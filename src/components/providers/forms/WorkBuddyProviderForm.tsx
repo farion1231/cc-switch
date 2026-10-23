@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -25,11 +26,19 @@ import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import { piPresetModelSources } from "@/config/presetModelMetadata";
 import {
+  WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
   WORKBUDDY_DEFAULT_CONFIG,
+  workbuddyOfficialPreset,
   workbuddyProviderPresets,
   type WorkBuddyModel,
+  type WorkBuddyProviderPreset,
   type WorkBuddySettingsConfig,
 } from "@/config/workbuddyProviderPresets";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import type { ManagedAuthAccount } from "@/lib/api";
+import { authApi } from "@/lib/api";
+import { WORKBUDDY_STATUS_KEY } from "@/components/providers/workbuddyOfficial";
+import { WorkBuddyOfficialSection } from "./WorkBuddyOfficialSection";
 import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import {
   FetchedModelPicker,
@@ -43,10 +52,32 @@ import {
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import type { ProviderFormProps } from "./ProviderForm";
 
-const PRESET_ENTRIES = workbuddyProviderPresets.map((preset, index) => ({
-  id: String(index),
-  preset,
-}));
+const OFFICIAL_PRESET_ID = "official";
+
+const PRESET_ENTRIES = [
+  { id: OFFICIAL_PRESET_ID, preset: workbuddyOfficialPreset },
+  ...workbuddyProviderPresets.map((preset, index) => ({
+    id: String(index),
+    preset,
+  })),
+];
+
+const presetById = (id: string): WorkBuddyProviderPreset | undefined =>
+  id === "custom"
+    ? undefined
+    : id === OFFICIAL_PRESET_ID
+      ? workbuddyOfficialPreset
+      : workbuddyProviderPresets[Number(id)];
+
+/** 官方登录卡的 key 自动生成，不让用户填（它不写进 models.json）。 */
+const officialKey = (taken: Record<string, unknown>) => {
+  const base = workbuddyOfficialPreset.providerKey;
+  if (!Object.prototype.hasOwnProperty.call(taken, base)) return base;
+  for (let n = 2; ; n += 1) {
+    const key = `${base}-${n}`;
+    if (!Object.prototype.hasOwnProperty.call(taken, key)) return key;
+  }
+};
 
 // WorkBuddy 的自定义模型这里只配 OpenAI Chat Completions。旧条目里的 `api` 字段
 // 不在表单里展示，靠 passthrough 原样带回保存。
@@ -91,7 +122,7 @@ const parseTokens = (value: string): number | undefined => {
 
 /** Chat Completions 填的是完整地址；拉模型列表和查预设参数都按基础地址来。 */
 const baseUrlOf = (config: WorkBuddySettingsConfig) =>
-  config.url.trim().replace(/\/chat\/completions\/*$/, "");
+  (config.url ?? "").trim().replace(/\/chat\/completions\/*$/, "");
 
 export function WorkBuddyProviderForm({
   providerId,
@@ -105,18 +136,29 @@ export function WorkBuddyProviderForm({
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
-  const [config, setConfig] = useState<WorkBuddySettingsConfig>(
-    (initialData?.settingsConfig as WorkBuddySettingsConfig | undefined) ??
-      WORKBUDDY_DEFAULT_CONFIG,
+  // 官方登录卡存的是空对象，表单里的模型字段按默认值补齐（保存时不用它）
+  const [config, setConfig] = useState<WorkBuddySettingsConfig>(() =>
+    initialData?.category === "official"
+      ? WORKBUDDY_DEFAULT_CONFIG
+      : ((initialData?.settingsConfig as WorkBuddySettingsConfig | undefined) ??
+        WORKBUDDY_DEFAULT_CONFIG),
   );
   const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 2));
   const [jsonValid, setJsonValid] = useState(true);
   const [presetId, setPresetId] = useState("custom");
-  const preset =
-    presetId === "custom"
-      ? undefined
-      : workbuddyProviderPresets[Number(presetId)];
+  const preset = presetById(presetId);
   const category = initialData?.category ?? preset?.category ?? "custom";
+  // 官方登录卡：只绑定授权中心的一个 WorkBuddy 账号，没有接口地址、Key、模型
+  const isOfficial = category === "official";
+  const [accountId, setAccountId] = useState<string | null>(
+    () =>
+      resolveManagedAccountId(
+        initialData?.meta,
+        WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
+      )?.trim() || null,
+  );
+  // 名称默认跟着选中账号的昵称；用户改过名称就不再覆盖
+  const autoName = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // The key is stored on every models.json entry this provider owns, so it is
@@ -151,13 +193,34 @@ export function WorkBuddyProviderForm({
     modelIds.every(Boolean) &&
     new Set(modelIds).size === modelIds.length;
   const urlValid = /^https?:\/\/\S+$/.test(config.url?.trim() ?? "");
-  const ready = Boolean(
-    jsonValid &&
-      name.trim() &&
-      (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
-      urlValid &&
-      modelsValid,
-  );
+  // 和账号区共用缓存：绑定的号已被删掉时不能保存，要重新选
+  const { data: workbuddyAccounts } = useQuery({
+    queryKey: WORKBUDDY_STATUS_KEY,
+    queryFn: () => authApi.authGetStatus(WORKBUDDY_ACCOUNT_AUTH_PROVIDER),
+    enabled: isOfficial,
+    staleTime: 30_000,
+  });
+  const accountAvailable =
+    accountId !== null &&
+    (workbuddyAccounts?.accounts.some((account) => account.id === accountId) ??
+      false);
+  const ready = isOfficial
+    ? Boolean(name.trim() && accountAvailable)
+    : Boolean(
+        jsonValid &&
+          name.trim() &&
+          (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
+          urlValid &&
+          modelsValid,
+      );
+  const chooseAccount = (account: ManagedAuthAccount) => {
+    setAccountId(account.id);
+    const current = form.getValues("name").trim();
+    if (!current || current === autoName.current) {
+      form.setValue("name", account.login, { shouldDirty: true });
+      autoName.current = account.login;
+    }
+  };
   useEffect(() => {
     onSubmitReadyChange?.(ready);
   }, [ready, onSubmitReadyChange]);
@@ -289,13 +352,16 @@ export function WorkBuddyProviderForm({
 
   const choosePreset = (id: string) => {
     setPresetId(id);
-    const selected =
-      id === "custom" ? undefined : workbuddyProviderPresets[Number(id)];
+    const selected = presetById(id);
+    const official = selected?.category === "official";
     const next = selected?.settingsConfig ?? WORKBUDDY_DEFAULT_CONFIG;
     update(next);
-    setProviderKey(selected?.providerKey ?? "");
+    setProviderKey(official ? "" : (selected?.providerKey ?? ""));
+    setAccountId(null);
+    autoName.current = null;
     form.reset({
-      name: selected?.name ?? "",
+      // 官方登录卡的名称在选账号时填成昵称
+      name: official ? "" : (selected?.name ?? ""),
       notes: "",
       websiteUrl: selected?.websiteUrl ?? "",
       icon: selected?.icon ?? "",
@@ -315,6 +381,26 @@ export function WorkBuddyProviderForm({
           onSubmittingChange?.(true);
           setError("");
           try {
+            if (isOfficial) {
+              await onSubmit({
+                ...identity,
+                name: identity.name.trim(),
+                meta: {
+                  ...initialData?.meta,
+                  authBinding: {
+                    source: "managed_account",
+                    authProvider: WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
+                    accountId: accountId ?? undefined,
+                  },
+                },
+                providerKey: isEdit
+                  ? providerId
+                  : officialKey(existing?.providers ?? {}),
+                presetCategory: "official",
+                settingsConfig: "{}",
+              });
+              return;
+            }
             const cleaned: WorkBuddySettingsConfig = {
               ...config,
               url: config.url.trim(),
@@ -367,292 +453,320 @@ export function WorkBuddyProviderForm({
           <BasicFormFields
             form={form}
             beforeNameSlot={
-              <div className="space-y-2">
-                <Label
-                  htmlFor="workbuddy-provider-key"
-                  className={REQUIRED_LABEL}
-                >
-                  {t("opencode.providerKey")}
-                </Label>
-                <Input
-                  id="workbuddy-provider-key"
-                  value={providerKey}
-                  onChange={(event) =>
-                    setProviderKey(normalizeKey(event.target.value))
-                  }
-                  disabled={isEdit}
-                  placeholder={t("opencode.providerKeyPlaceholder")}
-                  autoComplete="off"
-                  aria-required
-                  aria-invalid={keyTaken || keyInvalid || undefined}
-                  className={keyTaken || keyInvalid ? "border-destructive" : ""}
-                />
-                <p
-                  className={
-                    keyTaken || keyInvalid
-                      ? "text-xs text-destructive"
-                      : "text-xs text-fg-2"
-                  }
-                >
-                  {keyTaken
-                    ? t("opencode.providerKeyDuplicate")
-                    : keyInvalid
-                      ? t("opencode.providerKeyInvalid")
-                      : isEdit
-                        ? t("workbuddy.form.providerKeyLockedHint")
-                        : t("workbuddy.form.providerKeyHint")}
-                </p>
-              </div>
+              isOfficial ? undefined : (
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="workbuddy-provider-key"
+                    className={REQUIRED_LABEL}
+                  >
+                    {t("opencode.providerKey")}
+                  </Label>
+                  <Input
+                    id="workbuddy-provider-key"
+                    value={providerKey}
+                    onChange={(event) =>
+                      setProviderKey(normalizeKey(event.target.value))
+                    }
+                    disabled={isEdit}
+                    placeholder={t("opencode.providerKeyPlaceholder")}
+                    autoComplete="off"
+                    aria-required
+                    aria-invalid={keyTaken || keyInvalid || undefined}
+                    className={
+                      keyTaken || keyInvalid ? "border-destructive" : ""
+                    }
+                  />
+                  <p
+                    className={
+                      keyTaken || keyInvalid
+                        ? "text-xs text-destructive"
+                        : "text-xs text-fg-2"
+                    }
+                  >
+                    {keyTaken
+                      ? t("opencode.providerKeyDuplicate")
+                      : keyInvalid
+                        ? t("opencode.providerKeyInvalid")
+                        : isEdit
+                          ? t("workbuddy.form.providerKeyLockedHint")
+                          : t("workbuddy.form.providerKeyHint")}
+                  </p>
+                </div>
+              )
             }
           />
 
-          <ApiKeySection
-            id="workbuddy-api-key"
-            value={config.apiKey}
-            onChange={(apiKey) => update({ ...config, apiKey })}
-            category={category}
-            shouldShowLink={Boolean(preset?.apiKeyUrl)}
-            websiteUrl={preset?.apiKeyUrl ?? ""}
-            isPartner={preset?.isPartner}
-            partnerPromotionKey={preset?.partnerPromotionKey}
-            hint={t("workbuddy.form.apiKeyHint")}
-          />
-
-          <EndpointField
-            id="workbuddy-url"
-            label={t("workbuddy.form.url")}
-            value={config.url}
-            onChange={(url) => update({ ...config, url })}
-            placeholder="https://api.example.com/v1/chat/completions"
-            hint={t("workbuddy.form.urlHint")}
-            showManageButton={false}
-          />
-
-          <div className="space-y-2">
-            <Label htmlFor="workbuddy-vendor">
-              {t("workbuddy.form.vendor")}
-            </Label>
-            <Input
-              id="workbuddy-vendor"
-              value={config.vendor ?? ""}
-              onChange={(event) =>
-                update({ ...config, vendor: event.target.value })
-              }
-              placeholder="Custom"
-              autoComplete="off"
+          {isOfficial ? (
+            <WorkBuddyOfficialSection
+              value={accountId}
+              onChange={chooseAccount}
             />
-          </div>
+          ) : (
+            <>
+              <ApiKeySection
+                id="workbuddy-api-key"
+                value={config.apiKey}
+                onChange={(apiKey) => update({ ...config, apiKey })}
+                category={category}
+                shouldShowLink={Boolean(preset?.apiKeyUrl)}
+                websiteUrl={preset?.apiKeyUrl ?? ""}
+                isPartner={preset?.isPartner}
+                partnerPromotionKey={preset?.partnerPromotionKey}
+                hint={t("workbuddy.form.apiKeyHint")}
+              />
 
-          <div className="space-y-3 border-l border-border pl-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                <FormLabel>{t("opencode.models")}</FormLabel>
-                <HelpTip title={t("opencode.models")}>
-                  {t("workbuddy.form.modelsHint")}
-                </HelpTip>
-              </div>
-              <div className="flex gap-1">
-                <FetchedModelPicker
-                  models={fetchedModels}
-                  configuredModelIds={modelIds}
-                  onApply={applyFetchedModels}
-                  onFetch={handleFetchModels}
-                  isFetching={isFetchingModels}
-                  metadataSource={{ baseUrl, presets: piPresetModelSources }}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1"
-                  onClick={() =>
-                    commitModels([
-                      ...configRef.current.models,
-                      { id: "", supportsToolCall: true, supportsImages: false },
-                    ])
-                  }
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {t("opencode.addModel")}
-                </Button>
-              </div>
-            </div>
-            {models.length === 0 ? (
-              <p role="status" className="py-2 text-sm text-fg-2">
-                {t("opencode.noModels")}
-              </p>
-            ) : (
+              <EndpointField
+                id="workbuddy-url"
+                label={t("workbuddy.form.url")}
+                value={config.url}
+                onChange={(url) => update({ ...config, url })}
+                placeholder="https://api.example.com/v1/chat/completions"
+                hint={t("workbuddy.form.urlHint")}
+                showManageButton={false}
+              />
+
               <div className="space-y-2">
-                <div className="mb-1 flex items-center gap-2 px-1 text-xs text-fg-2">
-                  <span className="w-9" />
-                  <span className={cn("flex-1", REQUIRED_LABEL)}>
-                    {t("opencode.modelId")}
-                  </span>
-                  <span className="flex-1">{t("opencode.modelName")}</span>
-                  <span className="w-9" />
+                <Label htmlFor="workbuddy-vendor">
+                  {t("workbuddy.form.vendor")}
+                </Label>
+                <Input
+                  id="workbuddy-vendor"
+                  value={config.vendor ?? ""}
+                  onChange={(event) =>
+                    update({ ...config, vendor: event.target.value })
+                  }
+                  placeholder="Custom"
+                  autoComplete="off"
+                />
+              </div>
+
+              <div className="space-y-3 border-l border-border pl-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1">
+                    <FormLabel>{t("opencode.models")}</FormLabel>
+                    <HelpTip title={t("opencode.models")}>
+                      {t("workbuddy.form.modelsHint")}
+                    </HelpTip>
+                  </div>
+                  <div className="flex gap-1">
+                    <FetchedModelPicker
+                      models={fetchedModels}
+                      configuredModelIds={modelIds}
+                      onApply={applyFetchedModels}
+                      onFetch={handleFetchModels}
+                      isFetching={isFetchingModels}
+                      metadataSource={{
+                        baseUrl,
+                        presets: piPresetModelSources,
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 gap-1"
+                      onClick={() =>
+                        commitModels([
+                          ...configRef.current.models,
+                          {
+                            id: "",
+                            supportsToolCall: true,
+                            supportsImages: false,
+                          },
+                        ])
+                      }
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t("opencode.addModel")}
+                    </Button>
+                  </div>
                 </div>
-                {models.map((model, index) => (
-                  <div key={index} className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => toggleModelExpand(index)}
-                        aria-label={t("opencode.toggleModelDetails")}
-                        aria-expanded={expandedModels.has(index)}
-                        className="h-9 w-9 shrink-0"
-                      >
-                        <ChevronRight
-                          className={cn(
-                            "h-4 w-4 transition-transform motion-reduce:transition-none",
-                            expandedModels.has(index) && "rotate-90",
-                          )}
-                        />
-                      </Button>
-                      <div className="flex min-w-0 flex-1 gap-1">
-                        <Input
-                          id={`workbuddy-model-id-${index}`}
-                          value={model.id}
-                          onChange={(event) =>
-                            updateModel(index, { id: event.target.value })
-                          }
-                          placeholder="model-id"
-                          aria-label={t("opencode.modelId")}
-                          aria-required
-                          autoComplete="off"
-                          className="min-w-0 flex-1"
-                        />
-                        {fetchedModels.length > 0 && (
-                          <ModelDropdown
-                            models={fetchedModels}
-                            onSelect={(id) => {
-                              updateModel(index, { id });
-                              fillModelMetadataFor(id);
-                            }}
-                          />
-                        )}
-                      </div>
-                      <Input
-                        id={`workbuddy-model-name-${index}`}
-                        value={model.name ?? ""}
-                        onChange={(event) =>
-                          updateModel(index, {
-                            name: event.target.value || undefined,
-                          })
-                        }
-                        placeholder={t("opencode.modelName")}
-                        aria-label={t("opencode.modelName")}
-                        autoComplete="off"
-                        className="min-w-0 flex-1"
-                      />
-                      <HoverTip content={t("common.delete")}>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t("common.delete")}
-                          className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
-                          onClick={() => removeModel(index)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </HoverTip>
+                {models.length === 0 ? (
+                  <p role="status" className="py-2 text-sm text-fg-2">
+                    {t("opencode.noModels")}
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="mb-1 flex items-center gap-2 px-1 text-xs text-fg-2">
+                      <span className="w-9" />
+                      <span className={cn("flex-1", REQUIRED_LABEL)}>
+                        {t("opencode.modelId")}
+                      </span>
+                      <span className="flex-1">{t("opencode.modelName")}</span>
+                      <span className="w-9" />
                     </div>
-                    {expandedModels.has(index) && (
-                      <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
-                        <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
-                          {CAPABILITIES.map(([capability, label]) => (
-                            <div
-                              key={capability}
-                              className="flex items-center gap-2.5"
+                    {models.map((model, index) => (
+                      <div key={index} className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => toggleModelExpand(index)}
+                            aria-label={t("opencode.toggleModelDetails")}
+                            aria-expanded={expandedModels.has(index)}
+                            className="h-9 w-9 shrink-0"
+                          >
+                            <ChevronRight
+                              className={cn(
+                                "h-4 w-4 transition-transform motion-reduce:transition-none",
+                                expandedModels.has(index) && "rotate-90",
+                              )}
+                            />
+                          </Button>
+                          <div className="flex min-w-0 flex-1 gap-1">
+                            <Input
+                              id={`workbuddy-model-id-${index}`}
+                              value={model.id}
+                              onChange={(event) =>
+                                updateModel(index, { id: event.target.value })
+                              }
+                              placeholder="model-id"
+                              aria-label={t("opencode.modelId")}
+                              aria-required
+                              autoComplete="off"
+                              className="min-w-0 flex-1"
+                            />
+                            {fetchedModels.length > 0 && (
+                              <ModelDropdown
+                                models={fetchedModels}
+                                onSelect={(id) => {
+                                  updateModel(index, { id });
+                                  fillModelMetadataFor(id);
+                                }}
+                              />
+                            )}
+                          </div>
+                          <Input
+                            id={`workbuddy-model-name-${index}`}
+                            value={model.name ?? ""}
+                            onChange={(event) =>
+                              updateModel(index, {
+                                name: event.target.value || undefined,
+                              })
+                            }
+                            placeholder={t("opencode.modelName")}
+                            aria-label={t("opencode.modelName")}
+                            autoComplete="off"
+                            className="min-w-0 flex-1"
+                          />
+                          <HoverTip content={t("common.delete")}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("common.delete")}
+                              className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                              onClick={() => removeModel(index)}
                             >
-                              <Label
-                                htmlFor={`workbuddy-model-${capability}-${index}`}
-                                className="cursor-pointer"
-                              >
-                                {t(label)}
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </HoverTip>
+                        </div>
+                        {expandedModels.has(index) && (
+                          <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
+                            <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
+                              {CAPABILITIES.map(([capability, label]) => (
+                                <div
+                                  key={capability}
+                                  className="flex items-center gap-2.5"
+                                >
+                                  <Label
+                                    htmlFor={`workbuddy-model-${capability}-${index}`}
+                                    className="cursor-pointer"
+                                  >
+                                    {t(label)}
+                                  </Label>
+                                  <Switch
+                                    id={`workbuddy-model-${capability}-${index}`}
+                                    checked={model[capability] === true}
+                                    onCheckedChange={(checked) =>
+                                      updateModel(index, {
+                                        [capability]: checked,
+                                      })
+                                    }
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`workbuddy-model-input-${index}`}>
+                                {t("workbuddy.form.maxInputTokens")}
                               </Label>
-                              <Switch
-                                id={`workbuddy-model-${capability}-${index}`}
-                                checked={model[capability] === true}
-                                onCheckedChange={(checked) =>
-                                  updateModel(index, { [capability]: checked })
+                              <Input
+                                id={`workbuddy-model-input-${index}`}
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={model.maxInputTokens ?? ""}
+                                onChange={(event) =>
+                                  updateModel(index, {
+                                    maxInputTokens: parseTokens(
+                                      event.target.value,
+                                    ),
+                                  })
                                 }
+                                placeholder="128000"
                               />
                             </div>
-                          ))}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`workbuddy-model-input-${index}`}>
-                            {t("workbuddy.form.maxInputTokens")}
-                          </Label>
-                          <Input
-                            id={`workbuddy-model-input-${index}`}
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={model.maxInputTokens ?? ""}
-                            onChange={(event) =>
-                              updateModel(index, {
-                                maxInputTokens: parseTokens(event.target.value),
-                              })
-                            }
-                            placeholder="128000"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`workbuddy-model-output-${index}`}>
-                            {t("workbuddy.form.maxOutputTokens")}
-                          </Label>
-                          <Input
-                            id={`workbuddy-model-output-${index}`}
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={model.maxOutputTokens ?? ""}
-                            onChange={(event) =>
-                              updateModel(index, {
-                                maxOutputTokens: parseTokens(
-                                  event.target.value,
-                                ),
-                              })
-                            }
-                            placeholder="16384"
-                          />
-                        </div>
+                            <div className="space-y-2">
+                              <Label
+                                htmlFor={`workbuddy-model-output-${index}`}
+                              >
+                                {t("workbuddy.form.maxOutputTokens")}
+                              </Label>
+                              <Input
+                                id={`workbuddy-model-output-${index}`}
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={model.maxOutputTokens ?? ""}
+                                onChange={(event) =>
+                                  updateModel(index, {
+                                    maxOutputTokens: parseTokens(
+                                      event.target.value,
+                                    ),
+                                  })
+                                }
+                                placeholder="16384"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </fieldset>
 
-        <div className="space-y-2">
-          <Label htmlFor="workbuddy-settings-config">
-            {t("provider.configJson")}
-          </Label>
-          <JsonEditor
-            id="workbuddy-settings-config"
-            ariaLabel={t("provider.configJson")}
-            value={jsonText}
-            darkMode={isDarkMode}
-            language="json"
-            showValidation
-            height={Math.max(1, jsonText.split("\n").length) * 20 + 20}
-            onChange={(text) => {
-              setJsonText(text);
-              try {
-                setConfig(configSchema.parse(JSON.parse(text)));
-                setJsonValid(true);
-              } catch {
-                setJsonValid(false);
-              }
-            }}
-          />
-        </div>
+        {!isOfficial && (
+          <div className="space-y-2">
+            <Label htmlFor="workbuddy-settings-config">
+              {t("provider.configJson")}
+            </Label>
+            <JsonEditor
+              id="workbuddy-settings-config"
+              ariaLabel={t("provider.configJson")}
+              value={jsonText}
+              darkMode={isDarkMode}
+              language="json"
+              showValidation
+              height={Math.max(1, jsonText.split("\n").length) * 20 + 20}
+              onChange={(text) => {
+                setJsonText(text);
+                try {
+                  setConfig(configSchema.parse(JSON.parse(text)));
+                  setJsonValid(true);
+                } catch {
+                  setJsonValid(false);
+                }
+              }}
+            />
+          </div>
+        )}
         {showButtons && (
           <div className="flex justify-end gap-2">
             <Button

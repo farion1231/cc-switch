@@ -79,3 +79,20 @@ export const workbuddyProviderPresets: WorkBuddyProviderPreset[] =
       },
     ];
   });
+
+/** 授权中心里 WorkBuddy 账号的 provider 标识（官方登录卡的 `meta.authBinding.authProvider`）。 */
+export const WORKBUDDY_ACCOUNT_AUTH_PROVIDER = "workbuddy_account";
+
+/**
+ * 「WorkBuddy 官方登录」：不是自定义模型，卡片只绑定授权中心里的一个 WorkBuddy 账号，
+ * 「切换」时把 WorkBuddy 桌面端的登录换成这个号。不写进 models.json。
+ */
+export const workbuddyOfficialPreset: WorkBuddyProviderPreset = {
+  name: "WorkBuddy 官方登录",
+  nameKey: "workbuddy.official.presetName",
+  providerKey: "workbuddy-official",
+  websiteUrl: "",
+  category: "official",
+  icon: "workbuddy",
+  settingsConfig: WORKBUDDY_DEFAULT_CONFIG,
+};

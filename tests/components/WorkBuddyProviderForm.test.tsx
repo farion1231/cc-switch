@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkBuddyProviderForm } from "@/components/providers/forms/WorkBuddyProviderForm";
 import { setProviders } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
@@ -20,6 +20,52 @@ vi.mock("@/lib/api/model-fetch", () => ({
   fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
   showFetchModelsError: modelFetchApiMock.showFetchModelsError,
 }));
+
+const authMocks = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+  liveState: vi.fn(),
+  prepareNewLogin: vi.fn(),
+  openApp: vi.fn(),
+}));
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    authApi: {
+      ...actual.authApi,
+      authGetStatus: authMocks.getStatus,
+      workbuddyAccountLiveState: authMocks.liveState,
+      workbuddyAccountPrepareNewLogin: authMocks.prepareNewLogin,
+      workbuddyAccountOpenApp: authMocks.openApp,
+    },
+  };
+});
+
+const wbAccount = (id: string, login: string, plan?: string) => ({
+  id,
+  provider: "workbuddy_account",
+  login,
+  avatar_url: null,
+  authenticated_at: 0,
+  is_default: id === "u-1",
+  github_domain: "workbuddy",
+  requires_reauth: false,
+  ...(plan ? { account_kind: plan } : {}),
+});
+
+const officialCard = (accountId: string) => ({
+  name: "Work account",
+  settingsConfig: {},
+  category: "official" as const,
+  meta: {
+    authBinding: {
+      source: "managed_account" as const,
+      authProvider: "workbuddy_account",
+      accountId,
+    },
+  },
+});
 
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -57,6 +103,132 @@ const existing = {
 };
 
 describe("WorkBuddyProviderForm", () => {
+  beforeEach(() => {
+    for (const mock of Object.values(authMocks)) mock.mockReset();
+    authMocks.getStatus.mockResolvedValue({
+      provider: "workbuddy_account",
+      authenticated: true,
+      default_account_id: "u-1",
+      accounts: [wbAccount("u-1", "Alice", "pro"), wbAccount("u-2", "Bob")],
+    });
+    authMocks.liveState.mockResolvedValue({
+      running: false,
+      signedIn: true,
+      recognized: true,
+      imported: true,
+    });
+    authMocks.openApp.mockResolvedValue(undefined);
+  });
+
+  it("creates an official sign-in card bound to the current account", async () => {
+    setProviders("workbuddy", {});
+    const submit = vi.fn();
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        initialData={undefined}
+        submitLabel="Add"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(await screen.findByText("workbuddy.official.presetName"));
+
+    // 账号区代替接口地址、Key、模型和 JSON
+    expect(
+      await screen.findByLabelText("workbuddy.official.account"),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/workbuddy.form.url/)).toBeNull();
+    expect(screen.queryByLabelText(/opencode.providerKey/)).toBeNull();
+    expect(screen.queryByLabelText("provider.configJson")).toBeNull();
+
+    // 默认绑定 WorkBuddy 现在登着的号，名称用它的昵称
+    await waitFor(() =>
+      expect(screen.getByLabelText("provider.name")).toHaveValue("Alice"),
+    );
+    const save = screen.getByRole("button", { name: "Add" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const call = submit.mock.calls[0][0];
+    expect(call).toMatchObject({
+      name: "Alice",
+      presetCategory: "official",
+      providerKey: "workbuddy-official",
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "workbuddy_account",
+          accountId: "u-1",
+        },
+      },
+    });
+    expect(JSON.parse(call.settingsConfig)).toEqual({});
+  });
+
+  it("keeps the binding when editing an official card", async () => {
+    const submit = vi.fn();
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        providerId="workbuddy-official"
+        initialData={officialCard("u-2")}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    // 用户起的名称不被昵称覆盖
+    expect(screen.getByLabelText("provider.name")).toHaveValue("Work account");
+    fireEvent.click(save);
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0][0]).toMatchObject({
+      providerKey: "workbuddy-official",
+      presetCategory: "official",
+      meta: { authBinding: { accountId: "u-2" } },
+    });
+  });
+
+  it("asks to choose again when the bound account was deleted", async () => {
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        providerId="workbuddy-official"
+        initialData={officialCard("u-9")}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    expect(
+      (await screen.findAllByText("workbuddy.official.accountDeleted")).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("prepares a new sign-in and opens WorkBuddy", async () => {
+    authMocks.prepareNewLogin.mockResolvedValue(null);
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        providerId="workbuddy-official"
+        initialData={officialCard("u-1")}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "authCenter.workbuddy.prepareNewLogin",
+      }),
+    );
+    await waitFor(() => expect(authMocks.prepareNewLogin).toHaveBeenCalled());
+    await waitFor(() => expect(authMocks.openApp).toHaveBeenCalled());
+  });
+
   it("edits fields while keeping the key and unknown settings", async () => {
     const submit = vi.fn();
     render(
