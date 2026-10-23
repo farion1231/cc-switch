@@ -52,7 +52,11 @@ export function useManagedAuth(
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    // CodeBuddy 的当前账号可能在 CLI 里被换掉（/login、/logout），同样定期刷新。
+    refetchInterval:
+      authProvider === "xai_oauth" || authProvider === "codebuddy_oauth"
+        ? 15_000
+        : false,
   });
 
   const stopPolling = useCallback(() => {
@@ -68,9 +72,12 @@ export function useManagedAuth(
 
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      // 只有 Codex（设备码）和 Antigravity（本机回调服务）在后端占着资源，要通知取消
+      // Codex（设备码）、Antigravity（本机回调服务）、CodeBuddy（等凭据文件变化）在后端
+      // 记着这次登录，要通知取消
       if (
-        (authProvider !== "codex_oauth" && authProvider !== "agy_oauth") ||
+        (authProvider !== "codex_oauth" &&
+          authProvider !== "agy_oauth" &&
+          authProvider !== "codebuddy_oauth") ||
         !deviceCode
       )
         return true;
@@ -140,10 +147,13 @@ export function useManagedAuth(
       }
       if (request.generation !== flowGenerationRef.current) return;
 
-      try {
-        await settingsApi.openExternal(response.verification_uri);
-      } catch (e) {
-        console.debug("[ManagedAuth] Failed to open browser:", e);
+      // 终端登录（CodeBuddy）没有授权页，后端已经打开了终端
+      if (response.verification_uri) {
+        try {
+          await settingsApi.openExternal(response.verification_uri);
+        } catch (e) {
+          console.debug("[ManagedAuth] Failed to open browser:", e);
+        }
       }
       if (request.generation !== flowGenerationRef.current) return;
 
@@ -308,6 +318,18 @@ export function useManagedAuth(
             }),
           );
         }
+      }
+      // CodeBuddy 监听凭据目录，运行中的 CLI 会自己换到这个号
+      if (authProvider === "codebuddy_oauth") {
+        toast.success(
+          t("authCenter.codebuddy.switched", {
+            defaultValue:
+              "已切换。正在运行的 CodeBuddy 会自动换到这个账号，新开的也会用它。",
+          }),
+        );
+        await queryClient.invalidateQueries({
+          queryKey: ["codebuddy-account-live"],
+        });
       }
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });

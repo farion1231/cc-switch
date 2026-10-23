@@ -4862,7 +4862,8 @@
       "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
-      "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。"
+      "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
+      "codebuddyHelp": "CodeBuddy Code 的官方登入（國內版、國際版都在這裡）。CodeBuddy 同時只能登入一個帳號，「切換」會把它的登入換成選中的帳號，正在執行的 CodeBuddy 也會自動換過去。新增帳號會開啟終端機執行 codebuddy，在裡面執行 /login 登入後這裡會自動收錄；權杖由 CodeBuddy 自己續期。"
     },
     "addAccount": "新增帳號",
     "groupMenu": "{{service}} 的更多操作",
@@ -4918,6 +4919,26 @@
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
       "switched": "已切換，新開的 agy 會使用這個帳號。",
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
+    },
+    "codebuddy": {
+      "mainland": "國內版",
+      "global": "國際版",
+      "expiredNote": "登入已過期，切換不過去",
+      "addedOn": "{{date}}收錄",
+      "imported": "已收錄 {{login}}。",
+      "uncollected": "CodeBuddy 目前登入的是 {{login}}，還沒收錄到這裡。",
+      "importCurrent": "收錄目前帳號",
+      "unrecognized": "無法辨識 CodeBuddy 的登入檔格式",
+      "unrecognizedNote": "可能由 WorkBuddy 加密託管。CC Switch 不會改動它，也無法在這裡切換帳號。",
+      "statusLoadFailed": "無法讀取 CodeBuddy 帳號，請重試。",
+      "empty": "還沒有 CodeBuddy 帳號。在終端機裡登入，或收錄 CodeBuddy 目前登入的帳號。",
+      "login": "在終端機登入",
+      "current": "CodeBuddy 使用中",
+      "switchTo": "將 CodeBuddy 切換到這個帳號",
+      "switched": "已切換。正在執行的 CodeBuddy 會自動換到這個帳號，新開的也會使用它。",
+      "pendingNote": "已在終端機開啟 codebuddy，在裡面輸入 /login 完成登入後這裡會自動收錄。",
+      "reopenTerminal": "重新開啟終端機",
+      "removeNote": "只刪除 CC Switch 裡的副本，不會讓 CodeBuddy 登出。"
     }
   },
   "kimi": {
@@ -4974,7 +4995,7 @@
   "codebuddy": {
     "empty": {
       "title": "尚未新增自訂模型",
-      "description": "CodeBuddy 官方模型與登入由 CodeBuddy Code 自行管理；~/.codebuddy/models.json 中已有的自訂模型會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增模型。"
+      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理，官方帳號可在授權中心收錄與切換；~/.codebuddy/models.json 中已有的自訂模型會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增模型。"
     },
     "modelsHint": "模型 ID 寫入 models.json 的 id，也是 /model 中選擇的名稱，通常就是介面的模型名稱，新增後不可修改。顯示名稱與上方的「名稱」是同一個值。",
     "modelIdDuplicate": "此模型 ID 已被使用，請更換",

@@ -4,7 +4,8 @@ export type ManagedAuthProvider =
   | "github_copilot"
   | "codex_oauth"
   | "xai_oauth"
-  | "agy_oauth";
+  | "agy_oauth"
+  | "codebuddy_oauth";
 
 export type AuthCenterTarget = ManagedAuthProvider | "kimi_oauth";
 
@@ -125,6 +126,28 @@ export async function agyAccountIsRunning(): Promise<boolean> {
   return invoke<boolean>("agy_account_is_running");
 }
 
+/** CodeBuddy 凭据文件现在的状态（授权中心顶部的「收录当前账号」提示用）。 */
+export interface CodebuddyLiveSummary {
+  state: "none" | "logged_out" | "collected" | "uncollected" | "unrecognized";
+  account_id: string | null;
+  label: string | null;
+  domain: string | null;
+}
+
+export async function codebuddyAccountLive(): Promise<CodebuddyLiveSummary> {
+  return invoke<CodebuddyLiveSummary>("codebuddy_account_live");
+}
+
+/** 收录 CodeBuddy 当前登录的账号（已收录就更新副本）。 */
+export async function codebuddyAccountImportCurrent(): Promise<ManagedAuthAccount> {
+  return invoke<ManagedAuthAccount>("codebuddy_account_import_current");
+}
+
+/** 登录等待中再开一个跑 `codebuddy` 的终端（不重置这次登录）。 */
+export async function codebuddyAccountOpenLoginTerminal(): Promise<void> {
+  return invoke("codebuddy_account_open_login_terminal");
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -135,4 +158,7 @@ export const authApi = {
   authSetDefaultAccount,
   authLogout,
   agyAccountIsRunning,
+  codebuddyAccountLive,
+  codebuddyAccountImportCurrent,
+  codebuddyAccountOpenLoginTerminal,
 };

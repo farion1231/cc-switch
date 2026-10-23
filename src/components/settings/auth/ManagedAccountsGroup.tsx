@@ -59,6 +59,11 @@ export interface GroupLoginFlow {
   error: string | null;
   onCancel: () => void;
   onRetry: () => void;
+  /** 没有验证码时等待块里的说明（默认是「已在浏览器打开登录页」；CodeBuddy 是在终端里登录） */
+  pendingNote?: string;
+  /** 等待块里「重新打开」按钮的文案和动作（默认重新打开登录页） */
+  reopenLabel?: string;
+  onReopen?: () => void;
 }
 
 interface ManagedAccountsGroupProps {
@@ -386,23 +391,25 @@ export function ManagedAccountsGroup({
             {login.deviceCode && !login.deviceCode.user_code && (
               <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
                 <span className="min-w-0 flex-1">
-                  {t("authCenter.pending.browserNote", {
-                    defaultValue:
-                      "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
-                    service: name,
-                  })}
+                  {login.pendingNote ??
+                    t("authCenter.pending.browserNote", {
+                      defaultValue:
+                        "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
+                      service: name,
+                    })}
                 </span>
                 <Button
                   type="button"
                   variant="quiet"
                   size="compact"
                   className="gap-1"
-                  onClick={openPage}
+                  onClick={login.onReopen ?? openPage}
                 >
                   <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  {t("authCenter.pending.reopen", {
-                    defaultValue: "重新打开登录页",
-                  })}
+                  {login.reopenLabel ??
+                    t("authCenter.pending.reopen", {
+                      defaultValue: "重新打开登录页",
+                    })}
                 </Button>
               </div>
             )}

@@ -4,6 +4,7 @@ import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSect
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
+import { CodebuddyAccountSection } from "@/components/providers/forms/CodebuddyAccountSection";
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { isMac } from "@/lib/platform";
 import type { AuthCenterTarget } from "@/lib/api";
@@ -18,7 +19,7 @@ interface AuthCenterPanelProps {
 }
 
 /**
- * 授权中心：GitHub Copilot、ChatGPT、xAI、Kimi Code，一组一张卡片；
+ * 授权中心：GitHub Copilot、ChatGPT、xAI、Kimi Code、CodeBuddy Code，一组一张卡片；
  * macOS 上另有 Antigravity 一组（切 agy 的官方登录，目前只实现了 macOS 钥匙串）。
  * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
  */
@@ -32,6 +33,7 @@ export function AuthCenterPanel({
   const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const agyOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const kimiOauthSectionRef = useRef<HTMLDivElement | null>(null);
+  const codebuddyOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const showAgy = isMac();
 
   useEffect(() => {
@@ -46,7 +48,9 @@ export function AuthCenterPanel({
             ? codexOauthSectionRef
             : authScrollTarget === "agy_oauth"
               ? agyOauthSectionRef
-              : xaiOauthSectionRef;
+              : authScrollTarget === "codebuddy_oauth"
+                ? codebuddyOauthSectionRef
+                : xaiOauthSectionRef;
 
     const frame = requestAnimationFrame(() => {
       const prefersReducedMotion = window.matchMedia(
@@ -79,7 +83,10 @@ export function AuthCenterPanel({
         <XaiOAuthSection mode="manage" helpSide="bottom" />
       </div>
       <div ref={kimiOauthSectionRef} className="scroll-mt-4">
-        <KimiAccountLogin helpSide={showAgy ? "bottom" : "top"} />
+        <KimiAccountLogin helpSide="bottom" />
+      </div>
+      <div ref={codebuddyOauthSectionRef} className="scroll-mt-4">
+        <CodebuddyAccountSection helpSide={showAgy ? "bottom" : "top"} />
       </div>
       {showAgy && (
         <div ref={agyOauthSectionRef} className="scroll-mt-4">
