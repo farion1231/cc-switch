@@ -8,6 +8,7 @@ import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import {
   extractErrorMessage,
+  translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
@@ -151,7 +152,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       const detail =
         (appId === "pi" || appId === "rpi"
           ? translatePiProviderMutationError(rawDetail, t, appId)
-          : "") ||
+          : appId === "kimi"
+            ? translateKimiProviderMutationError(rawDetail, t)
+            : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -219,7 +222,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       const detail =
         (appId === "pi" || appId === "rpi"
           ? translatePiProviderMutationError(rawDetail, t, appId)
-          : "") ||
+          : appId === "kimi"
+            ? translateKimiProviderMutationError(rawDetail, t)
+            : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -232,6 +237,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi" || appId === "rpi") {
         await invalidatePiProviderCaches(queryClient, appId);
+      } else if (appId === "kimi") {
+        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "kimi"],
+        });
       }
     },
   });
@@ -295,7 +305,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       const detail =
         (appId === "pi" || appId === "rpi"
           ? translatePiProviderMutationError(rawDetail, t, appId)
-          : "") ||
+          : appId === "kimi"
+            ? translateKimiProviderMutationError(rawDetail, t)
+            : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -308,6 +320,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi" || appId === "rpi") {
         await invalidatePiProviderCaches(queryClient, appId);
+      } else if (appId === "kimi") {
+        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "kimi"],
+        });
       }
     },
   });

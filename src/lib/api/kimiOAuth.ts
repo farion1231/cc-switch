@@ -1,11 +1,26 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { SubscriptionQuota } from "@/types/subscription";
 
 export type KimiRegion = "mainland-cn" | "global";
 
-export interface KimiOAuthStatus {
+export interface KimiOAuthAccount {
+  id: string;
+  name: string;
+  nickname: string | null;
+  avatarUrl: string | null;
+  /** Kimi's own default login: web search and fetch always use it. */
+  primary: boolean;
   authenticated: boolean;
   region: KimiRegion;
   expiresAt: number | null;
+  error: string | null;
+}
+
+export interface KimiOAuthStatus {
+  accounts: KimiOAuthAccount[];
+  currentAccountId: string | null;
+  /** Kimi 自己的登录还在，只是被移出了列表 */
+  primaryHidden: boolean;
 }
 
 export interface KimiLoginStart {
@@ -18,8 +33,11 @@ export interface KimiLoginStart {
 
 export const kimiOAuthApi = {
   status: () => invoke<KimiOAuthStatus>("kimi_oauth_status"),
-  start: (region: KimiRegion) =>
-    invoke<KimiLoginStart>("kimi_oauth_start", { region }),
+  start: (region: KimiRegion, accountId?: string) =>
+    invoke<KimiLoginStart>("kimi_oauth_start", {
+      region,
+      accountId: accountId ?? null,
+    }),
   poll: (flowId: string) =>
     invoke<{
       authenticated: boolean;
@@ -27,6 +45,11 @@ export const kimiOAuthApi = {
       ended: "expired" | "denied" | "cancelled" | null;
     }>("kimi_oauth_poll", { flowId }),
   cancel: (flowId: string) => invoke<boolean>("kimi_oauth_cancel", { flowId }),
-  logout: () => invoke<void>("kimi_oauth_logout"),
-  useAccount: () => invoke<void>("kimi_oauth_use_account"),
+  /** Separate accounts are deleted; Kimi's own login is only hidden. */
+  remove: (accountId: string) =>
+    invoke<void>("kimi_oauth_remove", { accountId }),
+  quota: (accountId: string) =>
+    invoke<SubscriptionQuota>("kimi_oauth_quota", { accountId }),
+  useAccount: (accountId: string) =>
+    invoke<void>("kimi_oauth_use_account", { accountId }),
 };

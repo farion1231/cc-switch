@@ -449,7 +449,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     name: "DIT.ai",
     providerKey: "cc-switch-dit-ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     settingsConfig: {
       name: "DIT.ai",
       baseUrl: "https://api.dit.ai",
@@ -464,6 +464,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "dit",
     icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    providerKey: "cc-switch-buytoken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    settingsConfig: {
+      name: "BuyToken",
+      baseUrl: "https://api.buytoken.work",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
   },
   {
     name: "TokenFactory",

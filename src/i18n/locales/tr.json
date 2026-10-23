@@ -2194,6 +2194,8 @@
       "actionEllipsis": "Codex Kullanımını Yeniden Oluşturun"
     },
     "totalRecords": "Toplam {{total}} kayıt",
+    "pageSize": "Sayfa başına {{count}}",
+    "pageSizeLabel": "Sayfa başına satır",
     "goToPage": "Git",
     "pageInputPlaceholder": "Sayfa",
     "modelPricing": "Model Fiyatlandırması",
@@ -2328,16 +2330,14 @@
     "cacheReadCostPerMillion": "Önbellek Okuma Maliyeti (milyon token başına, USD)",
     "cacheCreationCostPerMillion": "Önbellek Yazma Maliyeti (milyon token başına, USD)",
     "syncStatus": {
-      "auto": "Oturum günlükleri · otomatik tarama",
-      "justNow": "Oturum günlükleri · az önce eşitle edildi",
-      "minutesAgo": "Oturum günlükleri · {{count}} dakika önce eşitle edildi",
-      "off": "Oturum günlükleri · otomatik tarama kapalı",
-      "tipAuto": "Arka planda her 10 dakikada bir taranır; bu sayfa açıkken sağdaki aralıkla taranır",
-      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır"
+      "justNow": "Az önce eşitlendi",
+      "minutesAgo": "{{count}} dk önce eşitlendi",
+      "syncing": "Eşitleniyor…",
+      "tip": "Şimdi eşitlemek için tıklayın",
+      "tipOff": "Otomatik tarama kapalı. Şimdi eşitlemek için tıklayın"
     },
     "refreshMenu": {
-      "label": "Her {{seconds}} saniyede tara",
-      "seconds": "{{seconds}}'ler"
+      "label": "Her {{seconds}} saniyede tara"
     },
     "dataSources": "Veri kaynakları",
     "providerFilter": {
@@ -2372,16 +2372,17 @@
       "requests": "İstekler",
       "tokens": "Tokenlar",
       "cost": "Maliyet",
-      "requestsLegend": "İstekler"
+      "requestsLegend": "İstekler",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "saatlik",
+      "daily": "günlük"
     },
     "tabs": {
       "label": "Ayrıntılar",
       "providers": "Sağlayıcılar",
       "models": "Modeller",
-      "pricing": "Fiyatlandırma",
-      "settings": "Ayarlar"
+      "pricing": "Fiyatlandırma"
     },
-    "sortedByRequests": "İsteklere göre sıralandı",
     "app": "Uygulama",
     "speed": "Hız",
     "speedValue": "{{value}} tok/sn",
@@ -2405,7 +2406,6 @@
       "performance": "Performans",
       "source": "Kaynak",
       "sourceProxy": "Yönlendirme hizmeti · durumu {{code}}",
-      "sourceSession": "Oturum günlüğü",
       "total": "Toplam",
       "firstToken": "İlk token",
       "duration": "Süre",
@@ -2465,7 +2465,22 @@
     "firstTokenHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
     "firstTokenSumHelpTitle": "İlk token süresi nasıl hesaplanır?",
     "firstTokenSumHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca yönlendirme hizmetinden geçen başarılı akış istekleri hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda yönlendirilmiş istek verisi yoksa gösterilir.",
-    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)"
+    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)",
+    "settings": {
+      "title": "Kullanım ayarları",
+      "pricingSummary": "Model başına milyon token fiyatlarını ayarlayın veya models.dev'den eşitleyin",
+      "managePricing": "Fiyatlandırmayı yönet…"
+    },
+    "logColumns": {
+      "reset": "Varsayılana sıfırla",
+      "cacheWrite": "Önbellek Yazma",
+      "hitRate": "İsabet Oranı",
+      "hitRateTip": "Önbelleğe alınabilir {{total}} girdinin {{read}} kadarı önbellekten geldi",
+      "duration": "Toplam Süre"
+    },
+    "display": {
+      "logColumns": "İstek günlüğü sütunları"
+    }
   },
   "usageScript": {
     "title": "Kullanım Sorgusunu Yapılandır",
@@ -4775,36 +4790,21 @@
     "oauth": {
       "useAccount": "Bu hesabı kullan",
       "title": "Kimi Code resmî girişi",
-      "description": "Resmî modelleri otomatik eklemek için Kimi kodlama planınıza giriş yapın.",
+      "description": "Ayrı kimlik bilgileri ve sağlayıcılarla birden fazla Kimi kodlama planı hesabı ekleyin. Girişi burada yönetin, ardından resmî modellerini kullanmak için bir hesap seçin.",
       "region": "Giriş bölgesi",
       "mainland-cn": "Çin ana karası",
       "global": "Küresel",
       "signIn": "Kimi hesabına giriş yap",
-      "signInAgain": "Yeniden giriş yap",
-      "signOut": "Çıkış yap",
-      "signedIn": "Giriş yapıldı · {{region}}",
       "signedOut": "Giriş yapılmadı",
       "statusFailed": "Giriş durumu okunamadı",
-      "refresh": "Kimi giriş durumunu yenile",
-      "waiting": "Tarayıcı yetkilendirmesi bekleniyor",
-      "copyCode": "Yetkilendirme kodunu kopyala",
-      "copied": "Yetkilendirme kodu kopyalandı",
-      "openPage": "Yetkilendirme sayfasını aç",
-      "manualHint": "Yetkilendirmeden sonra bu sayfa güncellenir. Tarayıcı açılmadıysa aşağıdaki bağlantıyı ziyaret edip kodu girin.",
-      "error": "Kimi girişi tamamlanamadı",
       "expired": "Yetkilendirme kodunun süresi doldu. Yeniden giriş yapın.",
       "denied": "Yetkilendirme reddedildi. Yeniden giriş yapın.",
       "cancelled": "Bu giriş iptal edildi veya değiştirildi. Yeniden giriş yapın.",
       "success": "Kimi Code girişi yapıldı ve resmî modeller eklendi.",
-      "signOutConfirm": "Bu işlem, geçerli Kimi Code bölgesinin yerel kimlik bilgilerini kaldırır ve Kimi Code oturumunu kapatır. Sağlayıcılar, modeller ve geçerli model seçimi korunur."
+      "manageAccounts": "Kimi hesaplarını yönet",
+      "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
     },
     "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
-    "providerType": "Sağlayıcı türü",
-    "baseUrl": "İstek adresi",
-    "models": "Modeller",
-    "addModel": "Model ekle",
-    "removeModel": "Modeli kaldır",
-    "modelId": "Model kimliği",
     "contextSize": "Bağlam uzunluğu",
     "deleteSessionHint": "Dizin ve geçmişin birlikte güncellenmesi için oturumu Kimi Code içinden silin.",
     "empty": {

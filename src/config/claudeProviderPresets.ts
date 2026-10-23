@@ -367,7 +367,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     // 协议文档 dit.ai/docs、模型目录 dit.ai/models（2026-10-21 核对）：Anthropic
     // Messages 在站点根、Key 走 Bearer。Claude 系有 sonnet-5 / opus-5 / sonnet-5-5 /
     // opus-5-5，Haiku 只有带日期的 claude-haiku-4-5-20251001，没有 haiku-5-5
@@ -382,6 +382,25 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "dit",
     icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    // 接入文档 buytoken.work/docs（2026-10-23 核对）：Anthropic Messages 在
+    // 站点根，Key 按分组发（Claude 分组的 Key 调不了 gpt-*）。Haiku 只有带日期的
+    // claude-haiku-4-5-20251001，不带日期会失败
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.buytoken.work",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5-20251001",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
   },
   {
     name: "TokenFactory",

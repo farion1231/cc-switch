@@ -793,7 +793,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     settingsConfig: {
       baseUrl: "https://api.dit.ai",
       apiKey: "",
@@ -838,6 +838,55 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "dit",
     icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    settingsConfig: {
+      baseUrl: "https://api.buytoken.work",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "buytoken/claude-opus-5-5",
+        fallbacks: ["buytoken/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "buytoken/claude-opus-5-5": { alias: "Opus" },
+        "buytoken/claude-sonnet-5-5": { alias: "Sonnet" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
   },
   {
     name: "TokenFactory",

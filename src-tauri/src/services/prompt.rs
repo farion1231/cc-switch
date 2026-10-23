@@ -54,20 +54,7 @@ fn project_prompt_set_to_path(
 impl PromptService {
     /// Apps whose own global prompt file is imported on first launch.
     pub(crate) fn first_launch_apps() -> impl Iterator<Item = AppType> {
-        [
-            AppType::Claude,
-            AppType::Codex,
-            AppType::Gemini,
-            AppType::GrokBuild,
-            AppType::OpenCode,
-            AppType::OpenClaw,
-            AppType::Hermes,
-            AppType::Pi,
-            AppType::Rpi,
-            AppType::Mcode,
-            AppType::Agy,
-        ]
-        .into_iter()
+        AppType::all().filter(|app| *app != AppType::ClaudeDesktop)
     }
 
     pub fn get_prompts(

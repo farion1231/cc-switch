@@ -95,12 +95,9 @@ export function isOfficialAccount(
 ): boolean {
   if (appId === "kimi") {
     const config = provider.settingsConfig.provider as
-      | { oauth?: { key?: unknown } }
+      | { type?: string; oauth?: { key?: unknown } }
       | undefined;
-    return (
-      provider.id === KIMI_OFFICIAL_PROVIDER_ID &&
-      nonEmptyString(config?.oauth?.key)
-    );
+    return config?.type === "kimi" && nonEmptyString(config?.oauth?.key);
   }
   return (
     provider.category === "official" ||

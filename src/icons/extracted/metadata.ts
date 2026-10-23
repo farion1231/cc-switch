@@ -1130,6 +1130,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["haoai", "hao.ai", "hao", "aggregator", "gateway"],
     defaultColor: "currentColor",
   },
+  buytoken: {
+    name: "buytoken",
+    displayName: "BuyToken",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["buytoken", "buy token", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
   everyapi: {
     name: "everyapi",
     displayName: "EveryAPI",

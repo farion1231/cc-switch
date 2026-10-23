@@ -599,6 +599,22 @@ impl Database {
                         Self::set_user_version(conn, 21)?;
                     }
                     21 => {
+                        // Preserve upstream's v22 Kimi migration.
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_kimi",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        // Upstream Kimi and earlier RPI builds both used v22 with
+                        // different columns. Reconcile either layout idempotently.
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 for column in
@@ -613,7 +629,7 @@ impl Database {
                                 }
                             }
                         }
-                        Self::set_user_version(conn, 22)?;
+                        Self::set_user_version(conn, 23)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3979,11 +3995,16 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v21_native_app_layouts_preserves_mcp_and_skill_state() -> Result<(), AppError> {
+    fn migrate_native_app_layouts_preserves_mcp_and_skill_state() -> Result<(), AppError> {
         use crate::app_config::{AppType, InstalledSkill, McpServer};
 
-        // Both upstream AGY and pre-merge RPI builds used schema v21.
-        for native_app in [AppType::Agy, AppType::Rpi] {
+        // Released upstream layouts and earlier RPI layouts must all upgrade.
+        for (version, native_app) in [
+            (21, AppType::Agy),
+            (21, AppType::Rpi),
+            (22, AppType::Kimi),
+            (22, AppType::Rpi),
+        ] {
             let db = Database::memory()?;
             let apps = serde_json::json!({"claude": true, native_app.as_str(): true});
             let mut server: McpServer = serde_json::from_value(serde_json::json!({
@@ -4001,19 +4022,25 @@ mod tests {
             db.save_skill(&skill)?;
             {
                 let conn = db.conn.lock().unwrap();
-                if native_app == AppType::Agy {
+                if matches!(native_app, AppType::Agy | AppType::Kimi) {
                     conn.execute_batch(
                         "ALTER TABLE mcp_servers DROP COLUMN enabled_rpi;
                          ALTER TABLE skills DROP COLUMN enabled_rpi;
                          ALTER TABLE skills DROP COLUMN enabled_pi;",
                     )?;
-                } else {
+                } else if version == 21 {
                     conn.execute_batch(
                         "ALTER TABLE mcp_servers DROP COLUMN enabled_agy;
                          ALTER TABLE skills DROP COLUMN enabled_agy;",
                     )?;
                 }
-                Database::set_user_version(&conn, 21)?;
+                if native_app != AppType::Kimi {
+                    conn.execute_batch(
+                        "ALTER TABLE mcp_servers DROP COLUMN enabled_kimi;
+                         ALTER TABLE skills DROP COLUMN enabled_kimi;",
+                    )?;
+                }
+                Database::set_user_version(&conn, version)?;
                 Database::create_tables_on_conn(&conn)?;
                 Database::apply_schema_migrations_on_conn(&conn)?;
                 Database::apply_schema_migrations_on_conn(&conn)?;
@@ -4027,7 +4054,7 @@ mod tests {
             assert_eq!(restored.updated_at, 456);
 
             // Updating either application's flag must preserve its sibling's state.
-            for app in [AppType::Rpi, AppType::Agy] {
+            for app in [AppType::Rpi, AppType::Agy, AppType::Kimi] {
                 server.apps.set_enabled_for(&app, true);
                 let updated = db
                     .update_mcp_server_app_enabled("server", &app, true)?

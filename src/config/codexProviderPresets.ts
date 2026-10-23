@@ -621,7 +621,7 @@ requires_openai_auth = true`,
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
@@ -632,6 +632,22 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "dit",
     icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 须用 Codex 分组的 Key；地址必须带 /v1（buytoken.work/docs，2026-10-23）
+    config: generateThirdPartyConfig(
+      "buytoken",
+      "https://api.buytoken.work/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
   },
   {
     name: "TokenFactory",

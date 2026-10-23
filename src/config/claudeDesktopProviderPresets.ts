@@ -409,7 +409,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     category: "aggregator",
     baseUrl: "https://api.dit.ai",
     mode: "direct",
@@ -425,6 +425,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "dit",
     icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    category: "aggregator",
+    baseUrl: "https://api.buytoken.work",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // 网关只认带日期的 Haiku ID（buytoken.work/docs，2026-10-23），透传会让
+    // Haiku 档失败，所以映射
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5-20251001",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
   },
   {
     name: "TokenFactory",

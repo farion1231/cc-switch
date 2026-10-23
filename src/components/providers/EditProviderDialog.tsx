@@ -17,7 +17,7 @@ import {
   providersApi,
   vscodeApi,
   type AppId,
-  type ManagedAuthProvider,
+  type AuthCenterTarget,
 } from "@/lib/api";
 import type {
   EditorConflictPolicy,
@@ -79,7 +79,7 @@ export function EditProviderDialog({
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
   const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
-    useState<ManagedAuthProvider | null>(null);
+    useState<AuthCenterTarget | null>(null);
 
   useEffect(() => {
     setAuthSettingsTarget(null);

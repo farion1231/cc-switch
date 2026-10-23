@@ -557,7 +557,7 @@ impl FromStr for AppType {
             "pi" => Ok(AppType::Pi),
             "rpi" => Ok(AppType::Rpi),
             "mcode" => Ok(AppType::Mcode),
-            "kimi" | "kimi-code" | "kimi-cli" => Ok(AppType::Kimi),
+            "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             other => Err(AppError::localized(
                 "unsupported_app",
