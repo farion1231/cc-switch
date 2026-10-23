@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
-use tauri::{AppHandle, State};
+use cc_command_api::command_api;
+use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -10,7 +11,7 @@ use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::settings;
 use crate::store::AppState;
 
-#[tauri::command]
+#[command_api]
 pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
     Ok(config::get_claude_config_status())
 }
@@ -64,7 +65,7 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn get_config_status(
     state: State<'_, AppState>,
     app: String,
@@ -138,13 +139,6 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
-        AppType::Kimi => {
-            let file = crate::kimi_config::config_path();
-            Ok(ConfigStatus {
-                exists: file.exists(),
-                path: file.to_string_lossy().to_string(),
-            })
-        }
         AppType::Mcode => {
             let file = crate::mcode_config::config_path();
             Ok(ConfigStatus {
@@ -163,6 +157,13 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::Kimi => {
+            let file = crate::kimi_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
         AppType::Agy => {
             let dir = crate::agy_config::agy_dir();
             Ok(ConfigStatus {
@@ -173,12 +174,12 @@ pub async fn get_config_status(
     }
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn get_claude_code_config_path() -> Result<String, String> {
     Ok(get_claude_settings_path().to_string_lossy().to_string())
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn get_config_dir(app: String) -> Result<String, String> {
     let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
         AppType::Claude => config::get_claude_config_dir(),
@@ -268,7 +269,7 @@ pub async fn pick_directory(
     }
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn get_app_config_path() -> Result<String, String> {
     let config_path = config::get_app_config_path();
     Ok(config_path.to_string_lossy().to_string())
@@ -291,7 +292,7 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
 }
 
 /// 在文件管理器中定位应用诊断日志 cc-switch.log；文件还没生成时打开日志目录
-#[tauri::command]
+#[command_api]
 pub async fn reveal_app_log_file() -> Result<bool, String> {
     let log_dir = crate::panic_hook::get_log_dir();
     let log_file = log_dir.join("cc-switch.log");
@@ -308,7 +309,7 @@ pub async fn reveal_app_log_file() -> Result<bool, String> {
     Ok(true)
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn get_claude_common_config_snippet(
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<Option<String>, String> {
@@ -318,7 +319,7 @@ pub async fn get_claude_common_config_snippet(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn set_claude_common_config_snippet(
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
@@ -342,7 +343,7 @@ pub async fn set_claude_common_config_snippet(
     Ok(())
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn get_common_config_snippet(
     app_type: String,
     state: tauri::State<'_, crate::store::AppState>,
@@ -353,7 +354,7 @@ pub async fn get_common_config_snippet(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn set_common_config_snippet(
     app_type: String,
     snippet: String,
@@ -426,7 +427,7 @@ mod tests {
     }
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn extract_common_config_snippet(
     appType: String,
     settingsConfig: Option<String>,

@@ -18,6 +18,7 @@ doctest = false
 [features]
 default = []
 test-hooks = []
+rest_api = ["dep:serde_urlencoded", "dep:inventory", "dep:rust-embed"]
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }
@@ -84,6 +85,12 @@ hmac = "0.12"
 json5 = "0.4"
 json-five = "0.3.1"
 sys-locale = "0.3"
+
+# REST 控制面 (feature-gated)
+cc-command-api = { path = "../crates/cc-command-api" }
+serde_urlencoded = { version = "0.7", optional = true }
+inventory = { version = "0.3", optional = true }
+rust-embed = { version = "8", optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

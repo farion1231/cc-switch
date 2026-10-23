@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use cc_command_api::command_api;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -10,7 +11,7 @@ struct UpdateDownloadProgress {
     total: Option<u64>,
 }
 
-fn merge_settings_for_save(
+pub(crate) fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
 ) -> crate::settings::AppSettings {
@@ -51,19 +52,24 @@ fn merge_settings_for_save(
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
+    // REST 控制面配置只经 set_rest_config / regenerate_rest_token 改写；
+    // 全量保存带的是前端缓存里的旧值，透传会关掉运行中的 REST 服务。
+    #[cfg(feature = "rest_api")]
+    {
+        incoming.rest_api = existing.rest_api.clone();
+    }
     incoming
 }
 
 /// 获取设置
-#[tauri::command]
+#[command_api]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
 /// 保存设置
-#[tauri::command]
+#[command_api(state = "state")]
 pub async fn save_settings(
-    app: tauri::AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
@@ -80,13 +86,7 @@ pub async fn save_settings(
         || merged.codex_stack_subagent_reasoning_effort
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
-    let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
-
-    // 原生托盘菜单 / 托盘面板当场切换，不用重启。
-    if tray_style_changed {
-        crate::tray::apply_tray_style(&app);
-    }
 
     // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。
     if stack_settings_changed {
@@ -174,14 +174,14 @@ pub struct CodexUnifyHistoryRestoreResult {
 }
 
 /// 是否存在统一会话开关的迁移备份（决定关闭弹窗里是否显示"恢复备份"勾选）。
-#[tauri::command]
+#[command_api]
 pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
     Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
 }
 
 /// Codex 的 `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具
 /// （这时「经典子 agent 工具」开关不生效，界面上提示）。
-#[tauri::command]
+#[command_api]
 pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
     let text = crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
     Ok(crate::codex_config::codex_config_forces_multi_agent_v2(
@@ -190,13 +190,13 @@ pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
 }
 
 /// Codex 会话压缩开关（`[features] local_thread_store_compression`）当前是否开启。
-#[tauri::command]
+#[command_api]
 pub async fn get_codex_session_compression() -> Result<bool, String> {
     crate::services::codex_session_compression::is_enabled().map_err(|e| e.to_string())
 }
 
 /// 开关 Codex 会话压缩，返回写入后的状态。
-#[tauri::command]
+#[command_api]
 pub async fn set_codex_session_compression(
     state: tauri::State<'_, crate::store::AppState>,
     enabled: bool,
@@ -211,7 +211,7 @@ pub async fn set_codex_session_compression(
 }
 
 /// Codex 会话目录（sessions + archived_sessions）当前占用的字节数。
-#[tauri::command]
+#[command_api]
 pub async fn get_codex_sessions_disk_usage() -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(
         crate::services::codex_session_compression::sessions_disk_usage,
@@ -222,7 +222,7 @@ pub async fn get_codex_sessions_disk_usage() -> Result<u64, String> {
 
 /// 按迁移备份账本把当时迁入共享桶的官方会话还原回 "openai" 桶。
 /// 由关闭统一会话开关的确认弹窗触发；幂等，可安全重试。
-#[tauri::command]
+#[command_api]
 pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreResult, String> {
     let outcome = tauri::async_runtime::spawn_blocking(|| {
         crate::codex_history_migration::restore_codex_official_history_from_backups()
@@ -275,15 +275,8 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let builder = app.updater_builder();
-    // Windows 上 updater 以 `msiexec /passive /promptrestart` 安装 MSI。passive 没有模态框、
-    // 未指定重启选项时，安装目录里有文件被占用，Windows Installer 会不经确认直接重启系统
-    // （#8534）。`/promptrestart` 只对应 REBOOTPROMPT，挡不住这一点，因此显式追加
-    // REBOOT=ReallySuppress（即 `/norestart`）。旧版本的 updater 不带这个参数，
-    // 由 MSI 模板自身的 REBOOT 属性兜底。
-    #[cfg(target_os = "windows")]
-    let builder = builder.installer_arg("REBOOT=ReallySuppress");
-    let updater = builder
+    let updater = app
+        .updater_builder()
         .build()
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
 
@@ -388,7 +381,7 @@ pub async fn set_app_config_dir_override(
 }
 
 /// 设置开机自启
-#[tauri::command]
+#[command_api]
 pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
     if enabled {
         crate::auto_launch::enable_auto_launch().map_err(|e| format!("启用开机自启失败: {e}"))?;
@@ -721,13 +714,13 @@ mod tests {
 }
 
 /// 获取开机自启状态
-#[tauri::command]
+#[command_api]
 pub async fn get_auto_launch_status() -> Result<bool, String> {
     crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
 }
 
 /// 获取整流器配置
-#[tauri::command]
+#[command_api]
 pub async fn get_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<crate::proxy::types::RectifierConfig, String> {
@@ -735,7 +728,7 @@ pub async fn get_rectifier_config(
 }
 
 /// 设置整流器配置
-#[tauri::command]
+#[command_api]
 pub async fn set_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::RectifierConfig,
@@ -748,7 +741,7 @@ pub async fn set_rectifier_config(
 }
 
 /// 获取优化器配置
-#[tauri::command]
+#[command_api]
 pub async fn get_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<crate::proxy::types::OptimizerConfig, String> {
@@ -756,7 +749,7 @@ pub async fn get_optimizer_config(
 }
 
 /// 设置优化器配置
-#[tauri::command]
+#[command_api]
 pub async fn set_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::OptimizerConfig,
@@ -769,7 +762,7 @@ pub async fn set_optimizer_config(
 }
 
 /// 获取 Copilot 优化器配置
-#[tauri::command]
+#[command_api]
 pub async fn get_copilot_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<crate::proxy::types::CopilotOptimizerConfig, String> {
@@ -780,7 +773,7 @@ pub async fn get_copilot_optimizer_config(
 }
 
 /// 设置 Copilot 优化器配置
-#[tauri::command]
+#[command_api]
 pub async fn set_copilot_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::CopilotOptimizerConfig,
@@ -793,7 +786,7 @@ pub async fn set_copilot_optimizer_config(
 }
 
 /// 获取日志配置
-#[tauri::command]
+#[command_api]
 pub async fn get_log_config(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<crate::proxy::types::LogConfig, String> {
@@ -801,7 +794,7 @@ pub async fn get_log_config(
 }
 
 /// 设置日志配置
-#[tauri::command]
+#[command_api]
 pub async fn set_log_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::LogConfig,

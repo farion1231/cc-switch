@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, State};
 
 use crate::app_config::AppType;
 use crate::services::subscription::SubscriptionQuota;
@@ -21,10 +21,7 @@ pub async fn get_subscription_quota(
     state: State<'_, AppState>,
     tool: String,
 ) -> Result<SubscriptionQuota, String> {
-    let inner = match app.try_state::<crate::commands::AgyAccountState>() {
-        Some(agy) if tool == "agy" => crate::commands::agy_account::agy_quota(&agy.0, None).await,
-        _ => crate::services::subscription::get_subscription_quota(&tool).await,
-    };
+    let inner = crate::services::subscription::get_subscription_quota(&tool).await;
     if let Ok(snapshot) = &inner {
         if let Ok(app_type) = AppType::from_str(&tool) {
             let payload = serde_json::json!({

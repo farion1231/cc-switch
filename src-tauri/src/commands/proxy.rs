@@ -6,6 +6,7 @@ use crate::error::AppError;
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
+use cc_command_api::command_api;
 use std::str::FromStr;
 
 /// 有 `proxy_config` 行的应用：重试、熔断、故障转移这些设置只对它们有意义。
@@ -29,7 +30,7 @@ fn require_mode_app(app_type: &str) -> Result<crate::app_config::AppType, String
 }
 
 /// 启动代理服务器（仅启动服务，不接管 Live 配置）
-#[tauri::command]
+#[command_api(rest = "POST /control/v1/proxy/start")]
 pub async fn start_proxy_server(
     state: tauri::State<'_, AppState>,
 ) -> Result<ProxyServerInfo, String> {
@@ -37,7 +38,7 @@ pub async fn start_proxy_server(
 }
 
 /// 停止代理服务器（仅停止服务，不恢复/清理 Live 接管状态）
-#[tauri::command]
+#[command_api(rest = "POST /control/v1/proxy/stop")]
 pub async fn stop_proxy_server(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let takeover = state.proxy_service.get_takeover_status().await?;
     if takeover.claude
@@ -57,13 +58,13 @@ pub async fn stop_proxy_server(state: tauri::State<'_, AppState>) -> Result<(), 
 }
 
 /// 关闭本地路由：所有应用退回直连，再停止代理服务器
-#[tauri::command]
+#[command_api(rest = "POST /control/v1/proxy/stop-with-restore")]
 pub async fn stop_proxy_with_restore(state: tauri::State<'_, AppState>) -> Result<(), String> {
     crate::mode::controller::exit_all(state.inner()).await
 }
 
 /// 获取各应用接管状态
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/proxy/takeover-status")]
 pub async fn get_proxy_takeover_status(
     state: tauri::State<'_, AppState>,
 ) -> Result<ProxyTakeoverStatus, String> {
@@ -73,7 +74,11 @@ pub async fn get_proxy_takeover_status(
 /// 为指定应用进入 / 退出代理模式。`stack` 为真时进入的是 Stack 模式（和路由模式二选一），
 /// `route` 是确认框里选的路由目标（Stack 模式下是默认那家，不传沿用上次的路由）；退出时
 /// 两者都不看。
-#[tauri::command]
+#[command_api(
+    rest = "POST /control/v1/proxy/:app_type/takeover",
+    path = "app_type",
+    body = "enabled,stack,route"
+)]
 pub async fn set_proxy_takeover_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
@@ -96,7 +101,7 @@ pub async fn set_proxy_takeover_for_app(
 }
 
 /// 应用页模式行用：生效的模式、路由目标（直连时是上次路由的那家）、直连那家。
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/proxy/:app_type/mode", path = "app_type")]
 pub fn get_app_mode(
     state: tauri::State<'_, AppState>,
     app_type: String,
@@ -122,14 +127,14 @@ pub async fn set_proxy_route(
 }
 
 /// 启动时没能接上代理、已退回直连的应用（取一次就清空）。
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/proxy/startup-failures")]
 pub fn take_startup_attach_failures() -> Vec<crate::mode::controller::StartupAttachFailure> {
     crate::mode::controller::take_startup_attach_failures()
 }
 
 /// 设置里在路由和 Stack 之间换的时候：处于另一种模式（`stack` 为真是 Stack 模式）的
 /// Claude Code、Codex 先退回直连。返回退回直连的应用。
-#[tauri::command]
+#[command_api(rest = "POST /control/v1/proxy/exit-mode", body = "stack")]
 pub async fn exit_proxy_apps_in_mode(
     state: tauri::State<'_, AppState>,
     stack: bool,
@@ -138,7 +143,10 @@ pub async fn exit_proxy_apps_in_mode(
 }
 
 /// 直连指针：代理模式下退出代理时写回的供应商
-#[tauri::command]
+#[command_api(
+    rest = "GET /control/v1/proxy/:app_type/direct-provider",
+    path = "app_type"
+)]
 pub fn get_direct_provider(
     state: tauri::State<'_, AppState>,
     app_type: String,
@@ -148,7 +156,7 @@ pub fn get_direct_provider(
 }
 
 /// Stack 模型：名单里的每一家和它发布的模型 id，以及还在用旧模型列表的 Codex 客户端
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/proxy/:app_type/stack", path = "app_type")]
 pub async fn get_proxy_stack(
     state: tauri::State<'_, AppState>,
     app_type: String,
@@ -159,7 +167,7 @@ pub async fn get_proxy_stack(
 
 /// 重启 Codex 的托管守护进程（`codex` TUI 连的那个），让它重读模型目录。会中断守护进程里
 /// 正在运行的任务，只在用户确认之后调。
-#[tauri::command]
+#[command_api(rest = "POST /control/v1/proxy/codex/restart-daemon")]
 pub async fn restart_codex_app_server_daemon(
 ) -> Result<crate::services::provider::codex_client_catalog::RestartOutcome, String> {
     crate::services::provider::codex_direct::off_runtime(
@@ -171,7 +179,7 @@ pub async fn restart_codex_app_server_daemon(
 
 /// 用户关掉「Codex 可能还在用旧的」提示（看不到进程时出的那种）：记下现在的模型目录和文件
 /// 登录，同一份不再提示。
-#[tauri::command]
+#[command_api(rest = "POST /control/v1/proxy/codex/acknowledge-stale")]
 pub async fn acknowledge_codex_stale_clients() -> Result<(), String> {
     crate::services::provider::codex_direct::off_runtime(|| {
         crate::services::provider::codex_client_catalog::acknowledge(
@@ -204,7 +212,7 @@ pub async fn set_proxy_stack_member(
 
 /// Codex 聚合的模型被别的模型目录挡住时，改用 CC Switch 生成的目录（去掉指向别的文件的
 /// `model_catalog_json`）。返回之后还剩的提示。
-#[tauri::command]
+#[command_api(rest = "POST /control/v1/proxy/codex/adopt-stack")]
 pub async fn adopt_codex_stack_catalog(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<&'static str>, String> {
@@ -212,19 +220,19 @@ pub async fn adopt_codex_stack_catalog(
 }
 
 /// 获取代理服务器状态
-#[tauri::command]
+#[command_api(state = "state")]
 pub async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<ProxyStatus, String> {
     state.proxy_service.get_status().await
 }
 
 /// 获取代理配置
-#[tauri::command]
+#[command_api(state = "state")]
 pub async fn get_proxy_config(state: tauri::State<'_, AppState>) -> Result<ProxyConfig, String> {
     state.proxy_service.get_config().await
 }
 
 /// 更新代理配置
-#[tauri::command]
+#[command_api(state = "state")]
 pub async fn update_proxy_config(
     state: tauri::State<'_, AppState>,
     config: ProxyConfig,
@@ -241,7 +249,7 @@ pub async fn update_proxy_config(
 /// 获取全局代理配置
 ///
 /// 返回统一的全局配置字段（代理开关、监听地址、端口、日志开关）
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/proxy/global-config")]
 pub async fn get_global_proxy_config(
     state: tauri::State<'_, AppState>,
 ) -> Result<GlobalProxyConfig, String> {
@@ -257,7 +265,7 @@ pub async fn get_global_proxy_config(
 /// 「保存并重启服务」：服务在跑时地址或端口变了就重启、再按新地址重写接上路由的客户端
 /// （含 Claude Desktop 的模型映射卡），日志开关实时生效；只写库的话服务还在旧端口上听、
 /// 客户端也还指着旧端口。
-#[tauri::command]
+#[command_api(rest = "PUT /control/v1/proxy/global-config", body = "config")]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
@@ -270,7 +278,7 @@ pub async fn update_global_proxy_config(
 }
 
 /// 获取客户端地址：写进客户端配置的代理主机，空表示按监听地址推。
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/proxy/client-host")]
 pub async fn get_proxy_client_host() -> Result<String, String> {
     Ok(crate::settings::get_proxy_client_host().unwrap_or_default())
 }
@@ -279,7 +287,7 @@ pub async fn get_proxy_client_host() -> Result<String, String> {
 /// settings.json 里：这个地址只对这台机器有意义，不能随数据库同步到别的设备。
 /// 每次保存都重写一遍：上次重写失败、改好客户端文件后原样再保存就是重试；
 /// 客户端已经是这个地址时重写不碰文件。
-#[tauri::command]
+#[command_api(rest = "PUT /control/v1/proxy/client-host", body = "host")]
 pub async fn set_proxy_client_host(
     state: tauri::State<'_, AppState>,
     host: String,
@@ -300,7 +308,7 @@ async fn resync_proxy_clients(state: &AppState) -> Result<(), String> {
 /// 获取指定应用的代理配置
 ///
 /// 返回应用级配置（enabled、auto_failover、超时、熔断器等）
-#[tauri::command]
+#[command_api(state = "state")]
 pub async fn get_proxy_config_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
@@ -315,7 +323,7 @@ pub async fn get_proxy_config_for_app(
 /// 更新指定应用的代理配置
 ///
 /// 更新应用级配置（enabled、auto_failover、超时、熔断器等）
-#[tauri::command]
+#[command_api(state = "state")]
 pub async fn update_proxy_config_for_app(
     state: tauri::State<'_, AppState>,
     config: AppProxyConfig,
@@ -355,7 +363,10 @@ pub async fn get_pricing_model_source_test_hook(
 }
 
 /// 获取计费模式来源
-#[tauri::command]
+#[command_api(
+    rest = "GET /control/v1/proxy/:app_type/pricing-source",
+    path = "app_type"
+)]
 pub async fn get_pricing_model_source(
     state: tauri::State<'_, AppState>,
     app_type: String,
@@ -384,7 +395,11 @@ pub async fn set_pricing_model_source_test_hook(
 }
 
 /// 设置计费模式来源
-#[tauri::command]
+#[command_api(
+    rest = "PUT /control/v1/proxy/:app_type/pricing-source",
+    path = "app_type",
+    body = "value"
+)]
 pub async fn set_pricing_model_source(
     state: tauri::State<'_, AppState>,
     app_type: String,
@@ -396,19 +411,23 @@ pub async fn set_pricing_model_source(
 }
 
 /// 检查代理服务器是否正在运行
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/proxy/is-running")]
 pub async fn is_proxy_running(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     Ok(state.proxy_service.is_running().await)
 }
 
 /// 检查是否处于 Live 接管模式
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/proxy/is-takeover-active")]
 pub async fn is_live_takeover_active(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     state.proxy_service.is_takeover_active().await
 }
 
 /// 代理模式下切换供应商（热切换）
-#[tauri::command]
+#[command_api(
+    rest = "POST /control/v1/proxy/:app_type/switch-provider",
+    path = "app_type",
+    body = "provider_id"
+)]
 pub async fn switch_proxy_provider(
     state: tauri::State<'_, AppState>,
     app_type: String,
@@ -421,7 +440,10 @@ pub async fn switch_proxy_provider(
 // ==================== 故障转移相关命令 ====================
 
 /// 获取供应商健康状态
-#[tauri::command]
+#[command_api(
+    rest = "GET /control/v1/proxy/:app_type/provider/:provider_id/health",
+    path = "app_type,provider_id"
+)]
 pub async fn get_provider_health(
     state: tauri::State<'_, AppState>,
     provider_id: String,
@@ -525,7 +547,7 @@ pub async fn reset_circuit_breaker(
 }
 
 /// 获取熔断器配置
-#[tauri::command]
+#[command_api(state = "state")]
 pub async fn get_circuit_breaker_config(
     state: tauri::State<'_, AppState>,
 ) -> Result<CircuitBreakerConfig, String> {
@@ -536,7 +558,7 @@ pub async fn get_circuit_breaker_config(
 }
 
 /// 更新熔断器配置
-#[tauri::command]
+#[command_api(state = "state")]
 pub async fn update_circuit_breaker_config(
     state: tauri::State<'_, AppState>,
     config: CircuitBreakerConfig,
@@ -558,7 +580,10 @@ pub async fn update_circuit_breaker_config(
 }
 
 /// 获取熔断器统计信息（仅当代理服务器运行时）
-#[tauri::command]
+#[command_api(
+    rest = "GET /control/v1/proxy/:app_type/provider/:provider_id/circuit-breaker-stats",
+    path = "app_type,provider_id"
+)]
 pub async fn get_circuit_breaker_stats(
     state: tauri::State<'_, AppState>,
     provider_id: String,

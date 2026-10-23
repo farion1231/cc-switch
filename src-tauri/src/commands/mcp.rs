@@ -1,10 +1,11 @@
 #![allow(non_snake_case)]
 
+use cc_command_api::command_api;
 use indexmap::IndexMap;
 use std::collections::HashMap;
+use tauri::State;
 
 use serde::Serialize;
-use tauri::State;
 
 use crate::app_config::AppType;
 use crate::claude_mcp;
@@ -12,31 +13,31 @@ use crate::services::McpService;
 use crate::store::AppState;
 
 /// 获取 Claude MCP 状态
-#[tauri::command]
+#[command_api]
 pub async fn get_claude_mcp_status() -> Result<claude_mcp::McpStatus, String> {
     claude_mcp::get_mcp_status().map_err(|e| e.to_string())
 }
 
 /// 读取 mcp.json 文本内容
-#[tauri::command]
+#[command_api]
 pub async fn read_claude_mcp_config() -> Result<Option<String>, String> {
     claude_mcp::read_mcp_json().map_err(|e| e.to_string())
 }
 
 /// 新增或更新一个 MCP 服务器条目
-#[tauri::command]
+#[command_api]
 pub async fn upsert_claude_mcp_server(id: String, spec: serde_json::Value) -> Result<bool, String> {
     claude_mcp::upsert_mcp_server(&id, spec).map_err(|e| e.to_string())
 }
 
 /// 删除一个 MCP 服务器条目
-#[tauri::command]
+#[command_api]
 pub async fn delete_claude_mcp_server(id: String) -> Result<bool, String> {
     claude_mcp::delete_mcp_server(&id).map_err(|e| e.to_string())
 }
 
 /// 校验命令是否在 PATH 中可用（不执行）
-#[tauri::command]
+#[command_api]
 pub async fn validate_mcp_command(cmd: String) -> Result<bool, String> {
     claude_mcp::validate_command_in_path(&cmd).map_err(|e| e.to_string())
 }
@@ -69,7 +70,7 @@ pub async fn get_mcp_config(
 
 /// 在 config.json 中新增或更新一个 MCP 服务器定义
 /// [已废弃] 该命令仍然使用旧的分应用API，会转换为统一结构
-#[tauri::command]
+#[command_api]
 pub async fn upsert_mcp_server_in_config(
     state: State<'_, AppState>,
     app: String,
@@ -131,7 +132,7 @@ pub async fn upsert_mcp_server_in_config(
 }
 
 /// 在 config.json 中删除一个 MCP 服务器定义
-#[tauri::command]
+#[command_api]
 pub async fn delete_mcp_server_in_config(
     state: State<'_, AppState>,
     _app: String, // 参数保留用于向后兼容，但在统一结构中不再需要
@@ -140,8 +141,9 @@ pub async fn delete_mcp_server_in_config(
     McpService::delete_server(&state, &id).map_err(|e| e.to_string())
 }
 
-/// 设置启用状态并同步到客户端配置（兼容层命令，同 `toggle_mcp_app`）
+/// 设置启用状态并同步到客户端配置
 #[tauri::command]
+#[allow(deprecated)] // 兼容层命令，内部调用已废弃的 Service 方法
 pub async fn set_mcp_enabled(
     state: State<'_, AppState>,
     app: String,
@@ -149,10 +151,7 @@ pub async fn set_mcp_enabled(
     enabled: bool,
 ) -> Result<bool, String> {
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    McpService::toggle_app_locked(&state, &id, app_ty, enabled)
-        .await
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    McpService::set_enabled(&state, app_ty, &id, enabled).map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -162,7 +161,7 @@ pub async fn set_mcp_enabled(
 use crate::app_config::McpServer;
 
 /// 获取所有 MCP 服务器（统一结构）
-#[tauri::command]
+#[command_api]
 pub async fn get_mcp_servers(
     state: State<'_, AppState>,
 ) -> Result<IndexMap<String, McpServer>, String> {
@@ -170,7 +169,7 @@ pub async fn get_mcp_servers(
 }
 
 /// 添加或更新 MCP 服务器
-#[tauri::command]
+#[command_api]
 pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
     server: McpServer,
@@ -179,13 +178,13 @@ pub async fn upsert_mcp_server(
 }
 
 /// 删除 MCP 服务器
-#[tauri::command]
+#[command_api]
 pub async fn delete_mcp_server(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     McpService::delete_server(&state, &id).map_err(|e| e.to_string())
 }
 
 /// 切换 MCP 服务器在指定应用的启用状态
-#[tauri::command]
+#[command_api]
 pub async fn toggle_mcp_app(
     state: State<'_, AppState>,
     server_id: String,
@@ -193,13 +192,11 @@ pub async fn toggle_mcp_app(
     enabled: bool,
 ) -> Result<(), String> {
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    McpService::toggle_app_locked(&state, &server_id, app_ty, enabled)
-        .await
-        .map_err(|e| e.to_string())
+    McpService::toggle_app(&state, &server_id, app_ty, enabled).map_err(|e| e.to_string())
 }
 
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）
-#[tauri::command]
+#[command_api]
 pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, String> {
     McpService::import_from_all_apps(&state).map_err(|e| e.to_string())
 }
@@ -208,7 +205,7 @@ pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, S
 ///
 /// `apps` 缺省或为空时同步全部受管应用。每个应用先拿它的切换锁再写，
 /// 和切换供应商互斥；单个应用失败（如配置文件解析失败）不影响其余应用。
-#[tauri::command]
+#[command_api]
 pub async fn resync_mcp_to_apps(
     state: State<'_, AppState>,
     apps: Option<Vec<String>>,

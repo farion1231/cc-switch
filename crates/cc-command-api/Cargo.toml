@@ -1,0 +1,15 @@
+[package]
+name = "cc-command-api"
+version = "0.1.0"
+edition = "2021"
+description = "Dual-generation macro: one plain fn → Tauri command + (optional) REST handler"
+license = "MIT"
+publish = false
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "parsing", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"

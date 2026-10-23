@@ -1,5 +1,6 @@
 //! 项目 Profile 管理命令
 
+use cc_command_api::command_api;
 use serde::Serialize;
 use tauri::{Emitter, State};
 
@@ -97,7 +98,7 @@ pub fn emit_profile_apply_events(
     crate::tray::refresh_tray_menu(app);
 }
 
-#[tauri::command]
+#[command_api]
 pub fn list_profiles(state: State<'_, AppState>) -> Result<ProfilesResponse, String> {
     let profiles = ProfileService::list(&state).map_err(|e| e.to_string())?;
     let current_ids = CurrentProfileIds {
@@ -120,7 +121,7 @@ pub fn list_profiles(state: State<'_, AppState>) -> Result<ProfilesResponse, Str
     })
 }
 
-#[tauri::command]
+#[command_api]
 pub fn create_profile(
     state: State<'_, AppState>,
     name: String,
@@ -132,7 +133,7 @@ pub fn create_profile(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[command_api]
 pub fn update_profile(
     state: State<'_, AppState>,
     id: String,
@@ -149,12 +150,12 @@ pub fn update_profile(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[command_api]
 pub fn delete_profile(state: State<'_, AppState>, id: String) -> Result<(), String> {
     ProfileService::delete(&state, &id).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[command_api]
 pub fn clear_current_profile(state: State<'_, AppState>, scope: String) -> Result<(), String> {
     let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
     state

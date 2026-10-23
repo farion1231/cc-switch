@@ -1083,6 +1083,19 @@
     },
     "data": {
       "location": "Location"
+    },
+    "restApi": {
+      "title": "REST Control Plane",
+      "description": "The REST API control plane lets external HTTP clients switch providers and control the proxy remotely.",
+      "hint": "The REST control plane lets external HTTP clients switch providers and control the proxy remotely. Localhost-only by default.",
+      "enable": "Enable REST control plane",
+      "saved": "REST config saved",
+      "saveFailed": "Failed to save REST config: {{error}}",
+      "tokenPlaceholder": "Bearer token (auto-generated when enabling if empty)",
+      "copy": "Copy token",
+      "regenerate": "Regenerate token",
+      "tokenRegenerated": "Token regenerated",
+      "regenerateFailed": "Failed to regenerate token: {{error}}"
     }
   },
   "apps": {

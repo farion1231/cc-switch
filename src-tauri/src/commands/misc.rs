@@ -3,6 +3,7 @@
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use crate::services::ProviderService;
+use cc_command_api::command_api;
 use indexmap::IndexSet;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -57,7 +58,7 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
     Ok(true)
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     // Use spawn_blocking to avoid blocking the async runtime
     // Clipboard access can block on some platforms and may have thread/loop constraints
@@ -122,7 +123,7 @@ pub async fn open_portable_update_download(
 }
 
 /// 判断是否为便携版（绿色版）运行
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/portable-mode")]
 pub async fn is_portable_mode() -> Result<bool, String> {
     let exe_path = std::env::current_exe().map_err(|e| format!("获取可执行路径失败: {e}"))?;
     if let Some(dir) = exe_path.parent() {
@@ -134,21 +135,21 @@ pub async fn is_portable_mode() -> Result<bool, String> {
 
 /// 获取应用启动阶段的初始化错误（若有）。
 /// 用于前端在早期主动拉取，避免事件订阅竞态导致的提示缺失。
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/init-error")]
 pub async fn get_init_error() -> Result<Option<InitErrorPayload>, String> {
     Ok(crate::init_status::get_init_error())
 }
 
 /// 获取 JSON→SQLite 迁移结果（若有）。
 /// 只返回一次 true，之后返回 false，用于前端显示一次性 Toast 通知。
-#[tauri::command]
+#[command_api]
 pub async fn get_migration_result() -> Result<bool, String> {
     Ok(crate::init_status::take_migration_success())
 }
 
 /// 获取 Skills 自动导入（SSOT）迁移结果（若有）。
 /// 只返回一次 Some({count})，之后返回 None，用于前端显示一次性 Toast 通知。
-#[tauri::command]
+#[command_api]
 pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPayload>, String> {
     Ok(crate::init_status::take_skills_migration_result())
 }
@@ -209,7 +210,10 @@ fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
     ("unknown".to_string(), None)
 }
 
-#[tauri::command]
+#[command_api(
+    rest = "GET /control/v1/tool-versions",
+    query = "tools,wsl_shell_by_tool"
+)]
 pub async fn get_tool_versions(
     tools: Option<Vec<String>>,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
@@ -312,7 +316,7 @@ pub struct ToolUninstallCandidate {
     reinstalled_by_updater: bool,
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn prepare_tool_uninstall(
     tool: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
@@ -330,7 +334,10 @@ pub async fn prepare_tool_uninstall(
     .map_err(|e| format!("uninstall plan task join error: {e}"))?
 }
 
-#[tauri::command]
+#[command_api(
+    rest = "POST /control/v1/tool-lifecycle-action",
+    body = "tools,action,wsl_shell_by_tool,uninstall_plan"
+)]
 pub async fn run_tool_lifecycle_action(
     tools: Vec<String>,
     action: String,
@@ -4663,7 +4670,7 @@ pub struct ToolInstallationReport {
 /// 探测各工具的安装分布：枚举所有安装、标记冲突、生成锚定升级命令。只读、无副作用。
 /// 诊断按钮、升级前确认、升级后补诊共用此命令，各取所需字段——避免对同一份枚举结果
 /// 散落多套下游判定。
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/tool-installations/probe", query = "tools")]
 pub async fn probe_tool_installations(
     tools: Vec<String>,
 ) -> Result<Vec<ToolInstallationReport>, String> {
@@ -4701,7 +4708,7 @@ pub async fn probe_tool_installations(
 
 /// 「应用」页显示每个工具的路径、安装来源和多处安装。和升级前的预检是同一份枚举，
 /// 单列一个命令只为把「打开页面时的展示」和「点升级时的预检」分开调用。
-#[tauri::command]
+#[command_api(rest = "GET /control/v1/tool-installations", query = "tools")]
 pub async fn list_tool_installations(
     tools: Vec<String>,
 ) -> Result<Vec<ToolInstallationReport>, String> {

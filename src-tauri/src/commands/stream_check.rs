@@ -8,10 +8,10 @@ use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::services::stream_check::{StreamCheckConfig, StreamCheckResult, StreamCheckService};
 use crate::store::AppState;
-use tauri::State;
+use cc_command_api::command_api;
 
 /// 连通性检查（单个供应商）
-#[tauri::command]
+#[command_api(state = "state, copilot_state")]
 pub async fn stream_check_provider(
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
@@ -39,7 +39,7 @@ pub async fn stream_check_provider(
 /// `is_full_url` 的供应商已是完整地址，无需解析。
 async fn resolve_copilot_base_url_override(
     provider: &crate::provider::Provider,
-    copilot_state: &State<'_, CopilotAuthState>,
+    copilot_state: &CopilotAuthState,
 ) -> Result<Option<String>, AppError> {
     let is_copilot = is_copilot_provider(provider);
     let is_full_url = provider
