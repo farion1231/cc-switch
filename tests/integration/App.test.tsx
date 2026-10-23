@@ -173,6 +173,19 @@ vi.mock("@/components/mcp/McpPanel", () => ({
     ),
 }));
 
+vi.mock("@/components/mcp/UnifiedMcpPanel", async () => {
+  const { useUnsavedChangesTracker } = await vi.importActual<
+    typeof import("@/lib/unsavedChanges")
+  >("@/lib/unsavedChanges");
+  // 当作一直开着的 MCP 编辑页：输入即登记未保存的修改
+  const Body = () => (
+    <div data-testid="mcp-editor" {...useUnsavedChangesTracker()}>
+      <input aria-label="mcp-field" />
+    </div>
+  );
+  return { default: Body };
+});
+
 /** 侧栏里的应用行（v7 侧栏取代了原来页头的应用切换器） */
 const sidebarApp = (name: string) =>
   // 首次启动提示是模态对话框，会把侧栏标成 aria-hidden，所以带上 hidden
@@ -258,6 +271,40 @@ describe("App integration with MSW", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
+
+  it("refreshes the route pointer when the proxy fails over to another provider", async () => {
+    let routeProviderId = "claude-1";
+    let modeRequests = 0;
+    server.use(
+      http.post("http://tauri.local/get_app_mode", async ({ request }) => {
+        const { appType } = (await request.json()) as { appType: string };
+        if (appType !== "claude") return;
+        modeRequests += 1;
+        return HttpResponse.json({
+          mode: "route",
+          attached: true,
+          routeProviderId,
+          directProviderId: "claude-1",
+        });
+      }),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() => expect(modeRequests).toBeGreaterThan(0));
+    const before = modeRequests;
+
+    // 故障转移只改后端的路由指针，再发 provider-switched
+    routeProviderId = "claude-2";
+    emitTauriEvent("provider-switched", {
+      appType: "claude",
+      providerId: "claude-2",
+      source: "failover",
+    });
+
+    await waitFor(() => expect(modeRequests).toBeGreaterThan(before));
+  });
 
   it("resets provider view scroll when switching apps", async () => {
     const { default: App } = await import("@/App");
@@ -385,6 +432,34 @@ describe("App integration with MSW", () => {
     expect(
       screen.queryByTestId("edit-provider-dialog"),
     ).not.toBeInTheDocument();
+  }, 10_000);
+
+  it("keeps the unsaved guard when re-clicking the current page", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    fireEvent.click(sidebarApp("MCP"));
+    fireEvent.input(await screen.findByLabelText("mcp-field"), {
+      target: { value: "draft" },
+    });
+
+    // 再点当前页：不离开，所以不问，也不能把未保存登记清掉
+    fireEvent.click(sidebarApp("MCP"));
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mcp-editor")).toBeInTheDocument();
+
+    // 之后真的离开时照样要问
+    fireEvent.click(sidebarApp("nav.usage"));
+    expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
+      "common.unsavedLeaveMessage",
+    );
+    fireEvent.click(screen.getByText("cancel-delete"));
+    expect(screen.getByTestId("mcp-editor")).toBeInTheDocument();
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {
@@ -714,6 +789,72 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("provider-list")).toHaveTextContent(
       "Custom MiniMax Code",
     );
+  });
+
+  it("rereads Kimi's default after a removal is refused for a stale default", async () => {
+    localStorage.setItem("cc-switch-last-app", "kimi");
+    let kimiCurrent = "kimi-sub";
+    let currentRequests = 0;
+    server.use(
+      http.post("http://tauri.local/get_providers", async ({ request }) => {
+        const { app } = (await request.json()) as { app: string };
+        if (app !== "kimi") return;
+        return HttpResponse.json({
+          go: {
+            id: "go",
+            name: "OpenCode Go",
+            settingsConfig: {},
+            meta: { liveConfigManaged: true },
+          },
+          "kimi-sub": {
+            id: "kimi-sub",
+            name: "Kimi subscription",
+            settingsConfig: {},
+            meta: { liveConfigManaged: true },
+          },
+        });
+      }),
+      http.post(
+        "http://tauri.local/get_current_provider",
+        async ({ request }) => {
+          const { app } = (await request.json()) as { app: string };
+          if (app !== "kimi") return;
+          currentRequests += 1;
+          return HttpResponse.json(kimiCurrent);
+        },
+      ),
+      http.post("http://tauri.local/remove_provider_from_live_config", () =>
+        HttpResponse.json(
+          "无效输入: Select another default model in Kimi Code before removing this model or provider",
+          { status: 500 },
+        ),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("current-provider")).toHaveTextContent(
+        "kimi-sub",
+      ),
+    );
+    // 用户在 Kimi Code 里用 /model 换到了 OpenCode Go 的模型，页面还没重读
+    kimiCurrent = "go";
+    const requestsBeforeRemoval = currentRequests;
+    fireEvent.click(screen.getByText("remove"));
+    fireEvent.click(screen.getByText("confirm-delete"));
+
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "notifications.removeFromConfigFailed",
+        expect.objectContaining({ description: "kimi.error.defaultModelInUse" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("current-provider")).toHaveTextContent("go"),
+    );
+    expect(currentRequests).toBeGreaterThan(requestsBeforeRemoval);
   });
 
   it("warns without blocking when removing Pi's global default provider", async () => {

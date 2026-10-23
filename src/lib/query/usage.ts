@@ -311,6 +311,7 @@ export function useProviderStats(
       );
     },
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -341,6 +342,7 @@ export function useModelStats(
       );
     },
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -371,6 +373,7 @@ export function useRequestLogs({
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -386,14 +389,14 @@ export function useRequestDetail(requestId: string) {
 
 /**
  * 会话日志扫描（后台定时或手动同步）最近一次完成的时间（毫秒）。
- * 后台每 60 秒扫一次，这里 30 秒问一次；挂在 usage 下，同步后跟着失效重取。
+ * 默认 30 秒查询一次；用量页由统一刷新流程在扫描结束后失效重取。
  */
-export function useSessionUsageLastSync() {
+export function useSessionUsageLastSync(options?: UsageQueryOptions) {
   return useQuery({
     queryKey: [...usageKeys.all, "session-last-sync"] as const,
     queryFn: () => usageApi.getSessionUsageLastSync(),
-    refetchInterval: DEFAULT_REFETCH_INTERVAL_MS,
-    refetchIntervalInBackground: false,
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }
 

@@ -12,6 +12,17 @@ const authState = vi.hoisted(() => ({
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
 }));
+const modelFetchMocks = vi.hoisted(() => ({
+  fetchCodexOauthModels: vi.fn(),
+}));
+
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/model-fetch")>();
+  return {
+    ...actual,
+    fetchCodexOauthModels: modelFetchMocks.fetchCodexOauthModels,
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: {
@@ -87,6 +98,65 @@ function renderForm(
 describe("ClaudeDesktopProviderForm", () => {
   beforeEach(() => {
     authState.codexReauthRequired = false;
+    toastMocks.error.mockReset();
+    modelFetchMocks.fetchCodexOauthModels.mockReset();
+  });
+
+  it("托管 OAuth 供应商也能获取模型并在映射行里选择（#8426）", async () => {
+    modelFetchMocks.fetchCodexOauthModels.mockResolvedValue([
+      { id: "gpt-5.6", ownedBy: "openai" },
+    ]);
+    renderForm({
+      name: "Codex OAuth Provider",
+      category: "third_party",
+      settingsConfig: { env: {} },
+      meta: {
+        providerType: "codex_oauth",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct-managed",
+        },
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "upstream-model" },
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /获取模型/ }));
+
+    await waitFor(() =>
+      expect(modelFetchMocks.fetchCodexOauthModels).toHaveBeenCalledWith(
+        "acct-managed",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: "Select model" }).length,
+      ).toBeGreaterThan(0),
+    );
+  });
+
+  it("未登录的 Copilot 获取模型时提示先登录", async () => {
+    renderForm({
+      name: "Copilot Provider",
+      category: "third_party",
+      settingsConfig: { env: {} },
+      meta: {
+        providerType: "github_copilot",
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "claude-sonnet-5" },
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /获取模型/ }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith("请先登录 GitHub Copilot"),
+    );
   });
 
   it.each(["github_copilot", "codex_oauth", "xai_oauth"])(

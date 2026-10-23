@@ -50,8 +50,42 @@ export interface PresetModelSource {
   models: ReadonlyMap<string, KnownModelMetadata>;
 }
 
+/**
+ * GPT 模型的窗口上限：Codex 官方目录给 GPT-5.5 以后各款的默认窗口。OpenAI API
+ * 写的是 1.05M，但很多中转站的 GPT 是从 ChatGPT 订阅分发的，按订阅的窗口卡。
+ * 窗口写大了客户端不压缩，直到上游拒收、这一轮失败；写小只是提前压缩。所以
+ * 认不出地址、只能借原厂条目的窗口时按订阅的窗口封顶；同地址预设和 models.dev
+ * 按地址认出的那家照用它们自己的值，用户手填的不经过这里。
+ */
+export const GPT_CONTEXT_WINDOW_CAP = 272_000;
+
+/** 是不是 OpenAI 的 GPT 模型（`gpt-6-astra`、`openai/gpt-5.6-sol`、`openai-gpt-6-1-sol`）。 */
+export function isGptModelId(modelId: string): boolean {
+  return /(?:^|[^a-z0-9])gpt-/.test(normalizeModelsDevModelId(modelId));
+}
+
+/** GPT 模型的窗口按 {@link GPT_CONTEXT_WINDOW_CAP} 封顶，本来就小的不动。 */
+export function capGptContextWindow(
+  modelId: string,
+  contextWindow: number,
+): number {
+  return isGptModelId(modelId)
+    ? Math.min(contextWindow, GPT_CONTEXT_WINDOW_CAP)
+    : contextWindow;
+}
+
 const VERSION_SEGMENT = /^v\d+(?:(?:alpha|beta)\d*)?$/;
 const REQUEST_SEGMENTS = new Set(["responses", "messages"]);
+
+/**
+ * 同一个接口的新旧地址（归一后的写法）。OpenCode 的 Zen / Go 在 models.dev
+ * 里改成了 `/inference/...`（2026-10），预设和用户手里的仍是 `/zen/...`，两者
+ * 都能用、计费相同。
+ */
+const ENDPOINT_ALIASES: Record<string, string> = {
+  "opencode.ai/zen": "opencode.ai/inference/openai",
+  "opencode.ai/zen/go": "opencode.ai/inference/go/openai",
+};
 
 /**
  * 把地址归一成「域名 + 路径」，去掉末尾的版本号（`v1`、`v4`、`v1beta`）和请求
@@ -85,7 +119,8 @@ function endpointKey(url: string): string | null {
       break;
     }
   }
-  return [parsed.hostname.toLowerCase(), ...segments].join("/");
+  const key = [parsed.hostname.toLowerCase(), ...segments].join("/");
+  return ENDPOINT_ALIASES[key] ?? key;
 }
 
 /** 挑出与地址是同一个接口的候选，保持原有顺序。 */
@@ -315,6 +350,7 @@ function fieldCount(metadata: KnownModelMetadata): number {
  * 3. models.dev 里的原厂条目（不带价格：转售价不等于原厂价；思考档位照用，
  *    中转站绝大多数与原厂一致），
  *    认出了供应商也照样用它补供应商条目里没写的字段。
+ * GPT 模型的窗口只在取自原厂条目时按 {@link GPT_CONTEXT_WINDOW_CAP} 封顶。
  * 都查不到返回 null。
  */
 export function resolveModelMetadata(
@@ -358,9 +394,14 @@ export function resolveModelMetadata(
     }
     const vendorModel = findByVendor(index, id);
     if (vendorModel) {
-      add("models-dev", metadataFromModelsDev(vendorModel, false));
+      const vendor = metadataFromModelsDev(vendorModel, false);
+      if (vendor.contextWindow !== undefined) {
+        vendor.contextWindow = capGptContextWindow(id, vendor.contextWindow);
+      }
+      add("models-dev", vendor);
     }
   }
 
-  return sources.length > 0 ? { ...metadata, sources } : null;
+  if (sources.length === 0) return null;
+  return { ...metadata, sources };
 }

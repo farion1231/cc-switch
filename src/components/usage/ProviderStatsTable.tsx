@@ -1,11 +1,11 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { ArrowDown } from "lucide-react";
 import { useProviderStats } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -14,6 +14,7 @@ import { usageTable } from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
@@ -31,6 +32,7 @@ export function ProviderStatsTable({
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t, i18n } = useTranslation();
+  const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useProviderStats(
     range,
@@ -57,16 +59,31 @@ export function ProviderStatsTable({
   return (
     <div className="flex flex-col">
       <div className={usageTable.scroller}>
+        {/* 和请求日志同一套列组与取宽：按内容取宽、至少铺满面板，放不下横向滚动 */}
         <table
-          className={cn(usageTable.table, "min-w-[620px]")}
+          className={cn(usageTable.table, "w-max min-w-full")}
           aria-label={t("usage.providerStats")}
         >
           <thead>
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.provider")}</th>
-              <th className={usageTable.th}>{t("usage.requests")}</th>
-              <th className={usageTable.th}>{t("usage.tokens")}</th>
-              <th className={usageTable.th}>{t("usage.cost")}</th>
+              {/* 按请求数从多到少排：箭头就是排序说明，不另写文字 */}
+              <th className={usageTable.th} aria-sort="descending">
+                <span className="inline-flex items-center gap-1">
+                  {t("usage.requests")}
+                  <ArrowDown
+                    aria-hidden="true"
+                    className="h-3 w-3 text-fg-3"
+                    strokeWidth={2}
+                  />
+                </span>
+              </th>
+              <th className={cn(usageTable.th, usageTable.groupGap)}>
+                {t("usage.cost")}
+              </th>
+              <th className={cn(usageTable.th, usageTable.groupGap)}>
+                {t("usage.tokens")}
+              </th>
               <PerformanceHeaders />
             </tr>
           </thead>
@@ -86,10 +103,7 @@ export function ProviderStatsTable({
                     className={usageTable.row}
                   >
                     <td className={usageTable.td}>
-                      <span
-                        className="block max-w-[260px] truncate"
-                        title={usageProviderTitle(provider)}
-                      >
+                      <span title={usageProviderTitle(provider)}>
                         {provider.label}
                       </span>
                     </td>
@@ -97,16 +111,20 @@ export function ProviderStatsTable({
                       {fmtInt(stat.requestCount, locale)}
                     </td>
                     <td
-                      className={usageTable.td}
+                      className={cn(
+                        usageTable.td,
+                        usageTable.groupGap,
+                        "font-medium",
+                      )}
+                      title={moneyTitle(stat.totalCost, 6)}
+                    >
+                      {money(stat.totalCost, 2)}
+                    </td>
+                    <td
+                      className={cn(usageTable.td, usageTable.groupGap)}
                       title={fmtInt(stat.totalTokens, locale)}
                     >
                       {formatTokensCompact(stat.totalTokens, locale)}
-                    </td>
-                    <td
-                      className={cn(usageTable.td, "font-medium")}
-                      title={fmtUsd(stat.totalCost, 6)}
-                    >
-                      {fmtUsd(stat.totalCost, 2)}
                     </td>
                     <PerformanceCells stat={stat} />
                   </tr>

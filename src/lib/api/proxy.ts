@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  RouteSwitchResult,
   ProxyStatus,
   ProxyServerInfo,
   ProxyTakeoverStatus,
@@ -60,7 +61,10 @@ export const proxyApi = {
 
   // 指定路由目标（聚合模式下是默认那家）：直连时只记下来、下次进入路由 / 聚合模式时用它，
   // 已经在路由 / 聚合模式时当场生效
-  async setProxyRoute(appType: string, providerId: string): Promise<void> {
+  async setProxyRoute(
+    appType: string,
+    providerId: string,
+  ): Promise<RouteSwitchResult> {
     return invoke("set_proxy_route", { appType, providerId });
   },
 

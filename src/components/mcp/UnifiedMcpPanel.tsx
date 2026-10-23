@@ -87,11 +87,18 @@ const IMPORT_SOURCE_FILES: Record<
   opencode: { file: "~/.config/opencode/opencode.json" },
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
+  agy: { file: "~/.gemini/config/mcp_config.json" },
+  kimi: { file: "~/.kimi-code/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
 };
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
-const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set(["mcode", "pi"]);
+const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
+  "mcode",
+  "kimi",
+  "pi",
+  "agy",
+]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
 interface WriteFailure {
@@ -420,16 +427,24 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
               void (async () => {
                 if (!beginWrite()) return;
                 try {
-                  await writeMany(succeeded, !enabled);
-                  toast.success(t("appMatrix.toast.undone"), {
-                    closeButton: true,
-                  });
+                  const result = await writeMany(succeeded, !enabled);
+                  if (result.failed) {
+                    toast[result.succeeded.length ? "warning" : "error"](
+                      t("common.bulkToggleFailed", { count: result.failed }),
+                      { closeButton: true },
+                    );
+                  } else {
+                    toast.success(t("appMatrix.toast.undone"), {
+                      closeButton: true,
+                    });
+                  }
                 } finally {
                   endWrite();
                 }
               })();
             }
           : undefined,
+        failed ? (succeeded.length ? "warning" : "error") : "success",
       );
     } finally {
       endWrite();

@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { http, HttpResponse } from "msw";
 import type { Provider } from "@/types";
 import {
@@ -24,6 +24,7 @@ const TAURI_ENDPOINT = "http://tauri.local";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+
 /** 某张卡片最近一次渲染拿到的 props。 */
 const lastProps = (id: string) =>
   providerCardRenderSpy.mock.calls
@@ -157,6 +158,26 @@ describe("ProviderList Component", () => {
     onDuplicate: vi.fn(),
     onOpenWebsite: vi.fn(),
   };
+
+  it.each([false, true])(
+    "keeps account login inside the add-provider flow with existing providers: %s",
+    (hasProvider) => {
+      const providers: Record<string, Provider> = hasProvider
+        ? {
+            custom: {
+              id: "custom",
+              name: "Custom",
+              settingsConfig: {},
+              meta: { liveConfigManaged: true },
+            },
+          }
+        : {};
+      renderWithQueryClient(
+        <ProviderList {...baseProps} appId="kimi" providers={providers} />,
+      );
+      expect(screen.queryByText("kimi.oauth.title")).not.toBeInTheDocument();
+    },
+  );
 
   function switchMode(
     overrides: Partial<SwitchModeProps> = {},
@@ -340,6 +361,502 @@ describe("ProviderList Component", () => {
     expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
     fireEvent.click(screen.getByTestId("add-a"));
     expect(onSwitch).toHaveBeenCalledWith(providerA);
+  });
+
+  it.each(["mcode"] as const)(
+    "uses native membership to add and remove %s providers",
+    async (appId) => {
+      const saved = createProvider({
+        id: "saved",
+        name: "Saved",
+        meta: { liveConfigManaged: false },
+      });
+      const live = createProvider({
+        id: "live",
+        name: "Live",
+        meta: { liveConfigManaged: true },
+      });
+      const onSwitch = vi.fn();
+      const onRemoveFromConfig = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [saved, live],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ saved, live }}
+          appId={appId}
+          onSwitch={onSwitch}
+          onRemoveFromConfig={onRemoveFromConfig}
+        />,
+      );
+      fireEvent.click(await screen.findByTestId("remove-live"));
+      expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
+      fireEvent.click(screen.getByTestId("add-saved"));
+      expect(onSwitch).toHaveBeenCalledWith(saved);
+    },
+  );
+
+  it("adds, switches and removes Kimi providers and marks only the native default-model owner as in use", () => {
+    const current = createProvider({
+      id: "current",
+      name: "Current",
+      meta: { liveConfigManaged: true },
+    });
+    const other = createProvider({
+      id: "other",
+      name: "Other",
+      meta: { liveConfigManaged: true },
+    });
+    const saved = createProvider({
+      id: "saved",
+      name: "Saved",
+      meta: { liveConfigManaged: false },
+    });
+    const onSwitch = vi.fn();
+    const onSetAsDefault = vi.fn();
+    const onRemoveFromConfig = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [current, other, saved],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const props = {
+      ...baseProps,
+      appId: "kimi" as const,
+      providers: { current, other, saved },
+      onSwitch,
+      onSetAsDefault,
+      onRemoveFromConfig,
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="current" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("status-current")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(lastProps("current")?.presentation.tone).toBe("direct");
+    expect(lastProps("current")?.isCurrent).toBe(true);
+    expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
+    expect(
+      lastProps("current")?.presentation.deleteDisabledReason,
+    ).toBeTruthy();
+    expect(
+      lastProps("current")?.presentation.buttons.find(
+        (button: { key: string }) => button.key === "remove",
+      )?.disabledReason,
+    ).toBeTruthy();
+    // 已添加的卡在「更多」菜单里「设为默认」；未添加的卡「添加」只写进配置
+    expect(screen.queryByTestId("switch-other")).not.toBeInTheDocument();
+    lastProps("other")
+      ?.presentation.menuItems.find(
+        (action: { key: string }) => action.key === "setDefault",
+      )
+      .onSelect();
+    expect(onSetAsDefault).toHaveBeenLastCalledWith(other, undefined);
+    expect(screen.queryByTestId("switch-saved")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("add-saved"));
+    expect(onSwitch).toHaveBeenLastCalledWith(saved);
+    fireEvent.click(screen.getByTestId("remove-other"));
+    expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
+    rerender(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="other" />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
+    expect(screen.getByTestId("status-other")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(
+      lastProps("current")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
+  });
+
+  it("does not mark any Kimi provider as current when the native selection is missing", () => {
+    const provider = createProvider({
+      id: "live",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="kimi"
+        providers={{ live: provider }}
+      />,
+    );
+    expect(screen.queryByTestId("status-live")).not.toBeInTheDocument();
+    expect(
+      lastProps("live")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
+  });
+
+  it("marks the native Kimi OAuth card as official without marking API-key presets", () => {
+    const official = createProvider({
+      id: "managed:kimi-code",
+      name: "Kimi Official",
+      icon: "kimi",
+      settingsConfig: {
+        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
+        models: {},
+      },
+      meta: { liveConfigManaged: true },
+    });
+    const apiKey = createProvider({
+      id: "kimi-coding",
+      name: "Kimi For Coding",
+      category: "cn_official",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [official, apiKey],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="kimi"
+        currentProviderId={official.id}
+        providers={{ [official.id]: official, [apiKey.id]: apiKey }}
+      />,
+    );
+    expect(lastProps(official.id)?.presentation.chips).toContainEqual({
+      key: "official",
+      label: "providerCard.chip.official",
+      tone: "outline",
+    });
+    expect(lastProps(official.id)?.presentation.status.label).toBe(
+      "providerCard.status.default",
+    );
+    expect(lastProps(apiKey.id)?.presentation.chips).toEqual([]);
+  });
+
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    "keeps search in the list flow and restores cards on close (%o)",
+    async (shortcut) => {
+      const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+      const beta = createProvider({ id: "beta", name: "Beta Works" });
+      const onEdit = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [alpha, beta],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+
+      const { container } = renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ alpha, beta }}
+          appId="codex"
+          switchMode={switchMode()}
+          onEdit={onEdit}
+        />,
+      );
+
+      fireEvent.keyDown(window, { key: "f", ...shortcut });
+      const input = screen.getByRole("textbox", { name: "Search providers" });
+      // A body portal with fixed positioning covers the first card's actions.
+      // Keep the panel before the cards in the list's normal document flow.
+      expect(container).toContainElement(input);
+      const list = container.firstElementChild!;
+      const panel = list.firstElementChild!;
+      expect(panel).toContainElement(input);
+      expect(panel).not.toHaveClass("fixed");
+      expect(panel).not.toHaveClass("absolute");
+      expect(panel.nextElementSibling).toContainElement(
+        screen.getByTestId("provider-card-alpha"),
+      );
+      await waitFor(() => expect(input).toHaveFocus());
+
+      fireEvent.change(input, { target: { value: "beta" } });
+      expect(
+        screen.queryByTestId("provider-card-alpha"),
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("edit-beta"));
+      expect(onEdit).toHaveBeenCalledWith(beta);
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(input).not.toBeInTheDocument());
+      expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "f", ...shortcut });
+      const reopened = screen.getByRole("textbox", {
+        name: "Search providers",
+      });
+      expect(reopened).toHaveValue("beta");
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+      expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Close provider search" }),
+      );
+      await waitFor(() => expect(reopened).not.toBeInTheDocument());
+    },
+  );
+
+  it.each([
+    { shortcut: { ctrlKey: true }, controlled: false },
+    { shortcut: { metaKey: true }, controlled: false },
+    { shortcut: { ctrlKey: true }, controlled: true },
+    { shortcut: { metaKey: true }, controlled: true },
+  ])(
+    "refocuses an already open search panel (%o)",
+    async ({ shortcut, controlled }) => {
+      const providers = Array.from({ length: 30 }, (_, index) =>
+        createProvider({ id: `provider-${index}`, name: `Provider ${index}` }),
+      );
+      useDragSortMock.mockReturnValue({
+        sortedProviders: providers,
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      function SearchList() {
+        const [open, setOpen] = useState(false);
+        return (
+          <div
+            data-testid="scroll-container"
+            style={{ height: 200, overflowY: "auto" }}
+          >
+            <ProviderList
+              {...baseProps}
+              providers={Object.fromEntries(
+                providers.map((provider) => [provider.id, provider]),
+              )}
+              appId="claude"
+              {...(controlled
+                ? { searchOpen: open, onSearchOpenChange: setOpen }
+                : {})}
+            />
+          </div>
+        );
+      }
+      renderWithQueryClient(<SearchList />);
+      fireEvent.keyDown(window, { key: "f", ...shortcut });
+      const input = screen.getByRole("textbox", {
+        name: "Search providers",
+      }) as HTMLInputElement;
+      await waitFor(() => expect(input).toHaveFocus());
+      fireEvent.change(input, { target: { value: "Provider" } });
+      const scrollIntoView = vi.fn();
+      input.scrollIntoView = scrollIntoView;
+
+      // jsdom has no layout: model scrolling away and assert the browser scroll request.
+      const scrollContainer = screen.getByTestId("scroll-container");
+      for (let invocation = 1; invocation <= 2; invocation++) {
+        scrollContainer.scrollTop = 1000;
+        screen.getByTestId("edit-provider-29").focus();
+        expect(input).not.toHaveFocus();
+        const event = new KeyboardEvent("keydown", {
+          key: "f",
+          ...shortcut,
+          cancelable: true,
+        });
+        fireEvent(window, event);
+        expect(event.defaultPrevented).toBe(true);
+        await waitFor(() => expect(input).toHaveFocus());
+        expect(input.selectionStart).toBe(0);
+        expect(input.selectionEnd).toBe("Provider".length);
+        expect(scrollIntoView).toHaveBeenCalledTimes(invocation);
+        expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+      }
+    },
+  );
+
+  it.each(["input", "textarea", "select", "contenteditable"])(
+    "does not steal the search shortcut from another %s",
+    async (targetType) => {
+      const provider = createProvider();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ [provider.id]: provider }}
+          appId="claude"
+        />,
+      );
+      fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+      const input = screen.getByRole("textbox", { name: "Search providers" });
+      await waitFor(() => expect(input).toHaveFocus());
+      const scrollIntoView = vi.fn();
+      input.scrollIntoView = scrollIntoView;
+      const target = document.createElement(
+        targetType === "contenteditable" ? "div" : targetType,
+      );
+      if (targetType === "contenteditable") {
+        target.tabIndex = 0;
+        // jsdom does not implement isContentEditable.
+        Object.defineProperty(target, "isContentEditable", { value: true });
+      }
+      document.body.appendChild(target);
+      try {
+        target.focus();
+        const event = new KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          cancelable: true,
+        });
+        fireEvent(window, event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(target).toHaveFocus();
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        target.remove();
+      }
+    },
+  );
+
+  it("renders the search field into the mode row slot instead of the list", async () => {
+    const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [alpha],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const slot = document.createElement("div");
+    document.body.appendChild(slot);
+    try {
+      const { container } = renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ alpha }}
+          appId="codex"
+          switchMode={switchMode()}
+          searchSlot={slot}
+        />,
+      );
+
+      fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+      const input = screen.getByRole("textbox", { name: "Search providers" });
+      expect(slot).toContainElement(input);
+      expect(container).not.toContainElement(input);
+      await waitFor(() => expect(input).toHaveFocus());
+    } finally {
+      slot.remove();
+    }
+  });
+
+  it("renders nothing for a mode row slot that is not mounted yet", () => {
+    const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [alpha],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ alpha }}
+        appId="codex"
+        switchMode={switchMode()}
+        searchSlot={null}
+        searchOpen
+      />,
+    );
+
+    expect(
+      screen.queryByRole("textbox", { name: "Search providers" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+  });
+
+  it("puts the search field beside the first section title and keeps it while no provider matches", async () => {
+    const live = createProvider({ id: "live", name: "Live Labs" });
+    const other = createProvider({ id: "other", name: "Other Works" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [live, other],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_opencode_live_provider_ids`, () =>
+        HttpResponse.json(["live"]),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ live, other }}
+        appId="opencode"
+      />,
+    );
+
+    const heading = await screen.findByRole("heading", {
+      name: "providerCard.section.added",
+    });
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const input = screen.getByRole("textbox", { name: "Search providers" });
+    // 同一行：标题和搜索框共用列表的第一行，第一个分组里不再重复画标题
+    const header = input.closest("div.min-h-8");
+    expect(header).toContainElement(heading);
+    expect(
+      screen.getAllByRole("heading", { name: "providerCard.section.added" }),
+    ).toHaveLength(1);
+    await waitFor(() => expect(input).toHaveFocus());
+
+    fireEvent.change(input, { target: { value: "nothing-matches" } });
+    expect(screen.getByText("No providers match your search.")).toBeVisible();
+    // 结果清空时输入框还是同一个节点，焦点不丢
+    expect(screen.getByRole("textbox", { name: "Search providers" })).toBe(
+      input,
+    );
+    expect(input).toHaveFocus();
+  });
+
+  it("adds the search row only while searching when the list has no section title", async () => {
+    const desk = createProvider({ id: "desk", name: "Desk Relay" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [desk],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    const { container } = renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ desk }}
+        appId="claude-desktop"
+        switchMode={switchMode()}
+      />,
+    );
+
+    const list = container.firstElementChild!;
+    expect(list.firstElementChild).toContainElement(
+      screen.getByTestId("provider-card-desk"),
+    );
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const input = screen.getByRole("textbox", { name: "Search providers" });
+    expect(list.firstElementChild).toContainElement(input);
+    expect(list.firstElementChild?.nextElementSibling).toContainElement(
+      screen.getByTestId("provider-card-desk"),
+    );
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(input).not.toBeInTheDocument());
+    expect(list.firstElementChild).toContainElement(
+      screen.getByTestId("provider-card-desk"),
+    );
   });
 
   it("filters providers with the search input", () => {

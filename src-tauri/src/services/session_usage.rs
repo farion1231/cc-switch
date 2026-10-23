@@ -167,6 +167,16 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "MCode",
         crate::services::session_usage_mcode::sync_mcode_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "Antigravity",
+        crate::services::session_usage_agy::sync_agy_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
+        "Kimi Code",
+        crate::services::session_usage_kimi::sync_kimi_usage(db),
+    );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
     result
@@ -849,6 +859,9 @@ fn sync_single_file(
     let tx = conn
         .unchecked_transaction()
         .map_err(|e| AppError::Database(format!("启动会话用量导入事务失败: {e}")))?;
+    // 只在这次持有连接锁的文件事务内复用定价（含未找到的模型）。
+    // 下一文件/下一轮新建缓存，事务之间的定价更新或新增立即可见。
+    let mut pricing_cache = SessionPricingCache::default();
 
     for msg in messages.values() {
         // 只要产生了真实计费 token 就导入，不再强制要求 stop_reason 或 output>0。
@@ -894,7 +907,7 @@ fn sync_single_file(
                 })
             });
 
-        match upsert_session_log_entry_on_conn(&tx, &request_id, msg, timing) {
+        match upsert_session_log_entry_on_conn(&tx, &request_id, msg, timing, &mut pricing_cache) {
             // 补全已有的行也算进 imported：数据变了，界面要跟着刷新
             Ok(SessionRowOutcome::Inserted | SessionRowOutcome::Updated) => imported += 1,
             Ok(SessionRowOutcome::Skipped) => skipped += 1,
@@ -1079,8 +1092,40 @@ fn find_stored_session_row(
     .map_err(|e| AppError::Database(format!("查询已入库的会话日志失败: {e}")))
 }
 
+/// 单个文件导入事务的定价缓存；连接锁释放时一起丢弃，不跨事务缓存旧价或未命中。
+#[derive(Default)]
+struct SessionPricingCache {
+    entries: HashMap<String, Option<ModelPricing>>,
+    #[cfg(test)]
+    lookup_count: usize,
+}
+
+impl SessionPricingCache {
+    fn get(&mut self, conn: &rusqlite::Connection, model: &str) -> Option<&ModelPricing> {
+        let Self {
+            entries,
+            #[cfg(test)]
+            lookup_count,
+        } = self;
+        entries
+            .entry(model.to_string())
+            .or_insert_with(|| {
+                #[cfg(test)]
+                {
+                    *lookup_count += 1;
+                }
+                find_model_pricing_for_session(conn, model)
+            })
+            .as_ref()
+    }
+}
+
 /// 一条回复按定价算出来的五项成本：输入、输出、缓存读、缓存写、合计。
-fn session_costs(conn: &rusqlite::Connection, msg: &ParsedAssistantUsage) -> [String; 5] {
+fn session_costs(
+    conn: &rusqlite::Connection,
+    msg: &ParsedAssistantUsage,
+    pricing_cache: &mut SessionPricingCache,
+) -> [String; 5] {
     let usage = TokenUsage {
         input_tokens: msg.input_tokens,
         output_tokens: msg.output_tokens,
@@ -1090,9 +1135,9 @@ fn session_costs(conn: &rusqlite::Connection, msg: &ParsedAssistantUsage) -> [St
         model: Some(msg.model.clone()),
         message_id: None,
     };
-    match find_model_pricing_for_session(conn, &msg.model) {
+    match pricing_cache.get(conn, &msg.model) {
         Some(pricing) => {
-            let cost = CostCalculator::calculate(&usage, &pricing, Decimal::from(1));
+            let cost = CostCalculator::calculate(&usage, pricing, Decimal::from(1));
             [
                 cost.input_cost.to_string(),
                 cost.output_cost.to_string(),
@@ -1121,6 +1166,7 @@ fn refresh_session_log_entry_on_conn(
     timing: Option<EstimatedTiming>,
     stored: &StoredSessionRow,
     dedup_key: &DedupKey,
+    pricing_cache: &mut SessionPricingCache,
 ) -> Result<SessionRowOutcome, AppError> {
     if stored.data_source != "session_log" {
         return Ok(SessionRowOutcome::Skipped);
@@ -1159,7 +1205,7 @@ fn refresh_session_log_entry_on_conn(
     }
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
-        session_costs(conn, msg);
+        session_costs(conn, msg, pricing_cache);
     conn.execute(
         "UPDATE proxy_request_logs SET
             input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3,
@@ -1196,6 +1242,7 @@ fn upsert_session_log_entry_on_conn(
     request_id: &str,
     msg: &ParsedAssistantUsage,
     timing: Option<EstimatedTiming>,
+    pricing_cache: &mut SessionPricingCache,
 ) -> Result<SessionRowOutcome, AppError> {
     let created_at = msg
         .timestamp
@@ -1223,7 +1270,13 @@ fn upsert_session_log_entry_on_conn(
     };
     if let Some(stored) = find_stored_session_row(conn, request_id)? {
         return refresh_session_log_entry_on_conn(
-            conn, request_id, msg, timing, &stored, &dedup_key,
+            conn,
+            request_id,
+            msg,
+            timing,
+            &stored,
+            &dedup_key,
+            pricing_cache,
         );
     }
     if has_matching_proxy_usage_log(conn, &dedup_key)? {
@@ -1231,7 +1284,7 @@ fn upsert_session_log_entry_on_conn(
     }
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
-        session_costs(conn, msg);
+        session_costs(conn, msg, pricing_cache);
 
     let inserted_rows = conn
         .execute(
@@ -1321,6 +1374,164 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pricing_test_message(model: &str) -> ParsedAssistantUsage {
+        ParsedAssistantUsage {
+            message_id: "pricing-test".to_string(),
+            model: model.to_string(),
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 5,
+            cache_creation_1h_tokens: 2,
+            stop_reason: Some("end_turn".to_string()),
+            timestamp: Some("2026-06-07T13:01:23Z".to_string()),
+            session_id: Some("pricing-session".to_string()),
+        }
+    }
+
+    fn seed_test_pricing(conn: &rusqlite::Connection, model: &str, factor: u32) {
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing (
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+             ) VALUES (?1, ?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                model,
+                factor.to_string(),
+                (2 * factor).to_string(),
+                (3 * factor).to_string(),
+                (4 * factor).to_string(),
+            ],
+        )
+        .unwrap();
+    }
+
+    fn assert_test_costs(costs: &[String; 5], factor: u32, output_tokens: u32) {
+        let output = Decimal::from(output_tokens * 2 * factor) / Decimal::from(1_000_000);
+        let expected = [
+            Decimal::new(100 * i64::from(factor), 6),
+            output,
+            Decimal::new(30 * i64::from(factor), 6),
+            // 3 five-minute tokens + 2 one-hour tokens at 1.6x the write rate.
+            Decimal::new(248 * i64::from(factor), 7),
+            Decimal::new(1548 * i64::from(factor), 7) + output,
+        ];
+        let actual: [Decimal; 5] = std::array::from_fn(|index| costs[index].parse().unwrap());
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_transaction_pricing_cache_reuses_hits_misses_and_streamed_updates(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let tx = conn.unchecked_transaction()?;
+        let models = [
+            "pricing-model-a",
+            "pricing-model-b",
+            "pricing-model-missing",
+        ];
+        seed_test_pricing(&tx, models[0], 1);
+        seed_test_pricing(&tx, models[1], 2);
+        let mut cache = SessionPricingCache::default();
+        let mut uncached_lookups = 0;
+
+        for index in 0..100 {
+            for (model_index, model) in models.iter().enumerate() {
+                let msg = pricing_test_message(model);
+                // A fresh cache per response reproduces the old lookup frequency.
+                let mut uncached = SessionPricingCache::default();
+                let expected = session_costs(&tx, &msg, &mut uncached);
+                uncached_lookups += uncached.lookup_count;
+                if model_index < 2 {
+                    assert_test_costs(&expected, model_index as u32 + 1, msg.output_tokens);
+                } else {
+                    assert_eq!(expected, std::array::from_fn(|_| "0".to_string()));
+                }
+                let id = format!("session:pricing-{model_index}-{index}");
+                assert_eq!(
+                    upsert_session_log_entry_on_conn(&tx, &id, &msg, None, &mut cache)?,
+                    SessionRowOutcome::Inserted
+                );
+                let stored: [String; 5] = tx.query_row(
+                    "SELECT input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                            cache_creation_cost_usd, total_cost_usd
+                     FROM proxy_request_logs WHERE request_id = ?1",
+                    [&id],
+                    |row| {
+                        Ok([
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ])
+                    },
+                )?;
+                assert_eq!(stored, expected);
+            }
+        }
+        assert_eq!(uncached_lookups, 300);
+        assert_eq!(cache.lookup_count, 3);
+
+        // Completing a partial reply shares the same model lookup with inserts.
+        let mut completed = pricing_test_message(models[0]);
+        completed.output_tokens = 40;
+        assert_eq!(
+            upsert_session_log_entry_on_conn(
+                &tx,
+                "session:pricing-0-0",
+                &completed,
+                None,
+                &mut cache,
+            )?,
+            SessionRowOutcome::Updated
+        );
+        let total: String = tx.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = ?1",
+            ["session:pricing-0-0"],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total.parse::<Decimal>().unwrap(), Decimal::new(2348, 7));
+        assert_eq!(cache.lookup_count, 3);
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_new_transaction_observes_updated_and_previously_missing_pricing() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let priced = pricing_test_message("pricing-model-existing");
+        let missing = pricing_test_message("pricing-model-new");
+        seed_test_pricing(&conn, &priced.model, 1);
+        {
+            let tx = conn.unchecked_transaction()?;
+            let mut cache = SessionPricingCache::default();
+            for _ in 0..2 {
+                assert_test_costs(&session_costs(&tx, &priced, &mut cache), 1, 20);
+                assert_eq!(
+                    session_costs(&tx, &missing, &mut cache),
+                    std::array::from_fn(|_| "0".to_string())
+                );
+            }
+            assert_eq!(cache.lookup_count, 2);
+            tx.commit()?;
+        }
+        seed_test_pricing(&conn, &priced.model, 2);
+        seed_test_pricing(&conn, &missing.model, 3);
+        {
+            let tx = conn.unchecked_transaction()?;
+            let mut cache = SessionPricingCache::default();
+            assert_test_costs(&session_costs(&tx, &priced, &mut cache), 2, 20);
+            assert_test_costs(&session_costs(&tx, &missing, &mut cache), 3, 20);
+            assert_eq!(cache.lookup_count, 2);
+            tx.commit()?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn sync_result_notification_is_coalesced_to_one_call() {
@@ -1478,7 +1689,13 @@ mod tests {
 
         let outcome = {
             let conn = lock_conn!(db.conn);
-            upsert_session_log_entry_on_conn(&conn, "session:msg_1", &msg, None)?
+            upsert_session_log_entry_on_conn(
+                &conn,
+                "session:msg_1",
+                &msg,
+                None,
+                &mut SessionPricingCache::default(),
+            )?
         };
         assert_eq!(outcome, SessionRowOutcome::Skipped);
 
