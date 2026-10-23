@@ -5324,7 +5324,7 @@ model_provider = "c"
         .unwrap();
         fs::write(
             root.join("p-two").join("config.yaml"),
-            "model:\n  default: a-model\n  provider: kimi\ncustom_providers:\n  - name: kimi\n",
+            "model:\n  default: a-model\n  provider: kimi\ncustom_providers:\n  - name: kimi\n  - name: a\nfallback_providers:\n  - provider: custom:a\n    model: a-model\n  - provider: custom:cc-switch\n    model: aim\nauxiliary:\n  vision:\n    provider: custom:a\n    model: a-model\n    base_url: https://direct.example/v1\nmoa:\n  presets:\n    heavy:\n      reference_models:\n        - provider: custom:a\n          model: a-model\n      aggregator:\n        provider: custom:a\n        model: a-model\n",
         )
         .unwrap();
     }
@@ -5406,6 +5406,31 @@ model_provider = "c"
             Some("a-model"),
             "路由仍提供的默认模型保留"
         );
+        // 角色引用接管：fallback 里映射内引用指向路由条目，悬空引用被清；aux 的
+        // base_url 覆盖被清（否则绕过路由）；moa 成员与聚合器同样接管。
+        let fallback = p_two_yaml["fallback_providers"].as_sequence().unwrap();
+        assert_eq!(fallback.len(), 1, "悬空 custom:cc-switch 被清掉");
+        assert_eq!(
+            (
+                fallback[0]["provider"].as_str(),
+                fallback[0]["model"].as_str()
+            ),
+            (Some("cc-switch-route"), Some("a-model"))
+        );
+        let vision = &p_two_yaml["auxiliary"]["vision"];
+        assert_eq!(
+            (vision["provider"].as_str(), vision["model"].as_str()),
+            (Some("cc-switch-route"), Some("a-model"))
+        );
+        assert!(vision.get("base_url").is_none(), "覆盖项清空");
+        assert_eq!(
+            p_two_yaml["moa"]["presets"]["heavy"]["reference_models"][0]["provider"].as_str(),
+            Some("cc-switch-route")
+        );
+        assert_eq!(
+            p_two_yaml["moa"]["presets"]["heavy"]["aggregator"]["provider"].as_str(),
+            Some("cc-switch-route")
+        );
 
         // 代理内换路由：条目按新路由那家重写。
         let result = ProviderService::switch(&state, AppType::Hermes, "b").expect("route to b");
@@ -5439,6 +5464,19 @@ model_provider = "c"
             serde_yaml::from_str(&hermes_profile_text("p-two")).unwrap();
         assert_eq!(p_two_yaml["model"]["provider"].as_str(), Some("kimi"));
         assert_eq!(p_two_yaml["model"]["default"].as_str(), Some("a-model"));
+        // 角色引用按记录恢复：fallback 两项（含被清的悬空项）、aux 的 base_url、moa 引用
+        let fallback = p_two_yaml["fallback_providers"].as_sequence().unwrap();
+        assert_eq!(fallback.len(), 2, "被清的悬空项按记录补回");
+        assert_eq!(fallback[0]["provider"].as_str(), Some("custom:a"));
+        assert_eq!(fallback[1]["provider"].as_str(), Some("custom:cc-switch"));
+        assert_eq!(
+            p_two_yaml["auxiliary"]["vision"]["base_url"].as_str(),
+            Some("https://direct.example/v1")
+        );
+        assert_eq!(
+            p_two_yaml["moa"]["presets"]["heavy"]["aggregator"]["provider"].as_str(),
+            Some("custom:a")
+        );
 
         // 直连再切到 b：条目按累加式语义落盘。
         ProviderService::switch(&state, AppType::Hermes, "b").expect("direct b");

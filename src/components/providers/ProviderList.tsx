@@ -212,7 +212,9 @@ export function ProviderList({
         return (await providersApi.importOpenClawFromLive()) > 0;
       }
       if (appId === "hermes") {
-        return (await providersApi.importHermesFromLive()) > 0;
+        // 默认 home + 各 agent（profile）一起扫：MoA 成员等手写在 agent 配置里的
+        // 条目入库后，路由模式的角色接管才能改写它们的引用。
+        return (await providersApi.importHermesFromAllHomes()) > 0;
       }
       if (appId === "claude-desktop") {
         return (await providersApi.importClaudeDesktopFromClaude()) > 0;

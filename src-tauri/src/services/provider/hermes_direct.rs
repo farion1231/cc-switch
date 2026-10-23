@@ -128,6 +128,7 @@ pub(crate) fn proxy_contract(
 ) -> Result<HermesProjection, AppError> {
     HermesProjection::proxy_contract(
         &route.settings_config,
+        &route.id,
         proxy_base_url,
         PROXY_TOKEN_PLACEHOLDER,
     )
@@ -139,8 +140,9 @@ pub(crate) fn stack_proxy_contract(
     members: &[crate::mode::stack::Member],
     proxy_base_url: &str,
 ) -> Result<HermesProjection, AppError> {
-    let models = crate::mode::stack::hermes_published(members)
-        .into_iter()
+    let published = crate::mode::stack::hermes_published(members);
+    let models = published
+        .iter()
         .map(|model| {
             json!({
                 "id": model.id,
@@ -149,9 +151,18 @@ pub(crate) fn stack_proxy_contract(
             })
         })
         .collect::<Vec<_>>();
+    // 角色映射：成员（DB id）→ {上游模型 id → 发布的 ccs-h-<key>/<model>}
+    let mut roles = crate::live::project::hermes::RoleMapping::new();
+    for member in members {
+        let entry = roles.entry(member.provider.id.clone()).or_default();
+        for model in crate::mode::stack::hermes_models(&member.key, &member.provider) {
+            entry.insert(model.upstream.clone(), model.id.clone());
+        }
+    }
     HermesProjection::proxy_contract_with_models(
         Value::Array(models),
         crate::mode::stack::hermes_route_default(members).map(|model| model.id),
+        roles,
         proxy_base_url,
         PROXY_TOKEN_PLACEHOLDER,
     )
@@ -234,9 +245,11 @@ pub(crate) fn run_enter_homes(
 
     let app_write = AppWrite::begin(db, key)?;
     let recorded = recorded_home_states(&app_write.store, key)?;
+    let recorded_roles = recorded_role_rewrites(&app_write.store, key)?;
     let mut restore = Map::new();
+    let mut role_records = Map::new();
+    let mut patches = Vec::with_capacity(homes.len());
     let mut changes: Vec<FileChange<'_>> = Vec::with_capacity(homes.len());
-    let patch = HermesConfigPatch::new(projection);
     for (name, file) in homes {
         let state = match recorded.get(name) {
             Some(state) => state.clone(),
@@ -246,9 +259,23 @@ pub(crate) fn run_enter_homes(
             }
         };
         restore.insert(name.clone(), state);
+
+        // 角色引用：按这个 home 的原文件算本轮改写，与已有记录合并（保留第一次
+        // 进入时的原始引用——此后文件已是改写后状态，from_* 会被还原语义还原回
+        // 原值，合并天然幂等）。
+        let existing = recorded_roles.get(name).cloned().unwrap_or_default();
+        let fresh = plan_role_rewrites(file.path.as_path(), &projection.roles, &existing)?;
+        let merged = merge_rewrites(existing, fresh);
+        role_records.insert(
+            name.clone(),
+            serde_json::to_value(&merged).unwrap_or(Value::Array(vec![])),
+        );
+        patches.push(HermesConfigPatch::with_recorded(projection, merged));
+    }
+    for ((_, file), patch) in homes.iter().zip(&patches) {
         changes.push(FileChange {
             file: file.clone(),
-            patch: &patch,
+            patch,
         });
     }
     target.written = Some(Written {
@@ -256,10 +283,72 @@ pub(crate) fn run_enter_homes(
         extra: {
             let mut extra = Map::new();
             extra.insert("homes".to_string(), Value::Object(restore));
+            extra.insert("rewrites".to_string(), Value::Object(role_records));
             extra
         },
     });
     app_write.run(op, &changes, target)
+}
+
+/// 读一个 home 的原文件，算出本轮角色改写清单（与补丁内同一套纯函数，输入相同
+/// 输出相同）。文件缺失或解析失败按无改写处理（这样的 home 本来也会被跳过）。
+fn plan_role_rewrites(
+    path: &Path,
+    target: &crate::live::project::hermes::RoleTarget,
+    recorded: &[crate::live::project::hermes::RoleRewrite],
+) -> Result<Vec<crate::live::project::hermes::RoleRewrite>, AppError> {
+    let raw = std::fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(&raw).map_err(|e| AppError::Config(format!("YAML 解析失败: {e}")))?;
+    let custom_names = custom_provider_names(&doc);
+    let outcome =
+        crate::live::project::hermes::apply_role_target(&doc, &custom_names, target, recorded);
+    Ok(outcome.rewrites)
+}
+
+/// 文件里 `custom_providers` 的条目名集合。
+fn custom_provider_names(doc: &serde_yaml::Value) -> std::collections::BTreeSet<String> {
+    doc.get("custom_providers")
+        .and_then(|v| v.as_sequence())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("name").and_then(|v| v.as_str()))
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 合并两轮改写记录：按（role, from_provider, from_model）去重，先到的（第一次
+/// 进入时的原值）保留。
+fn merge_rewrites(
+    existing: Vec<crate::live::project::hermes::RoleRewrite>,
+    fresh: Vec<crate::live::project::hermes::RoleRewrite>,
+) -> Vec<crate::live::project::hermes::RoleRewrite> {
+    let mut merged = existing;
+    for rewrite in fresh {
+        let dup = merged.iter().any(|r| {
+            r.role == rewrite.role
+                && r.from_provider == rewrite.from_provider
+                && r.from_model == rewrite.from_model
+        });
+        if !dup {
+            merged.push(rewrite);
+        }
+    }
+    merged
+}
+
+/// `written.extra["rewrites"]`：home 名 → 该 home 的改写记录。
+fn recorded_role_rewrites(
+    store: &DeviceStore,
+    key: &str,
+) -> Result<BTreeMap<String, Vec<crate::live::project::hermes::RoleRewrite>>, AppError> {
+    let recorded = state::written(store, key)?
+        .and_then(|written| written.extra.get("rewrites").cloned())
+        .unwrap_or_else(|| json!({}));
+    Ok(serde_json::from_value(recorded).unwrap_or_default())
 }
 
 /// 退出代理：删路由条目。默认 home（`name` 为空且 `key` 是统一键）按直连指针恢复，
@@ -297,16 +386,25 @@ pub(crate) fn run_exit_homes(
                             .and_then(Value::as_str)
                             .map(String::from),
                     },
+                    roles: crate::live::project::hermes::RoleTarget::Restore,
                 },
                 None => HermesProjection {
                     entry: None,
                     model: ModelTarget::Untouched,
+                    roles: crate::live::project::hermes::RoleTarget::Restore,
                 },
             }
         })
         .collect();
-    let patches: Vec<HermesConfigPatch<'_>> =
-        projections.iter().map(HermesConfigPatch::new).collect();
+    let recorded_roles = recorded_role_rewrites(&app_write.store, key)?;
+    let patches: Vec<HermesConfigPatch<'_>> = homes
+        .iter()
+        .zip(&projections)
+        .map(|((name, _), projection)| {
+            let recorded = recorded_roles.get(name).cloned().unwrap_or_default();
+            HermesConfigPatch::with_recorded(projection, recorded)
+        })
+        .collect();
     let changes: Vec<FileChange<'_>> = homes
         .iter()
         .zip(&patches)

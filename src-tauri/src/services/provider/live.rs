@@ -1413,6 +1413,66 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
 /// This imports existing providers from ~/.hermes/config.yaml
 /// into the CC Switch database. Each provider found will be added to the
 /// database with is_current set to false.
+/// 从全部 Hermes home（默认 + 各 profile agent）导入供应商：MoA 成员等手写在 agent
+/// 配置里的条目入库后，路由模式的角色接管才能改写它们的引用。按条目名（=DB id）
+/// 去重合并，已存在的按现有导入语义更新（内容变了才写）；跳过 CC Switch 自己的路由
+/// 条目。返回新建的条数。
+pub fn import_hermes_providers_from_all_homes(state: &AppState) -> Result<usize, AppError> {
+    use crate::hermes_config;
+
+    let mut paths = vec![hermes_config::get_hermes_config_path()];
+    paths.extend(
+        hermes_config::list_profile_config_paths()
+            .into_iter()
+            .map(|(_, path)| path),
+    );
+
+    let existing_ids = state.db.get_provider_ids("hermes")?;
+    let mut imported = 0usize;
+    let mut updated = 0usize;
+    // 同名条目跨 home 合并：先到的为准（profile 与默认 home 重复时保默认 home 的）
+    let mut seen: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
+    for path in &paths {
+        for (name, config) in hermes_config::get_providers_at(path)? {
+            if name.trim().is_empty() || name == crate::live::project::hermes::ROUTE_ENTRY_NAME {
+                continue;
+            }
+            seen.entry(name).or_insert(config);
+        }
+    }
+
+    for (name, config) in seen {
+        if existing_ids.contains(&name) {
+            match state.db.get_provider_by_id(&name, "hermes") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("hermes", &provider) {
+                            log::warn!("更新 Hermes 供应商 '{name}' 失败: {e}");
+                        } else {
+                            updated += 1;
+                        }
+                    }
+                }
+                Err(e) => log::warn!("查询 Hermes 供应商 '{name}' 失败: {e}"),
+                Ok(None) => {}
+            }
+            continue;
+        }
+        let provider = Provider::with_id(name.clone(), name.clone(), config, None);
+        if let Err(e) = state.db.save_provider("hermes", &provider) {
+            log::warn!("导入 Hermes 供应商 '{name}' 失败: {e}");
+            continue;
+        }
+        imported += 1;
+    }
+    if imported + updated > 0 {
+        log::info!("从全部 Hermes home 导入完成：新建 {imported}，更新 {updated}");
+    }
+    Ok(imported)
+}
+
 pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::hermes_config;
 

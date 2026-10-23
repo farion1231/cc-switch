@@ -264,6 +264,10 @@ export const providersApi = {
    * 从 Hermes live 配置导入供应商到数据库
    * Hermes 特有功能：由于累加模式，用户可能已在 Hermes 配置中配置供应商
    */
+  async importHermesFromAllHomes(): Promise<number> {
+    return await invoke("import_hermes_providers_from_all_homes");
+  },
+
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },

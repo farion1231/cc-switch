@@ -19,6 +19,12 @@ const HERMES_WEB_OFFLINE_ERROR: &str = "hermes_web_offline";
 /// Hermes uses additive mode — users may already have providers
 /// configured in config.yaml.
 #[tauri::command]
+pub fn import_hermes_providers_from_all_homes(state: State<'_, AppState>) -> Result<usize, String> {
+    crate::services::provider::import_hermes_providers_from_all_homes(state.inner())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn import_hermes_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
     crate::services::provider::import_hermes_providers_from_live(state.inner())
         .map_err(|e| e.to_string())

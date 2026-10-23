@@ -714,7 +714,21 @@ fn read_providers_dict_entries(config: &serde_yaml::Value) -> Vec<(String, serde
 /// keeping CC Switch free to edit it. Models are denormalized from the YAML
 /// dict shape to the UI-friendly ordered array.
 pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
-    let config = read_hermes_config()?;
+    get_providers_at(&get_hermes_config_path())
+}
+
+/// 读任意一份 Hermes config.yaml 的供应商条目（默认 home 之外，profile home 也用）。
+/// 文件不存在按空处理。
+pub fn get_providers_at(
+    path: &Path,
+) -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
+    let raw = if path.exists() {
+        fs::read_to_string(path).map_err(|e| AppError::io(path, e))?
+    } else {
+        String::new()
+    };
+    let config: serde_yaml::Value = serde_yaml::from_str(&raw)
+        .unwrap_or_else(|_| serde_yaml::Value::Mapping(Default::default()));
     let mut map = serde_json::Map::new();
 
     if let Some(seq) = config.get("custom_providers").and_then(|v| v.as_sequence()) {
