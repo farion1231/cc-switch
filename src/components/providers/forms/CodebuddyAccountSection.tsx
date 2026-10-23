@@ -15,6 +15,7 @@ import {
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { CodebuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
 
 export const CODEBUDDY_LIVE_KEY = ["codebuddy-account-live"] as const;
 
@@ -154,6 +155,9 @@ export const CodebuddyAccountSection: React.FC<
       isDefault: defaultAccountId === account.id,
       needsReauth: account.requires_reauth,
       users: [],
+      quota: (
+        <CodebuddyAccountQuota accountId={account.id} login={account.login} />
+      ),
     };
   });
 

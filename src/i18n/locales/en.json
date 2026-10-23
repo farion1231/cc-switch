@@ -4937,7 +4937,15 @@
       "switched": "Switched. A running CodeBuddy moves to this account automatically, and new sessions use it too.",
       "pendingNote": "Opened codebuddy in a terminal. Type /login there; the account is added here once you finish.",
       "reopenTerminal": "Reopen terminal",
-      "removeNote": "Only removes CC Switch's copy. CodeBuddy stays signed in."
+      "removeNote": "Only removes CC Switch's copy. CodeBuddy stays signed in.",
+      "quota": {
+        "credits": "Credits",
+        "enterprise": "Enterprise",
+        "unlimited": "Unlimited",
+        "detail": "{{remaining}} of {{total}} credits left, {{used}} used",
+        "usedDetail": "{{used}} credits used this cycle",
+        "refreshPending": "Token awaiting renewal by CodeBuddy. Switch to this account and use it once, then check again."
+      }
     }
   },
   "kimi": {

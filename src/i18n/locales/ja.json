@@ -4937,7 +4937,15 @@
       "switched": "切り替えました。実行中の CodeBuddy は自動でこのアカウントに切り替わり、新しく起動する CodeBuddy もこれを使います。",
       "pendingNote": "ターミナルで codebuddy を起動しました。そこで /login を入力してログインすると、ここに自動で追加されます。",
       "reopenTerminal": "ターミナルを再度開く",
-      "removeNote": "CC Switch 内のコピーだけを削除します。CodeBuddy からはログアウトしません。"
+      "removeNote": "CC Switch 内のコピーだけを削除します。CodeBuddy からはログアウトしません。",
+      "quota": {
+        "credits": "クレジット",
+        "enterprise": "エンタープライズ",
+        "unlimited": "無制限",
+        "detail": "クレジット残り {{remaining}} / 合計 {{total}}、使用済み {{used}}",
+        "usedDetail": "今期の使用済みクレジット {{used}}",
+        "refreshPending": "トークンは CodeBuddy による更新待ちです。このアカウントに切り替えて一度使ってから再確認してください。"
+      }
     }
   },
   "kimi": {

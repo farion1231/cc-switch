@@ -4938,7 +4938,15 @@
       "switched": "已切換。正在執行的 CodeBuddy 會自動換到這個帳號，新開的也會使用它。",
       "pendingNote": "已在終端機開啟 codebuddy，在裡面輸入 /login 完成登入後這裡會自動收錄。",
       "reopenTerminal": "重新開啟終端機",
-      "removeNote": "只刪除 CC Switch 裡的副本，不會讓 CodeBuddy 登出。"
+      "removeNote": "只刪除 CC Switch 裡的副本，不會讓 CodeBuddy 登出。",
+      "quota": {
+        "credits": "積分",
+        "enterprise": "企業版",
+        "unlimited": "不限量",
+        "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
+        "usedDetail": "本週期已用 {{used}} 積分",
+        "refreshPending": "權杖待 CodeBuddy 續期，切到這個帳號用一次後再查"
+      }
     }
   },
   "kimi": {

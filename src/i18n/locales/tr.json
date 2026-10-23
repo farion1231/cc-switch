@@ -4806,7 +4806,15 @@
       "switched": "Geçiş yapıldı. Çalışan CodeBuddy bu hesaba otomatik geçer, yeni oturumlar da bunu kullanır.",
       "pendingNote": "codebuddy bir terminalde açıldı. Orada /login yazın; işiniz bitince hesap buraya eklenir.",
       "reopenTerminal": "Terminali yeniden aç",
-      "removeNote": "Yalnızca CC Switch'teki kopyayı siler. CodeBuddy oturumu açık kalır."
+      "removeNote": "Yalnızca CC Switch'teki kopyayı siler. CodeBuddy oturumu açık kalır.",
+      "quota": {
+        "credits": "Kredi",
+        "enterprise": "Kurumsal",
+        "unlimited": "Sınırsız",
+        "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
+        "usedDetail": "Bu dönemde {{used}} kredi kullanıldı",
+        "refreshPending": "Belirteç CodeBuddy tarafından yenilenmeyi bekliyor. Bu hesaba geçip bir kez kullanın, sonra tekrar kontrol edin."
+      }
     }
   },
   "kimi": {

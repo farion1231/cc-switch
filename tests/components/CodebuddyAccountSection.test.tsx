@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   live: vi.fn(),
   importCurrent: vi.fn(),
   openTerminal: vi.fn(),
+  quota: vi.fn(),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -33,6 +34,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       codebuddyAccountLive: mocks.live,
       codebuddyAccountImportCurrent: mocks.importCurrent,
       codebuddyAccountOpenLoginTerminal: mocks.openTerminal,
+      codebuddyAccountQuota: mocks.quota,
     },
   };
 });
@@ -83,13 +85,30 @@ const liveState = (state: string, extra = {}) => ({
   ...extra,
 });
 
+const quotaResult = (extra = {}) => ({
+  credentialStatus: "valid",
+  success: true,
+  planName: "体验版",
+  isPaid: false,
+  enterprise: false,
+  unlimited: false,
+  total: 200,
+  remaining: 150,
+  used: 50,
+  error: null,
+  queriedAt: Date.now(),
+  ...extra,
+});
+
 describe("CodebuddyAccountSection", () => {
   beforeEach(() => {
     mocks.useManagedAuth.mockReset();
     mocks.live.mockReset();
     mocks.importCurrent.mockReset();
     mocks.openTerminal.mockReset();
+    mocks.quota.mockReset();
     mocks.live.mockResolvedValue(liveState("collected"));
+    mocks.quota.mockResolvedValue(quotaResult());
   });
 
   it("lists accounts with their site and switches from the menu", async () => {
@@ -177,6 +196,47 @@ describe("CodebuddyAccountSection", () => {
     expect(screen.queryByText(/已在浏览器打开/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "重新打开终端" }));
     expect(mocks.openTerminal).toHaveBeenCalledOnce();
+  });
+
+  it("shows each account's plan and credits, and refreshes past the cache", async () => {
+    const auth = baseAuth();
+    auth.accounts = [
+      account("100", "www.codebuddy.cn", "alice"),
+      account("200", "www.codebuddy.cn", "bob"),
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    mocks.quota.mockImplementation(async (accountId: string) =>
+      accountId.startsWith("200")
+        ? quotaResult({
+            success: false,
+            credentialStatus: "refresh_pending",
+            planName: null,
+          })
+        : quotaResult(),
+    );
+    render(<CodebuddyAccountSection />);
+
+    expect(await screen.findByText("体验版")).toBeInTheDocument();
+    expect(
+      screen.getByRole("meter", { name: "体验版: 150" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/令牌待 CodeBuddy 续期/)).toBeInTheDocument();
+    expect(mocks.quota).toHaveBeenCalledWith(
+      "100@www.codebuddy.cn",
+      "zh",
+      false,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "刷新 alice 的额度" }),
+    );
+    await waitFor(() =>
+      expect(mocks.quota).toHaveBeenCalledWith(
+        "100@www.codebuddy.cn",
+        "zh",
+        true,
+      ),
+    );
   });
 
   it("classifies CodeBuddy domains", () => {

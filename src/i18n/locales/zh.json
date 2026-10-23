@@ -4937,7 +4937,15 @@
       "switched": "已切换。正在运行的 CodeBuddy 会自动换到这个账号，新开的也会用它。",
       "pendingNote": "已在终端打开 codebuddy，在里面输入 /login 完成登录后这里会自动收录。",
       "reopenTerminal": "重新打开终端",
-      "removeNote": "只删除 CC Switch 里的副本，不会让 CodeBuddy 退出登录。"
+      "removeNote": "只删除 CC Switch 里的副本，不会让 CodeBuddy 退出登录。",
+      "quota": {
+        "credits": "积分",
+        "enterprise": "企业版",
+        "unlimited": "不限量",
+        "detail": "积分剩余 {{remaining}} / 共 {{total}}，已用 {{used}}",
+        "usedDetail": "本周期已用 {{used}} 积分",
+        "refreshPending": "令牌待 CodeBuddy 续期，切到这个号用一次后再查"
+      }
     }
   },
   "kimi": {

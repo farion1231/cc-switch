@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CredentialStatus } from "@/types/subscription";
 
 export type ManagedAuthProvider =
   | "github_copilot"
@@ -148,6 +149,37 @@ export async function codebuddyAccountOpenLoginTerminal(): Promise<void> {
   return invoke("codebuddy_account_open_login_terminal");
 }
 
+/** CodeBuddy 账号的套餐与积分（用该账号副本里的令牌只读查询，不切号、不续期）。 */
+export interface CodebuddyQuota {
+  credentialStatus: CredentialStatus;
+  success: boolean;
+  /** 套餐名（后端按语言给的）；企业账号为 null */
+  planName: string | null;
+  isPaid: boolean;
+  enterprise: boolean;
+  /** 企业额度不限量 */
+  unlimited: boolean;
+  /** 本周期积分：总量 / 剩余 / 已用 */
+  total: number;
+  remaining: number;
+  used: number;
+  error: string | null;
+  queriedAt: number | null;
+}
+
+/** 5 分钟内重复查询走后端缓存；`force` 跳过缓存（手动刷新）。 */
+export async function codebuddyAccountQuota(
+  accountId: string,
+  lang: string,
+  force = false,
+): Promise<CodebuddyQuota> {
+  return invoke<CodebuddyQuota>("codebuddy_account_quota", {
+    accountId,
+    lang,
+    force,
+  });
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -161,4 +193,5 @@ export const authApi = {
   codebuddyAccountLive,
   codebuddyAccountImportCurrent,
   codebuddyAccountOpenLoginTerminal,
+  codebuddyAccountQuota,
 };
