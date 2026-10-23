@@ -41,6 +41,7 @@ pub async fn get_latest_version() -> String {
 
     match fetch_latest_version().await {
         Some(v) => {
+            log::debug!("[AgyVersion] Detected latest Antigravity Hub version: {v}");
             if let Ok(mut guard) = CACHED_VERSION.write() {
                 *guard = Some(VersionCache {
                     version: v.clone(),
@@ -56,6 +57,9 @@ pub async fn get_latest_version() -> String {
                     .as_ref()
                     .map(|c| c.version.clone())
                     .unwrap_or_else(|| FALLBACK_VERSION.to_string());
+                log::debug!(
+                    "[AgyVersion] Falling back to Antigravity Hub version: {v} (retry in {FAILURE_RETRY_DELAY:?})"
+                );
                 *guard = Some(VersionCache {
                     version: v.clone(),
                     fetched_at: Instant::now(),
@@ -72,21 +76,42 @@ pub async fn get_latest_version() -> String {
 /// 从官方 Hub 更新清单异步拉取版本字符串
 async fn fetch_latest_version() -> Option<String> {
     let client = crate::proxy::http_client::get();
-    let resp = client
+    let resp = match client
         .get(HUB_MANIFEST_URL)
         .header(reqwest::header::USER_AGENT, "electron-builder")
         .header(reqwest::header::CACHE_CONTROL, "no-cache")
         .timeout(FETCH_TIMEOUT)
         .send()
         .await
-        .ok()?;
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            log::warn!("[AgyVersion] Failed to request Antigravity Hub manifest: {err}");
+            return None;
+        }
+    };
 
     if !resp.status().is_success() {
+        log::warn!(
+            "[AgyVersion] Antigravity Hub manifest returned non-success status: {}",
+            resp.status()
+        );
         return None;
     }
 
-    let text = resp.text().await.ok()?;
-    parse_manifest_version(&text)
+    let text = match resp.text().await {
+        Ok(t) => t,
+        Err(err) => {
+            log::warn!("[AgyVersion] Failed to read Antigravity Hub manifest text: {err}");
+            return None;
+        }
+    };
+
+    let version = parse_manifest_version(&text);
+    if version.is_none() {
+        log::warn!("[AgyVersion] Failed to parse version from Antigravity Hub manifest");
+    }
+    version
 }
 
 /// 从 manifest YAML 文本中解析 version 字段
