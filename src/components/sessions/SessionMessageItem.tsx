@@ -86,7 +86,7 @@ export const SessionMessageItem = memo(function SessionMessageItem({
           </span>
         )}
       </div>
-      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed min-w-0">
+      <div className="selectable whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed min-w-0">
         {searchQuery
           ? highlightText(displayContent, searchQuery)
           : displayContent}
