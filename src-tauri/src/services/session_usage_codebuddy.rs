@@ -95,14 +95,24 @@ pub(crate) fn token_counts(provider_data: &Value) -> Option<TokenCounts> {
     })
 }
 
-/// The model id the request used.
+/// The model id the request used. Custom models are recorded as
+/// `custom-local:<id>` in `requestModelId`; the prefix is dropped so the id matches
+/// the pricing table and the model the user configured.
 pub(crate) fn request_model(provider_data: &Value) -> Option<String> {
     ["requestModelId", "model"]
         .iter()
         .find_map(|key| provider_data.get(*key).and_then(Value::as_str))
-        .map(str::trim)
+        .map(|model| strip_custom_prefix(model.trim()))
         .filter(|model| !model.is_empty())
         .map(str::to_string)
+}
+
+/// `custom-local:deepseek-flash` → `deepseek-flash`; other ids are returned as is.
+pub(crate) fn strip_custom_prefix(model: &str) -> &str {
+    match model.split_once(':') {
+        Some((prefix, id)) if prefix.starts_with("custom-") && !id.trim().is_empty() => id.trim(),
+        _ => model,
+    }
 }
 
 pub fn sync_codebuddy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
@@ -464,5 +474,14 @@ mod tests {
             }
         );
         assert!(token_counts(&json!({"model": "x"})).is_none());
+    }
+
+    #[test]
+    fn codebuddy_usage_drops_the_custom_model_prefix() {
+        let data =
+            json!({"model": "deepseek-flash", "requestModelId": "custom-local:deepseek-flash"});
+        assert_eq!(request_model(&data).as_deref(), Some("deepseek-flash"));
+        assert_eq!(strip_custom_prefix("hy4-preview"), "hy4-preview");
+        assert_eq!(strip_custom_prefix("custom-local:"), "custom-local:");
     }
 }
