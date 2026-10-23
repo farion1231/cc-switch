@@ -258,6 +258,49 @@ describe("resolveModelMetadata", () => {
     ).toBe(1000000);
   });
 
+  it("matches the old OpenCode address to the entry models.dev moved to /inference", () => {
+    const moved: ModelsDevResponse = {
+      "opencode-go": {
+        id: "opencode-go",
+        api: "https://opencode.ai/inference/go/openai/v1",
+        models: {
+          "deepseek-v4.1-flash": {
+            id: "deepseek-v4.1-flash",
+            limit: { context: 1000000 },
+            reasoning: true,
+            modalities: { input: ["text", "image"], output: ["text"] },
+          },
+        },
+      },
+      opencode: {
+        id: "opencode",
+        api: "https://opencode.ai/inference/openai/v1",
+        models: {
+          "deepseek-v4.1-flash": {
+            id: "deepseek-v4.1-flash",
+            limit: { context: 200000 },
+          },
+        },
+      },
+    };
+    expect(
+      resolveModelMetadata("deepseek-v4.1-flash", {
+        baseUrl: "https://opencode.ai/zen/go/v1",
+        modelsDev: moved,
+      }),
+    ).toMatchObject({
+      contextWindow: 1000000,
+      reasoning: true,
+      inputModalities: ["text", "image"],
+    });
+    expect(
+      resolveModelMetadata("deepseek-v4.1-flash", {
+        baseUrl: "https://opencode.ai/zen/v1",
+        modelsDev: moved,
+      })?.contextWindow,
+    ).toBe(200000);
+  });
+
   it("does not treat a parent path as the plans nested under it", () => {
     expect(
       resolveModelMetadata("glm-5.3", {

@@ -151,10 +151,20 @@ impl CodingPlanOutcome {
 // ── Kimi For Coding ─────────────────────────────────────────
 
 async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
+    query_kimi_at("https://api.kimi.com/coding/v1", api_key).await
+}
+
+/// `base_url` is the Kimi Code API root (`https://api.kimi.ai/coding/v1` for
+/// global accounts); `token` is an API key or an official OAuth access token.
+pub(crate) async fn query_kimi_at(
+    base_url: &str,
+    token: &str,
+) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
+    let api_key = token;
 
     let resp = client
-        .get("https://api.kimi.com/coding/v1/usages")
+        .get(format!("{}/usages", base_url.trim_end_matches('/')))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))

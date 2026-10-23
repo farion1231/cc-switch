@@ -210,7 +210,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     auth: grokAuth(),
     config: grokPresetConfig("DIT.ai", "https://api.dit.ai/v1", "grok-4.7"),
     category: "aggregator",
