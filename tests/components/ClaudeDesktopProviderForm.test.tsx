@@ -138,6 +138,33 @@ describe("ClaudeDesktopProviderForm", () => {
     );
   });
 
+  it("OpenCode Go 新旧两个请求地址可以一键切换", () => {
+    const { container } = renderForm({
+      name: "OpenCode Go",
+      category: "third_party",
+      settingsConfig: {
+        env: { ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go" },
+      },
+    });
+
+    const legacy = screen.getByRole("button", {
+      name: "opencode.ai/zen/go",
+    });
+    const current = screen.getByRole("button", {
+      name: "opencode.ai/inference/go/anthropic",
+    });
+    expect(legacy).toHaveAttribute("aria-pressed", "true");
+    expect(current).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(current);
+
+    expect(current).toHaveAttribute("aria-pressed", "true");
+    expect(legacy).toHaveAttribute("aria-pressed", "false");
+    expect(container.querySelector<HTMLInputElement>("#baseUrl")?.value).toBe(
+      "https://opencode.ai/inference/go/anthropic",
+    );
+  });
+
   it("未登录的 Copilot 获取模型时提示先登录", async () => {
     renderForm({
       name: "Copilot Provider",

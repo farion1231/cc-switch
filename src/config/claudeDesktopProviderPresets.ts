@@ -52,6 +52,11 @@ export interface ClaudeDesktopProviderPreset extends PresetFamilyFields {
   partnerPromotionKey?: string;
 
   baseUrl: string;
+  /**
+   * 可一键切换的请求地址候选（含默认值）。表单在地址输入框下方渲染成按钮，
+   * 自定义地址仍直接手填。为空时不显示切换行。
+   */
+  baseUrlOptions?: string[];
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
   mode: "direct" | "proxy";
@@ -1303,7 +1308,14 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     category: "third_party",
-    baseUrl: "https://opencode.ai/zen/go",
+    // 官方文档（https://opencode.ai/v2/docs/console/go）只列
+    // /inference/go/anthropic 这一 Anthropic 端基址；/zen/go 是未文档化的
+    // 旧入口，实测仍可用（/v1/messages 正常），留作候选。
+    baseUrl: "https://opencode.ai/inference/go/anthropic",
+    baseUrlOptions: [
+      "https://opencode.ai/inference/go/anthropic",
+      "https://opencode.ai/zen/go",
+    ],
     mode: "proxy",
     // Go 网关 /messages 收除 grok-4.5 外全部模型（Chat 组靠服务端转换），
     // anthropic 透传即可；上游只认 x-api-key，apiKey 直填默认即该头。
@@ -1317,7 +1329,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "deepseek-v4-flash",
       true,
     ),
-    endpointCandidates: ["https://opencode.ai/zen/go"],
+    endpointCandidates: ["https://opencode.ai/inference/go/anthropic"],
     icon: "opencode",
     iconColor: "#211E1E",
   },
