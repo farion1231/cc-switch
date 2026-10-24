@@ -541,7 +541,10 @@ describe("CodebuddyProviderForm", () => {
       await waitFor(() =>
         expect(carol).toHaveAttribute("aria-checked", "true"),
       );
-      expect(screen.getByLabelText("provider.name")).toHaveValue("carol");
+      // 名字在选中之后的下一次渲染才跟着换，CI 机器慢时要等
+      await waitFor(() =>
+        expect(screen.getByLabelText("provider.name")).toHaveValue("carol"),
+      );
       expect(
         screen.queryByRole("button", { name: "恢复原来的登录" }),
       ).not.toBeInTheDocument();
