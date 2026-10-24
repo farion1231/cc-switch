@@ -4456,7 +4456,6 @@
     "used": "{{value}}% used",
     "usedUp": "Used up",
     "balance": "Balance {{value}}",
-    "balanceUsedUp": "Balance used up",
     "planExpired": "Plan expired",
     "failed": "Quota unavailable",
     "reason": {

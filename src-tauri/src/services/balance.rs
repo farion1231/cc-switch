@@ -144,7 +144,7 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
     }
 
     // 同一账号会列出 CNY / USD 两个币种钱包，扣费走有钱的那个。只要还有币种有余额，
-    // 就不再列出空钱包：否则空的那一行会显示「余额已用完」，两行还会让卡片自动展开（#8170）。
+    // 就不再列出空钱包：否则空的那一行会显示一条红字余额，两行还会让卡片自动展开（#8170）。
     if data.iter().any(|d| d.remaining.is_some_and(|v| v > 0.0)) {
         data.retain(|d| d.remaining.is_none_or(|v| v > 0.0));
     }
@@ -428,7 +428,7 @@ fn parse_novita_balance(body: &serde_json::Value) -> UsageResult {
             total: None,
             used: None,
             unit: Some("USD".to_string()),
-            // 余额为 0 或负数不代表 key 失效：交给 UI 显示「余额已用完」，
+            // 余额为 0 或负数不代表 key 失效：交给 UI 按余额红字显示，
             // 而不是标成套餐已过期（同 OpenRouter，#8175）
             is_valid: Some(true),
             invalid_message: None,
@@ -525,7 +525,7 @@ fn parse_zhipu_balance(body: &serde_json::Value, is_cn: bool) -> UsageResult {
             total: None,
             used: None,
             unit: Some(if is_cn { "CNY" } else { "USD" }.to_string()),
-            // 余额为 0 不代表 Key 失效，交给 UI 显示「余额已用完」（同 OpenRouter，#8175）
+            // 余额为 0 不代表 Key 失效，交给 UI 按余额红字显示（同 OpenRouter，#8175）
             is_valid: Some(true),
             invalid_message: None,
             extra: None,

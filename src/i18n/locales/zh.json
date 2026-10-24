@@ -4456,7 +4456,6 @@
     "used": "已用 {{value}}%",
     "usedUp": "已用完",
     "balance": "余额 {{value}}",
-    "balanceUsedUp": "余额已用完",
     "planExpired": "套餐已过期",
     "failed": "额度没查到",
     "reason": {

@@ -4447,7 +4447,6 @@
     "used": "%{{value}} kullanıldı",
     "usedUp": "Tükendi",
     "balance": "Bakiye {{value}}",
-    "balanceUsedUp": "Bakiye tükendi",
     "planExpired": "Planın süresi doldu",
     "failed": "Kota bilgisi alınamıyor",
     "reason": {
