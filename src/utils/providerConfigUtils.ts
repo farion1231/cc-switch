@@ -867,6 +867,140 @@ export const setCodexWireApi = (
   return finalizeTomlText(lines);
 };
 
+/** Read the explicit preference, not the effective mode after Codex overrides. */
+export const isCodexLiveWebSearchEnabled = (configText: string): boolean => {
+  try {
+    return parseToml(normalizeTomlText(configText)).web_search === "live";
+  } catch {
+    return false;
+  }
+};
+
+export const setCodexLiveWebSearch = (
+  configText: string,
+  enabled: boolean,
+): string => {
+  try {
+    const text = configText;
+    const parsed = parseToml(text);
+    const mode = enabled ? "live" : "cached";
+    if (parsed.web_search === mode) return configText;
+    const lines = text ? text.split("\n") : [];
+    const pattern =
+      /^(\s*(?:web_search|"web_search"|'web_search')\s*=\s*)(?:"(?:disabled|cached|indexed|live)"|'(?:disabled|cached|indexed|live)')(\s*(?:#.*)?)$/;
+    const index =
+      parsed.web_search === undefined
+        ? -1
+        : findTomlLineInRange(lines, pattern, 0, getTopLevelEndIndex(lines));
+    if (index !== -1) {
+      lines[index] = lines[index].replace(pattern, `$1"${mode}"$2`);
+    } else {
+      // Prepend so commented table headers and arrays of tables cannot put
+      // this root setting inside a nested table.
+      lines.unshift(`web_search = "${mode}"`);
+    }
+    parsed.web_search = mode;
+    const candidate = lines.join("\n");
+    try {
+      if (
+        JSON.stringify(comparableTomlValue(parseToml(candidate))) ===
+        JSON.stringify(comparableTomlValue(parsed))
+      ) {
+        return candidate;
+      }
+    } catch {
+      // A toggle must not reserialize the whole live config and lose comments
+      // or change unrelated value types (e.g. 30.0 to 30).
+    }
+    return configText;
+  } catch {
+    return configText;
+  }
+};
+
+/** The provider capability is independent of the top-level web_search mode. */
+export const isCodexStandaloneWebSearchEnabled = (
+  configText: string,
+): boolean => {
+  try {
+    const parsed = parseToml(normalizeTomlText(configText));
+    const id = parsed.model_provider;
+    if (typeof id !== "string") return false;
+    const providers: unknown = parsed.model_providers;
+    if (!isPlainObject(providers)) return false;
+    return providers[id]?.supports_standalone_web_search === true;
+  } catch {
+    return false;
+  }
+};
+
+export const setCodexStandaloneWebSearch = (
+  configText: string,
+  enabled: boolean,
+): string => {
+  const text = configText;
+  try {
+    const parsed = parseToml(text);
+    const id = parsed.model_provider;
+    if (typeof id !== "string" || !isCustomCodexModelProviderId(id)) {
+      return configText;
+    }
+    const providers: unknown = parsed.model_providers;
+    if (!isPlainObject(providers) || !isPlainObject(providers[id])) {
+      return configText;
+    }
+    const key = "supports_standalone_web_search";
+    const finish = (editedLines: string[]): string => {
+      providers[id][key] = enabled;
+      const candidate = editedLines.join("\n");
+      try {
+        if (
+          JSON.stringify(comparableTomlValue(parseToml(candidate))) ===
+          JSON.stringify(comparableTomlValue(parsed))
+        ) {
+          return candidate;
+        }
+      } catch {
+        // Unusual table syntax may not be recognized by the line editor.
+      }
+      return configText;
+    };
+    const lines = text.split("\n");
+    const section = getTomlSectionRange(
+      lines,
+      tomlTableName("model_providers", id),
+    );
+    const pattern =
+      /^(\s*(?:supports_standalone_web_search|"supports_standalone_web_search"|'supports_standalone_web_search')\s*=\s*)(true|false)(\s*(?:#.*)?)$/;
+    if (section) {
+      const index = findTomlLineInRange(
+        lines,
+        pattern,
+        section.bodyStartIndex,
+        section.bodyEndIndex,
+      );
+      if (index !== -1) {
+        lines[index] = lines[index].replace(pattern, `$1${enabled}$3`);
+        return finish(lines);
+      }
+      if (!(key in providers[id])) {
+        lines.splice(
+          getTomlSectionInsertIndex(lines, section),
+          0,
+          `${key} = ${enabled}`,
+        );
+        return finish(lines);
+      }
+    }
+    // Leave unsupported layouts untouched rather than reserialize unrelated
+    // live settings. The user can still edit the target value in the TOML editor.
+    return configText;
+  } catch {
+    // Leave incomplete/invalid TOML untouched while the user is typing.
+    return configText;
+  }
+};
+
 export const isCodexRemoteCompactionEnabled = (
   configText: string | undefined | null,
 ): boolean => {

@@ -11,9 +11,14 @@ import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 import {
   extractCodexTopLevelInt,
+  hasExplicitNonOpenAiCodexModelProvider,
+  isCodexLiveWebSearchEnabled,
   isCodexRemoteCompactionEnabled,
+  isCodexStandaloneWebSearchEnabled,
   removeCodexTopLevelField,
+  setCodexLiveWebSearch,
   setCodexRemoteCompaction,
+  setCodexStandaloneWebSearch,
   setCodexTopLevelInt,
 } from "@/utils/providerConfigUtils";
 import { fieldClass } from "@/components/ui/input";
@@ -101,6 +106,7 @@ interface CodexConfigSectionProps {
   onChange: (value: string) => void;
   providerName?: string;
   showRemoteCompaction?: boolean;
+  showStandaloneWebSearch?: boolean;
   configError?: string;
   isProxyTakeover?: boolean;
   /** 行里保存着、但不随切换生效的全局设置（值是可以照抄的 TOML）。 */
@@ -115,6 +121,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   onChange,
   providerName,
   showRemoteCompaction = true,
+  showStandaloneWebSearch = true,
   configError,
   isProxyTakeover = false,
   inactiveFields = [],
@@ -252,6 +259,51 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         </label>
 
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
+          <label
+            className="inline-flex cursor-pointer items-center gap-2 text-sm text-fg-2"
+            title={t("codexConfig.liveWebSearchHint")}
+          >
+            <input
+              type="checkbox"
+              checked={isCodexLiveWebSearchEnabled(localValue)}
+              disabled={Boolean(configError)}
+              onChange={(e) =>
+                handleLocalChange(
+                  setCodexLiveWebSearch(
+                    localValueRef.current,
+                    e.target.checked,
+                  ),
+                )
+              }
+              className="ui-checkbox"
+            />
+            {t("codexConfig.enableLiveWebSearch")}
+          </label>
+          {showStandaloneWebSearch && (
+            <label
+              className="inline-flex cursor-pointer items-center gap-2 text-sm text-fg-2"
+              title={t("codexConfig.standaloneWebSearchHint")}
+            >
+              <input
+                type="checkbox"
+                checked={isCodexStandaloneWebSearchEnabled(localValue)}
+                disabled={
+                  Boolean(configError) ||
+                  !hasExplicitNonOpenAiCodexModelProvider(localValue)
+                }
+                onChange={(e) =>
+                  handleLocalChange(
+                    setCodexStandaloneWebSearch(
+                      localValueRef.current,
+                      e.target.checked,
+                    ),
+                  )
+                }
+                className="ui-checkbox"
+              />
+              {t("codexConfig.enableStandaloneWebSearch")}
+            </label>
+          )}
           {showRemoteCompaction && (
             <label
               className="inline-flex cursor-pointer items-center gap-2 text-sm text-fg-2"
