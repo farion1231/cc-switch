@@ -133,9 +133,6 @@ describe("KimiProviderForm", () => {
       expect(
         screen.queryByRole("switch", { name: "kimi.capabilities.video_in" }),
       ).not.toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
-        target: { value: "https://updated.example.com/v1" },
-      });
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
       await waitFor(() => expect(submit).toHaveBeenCalledOnce());
       const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
@@ -143,10 +140,7 @@ describe("KimiProviderForm", () => {
         capabilities: native.models["kimi-code/k3"].capabilities,
         overrides: native.models["kimi-code/k3"].overrides,
       });
-      expect(saved.provider).toEqual({
-        ...config.provider,
-        base_url: "https://updated.example.com/v1",
-      });
+      expect(saved.provider).toEqual(config.provider);
     },
   );
 
@@ -264,24 +258,75 @@ describe("KimiProviderForm", () => {
     },
   );
 
-  it("edits native endpoints while preserving OAuth and model overrides", async () => {
+  it("edits only the models of an official account, keeping its login", async () => {
     const submit = setup();
-    fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
-      target: { value: "https://example.com/v1" },
-    });
+    expect(
+      screen.getByText("kimi.oauth.connectionManaged"),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("opencode.baseUrl")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
-    expect(saved.provider).toEqual({
-      ...config.provider,
-      base_url: "https://example.com/v1",
-    });
+    expect(saved.provider).toEqual(config.provider);
     expect(saved.models).toEqual(config.models);
     expect(submit.mock.calls[0][0].providerKey).toBe("managed:kimi-code");
   });
 
+  it("adds models from the official account's own catalog", async () => {
+    const user = userEvent.setup();
+    let requested: unknown;
+    server.use(
+      http.post("http://tauri.local/kimi_oauth_models", async ({ request }) => {
+        requested = await request.json();
+        return HttpResponse.json({
+          "kimi-code/k3": {
+            provider: "managed:kimi-code",
+            model: "k3",
+            max_context_size: 1048576,
+          },
+          "kimi-code/k3.1-pro": {
+            provider: "managed:kimi-code",
+            model: "k3.1-pro",
+            display_name: "K3.1 Pro",
+            max_context_size: 1048576,
+            capabilities: ["tool_use", "thinking"],
+            support_efforts: ["high", "max"],
+            default_effort: "max",
+          },
+        });
+      }),
+    );
+    const submit = setup();
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(await screen.findByRole("checkbox", { name: "k3.1-pro" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.modelPicker.apply" }),
+    );
+    expect(requested).toEqual({ accountId: "managed:kimi-code" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.models["kimi-code/k3.1-pro"]).toEqual({
+      provider: "managed:kimi-code",
+      model: "k3.1-pro",
+      display_name: "K3.1 Pro",
+      max_context_size: 1048576,
+      capabilities: ["tool_use", "thinking"],
+      support_efforts: ["high", "max"],
+      default_effort: "max",
+    });
+    expect(saved.models["kimi-code/k3"]).toEqual(config.models["kimi-code/k3"]);
+  });
+
   it("shows request headers inline like Pi", () => {
-    setup();
+    const { oauth: _oauth, ...apiKeyProvider } = config.provider;
+    setup(vi.fn(), undefined, {
+      ...config,
+      provider: { ...apiKeyProvider, type: "openai", api_key: "sk-test" },
+    });
     expect(screen.getByDisplayValue("X-Custom")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", {

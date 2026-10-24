@@ -402,30 +402,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "openmodel",
   },
   {
-    name: "EveryAPI",
-    providerKey: "cc-switch-everyapi",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
-    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
-    settingsConfig: {
-      name: "EveryAPI",
-      baseUrl: "https://api.everyapi.ai/v1",
-      api: "openai-responses",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-5.6-sol", { id: "gpt-5.6-sol" }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
-  },
-  {
     name: "GrooRoute Pro",
     providerKey: "cc-switch-grooroute-pro",
     websiteUrl: "https://grooroute.pro",

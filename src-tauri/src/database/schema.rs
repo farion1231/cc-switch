@@ -75,7 +75,8 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -617,9 +618,21 @@ impl Database {
                         Self::set_user_version(conn, 22)?;
                     }
                     22 => {
-                        log::info!("迁移数据库从 v22 到 v23（跨设备用量同步缓存表）");
-                        Self::migrate_v22_to_v23(conn)?;
+                        // Oh My Pi：只有 MCP 存开关；Skills 的启用状态按原生目录现算（同 Pi）。
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
                         Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        log::info!("迁移数据库从 v23 到 v24（跨设备用量同步缓存表）");
+                        Self::migrate_v23_to_v24(conn)?;
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1633,7 +1646,7 @@ impl Database {
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
     }
 
-    /// Cross-device usage sync tables (v23).
+    /// Cross-device usage sync tables (v24).
     ///
     /// - `usage_sync_identity`: this installation's device identity (single row).
     ///   Lives in the database rather than settings.json so that a lost or freshly
@@ -1645,7 +1658,7 @@ impl Database {
     ///   other devices' usage, shaped like `proxy_request_logs` /
     ///   `usage_daily_rollups` so the same SQL helpers apply.
     ///
-    /// Idempotent: used both for fresh databases and for the v22 -> v23 migration.
+    /// Idempotent: used both for fresh databases and for the v23 -> v24 migration.
     pub(crate) fn create_usage_sync_tables(conn: &Connection) -> Result<(), AppError> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS usage_sync_identity (
@@ -2031,17 +2044,25 @@ impl Database {
         Ok(())
     }
 
-    /// v22 -> v23: cross-device usage sync tables.
+    /// v23 -> v24: cross-device usage sync tables.
     ///
-    /// Pre-release builds of the usage sync change used v21 for these tables,
-    /// while upstream v21 / v22 add the AGY and Kimi flags. Such a database
-    /// reaches this step through upstream's v21 -> v22 (Kimi) and never ran the
-    /// AGY step, so the flags are checked against the actual schema here, not
-    /// derived from `user_version`. Every statement is idempotent.
-    fn migrate_v22_to_v23(conn: &Connection) -> Result<(), AppError> {
-        for table in ["mcp_servers", "skills"] {
+    /// Pre-release builds of the usage sync change numbered this step
+    /// differently (v21, later v23) while upstream used those numbers for the
+    /// per-app flags (v21 AGY, v22 Kimi, v23 Oh My Pi). Such a database
+    /// continues through the upstream steps above its own number and may
+    /// never have run the earlier ones, so every flag column is checked
+    /// against the actual schema here instead of being derived from
+    /// `user_version`. Every statement is idempotent.
+    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+        for (table, columns) in [
+            (
+                "mcp_servers",
+                &["enabled_agy", "enabled_kimi", "enabled_omp"][..],
+            ),
+            ("skills", &["enabled_agy", "enabled_kimi"][..]),
+        ] {
             if Self::table_exists(conn, table)? {
-                for column in ["enabled_agy", "enabled_kimi"] {
+                for column in columns {
                     Self::add_column_if_missing(conn, table, column, "BOOLEAN NOT NULL DEFAULT 0")?;
                 }
             }
@@ -2932,6 +2953,34 @@ impl Database {
             ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
             // Kimi For Coding 套餐里 K3 的裸名（无 kimi- 前缀），同标准 list 价
             ("k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
+            // 2026-10-24 官方价页：K3.1 Pro 缓存写入取默认 5 分钟档（1 小时档为 2 倍）。
+            // HighSpeed 只有输入/输出/缓存写翻倍，缓存读仍是 $0.20，别按 K2.7 的 2 倍规律改
+            (
+                "kimi-k3.1-pro",
+                "Kimi K3.1 Pro",
+                "2.00",
+                "10.00",
+                "0.20",
+                "2.00",
+            ),
+            (
+                "kimi-k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
+            // Kimi Code 套餐里的裸名（无 kimi- 前缀），同标准 list 价
+            ("k3.1-pro", "Kimi K3.1 Pro", "2.00", "10.00", "0.20", "2.00"),
+            (
+                "k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
             // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
             ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),

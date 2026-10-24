@@ -1210,7 +1210,7 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         Database::get_user_version(&conn)?,
         crate::database::SCHEMA_VERSION
     );
-    assert_eq!(crate::database::SCHEMA_VERSION, 23);
+    assert_eq!(crate::database::SCHEMA_VERSION, 24);
     for table in [
         "usage_sync_identity",
         "usage_sync_devices",
@@ -4120,7 +4120,7 @@ async fn identities_keep_being_recorded_only_where_the_identity_already_publishe
     assert_eq!(identities, 0);
 }
 
-// ─── Schema v23: upstream v21 (AGY) / v22 (Kimi) + usage sync ─────────
+// ─── Schema v24: upstream v21 (AGY) / v22 (Kimi) / v23 (OMP) + usage sync ─
 
 const USAGE_SYNC_TABLES: [&str; 15] = [
     "usage_sync_identity",
@@ -4148,6 +4148,7 @@ struct SchemaFixture {
     usage_sync: bool,
     agy: bool,
     kimi: bool,
+    omp: bool,
     /// Version triggers with the pre-R4 body.
     old_triggers: bool,
 }
@@ -4286,9 +4287,13 @@ fn shape_fixture(conn: &rusqlite::Connection, fixture: SchemaFixture) {
             conn.execute_batch(&format!("DROP TABLE {table};")).unwrap();
         }
     }
-    for (column, keep) in [("enabled_agy", fixture.agy), ("enabled_kimi", fixture.kimi)] {
+    for (column, keep, tables) in [
+        ("enabled_agy", fixture.agy, &["mcp_servers", "skills"][..]),
+        ("enabled_kimi", fixture.kimi, &["mcp_servers", "skills"][..]),
+        ("enabled_omp", fixture.omp, &["mcp_servers"][..]),
+    ] {
         if !keep {
-            for table in ["mcp_servers", "skills"] {
+            for table in tables {
                 conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN {column};"))
                     .unwrap();
             }
@@ -4314,9 +4319,13 @@ fn schema_text(conn: &rusqlite::Connection) -> String {
     rows.join("\n")
 }
 
-fn assert_v23(conn: &rusqlite::Connection, fixture: Option<SchemaFixture>) {
+fn assert_latest(conn: &rusqlite::Connection, fixture: Option<SchemaFixture>) {
     let label = format!("{fixture:?}");
-    assert_eq!(Database::get_user_version(conn).unwrap(), 23, "{label}");
+    assert_eq!(Database::get_user_version(conn).unwrap(), 24, "{label}");
+    assert!(
+        column_exists(conn, "mcp_servers", "enabled_omp"),
+        "{label}: mcp_servers.enabled_omp"
+    );
     for table in ["mcp_servers", "skills"] {
         for column in ["enabled_agy", "enabled_kimi", "enabled_claude"] {
             assert!(
@@ -4376,6 +4385,16 @@ fn assert_v23(conn: &rusqlite::Connection, fixture: Option<SchemaFixture>) {
             )
             .unwrap();
         assert_eq!(flags, (1, 0, 0), "{label}: {table} flags");
+        if table == "mcp_servers" {
+            let omp: i64 = conn
+                .query_row(
+                    "SELECT enabled_omp FROM mcp_servers WHERE id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(omp, 0, "{label}: omp flag");
+        }
     }
     if fixture.usage_sync {
         assert_eq!(
@@ -4413,12 +4432,12 @@ fn assert_v23(conn: &rusqlite::Connection, fixture: Option<SchemaFixture>) {
 }
 
 #[test]
-fn schema_v23_migration_matrix() {
+fn schema_v24_migration_matrix() {
     // A brand-new database, through the same start-up as `Database::init`.
     {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         start_up(&conn);
-        assert_v23(&conn, None);
+        assert_latest(&conn, None);
     }
     let cases = [
         // Official releases.
@@ -4427,6 +4446,7 @@ fn schema_v23_migration_matrix() {
             usage_sync: false,
             agy: false,
             kimi: false,
+            omp: false,
             old_triggers: false,
         },
         SchemaFixture {
@@ -4434,6 +4454,7 @@ fn schema_v23_migration_matrix() {
             usage_sync: false,
             agy: true,
             kimi: false,
+            omp: false,
             old_triggers: false,
         },
         SchemaFixture {
@@ -4441,14 +4462,24 @@ fn schema_v23_migration_matrix() {
             usage_sync: false,
             agy: true,
             kimi: true,
+            omp: false,
             old_triggers: false,
         },
-        // Pre-release builds of this change (their v21 = usage sync, no AGY / Kimi).
+        SchemaFixture {
+            user_version: 23,
+            usage_sync: false,
+            agy: true,
+            kimi: true,
+            omp: true,
+            old_triggers: false,
+        },
+        // Pre-release builds of this change (their v21 = usage sync, no AGY / Kimi / OMP).
         SchemaFixture {
             user_version: 21,
             usage_sync: true,
             agy: false,
             kimi: false,
+            omp: false,
             old_triggers: true,
         },
         SchemaFixture {
@@ -4456,6 +4487,16 @@ fn schema_v23_migration_matrix() {
             usage_sync: true,
             agy: false,
             kimi: false,
+            omp: false,
+            old_triggers: false,
+        },
+        // The build at 232a80a0 used v23 for usage sync (after AGY / Kimi, no OMP).
+        SchemaFixture {
+            user_version: 23,
+            usage_sync: true,
+            agy: true,
+            kimi: true,
+            omp: false,
             old_triggers: false,
         },
     ];
@@ -4464,7 +4505,7 @@ fn schema_v23_migration_matrix() {
         let conn = db.conn.lock().unwrap();
         shape_fixture(&conn, fixture);
         start_up(&conn);
-        assert_v23(&conn, Some(fixture));
+        assert_latest(&conn, Some(fixture));
         // Re-running start-up changes nothing (schema and data).
         let schema = schema_text(&conn);
         let cache = count(&conn, "SELECT COUNT(*) FROM usage_sync_export_cache");
@@ -4485,21 +4526,22 @@ fn schema_v23_migration_matrix() {
             cache + 1,
             "{fixture:?}: re-run cleared the export cache"
         );
-        assert_v23(&conn, None);
+        assert_latest(&conn, None);
     }
 }
 
 #[test]
 #[serial]
-fn sql_backups_and_snapshots_cross_the_v23_boundary() {
+fn sql_backups_and_snapshots_cross_the_v24_boundary() {
     // A SQL backup of a pre-release v21 database (usage sync, no AGY/Kimi)
-    // restores into this build as v23 with its usage sync state.
+    // restores into this build as v24 with its usage sync state.
     let old = Database::memory().unwrap();
     let fixture = SchemaFixture {
         user_version: 21,
         usage_sync: true,
         agy: false,
         kimi: false,
+        omp: false,
         old_triggers: true,
     };
     {
@@ -4511,16 +4553,16 @@ fn sql_backups_and_snapshots_cross_the_v23_boundary() {
     restored.import_sql_string(&dump).unwrap();
     {
         let conn = restored.conn.lock().unwrap();
-        assert_v23(&conn, Some(fixture));
+        assert_latest(&conn, Some(fixture));
     }
 
-    // Round trip of a v23 backup keeps everything.
+    // Round trip of a v24 backup keeps everything.
     let dump = restored.export_sql_string().unwrap();
     let again = Database::memory().unwrap();
     again.import_sql_string(&dump).unwrap();
     {
         let conn = again.conn.lock().unwrap();
-        assert_v23(&conn, None);
+        assert_latest(&conn, None);
         assert_eq!(
             count(
                 &conn,
@@ -4531,7 +4573,7 @@ fn sql_backups_and_snapshots_cross_the_v23_boundary() {
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM usage_sync_identity"), 1);
     }
 
-    // A Cloud Sync snapshot from an official v22 client applies to a v23
+    // A Cloud Sync snapshot from an official v23 client applies to a v24
     // database and keeps its local usage sync state.
     let upstream = Database::memory().unwrap();
     {
@@ -4539,10 +4581,11 @@ fn sql_backups_and_snapshots_cross_the_v23_boundary() {
         shape_fixture(
             &conn,
             SchemaFixture {
-                user_version: 22,
+                user_version: 23,
                 usage_sync: false,
                 agy: true,
                 kimi: true,
+                omp: true,
                 old_triggers: false,
             },
         );
@@ -4550,7 +4593,7 @@ fn sql_backups_and_snapshots_cross_the_v23_boundary() {
     let snapshot = upstream.export_sql_string_for_sync().unwrap();
     again.import_sql_string_for_sync(&snapshot).unwrap();
     let conn = again.conn.lock().unwrap();
-    assert_v23(&conn, None);
+    assert_latest(&conn, None);
     assert_eq!(
         count(&conn, "SELECT COUNT(*) FROM usage_sync_identity"),
         1,
