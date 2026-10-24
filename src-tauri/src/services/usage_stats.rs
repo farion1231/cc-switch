@@ -137,7 +137,7 @@ pub struct ProviderStats {
     pub est_speed_output_tokens: u64,
     /// 估算速度的分母：同一批请求的 latency_ms 之和，单位毫秒。
     pub est_speed_duration_ms: u64,
-    /// 首字时间中位数（毫秒）：经路由服务、成功的流式明细请求；没有这样的请求时为 None。
+    /// 首字时间中位数（毫秒）：路由或 Antigravity 原生计时的成功明细请求。
     pub first_token_median_ms: Option<u64>,
     /// 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的明细请求。
     /// 和上面分开：口径不同，界面上只在没有精确值时显示，带 ≈。
@@ -151,12 +151,12 @@ pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
 /// 或短回复整段落在同一个网络包里，算出来的是传输突发而不是生成速度。
 pub const SPEED_MIN_GENERATION_MS: i64 = 100;
 
-/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。会话日志导入的行
-/// 也可能有首字（按时间戳推出来的），所以先按来源分开，不能只看有没有首字。
+/// 路由与 Antigravity 原生计时使用生成耗时；其他会话的时间戳估算单独统计。
+/// 与前端 `isSpeedEligible` 同口径，不能仅凭首字字段判断计时来源。
 fn speed_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
-        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+        "{data_source} IN ('proxy', 'agy_session') AND {alias}.first_token_ms IS NOT NULL \
          AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
     )
@@ -176,17 +176,17 @@ pub const SPEED_ESTIMATE_MIN_DURATION_MS: i64 = 1000;
 fn speed_estimate_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
-        "{data_source} <> 'proxy' \
+        "{data_source} NOT IN ('proxy', 'agy_session') \
          AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
     )
 }
 
-/// 明细行能不能计首字时间的 SQL 条件：经路由服务、成功、有首字计时（流式请求）。
+/// 路由或 Antigravity 原生记录中，成功且有首字计时的明细请求。
 fn first_token_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
-        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+        "{data_source} IN ('proxy', 'agy_session') AND {alias}.first_token_ms IS NOT NULL \
          AND {alias}.status_code >= 200 AND {alias}.status_code < 300"
     )
 }
@@ -196,7 +196,7 @@ fn first_token_eligible_sql(alias: &str) -> String {
 /// 组装请求的时间，系统性偏高。
 fn est_first_token_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
-    format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
+    format!("{data_source} NOT IN ('proxy', 'agy_session') AND {alias}.first_token_ms IS NOT NULL")
 }
 
 /// 按分组键取首字时间的中位数（毫秒）。首字时间长尾明显，偶尔一次排队就是十几秒，
@@ -5071,6 +5071,38 @@ mod tests {
         assert_eq!(slow.est_speed_output_tokens, 400);
         assert_eq!(slow.est_speed_duration_ms, 8_000);
 
+        Ok(())
+    }
+
+    #[test]
+    fn agy_native_timing_counts_as_recorded_speed_in_provider_and_model_stats(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, output, latency, first) in [
+                ("native", 600, 5000, Some(2000)),
+                ("short", 50, 5000, Some(4000)),
+                ("burst", 600, 1050, Some(1000)),
+                ("missing", 600, 0, None),
+            ] {
+                conn.execute("INSERT INTO proxy_request_logs (request_id,provider_id,app_type,model,input_tokens,output_tokens,total_cost_usd,latency_ms,first_token_ms,status_code,created_at,data_source) VALUES (?1,'_agy_session','agy','gemini-4-argon',100,?2,'0',?3,?4,200,1000,'agy_session')", params![id,output,latency,first])?;
+            }
+        }
+        let providers = db.get_provider_stats(None, None, Some("agy"), None, None)?;
+        assert_eq!(providers.len(), 1);
+        let p = &providers[0];
+        assert_eq!((p.speed_output_tokens, p.speed_generation_ms), (600, 3000));
+        assert_eq!((p.est_speed_output_tokens, p.est_speed_duration_ms), (0, 0));
+        assert_eq!(p.first_token_median_ms, Some(2000));
+        assert_eq!(p.est_first_token_median_ms, None);
+        let models = db.get_model_stats(None, None, Some("agy"), None, None)?;
+        assert_eq!(models.len(), 1);
+        let m = &models[0];
+        assert_eq!((m.speed_output_tokens, m.speed_generation_ms), (600, 3000));
+        assert_eq!((m.est_speed_output_tokens, m.est_speed_duration_ms), (0, 0));
+        assert_eq!(m.first_token_median_ms, Some(2000));
+        assert_eq!(m.est_first_token_median_ms, None);
         Ok(())
     }
 

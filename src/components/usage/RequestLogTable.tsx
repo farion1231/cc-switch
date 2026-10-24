@@ -29,7 +29,7 @@ import {
   formatOutputTokensPerSecond,
   formatTokensCompact,
   getLocaleFromLanguage,
-  isSessionLogRequest,
+  isEstimatedTiming,
   parseFiniteNumber,
 } from "./format";
 import {
@@ -374,15 +374,15 @@ export function RequestLogTable({
     const providerLabel = getUsageProviderLabel(log.providerName, t);
     const provider = providerLabel.shortLabel;
     const exactTps = formatOutputTokensPerSecond(log);
-    // 会话日志导入的请求没有首字计时，速度是按日志时间戳估的，前面带 ≈
+    // 原生计时缺失时，只对支持时间戳估算的会话显示 ≈。
     const estimatedTps =
       exactTps == null ? formatEstimatedTokensPerSecond(log) : null;
     const tps = exactTps ?? estimatedTps;
     const latency = parseFiniteNumber(log.latencyMs);
     const firstToken = parseFiniteNumber(log.firstTokenMs);
     const firstTokenText = formatFirstTokenSeconds(firstToken);
-    // 会话日志的耗时和首字都是按时间戳估的，带 ≈
-    const isSession = isSessionLogRequest(log);
+    // 只有按日志时间戳估算的计时带 ≈，Antigravity 原生计时原样显示。
+    const estimatedTiming = isEstimatedTiming(log);
     const timing =
       latency != null && latency > 0
         ? {
@@ -393,7 +393,7 @@ export function RequestLogTable({
     const timingTip =
       timing == null
         ? undefined
-        : !isSession
+        : !estimatedTiming
           ? timing.ttft != null
             ? t("usage.timingTip", timing)
             : undefined
@@ -581,7 +581,7 @@ export function RequestLogTable({
           )}
           title={timingTip}
         >
-          {isSession && firstTokenText != null && "≈"}
+          {estimatedTiming && firstTokenText != null && "≈"}
           {firstTokenText ?? "—"}
         </td>
       ),
@@ -591,10 +591,12 @@ export function RequestLogTable({
           title={
             timing == null
               ? undefined
-              : `${isSession ? "≈" : ""}${fmtInt(latency, locale)} ms`
+              : `${estimatedTiming ? "≈" : ""}${fmtInt(latency, locale)} ms`
           }
         >
-          {timing == null ? "—" : `${isSession ? "≈" : ""}${timing.duration}s`}
+          {timing == null
+            ? "—"
+            : `${estimatedTiming ? "≈" : ""}${timing.duration}s`}
         </td>
       ),
       statusCode: (

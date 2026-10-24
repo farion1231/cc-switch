@@ -26,6 +26,7 @@ import {
   formatOutputTokensPerSecond,
   getLocaleFromLanguage,
   getResolvedLang,
+  isEstimatedTiming,
   parseFiniteNumber,
 } from "./format";
 import { appDisplayName } from "./RequestLogTable";
@@ -223,7 +224,10 @@ function useDetailSections(request: RequestLog) {
   });
 
   let performance: DetailRow[];
-  if (!isProxy) {
+  if (
+    !isProxy &&
+    (isEstimatedTiming(request) || latency == null || latency <= 0)
+  ) {
     // 会话日志的耗时和首字是导入时按日志时间戳估的（耗时 0 = 没估出来）
     if (latency == null || latency <= 0) {
       performance = [

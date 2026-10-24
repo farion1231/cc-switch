@@ -12,7 +12,7 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use std::path::Path;
 
-mod native_models;
+mod native_usage;
 
 pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
@@ -134,24 +134,20 @@ fn import_records(
         }
     }
 
-    // 子代理通常没有 Model Selection；按步骤关联原生生成记录，不推测档位映射。
-    if let Some(transcript) = transcript {
-        let missing: Vec<u64> = ordered
-            .iter()
-            .filter(|row| row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE")
-            .filter(|row| known_model(row).is_none())
-            .filter_map(|row| row["step_index"].as_u64())
-            .filter(|step| !model_by_step.contains_key(step))
-            .collect();
-        if !missing.is_empty() {
-            match native_models::models_for_transcript(transcript, &missing) {
-                Ok(models) => model_by_step.extend(models),
-                Err(error) => {
-                    log::debug!("Antigravity {session}: cannot read native models: {error}")
-                }
-            }
-        }
-    }
+    // 原生生成记录同时提供模型名和计时；已知模型的响应也需要读取计时。
+    let steps: Vec<u64> = ordered
+        .iter()
+        .filter(|row| row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE")
+        .filter_map(|row| row["step_index"].as_u64())
+        .collect();
+    let native = if let Some(transcript) = transcript.filter(|_| !steps.is_empty()) {
+        native_usage::usage_for_transcript(transcript, &steps).unwrap_or_else(|error| {
+            log::debug!("Antigravity {session}: cannot read native usage: {error}");
+            Default::default()
+        })
+    } else {
+        Default::default()
+    };
 
     let mut conn = lock_conn!(db.conn);
     let tx = conn.transaction()?;
@@ -183,6 +179,7 @@ fn import_records(
         let display = known_model(row)
             .map(str::to_string)
             .or_else(|| model_by_step.get(&step).cloned())
+            .or_else(|| native.get(&step).and_then(|usage| usage.model.clone()))
             .unwrap_or_else(|| "unknown".to_string());
         let model = model_id_of(&display);
         // 原生库暂时不可读时，保留已恢复的模型；Token 仍按最新日志更新。
@@ -198,12 +195,15 @@ fn import_records(
         } else {
             (model, display)
         };
+        let timing = native.get(&step).and_then(|usage| usage.timing);
+        let latency = timing.map(|timing| timing.latency_ms);
+        let first_token = timing.map(|timing| timing.first_token_ms);
         let [input_cost, output_cost, cache_cost, write_cost, total_cost] =
             costs(&tx, &model, [input, output, cache, write]);
         if fresh == 0 {
             // A rewritten completed step may correct counters; update retained detail only.
             // If retention already removed it, its tombstone still forbids resurrection.
-            let changed = tx.execute("UPDATE proxy_request_logs SET model=?2,request_model=?7,input_tokens=?3,output_tokens=?4,cache_read_tokens=?5,cache_creation_tokens=?6,input_cost_usd=?8,output_cost_usd=?9,cache_read_cost_usd=?10,cache_creation_cost_usd=?11,total_cost_usd=?12 WHERE request_id=?1 AND (model!=?2 OR request_model!=?7 OR input_tokens!=?3 OR output_tokens!=?4 OR cache_read_tokens!=?5 OR cache_creation_tokens!=?6 OR total_cost_usd!=?12)", params![id,model,input,output,cache,write,display,input_cost,output_cost,cache_cost,write_cost,total_cost])?;
+            let changed = tx.execute("UPDATE proxy_request_logs SET model=?2,request_model=?7,input_tokens=?3,output_tokens=?4,cache_read_tokens=?5,cache_creation_tokens=?6,input_cost_usd=?8,output_cost_usd=?9,cache_read_cost_usd=?10,cache_creation_cost_usd=?11,total_cost_usd=?12,latency_ms=COALESCE(?13,latency_ms),first_token_ms=COALESCE(?14,first_token_ms) WHERE request_id=?1 AND (model!=?2 OR request_model!=?7 OR input_tokens!=?3 OR output_tokens!=?4 OR cache_read_tokens!=?5 OR cache_creation_tokens!=?6 OR total_cost_usd!=?12 OR (?13 IS NOT NULL AND latency_ms!=?13) OR (?14 IS NOT NULL AND first_token_ms IS NOT ?14))", params![id,model,input,output,cache,write,display,input_cost,output_cost,cache_cost,write_cost,total_cost,latency,first_token])?;
             imported += changed as u32;
             skipped += u32::from(changed == 0);
             continue;
@@ -214,10 +214,10 @@ fn import_records(
         tx.execute("INSERT INTO proxy_request_logs (
             request_id,provider_id,app_type,model,request_model,input_tokens,output_tokens,
             cache_read_tokens,cache_creation_tokens,input_cost_usd,output_cost_usd,
-            cache_read_cost_usd,cache_creation_cost_usd,total_cost_usd,latency_ms,status_code,
+            cache_read_cost_usd,cache_creation_cost_usd,total_cost_usd,latency_ms,first_token_ms,status_code,
             session_id,provider_type,is_streaming,cost_multiplier,created_at,data_source,input_token_semantics
-        ) VALUES (?1,'_agy_session','agy',?2,?10,?3,?4,?5,?6,?11,?12,?13,?14,?15,0,200,?7,'agy_session',1,'1',?8,'agy_session',?9)",
-        params![id, model, input, output, cache, write, session, agy::timestamp(row).unwrap_or(0)/1000, INPUT_TOKEN_SEMANTICS_FRESH, display, input_cost, output_cost, cache_cost, write_cost, total_cost])?;
+        ) VALUES (?1,'_agy_session','agy',?2,?10,?3,?4,?5,?6,?11,?12,?13,?14,?15,?16,?17,200,?7,'agy_session',1,'1',?8,'agy_session',?9)",
+        params![id, model, input, output, cache, write, session, agy::timestamp(row).unwrap_or(0)/1000, INPUT_TOKEN_SEMANTICS_FRESH, display, input_cost, output_cost, cache_cost, write_cost, total_cost, latency.unwrap_or(0), first_token])?;
         imported += 1;
     }
     tx.commit()?;
@@ -236,7 +236,75 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn native_models_backfill_unknown_rows_without_changing_tokens_or_deduplication() {
+    fn backfills_native_timing_for_known_models_and_preserves_it_when_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/timing/.system_generated/logs/transcript_full.jsonl");
+        let db = Database::memory().unwrap();
+        let mut rows = vec![
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","model":"gemini-4-argon-medium","input_tokens":100,"output_tokens":600}),
+        ];
+        assert_eq!(
+            import_records(&db, "timing", &rows, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        let native = native_usage::write_test_database(
+            &dir.path().join("conversations/timing.db"),
+            &[(1, 0, "different-native-model")],
+        );
+        native_usage::set_test_timing(&native, 0, Some((2, 500_000_000)), Some((3, 500_000_000)));
+        assert_eq!(
+            import_records(&db, "timing", &rows, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(
+            import_records(&db, "timing", &rows, Some(&source)).unwrap(),
+            (0, 1)
+        );
+        let read = || {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT model,latency_ms,first_token_ms,input_tokens FROM proxy_request_logs WHERE request_id='agy:timing:1'", [], |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,Option<i64>>(2)?, r.get::<_,i64>(3)?))).unwrap()
+        };
+        assert_eq!(
+            read(),
+            ("gemini-4-argon-medium".into(), 6000, Some(2500), 100)
+        );
+        let fresh_db = Database::memory().unwrap();
+        assert_eq!(
+            import_records(&fresh_db, "timing", &rows, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        let timing: (i64, Option<i64>) = fresh_db.conn.lock().unwrap().query_row(
+            "SELECT latency_ms,first_token_ms FROM proxy_request_logs WHERE request_id='agy:timing:1'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(timing, (6000, Some(2500)));
+
+        native.execute_batch("DROP TABLE gen_metadata").unwrap();
+        rows[0]["input_tokens"] = json!(120);
+        assert_eq!(
+            import_records(&db, "timing", &rows, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(
+            read(),
+            ("gemini-4-argon-medium".into(), 6000, Some(2500), 120)
+        );
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM proxy_request_logs", [])
+            .unwrap();
+        assert_eq!(
+            import_records(&db, "timing", &rows, Some(&source)).unwrap(),
+            (0, 1)
+        );
+    }
+
+    #[test]
+    fn native_usage_backfill_unknown_rows_without_changing_tokens_or_deduplication() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("conversations")).unwrap();
         let source = dir
@@ -252,7 +320,7 @@ mod tests {
             import_records(&db, "subagent", &rows, Some(&source)).unwrap(),
             (2, 0)
         );
-        let native = native_models::write_test_database(
+        let native = native_usage::write_test_database(
             &path,
             &[(1, 0, "gemini-4-argon"), (3, 7, "gemini-3.8-flash-tiered")],
         );
@@ -325,13 +393,13 @@ mod tests {
     }
 
     #[test]
-    fn native_models_do_not_replace_explicit_models_or_selection_events() {
+    fn native_usage_do_not_replace_explicit_models_or_selection_events() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("conversations")).unwrap();
         let source = dir
             .path()
             .join("brain/session/.system_generated/logs/transcript_full.jsonl");
-        native_models::write_test_database(
+        native_usage::write_test_database(
             &dir.path().join("conversations/session.db"),
             &[
                 (1, 0, "gemini-3.8-flash-tiered"),
@@ -371,22 +439,22 @@ mod tests {
         let source = dir
             .path()
             .join("brain/acp/.system_generated/logs/transcript_full.jsonl");
-        let native = native_models::write_test_database(
+        let native = native_usage::write_test_database(
             &dir.path().join("conversations/acp.db"),
             &[(1, 0, "gemini-4-argon"), (2, 1, "gemini-4-argon")],
         );
-        native_models::set_test_generation(
+        native_usage::set_test_generation(
             &native,
             0,
             "gemini-4-argon",
-            &native_models::test_model_id("gemini-4-argon-medium"),
+            &native_usage::test_model_id("gemini-4-argon-medium"),
         );
         // Older builds may store the display name in field 21.
-        native_models::set_test_generation(
+        native_usage::set_test_generation(
             &native,
             1,
             "gemini-4-argon",
-            &native_models::test_model_id("Gemini 4 Argon (Medium)"),
+            &native_usage::test_model_id("Gemini 4 Argon (Medium)"),
         );
         let db = Database::memory().unwrap();
         let rows = vec![
