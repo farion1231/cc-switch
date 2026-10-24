@@ -20,13 +20,44 @@ struct Step {
     has_tools: bool,
 }
 
+/// Kimi writes one wire journal per agent: `agents/main` and one `agents/agent-N` per
+/// sub-agent instance, all inside the same session directory.
+pub(crate) const MAIN_AGENT: &str = "main";
+
+/// Records written into an agent's own journal normally carry no agent id. A record that
+/// names another agent was mirrored from that agent's run, so it must not be imported or
+/// update the trace a second time. `welcome`-style records put the id under
+/// `message.meta`, so both places are checked.
+pub(crate) fn record_belongs_to(record: &Value, agent: &str) -> bool {
+    [
+        record.get("agentId"),
+        record.pointer("/message/meta/agentId"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .all(|id| id == agent)
+}
+
 /// The human projection contains the synthetic model `agent-loop`. Resolve actual models
 /// from loop requests, then join the completed step to its committed message by messageId.
 /// Keep only metadata; never retain prompts, tool arguments, or response content here.
-#[derive(Default)]
 pub(crate) struct RequestIndex {
+    /// The agent whose journal this index reads, so a sub-agent's own `llm.request`
+    /// records resolve instead of being dropped as "not the main agent".
+    agent: String,
     step: Option<Step>,
     messages: HashMap<String, RequestInfo>,
+}
+
+impl Default for RequestIndex {
+    fn default() -> Self {
+        Self {
+            agent: MAIN_AGENT.into(),
+            step: None,
+            messages: HashMap::new(),
+        }
+    }
 }
 
 pub(crate) fn timestamp_ms(value: &Value) -> Option<i64> {
@@ -49,9 +80,17 @@ fn duration_ms(value: &Value) -> Option<i64> {
 }
 
 impl RequestIndex {
+    pub fn for_agent(agent: &str) -> Self {
+        Self {
+            agent: agent.into(),
+            ..Self::default()
+        }
+    }
+
     pub fn observe(&mut self, record: &Value) {
-        // Only the main agent's committed messages live in agents/main/wire.jsonl.
-        if record["agentId"].as_str().is_some_and(|id| id != "main") {
+        // A record without an agent id belongs to the journal it was written to; one that
+        // names another agent is mirrored from that agent's run and must not set the trace.
+        if !record_belongs_to(record, &self.agent) {
             return;
         }
         match record["type"].as_str() {
@@ -280,6 +319,57 @@ mod tests {
                 .first_token_ms,
             None
         );
+    }
+
+    #[test]
+    fn kimi_records_belong_only_to_the_agent_that_wrote_them() {
+        assert!(record_belongs_to(
+            &json!({"type":"agent.message.appended"}),
+            "agent-1"
+        ));
+        assert!(record_belongs_to(
+            &json!({"type":"llm.request","agentId":"agent-1","kind":"loop","model":"sub-model"}),
+            "agent-1"
+        ));
+        // Mirrored records name the agent they came from, at the top level or in the
+        // committed message metadata.
+        assert!(!record_belongs_to(
+            &json!({"type":"llm.request","agentId":"main","kind":"loop","model":"main-model"}),
+            "agent-1"
+        ));
+        assert!(!record_belongs_to(
+            &json!({"type":"agent.message.appended","message":{"meta":{"agentId":"main"}}}),
+            "agent-1"
+        ));
+    }
+
+    #[test]
+    fn kimi_request_metadata_resolves_subagent_journals() {
+        let mut index = RequestIndex::for_agent("agent-0");
+        index.observe(&loop_event(
+            1_700_000_000_000,
+            json!({"type":"step.begin","uuid":"step","turnId":"0","step":1}),
+        ));
+        // A mirrored parent record must not replace the sub-agent's own request.
+        index.observe(&json!({"type":"llm.request","agentId":"main","kind":"loop","turnStep":"0.1","model":"parent-model"}));
+        index.observe(&json!({"type":"llm.request","agentId":"agent-0","kind":"loop","turnStep":"0.1","model":"sub-model"}));
+        index.observe(&loop_event(1_700_000_009_000, json!({"type":"step.end","uuid":"step","messageId":"message","llmFirstTokenLatencyMs":400,"llmStreamDurationMs":600})));
+        let meta = json!({"messageId":"message","model":{"model":"agent-loop"}});
+        assert_eq!(index.model(&meta), Some("sub-model"));
+        assert_eq!(index.get(&meta).unwrap().first_token_ms, Some(400));
+
+        // Records without an agent id belong to the journal they were written to.
+        let mut unlabelled = RequestIndex::for_agent("agent-0");
+        unlabelled.observe(&loop_event(
+            1_700_000_000_000,
+            json!({"type":"step.begin","uuid":"step","turnId":"0","step":1}),
+        ));
+        unlabelled.observe(&json!({"type":"llm.request","kind":"loop","turnStep":"0.1","model":"unlabelled-model"}));
+        unlabelled.observe(&loop_event(
+            1_700_000_001_000,
+            json!({"type":"step.end","uuid":"step","messageId":"message"}),
+        ));
+        assert_eq!(unlabelled.model(&meta), Some("unlabelled-model"));
     }
 
     #[test]
