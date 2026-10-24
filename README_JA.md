@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、Kimi Code のオールインワン管理ツール
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、Kimi Code、Oh My Pi のオールインワン管理ツール
 
 **ワンクリックで API プロバイダを切り替え、MCP・Skills・プロンプトを一元管理。JSON / TOML / YAML の設定ファイルを手作業で編集する必要はもうありません。**
 
@@ -84,11 +84,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite"><img src="assets/partners/logos/everyapi-banner.jpg" alt="EveryAPI" width="150"></a></td>
-<td>本プロジェクトのスポンサーである EveryAPI に感謝いたします！EveryAPI は、開発者に安定・高効率・高コストパフォーマンスな API 中継サービスを提供することに力を注いでおり、Claude、Codex、Gemini などの主要な AI コーディングツールと多数の先進的なモデルに対応しています。複雑な設定は不要で手軽に接続でき、開発者の効率的なコーディングと AI アプリケーションの迅速な構築を支援します。日々の開発、プロジェクトのデバッグ、AI 支援プログラミングのいずれにおいても、EveryAPI は便利でスムーズな利用体験を提供します。EveryAPI は AI 開発をよりシンプルに、すべての呼び出しをより価値あるものにします！CC Switch ユーザー向けの特典として、<a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite">こちらのリンク</a>から登録すると 14 元分のクレジットを進呈、初回チャージは割引コード <strong>ccswitch</strong> で 20% オフ、GPT は公式価格の 15% から利用できます！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
 <td>本プロジェクトのスポンサーである GrooRoute Pro に感謝いたします！GrooRoute Pro は信頼性が高くスムーズな AI API 中継サービスプラットフォームで、OpenAI、Claude、DeepSeek など多数の主要モデルに対応しています。海外サーバーで運用されており、料金倍率のプランを自由に選択でき、従量課金とサブスクリプションの 2 つの料金体系から柔軟に選べます。回線は安定しており応答も速く、さまざまな AI 機能をより手軽に利用できます。CC Switch ユーザー向けの特典として、<a href="https://grooroute.pro/sign-up?aff=qqm9">こちらのリンク</a>から登録すると 5 元分の無料お試しクレジットがもらえます！</td>
 </tr>
@@ -99,8 +94,18 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
-<td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
+<td width="180"><a href="https://buytoken.work/sign-up?aff=cc-switch"><img src="assets/partners/logos/buytoken-banner.png" alt="BuyToken" width="150"></a></td>
+<td>本プロジェクトのスポンサーである BuyToken に感謝いたします！BuyToken は Claude Code / Codex / DeepSeek などの各種中継サービスを提供し、エンタープライズ級の同時実行と迅速な請求書発行に対応、安定して長く続くサービスを目指しています。CC Switch ユーザー向けの特別特典もご用意しています：<a href="https://buytoken.work/sign-up?aff=cc-switch">このリンク</a>から登録すると 3 元分のお試しクレジットを受け取れ、さらに初回チャージが 10% オフになります！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
+<td>本プロジェクトのスポンサーである V-API に感謝いたします！V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスプラットフォームを提供しており、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザー向けの特別特典として、<a href="https://gpt.ge/signup?aff=URNP">このリンク</a>から登録すると初回注文が 2 元引きのうえ 10% オフになります！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
+<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
 </tr>
 
 <tr>
@@ -119,8 +124,8 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
-<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
+<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
+<td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
 </tr>
 
 <tr>
@@ -230,7 +235,7 @@ Claude Code、Codex、Gemini CLI などの AI コーディングツールは、�
 
 **CC Switch** は、こうした作業を 1 つのデスクトップアプリに集約します。プリセットを選んでキーを入力すれば、ワンクリックで切り替えられます。切り替え時に置き換えるのはアドレス、キー、モデルといった接続情報だけで、自分で追加したプラグイン、フック、MCP、コメントはそのまま残ります。
 
-- **1 つのアプリで 11 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code
+- **1 つのアプリで 12 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi
 - **手動編集は不要** — AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 90 以上のプロバイダプリセットを内蔵
 - **直接接続・ルーティング・集約を用途に応じて選択** — 直接接続はツールがプロバイダへ直接つなぎます。ルーティングはローカルで転送し、API 形式の変換と自動フェイルオーバーにより、Claude Code で GPT を、Codex で Claude を使えるようにします。集約は複数のプロバイダのモデルを Claude Code や Codex の 1 つのモデル一覧にまとめ、選んだモデルに応じてそのプロバイダへリクエストを送ります
 - **MCP・Skills・プロンプトを一元管理** — MCP と Skills は一度追加すれば、ツールごとにチェックを入れて同期。プロンプトはツールごとに個別に管理
@@ -311,7 +316,7 @@ paru -S cc-switch-bin
 
 1. **プロバイダ追加**: サイドバーで管理するツールを選び、ページ右上の「+」（プロバイダーを追加）をクリック → プリセットを選ぶかカスタム設定を作成
 2. **プロバイダ切り替え**:
-   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code、Kimi Code ではボタンが「追加」、Pi では「有効にする / 削除」になります。この 6 つは共存型のツールで、複数のプロバイダを同時に追加できます）
+   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code、Kimi Code ではボタンが「追加」、Pi と Oh My Pi では「有効にする / 削除」になります。この 7 つは共存型のツールで、複数のプロバイダを同時に追加できます）
    - システムトレイ: ツールごとに 1 行で「名前 · モード · プロバイダ · クォータ」を表示。サブメニューでプロバイダ名をクリック（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build に対応）
 3. **反映**: Claude Code は再起動不要。Codex、Gemini CLI、Grok Build はターミナルまたは CLI ツールを再起動、Claude Desktop はアプリ自体を再起動（詳しくはよくある質問を参照）
 4. **公式ログインに戻す**: リストに含まれている公式プロバイダ（例：「Claude Official」）に切り替え、ツールを再起動してログイン/OAuth フローを実行
@@ -350,6 +355,7 @@ paru -S cc-switch-bin
 | Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md、SYSTEM.md、プロンプトテンプレート | ✓ | ✓ |
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Oh My Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
 
 - **切り替え**：同時に有効にできるプロバイダは 1 つだけです。**共存**：複数のプロバイダを同時にツール自身の設定に書き込み、ツール内で選んで使用します。
 - **ローカルルーティング**：CC Switch がローカルでリクエストを転送し、API 形式を変換します。詳しくは下記の[ローカルルーティング & フェイルオーバー](#ローカルルーティング--フェイルオーバー)をご覧ください。Claude Desktop のプロバイダでは「直接接続」か「モデルマッピング」を選択でき、「モデルマッピング」を選ぶとローカルルーティング経由で転送されます。
@@ -388,7 +394,7 @@ paru -S cc-switch-bin
 
 ### MCP、プロンプト & Skills
 
-- **統一 MCP パネル** — すべての MCP サーバーを 1 か所で管理し、ツールごとにチェックを入れて同期（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code）。各ツールの既存設定からのインポート、Deep Link インポートに対応
+- **統一 MCP パネル** — すべての MCP サーバーを 1 か所で管理し、ツールごとにチェックを入れて同期（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi）。各ツールの既存設定からのインポート、Deep Link インポートに対応
 - **プロンプト** — ツールごとに管理するプロンプトライブラリ（Markdown エディタ付き）。有効化すると、そのツールのプロンプトファイル（CLAUDE.md / AGENTS.md / GEMINI.md）に書き込み。有効化の前にファイル内の既存の内容をプロンプトライブラリへ保存するため、内容が失われることはありません。Pi では SYSTEM.md、APPEND_SYSTEM.md、プロンプトテンプレートも編集可能
 - **Skills** — skills.sh を検索、または GitHub リポジトリや ZIP ファイルからワンクリックでインストール。更新の確認とワンクリックでの一括更新に対応。各ツールへの同期方式は「自動」「シンボリックリンクのみ」「コピーのみ」から選べ、保存場所として `~/.agents/skills` も選択可能
 - 3 つのパネルはいずれも検索に対応。MCP と Skills はツールごとにワンクリックで一括有効化・一括無効化も可能。プロバイダ、MCP、プロンプトはコンテンツ領域の全画面で編集し、未保存の変更があるままページを離れようとすると確認が表示されます
@@ -419,7 +425,7 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
 
-CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code** の 11 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code**、**Oh My Pi** の 12 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
 
 </details>
 
@@ -432,7 +438,7 @@ CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**�
 - **Codex、Gemini CLI、Grok Build**：変更を反映するにはターミナルまたは CLI ツールを再起動してください（切り替え後に通知が表示されます）。ルーティングモードでは、リクエストは即座に新しいプロバイダへ転送されますが、切り替えでモデルが変わる場合は、この 3 つのツールは再起動が必要になることがあります。
 - **集約モード**：Claude Code の集約モデルの変更はすぐに反映されます。Codex は集約モードに入る・抜ける、または集約モデルの一覧を変更した後、完全に再起動する必要があります。次の質問をご覧ください。
 - **Claude Desktop**：Claude Desktop を完全に終了してから再度開いてください。「モデルマッピング」を使用する場合は、CC Switch を起動したままにしておく必要もあります。
-- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code**：これらは共存型のツールです。「追加」（Pi では「有効化」）をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。Kimi Code では「切り替え」ボタンでも選択でき、主モデルやサブエージェントから参照されているモデルは除去できません。設定とアカウントの詳細は [Kimi Code 接続ガイド](docs/kimi-code-integration-zh.md)（中国語）をご覧ください。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi**：これらは共存型のツールです。「追加」（Pi と Oh My Pi では「有効化」）をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。Kimi Code では「切り替え」ボタンでも選択でき、主モデルやサブエージェントから参照されているモデルは除去できません。設定とアカウントの詳細は [Kimi Code 接続ガイド](docs/kimi-code-integration-zh.md)（中国語）をご覧ください。
 
 </details>
 

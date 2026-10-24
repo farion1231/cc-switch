@@ -590,7 +590,7 @@ SQLite 不能直接修改主键，迁移时必须创建新表、复制旧数据�
 
 ### 9.5 数据库迁移
 
-上游 `main` 当前 `SCHEMA_VERSION` 为 22，多维用量使用独立的 v22→v23 迁移。保留上游 v20→v21 的 Antigravity 和 v21→v22 的 Kimi 能力迁移，避免已升级上游版本的用户跳过多维字段初始化。
+上游 `main` 当前 `SCHEMA_VERSION` 为 23，多维用量使用独立的 v23→v24 迁移。保留上游 Antigravity、Kimi 和 Oh My Pi 的 v20→v21、v21→v22、v22→v23 能力迁移，避免已升级上游版本的用户跳过多维字段初始化。早期 PR v21/v23 的既有归属和汇总原样保留；早期 PR v23 缺少的 `mcp_servers.enabled_omp` 也须补齐，已有 MCP 开关保持不变。
 
 迁移步骤：
 
@@ -853,12 +853,12 @@ cacheHitRate
 
 ### 16.3 迁移测试
 
-- 上游 v20、v21、v22 数据库迁移到 v23 后不丢行。
-- 早期 PR v21 数据库的已有归属证据及项目、数据源汇总分组不变；重复运行迁移不改变结果。
+- 上游 v20、v21、v22、v23 数据库迁移到 v24 后不丢行，早期 PR v21/v23 的归属与汇总分组保留。
+- 早期 PR v21/v23 数据库的已有归属证据及项目、数据源汇总分组不变，缺少的 Oh My Pi 开关补齐；重复运行迁移不改变结果。
 - `usage_daily_rollups` 新主键生效。
 - 旧数据项目为空并显示未识别。
 - 迁移失败后可以用迁移前备份恢复。
-- 旧版本不能直接打开 v23 数据库，回滚路径明确。
+- 旧版本不能直接打开 v24 数据库，回滚路径明确。
 
 ### 16.4 UI 验收
 
@@ -888,7 +888,7 @@ cacheHitRate
 | A06 | 去重 | 路由代理行和会话行只计一次且项目不丢 |
 | A07 | 未识别 | 无证据的数据进入未识别，不伪造 |
 | A08 | 历史 | 升级前不可证明的数据保持未识别 |
-| A09 | 迁移 | 上游 v20/v21/v22 与早期 PR v21 升级到 v23 不丢数据，回滚路径可执行 |
+| A09 | 迁移 | 上游 v20/v21/v22/v23 与早期 PR v21/v23 升级到 v24 不丢数据，MCP 开关保留，回滚路径可执行 |
 | A10 | 性能 | 无逐条查库和明显查询退化 |
 | A11 | 多客户端 | 每个 P0 客户端的项目与供应商证据可验证，缺证据时进入未识别 |
 | A12 | 应用隔离 | 相同供应商 ID 跨应用时不串数据，项目可按应用拆分查看 |
@@ -964,7 +964,7 @@ cacheHitRate
 | 代理请求 | `src-tauri/src/proxy/session.rs`、`src-tauri/src/services/usage_stats.rs` | 统一 session_key、项目关联和去重时项目证据回写 |
 | 用量统计 | `src-tauri/src/services/usage_stats.rs` | 项目过滤、缓存字段、项目统计 |
 | 日汇总 | `src-tauri/src/database/dao/usage_rollup.rs` | 项目维度和新主键 |
-| 数据库 | `src-tauri/src/database/schema.rs` | v23 迁移、新表、列和索引 |
+| 数据库 | `src-tauri/src/database/schema.rs` | v24 迁移、新表、列和索引 |
 | 前端类型 | `src/types/usage.ts` | 项目与缓存字段 |
 | 前端 API | `src/lib/api/usage.ts` | 项目参数和新接口 |
 | 用量面板 | `src/components/usage/UsageDashboard.tsx` | 项目筛选、项目页签 |

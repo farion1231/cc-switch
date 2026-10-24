@@ -71,7 +71,8 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -665,9 +666,21 @@ impl Database {
                         Self::set_user_version(conn, 22)?;
                     }
                     22 => {
-                        log::info!("迁移数据库从 v22 到 v23（用量多维归属）");
-                        Self::migrate_v22_to_v23(conn)?;
+                        // Oh My Pi：只有 MCP 存开关；Skills 的启用状态按原生目录现算（同 Pi）。
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
                         Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        log::info!("迁移数据库从 v23 到 v24（用量多维归属）");
+                        Self::migrate_v23_to_v24(conn)?;
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -694,13 +707,22 @@ impl Database {
         }
     }
 
-    /// v22 -> v23 迁移：用量多维归属基础设施。
+    /// v23 -> v24 迁移：用量多维归属基础设施。
     ///
     /// 新增供应商激活时间线与会话项目索引，给代理明细和日汇总增加项目维度、
     /// 归属证据与供应商名称快照；存量会话行统一标记为未识别，避免被列默认的
     /// `proxy/exact` 误标。日汇总重建主键以纳入 `project_key`。
-    /// 早期 PR 构建曾使用 v21，已有归属证据和汇总分组必须原样保留。
-    fn migrate_v22_to_v23(conn: &Connection) -> Result<(), AppError> {
+    /// 早期 PR 构建曾使用 v21/v23，已有归属证据和汇总分组必须原样保留。
+    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+        // 早期 PR 的 v23 尚无上游 Oh My Pi 开关，不能只依赖 v22 -> v23。
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_omp",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
         // 1. 供应商激活时间线（切换式客户端直连归属证据）
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS provider_activations (
@@ -717,7 +739,7 @@ impl Database {
                 ON provider_activations(app_type, effective_at_ms);",
         )
         .map_err(|e| {
-            AppError::Database(format!("v22 -> v23 创建 provider_activations 失败: {e}"))
+            AppError::Database(format!("v23 -> v24 创建 provider_activations 失败: {e}"))
         })?;
 
         // 2. 会话项目索引（项目键与会话键的关联）
@@ -735,7 +757,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_session_projects_project
                 ON session_projects(project_key);",
         )
-        .map_err(|e| AppError::Database(format!("v22 -> v23 创建 session_projects 失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("v23 -> v24 创建 session_projects 失败: {e}")))?;
 
         // 3. 代理明细新增项目、归属证据与名称快照列
         if Self::table_exists(conn, "proxy_request_logs")? {
@@ -769,7 +791,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v22 -> v23 回填存量会话行归属失败: {e}"))
+                    AppError::Database(format!("v23 -> v24 回填存量会话行归属失败: {e}"))
                 })?;
             }
 
@@ -787,7 +809,7 @@ impl Database {
                      CREATE INDEX IF NOT EXISTS idx_request_logs_session_key
                          ON proxy_request_logs(app_type, session_key);",
                 )
-                .map_err(|e| AppError::Database(format!("v22 -> v23 创建项目维度索引失败: {e}")))?;
+                .map_err(|e| AppError::Database(format!("v23 -> v24 创建项目维度索引失败: {e}")))?;
             }
         }
 
@@ -859,7 +881,7 @@ impl Database {
                      DROP TABLE usage_daily_rollups_v22;",
                 ))
                 .map_err(|e| {
-                    AppError::Database(format!("v22 -> v23 重建 usage_daily_rollups 失败: {e}"))
+                    AppError::Database(format!("v23 -> v24 重建 usage_daily_rollups 失败: {e}"))
                 })?;
             } else {
                 for (column, definition) in [
@@ -896,7 +918,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v22 -> v23 回填代理明细供应商名称快照失败: {e}"))
+                    AppError::Database(format!("v23 -> v24 回填代理明细供应商名称快照失败: {e}"))
                 })?;
             }
             if Self::table_exists(conn, "usage_daily_rollups")?
@@ -915,7 +937,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v22 -> v23 回填日汇总供应商名称快照失败: {e}"))
+                    AppError::Database(format!("v23 -> v24 回填日汇总供应商名称快照失败: {e}"))
                 })?;
             }
         }
@@ -2793,6 +2815,34 @@ impl Database {
             ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
             // Kimi For Coding 套餐里 K3 的裸名（无 kimi- 前缀），同标准 list 价
             ("k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
+            // 2026-10-24 官方价页：K3.1 Pro 缓存写入取默认 5 分钟档（1 小时档为 2 倍）。
+            // HighSpeed 只有输入/输出/缓存写翻倍，缓存读仍是 $0.20，别按 K2.7 的 2 倍规律改
+            (
+                "kimi-k3.1-pro",
+                "Kimi K3.1 Pro",
+                "2.00",
+                "10.00",
+                "0.20",
+                "2.00",
+            ),
+            (
+                "kimi-k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
+            // Kimi Code 套餐里的裸名（无 kimi- 前缀），同标准 list 价
+            ("k3.1-pro", "Kimi K3.1 Pro", "2.00", "10.00", "0.20", "2.00"),
+            (
+                "k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
             // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
             ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
@@ -4481,6 +4531,36 @@ mod tests {
     }
 
     #[test]
+    fn multidim_migration_upgrades_main_v23() -> Result<(), AppError> {
+        assert_multidim_migration(23, false)
+    }
+
+    #[test]
+    fn multidim_migration_repairs_early_pr_v23_mcp_switch() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        // Earlier PR builds used v23 before upstream added the Oh My Pi switch.
+        if Database::has_column(&conn, "mcp_servers", "enabled_omp")? {
+            conn.execute("ALTER TABLE mcp_servers DROP COLUMN enabled_omp", [])?;
+        }
+        conn.execute("INSERT INTO mcp_servers (id, name, server_config, enabled_kimi) VALUES ('retained', 'Retained', '{}', 1)", [])?;
+        Database::set_user_version(&conn, 23)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+        let switches: (i64, i64) = conn.query_row(
+            "SELECT enabled_kimi, enabled_omp FROM mcp_servers WHERE id = 'retained'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(switches, (1, 0));
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    #[test]
     fn multidim_migration_preserves_legacy_rollup_source() -> Result<(), AppError> {
         assert_multidim_migration(22, true)
     }
@@ -4624,37 +4704,39 @@ mod tests {
 
     #[test]
     fn multidim_migration_preserves_existing_pr_attribution_and_rollups() -> Result<(), AppError> {
-        let db = Database::memory()?;
-        let conn = lock_conn!(db.conn);
-        conn.execute_batch(
+        for from_version in [21, 23] {
+            let db = Database::memory()?;
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch(
             "INSERT INTO proxy_request_logs(request_id,provider_id,app_type,model,latency_ms,status_code,created_at,data_source,project_key,attribution_source,attribution_confidence)
              VALUES ('retained','provider-a','codex','model-a',10,200,100,'codex_session','project-a','session_meta','exact');
              INSERT INTO usage_daily_rollups(date,app_type,provider_id,model,data_source,project_key,input_tokens)
              VALUES ('2026-10-20','codex','provider-a','model-a','codex_session','project-a',11),
                     ('2026-10-20','codex','provider-a','model-a','proxy','project-b',22);",
         )?;
-        Database::set_user_version(&conn, 21)?;
-        Database::apply_schema_migrations_on_conn(&conn)?;
-        let attribution: (String, String, String) = conn.query_row(
+            Database::set_user_version(&conn, from_version)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            let attribution: (String, String, String) = conn.query_row(
             "SELECT project_key,attribution_source,attribution_confidence FROM proxy_request_logs WHERE request_id='retained'",
             [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
         )?;
-        assert_eq!(
-            attribution,
-            ("project-a".into(), "session_meta".into(), "exact".into())
-        );
-        let rows: Vec<(String,String,i64)> = conn.prepare(
+            assert_eq!(
+                attribution,
+                ("project-a".into(), "session_meta".into(), "exact".into())
+            );
+            let rows: Vec<(String,String,i64)> = conn.prepare(
             "SELECT project_key,data_source,input_tokens FROM usage_daily_rollups ORDER BY project_key",
         )?.query_map([], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?.collect::<Result<_,_>>()?;
-        assert_eq!(
-            rows,
-            vec![
-                ("project-a".into(), "codex_session".into(), 11),
-                ("project-b".into(), "proxy".into(), 22)
-            ]
-        );
-        Database::apply_schema_migrations_on_conn(&conn)?;
-        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            assert_eq!(
+                rows,
+                vec![
+                    ("project-a".into(), "codex_session".into(), 11),
+                    ("project-b".into(), "proxy".into(), 22)
+                ]
+            );
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        }
         Ok(())
     }
 }

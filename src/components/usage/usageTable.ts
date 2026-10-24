@@ -23,6 +23,9 @@ export const usageTable = {
   td: "whitespace-nowrap px-3 first:ps-4 last:pe-4",
   /** 列组之间多留的间距（请求日志按身份 / 成本 / Tokens / 性能分组）：组内列距 24px，换组处 40px */
   groupGap: "ps-7",
+  /** 请求日志列多，收紧一档：组内列距 16px，换组处 32px（叠在 th / td / groupGap 之后，首尾 16px 不变） */
+  denseCell: "px-2 first:ps-4 last:pe-4",
+  denseGroupGap: "ps-6",
   mono: "font-mono text-caption",
   muted: "text-fg-3",
   empty: "py-10 text-center text-body text-fg-3",

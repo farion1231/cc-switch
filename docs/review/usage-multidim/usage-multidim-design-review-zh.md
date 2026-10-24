@@ -1,6 +1,23 @@
 # CC Switch 用量多维度 详细设计评审记录
 
-## 最新复核：下钻范围与历史归属（2026-10-24）
+## 最新复核：Oh My Pi 与数据库版本冲突（2026-10-24）
+
+合并上游 `main` `cae7c375`，解决 `database/schema.rs` 和 `database/tests.rs` 的冲突。上游新增 Oh My Pi，使用 v22→v23 增加 MCP 的 `enabled_omp`；本功能此前也使用 v23。仅消除文本冲突会使上游 v23 用户跳过多维迁移，也会使早期 PR v23 用户缺少 MCP 开关。
+
+- 保留上游 v22→v23 迁移，将多维归属迁移独立调整为 v23→v24；迁移入口同时补齐早期 PR v23 缺少的 `enabled_omp`。
+- 保留上游 MCP 迁移测试及本功能的迁移、数据完整性测试。新增上游 v23 升级、早期 PR v23 开关修复和幂等性回归；归属与汇总保留测试覆盖早期 PR v21、v23，确认项目、数据源分组和已有归属证据不被覆盖。
+- 两项新增回归在修复前实际失败；修复后数据库 schema 测试 18 项通过。独立复核未发现高、中优先级问题。
+
+验证结果：
+
+- `pnpm test:unit --maxWorkers=2 --minWorkers=1`：260 个文件、3302 项通过。
+- `pnpm typecheck`、`pnpm format:check`、`pnpm build:renderer`：通过。
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check`、`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：通过。
+- 完整 `cargo test --manifest-path src-tauri/Cargo.toml`：4255 项通过，含 4047 项库测试和 208 项集成测试；12 项忽略，0 失败。使用隔离测试目录、`umask 022` 和 `NO_PROXY=127.0.0.1,localhost`；仅在测试子进程的 PATH 中移除 Bun 全局 bin，复现 GUI 启动环境。
+
+首轮完整 Rust 测试有 1 项失败：上游新增 `omp_search_paths_include_the_bun_global_bin` 假定 GUI 的 PATH 不含 Bun 全局 bin，当前终端预含该目录，导致 Gemini 的负断言失败。应用搜索实现与上游一致；在上述子进程环境中，该项及完整测试集均通过，未修改应用搜索逻辑或系统环境。后续从终端运行此类搜索路径用例时，应显式区分继承的终端 PATH 与 GUI PATH。
+
+## 上一轮复核：下钻范围与历史归属（2026-10-24）
 
 复查确认三类问题，均先由回归测试复现，再修复：
 

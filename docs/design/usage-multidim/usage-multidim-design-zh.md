@@ -27,11 +27,11 @@
 
 ### 3.1 迁移骨架
 
-`SCHEMA_VERSION` 在 `src-tauri/src/database/mod.rs`。迁移循环 `Database::apply_schema_migrations_on_conn` 逐级升级。最新上游已使用 v21 和 v22，新增独立的 v22→v23：
+`SCHEMA_VERSION` 在 `src-tauri/src/database/mod.rs`。迁移循环 `Database::apply_schema_migrations_on_conn` 逐级升级。最新上游已使用 v23，多维用量使用独立的 v23→v24：
 
-- 把 `SCHEMA_VERSION` 改为 `23`。
-- 保留上游 `20 =>` 的 Antigravity 能力列和 `21 =>` 的 Kimi 能力列迁移，在 `22 =>` 调用 `migrate_v22_to_v23(conn)`。
-- `migrate_v22_to_v23` 按 3.2~3.5 执行；对于已含多维字段的早期 PR v21 数据库，保留现有归属和汇总维度。
+- 把 `SCHEMA_VERSION` 改为 `24`。
+- 保留上游 Antigravity、Kimi 和 Oh My Pi 的 v20→v21、v21→v22、v22→v23 迁移，在 `23 =>` 调用 `migrate_v23_to_v24(conn)`。
+- `migrate_v23_to_v24` 按 3.2~3.5 执行；对于已含多维字段的早期 PR v21/v23 数据库，保留现有归属和汇总维度。早期 PR v23 尚未包含上游 `enabled_omp`，在此幂等补齐该列，不改变其他 MCP 开关。
 
 迁移失败必须回滚，现有外层 `SAVEPOINT schema_migration` 已覆盖，无需额外处理。
 
@@ -295,7 +295,7 @@ cacheHitRate = cacheRead / cacheable
 
 ## 7. 实施顺序
 
-1. 数据库迁移 v22→v23（本设计第 3 节）+ 多个来源版本的迁移测试。
+1. 数据库迁移 v23→v24（本设计第 3 节）+ 多个来源版本的迁移测试。
 2. `provider_activations`、`session_projects` 的 DAO 写入接口与类型。
 3. 切换式客户端激活时间线写入（`switch_provider` 后钩子）。
 4. 各会话适配器项目字段解析与 `session_projects` 写入。
@@ -308,7 +308,7 @@ cacheHitRate = cacheRead / cacheable
 
 ## 8. 测试计划
 
-- 迁移：上游 v20/v21/v22→v23 不丢行、新主键生效、首次增加归属列时存量会话行标记 `unknown`；早期 PR v21 的归属和汇总分组原样保留，重复迁移幂等。旧版本拒绝打开 v23（已有 `apply_schema_migrations_on_conn` 的超版本报错路径）。
+- 迁移：上游 v20/v21/v22/v23→v24 不丢行、新主键生效、首次增加归属列时存量会话行标记 `unknown`；早期 PR v21/v23 的归属和汇总分组原样保留，补齐 Oh My Pi 开关且重复迁移幂等。旧版本拒绝打开 v24（已有 `apply_schema_migrations_on_conn` 的超版本报错路径）。
 - 归属：请求早于/落在/跨激活记录、同秒歧义、路由不用时间线、配置指纹不匹配。
 - 项目：尾斜杠、符号链接、非 Git、路径不存在、子 agent 继承。
 - 缓存：全新增 / 全命中 / 仅写入 / 可缓存为 0 / 多供应商 Token 加权。
@@ -325,7 +325,7 @@ cacheHitRate = cacheRead / cacheable
 
 | 能力 | 实现位置 |
 | --- | --- |
-| v22→v23 迁移 | `src-tauri/src/database/schema.rs::migrate_v22_to_v23` |
+| v23→v24 迁移 | `src-tauri/src/database/schema.rs::migrate_v23_to_v24` |
 | 激活时间线 / 项目索引 / 归属算法 | `src-tauri/src/services/usage_attribution.rs` |
 | 切换式客户端钩子 | `ProviderService::switch`、`mode::operation::commit_target`、`usage_attribution::ensure_startup_baselines`（启动调用） |
 | Codex / Claude / Gemini / Grok 归属 | 各 `session_usage_*.rs`；Codex 读 `session_meta.cwd/model_provider` |
@@ -383,3 +383,9 @@ Kimi 的统计测试调用同步新的项目、供应商应用与归属过滤参
 - 保留模型/供应商缓存命中率列和供应商展开入口，按上游“费用、Token、性能”顺序排列表格；项目/供应商模型缓存下钻继续使用原有加权与缺失数据规则。
 - 原生会话详情继续显示项目、归属来源、置信度和原因，保留上游隐藏会话内部供应商 ID 的行为。
 - Kimi 保留上游账号及解析器更新，同时保留本 PR 的原生会话未识别标记、归属修复和扩展统计参数。
+
+## 14. Oh My Pi 与迁移版本兼容
+
+2026-10-24 合并上游 `main` `cae7c375`，保留 Oh My Pi 和 Kimi 的最新能力。上游的 v22→v23 用于添加 `mcp_servers.enabled_omp`，多维用量迁移顺延至 v23→v24，避免上游 v23 用户跳过项目与供应商归属字段初始化。
+
+此前 PR 的 v23 与上游 v23 结构不同，升级时同时补齐 Oh My Pi 开关，并保留已存在的供应商证据及项目、数据源汇总。回归覆盖上游 v20/v21/v22/v23、早期 PR v21/v23、MCP 既有开关、重复迁移及部分汇总维度。

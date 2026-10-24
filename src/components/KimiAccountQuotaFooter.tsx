@@ -1,4 +1,5 @@
 import React, { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useKimiAccountQuota } from "@/lib/query/subscription";
 import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
@@ -25,6 +26,7 @@ const KimiAccountQuotaFooter: React.FC<KimiAccountQuotaFooterProps> = ({
   inline = false,
   isCurrent = false,
 }) => {
+  const { t } = useTranslation();
   const display = useQuotaDisplay();
   const queryClient = useQueryClient();
   const {
@@ -60,6 +62,7 @@ const KimiAccountQuotaFooter: React.FC<KimiAccountQuotaFooterProps> = ({
       appIdForExpiredHint="kimi"
       inline={inline}
       display={display}
+      emptyText={t("kimi.oauth.noSubscription")}
     />
   );
 };
