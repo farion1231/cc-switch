@@ -11,7 +11,6 @@ import type {
   UniversalProviderModels,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
-import { providerPresets } from "./claudeProviderPresets";
 
 /**
  * 统一供应商预设接口
@@ -138,35 +137,4 @@ export function findPresetByType(
   providerType: string,
 ): UniversalProviderPreset | undefined {
   return universalProviderPresets.find((p) => p.providerType === providerType);
-}
-
-/**
- * 从 Claude 分组的厂商预设库（logo/官网/地址/协议）桥接出统一供应商预设。
- * 只取有固定 baseUrl 且非 OAuth/官方/隐藏的条目；模型不预填（连接后获取）。
- */
-export function claudeLibraryUniversalPresets(): UniversalProviderPreset[] {
-  return providerPresets
-    .filter((preset: (typeof providerPresets)[number]) => {
-      if (preset.requiresOAuth || preset.hidden || preset.isOfficial)
-        return false;
-      const env = (preset.settingsConfig as { env?: Record<string, unknown> })
-        ?.env;
-      const base = env?.ANTHROPIC_BASE_URL;
-      return typeof base === "string" && base.includes("://");
-    })
-    .map((preset: (typeof providerPresets)[number]) => {
-      const env =
-        (preset.settingsConfig as { env?: Record<string, unknown> }).env ?? {};
-      return {
-        name: preset.name,
-        providerType: `lib:${preset.name}`,
-        defaultApps: { claude: true, codex: true, gemini: true },
-        defaultModels: {},
-        websiteUrl: preset.websiteUrl,
-        icon: preset.icon,
-        iconColor: preset.iconColor,
-        baseUrlPlaceholder: String(env.ANTHROPIC_BASE_URL),
-        defaultApiFormat: preset.apiFormat ?? "anthropic",
-      } satisfies UniversalProviderPreset;
-    });
 }

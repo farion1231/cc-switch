@@ -24,7 +24,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SearchField } from "@/components/ui/search-field";
 import {
   Select,
   SelectContent,
@@ -40,12 +39,13 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import JsonEditor from "@/components/JsonEditor";
 import type { UniversalProvider, UniversalProviderModels } from "@/types";
 import {
-  claudeLibraryUniversalPresets,
   universalProviderPresets,
   createUniversalProviderFromPreset,
   type UniversalProviderPreset,
 } from "@/config/universalProviderPresets";
 import { deepClone } from "@/utils/deepClone";
+import { ProviderPresetSelector } from "@/components/providers/forms/ProviderPresetSelector";
+import { providerPresets } from "@/config/claudeProviderPresets";
 
 interface UniversalProviderFormModalProps {
   isOpen: boolean;
@@ -103,6 +103,8 @@ export function UniversalProviderFormModal({
       setBaseUrl(editingProvider.baseUrl);
       setApiKey(editingProvider.apiKey);
       setApiFormat(editingProvider.apiFormat ?? "anthropic");
+      setIcon(editingProvider.icon);
+      setIconColor(editingProvider.iconColor);
       setWebsiteUrl(editingProvider.websiteUrl || "");
       setNotes(editingProvider.notes || "");
       setClaudeEnabled(editingProvider.apps.claude);
@@ -125,6 +127,8 @@ export function UniversalProviderFormModal({
       setBaseUrl("");
       setApiKey("");
       setApiFormat("anthropic");
+      setIcon(undefined);
+      setIconColor(undefined);
       setWebsiteUrl(defaultPreset.websiteUrl || "");
       setNotes("");
       setClaudeEnabled(defaultPreset.defaultApps.claude);
@@ -135,20 +139,52 @@ export function UniversalProviderFormModal({
   }, [editingProvider, initialPreset, isOpen]);
 
   // 选择预设
-  const handlePresetSelect = useCallback(
-    (preset: UniversalProviderPreset) => {
-      setSelectedPreset(preset);
-      if (!isEditMode) {
-        setName(preset.name);
-        setClaudeEnabled(preset.defaultApps.claude);
-        setCodexEnabled(preset.defaultApps.codex);
-        setGeminiEnabled(preset.defaultApps.gemini);
-        setModels(deepClone(preset.defaultModels));
-        // 厂商标准信息：协议格式随预设自动选中
-        setApiFormat(preset.defaultApiFormat ?? "anthropic");
+  // 厂商标准库选择（ProviderPresetSelector 就地模式）
+  const [selectedLibraryPresetId, setSelectedLibraryPresetId] = useState<
+    string | null
+  >(null);
+  const libraryPresetEntries = useMemo(
+    () =>
+      providerPresets
+        .map((preset, index) => ({ id: `claude-${index}`, preset }))
+        .filter((entry) => !(entry.preset as { hidden?: boolean }).hidden),
+    [],
+  );
+  const handleLibraryPresetChange = useCallback(
+    (entryId: string) => {
+      setSelectedLibraryPresetId(entryId);
+      const entry = libraryPresetEntries.find((item) => item.id === entryId);
+      if (!entry || entryId === "custom") return;
+      const preset = entry.preset as (typeof providerPresets)[number];
+      const env =
+        (preset.settingsConfig as { env?: Record<string, unknown> }).env ?? {};
+      const str = (v: unknown) =>
+        typeof v === "string" && v.trim() ? v : undefined;
+      setSelectedPreset(null); // 库预设优先于通用预设（NewAPI 等）
+      setName(preset.name);
+      setWebsiteUrl(preset.websiteUrl || "");
+      if (preset.icon) {
+        setIcon(preset.icon);
+        setIconColor(preset.iconColor ?? undefined);
+      }
+      const base = str(env.ANTHROPIC_BASE_URL);
+      if (base) setBaseUrl(base);
+      setApiFormat(preset.apiFormat ?? "anthropic");
+      const mainModel = str(env.ANTHROPIC_MODEL);
+      if (mainModel) {
+        setModels((prev) => ({
+          ...prev,
+          claude: {
+            ...prev.claude,
+            model: mainModel,
+            haikuModel: str(env.ANTHROPIC_DEFAULT_HAIKU_MODEL) ?? mainModel,
+            sonnetModel: str(env.ANTHROPIC_DEFAULT_SONNET_MODEL) ?? mainModel,
+            opusModel: str(env.ANTHROPIC_DEFAULT_OPUS_MODEL) ?? mainModel,
+          },
+        }));
       }
     },
-    [isEditMode],
+    [libraryPresetEntries],
   );
 
   // 更新模型配置
@@ -156,7 +192,8 @@ export function UniversalProviderFormModal({
   const [fetchedModelIds, setFetchedModelIds] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [presetSearch, setPresetSearch] = useState("");
+  const [icon, setIcon] = useState<string | undefined>(undefined);
+  const [iconColor, setIconColor] = useState<string | undefined>(undefined);
 
   const handleFetchModels = useCallback(async () => {
     if (!baseUrl.trim() || !apiKey.trim()) {
@@ -298,6 +335,10 @@ requires_openai_auth = true`;
           name.trim(),
         );
 
+    // 库预设/编辑带来的图标状态覆盖（state 优先）
+    provider.icon = icon ?? provider.icon;
+    provider.iconColor = iconColor ?? provider.iconColor;
+
     // 如果是新建，更新应用启用状态和模型
     if (!editingProvider) {
       provider.apiFormat = apiFormat;
@@ -321,6 +362,8 @@ requires_openai_auth = true`;
     apiFormat,
     websiteUrl,
     notes,
+    icon,
+    iconColor,
     claudeEnabled,
     claudeDesktopEnabled,
     codexEnabled,
@@ -446,54 +489,14 @@ requires_openai_auth = true`;
       footer={footer}
     >
       <div className="space-y-6">
-        {/* 预设选择（仅新建模式） */}
+        {/* 预设选择（仅新建模式）——复用添加供应商的完整选择器：
+            常驻搜索 + 分类 + 国内/海外等多版本切换（VersionSwitch） */}
         {!isEditMode && (
-          <div className="space-y-3">
-            <Label>
-              {t("universalProvider.selectPreset", {
-                defaultValue: "选择预设类型",
-              })}
-            </Label>
-            <SearchField
-              value={presetSearch}
-              onValueChange={setPresetSearch}
-              clearLabel={t("common.clear", { defaultValue: "清除" })}
-              placeholder={t("providerPreset.searchPlaceholder", {
-                defaultValue: "搜索厂商…",
-              })}
-              containerClassName="w-full sm:w-72"
-            />
-            <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto">
-              {[...universalProviderPresets, ...claudeLibraryUniversalPresets()]
-                .filter((preset) =>
-                  preset.name
-                    .toLowerCase()
-                    .includes(presetSearch.trim().toLowerCase()),
-                )
-                .map((preset) => (
-                  <button
-                    key={preset.providerType}
-                    type="button"
-                    onClick={() => handlePresetSelect(preset)}
-                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                      selectedPreset?.providerType === preset.providerType
-                        ? "bg-surface text-fg-1 shadow-v7-sm ring-1 ring-border-strong"
-                        : "bg-subtle text-fg-2 hover:bg-subtle"
-                    }`}
-                  >
-                    <ProviderIcon
-                      icon={preset.icon}
-                      name={preset.name}
-                      size={16}
-                    />
-                    {preset.name}
-                  </button>
-                ))}
-            </div>
-            {selectedPreset?.description && (
-              <p className="text-xs text-fg-2">{selectedPreset.description}</p>
-            )}
-          </div>
+          <ProviderPresetSelector
+            selectedPresetId={selectedLibraryPresetId}
+            presetEntries={libraryPresetEntries}
+            onPresetChange={handleLibraryPresetChange}
+          />
         )}
 
         {/* 基本信息——双列网格，与添加供应商表单同排版 */}
