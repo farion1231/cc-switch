@@ -899,7 +899,9 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
             name: "Codex Server".to_string(),
             server: json!({
                 "type": "stdio",
-                "command": "echo"
+                "command": "echo",
+                "timeout": 900000,
+                "autoApprove": ["read_document"]
             }),
             apps: McpApps {
                 agy: false,
@@ -923,6 +925,22 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
 
     let state = create_test_state_with_config(&config).expect("create test state");
 
+    for dir in [".claude", ".gemini", ".grok"] {
+        fs::create_dir_all(home.join(dir)).unwrap();
+    }
+    for app in [AppType::Claude, AppType::Gemini, AppType::GrokBuild] {
+        McpService::toggle_app(&state, "codex-server", app, true).unwrap();
+    }
+    let other_configs = [
+        get_claude_mcp_path(),
+        home.join(".gemini/settings.json"),
+        get_grok_config_path(),
+    ]
+    .map(|path| {
+        let bytes = fs::read(&path).unwrap();
+        (path, bytes)
+    });
+
     // v3.7.0: 使用 toggle_app 替代 set_enabled
     McpService::toggle_app(&state, "codex-server", AppType::Codex, true)
         .expect("toggle_app should succeed");
@@ -940,9 +958,23 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
         "enabling server should trigger sync to ~/.codex/config.toml"
     );
     let toml_text = fs::read_to_string(&toml_path).expect("read codex config");
-    assert!(
-        toml_text.contains("codex-server"),
-        "codex config should include the enabled server definition"
+    let written: toml::Value = toml::from_str(&toml_text).unwrap();
+    let server = written["mcp_servers"]["codex-server"].as_table().unwrap();
+    assert_eq!(server["command"].as_str(), Some("echo"));
+    assert_eq!(server["tool_timeout_sec"].as_float(), Some(900.0));
+    for key in ["type", "timeout", "autoApprove"] {
+        assert!(!server.contains_key(key));
+    }
+    McpService::sync_enabled_for_app(&state, &AppType::Codex).unwrap();
+    assert_eq!(fs::read_to_string(&toml_path).unwrap(), toml_text);
+    for (path, bytes) in other_configs {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+    let after = state.db.get_all_mcp_servers().unwrap();
+    assert_eq!(after["codex-server"].server["timeout"], json!(900000));
+    assert_eq!(
+        after["codex-server"].server["autoApprove"],
+        json!(["read_document"])
     );
 }
 

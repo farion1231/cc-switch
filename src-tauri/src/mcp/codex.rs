@@ -345,7 +345,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
         for id in ids {
             let spec = enabled.get(&id).expect("spec must exist");
             // 复用通用转换函数（已包含扩展字段支持）
-            match json_server_to_toml_table(spec) {
+            match codex_server_to_toml_table(spec) {
                 Ok(table) => {
                     servers_tbl[&id[..]] = Item::Table(table);
                 }
@@ -470,7 +470,7 @@ pub fn sync_single_server_to_codex(
     }
 
     // 将 JSON 服务器规范转换为 TOML 表
-    let toml_table = json_server_to_toml_table(server_spec)?;
+    let toml_table = codex_server_to_toml_table(server_spec)?;
     upsert_mcp_server_table(&mut doc, id, toml_table)?;
 
     // 写回文件
@@ -618,6 +618,20 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
             None
         }
     }
+}
+
+/// Codex 使用秒制超时；共享规范保留其他客户端的毫秒制 timeout 和 autoApprove。
+fn codex_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
+    let mut table = json_server_to_toml_table(spec)?;
+    table.remove("timeout");
+    // autoApprove 与 Codex 的审批语义不同，不据此扩大工具权限。
+    table.remove("autoApprove");
+    if !table.contains_key("tool_timeout_sec") {
+        if let Some(timeout_ms) = spec.get("timeout").and_then(Value::as_u64) {
+            table["tool_timeout_sec"] = toml_edit::value(timeout_ms as f64 / 1000.0);
+        }
+    }
+    Ok(table)
 }
 
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
@@ -902,14 +916,39 @@ mod tests {
     fn codex_mcp_table_omits_type_field() {
         // Codex 的 [mcp_servers.*] 没有 `type` 字段：传输方式由 command / url 推断。
         // 写出 `type` 会被 Codex 0.158+ 当作未知配置字段告警。
-        for spec in [
+        for mut spec in [
             json!({ "type": "stdio", "command": "echo", "args": ["hi"] }),
             json!({ "type": "http", "url": "https://mcp.example.com/mcp" }),
         ] {
-            let table = json_server_to_toml_table(&spec).unwrap();
-            assert!(
-                table.get("type").is_none(),
-                "Codex MCP table must not contain a `type` field"
+            let defaults = codex_server_to_toml_table(&spec).unwrap();
+            assert!(defaults.get("tool_timeout_sec").is_none());
+            spec["autoApprove"] = json!(["read_document"]);
+            for timeout_ms in [0, 1500, 900000] {
+                spec["timeout"] = json!(timeout_ms);
+                let original = spec.clone();
+                let table = codex_server_to_toml_table(&spec).unwrap();
+                for key in ["type", "timeout", "autoApprove"] {
+                    assert!(table.get(key).is_none(), "Codex must not receive {key}");
+                }
+                assert_eq!(
+                    table
+                        .get("tool_timeout_sec")
+                        .and_then(|item| item.as_float()),
+                    Some(timeout_ms as f64 / 1000.0)
+                );
+                assert!(table.get("default_tools_approval_mode").is_none());
+                assert_eq!(spec, original, "shared client configuration must survive");
+                let shared = json_server_to_toml_table(&spec).unwrap();
+                assert_eq!(shared["timeout"].as_integer(), Some(timeout_ms));
+                assert!(shared.get("autoApprove").is_some());
+            }
+            spec["tool_timeout_sec"] = json!(360);
+            spec["default_tools_approval_mode"] = json!("writes");
+            let table = codex_server_to_toml_table(&spec).unwrap();
+            assert_eq!(table["tool_timeout_sec"].as_integer(), Some(360));
+            assert_eq!(
+                table["default_tools_approval_mode"].as_str(),
+                Some("writes")
             );
         }
     }
