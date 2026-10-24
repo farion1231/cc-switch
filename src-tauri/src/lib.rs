@@ -44,6 +44,7 @@ mod proxy;
 mod services;
 mod session_manager;
 mod settings;
+mod stepfun_context_window;
 mod store;
 
 mod tray;
@@ -885,6 +886,25 @@ pub fn run() {
                         }
                         Err(e) => {
                             log::warn!("✗ Codex provider template bucket migration failed: {e}");
+                        }
+                    }
+
+                    // StepFun 存量供应商补窗口默认值：预设修正只覆盖新建的行。
+                    match crate::stepfun_context_window::maybe_backfill_stepfun_context_window(
+                        &db_for_codex_history_migration,
+                    ) {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ StepFun context window backfill skipped: {reason}");
+                            } else if !outcome.migrated_provider_ids.is_empty() {
+                                log::info!(
+                                    "✓ StepFun context window backfill completed: providers={}",
+                                    outcome.migrated_provider_ids.len()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ StepFun context window backfill failed: {e}");
                         }
                     }
 

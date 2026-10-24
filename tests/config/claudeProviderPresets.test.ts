@@ -214,3 +214,21 @@ describe("Microsoft Foundry Provider Preset", () => {
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
 });
+
+describe("StepFun Provider Presets", () => {
+  const presets = providerPresets.filter((p) => p.family === "stepfun");
+
+  // 3.x 的窗口是 262,144，两个键同值钉住（与 Kimi For Coding、Mistral 等预设一致）。
+  // 不声明时 Claude Code 会按更小的默认窗口走，长会话会先撞上游 400。
+  it.each([
+    ["StepFun", "https://api.stepfun.com/step_plan"],
+    ["StepFun en", "https://api.stepfun.ai/step_plan"],
+  ])("%s pins the 256K window on both keys", (name, baseUrl) => {
+    const preset = presets.find((p) => p.name === name);
+    expect(preset).toBeDefined();
+    const env = (preset!.settingsConfig as any).env;
+    expect(env.ANTHROPIC_BASE_URL).toBe(baseUrl);
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("262144");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
+  });
+});
