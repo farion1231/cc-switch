@@ -24,6 +24,13 @@ vi.mock("@/lib/api", () => ({
     getCurrent: apiMocks.getCurrent,
     getEditorView: apiMocks.getEditorView,
   },
+  endpointsApi: {
+    getAll: vi.fn(async () => ({})),
+    get: vi.fn(async () => null),
+    save: vi.fn(async () => {}),
+    delete: vi.fn(async () => {}),
+    referencingProviders: vi.fn(async () => []),
+  },
   vscodeApi: {
     getLiveProviderSettings: apiMocks.getLiveProviderSettings,
   },

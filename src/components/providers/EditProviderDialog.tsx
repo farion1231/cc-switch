@@ -26,6 +26,8 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { EndpointRefSection } from "@/components/endpoints";
+import { endpointsApi } from "@/lib/api";
+import type { Endpoint, TierMappings } from "@/types";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
 import { usesEditorView } from "@/config/appConfig";
 
@@ -88,8 +90,25 @@ export function EditProviderDialog({
   // 端点引用与档位映射（独立于 ProviderForm 的表单状态，保存时合入）
   const [endpointState, setEndpointState] = useState<{
     endpointRef?: string;
-    tierMappings?: import("@/types").TierMappings;
+    tierMappings?: TierMappings;
   }>({});
+  const [tierEndpoints, setTierEndpoints] = useState<Endpoint[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    endpointsApi
+      .getAll()
+      .then((map) => {
+        if (!cancelled) setTierEndpoints(Object.values(map));
+      })
+      .catch(() => {
+        // 端点列表加载失败：模型映射行退回无端点列（不影响其他编辑）
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     setEndpointState({
@@ -426,8 +445,9 @@ export function EditProviderDialog({
       {ENDPOINT_SECTION_APPS.includes(appId) && (
         <EndpointRefSection
           endpointRef={endpointState.endpointRef}
-          tierMappings={endpointState.tierMappings}
-          onChange={setEndpointState}
+          onChange={(endpointRef) =>
+            setEndpointState((prev) => ({ ...prev, endpointRef }))
+          }
         />
       )}
       {waitingForEditorView ? (
@@ -445,6 +465,11 @@ export function EditProviderDialog({
           onSubmittingChange={setIsFormSubmitting}
           onSubmitReadyChange={handleSubmitReadyChange}
           initialData={initialData}
+          tierEndpoints={tierEndpoints}
+          tierMappings={endpointState.tierMappings}
+          onTierMappingsChange={(mappings) =>
+            setEndpointState((prev) => ({ ...prev, tierMappings: mappings }))
+          }
           showButtons={false}
           isProxyTakeover={isProxyTakeover}
           inactiveFields={editorView?.inactive}

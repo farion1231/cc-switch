@@ -12,6 +12,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -51,6 +57,7 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import type { Endpoint, TierMappings } from "@/types";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import {
   ClaudeStackModelsField,
@@ -114,6 +121,12 @@ interface ClaudeFormFieldsProps {
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
+
+  // 档位映射整合（端点引用化）：endpoints 非空时模型映射行内可选档位端点，
+  // 模型下拉按所选端点拉取；未传时行为与旧版完全一致
+  tierEndpoints?: Endpoint[];
+  tierMappings?: TierMappings;
+  onTierMappingsChange?: (mappings: TierMappings | undefined) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -207,6 +220,9 @@ export function ClaudeFormFields({
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
+  tierEndpoints,
+  tierMappings,
+  onTierMappingsChange,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -303,6 +319,8 @@ export function ClaudeFormFields({
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  // 档位模型下拉的展开行（row.role）；null = 全收起
+  const [openModelPicker, setOpenModelPicker] = useState<string | null>(null);
 
   // 聚合布局的模型列表拉取成功后直接打开选择弹窗，不再提示成功。
   const opensModelPicker = variant === "stack" && !!onStackModelRowsChange;
@@ -621,6 +639,95 @@ export function ClaudeFormFields({
     displayNameField?: ClaudeModelEnvField;
     inputId: string;
   };
+
+  // ---- 档位端点整合（模型映射行内选择端点 + 按端点拉模型下拉） ----
+  const tierEndpointList = tierEndpoints ?? [];
+  const tierEnabled = tierEndpointList.length > 0 && !!onTierMappingsChange;
+  const [endpointModelCache, setEndpointModelCache] = useState<
+    Record<string, string[]>
+  >({});
+  const [endpointModelLoading, setEndpointModelLoading] = useState<
+    Record<string, boolean>
+  >({});
+
+  const loadEndpointModels = useCallback(
+    async (endpoint: Endpoint) => {
+      if (
+        endpointModelCache[endpoint.id] ||
+        endpointModelLoading[endpoint.id]
+      ) {
+        return;
+      }
+      setEndpointModelLoading((prev) => ({ ...prev, [endpoint.id]: true }));
+      try {
+        const models = await fetchModelsForConfig(
+          endpoint.baseUrl,
+          endpoint.apiKey,
+          undefined,
+          undefined,
+          undefined,
+          { apiFormat: endpoint.apiFormat },
+        );
+        setEndpointModelCache((prev) => ({
+          ...prev,
+          [endpoint.id]: models.map((m) => m.id),
+        }));
+      } catch (error) {
+        console.error(
+          `Failed to fetch models for endpoint ${endpoint.name}:`,
+          error,
+        );
+        toast.error(
+          t("providerForm.endpointModelsFetchError", {
+            defaultValue: "获取端点模型列表失败",
+          }),
+        );
+      } finally {
+        setEndpointModelLoading((prev) => ({ ...prev, [endpoint.id]: false }));
+      }
+    },
+    [endpointModelCache, endpointModelLoading, t],
+  );
+
+  /** 档位行切换端点：跨端点时档位模型写入 tierMappings 并清掉 env 键（单一来源）；
+   *  切回本端点时把档位模型写回 env 键并移除 tier 档。 */
+  const handleTierEndpointChange = useCallback(
+    (
+      role: "sonnet" | "opus" | "fable" | "haiku" | "subagent" | "default",
+      envField: ClaudeModelEnvField,
+      currentModel: string,
+      endpointId: string | undefined,
+    ) => {
+      if (!onTierMappingsChange) return;
+      const next: TierMappings = { ...tierMappings };
+      if (!endpointId) {
+        delete next[role];
+        onModelChange(envField, currentModel);
+      } else {
+        next[role] = { endpoint: endpointId, model: currentModel || undefined };
+        onModelChange(envField, "");
+      }
+      const hasAny = (Object.keys(next) as Array<keyof TierMappings>).some(
+        (k) => next[k],
+      );
+      onTierMappingsChange(hasAny ? next : undefined);
+    },
+    [onModelChange, onTierMappingsChange, tierMappings],
+  );
+
+  const setTierModel = useCallback(
+    (role: keyof TierMappings, model: string) => {
+      if (!onTierMappingsChange) return;
+      const current = tierMappings?.[role];
+      if (!current) return;
+      const next: TierMappings = {
+        ...tierMappings,
+        [role]: { ...current, model: model || undefined },
+      };
+      onTierMappingsChange(next);
+    },
+    [onTierMappingsChange, tierMappings],
+  );
 
   const modelRoleRows: ModelRoleRow[] = [
     {
@@ -1170,7 +1277,13 @@ export function ClaudeFormFields({
             </div>
 
             <div className="space-y-3">
-              <div className="hidden grid-cols-[120px_1fr_minmax(0,1fr)_104px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+              <div
+                className={
+                  tierEnabled
+                    ? "hidden grid-cols-[120px_1fr_150px_minmax(0,1fr)_104px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid"
+                    : "hidden grid-cols-[120px_1fr_minmax(0,1fr)_104px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid"
+                }
+              >
                 <span>
                   {t("providerForm.modelRoleLabel", {
                     defaultValue: "模型角色",
@@ -1181,6 +1294,13 @@ export function ClaudeFormFields({
                     defaultValue: "显示名称",
                   })}
                 </span>
+                {tierEnabled && (
+                  <span>
+                    {t("providerForm.tierEndpointLabel", {
+                      defaultValue: "档位端点",
+                    })}
+                  </span>
+                )}
                 <span>
                   {t("providerForm.requestModelLabel", {
                     defaultValue: "实际请求模型",
@@ -1196,11 +1316,22 @@ export function ClaudeFormFields({
               {modelRoleRows.map((row) => {
                 const modelBase = stripClaudeOneMMarker(row.model);
                 const usesOneM = hasClaudeOneMMarker(row.model);
+                const tierEntry = tierMappings?.[row.role];
+                const crossEndpointId = tierEntry?.endpoint;
+                const crossModel = tierEntry?.model ?? "";
+                const crossEndpointObj = tierEndpointList.find(
+                  (e) => e.id === crossEndpointId,
+                );
+                const isCross = tierEnabled && !!crossEndpointId;
 
                 return (
                   <div
                     key={row.role}
-                    className="grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_minmax(0,1fr)_104px]"
+                    className={
+                      tierEnabled
+                        ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_150px_minmax(0,1fr)_104px]"
+                        : "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_minmax(0,1fr)_104px]"
+                    }
                   >
                     <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
                       {row.label}
@@ -1215,10 +1346,12 @@ export function ClaudeFormFields({
                           )
                         }
                         placeholder={
-                          modelBase ||
-                          t("providerForm.modelDisplayNamePlaceholder", {
-                            defaultValue: "例如 DeepSeek V4 Pro",
-                          })
+                          isCross
+                            ? crossModel
+                            : modelBase ||
+                              t("providerForm.modelDisplayNamePlaceholder", {
+                                defaultValue: "例如 DeepSeek V4 Pro",
+                              })
                         }
                         autoComplete="off"
                       />
@@ -1229,20 +1362,134 @@ export function ClaudeFormFields({
                         })}
                       </div>
                     )}
-                    {renderModelInput(
-                      row.inputId,
-                      modelBase,
-                      row.modelField,
-                      t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                      (value) =>
-                        handleRoleModelChange(
-                          row,
-                          setClaudeOneMMarker(value, usesOneM),
-                        ),
+                    {tierEnabled && (
+                      <Select
+                        value={crossEndpointId ?? "__self__"}
+                        onValueChange={(value) =>
+                          handleTierEndpointChange(
+                            row.role,
+                            row.modelField,
+                            crossEndpointId ? crossModel : modelBase,
+                            value === "__self__" ? undefined : value,
+                          )
+                        }
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__self__">
+                            {t("providerForm.tierSelfEndpoint", {
+                              defaultValue: "本端点",
+                            })}
+                          </SelectItem>
+                          {tierEndpointList.map((endpoint) => (
+                            <SelectItem key={endpoint.id} value={endpoint.id}>
+                              {endpoint.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {isCross && crossEndpointObj ? (
+                      <Popover
+                        open={openModelPicker === row.role}
+                        onOpenChange={(open) => {
+                          if (open) {
+                            setOpenModelPicker(row.role);
+                            void loadEndpointModels(crossEndpointObj);
+                          } else {
+                            setOpenModelPicker(null);
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-bg-1 px-3 text-sm"
+                          >
+                            <span className="truncate text-left">
+                              {crossModel ||
+                                t("providerForm.tierModelPlaceholder", {
+                                  defaultValue: "选择或输入模型",
+                                })}
+                            </span>
+                            <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-fg-3" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-72 p-0" align="start">
+                          <div className="border-b border-border p-2">
+                            <Input
+                              value={crossModel}
+                              onChange={(event) =>
+                                setTierModel(row.role, event.target.value)
+                              }
+                              placeholder={t(
+                                "providerForm.tierModelPlaceholder",
+                                {
+                                  defaultValue: "选择或输入模型",
+                                },
+                              )}
+                              className="h-8"
+                            />
+                          </div>
+                          <ScrollArea className="h-56">
+                            <div className="p-1">
+                              {endpointModelLoading[crossEndpointId] ? (
+                                <div className="flex items-center justify-center gap-2 py-4 text-xs text-fg-2">
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  {t("providerForm.endpointModelsLoading", {
+                                    defaultValue: "正在获取模型列表…",
+                                  })}
+                                </div>
+                              ) : (endpointModelCache[crossEndpointId] ?? [])
+                                  .length === 0 ? (
+                                <div className="py-4 text-center text-xs text-fg-3">
+                                  {t("providerForm.endpointModelsEmpty", {
+                                    defaultValue:
+                                      "未获取到模型，可手动输入或稍后再试",
+                                  })}
+                                </div>
+                              ) : (
+                                (endpointModelCache[crossEndpointId] ?? []).map(
+                                  (model) => (
+                                    <button
+                                      key={model}
+                                      type="button"
+                                      className="w-full truncate rounded px-2 py-1.5 text-left font-mono text-xs hover:bg-subtle"
+                                      onClick={() => {
+                                        setTierModel(row.role, model);
+                                        setOpenModelPicker(null);
+                                      }}
+                                    >
+                                      {model}
+                                    </button>
+                                  ),
+                                )
+                              )}
+                            </div>
+                          </ScrollArea>
+                        </PopoverContent>
+                      </Popover>
+                    ) : (
+                      renderModelInput(
+                        row.inputId,
+                        modelBase,
+                        row.modelField,
+                        t("providerForm.modelPlaceholder", {
+                          defaultValue: "",
+                        }),
+                        (value) =>
+                          handleRoleModelChange(
+                            row,
+                            setClaudeOneMMarker(value, usesOneM),
+                          ),
+                      )
                     )}
                     <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
                       <Checkbox
                         checked={usesOneM}
+                        disabled={isCross}
                         onCheckedChange={(checked) =>
                           handleRoleOneMChange(row, checked === true)
                         }
@@ -1274,21 +1521,148 @@ export function ClaudeFormFields({
                       })}
                 </HelpTip>
               </div>
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]">
-                {renderModelInput(
-                  "claudeModel",
-                  stripClaudeOneMMarker(claudeModel),
-                  "ANTHROPIC_MODEL",
-                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                  (value) =>
-                    onModelChange(
-                      "ANTHROPIC_MODEL",
-                      setClaudeOneMMarker(value, fallbackUsesOneM),
-                    ),
-                )}
+              <div
+                className={
+                  tierEnabled
+                    ? "grid grid-cols-1 gap-2 md:grid-cols-[150px_1fr_minmax(0,104px)]"
+                    : "grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]"
+                }
+              >
+                {tierEnabled &&
+                  (() => {
+                    const tierEntry = tierMappings?.default;
+                    const crossId = tierEntry?.endpoint;
+                    return (
+                      <Select
+                        value={crossId ?? "__self__"}
+                        onValueChange={(value) =>
+                          handleTierEndpointChange(
+                            "default",
+                            "ANTHROPIC_MODEL",
+                            crossId
+                              ? (tierEntry?.model ?? "")
+                              : stripClaudeOneMMarker(claudeModel),
+                            value === "__self__" ? undefined : value,
+                          )
+                        }
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__self__">
+                            {t("providerForm.tierSelfEndpoint", {
+                              defaultValue: "本端点",
+                            })}
+                          </SelectItem>
+                          {tierEndpointList.map((endpoint) => (
+                            <SelectItem key={endpoint.id} value={endpoint.id}>
+                              {endpoint.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    );
+                  })()}
+                {(() => {
+                  const crossId = tierMappings?.default?.endpoint;
+                  const crossModel = tierMappings?.default?.model ?? "";
+                  const crossEndpointObj = tierEndpointList.find(
+                    (e) => e.id === crossId,
+                  );
+                  if (tierEnabled && crossId && crossEndpointObj) {
+                    return (
+                      <Popover
+                        open={openModelPicker === "default"}
+                        onOpenChange={(open) => {
+                          if (open) {
+                            setOpenModelPicker("default");
+                            void loadEndpointModels(crossEndpointObj);
+                          } else {
+                            setOpenModelPicker(null);
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-bg-1 px-3 text-sm"
+                          >
+                            <span className="truncate text-left">
+                              {crossModel ||
+                                t("providerForm.tierModelPlaceholder", {
+                                  defaultValue: "选择或输入模型",
+                                })}
+                            </span>
+                            <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-fg-3" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-72 p-0" align="start">
+                          <div className="border-b border-border p-2">
+                            <Input
+                              value={crossModel}
+                              onChange={(event) =>
+                                setTierModel("default", event.target.value)
+                              }
+                              placeholder={t(
+                                "providerForm.tierModelPlaceholder",
+                                {
+                                  defaultValue: "选择或输入模型",
+                                },
+                              )}
+                              className="h-8"
+                            />
+                          </div>
+                          <ScrollArea className="h-56">
+                            <div className="p-1">
+                              {(endpointModelCache[crossId] ?? []).map(
+                                (model) => (
+                                  <button
+                                    key={model}
+                                    type="button"
+                                    className="w-full truncate rounded px-2 py-1.5 text-left font-mono text-xs hover:bg-subtle"
+                                    onClick={() => {
+                                      setTierModel("default", model);
+                                      setOpenModelPicker(null);
+                                    }}
+                                  >
+                                    {model}
+                                  </button>
+                                ),
+                              )}
+                              {(endpointModelCache[crossId] ?? []).length ===
+                                0 && (
+                                <div className="py-4 text-center text-xs text-fg-3">
+                                  {t("providerForm.endpointModelsEmpty", {
+                                    defaultValue:
+                                      "未获取到模型，可手动输入或稍后再试",
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </ScrollArea>
+                        </PopoverContent>
+                      </Popover>
+                    );
+                  }
+                  return renderModelInput(
+                    "claudeModel",
+                    stripClaudeOneMMarker(claudeModel),
+                    "ANTHROPIC_MODEL",
+                    t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                    (value) =>
+                      onModelChange(
+                        "ANTHROPIC_MODEL",
+                        setClaudeOneMMarker(value, fallbackUsesOneM),
+                      ),
+                  );
+                })()}
                 <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
                   <Checkbox
                     checked={fallbackUsesOneM}
+                    disabled={
+                      !!(tierEnabled && tierMappings?.default?.endpoint)
+                    }
                     onCheckedChange={(checked) => {
                       const base = stripClaudeOneMMarker(claudeModel).trim();
                       if (!base) return;

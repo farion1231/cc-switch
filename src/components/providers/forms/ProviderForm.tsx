@@ -20,6 +20,8 @@ import {
 } from "@/utils/claudeEditorOverlay";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
+  Endpoint,
+  TierMappings,
   ProviderCategory,
   ProviderMeta,
   ClaudeApiFormat,
@@ -291,6 +293,10 @@ export interface ProviderFormProps {
   submitLabel: string;
   onSubmit: (values: ProviderFormValues) => Promise<void> | void;
   onCancel: () => void;
+  // 档位映射整合（端点引用化）：透传给 ClaudeFormFields
+  tierEndpoints?: Endpoint[];
+  tierMappings?: TierMappings;
+  onTierMappingsChange?: (mappings: TierMappings | undefined) => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
   onManageAuthAccounts?: (target: AuthCenterTarget) => void;
@@ -352,6 +358,9 @@ function ProviderFormFull({
   providerId,
   submitLabel,
   onSubmit,
+  tierEndpoints,
+  tierMappings,
+  onTierMappingsChange,
   onCancel,
   onUniversalPresetSelect,
   onManageUniversalProviders,
@@ -2700,6 +2709,9 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
+              tierEndpoints={tierEndpoints}
+              tierMappings={tierMappings}
+              onTierMappingsChange={onTierMappingsChange}
               templateValueEntries={templateValueEntries}
               templateValues={templateValues}
               templatePresetName={templatePreset?.name || ""}

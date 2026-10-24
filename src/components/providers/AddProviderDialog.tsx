@@ -9,7 +9,13 @@ import {
   PresetStepContext,
   type PresetStepState,
 } from "@/components/providers/forms/presetStep";
-import type { Provider, CustomEndpoint, UniversalProvider } from "@/types";
+import type {
+  Endpoint,
+  TierMappings,
+  Provider,
+  CustomEndpoint,
+  UniversalProvider,
+} from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi, universalProvidersApi } from "@/lib/api";
 import type {
@@ -27,6 +33,7 @@ import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
 import { EndpointPanel } from "@/components/endpoints";
+import { endpointsApi } from "@/lib/api";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
@@ -79,6 +86,23 @@ export function AddProviderDialog({
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
   const [manageUniversalOpen, setManageUniversalOpen] = useState(false);
   const [manageEndpointsOpen, setManageEndpointsOpen] = useState(false);
+  // 档位映射整合：新建时也可就地配置跨端点档位
+  const [tierEndpoints, setTierEndpoints] = useState<Endpoint[]>([]);
+  const [tierMappings, setTierMappings] = useState<TierMappings | undefined>();
+  useEffect(() => {
+    let cancelled = false;
+    endpointsApi
+      .getAll()
+      .then((map) => {
+        if (!cancelled) setTierEndpoints(Object.values(map));
+      })
+      .catch(() => {
+        // 加载失败：模型映射行退回无端点列
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     if (open) setStep("pick");
   }, [open, appId]);
@@ -270,6 +294,7 @@ export function AddProviderDialog({
         iconColor: values.iconColor?.trim() || undefined,
         ...(values.presetCategory ? { category: values.presetCategory } : {}),
         ...(values.meta ? { meta: values.meta } : {}),
+        tierMappings,
       };
       if (appId === "claude-desktop" && values.presetId) {
         const presetIndex = parseInt(
@@ -524,6 +549,9 @@ export function AddProviderDialog({
       onStackLayoutChange={setStackLayout}
       onSubmit={handleSubmit}
       onCancel={closeDialog}
+      tierEndpoints={tierEndpoints}
+      tierMappings={tierMappings}
+      onTierMappingsChange={setTierMappings}
       onManageAuthAccounts={setAuthSettingsTarget}
       onSubmittingChange={setIsFormSubmitting}
       onSubmitReadyChange={handleSubmitReadyChange}
