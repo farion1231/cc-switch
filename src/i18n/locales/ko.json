@@ -1828,7 +1828,9 @@
     "deploymentType": "GitHub 배포 유형",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "예를 들어 company.ghe.com"
+    "enterpriseDomainPlaceholder": "예를 들어 company.ghe.com",
+    "automaticFormat": "모델에 따라 자동 선택",
+    "automaticFormatHint": "Copilot의 업스트림 형식은 라우팅에서 모델에 따라 자동으로 선택합니다. 수동으로 지정한 형식은 적용되지 않습니다."
   },
   "codexOauth": {
     "authStatus": "인증 상태",
@@ -1868,7 +1870,12 @@
     "retry": "다시 시도",
     "copyCode": "코드 복사",
     "fastMode": "FAST 모드",
-    "fastModeDescription": "대기 시간을 줄이려면 service_tier=\"priority\"를 보내세요. 기본적으로 꺼져 있습니다. 활성화하면 ChatGPT 할당량이 더 높은 비율로 소모됩니다."
+    "fastModeDescription": "대기 시간을 줄이려면 service_tier=\"priority\"를 보내세요. 기본적으로 꺼져 있습니다. 활성화하면 ChatGPT 할당량이 더 높은 비율로 소모됩니다.",
+    "loginMethod": "로그인 방법",
+    "browserLogin": "브라우저 로그인",
+    "deviceCodeLogin": "디바이스 코드 로그인",
+    "openBrowserLogin": "브라우저에서 로그인",
+    "loginExpired": "로그인 시간이 만료되었습니다. 다시 시도해 주세요."
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 인증",
