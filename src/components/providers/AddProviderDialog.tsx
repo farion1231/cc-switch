@@ -26,6 +26,7 @@ import {
 import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
+import { EndpointPanel } from "@/components/endpoints";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
@@ -77,6 +78,7 @@ export function AddProviderDialog({
   const [step, setStep] = useState<"pick" | "form">("pick");
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
   const [manageUniversalOpen, setManageUniversalOpen] = useState(false);
+  const [manageEndpointsOpen, setManageEndpointsOpen] = useState(false);
   useEffect(() => {
     if (open) setStep("pick");
   }, [open, appId]);
@@ -503,7 +505,16 @@ export function AddProviderDialog({
           {t("common.add")}
         </Button>
       </>
-    ) : null;
+    ) : (
+      <Button
+        type="button"
+        variant="neutral"
+        size="regular"
+        onClick={() => setManageEndpointsOpen(true)}
+      >
+        {t("endpoints.manage", { defaultValue: "管理全局端点" })}
+      </Button>
+    );
 
   const form = (
     <ProviderForm
@@ -597,6 +608,14 @@ export function AddProviderDialog({
           <UniversalProviderPanel />
         </FullScreenPanel>
       )}
+
+      <FullScreenPanel
+        isOpen={manageEndpointsOpen}
+        title={t("endpoints.manage", { defaultValue: "管理全局端点" })}
+        onClose={() => setManageEndpointsOpen(false)}
+      >
+        <EndpointPanel />
+      </FullScreenPanel>
 
       <AuthSettingsPanel
         target={authSettingsTarget}

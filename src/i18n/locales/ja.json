@@ -1787,7 +1787,18 @@
     "localProxyRequestOverridesHelp": "形式変換後に上流へ送るリクエストに適用されます。",
     "apiFormatHelp": "プロバイダーがネイティブ対応するプロトコルを選びます。Anthropic Messages はそのまま転送して変換なし、他の三つはルーティングが Anthropic Messages に変換します。",
     "directModeFormatInUse": "このカードは直結で使用中です。この形式で保存するとリクエストが失敗します。先にルーティングか集約に切り替えてください。",
-    "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。"
+    "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。",
+    "endpointSectionTitle": "エンドポイント参照とティアマッピング",
+    "endpointRef": "接続エンドポイント",
+    "endpointStandalone": "独立設定（URL とキーをこの項目で入力）",
+    "endpointRefActive": "「{{name}}」を参照中：URL とキーはエンドポイント優先（エンドポイント管理で変更、この項目は保存時に自動更新）",
+    "endpointRefHint": "グローバルエンドポイントを参照すると、同一ベンダーの複数項目がキーを共有します",
+    "tierMappings": "ティアマッピング",
+    "tierMappingsHint": "モデル名=このエンドポイント内でティアを差し替え；クロスエンドポイント=プロキシモードでそのティアを別エンドポイントへ（例：Haiku ティアを安価なリレーへ）。直接接続では無効",
+    "tierModelPlaceholder": "モデル名（空=マッピングなし）",
+    "tierSelfEndpoint": "このエンドポイント",
+    "tierCrossEndpoint": "クロス → {{name}}",
+    "tierClear": "このティアのマッピングをクリア"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",
@@ -5033,5 +5044,32 @@
       "defaultModelInUse": "Kimi Code がこのプロバイダーのモデルを使用中です。先に Kimi Code の /model でほかのモデルに切り替えてください。",
       "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"
     }
+  },
+  "endpoints": {
+    "title": "グローバルエンドポイント",
+    "description": "エンドポイントはベンダーの接続情報（URL・キー・プロトコル）を保持し、各グループのプロバイダー項目から参照されます。キーを一度変更すれば、参照するすべての項目に反映されます。",
+    "empty": "エンドポイントはまだありません",
+    "emptyHint": "項目から参照すると自動作成されるか、下のボタンで新規作成",
+    "add": "新規エンドポイント",
+    "manage": "グローバルエンドポイント管理",
+    "editTitle": "エンドポイント編集",
+    "addTitle": "新規エンドポイント",
+    "name": "名前",
+    "namePlaceholder": "例：SiliconFlow",
+    "baseUrl": "API URL",
+    "apiKey": "API キー",
+    "apiFormat": "プロトコル形式",
+    "apiFormatHint": "プロキシがこの形式に従い Claude / OpenAI / Gemini 間で変換します。多くのリレーは Anthropic",
+    "notes": "メモ",
+    "notesPlaceholder": "任意",
+    "nameRequired": "名前を入力してください",
+    "baseUrlRequired": "API URL を入力してください",
+    "saved": "エンドポイントを保存しました（参照項目があれば同期済み）",
+    "saveError": "エンドポイントの保存に失敗",
+    "deleted": "エンドポイントを削除しました",
+    "deleteError": "エンドポイントの削除に失敗",
+    "loadError": "エンドポイントの読み込みに失敗",
+    "deleteConfirmTitle": "削除できません：エンドポイントが参照されています",
+    "deleteConfirmDescription": "「{{name}}」は {{count}} 件のプロバイダー項目から参照されています（{{apps}}）。先にそれらの項目で別のエンドポイントへ変更するか独立設定にしてください。"
   }
 }

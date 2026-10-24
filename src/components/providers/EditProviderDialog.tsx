@@ -25,6 +25,7 @@ import type {
   ProviderEditorView,
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
+import { EndpointRefSection } from "@/components/endpoints";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
 import { usesEditorView } from "@/config/appConfig";
 
@@ -59,6 +60,10 @@ const SWITCH_APPS: AppId[] = [
   "claude-desktop",
 ];
 
+// 端点引用区块适用范围：Claude 系 env 形态（档位映射物化与代理分流
+// 都建立在 ANTHROPIC_* 语义上）；其他 app 形态后续版本扩展
+const ENDPOINT_SECTION_APPS: AppId[] = ["claude", "claude-desktop"];
+
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -80,6 +85,18 @@ export function EditProviderDialog({
   const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
     useState<AuthCenterTarget | null>(null);
+  // 端点引用与档位映射（独立于 ProviderForm 的表单状态，保存时合入）
+  const [endpointState, setEndpointState] = useState<{
+    endpointRef?: string;
+    tierMappings?: import("@/types").TierMappings;
+  }>({});
+
+  useEffect(() => {
+    setEndpointState({
+      endpointRef: provider?.endpointRef,
+      tierMappings: provider?.tierMappings,
+    });
+  }, [provider?.id, open]);
 
   useEffect(() => {
     setAuthSettingsTarget(null);
@@ -312,6 +329,9 @@ export function EditProviderDialog({
         ...(values.presetCategory ? { category: values.presetCategory } : {}),
         // 保留或更新 meta 字段
         ...(values.meta ? { meta: values.meta } : {}),
+        // 端点引用与档位映射（保存时后端按端点物化凭据）
+        endpointRef: endpointState.endpointRef,
+        tierMappings: endpointState.tierMappings,
       };
 
       const submit = async (onConflict: EditorConflictPolicy) => {
@@ -403,6 +423,13 @@ export function EditProviderDialog({
       }
     >
       {currentNotice}
+      {ENDPOINT_SECTION_APPS.includes(appId) && (
+        <EndpointRefSection
+          endpointRef={endpointState.endpointRef}
+          tierMappings={endpointState.tierMappings}
+          onChange={setEndpointState}
+        />
+      )}
       {waitingForEditorView ? (
         <div className="py-12 text-center text-body text-fg-2">
           {t("common.loading")}

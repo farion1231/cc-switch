@@ -38,9 +38,7 @@ export function EndpointPanel({ onRefChanged }: EndpointPanelProps) {
       setEndpoints(await endpointsApi.getAll());
     } catch (error) {
       console.error("Failed to load endpoints:", error);
-      toast.error(
-        t("endpoints.loadError", { defaultValue: "加载端点失败" }),
-      );
+      toast.error(t("endpoints.loadError", { defaultValue: "加载端点失败" }));
     } finally {
       setLoading(false);
     }
@@ -56,17 +54,14 @@ export function EndpointPanel({ onRefChanged }: EndpointPanelProps) {
         await endpointsApi.save(endpoint);
         toast.success(
           t("endpoints.saved", {
-            defaultValue:
-              "端点已保存，引用它的条目已同步更新（如有）",
+            defaultValue: "端点已保存，引用它的条目已同步更新（如有）",
           }),
         );
         await load();
         onRefChanged?.();
       } catch (error) {
         console.error("Failed to save endpoint:", error);
-        toast.error(
-          t("endpoints.saveError", { defaultValue: "保存端点失败" }),
-        );
+        toast.error(t("endpoints.saveError", { defaultValue: "保存端点失败" }));
       }
     },
     [load, onRefChanged, t],
@@ -77,9 +72,7 @@ export function EndpointPanel({ onRefChanged }: EndpointPanelProps) {
       try {
         await endpointsApi.delete(endpoint.id);
         setDeleteTarget({ open: false, endpoint: null, refs: [] });
-        toast.success(
-          t("endpoints.deleted", { defaultValue: "端点已删除" }),
-        );
+        toast.success(t("endpoints.deleted", { defaultValue: "端点已删除" }));
         await load();
       } catch (error) {
         const refs = (error as { refs?: EndpointReference[] }).refs;
@@ -129,7 +122,8 @@ export function EndpointPanel({ onRefChanged }: EndpointPanelProps) {
           </p>
           <p className="mt-1 text-xs text-fg-3">
             {t("endpoints.emptyHint", {
-              defaultValue: "从供应商条目「引用端点」时会自动创建，或点下方按钮新建",
+              defaultValue:
+                "从供应商条目「引用端点」时会自动创建，或点下方按钮新建",
             })}
           </p>
         </div>

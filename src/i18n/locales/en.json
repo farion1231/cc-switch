@@ -1787,7 +1787,18 @@
     "localProxyRequestOverridesHelp": "Applies to the upstream request after format conversion.",
     "apiFormatHelp": "Pick the protocol the provider supports natively: Anthropic Messages is forwarded as is without conversion; routing converts the other three to Anthropic Messages.",
     "directModeFormatInUse": "This card is in use in direct mode: saving it with this format makes requests fail. Switch to routing or Aggregation first.",
-    "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card."
+    "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card.",
+    "endpointSectionTitle": "Endpoint Reference & Tier Mapping",
+    "endpointRef": "Connection Endpoint",
+    "endpointStandalone": "Standalone (URL & key entered in this entry)",
+    "endpointRefActive": "Referencing \"{{name}}\": URL & key come from the endpoint (edit in endpoint management; this entry updates on save)",
+    "endpointRefHint": "Referencing a global endpoint lets multiple entries of the same vendor share one key",
+    "tierMappings": "Tier Mapping",
+    "tierMappingsHint": "Model name = remap the tier within this endpoint; cross-endpoint = in proxy mode this tier routes to another endpoint (e.g. Haiku tier on a cheaper relay); not effective in direct mode",
+    "tierModelPlaceholder": "Model name (empty = no mapping)",
+    "tierSelfEndpoint": "This endpoint",
+    "tierCrossEndpoint": "Cross-endpoint → {{name}}",
+    "tierClear": "Clear this tier mapping"
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -5033,5 +5044,32 @@
       "defaultModelInUse": "Kimi Code is using a model from this provider. Switch to another model with /model in Kimi Code first.",
       "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
     }
+  },
+  "endpoints": {
+    "title": "Global Endpoints",
+    "description": "Endpoints hold vendor connection info (URL, key, protocol). Provider entries in every group reference them — change a key once and all referencing entries update.",
+    "empty": "No endpoints yet",
+    "emptyHint": "Created automatically when an entry references one, or use the button below",
+    "add": "New Endpoint",
+    "manage": "Manage Global Endpoints",
+    "editTitle": "Edit Endpoint",
+    "addTitle": "New Endpoint",
+    "name": "Name",
+    "namePlaceholder": "e.g. SiliconFlow",
+    "baseUrl": "API URL",
+    "apiKey": "API Key",
+    "apiFormat": "Protocol Format",
+    "apiFormatHint": "The proxy converts between Claude / OpenAI / Gemini protocols accordingly; most relays use Anthropic",
+    "notes": "Notes",
+    "notesPlaceholder": "Optional",
+    "nameRequired": "Name is required",
+    "baseUrlRequired": "API URL is required",
+    "saved": "Endpoint saved; referencing entries updated",
+    "saveError": "Failed to save endpoint",
+    "deleted": "Endpoint deleted",
+    "deleteError": "Failed to delete endpoint",
+    "loadError": "Failed to load endpoints",
+    "deleteConfirmTitle": "Cannot delete: endpoint is referenced",
+    "deleteConfirmDescription": "\"{{name}}\" is still referenced by {{count}} provider entries ({{apps}}). Switch those entries to another endpoint or standalone config first."
   }
 }

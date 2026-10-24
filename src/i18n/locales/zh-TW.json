@@ -1788,7 +1788,18 @@
     "localProxyRequestOverridesHelp": "作用於格式轉換後發給上游的請求。",
     "apiFormatHelp": "看供應商原生支援哪種協定：Anthropic Messages 原樣轉發、不轉換格式；其餘三種由路由轉成 Anthropic Messages。",
     "directModeFormatInUse": "這張卡正在直連使用：改成這種格式後儲存，請求會失敗。請先切到路由或聚合。",
-    "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。"
+    "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。",
+    "endpointSectionTitle": "端點引用與檔位映射",
+    "endpointRef": "連線端點",
+    "endpointStandalone": "獨立設定（位址金鑰在本條目內填寫）",
+    "endpointRefActive": "已引用「{{name}}」：位址與金鑰以端點為準（在端點管理裡改，本條目保存時自動更新）",
+    "endpointRefHint": "引用全域端點後，同一家廠商的多個條目共享一份金鑰，改一處全部生效",
+    "tierMappings": "檔位映射",
+    "tierMappingsHint": "填模型名=該檔在本端點內換模型；選「跨端點」=代理模式下該檔請求發往其他端點（如 Haiku 檔走便宜中轉），直連模式不生效",
+    "tierModelPlaceholder": "模型名（留空=不映射）",
+    "tierSelfEndpoint": "本端點",
+    "tierCrossEndpoint": "跨端點 → {{name}}",
+    "tierClear": "清除該檔映射"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",
@@ -5034,5 +5045,32 @@
       "defaultModelInUse": "Kimi Code 正在使用此供應商的模型，請先在 Kimi Code 中用 /model 切換到其他模型",
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用此供應商的模型，請先在 Kimi Code 中用 /secondary-model 更換"
     }
+  },
+  "endpoints": {
+    "title": "全域端點",
+    "description": "端點保存廠商的連線資訊（位址、金鑰、協定格式），各分組的供應商條目引用它。在這裡改一次金鑰，所有引用條目同時生效。",
+    "empty": "還沒有端點",
+    "emptyHint": "從供應商條目「引用端點」時會自動建立，或點下方按鈕新建",
+    "add": "新建端點",
+    "manage": "管理全域端點",
+    "editTitle": "編輯端點",
+    "addTitle": "新建端點",
+    "name": "名稱",
+    "namePlaceholder": "如：SiliconFlow",
+    "baseUrl": "API 位址",
+    "apiKey": "API 金鑰",
+    "apiFormat": "協定格式",
+    "apiFormatHint": "代理按此格式在 Claude / OpenAI / Gemini 協定間轉換；大多數中轉站選 Anthropic",
+    "notes": "備註",
+    "notesPlaceholder": "可選",
+    "nameRequired": "請填寫名稱",
+    "baseUrlRequired": "請填寫 API 位址",
+    "saved": "端點已保存，引用它的條目已同步更新（如有）",
+    "saveError": "保存端點失敗",
+    "deleted": "端點已刪除",
+    "deleteError": "刪除端點失敗",
+    "loadError": "載入端點失敗",
+    "deleteConfirmTitle": "無法刪除：端點正在被引用",
+    "deleteConfirmDescription": "「{{name}}」仍被 {{count}} 個供應商條目引用（{{apps}}）。請先在這些條目裡改用其他端點或改為獨立設定。"
   }
 }
