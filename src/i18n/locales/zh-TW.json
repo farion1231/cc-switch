@@ -1805,7 +1805,7 @@
     "endpointModelsLoading": "正在取得模型列表…",
     "endpointModelsEmpty": "未取得模型，可手動輸入或稍後再試",
     "fetchModelsNeedConnection": "請先填寫 API 位址與金鑰",
-    "apiFormatLocked": "官方廠商端點只支援該協定，已按官方預設鎖定"
+    "apiFormatOfficialOnly": "選項已按該廠商官方文件聲明的協定過濾"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",

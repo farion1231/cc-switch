@@ -1804,7 +1804,7 @@
     "endpointModelsLoading": "モデル一覧を取得中…",
     "endpointModelsEmpty": "モデルが取得できません。手入力か再試行を",
     "fetchModelsNeedConnection": "API URL とキーを先に入力してください",
-    "apiFormatLocked": "公式ベンダーのエンドポイントはこのプロトコルのみ対応。プリセットに従い固定"
+    "apiFormatOfficialOnly": "このベンダーの公式ドキュメントに記載のプロトコルのみ表示"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",

@@ -1804,7 +1804,7 @@
     "endpointModelsLoading": "Fetching models…",
     "endpointModelsEmpty": "No models fetched; type manually or retry",
     "fetchModelsNeedConnection": "Fill API URL and key first",
-    "apiFormatLocked": "Official vendor endpoint supports only this protocol, locked by preset"
+    "apiFormatOfficialOnly": "Options filtered to protocols officially documented by this vendor"
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",

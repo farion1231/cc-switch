@@ -46,6 +46,11 @@ import {
 import { deepClone } from "@/utils/deepClone";
 import { ProviderPresetSelector } from "@/components/providers/forms/ProviderPresetSelector";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import {
+  ALL_API_FORMATS,
+  vendorSupportedFormats,
+  type VendorApiFormat,
+} from "@/config/vendorProtocolSupport";
 
 interface UniversalProviderFormModalProps {
   isOpen: boolean;
@@ -143,10 +148,9 @@ export function UniversalProviderFormModal({
   const [selectedLibraryPresetId, setSelectedLibraryPresetId] = useState<
     string | null
   >(null);
-  // 官方厂商预设的端点只支持其声明的协议——锁定不可改；
-  // 自定义网关（null）支持全部四种
-  const [lockedApiFormat, setLockedApiFormat] = useState<
-    UniversalProvider["apiFormat"] | null
+  // 官方厂商按官方手册声明的协议集合过滤可选项；null = 未收录/自定义，全部可选
+  const [supportedFormats, setSupportedFormats] = useState<
+    VendorApiFormat[] | null
   >(null);
   const libraryPresetEntries = useMemo(
     () =>
@@ -160,7 +164,7 @@ export function UniversalProviderFormModal({
       setSelectedLibraryPresetId(entryId);
       const entry = libraryPresetEntries.find((item) => item.id === entryId);
       if (!entry || entryId === "custom") {
-        setLockedApiFormat(null); // 自定义：全部协议可选
+        setSupportedFormats(null); // 自定义：全部协议可选
         return;
       }
       const preset = entry.preset as (typeof providerPresets)[number];
@@ -169,7 +173,12 @@ export function UniversalProviderFormModal({
       const str = (v: unknown) =>
         typeof v === "string" && v.trim() ? v : undefined;
       setSelectedPreset(null); // 库预设优先于通用预设（NewAPI 等）
-      setLockedApiFormat(preset.apiFormat ?? "anthropic");
+      setSupportedFormats(
+        vendorSupportedFormats(
+          (preset as { family?: string }).family,
+          preset.name,
+        ),
+      );
       setName(preset.name);
       setWebsiteUrl(preset.websiteUrl || "");
       if (preset.icon) {
@@ -590,21 +599,12 @@ requires_openai_auth = true`;
                 onValueChange={(value) =>
                   setApiFormat(value as UniversalProvider["apiFormat"])
                 }
-                disabled={!!lockedApiFormat}
               >
                 <SelectTrigger id="universalApiFormat">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(lockedApiFormat
-                    ? [lockedApiFormat]
-                    : ([
-                        "anthropic",
-                        "openai_chat",
-                        "openai_responses",
-                        "gemini_native",
-                      ] as const)
-                  ).map((format) => (
+                  {(supportedFormats ?? ALL_API_FORMATS).map((format) => (
                     <SelectItem key={format} value={format}>
                       {format === "anthropic"
                         ? "Anthropic Messages"
@@ -617,10 +617,10 @@ requires_openai_auth = true`;
                   ))}
                 </SelectContent>
               </Select>
-              {lockedApiFormat && (
+              {supportedFormats && (
                 <p className="text-xs text-fg-3">
-                  {t("providerForm.apiFormatLocked", {
-                    defaultValue: "官方厂商端点只支持该协议，已按官方预设锁定",
+                  {t("providerForm.apiFormatOfficialOnly", {
+                    defaultValue: "选项已按该厂商官方文档声明的协议过滤",
                   })}
                 </p>
               )}
