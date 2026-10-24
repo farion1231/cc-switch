@@ -7060,9 +7060,10 @@ model_provider = "c"
     #[tokio::test]
     #[serial]
     async fn codex_proxy_preserves_actor_authorization_for_client_tool_discovery() {
-        for stack in [false, true] {
+        for (stack, keep_login) in [(false, false), (false, true), (true, false), (true, true)] {
             let _home = Home::new();
-            seed_codex("", Some(&chatgpt_login("acct")));
+            let login = keep_login.then(|| chatgpt_login("acct"));
+            seed_codex("", login.as_ref());
             let mut relay = codex_native("relay", "https://relay.example/v1", "", None);
             let mut config = relay.settings_config["config"]
                 .as_str()
@@ -7084,8 +7085,8 @@ model_provider = "c"
                     Some("local-image-extension")
                 );
                 assert!(proxy["http_headers"].get("X-Upstream-Only").is_none());
-                assert_eq!(proxy["requires_openai_auth"].as_bool(), Some(false));
-                assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+                assert_eq!(proxy["requires_openai_auth"].as_bool(), Some(keep_login));
+                assert_eq!(codex_login_file(), login);
             };
             check();
             detach_all(&state).await;

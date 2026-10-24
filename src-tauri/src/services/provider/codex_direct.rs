@@ -663,7 +663,6 @@ pub(crate) fn plan(
                         let mut headers = Table::new();
                         headers.insert("x-openai-actor-authorization", toml_edit::value(actor));
                         proxy_table.insert("http_headers", Item::Table(headers));
-                        proxy_table.insert("requires_openai_auth", toml_edit::value(false));
                     }
                     if table.get("name").and_then(Item::as_str) == Some("OpenAI") {
                         proxy_table.insert("name", toml_edit::value("OpenAI"));
@@ -684,16 +683,9 @@ pub(crate) fn plan(
                         }
                     }
                 }
-                let actor_authorization = proxy_table.get("http_headers").is_some();
                 (
                     RouteWrite::Custom(proxy_table),
-                    // Actor authorization requires false even when a native login
-                    // is preserved beside the proxy's own bearer token.
-                    if actor_authorization {
-                        None
-                    } else {
-                        Some(RouteAuth::Bearer)
-                    },
+                    Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
             }
