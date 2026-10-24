@@ -3463,7 +3463,16 @@ mod mode_tests {
                 ..Default::default()
             })
             .unwrap();
-            let state = state_with(AppType::Codex, &[official.clone()], &official.id).await;
+            let api = Provider::with_id(
+                "api-unified".to_string(),
+                "API".to_string(),
+                json!({
+                    "auth":{"OPENAI_API_KEY":"sk-api-only"},
+                    "config":"model = \"gpt-5.4\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nname = \"API\"\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n"
+                }),
+                None,
+            );
+            let state = state_with(AppType::Codex, &[official.clone(), api], &official.id).await;
             ProviderService::switch(&state, AppType::Codex, &official.id).expect("direct official");
             let config_path = crate::codex_config::get_codex_config_path();
             let selector = || -> Option<String> {
@@ -3473,32 +3482,15 @@ mod mode_tests {
                     .and_then(|value| value.as_str())
                     .map(str::to_string)
             };
-            let bucket = if unified {
-                Some("custom".to_string())
-            } else {
-                None
-            };
+            let bucket = None;
             assert_eq!(selector(), bucket, "direct, unified={unified}");
 
             enter(&state, &AppType::Codex, false).await.expect("enter");
             let contract = fs::read_to_string(&config_path).unwrap();
             assert_eq!(selector(), bucket, "proxy, unified={unified}: {contract}");
             let doc: toml::Table = toml::from_str(&contract).unwrap();
-            if unified {
-                assert!(doc.get("openai_base_url").is_none(), "{contract}");
-                let mirror = &doc["model_providers"]["custom"];
-                assert_eq!(mirror["name"].as_str(), Some("OpenAI"));
-                assert_eq!(mirror["requires_openai_auth"].as_bool(), Some(true));
-                assert_eq!(mirror["supports_websockets"].as_bool(), Some(false));
-                assert!(mirror.get("experimental_bearer_token").is_none());
-                assert!(
-                    mirror["base_url"].as_str().unwrap().ends_with("/v1"),
-                    "{contract}"
-                );
-            } else {
-                assert!(doc["openai_base_url"].as_str().is_some(), "{contract}");
-                assert!(doc.get("model_providers").is_none(), "{contract}");
-            }
+            assert!(doc["openai_base_url"].as_str().is_some(), "{contract}");
+            assert!(doc.get("model_providers").is_none(), "{contract}");
             assert!(state
                 .proxy_service
                 .live_has_proxy_placeholder(&AppType::Codex));
@@ -3507,6 +3499,37 @@ mod mode_tests {
                     .unwrap(),
                 native_auth
             );
+
+            if unified {
+                ProviderService::switch(&state, AppType::Codex, "api-unified").expect("API route");
+                let api_config = fs::read_to_string(&config_path).unwrap();
+                assert_eq!(selector(), None, "{api_config}");
+                assert!(api_config.contains("openai_base_url"));
+                assert!(!api_config.contains("sk-api-only"));
+                assert_eq!(
+                    crate::config::read_json_file::<Value>(
+                        &crate::codex_config::get_codex_auth_path()
+                    )
+                    .unwrap(),
+                    native_auth
+                );
+                let mut settings = crate::settings::get_settings();
+                settings.unify_codex_session_history = false;
+                crate::settings::update_settings(settings.clone()).unwrap();
+                crate::services::provider::reapply_current_codex_official_live(&state).unwrap();
+                assert_eq!(selector().as_deref(), Some("custom"));
+                settings.unify_codex_session_history = true;
+                crate::settings::update_settings(settings).unwrap();
+                crate::services::provider::reapply_current_codex_official_live(&state).unwrap();
+                assert_eq!(
+                    selector(),
+                    None,
+                    "toggle must refresh the API proxy contract"
+                );
+                ProviderService::switch(&state, AppType::Codex, &official.id)
+                    .expect("back to OAuth");
+                assert_eq!(selector(), None);
+            }
 
             exit(&state, &AppType::Codex).await.expect("exit");
             let restored = fs::read_to_string(&config_path).unwrap();
