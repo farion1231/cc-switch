@@ -932,6 +932,7 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "ompConfigDir": "Oh My Pi Configuration Directory",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -940,6 +941,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
+    "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -974,7 +976,7 @@
     "copyToolUninstallCommand": "Copy the uninstall command for {{tool}}",
     "uninstallCommandCopied": "Uninstall command copied",
     "uninstallCommandCopyFailed": "Copy failed. Please select and copy the command manually.",
-    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
     "localEnvCheck": "Local environment check",
     "updateAllTools": "Update All ({{count}})",
     "currentVersion": "Current Version",
@@ -1098,7 +1100,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1630,7 +1633,6 @@
       "fluxa": "FluxA and Baidu AI Cloud jointly launched AgenticPlan, letting AI agents buy, manage and use models, APIs and tools on their own. It includes Baidu Qianfan TokenPlan at up to 40% off with flagship models such as DeepSeek V4, GLM 5.2 and Kimi, plus bonus FluxA AgentMarket API credits that unlock 13,000+ paid APIs for search, data scraping, social media, finance, crypto, image generation and video.",
       "88api": "88API is a one-stop multi-model API platform run by a Hong Kong company, giving unified access to text, image, speech and video models. It accepts major international payment methods, can issue invoices and provides enterprise-grade stable service. Sign up through the exclusive link to receive bonus credits!",
       "modelflare": "Modelflare is a stable, lower-cost AI model gateway: one key reaches GPT, Claude, Gemini, Grok, and other leading models. Exclusive for CC Switch users: use the code \"CCSWITCH\" on your first top-up for 10% off!",
-      "everyapi": "EveryAPI ships its own desktop client that auto-configures Claude Code, Codex, Cursor, and 20+ other tools in one click; one key reaches Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, and Doubao, so switching models needs no config changes. Get ¥14 in free credit on sign-up, with GPT models from just 15% of the official price. Exclusive for CC Switch users: use the code \"ccswitch\" on your first top-up for 20% off, with no expiry!",
       "alltokens": "AllTokens is built on stability and honesty, aiming to make every AI call stable, genuine, and trustworthy: reliable service, transparent billing, and one platform for GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi, and other leading models, with pay-as-you-go pricing and spending caps. Get $1 in free trial credit when you sign up!",
       "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
@@ -4201,8 +4203,12 @@
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
-      "agy": "Installs with the official script"
-    }
+      "agy": "Installs with the official script",
+      "omp": "Installs with the official script"
+    },
+    "ompDiscoveryHelpTitle": "What Oh My Pi actually loads",
+    "ompDiscoveryHelp": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
+    "ompDiscoveryDocsLink": "Docs: context-files (disabledProviders)"
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",
@@ -4929,6 +4935,7 @@
       "removeAccount": "Remove account",
       "dismissAccount": "Hide from list",
       "signedOut": "Signed out",
+      "noSubscription": "No subscription",
       "statusFailed": "Cannot read sign-in status",
       "expired": "The authorization code expired. Please sign in again.",
       "denied": "Authorization was denied. Please sign in again.",
@@ -4939,7 +4946,8 @@
       "primaryHidden": "Kimi Code's own login was removed from the list; sign in to the same account to bring it back",
       "removeCurrentHint": "This account is in use. Switch to another account before removing it.",
       "manageAccounts": "Manage Kimi accounts",
-      "managedHint": "Manage official Kimi accounts in the Authorization Center.",
+      "managedHint": "Remove this official account first, or delete it (with its login) in the Authorization Center.",
+      "connectionManaged": "The connection and login are managed in the Authorization Center; edit only the models here. Fetching models reads the official models currently available to this account.",
       "current": "In use by Kimi",
       "primaryShort": "Kimi Code's own login",
       "empty": "No Kimi accounts yet. The account signed in to Kimi Code shows up here automatically.",
@@ -4966,6 +4974,38 @@
     "error": {
       "defaultModelInUse": "Kimi Code is using a model from this provider. Switch to another model with /model in Kimi Code first.",
       "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "No API key providers yet",
+      "description": "Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "provider": {
+      "enabled": "Enabled in Oh My Pi",
+      "enableFailed": "Could not enable this provider in Oh My Pi",
+      "removed": "Removed from Oh My Pi"
+    },
+    "current": {
+      "readFailed": "Could not read Oh My Pi's provider configuration",
+      "stateUnavailableHint": "Provider changes are disabled until CC Switch can read Oh My Pi's provider configuration."
+    },
+    "form": {
+      "discoveryType": "Model discovery",
+      "discoveryOff": "Off",
+      "discoveryHint": "Oh My Pi periodically fetches the model list from the endpoint and applies metadata such as the context window. Manually added models still apply, and with discovery on the model list may be left empty."
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi configuration exceeds the 1 MiB limit.",
+      "externalChange": "Oh My Pi configuration changed outside CC Switch. Refresh and try again.",
+      "rollbackConflict": "The database save failed and Oh My Pi configuration changed externally. Restore it by hand.",
+      "invalidMcp": "Invalid Oh My Pi MCP JSON. The root and mcpServers must be objects.",
+      "invalidYaml": "Invalid Oh My Pi YAML. The root and providers must be mappings.",
+      "invalidProvider": "Invalid Oh My Pi provider. Check required fields, API format and field types.",
+      "manualEdit": "This YAML uses a layout or construct CC Switch cannot safely edit. Edit models.yml by hand.",
+      "duplicateProvider": "This Oh My Pi provider key already exists.",
+      "renameProvider": "Oh My Pi provider keys cannot be renamed.",
+      "providerMissing": "This Oh My Pi provider is no longer saved."
     }
   }
 }

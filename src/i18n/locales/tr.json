@@ -898,6 +898,7 @@
     "hermesConfigDirDescription": "Hermes yapılandırma dizinini (config.yaml) geçersiz kılın.",
     "piConfigDir": "Pi Yapılandırma Dizini",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
+    "ompConfigDir": "Oh My Pi Yapılandırma Dizini",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -906,6 +907,7 @@
     "browsePlaceholderOpenclaw": "ör. /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "ör. /home/<your-username>/.hermes",
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
+    "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",
     "checkForUpdates": "Güncellemeleri Kontrol Et",
@@ -1062,7 +1064,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -4109,8 +4112,12 @@
       "openclaw": "Npm ile yüklenir",
       "hermes": "Resmi komut dosyasıyla yüklenir",
       "pi": "Npm ile yüklenir",
-      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner"
-    }
+      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
+      "omp": "Resmi komut dosyasıyla yüklenir"
+    },
+    "ompDiscoveryHelpTitle": "Oh My Pi'nin gerçekte yükledikleri",
+    "ompDiscoveryHelp": "Oh My Pi, kendi ~/.omp/agent yapılandırmasının yanı sıra diğer ajanların dizinlerinden (ör. Claude'un ~/.claude, Codex'in ~/.codex) MCP sunucularını, becerileri, komutları, kancaları, kuralları ve ayarları da keşfeder. Oh My Pi'nin gerçekte yüklediklerini CC Switch arayüzüyle uyumlu tutmak için ~/.omp/agent/config.yml içinde disabledProviders ile gereksiz keşif kaynaklarını kapatın (kimlikler belgelerle aynıdır, ör. claude, codex, gemini, opencode, github, agents).",
+    "ompDiscoveryDocsLink": "Belgeler: context-files (disabledProviders)"
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -4802,7 +4809,7 @@
       "cancelled": "Bu giriş iptal edildi veya değiştirildi. Yeniden giriş yapın.",
       "success": "Kimi Code girişi yapıldı ve resmî modeller eklendi.",
       "manageAccounts": "Kimi hesaplarını yönet",
-      "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
+      "managedHint": "Önce bu resmî hesabı kaldırın veya Yetkilendirme Merkezi'nde oturumuyla birlikte silin."
     },
     "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
     "contextSize": "Bağlam uzunluğu",
@@ -4817,6 +4824,38 @@
       "always_thinking": "Her zaman düşünme",
       "tool_use": "Araç kullanımı",
       "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "Henüz API anahtarı sağlayıcısı yok",
+      "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın."
+    },
+    "provider": {
+      "enabled": "Oh My Pi içinde etkinleştirildi",
+      "enableFailed": "Sağlayıcı Oh My Pi içinde etkinleştirilemedi",
+      "removed": "Oh My Pi içinden kaldırıldı"
+    },
+    "current": {
+      "readFailed": "Oh My Pi sağlayıcı yapılandırması okunamadı",
+      "stateUnavailableHint": "Oh My Pi yapılandırması okunana kadar sağlayıcı değişiklikleri devre dışıdır."
+    },
+    "form": {
+      "discoveryType": "Model keşfi",
+      "discoveryOff": "Kapalı",
+      "discoveryHint": "Oh My Pi model listesini uç noktadan düzenli olarak alır ve bağlam penceresi gibi meta verileri uygular. Elle eklenen modeller geçerliliğini korur; keşif açıkken model listesi boş bırakılabilir."
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi yapılandırması 1 MiB sınırını aşıyor.",
+      "externalChange": "Oh My Pi yapılandırması dışarıdan değiştirildi. Yenileyip tekrar deneyin.",
+      "rollbackConflict": "Veritabanı kaydı başarısız oldu ve Oh My Pi yapılandırması dışarıdan değiştirildi. Elle geri yükleyin.",
+      "invalidMcp": "Oh My Pi MCP JSON geçersiz. Kök ve mcpServers nesne olmalıdır.",
+      "invalidYaml": "Geçersiz Oh My Pi YAML. Kök ve providers birer eşleme olmalıdır.",
+      "invalidProvider": "Geçersiz Oh My Pi sağlayıcısı. Gerekli alanları, API biçimini ve alan türlerini kontrol edin.",
+      "manualEdit": "Bu YAML yapısını CC Switch güvenle düzenleyemiyor. models.yml dosyasını elle düzenleyin.",
+      "duplicateProvider": "Bu Oh My Pi sağlayıcı anahtarı zaten var.",
+      "renameProvider": "Oh My Pi sağlayıcı anahtarları yeniden adlandırılamaz.",
+      "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil."
     }
   }
 }
