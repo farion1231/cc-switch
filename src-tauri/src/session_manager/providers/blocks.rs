@@ -637,8 +637,38 @@ pub fn parse_antigravity_args(raw: &Value) -> Value {
             for (k, v) in map {
                 if let Value::String(s) = v {
                     if let Ok(parsed) = serde_json::from_str::<Value>(s) {
-                        cleaned.insert(k.clone(), parsed);
-                        continue;
+                        // Commands, paths and file text can themselves be valid JSON
+                        // (e.g. `true`, `123`, or a JSON document). Only unwrap extra
+                        // JSON quotes for these fields; keep their textual meaning.
+                        let text_field = matches!(
+                            k.as_str(),
+                            "CommandLine"
+                                | "AbsolutePath"
+                                | "DirectoryPath"
+                                | "TargetFile"
+                                | "SearchPath"
+                                | "SearchDirectory"
+                                | "TargetContent"
+                                | "ReplacementContent"
+                                | "CodeContent"
+                                | "Url"
+                                | "Pattern"
+                                | "Query"
+                                | "toolSummary"
+                                | "toolAction"
+                                | "command"
+                                | "path"
+                                | "content"
+                                | "old_string"
+                                | "new_string"
+                                | "url"
+                                | "pattern"
+                                | "query"
+                        );
+                        if !text_field || parsed.is_string() {
+                            cleaned.insert(k.clone(), parsed);
+                            continue;
+                        }
                     }
                 }
                 cleaned.insert(k.clone(), v.clone());
@@ -860,6 +890,33 @@ pub fn line_change_counts(old: &str, new: &str) -> (u32, u32) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn antigravity_text_args_keep_json_literals_and_documents_as_text() {
+        let raw = serde_json::json!({
+            "CommandLine":"true", "AbsolutePath":"123", "CodeContent":"{\"ok\":true}",
+            "TargetContent":"null", "ReplacementContent":"false", "Overwrite":"true",
+            "StartLine":"1", "toolSummary":"123", "command":"false"
+        });
+        let parsed = parse_antigravity_args(&raw);
+        for key in [
+            "CommandLine",
+            "AbsolutePath",
+            "CodeContent",
+            "TargetContent",
+            "ReplacementContent",
+            "toolSummary",
+            "command",
+        ] {
+            assert_eq!(parsed[key], raw[key]);
+        }
+        assert_eq!(parsed["Overwrite"], true);
+        assert_eq!(parsed["StartLine"], 1);
+        assert_eq!(
+            parse_antigravity_args(&serde_json::json!({"CommandLine":"\"true\""}))["CommandLine"],
+            "true"
+        );
+    }
 
     #[test]
     fn read_range_handles_reversed_and_extreme_line_numbers() {
