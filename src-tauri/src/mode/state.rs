@@ -382,6 +382,27 @@ pub fn mode_state(store: &DeviceStore, app: &str) -> Result<ModeState, AppError>
     Ok(mode)
 }
 
+/// Read without quarantining a corrupt state file or creating device state.
+pub(crate) fn mode_state_read_only(store: &DeviceStore, app: &str) -> Result<ModeState, AppError> {
+    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let path = store.state_path();
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(ModeState::default()),
+        Err(err) => return Err(AppError::io(&path, err)),
+    };
+    let state: LiveState =
+        serde_json::from_slice(&bytes).map_err(|err| AppError::json(&path, err))?;
+    if state.version != STATE_VERSION {
+        return Err(AppError::Config("Unsupported device state version".into()));
+    }
+    Ok(state
+        .apps
+        .get(app)
+        .map(AppLiveState::mode_state)
+        .unwrap_or_default())
+}
+
 /// 这个应用的写入记录；`None` 表示新版还没写过。
 pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppError> {
     let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
