@@ -138,6 +138,7 @@ import {
   DEFAULT_VISIBLE_APPS,
   isModeAppId,
   isPiFamilyApp,
+  orderAppIds,
 } from "@/config/appConfig";
 import type { PiFamilyAppId } from "@/lib/api/pi";
 
@@ -221,7 +222,10 @@ function App() {
   );
 
   const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
+    return (
+      orderAppIds(settingsData?.appOrder).find((app) => visibleApps[app]) ??
+      "claude"
+    );
   };
 
   useEffect(() => {
