@@ -12,7 +12,7 @@ import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
 } from "@/lib/requestOverrides";
-import { providersApi, type AppId, type ManagedAuthProvider } from "@/lib/api";
+import { providersApi, type AppId, type AuthCenterTarget } from "@/lib/api";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 import {
   overlayClaudeProviderFields,
@@ -289,9 +289,11 @@ export interface ProviderFormProps {
   onCancel: () => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
-  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
+  onManageAuthAccounts?: (target: AuthCenterTarget) => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
   onSubmitReadyChange?: (isReady: boolean) => void;
+  /** Native account login supplies its own actions instead of the provider-save footer. */
+  onAccountLoginChange?: (accountLogin: boolean) => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -328,7 +330,7 @@ export interface ProviderFormProps {
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
   if (props.appId === "mcode") return <McodeProviderForm {...props} />;
-  if (props.appId === "pi") {
+  if (props.appId === "pi" || props.appId === "omp") {
     return <PiProviderForm {...props} />;
   }
   if (props.appId === "claude-desktop") {

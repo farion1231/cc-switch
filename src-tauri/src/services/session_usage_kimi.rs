@@ -42,9 +42,7 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
             let modified = fs::metadata(&path)
                 .map(|meta| metadata_modified_nanos(&meta))
                 .unwrap_or(0);
-            // Revisit unchanged v1 files once to repair synthetic models and missing timing.
-            // Keep request identities and permanent receipts unchanged across parser revisions.
-            let key = format!("kimi:v2:{}", path.to_string_lossy());
+            let key = format!("kimi:{}", path.to_string_lossy());
             if cursors.get(&key).is_some_and(|cursor| {
                 cursor.last_modified == modified
                     && cursor.last_line_offset
@@ -230,7 +228,7 @@ fn refresh_existing(
     let Some((old_model, multiplier, old_latency, old_first)) = stored else {
         return Ok(false);
     };
-    let model_changed = model != old_model && (model != "unknown" || old_model == "agent-loop");
+    let model_changed = model != old_model && model != "unknown";
     // Preserve native timing when a copied history contains only timestamp estimates.
     let latency = if latency > 0 && (old_first.is_none() || first_token.is_some()) {
         latency
@@ -377,64 +375,6 @@ mod tests {
         assert!(models
             .iter()
             .all(|model| model.model != "agent-loop" && model.est_speed_output_tokens > 0));
-    }
-
-    #[test]
-    fn kimi_usage_repairs_unchanged_legacy_details_once_without_reimporting_rollups() {
-        let db = Database::memory().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let path = root.join("workspace/session/agents/main/wire.jsonl");
-        let records = request(
-            "legacy",
-            "fixture-model",
-            1_700_000_000_000,
-            3_000,
-            7_000,
-            900,
-        );
-        write_records(&path, &records);
-        let modified = metadata_modified_nanos(&fs::metadata(&path).unwrap());
-        let key = format!("kimi:{}", path.to_string_lossy());
-        assert_eq!(
-            sync_file(&db, &path, "session", &key, modified)
-                .unwrap()
-                .imported,
-            1
-        );
-        {
-            let conn = db.conn.lock().unwrap();
-            conn.execute("INSERT OR REPLACE INTO model_pricing (model_id,display_name,input_cost_per_million,output_cost_per_million,cache_read_cost_per_million,cache_creation_cost_per_million) VALUES ('fixture-model','Fixture','1','2','0.1','0.5')",[]).unwrap();
-            conn.execute("UPDATE proxy_request_logs SET model='agent-loop',request_model='agent-loop',total_cost_usd='0',cost_multiplier='2',latency_ms=0,first_token_ms=NULL",[]).unwrap();
-        }
-        let repaired = sync_sessions(&db, root).unwrap();
-        assert!(repaired.errors.is_empty());
-        assert_eq!((repaired.imported, repaired.files_scanned), (1, 1));
-        {
-            let conn = db.conn.lock().unwrap();
-            let row: (String,String,i64,Option<i64>,String) = conn.query_row("SELECT request_id,model,latency_ms,first_token_ms,total_cost_usd FROM proxy_request_logs",[],|row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
-            assert_eq!(
-                (row.0.as_str(), row.1.as_str(), row.2, row.3),
-                (
-                    "kimi:agent-loop:legacy",
-                    "fixture-model",
-                    10_000,
-                    Some(3_000)
-                )
-            );
-            assert_eq!(row.4.parse::<Decimal>().unwrap(), Decimal::new(3666, 6));
-        }
-        assert_eq!(sync_sessions(&db, root).unwrap().files_scanned, 0);
-        assert_eq!(db.rollup_and_prune(30).unwrap(), 1);
-        // A fork is scanned from scratch, but its historical receipt must still win.
-        write_records(
-            &root.join("workspace/fork/agents/main/wire.jsonl"),
-            &records,
-        );
-        assert_eq!(sync_sessions(&db, root).unwrap().imported, 0);
-        let conn = db.conn.lock().unwrap();
-        let counts:(i64,i64)=conn.query_row("SELECT (SELECT COUNT(*) FROM proxy_request_logs),(SELECT SUM(request_count) FROM usage_daily_rollups)",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
-        assert_eq!(counts, (0, 1));
     }
 
     #[test]

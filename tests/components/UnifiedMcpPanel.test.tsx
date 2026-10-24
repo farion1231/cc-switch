@@ -266,43 +266,37 @@ describe("UnifiedMcpPanel", () => {
   it.each<["error" | "warning", string[]]>([
     ["error", ["alpha", "beta"]],
     ["warning", ["beta"]],
-  ])(
-    "shows a %s toast when bulk writes fail",
-    async (level, failedIds) => {
-      mocks.serversMap = {
-        alpha: makeServer("alpha"),
-        beta: makeServer("beta"),
-      };
-      mocks.bulkToggle.mockImplementationOnce(async ({ serverIds }) => ({
-        succeeded: serverIds.filter((id: string) => !failedIds.includes(id)),
-        failed: failedIds.map((item) => ({ item, error: "write failed" })),
-      }));
-      renderPanel();
-      await userEvent.click(
-        screen.getAllByRole("button", { name: /appMatrix.columnAria/ })[1],
-      );
-      await userEvent.click(
-        screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
-      );
+  ])("shows a %s toast when bulk writes fail", async (level, failedIds) => {
+    mocks.serversMap = {
+      alpha: makeServer("alpha"),
+      beta: makeServer("beta"),
+    };
+    mocks.bulkToggle.mockImplementationOnce(async ({ serverIds }) => ({
+      succeeded: serverIds.filter((id: string) => !failedIds.includes(id)),
+      failed: failedIds.map((item) => ({ item, error: "write failed" })),
+    }));
+    renderPanel();
+    await userEvent.click(
+      screen.getAllByRole("button", { name: /appMatrix.columnAria/ })[1],
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
+    );
 
-      const expected =
-        level === "error" ? mocks.toastError : mocks.toastWarning;
-      await waitFor(() =>
-        expect(expected).toHaveBeenCalledWith(
-          expect.stringContaining("appMatrix.toast.partialFail"),
-          expect.objectContaining({ closeButton: true }),
-        ),
-      );
-      // 全部失败没有可撤销的，部分失败只撤销写成功的那些
-      expect(Boolean(expected.mock.calls[0][1].action)).toBe(
-        level === "warning",
-      );
-      expect(mocks.toastSuccess).not.toHaveBeenCalled();
-      expect(
-        screen.getAllByRole("button", { name: "appMatrix.cell.fail" }),
-      ).toHaveLength(failedIds.length);
-    },
-  );
+    const expected = level === "error" ? mocks.toastError : mocks.toastWarning;
+    await waitFor(() =>
+      expect(expected).toHaveBeenCalledWith(
+        expect.stringContaining("appMatrix.toast.partialFail"),
+        expect.objectContaining({ closeButton: true }),
+      ),
+    );
+    // 全部失败没有可撤销的，部分失败只撤销写成功的那些
+    expect(Boolean(expected.mock.calls[0][1].action)).toBe(level === "warning");
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByRole("button", { name: "appMatrix.cell.fail" }),
+    ).toHaveLength(failedIds.length);
+  });
 
   it.each(["success", "partial", "total", "rejected"] as const)(
     "reports the real result of a bulk undo (%s)",
@@ -426,6 +420,35 @@ describe("UnifiedMcpPanel", () => {
       "mcpPage.toast.written",
       expect.anything(),
     );
+  });
+
+  it("rewrites Oh My Pi cell by cell on retry, because the toggle never reached the DB", async () => {
+    // omp commits only after the config write succeeds (`sync_and_commit`), so a
+    // failed write leaves the row's flag unset: the retry must re-write that
+    // value instead of resyncing from the (unchanged) database state.
+    mocks.visibleApps = ["omp"];
+    mocks.serversMap = { serena: makeServer("serena") };
+    mocks.toggle.mockRejectedValueOnce(new Error("models.yml line 3"));
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "appMatrix.cell.off" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+
+    await waitFor(() =>
+      expect(mocks.bulkToggle).toHaveBeenCalledWith({
+        serverIds: ["serena"],
+        app: "omp",
+        enabled: true,
+      }),
+    );
+    expect(mocks.toggle).toHaveBeenCalledTimes(1);
+    expect(mocks.resync).not.toHaveBeenCalled();
   });
 
   it("keeps the notice when the resync retry fails again", async () => {

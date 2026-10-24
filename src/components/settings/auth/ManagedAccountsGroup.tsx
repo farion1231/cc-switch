@@ -40,6 +40,10 @@ export interface GroupAccountRow {
   users: ManagedAccountUser[];
   /** 右侧的额度（AccountQuotaColumn）；需要重新登录的账号不传 */
   quota?: React.ReactNode;
+  /** ⋯ 里删除项的文案（Kimi Code 自己的登录是「移出列表」） */
+  removeLabel?: string;
+  /** 删除项不能点的原因（Kimi 正在用的号要先切走），照常列出、原因写在下面 */
+  removeDisabledReason?: string;
 }
 
 export interface GroupLoginFlow {
@@ -48,7 +52,10 @@ export interface GroupLoginFlow {
   /** 已拿到验证码，等用户在浏览器里授权 */
   polling: boolean;
   pollingState: "idle" | "polling" | "success" | "error";
-  deviceCode: ManagedAuthDeviceCodeResponse | null;
+  deviceCode: Pick<
+    ManagedAuthDeviceCodeResponse,
+    "user_code" | "verification_uri"
+  > | null;
   error: string | null;
   onCancel: () => void;
   onRetry: () => void;
@@ -84,7 +91,8 @@ interface ManagedAccountsGroupProps {
   onSetDefault: (accountId: string) => void;
   settingDefault: boolean;
   onRemove: (accountId: string, login: string) => void;
-  onRemoveAll: () => void;
+  /** 标题行 ⋯ 里的「删除全部账号」；不传就没有这个菜单（Kimi） */
+  onRemoveAll?: () => void;
   removing: boolean;
   login: GroupLoginFlow;
   /** 确认框等 */
@@ -244,7 +252,7 @@ export function ManagedAccountsGroup({
             {t("authCenter.addAccount", { defaultValue: "添加账号" })}
           </Button>
         )}
-        {ready && accounts.length > 1 && (
+        {ready && accounts.length > 1 && onRemoveAll && (
           <DropdownMenu>
             <HoverTip content={t("common.more", { defaultValue: "更多" })}>
               <DropdownMenuTrigger asChild>
@@ -661,11 +669,22 @@ function AccountRow({
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
-            disabled={removing}
+            disabled={removing || Boolean(account.removeDisabledReason)}
             onSelect={() => onRemove(account.id, account.login)}
-            className="h-[30px] rounded-control px-2.5 text-body text-danger-text focus:text-danger-text"
+            className={cn(
+              "min-h-[30px] flex-col items-start justify-center gap-0 rounded-control px-2.5 text-body text-danger-text focus:text-danger-text",
+              account.removeDisabledReason && "data-[disabled]:opacity-100",
+            )}
           >
-            {t("authCenter.removeAccount", { defaultValue: "删除账号…" })}
+            <span className={cn(account.removeDisabledReason && "text-fg-3")}>
+              {account.removeLabel ??
+                t("authCenter.removeAccount", { defaultValue: "删除账号…" })}
+            </span>
+            {account.removeDisabledReason && (
+              <span className="text-caption text-fg-3">
+                {account.removeDisabledReason}
+              </span>
+            )}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
