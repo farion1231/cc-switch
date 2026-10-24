@@ -163,6 +163,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["tokenflux", "flux", "aggregator", "relay", "claude", "codex"],
     defaultColor: "currentColor",
   },
+  tokenrhythm: {
+    name: "tokenrhythm",
+    displayName: "TokenRhythm",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: [
+      "tokenrhythm",
+      "token rhythm",
+      "基元律动",
+      "aggregator",
+      "relay",
+      "claude",
+      "deepseek",
+    ],
+    defaultColor: "currentColor",
+  },
   soshow: {
     name: "soshow",
     displayName: "Soshow",

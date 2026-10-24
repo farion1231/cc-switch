@@ -47,6 +47,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "Tencent Token Plan Enterprise Pro": "腾讯 混元 hunyuan",
   "Tencent Token Plan Enterprise Pro (Intl)": "腾讯 混元 hunyuan",
   TokenFactory: "词元工厂 詞元工廠 token factory",
+  TokenRhythm: "基元律动 基元律動 基云律动 token rhythm",
   "Tu-zi": "兔子 兔子api tuzi",
   "xAI (Grok)": "grok",
   "Xiaomi MiMo": "小米",
