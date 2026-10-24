@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
-import type { WebDavSyncSettings } from "@/types";
+import type { S3SyncSettings, WebDavSyncSettings } from "@/types";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -79,6 +79,8 @@ const { settingsApiMock } = vi.hoisted(() => ({
     webdavSyncFetchRemoteInfo: vi.fn(),
     webdavSyncUpload: vi.fn(),
     webdavSyncDownload: vi.fn(),
+    s3TestConnection: vi.fn(),
+    s3SyncSaveSettings: vi.fn(),
   },
 }));
 
@@ -97,7 +99,24 @@ const baseConfig: WebDavSyncSettings = {
   status: {},
 };
 
-function renderSection(config?: WebDavSyncSettings) {
+const legacyS3Config: S3SyncSettings = {
+  enabled: true,
+  region: "us-east-1",
+  bucket: "my-bucket",
+  accessKeyId: "AKIAEXAMPLE",
+  secretAccessKey: "secret",
+  endpoint: "",
+  addressingStyle: "",
+  remoteRoot: "cc-switch-sync",
+  profile: "default",
+  autoSync: false,
+  status: {},
+};
+
+function renderSection(
+  config?: WebDavSyncSettings,
+  s3Config?: S3SyncSettings,
+) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -106,7 +125,7 @@ function renderSection(config?: WebDavSyncSettings) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <WebdavSyncSection config={config} />
+      <WebdavSyncSection config={config} s3Config={s3Config} />
     </QueryClientProvider>,
   );
   return { ...view, client };
@@ -123,6 +142,8 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.webdavSyncFetchRemoteInfo.mockReset();
     settingsApiMock.webdavSyncUpload.mockReset();
     settingsApiMock.webdavSyncDownload.mockReset();
+    settingsApiMock.s3TestConnection.mockReset();
+    settingsApiMock.s3SyncSaveSettings.mockReset();
 
     settingsApiMock.webdavSyncSaveSettings.mockResolvedValue({ success: true });
     settingsApiMock.webdavTestConnection.mockResolvedValue({
@@ -139,6 +160,11 @@ describe("WebdavSyncSection", () => {
     });
     settingsApiMock.webdavSyncUpload.mockResolvedValue({ status: "uploaded" });
     settingsApiMock.webdavSyncDownload.mockResolvedValue({ status: "downloaded" });
+    settingsApiMock.s3SyncSaveSettings.mockResolvedValue({ success: true });
+    settingsApiMock.s3TestConnection.mockResolvedValue({
+      success: true,
+      message: "ok",
+    });
   });
 
   it("shows auto sync error callout when last auto sync failed", () => {
@@ -554,5 +580,26 @@ describe("WebdavSyncSection", () => {
         "settings.webdavSync.downloadFailed",
       );
     });
+  });
+
+  it("does not persist the inferred addressing style when saving a legacy config", async () => {
+    renderSection(undefined, legacyS3Config);
+
+    fireEvent.change(
+      screen.getByPlaceholderText("settings.s3Sync.endpointPlaceholder"),
+      { target: { value: "http://localhost:9000" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "settings.s3Sync.save" }));
+
+    await waitFor(() => {
+      expect(settingsApiMock.s3SyncSaveSettings).toHaveBeenCalledTimes(1);
+    });
+    expect(settingsApiMock.s3SyncSaveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "http://localhost:9000",
+        addressingStyle: "",
+      }),
+      false,
+    );
   });
 });

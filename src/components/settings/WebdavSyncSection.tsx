@@ -37,6 +37,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type {
   RemoteSnapshotInfo,
+  S3AddressingStyle,
   S3SyncSettings,
   WebDavSyncSettings,
 } from "@/types";
@@ -146,6 +147,33 @@ const S3_PRESETS: S3Preset[] = [
     regionPlaceholder: "us-east-1",
   },
 ];
+
+/** Match a saved S3 endpoint to one of the preset providers. */
+function detectS3Preset(endpoint: string | null | undefined): string {
+  const host = (endpoint ?? "").trim().toLowerCase();
+  if (!host) return "aws-s3";
+  if (host.includes("aliyuncs.com")) return "s3-oss";
+  if (host.includes("myqcloud.com")) return "s3-cos";
+  if (host.includes("myhuaweicloud.com")) return "s3-obs";
+  if (host.includes("r2.cloudflarestorage.com")) return "s3-r2";
+  if (host.includes("amazonaws.com")) return "aws-s3";
+  return "s3-custom";
+}
+
+/** Parse a persisted addressing style; empty/unknown means "follow the endpoint". */
+function readSavedAddressingStyle(
+  style: string | null | undefined,
+): S3AddressingStyle | null {
+  return style === "virtual-hosted" || style === "path" ? style : null;
+}
+
+/** Infer the addressing style from the endpoint (legacy behavior). */
+function inferAddressingStyle(
+  endpoint: string | null | undefined,
+): S3AddressingStyle {
+  const host = (endpoint ?? "").trim();
+  return !host || host.includes("amazonaws.com") ? "virtual-hosted" : "path";
+}
 
 /** Format an RFC 3339 date string for display; falls back to raw string. */
 function formatDate(rfc3339: string): string {
@@ -273,7 +301,9 @@ export function WebdavSyncSection({
   }));
 
   // ─── S3 form state ─────────────────────────────────────────
-  const [s3Preset, setS3Preset] = useState("aws-s3");
+  const [s3Preset, setS3Preset] = useState(() =>
+    detectS3Preset(s3Config?.endpoint),
+  );
   const [s3Region, setS3Region] = useState(s3Config?.region ?? "");
   const [s3Bucket, setS3Bucket] = useState(s3Config?.bucket ?? "");
   const [s3AccessKeyId, setS3AccessKeyId] = useState(
@@ -283,6 +313,13 @@ export function WebdavSyncSection({
     s3Config?.secretAccessKey ?? "",
   );
   const [s3Endpoint, setS3Endpoint] = useState(s3Config?.endpoint ?? "");
+  // `null` keeps following the endpoint (legacy automatic behavior).
+  const [s3AddressingStyleChoice, setS3AddressingStyleChoice] =
+    useState<S3AddressingStyle | null>(() =>
+      readSavedAddressingStyle(s3Config?.addressingStyle),
+    );
+  const s3AddressingStyle =
+    s3AddressingStyleChoice ?? inferAddressingStyle(s3Endpoint);
   const [s3RemoteRoot, setS3RemoteRoot] = useState(
     s3Config?.remoteRoot ?? "cc-switch-sync",
   );
@@ -380,6 +417,10 @@ export function WebdavSyncSection({
     setS3AccessKeyId(s3Config.accessKeyId ?? "");
     setS3SecretAccessKey(s3Config.secretAccessKey ?? "");
     setS3Endpoint(s3Config.endpoint ?? "");
+    setS3Preset(detectS3Preset(s3Config.endpoint));
+    setS3AddressingStyleChoice(
+      readSavedAddressingStyle(s3Config.addressingStyle),
+    );
     setS3RemoteRoot(s3Config.remoteRoot ?? "cc-switch-sync");
     setS3Profile(s3Config.profile ?? "default");
     setS3AutoSync(s3Config.autoSync ?? false);
@@ -677,6 +718,7 @@ export function WebdavSyncSection({
       accessKeyId: s3AccessKeyId.trim(),
       secretAccessKey: s3SecretAccessKey,
       endpoint: s3Endpoint.trim() || undefined,
+      addressingStyle: s3AddressingStyleChoice ?? "",
       remoteRoot: s3RemoteRoot.trim() || "cc-switch-sync",
       profile: s3Profile.trim() || "default",
     };
@@ -688,6 +730,7 @@ export function WebdavSyncSection({
     s3AccessKeyId,
     s3SecretAccessKey,
     s3Endpoint,
+    s3AddressingStyleChoice,
     s3RemoteRoot,
     s3Profile,
   ]);
@@ -1341,6 +1384,36 @@ export function WebdavSyncSection({
                 className="text-xs flex-1"
                 disabled={isS3Loading}
               />
+            </div>
+
+            {/* Addressing style */}
+            <div className="flex items-center gap-4">
+              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                {t("settings.s3Sync.addressingStyle")}
+                <span className="block text-badge font-normal text-fg-2">
+                  {t("settings.s3Sync.addressingStyleHint")}
+                </span>
+              </label>
+              <Select
+                value={s3AddressingStyle}
+                onValueChange={(value) => {
+                  setS3AddressingStyleChoice(value as S3AddressingStyle);
+                  markS3Dirty();
+                }}
+                disabled={isS3Loading}
+              >
+                <SelectTrigger className="text-xs flex-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="virtual-hosted">
+                    {t("settings.s3Sync.addressingStyleVirtualHosted")}
+                  </SelectItem>
+                  <SelectItem value="path">
+                    {t("settings.s3Sync.addressingStylePath")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Remote Root */}

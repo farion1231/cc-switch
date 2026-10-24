@@ -26,6 +26,9 @@ pub(crate) struct S3Credentials {
     /// Custom endpoint host (e.g. `minio.example.com:9000`).
     /// Empty string means AWS official endpoint.
     pub endpoint: String,
+    /// Object addressing style: `virtual-hosted` or `path`.
+    /// Empty string keeps the legacy behavior (AWS virtual-hosted, custom endpoint path).
+    pub addressing_style: String,
 }
 
 // ─── URL construction ────────────────────────────────────────
@@ -56,33 +59,71 @@ fn split_scheme_host(endpoint: &str) -> (&str, &str) {
     }
 }
 
+/// Object addressing style selected by the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AddressingStyle {
+    VirtualHosted,
+    Path,
+}
+
+/// Parse the configured addressing style. Unknown/empty values mean automatic.
+fn parse_addressing_style(raw: &str) -> Option<AddressingStyle> {
+    match raw.trim() {
+        "virtual-hosted" => Some(AddressingStyle::VirtualHosted),
+        "path" => Some(AddressingStyle::Path),
+        _ => None,
+    }
+}
+
+/// Resolve the effective addressing style.
+///
+/// Without an explicit setting, AWS endpoints use virtual-hosted style and
+/// custom endpoints use path style (legacy behavior).
+fn effective_addressing_style(creds: &S3Credentials) -> AddressingStyle {
+    parse_addressing_style(&creds.addressing_style).unwrap_or_else(|| {
+        if is_aws_endpoint(&creds.endpoint) {
+            AddressingStyle::VirtualHosted
+        } else {
+            AddressingStyle::Path
+        }
+    })
+}
+
+/// Resolve the scheme and host for the configured endpoint.
+///
+/// AWS official endpoints are normalized to `s3.{region}.amazonaws.com`.
+fn resolve_scheme_host(creds: &S3Credentials) -> (&str, String) {
+    let (scheme, host) = split_scheme_host(&creds.endpoint);
+    if is_aws_endpoint(&creds.endpoint) {
+        (scheme, format!("s3.{}.amazonaws.com", creds.region))
+    } else {
+        (scheme, host.to_string())
+    }
+}
+
 /// Build the full URL for an S3 object.
 ///
-/// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
-/// - Custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
+/// - Virtual-hosted style: `{scheme}://{bucket}.{host}/{key}`
+/// - Path style:           `{scheme}://{host}/{bucket}/{key}`
 fn build_object_url(creds: &S3Credentials, key: &str) -> String {
     let key = key.trim_start_matches('/');
-    if is_aws_endpoint(&creds.endpoint) {
-        format!(
-            "https://{}.s3.{}.amazonaws.com/{}",
-            creds.bucket, creds.region, key
-        )
-    } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
+    let (scheme, host) = resolve_scheme_host(creds);
+    match effective_addressing_style(creds) {
+        AddressingStyle::VirtualHosted => {
+            format!("{}://{}.{}/{}", scheme, creds.bucket, host, key)
+        }
+        AddressingStyle::Path => {
+            format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
+        }
     }
 }
 
 /// Build the bucket-level URL (for HEAD bucket / test connection).
 fn build_bucket_url(creds: &S3Credentials) -> String {
-    if is_aws_endpoint(&creds.endpoint) {
-        format!(
-            "https://{}.s3.{}.amazonaws.com/",
-            creds.bucket, creds.region
-        )
-    } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/", scheme, host, creds.bucket)
+    let (scheme, host) = resolve_scheme_host(creds);
+    match effective_addressing_style(creds) {
+        AddressingStyle::VirtualHosted => format!("{}://{}.{}/", scheme, creds.bucket, host),
+        AddressingStyle::Path => format!("{}://{}/{}/", scheme, host, creds.bucket),
     }
 }
 
@@ -602,6 +643,58 @@ mod tests {
     }
 
     #[test]
+    fn build_object_url_explicit_virtual_hosted_custom_endpoint() {
+        let creds = test_creds_with_style(
+            "oss-cn-shanghai.aliyuncs.com",
+            "us-east-1",
+            "mybucket",
+            "virtual-hosted",
+        );
+        assert_eq!(
+            build_object_url(&creds, "path/to/file.json"),
+            "https://mybucket.oss-cn-shanghai.aliyuncs.com/path/to/file.json"
+        );
+    }
+
+    #[test]
+    fn build_object_url_explicit_path_style_aws() {
+        let creds = test_creds_with_style("", "us-east-1", "mybucket", "path");
+        assert_eq!(
+            build_object_url(&creds, "key.txt"),
+            "https://s3.us-east-1.amazonaws.com/mybucket/key.txt"
+        );
+    }
+
+    #[test]
+    fn build_object_url_explicit_path_style_custom_endpoint() {
+        let creds = test_creds_with_style(
+            "https://oss-cn-shanghai.aliyuncs.com",
+            "cn-shanghai",
+            "mybucket",
+            "path",
+        );
+        assert_eq!(
+            build_object_url(&creds, "key.txt"),
+            "https://oss-cn-shanghai.aliyuncs.com/mybucket/key.txt"
+        );
+    }
+
+    #[test]
+    fn build_object_url_empty_style_keeps_legacy_behavior() {
+        let aws = test_creds("", "us-east-1", "b");
+        assert_eq!(
+            build_object_url(&aws, "k"),
+            "https://b.s3.us-east-1.amazonaws.com/k"
+        );
+
+        let custom = test_creds("storage.example.com", "us-east-1", "b");
+        assert_eq!(
+            build_object_url(&custom, "k"),
+            "https://storage.example.com/b/k"
+        );
+    }
+
+    #[test]
     fn build_object_url_strips_leading_slash_from_key() {
         let creds = test_creds("", "us-east-1", "b");
         assert_eq!(
@@ -741,6 +834,7 @@ mod tests {
             region: "us-east-1".to_string(),
             bucket: "examplebucket".to_string(),
             endpoint: String::new(),
+            addressing_style: String::new(),
         };
 
         let now = chrono::Utc.with_ymd_and_hms(2013, 5, 24, 0, 0, 0).unwrap();
@@ -781,6 +875,7 @@ mod tests {
             region: "us-east-1".to_string(),
             bucket: "b".to_string(),
             endpoint: String::new(),
+            addressing_style: String::new(),
         };
 
         let now = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
@@ -866,12 +961,22 @@ mod tests {
     // ── Helper ──
 
     fn test_creds(endpoint: &str, region: &str, bucket: &str) -> S3Credentials {
+        test_creds_with_style(endpoint, region, bucket, "")
+    }
+
+    fn test_creds_with_style(
+        endpoint: &str,
+        region: &str,
+        bucket: &str,
+        addressing_style: &str,
+    ) -> S3Credentials {
         S3Credentials {
             access_key_id: String::new(),
             secret_access_key: String::new(),
             region: region.to_string(),
             bucket: bucket.to_string(),
             endpoint: endpoint.to_string(),
+            addressing_style: addressing_style.to_string(),
         }
     }
 }
@@ -889,6 +994,7 @@ mod integration_tests {
             region: std::env::var("S3_TEST_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
             bucket: std::env::var("S3_TEST_BUCKET").expect("S3_TEST_BUCKET env required"),
             endpoint: std::env::var("S3_TEST_ENDPOINT").unwrap_or_default(),
+            addressing_style: std::env::var("S3_TEST_ADDRESSING_STYLE").unwrap_or_default(),
         }
     }
 
