@@ -12,4 +12,5 @@ export type AppId =
   | "kimi"
   | "mcode"
   | "agy"
+  | "omp"
   | "codebuddy";

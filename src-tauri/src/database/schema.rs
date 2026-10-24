@@ -72,7 +72,8 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -610,6 +611,28 @@ impl Database {
                         Self::set_user_version(conn, 22)?;
                     }
                     22 => {
+                        // Oh My Pi：只有 MCP 存开关；Skills 的启用状态按原生目录现算（同 Pi）。
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        // 早期开发版曾在 v23 加 enabled_codebuddy 而没有 enabled_omp；
+                        // 这里两列都按“缺失才加”补齐，任一来源的 v23 库都能升到 v24。
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
@@ -620,7 +643,7 @@ impl Database {
                                 )?;
                             }
                         }
-                        Self::set_user_version(conn, 23)?;
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3959,9 +3982,10 @@ mod tests {
 
     #[test]
     fn codebuddy_v22_database_upgrades_and_round_trips_flags() -> Result<(), AppError> {
-        // A full v22 schema: today's tables without the CodeBuddy columns.
+        // A full v22 schema: today's tables without the Oh My Pi and CodeBuddy columns.
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")?;
         for table in ["mcp_servers", "skills"] {
             conn.execute_batch(&format!(
                 "ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
@@ -3972,11 +3996,94 @@ mod tests {
         Database::apply_schema_migrations_on_conn(&conn)?;
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let flags = conn.query_row(
-            "SELECT enabled_claude, enabled_codebuddy FROM mcp_servers WHERE id = 'm'",
+            "SELECT enabled_claude, enabled_omp, enabled_codebuddy FROM mcp_servers WHERE id = 'm'",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(flags, (1, 0, 0));
+        assert!(Database::has_column(&conn, "skills", "enabled_codebuddy")?);
+        assert!(!Database::has_column(&conn, "skills", "enabled_omp")?);
+        Ok(())
+    }
+
+    /// Upstream v23 (Oh My Pi): `enabled_omp` exists, CodeBuddy columns do not.
+    #[test]
+    fn codebuddy_upstream_v23_database_upgrades_and_keeps_omp_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
+            ))?;
+        }
+        conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_omp) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1); INSERT INTO skills (id, name, directory, enabled_kimi) VALUES ('s', 's', 's', 1);")?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let flags = conn.query_row(
+            "SELECT enabled_omp, enabled_codebuddy FROM mcp_servers WHERE id = 'm'",
             [],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )?;
         assert_eq!(flags, (1, 0));
+        let flags = conn.query_row(
+            "SELECT enabled_kimi, enabled_codebuddy FROM skills WHERE id = 's'",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        assert_eq!(flags, (1, 0));
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    /// Early CodeBuddy dev builds shipped `enabled_codebuddy` as v23 without
+    /// `enabled_omp`; the v23 -> v24 step must fill in the missing column too.
+    #[test]
+    fn codebuddy_dev_v23_database_gains_omp_column_and_keeps_codebuddy_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")?;
+        conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_codebuddy) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1); INSERT INTO skills (id, name, directory, enabled_codebuddy) VALUES ('s', 's', 's', 1);")?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let flags = conn.query_row(
+            "SELECT enabled_omp, enabled_codebuddy FROM mcp_servers WHERE id = 'm'",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        assert_eq!(flags, (0, 1));
+        let skill_flag: i64 = conn.query_row(
+            "SELECT enabled_codebuddy FROM skills WHERE id = 's'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(skill_flag, 1);
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn codebuddy_fresh_install_has_omp_and_codebuddy_columns() -> Result<(), AppError> {
+        // Same path as `Database::init` on a brand-new file: create tables, then migrate from 0.
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, 24);
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+        assert!(Database::has_column(
+            &conn,
+            "mcp_servers",
+            "enabled_codebuddy"
+        )?);
+        assert!(Database::has_column(&conn, "skills", "enabled_codebuddy")?);
         Ok(())
     }
 

@@ -15,6 +15,7 @@ export type AppType =
   | "mcode"
   | "kimi"
   | "agy"
+  | "omp"
   | "codebuddy";
 
 /** Skill 应用启用状态 */
@@ -31,6 +32,7 @@ export interface SkillApps {
   mcode?: boolean;
   kimi?: boolean;
   agy?: boolean;
+  omp?: boolean;
   codebuddy?: boolean;
 }
 

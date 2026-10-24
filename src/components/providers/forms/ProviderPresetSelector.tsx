@@ -18,6 +18,7 @@ import type { McodeProviderPreset } from "@/config/mcodeProviderPresets";
 import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
 import type { CodebuddyProviderPreset } from "@/config/codebuddyProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
+import type { OmpProviderPreset } from "@/config/ompProviderPresets";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
@@ -75,6 +76,7 @@ export type AnyPreset =
   | PiProviderPreset
   | McodeProviderPreset
   | KimiProviderPreset
+  | OmpProviderPreset
   | CodebuddyProviderPreset;
 
 export type PresetEntry = {
