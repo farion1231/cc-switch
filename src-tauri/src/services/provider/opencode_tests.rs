@@ -137,6 +137,201 @@ fn opencode_builtin_partial_model_override_can_omit_display_name() {
 
 #[test]
 #[serial]
+fn opencode_failed_update_keeps_previous_provider() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
+    import_opencode_providers_from_live(&fixture.state).unwrap();
+    let before = fixture.imported();
+    let live_before = fs::read(&fixture.config_path).unwrap();
+
+    let mut edited = before.clone();
+    edited.name = "Failed edit".into();
+    edited.settings_config = json!({"models": []});
+    let error =
+        ProviderService::update(&fixture.state, AppType::OpenCode, None, edited).unwrap_err();
+
+    assert!(error.to_string().contains("invalid config structure"));
+    assert_eq!(fs::read(&fixture.config_path).unwrap(), live_before);
+    let restored = fixture.imported();
+    assert_eq!(restored.name, before.name);
+    assert_eq!(restored.settings_config, before.settings_config);
+}
+
+/// 并发交错回归：A 读到旧快照、存进无效配置后，B 的有效更新先完成落库并写进 live；
+/// A 的 live 写入此刻才失败。回滚必须放弃——当前行已不是 A 刚写入的行，恢复旧快照会
+/// 覆盖 B 已成功的编辑（OpenCode 没有切换锁，后端允许这种交错）。
+#[test]
+#[serial]
+fn opencode_failed_update_skips_rollback_when_row_changed_concurrently() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
+    import_opencode_providers_from_live(&fixture.state).unwrap();
+    let snapshot = fixture.imported();
+
+    // A：读到旧快照后，先把无效配置写进行（live 写入将在校验阶段失败）。
+    let mut invalid = snapshot.clone();
+    invalid.name = "A edit".into();
+    invalid.settings_config = json!({"models": []});
+    fixture
+        .state
+        .db
+        .save_provider("opencode", &invalid)
+        .unwrap();
+    let written = fixture
+        .state
+        .db
+        .get_provider_by_id("opencode-go", "opencode")
+        .unwrap();
+
+    // B：并发更新先完成，有效配置已落库并写进 live。
+    let mut valid_b = snapshot.clone();
+    valid_b.name = "B edit".into();
+    valid_b.settings_config = json!({
+        "npm": "@ai-sdk/openai-compatible",
+        "models": {"glm-5": {"name": "GLM 5"}},
+    });
+    let b_settings = valid_b.settings_config.clone();
+    ProviderService::update(&fixture.state, AppType::OpenCode, None, valid_b).unwrap();
+
+    let rolled_back = ProviderService::rollback_failed_update_row(
+        &fixture.state,
+        written.as_ref(),
+        Some(&snapshot),
+        "opencode-go",
+    )
+    .unwrap();
+    assert!(!rolled_back);
+    let current = fixture.imported();
+    assert_eq!(current.name, "B edit");
+    assert_eq!(current.settings_config, b_settings);
+}
+
+/// 没有并发写入时，失败回滚仍恢复旧快照（原有语义不回退）。
+#[test]
+#[serial]
+fn opencode_failed_update_still_restores_row_without_concurrent_write() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
+    import_opencode_providers_from_live(&fixture.state).unwrap();
+    let snapshot = fixture.imported();
+
+    let mut invalid = snapshot.clone();
+    invalid.name = "A edit".into();
+    invalid.settings_config = json!({"models": []});
+    fixture
+        .state
+        .db
+        .save_provider("opencode", &invalid)
+        .unwrap();
+    let written = fixture
+        .state
+        .db
+        .get_provider_by_id("opencode-go", "opencode")
+        .unwrap();
+
+    let rolled_back = ProviderService::rollback_failed_update_row(
+        &fixture.state,
+        written.as_ref(),
+        Some(&snapshot),
+        "opencode-go",
+    )
+    .unwrap();
+    assert!(rolled_back);
+    let restored = fixture.imported();
+    assert_eq!(restored.name, snapshot.name);
+    assert_eq!(restored.settings_config, snapshot.settings_config);
+}
+
+/// 并发交错回归：本次是新建托管行（existing 为 None），回滚是删行；删前该行已被并发
+/// 写入改成别人的内容时，不能误删。
+#[test]
+#[serial]
+fn opencode_failed_create_skips_delete_when_row_changed_concurrently() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
+
+    // A：新建行（live 写入即将失败），行此前不存在。
+    let created = Provider::with_id(
+        "opencode-go".into(),
+        "opencode-go".into(),
+        json!({"models": []}),
+        None,
+    );
+    fixture
+        .state
+        .db
+        .save_provider("opencode", &created)
+        .unwrap();
+    let written = fixture
+        .state
+        .db
+        .get_provider_by_id("opencode-go", "opencode")
+        .unwrap();
+
+    // B：并发把这行改成了自己的内容。
+    let mut concurrent = created.clone();
+    concurrent.name = "B wins".into();
+    concurrent.settings_config =
+        json!({"npm": "@ai-sdk/openai-compatible", "models": {"glm-5": {}}});
+    fixture
+        .state
+        .db
+        .save_provider("opencode", &concurrent)
+        .unwrap();
+
+    let rolled_back = ProviderService::rollback_failed_update_row(
+        &fixture.state,
+        written.as_ref(),
+        None,
+        "opencode-go",
+    )
+    .unwrap();
+    assert!(!rolled_back);
+    let current = fixture.imported();
+    assert_eq!(current.name, "B wins");
+}
+
+/// 没有并发写入时，新建托管行失败仍删掉自己刚建的行（原有语义不回退）。
+#[test]
+#[serial]
+fn opencode_failed_create_still_deletes_own_row() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
+    let created = Provider::with_id(
+        "opencode-go".into(),
+        "opencode-go".into(),
+        json!({"models": []}),
+        None,
+    );
+    fixture
+        .state
+        .db
+        .save_provider("opencode", &created)
+        .unwrap();
+    let written = fixture
+        .state
+        .db
+        .get_provider_by_id("opencode-go", "opencode")
+        .unwrap();
+
+    let rolled_back = ProviderService::rollback_failed_update_row(
+        &fixture.state,
+        written.as_ref(),
+        None,
+        "opencode-go",
+    )
+    .unwrap();
+    assert!(rolled_back);
+    assert!(fixture
+        .state
+        .db
+        .get_provider_by_id("opencode-go", "opencode")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+#[serial]
 fn opencode_builtin_incomplete_copies_cannot_be_added_to_live() {
     let fixture = Fixture::new();
     fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
