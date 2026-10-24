@@ -50,6 +50,7 @@ export const TOOL_NAMES = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
   "copilot",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -164,6 +165,8 @@ ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} |
 ${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
 # Antigravity CLI
 ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest
 # GitHub Copilot CLI
 npm i -g @github/copilot@latest`;
 
@@ -189,6 +192,8 @@ ${MCODE_WINDOWS_INSTALL_COMMAND}
 ${KIMI_WINDOWS_INSTALL_COMMAND}
 # Antigravity CLI
 ${AGY_WINDOWS_INSTALL_COMMAND}
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest
 # GitHub Copilot CLI
 npm i -g @github/copilot@latest`;
 
@@ -208,6 +213,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
   agy: "Antigravity CLI",
+  omp: "Oh My Pi",
   copilot: "GitHub Copilot CLI",
 };
 
@@ -229,6 +235,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   mcode: "mcode",
   kimi: "kimi",
   agy: "agy",
+  omp: "omp",
   copilot: "copilot",
 };
 

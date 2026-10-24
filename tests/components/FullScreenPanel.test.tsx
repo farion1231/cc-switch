@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { DRAG_REGION_ENABLED } from "@/lib/platform";
 
@@ -72,6 +72,73 @@ describe("FullScreenPanel body scroll locking", () => {
 
     view.unmount();
     expect(document.body.style.overflow).toBe("clip");
+  });
+});
+
+describe("FullScreenPanel Escape", () => {
+  const Stacked = ({
+    innerOpen,
+    onOuterClose,
+    onInnerClose,
+  }: {
+    innerOpen: boolean;
+    onOuterClose: () => void;
+    onInnerClose: () => void;
+  }) => (
+    <>
+      <FullScreenPanel isOpen title="Pricing" onClose={onOuterClose}>
+        pricing
+      </FullScreenPanel>
+      <FullScreenPanel
+        isOpen={innerOpen}
+        title="Edit pricing"
+        onClose={onInnerClose}
+      >
+        <input aria-label="price" />
+      </FullScreenPanel>
+    </>
+  );
+
+  it("closes only the topmost of two stacked panels", async () => {
+    const onOuterClose = vi.fn();
+    const onInnerClose = vi.fn();
+    const view = render(
+      <Stacked
+        innerOpen={false}
+        onOuterClose={onOuterClose}
+        onInnerClose={onInnerClose}
+      />,
+    );
+    // 子页后打开，叠在上面
+    view.rerender(
+      <Stacked
+        innerOpen
+        onOuterClose={onOuterClose}
+        onInnerClose={onInnerClose}
+      />,
+    );
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onInnerClose).toHaveBeenCalledTimes(1);
+    expect(onOuterClose).not.toHaveBeenCalled();
+
+    // 输入框里的 ESC 留给输入框，哪层都不关
+    fireEvent.keyDown(screen.getByLabelText("price"), { key: "Escape" });
+    expect(onInnerClose).toHaveBeenCalledTimes(1);
+    expect(onOuterClose).not.toHaveBeenCalled();
+
+    // 子页关掉后，下一次 ESC 才轮到下面那层
+    view.rerender(
+      <Stacked
+        innerOpen={false}
+        onOuterClose={onOuterClose}
+        onInnerClose={onInnerClose}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByLabelText("price")).toBeNull());
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onOuterClose).toHaveBeenCalledTimes(1);
+    expect(onInnerClose).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -8,6 +8,7 @@ import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
+import { piProviderPresets } from "@/config/piProviderPresets";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -46,6 +47,47 @@ vi.mock("@/components/JsonEditor", () => ({
 describe("PiProviderForm", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("shows a preset's provider key and blocks saving when it is already taken", async () => {
+    const user = userEvent.setup();
+    const preset = piProviderPresets.find((entry) => entry.name === "Kimi")!;
+    server.use(
+      http.post("http://tauri.local/get_providers", () =>
+        HttpResponse.json({
+          [preset.providerKey]: {
+            id: preset.providerKey,
+            name: "Kimi",
+            settingsConfig: {},
+          },
+        }),
+      ),
+    );
+    const onSubmit = vi.fn();
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save Pi provider"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
+    );
+    await user.click(screen.getByRole("button", { name: "Kimi" }));
+    expect(screen.getByLabelText("pi.form.providerKey")).toHaveValue(
+      preset.providerKey,
+    );
+    expect(
+      await screen.findByText("pi.form.providerKeyDuplicate"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save Pi provider" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "pi.form.providerKeyDuplicate",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("starts in the same editable custom state as OpenCode", async () => {
@@ -767,6 +809,54 @@ describe("PiProviderForm", () => {
     expect(
       screen.queryByText("pi.form.nativeLoginAlternative"),
     ).not.toBeInTheDocument();
+  });
+
+  it("writes omp presets without Pi-only fields and edits discovery", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save omp preset"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Kimi", { selector: "span" }));
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    const preset = JSON.parse(configEditor.value);
+    // omp 的 models.yml 没有供应商级 name，也没有 thinkingLevelMap
+    expect(preset).not.toHaveProperty("name");
+    expect(preset.models.length).toBeGreaterThan(0);
+    for (const model of preset.models) {
+      expect(model).not.toHaveProperty("thinkingLevelMap");
+    }
+
+    await user.click(document.querySelector("#omp-discovery-type")!);
+    await user.click(
+      await screen.findByRole("option", { name: "openai-models-list" }),
+    );
+    expect(JSON.parse(configEditor.value).discovery).toEqual({
+      type: "openai-models-list",
+    });
+
+    await user.click(document.querySelector("#omp-discovery-type")!);
+    await user.click(
+      await screen.findByRole("option", { name: "omp.form.discoveryOff" }),
+    );
+    expect(JSON.parse(configEditor.value)).not.toHaveProperty("discovery");
+
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save omp preset" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(onSubmit.mock.calls[0][0].settingsConfig),
+    ).not.toHaveProperty("name");
   });
 
   it("keeps preset model order without exposing a default-model field", async () => {
