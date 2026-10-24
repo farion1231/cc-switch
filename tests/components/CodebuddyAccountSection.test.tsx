@@ -133,6 +133,11 @@ describe("CodebuddyAccountSection", () => {
     expect(screen.getByText(/UID 300/)).toBeInTheDocument();
     expect(screen.getByText(/登录已过期，需要重新登录/)).toBeInTheDocument();
 
+    // 分组没有「删除全部账号」：只能逐个删除
+    expect(
+      screen.queryByRole("button", { name: "CodeBuddy Code 的更多操作" }),
+    ).not.toBeInTheDocument();
+
     // 切换改在供应商列表的官方登录卡上做，账号菜单里只剩重新登录、删除
     await userEvent.click(
       screen.getByRole("button", { name: "carol 的更多操作" }),

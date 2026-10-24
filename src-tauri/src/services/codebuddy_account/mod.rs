@@ -545,15 +545,6 @@ impl CodebuddyAccountManager {
         self.persist(&store)
     }
 
-    pub async fn remove_all(&self) -> Result<Vec<String>, AppError> {
-        let mut store = self.store.lock().await;
-        let removed: Vec<String> = store.accounts.keys().cloned().collect();
-        store.accounts.clear();
-        self.quota_cache.lock().await.clear();
-        self.persist(&store)?;
-        Ok(removed)
-    }
-
     // ---------- 额度 ----------
 
     /// 这个账号的套餐与积分。先把凭据文件里现在那份收回来（当前登录的号用 CodeBuddy 刚续过的

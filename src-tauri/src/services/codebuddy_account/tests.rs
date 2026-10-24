@@ -461,9 +461,6 @@ async fn removing_copies_never_touches_codebuddy() {
     fx.manager.remove(&account.id).await.unwrap();
     assert_eq!(fx.live(), alice);
     assert!(!fx.marker().exists());
-    fx.manager.import_current().await.unwrap();
-    assert_eq!(fx.manager.remove_all().await.unwrap().len(), 1);
-    assert_eq!(fx.live(), alice);
 }
 
 #[test]

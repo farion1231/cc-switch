@@ -57,7 +57,6 @@ export const CodebuddyAccountSection: React.FC<
     isAddingAccount,
     isRemovingAccount,
     removeAccount,
-    logout,
     refetchStatus,
   } = login.auth;
   const [removeTarget, setRemoveTarget] =
@@ -90,9 +89,7 @@ export const CodebuddyAccountSection: React.FC<
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
-    if (!target) return;
-    if (target.kind === "all") logout();
-    else removeAccount(target.accountId);
+    if (target?.kind === "one") removeAccount(target.accountId);
   };
 
   const rows: GroupAccountRow[] = accounts.map((account) => {
@@ -199,12 +196,6 @@ export const CodebuddyAccountSection: React.FC<
       settingDefault={false}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
-      }
-      onRemoveAll={() =>
-        setRemoveTarget({
-          kind: "all",
-          accountIds: accounts.map((account) => account.id),
-        })
       }
       removing={isRemovingAccount}
       login={{
