@@ -3,7 +3,7 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+use crate::app_config::{AppType, McpApps, McpConfig, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
 use super::validation::{extract_server_spec, validate_server_spec};
@@ -47,7 +47,7 @@ pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
 }
 
 /// 从 ~/.claude.json 导入 mcpServers 到统一结构（v3.7.0+）
-/// 已存在的服务器将启用 Claude 应用，不覆盖其他字段和应用状态
+/// Existing IDs retain a shared default and import Claude's independent spec.
 pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError> {
     let text_opt = crate::claude_mcp::read_mcp_json()?;
     let Some(text) = text_opt else { return Ok(0) };
@@ -73,17 +73,18 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
         }
 
         if let Some(existing) = servers.get_mut(id) {
-            // 已存在：仅启用 Claude 应用
-            if !existing.apps.claude {
-                existing.apps.claude = true;
+            let previous = existing.app_overrides.clone();
+            existing.import_app_server(&AppType::Claude, spec.clone());
+            if !existing.apps.claude || existing.app_overrides != previous {
                 changed += 1;
-                log::info!("MCP 服务器 '{id}' 已启用 Claude 应用");
             }
+            existing.apps.claude = true;
         } else {
             // 新建服务器：默认仅启用 Claude
             servers.insert(
                 id.clone(),
                 McpServer {
+                    app_overrides: Default::default(),
                     id: id.clone(),
                     name: id.clone(),
                     server: spec.clone(),

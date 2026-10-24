@@ -90,6 +90,10 @@ export const translateMcpBackendError = (
   t: (key: string, opts?: any) => string,
 ): string => {
   if (!message) return "";
+  const overrideKey = message.match(
+    /mcp\.error\.invalidOverride(?:Claude|Codex|Gemini|Grokbuild|Opencode|Hermes|Pi|Mcode|Kimi|Agy|Omp)/,
+  )?.[0];
+  if (overrideKey) return t(overrideKey);
   // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
   const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
   if (ompKey) return t(ompKey);

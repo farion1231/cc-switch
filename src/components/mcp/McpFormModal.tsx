@@ -53,6 +53,10 @@ import {
 } from "./mcpDraft";
 
 type AppsState = Record<McpAppId, boolean>;
+type ConnectionScope = "default" | McpAppId;
+type ConnectionDrafts = { default: McpDraftConnection } & Partial<
+  Record<McpAppId, McpDraftConnection>
+>;
 
 interface MetaDraft {
   name: string;
@@ -131,9 +135,39 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   );
 
   const [name, setName] = useState(editingId ?? "");
-  const [conn, setConn] = useState<McpDraftConnection>(() =>
-    connectionOf(initialData?.server ?? { type: "stdio" }),
+  const [scope, setScope] = useState<ConnectionScope>("default");
+  const [configurations, setConfigurations] = useState<ConnectionDrafts>(
+    () => ({
+      default: connectionOf(initialData?.server ?? { type: "stdio" }),
+      ...Object.fromEntries(
+        Object.entries(initialData?.appOverrides ?? {}).map(([app, spec]) => [
+          app,
+          connectionOf(spec),
+        ]),
+      ),
+    }),
   );
+  const conn = configurations[scope] ?? configurations.default;
+  const inheritsDefault = scope !== "default" && !configurations[scope];
+  const editedScopes = useRef(new Set<ConnectionScope>());
+  const setConn = (
+    update: React.SetStateAction<McpDraftConnection>,
+    options: { fromView?: boolean } = {},
+  ) => {
+    if (!options.fromView) editedScopes.current.add(scope);
+    setConfigurations((previous) => ({
+      ...previous,
+      [scope]:
+        typeof update === "function"
+          ? update(previous[scope] ?? previous.default)
+          : update,
+    }));
+  };
+  const setDefaultConn = (connection: McpDraftConnection) => {
+    editedScopes.current.add("default");
+    setConfigurations((previous) => ({ ...previous, default: connection }));
+    setScope("default");
+  };
   const [apps, setApps] = useState<AppsState>(() =>
     appsOf(initialData, visibleAppIds),
   );
@@ -190,7 +224,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     const withDesc = getMcpPresetWithDescription(preset, t);
     setTemplate(id);
     setName(uniqueId(preset.id, existingIds));
-    setConn(connectionOf(withDesc.server));
+    setDefaultConn(connectionOf(withDesc.server));
     setMeta({
       name: withDesc.name && withDesc.name !== preset.id ? withDesc.name : "",
       description: withDesc.description ?? "",
@@ -223,7 +257,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     if (result.items.length === 1) {
       const [item] = result.items;
       setName(item.name);
-      setConn(connectionOf(item.spec));
+      setDefaultConn(connectionOf(item.spec));
       setMeta(emptyMeta());
       setBatch(null);
       setTab("form");
@@ -255,10 +289,64 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   };
 
   // ─── 表单 ⇄ JSON ─────────────────────────────────────────────────────
+  const switchScope = (next: ConnectionScope) => {
+    if (next === scope) return;
+    let nextConfigurations = configurations;
+    if (tab === "json" && !inheritsDefault) {
+      const parsed = parseJsonText(jsonText, conn);
+      if (!parsed.ok) {
+        setJsonError(parsed.error);
+        return;
+      }
+      nextConfigurations = {
+        ...configurations,
+        [scope]: connectionOf(parsed.spec),
+      };
+      setConfigurations(nextConfigurations);
+    }
+    setScope(next);
+    setJsonText(
+      jsonTextOf(
+        nextConfigurations[next] ?? nextConfigurations.default,
+        false,
+        {
+          preserveLiteralValues: next !== "default",
+        },
+      ),
+    );
+    setJsonError(null);
+    setRevealJson(false);
+    setRevealed({});
+    setAttempted(false);
+  };
+
+  const toggleAppConfig = (enabled: boolean) => {
+    if (scope === "default") return;
+    editedScopes.current.add(scope);
+    setConfigurations((previous) => {
+      const next = { ...previous };
+      if (enabled)
+        next[scope] = connectionOf(
+          specOf(previous.default, false, { preserveLiteralValues: true }),
+        );
+      else delete next[scope];
+      return next;
+    });
+    setTab("form");
+    setJsonError(null);
+    setRevealJson(false);
+    setRevealed({});
+    setAttempted(false);
+  };
+
   const switchTab = (next: "form" | "json") => {
     if (next === tab) return;
     if (next === "json") {
-      setJsonText(jsonTextOf(conn, revealJson));
+      setJsonText(
+        jsonTextOf(conn, revealJson, {
+          preserveLiteralValues: scope !== "default",
+        }),
+      );
       setJsonError(null);
       setTab("json");
       return;
@@ -268,12 +356,13 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       setJsonError(parsed.error);
       return;
     }
-    setConn(connectionOf(parsed.spec));
+    setConn(connectionOf(parsed.spec), { fromView: true });
     setJsonError(null);
     setTab("form");
   };
 
   const handleJsonChange = (text: string) => {
+    editedScopes.current.add(scope);
     setJsonText(text);
     const parsed = parseJsonText(text, conn);
     setJsonError(parsed.ok ? null : parsed.error);
@@ -283,10 +372,12 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     // 先把当前文字里的改动收进草稿，再换显示方式
     const parsed = parseJsonText(jsonText, conn);
     const base = parsed.ok ? connectionOf(parsed.spec) : conn;
-    if (parsed.ok) setConn(base);
+    if (parsed.ok) setConn(base, { fromView: true });
     const next = !revealJson;
     setRevealJson(next);
-    setJsonText(jsonTextOf(base, next));
+    setJsonText(
+      jsonTextOf(base, next, { preserveLiteralValues: scope !== "default" }),
+    );
   };
 
   const jsonErrorText = (error: JsonParseError) =>
@@ -410,7 +501,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
   const submitSingle = async () => {
     let current = conn;
-    if (tab === "json") {
+    if (tab === "json" && !inheritsDefault) {
       const parsed = parseJsonText(jsonText, conn);
       if (!parsed.ok) {
         setJsonError(parsed.error);
@@ -418,28 +509,55 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         return;
       }
       current = connectionOf(parsed.spec);
-      setConn(current);
+      setConn(current, { fromView: true });
     }
-    const errs = validateDraft(name, current, {
-      checkName: !isEdit,
-      existingIds,
-    });
+    const nextConfigurations = { ...configurations };
+    if (!inheritsDefault) nextConfigurations[scope] = current;
     setAttempted(true);
-    if (errs.name || errs.command || errs.url) {
-      if (tab === "json" && !errs.name) {
+    for (const candidate of ["default", ...MCP_APP_IDS] as const) {
+      const connection = nextConfigurations[candidate];
+      if (!connection) continue;
+      const errs = validateDraft(name, connection, {
+        checkName: !isEdit,
+        existingIds,
+      });
+      if (errs.name || errs.command || errs.url) {
+        setConfigurations(nextConfigurations);
+        setScope(candidate);
         setJsonError(null);
         setTab("form");
+        setRevealed({});
+        focusSoon(
+          errs.name ? "mcp-name" : errs.command ? "mcp-cmd" : "mcp-url",
+        );
+        return;
       }
-      focusSoon(errs.name ? "mcp-name" : errs.command ? "mcp-cmd" : "mcp-url");
-      return;
     }
     const id = isEdit ? (editingId as string) : name.trim();
     savingRef.current = true;
     setSaving(true);
     try {
-      await upsertMutation.mutateAsync(
-        buildEntry(id, specOf(current), initialData, meta),
+      const entry = buildEntry(
+        id,
+        specOf(nextConfigurations.default),
+        initialData,
+        meta,
       );
+      const overrides: NonNullable<McpServer["appOverrides"]> = {};
+      for (const app of MCP_APP_IDS) {
+        const connection = nextConfigurations[app];
+        if (connection) {
+          const original = initialData?.appOverrides?.[app];
+          // Saving another scope must not normalize an untouched native spec.
+          overrides[app] =
+            original && !editedScopes.current.has(app)
+              ? original
+              : specOf(connection, false, { preserveLiteralValues: true });
+        }
+      }
+      if (Object.keys(overrides).length) entry.appOverrides = overrides;
+      else delete entry.appOverrides;
+      await upsertMutation.mutateAsync(entry);
       toast.success(
         isEdit
           ? t("mcpPage.toast.saved", { id })
@@ -855,6 +973,55 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 aria-labelledby="mcp-conn-title"
                 className="flex flex-col gap-4"
               >
+                <div className="flex flex-col gap-2">
+                  <div data-unsaved-ignore>
+                    <SegmentedControl<ConnectionScope>
+                      aria-label={t("mcpPage.drawer.configScope")}
+                      className="h-auto max-w-full flex-wrap gap-1"
+                      value={scope}
+                      onValueChange={switchScope}
+                      items={[
+                        {
+                          value: "default",
+                          label: t("mcpPage.drawer.sharedConfig"),
+                          className: "h-8",
+                        },
+                        ...MCP_APP_IDS.filter(
+                          (app) =>
+                            visibleAppIds.includes(app) ||
+                            configurations[app] ||
+                            scope === app,
+                        ).map((app) => ({
+                          value: app,
+                          label: APP_DISPLAY_NAME[app],
+                          className: "h-8",
+                        })),
+                      ]}
+                    />
+                  </div>
+                  {scope !== "default" ? (
+                    <label className="flex items-center gap-2 text-body">
+                      <input
+                        type="checkbox"
+                        className={CHECKBOX_CLASS}
+                        checked={!inheritsDefault}
+                        onChange={(event) =>
+                          toggleAppConfig(event.target.checked)
+                        }
+                      />
+                      {t("mcpPage.drawer.useAppConfig", {
+                        app: APP_DISPLAY_NAME[scope],
+                      })}
+                    </label>
+                  ) : null}
+                  <p className="text-caption text-fg-2">
+                    {t(
+                      scope === "default"
+                        ? "mcpPage.drawer.sharedConfigHint"
+                        : "mcpPage.drawer.appConfigHint",
+                    )}
+                  </p>
+                </div>
                 <div data-unsaved-ignore className="flex items-center gap-3">
                   <h3
                     id="mcp-conn-title"
@@ -871,19 +1038,26 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       {
                         value: "form",
                         label: t("mcpPage.drawer.tabForm"),
-                        disabled: tab === "json" && jsonError !== null,
+                        disabled:
+                          inheritsDefault ||
+                          (tab === "json" && jsonError !== null),
                         className: "min-w-[60px] rounded-[5px]",
                       },
                       {
                         value: "json",
                         label: "JSON",
+                        disabled: inheritsDefault,
                         className: "min-w-[60px] rounded-[5px]",
                       },
                     ]}
                   />
                 </div>
 
-                {tab === "form" ? (
+                {inheritsDefault ? (
+                  <p className="rounded-panel border border-border bg-subtle p-3 text-body text-fg-2">
+                    {t("mcpPage.drawer.followsSharedConfig")}
+                  </p>
+                ) : tab === "form" ? (
                   <>
                     <div className="flex flex-col gap-1.5">
                       <span id="mcp-tr-label" className={LABEL_CLASS}>

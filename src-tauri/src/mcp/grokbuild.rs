@@ -5,7 +5,7 @@
 
 use serde_json::{json, Value};
 
-use crate::app_config::{McpApps, McpServer, MultiAppConfig};
+use crate::app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
 use super::codex::json_server_to_toml_table;
@@ -23,7 +23,9 @@ fn read_config_text() -> Result<String, AppError> {
     std::fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))
 }
 
-fn json_server_to_grokbuild_toml_table(server_spec: &Value) -> Result<toml_edit::Table, AppError> {
+pub(super) fn json_server_to_grokbuild_toml_table(
+    server_spec: &Value,
+) -> Result<toml_edit::Table, AppError> {
     let mut table = json_server_to_toml_table(server_spec)?;
     // Grok infers transport from `command` or `url` and uses `headers`, while
     // the shared converter writes `http_headers` (and no longer writes `type`).
@@ -103,7 +105,9 @@ pub fn import_from_grokbuild(config: &mut MultiAppConfig) -> Result<usize, AppEr
         }
 
         if let Some(existing) = servers.get_mut(id) {
-            if !existing.apps.grokbuild {
+            let previous = existing.app_overrides.clone();
+            existing.import_app_server(&AppType::GrokBuild, spec.clone());
+            if !existing.apps.grokbuild || existing.app_overrides != previous {
                 existing.apps.grokbuild = true;
                 changed += 1;
             }
@@ -111,6 +115,7 @@ pub fn import_from_grokbuild(config: &mut MultiAppConfig) -> Result<usize, AppEr
             servers.insert(
                 id.clone(),
                 McpServer {
+                    app_overrides: Default::default(),
                     id: id.clone(),
                     name: id.clone(),
                     server: spec,
