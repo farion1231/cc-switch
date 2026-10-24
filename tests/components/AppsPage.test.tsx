@@ -614,6 +614,22 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeEnabled();
   });
 
+  it("groups apps into installed and not installed sections", async () => {
+    missing.add("codex");
+    await renderApps();
+    const installed = within(
+      screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
+    );
+    const notInstalled = within(
+      screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),
+    );
+    expect(installed.getByText("Claude Code")).toBeInTheDocument();
+    expect(installed.getByText("Claude Desktop")).toBeInTheDocument();
+    expect(installed.queryByText("Codex")).toBeNull();
+    expect(notInstalled.getByText("Codex")).toBeInTheDocument();
+    expect(notInstalled.queryByText("Claude Code")).toBeNull();
+  });
+
   it("shows the selected path and command while retaining the resolved target for uninstall validation", async () => {
     const pending = deferred<ToolUninstallCandidate[]>();
     mocks.prepareToolUninstall.mockReturnValueOnce(pending.promise);
