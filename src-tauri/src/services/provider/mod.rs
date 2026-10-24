@@ -84,9 +84,8 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
         && crate::proxy::providers::is_codex_official_provider(provider)
 }
 
-/// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的选路（关键字段），
-/// 使开关即时生效，无需等下一次切换。当前供应商非官方（或不存在）时为 no-op：开关只
-/// 影响官方直连的选路。代理模式下 live 是代理契约，不受这个开关影响。
+/// Reapply the history identity to either the official login or an API proxy
+/// contract. Strict third-party direct mode cannot retain the built-in identity.
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
     let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &AppType::Codex)?;
     let current_id = ProviderService::current(state, AppType::Codex)?;
@@ -97,7 +96,10 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     let Some(provider) = providers.get(&current_id) else {
         return Ok(false);
     };
-    if !codex_direct::is_official(provider) {
+    if !codex_direct::is_official(provider) && !crate::mode::current::is_proxy(&AppType::Codex) {
+        if crate::settings::unify_codex_session_history() {
+            return Err(AppError::Message("Switch Codex to local API routing before enabling unified history and Dot compatibility.".to_string()));
+        }
         return Ok(false);
     }
     live::sync_live_for_provider_respecting_mode(state, &AppType::Codex, provider, None)?;

@@ -452,8 +452,6 @@ pub enum RouteWrite {
     /// 官方直连：不写选路。live 里已有 custom 表时改写成休眠形态（本地代理地址加占位
     /// Key）：Codex 按 provider id 给会话分桶，表一删，第三方的旧会话就 resume 不了。
     Official { dormant_base_url: String },
-    /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
-    OfficialMirror,
     /// 第三方（直连或代理契约）：选路写 custom。
     Custom(Table),
     /// Codex 内置的其他 provider。
@@ -470,7 +468,7 @@ impl RouteWrite {
     fn selector(&self) -> Option<&str> {
         match self {
             Self::Official { .. } | Self::Default => None,
-            Self::OfficialMirror | Self::Custom(_) => Some(ROUTE_ID),
+            Self::Custom(_) => Some(ROUTE_ID),
             Self::BuiltIn { id, .. } => Some(id),
             Self::OfficialProxy { unified, .. } => unified.then_some(ROUTE_ID),
         }
@@ -788,14 +786,6 @@ impl CodexConfigPatch {
             } => {
                 put_table(providers, id, table.clone(), container_inline);
             }
-            RouteWrite::OfficialMirror => {
-                put_table(
-                    providers,
-                    ROUTE_ID,
-                    official_mirror_table(None, true),
-                    container_inline,
-                );
-            }
             RouteWrite::Custom(table) => {
                 put_table(providers, ROUTE_ID, table.clone(), container_inline);
             }
@@ -832,7 +822,6 @@ impl CodexConfigPatch {
     fn owned_table(&self) -> Option<(&str, Table)> {
         match &self.route {
             RouteWrite::Custom(table) => Some((ROUTE_ID, table.clone())),
-            RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
             RouteWrite::OfficialProxy {
                 base_url,
                 unified: true,
