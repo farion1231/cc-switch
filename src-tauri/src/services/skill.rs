@@ -1176,9 +1176,6 @@ impl SkillService {
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
-                                | AppType::Mcode
-                                | AppType::Agy
-                                | AppType::Kimi
                                 | AppType::Qoder
                                 | AppType::QoderCn
                         ) {
@@ -1656,9 +1653,6 @@ impl SkillService {
         for app in [
             AppType::Pi,
             AppType::Omp,
-            AppType::Mcode,
-            AppType::Agy,
-            AppType::Kimi,
             AppType::Mcode,
             AppType::Agy,
             AppType::Kimi,

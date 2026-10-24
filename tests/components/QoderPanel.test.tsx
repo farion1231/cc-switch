@@ -23,6 +23,9 @@ import type { UsageScript } from "@/types";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("@/components/providers/KimiAccountLogin", () => ({
+  KimiAccountLogin: () => null,
+}));
 vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: () => null,
 }));
@@ -1164,10 +1167,14 @@ describe("Qoder model management", () => {
     const user = userEvent.setup();
     mount();
     await user.click(
-      await screen.findByRole("button", { name: "qoder.selectModelAction" }),
+      await screen.findByRole("button", { name: "providerCard.action.more" }),
     );
     await user.click(
+      await screen.findByRole("menuitem", { name: "qoder.selectModelAction" }),
+    );
+    fireEvent.keyDown(
       await screen.findByRole("menuitem", { name: /^Model One/ }),
+      { key: "Enter" },
     );
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("set_qoder_model", {

@@ -120,7 +120,11 @@ const ROW_BY_APP = Object.fromEntries([
 type RowSection = { key: string; title: string; rows: Row[] };
 
 const rowKey = (row: Row): AppId =>
-  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
+  row.kind === "desktop"
+    ? "claude-desktop"
+    : row.tool === "qodercn"
+      ? "qoder"
+      : TOOL_APP_IDS[row.tool];
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -232,10 +236,13 @@ export function AppsPage() {
     return isToolPresent(info, tools.installReports?.[row.tool]);
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
-  const appOrder = orderAppIds(settings?.appOrder);
-  const orderedRows = appOrder
-    .filter((app) => app !== (edition === "cn" ? "qoder" : "qoder-cn"))
-    .map((app) => ROW_BY_APP[app]);
+  const appOrder: AppId[] = orderAppIds(settings?.appOrder).filter(
+    (app) => app !== "qoder-cn",
+  );
+  const orderedRows = appOrder.map(
+    (app): Row =>
+      app === "qoder" ? { kind: "tool", tool: qoderTool } : ROW_BY_APP[app],
+  );
   const rowStates = orderedRows.map((row) => ({
     row,
     installed: rowInstalled(row),
@@ -368,7 +375,9 @@ export function AppsPage() {
     const oldIndex = appOrder.indexOf(active.id as AppId);
     const newIndex = appOrder.indexOf(over.id as AppId);
     if (oldIndex === -1 || newIndex === -1) return;
-    const next = arrayMove(appOrder, oldIndex, newIndex);
+    const next = arrayMove(appOrder, oldIndex, newIndex).flatMap((app) =>
+      app === "qoder" ? ["qoder", "qoder-cn"] : [app],
+    );
     const previous = settings.appOrder;
     updateSettings({ appOrder: next });
     void autoSaveSettings({ appOrder: next }).catch(() =>
@@ -400,7 +409,7 @@ export function AppsPage() {
       />
     ) : (
       <ToolRow
-        key={row.tool}
+        key={rowKey(row)}
         tool={row.tool}
         editionControl={row.tool === qoderTool ? editionControl : undefined}
         tools={tools}

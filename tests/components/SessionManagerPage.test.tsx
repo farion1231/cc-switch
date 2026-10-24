@@ -289,7 +289,7 @@ describe("SessionManagerPage", () => {
     const menu = await screen.findByRole("menu");
     const items = within(menu).getAllByRole("menuitemradio");
     // 全部应用 + 13 个来源（Qoder 只显示所选版本），按会话数从多到少
-    expect(items).toHaveLength(13);
+    expect(items).toHaveLength(14);
     expect(items[0]).toHaveTextContent("全部应用5");
     expect(items[1]).toHaveTextContent("Codex3");
     expect(items[items.length - 1]).toHaveTextContent("无会话");
