@@ -23,7 +23,10 @@ import type { OpenClawProviderConfig, Provider } from "@/types";
 import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  translatePiProviderMutationError,
+} from "@/utils/errorUtils";
 import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
@@ -48,6 +51,7 @@ import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
+import { isPiFamilyApp } from "@/config/appConfig";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
@@ -153,8 +157,8 @@ export function ProviderList({
     isPending: isPiCurrentStatePending,
     isError: isPiCurrentStateError,
     error: piCurrentStateError,
-  } = usePiCurrentState(appId === "pi");
-  const isPiStateReady = appId !== "pi" || isPiCurrentStateSuccess;
+  } = usePiCurrentState(isPiFamilyApp(appId), appId === "omp" ? "omp" : "pi");
+  const isPiStateReady = !isPiFamilyApp(appId) || isPiCurrentStateSuccess;
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -162,7 +166,7 @@ export function ProviderList({
     (appId === "opencode" && isOpencodeLiveIdsPending) ||
     (appId === "openclaw" && isOpenclawLiveIdsPending) ||
     (appId === "hermes" && isHermesLiveIdsPending) ||
-    (appId === "pi" && isPiCurrentStatePending);
+    (isPiFamilyApp(appId) && isPiCurrentStatePending);
 
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
@@ -177,6 +181,7 @@ export function ProviderList({
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
         case "pi":
+        case "omp":
           return isPiStateReady
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
                 false)
@@ -373,7 +378,8 @@ export function ProviderList({
       hermesCurrentId: hermesModelConfig?.provider ?? null,
       isHermesManaged: (provider) =>
         isHermesReadOnlyProvider(provider.settingsConfig),
-      piStateUnavailable: appId === "pi" && !isPiStateReady,
+      piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
+      kimiCurrentId: currentProviderId,
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -402,6 +408,7 @@ export function ProviderList({
     currentOmoSlimId,
     hermesModelConfig?.provider,
     isPiStateReady,
+    currentProviderId,
     onRemoveFromConfig,
     onDelete,
     onDisableOmo,
@@ -409,19 +416,21 @@ export function ProviderList({
     onSetAsDefault,
   ]);
 
-  const piStateError =
-    appId === "pi" && isPiCurrentStateError
+  const piStateRawError =
+    isPiFamilyApp(appId) && isPiCurrentStateError
       ? extractErrorMessage(piCurrentStateError)
       : "";
+  const piStateError =
+    translatePiProviderMutationError(piStateRawError, t) || piStateRawError;
   const piStateErrorNotice =
-    appId === "pi" && isPiCurrentStateError ? (
+    isPiFamilyApp(appId) && isPiCurrentStateError ? (
       <Notice
         tone="warning"
-        title={t("pi.current.readFailed", {
+        title={t(`${appId}.current.readFailed`, {
           defaultValue: "无法读取 Pi 当前配置",
         })}
       >
-        {t("pi.current.stateUnavailableHint")}
+        {t(`${appId}.current.stateUnavailableHint`)}
         {piStateError ? ` ${piStateError}` : ""}
       </Notice>
     ) : null;
@@ -445,9 +454,9 @@ export function ProviderList({
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
-          onCreate={appId === "pi" ? undefined : onCreate}
+          onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
           onImport={
-            appId === "pi" || appId === "mcode" || appId === "kimi"
+            isPiFamilyApp(appId) || appId === "mcode" || appId === "kimi"
               ? undefined
               : () => importMutation.mutate()
           }
@@ -459,7 +468,7 @@ export function ProviderList({
   // 「当前」只用来决定额度显示和自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
   const isCurrentFor = (provider: Provider) => {
-    if (appId === "pi") return false;
+    if (isPiFamilyApp(appId)) return false;
     if (appId === "agy") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")

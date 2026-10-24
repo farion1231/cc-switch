@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, openclaw, opencode, pi,
+    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,7 +96,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 11] = [
+    let scanners: [(&str, Scanner); 12] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -105,6 +105,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("hermes", hermes::scan_sessions_with_status),
         ("grokbuild", grokbuild::scan_sessions_with_status),
         ("pi", pi::scan_sessions_with_status),
+        ("omp", omp::scan_sessions_with_status),
         ("mcode", mcode::scan_sessions_with_status),
         // Kimi Code、Antigravity 的扫描还不报告读取失败，按完整处理
         ("kimi", |_| kimi::scan_sessions()),
@@ -170,6 +171,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
+        "omp" => omp::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -276,6 +278,7 @@ fn delete_session_with_roots(
         "grokbuild" => grokbuild::delete_session(&validated_root, &validated_source, session_id),
         "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
+        "omp" => omp::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -292,6 +295,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "agy" => agy::session_roots(),
+        "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

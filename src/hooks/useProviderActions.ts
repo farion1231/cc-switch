@@ -268,8 +268,7 @@ export function useProviderActions(
           } else if (
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
-            activeApp === "mcode" ||
-            activeApp === "kimi"
+            activeApp === "mcode"
           ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
@@ -308,8 +307,8 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi") {
-          await piApi.updateProviderUsageScript(provider.id, script);
+        if (activeApp === "pi" || activeApp === "omp") {
+          await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }
