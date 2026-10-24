@@ -16,6 +16,18 @@ use std::time::Duration;
 pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
+    pub max_input_tokens: Option<u64>,
+    pub max_output_tokens: Option<u64>,
+    pub pricing: Option<FetchedModelPricing>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchedModelPricing {
+    pub prompt: Option<String>,
+    pub completion: Option<String>,
+    pub input_cache_read: Option<String>,
+    pub input_cache_write: Option<String>,
 }
 
 /// 模型列表响应的兼容格式。
@@ -36,6 +48,25 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+    max_input_tokens: Option<u64>,
+    max_output_tokens: Option<u64>,
+    pricing: Option<serde_json::Value>,
+}
+
+fn parse_token_pricing(value: Option<serde_json::Value>) -> Option<FetchedModelPricing> {
+    let pricing = value?.as_object()?.clone();
+    let string_value = |key: &str| pricing.get(key)?.as_str().map(str::to_string);
+    let parsed = FetchedModelPricing {
+        prompt: string_value("prompt"),
+        completion: string_value("completion"),
+        input_cache_read: string_value("input_cache_read"),
+        input_cache_write: string_value("input_cache_write"),
+    };
+    (parsed.prompt.is_some()
+        || parsed.completion.is_some()
+        || parsed.input_cache_read.is_some()
+        || parsed.input_cache_write.is_some())
+    .then_some(parsed)
 }
 
 /// `models[]` 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`；
@@ -145,12 +176,21 @@ pub async fn fetch_models(
                     .map(|m| FetchedModel {
                         id: m.id,
                         owned_by: m.owned_by,
+                        max_input_tokens: m.max_input_tokens,
+                        max_output_tokens: m.max_output_tokens,
+                        pricing: parse_token_pricing(m.pricing),
                     })
                     .collect()
             } else {
                 catalog_model_ids(resp.models)
                     .into_iter()
-                    .map(|id| FetchedModel { id, owned_by: None })
+                    .map(|id| FetchedModel {
+                        id,
+                        owned_by: None,
+                        max_input_tokens: None,
+                        max_output_tokens: None,
+                        pricing: None,
+                    })
                     .collect()
             };
 
@@ -427,6 +467,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_optional_model_token_limits() {
+        let resp: ModelsResponse = serde_json::from_value(serde_json::json!({
+            "data": [
+                {
+                    "id": "zhipu/glm-5.3",
+                    "object": "model",
+                    "created": 1677610602,
+                    "owned_by": "openai",
+                    "max_input_tokens": 1000000,
+                    "max_output_tokens": 128000
+                }
+            ]
+        }))
+        .unwrap();
+
+        let mut data = resp.data.unwrap();
+        let entry = data.remove(0);
+        assert_eq!(entry.id, "zhipu/glm-5.3");
+        assert_eq!(entry.owned_by.as_deref(), Some("openai"));
+        assert_eq!(entry.max_input_tokens, Some(1_000_000));
+        assert_eq!(entry.max_output_tokens, Some(128_000));
+    }
+
+    #[test]
     fn test_candidates_plain_root() {
         let c = build_models_url_candidates("https://api.siliconflow.cn", false, None).unwrap();
         assert_eq!(c, vec!["https://api.siliconflow.cn/v1/models"]);
@@ -679,6 +743,20 @@ mod tests {
         let data = resp.data.unwrap();
         assert_eq!(data[0].id, "my-model");
         assert!(data[0].owned_by.is_none());
+    }
+
+    #[test]
+    fn parses_only_openrouter_token_pricing_strings() {
+        let json = r#"{"data":[{"id":"priced","pricing":{"prompt":"0","completion":"0.000002","input_cache_read":"0.0000005","input_cache_write":3,"request":"0.01"}},{"id":"invalid","pricing":"free"}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let mut data = resp.data.unwrap();
+
+        let pricing = parse_token_pricing(data.remove(0).pricing).unwrap();
+        assert_eq!(pricing.prompt.as_deref(), Some("0"));
+        assert_eq!(pricing.completion.as_deref(), Some("0.000002"));
+        assert_eq!(pricing.input_cache_read.as_deref(), Some("0.0000005"));
+        assert!(pricing.input_cache_write.is_none());
+        assert!(parse_token_pricing(data.remove(0).pricing).is_none());
     }
 
     #[test]
