@@ -1,6 +1,5 @@
 export type { AppId } from "./types";
 export { piApi } from "./pi";
-export { ompApi } from "./omp";
 export { providersApi, universalProvidersApi } from "./providers";
 export { settingsApi } from "./settings";
 export { backupsApi } from "./settings";

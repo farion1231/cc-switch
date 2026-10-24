@@ -42,6 +42,9 @@ export const translatePiProviderMutationError = (
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string => {
   if (!message) return "";
+  // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
 
   if (
     message.includes("models.json changed") ||
@@ -54,30 +57,6 @@ export const translatePiProviderMutationError = (
 
   if (message.includes("Pi provider") && message.includes("already exists")) {
     return t("pi.form.providerKeyDuplicate");
-  }
-
-  return "";
-};
-
-export const translateOmpProviderMutationError = (
-  message: string,
-  t: (key: string, options?: Record<string, unknown>) => string,
-): string => {
-  if (!message) return "";
-
-  if (
-    message.includes("changed outside CC Switch") ||
-    message.includes("no longer present in models.yml") ||
-    message.includes("another value now owns the key")
-  ) {
-    return t("omp.provider.writeConflict");
-  }
-
-  if (
-    message.includes("Oh My Pi provider") &&
-    message.includes("already exists")
-  ) {
-    return t("omp.form.providerKeyDuplicate");
   }
 
   return "";
@@ -111,6 +90,9 @@ export const translateMcpBackendError = (
   t: (key: string, opts?: any) => string,
 ): string => {
   if (!message) return "";
+  // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
   const msg = String(message).trim();
 
   // 基础字段与结构校验相关

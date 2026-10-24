@@ -933,7 +933,6 @@
     "piConfigDir": "Pi 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
     "ompConfigDir": "Oh My Pi 配置目录",
-    "ompConfigDirDescription": "覆盖 Oh My Pi 配置目录（models.yml、config.yml、提示词、Skills 与会话）。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -1677,7 +1676,7 @@
       "hint": "仍要保存吗？保存后切换此供应商时可能失败，可以之后再补全。",
       "saveAnyway": "仍要保存"
     },
-    "configJsonError": "配置 JSON 格式错误，请检查语法",
+    "configJsonError": "配置JSON格式错误，请检查语法",
     "authJsonRequired": "auth.json 必须是 JSON 对象",
     "authJsonError": "auth.json 格式错误，请检查JSON语法",
     "fillAuthJson": "请填写 auth.json 配置",
@@ -4978,60 +4977,34 @@
   },
   "omp": {
     "empty": {
-      "title": "还没有添加自定义供应商",
-      "description": "Oh My Pi 内置供应商由 Oh My Pi 自行管理。点击右上角 +，从预设或自定义配置添加供应商。"
-    },
-    "form": {
-      "modelsMode": "模型来源",
-      "modelsModeManual": "手动配置模型列表",
-      "modelsModeDiscovery": "自动发现模型列表",
-      "modelsModeNone": "不配置模型",
-      "modelsDiscoveryHint": "模型列表由 Oh My Pi 运行时自动发现，此处无需手动配置；仍可通过下方 YAML 添加 models 或 modelOverrides 微调。",
-      "discoveryType": "发现方式",
-      "discoveryHint": "由 Oh My Pi 定期从端点拉取模型列表；端点返回的上下文长度等元数据会自动套用。手动模型行和下方 YAML 的 modelOverrides 仍然生效。",
-      "discoveryApiRequired": "启用自动发现时必须选择接口格式（proxy 类型除外）",
-      "apiInherit": "不指定（继承默认）",
-      "apiInheritHint": "选择「不指定」时不写 api 键：标识与内置供应商相同时继承其模型的接口格式，proxy 自动发现时每个模型单独自动判断接口格式。",
-      "modelsHiddenHint": "未配置模型列表：保存后不写 models 键。此供应商仅在标识与 Oh My Pi 内置供应商相同时生效（其字段作为该内置供应商的覆盖）。",
-      "configYaml": "配置 YAML",
-      "fixYamlFirst": "请先修复下方配置 YAML，再编辑结构化字段。",
-      "providerKeyDuplicate": "此标识已被使用，请更换",
-      "absoluteHttpUrlRequired": "{{label}} 必须是绝对 HTTP 或 HTTPS 地址",
-      "addCompatibilityOption": "添加",
-      "addModel": "添加模型",
-      "compatibility": "接口兼容性",
-      "compatibilityHint": "调整兼容端点或本地服务的请求行为。",
-      "contextWindow": "上下文长度",
-      "credential": "API Key",
-      "duplicateModel": "模型 ID {{id}} 重复",
-      "imageInput": "支持图片输入",
-      "maxTokens": "最大输出 Token 数",
-      "modelId": "模型 ID",
-      "modelIdRequired": "第 {{index}} 个模型缺少 ID",
-      "modelName": "显示名称",
-      "modelNamePlaceholder": "显示名称",
-      "nameRequired": "显示名称不能为空",
-      "noCompatibilityOptions": "暂无兼容性选项",
-      "noModels": "暂无模型配置",
-      "optionKey": "选项",
-      "optionValue": "值",
-      "positiveNumberRequired": "{{label}} 必须是大于 0 的数字",
-      "providerKey": "供应商标识",
-      "providerKeyRequired": "供应商标识不能为空",
-      "reasoning": "支持扩展思考",
-      "removeCompatibilityOption": "移除兼容性选项",
-      "removeModel": "移除模型",
-      "toggleModelDetails": "展开或收起模型详情"
+      "title": "还没有添加 API Key 供应商",
+      "description": "点击右上角 +，从预设或自定义配置添加供应商。"
     },
     "provider": {
       "enabled": "已在 Oh My Pi 中启用",
       "enableFailed": "无法在 Oh My Pi 中启用此供应商",
-      "removed": "已从 Oh My Pi 移除",
-      "writeConflict": "Oh My Pi 配置正在被其他进程修改，请稍后再试。"
+      "removed": "已从 Oh My Pi 移除"
     },
     "current": {
-      "readFailed": "无法读取 Oh My Pi 的供应商配置",
-      "stateUnavailableHint": "在 CC Switch 能读取 Oh My Pi 的供应商配置之前，供应商改动暂不可用。"
+      "readFailed": "无法读取 Oh My Pi 供应商配置",
+      "stateUnavailableHint": "CC Switch 读取到 Oh My Pi 供应商配置前，供应商变更已暂时禁用。"
+    },
+    "form": {
+      "discoveryType": "模型自动发现",
+      "discoveryOff": "不自动发现",
+      "discoveryHint": "由 Oh My Pi 定期从端点拉取模型列表，端点返回的上下文长度等元数据会自动套用；手动添加的模型仍然生效。开启后可以不配置模型。"
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi 配置超过 1 MiB 大小限制。",
+      "externalChange": "Oh My Pi 配置已被其他程序修改，请刷新后重试。",
+      "rollbackConflict": "数据库保存失败，且 Oh My Pi 配置已被其他程序修改，请手动恢复。",
+      "invalidMcp": "Oh My Pi MCP JSON 格式无效，根节点和 mcpServers 必须为对象。",
+      "invalidYaml": "Oh My Pi YAML 无效，根节点和 providers 必须是映射。",
+      "invalidProvider": "Oh My Pi 供应商配置无效，请检查必填字段、API 格式和字段类型。",
+      "manualEdit": "此 YAML 使用了 CC Switch 无法安全编辑的格式或语法，请手动编辑 models.yml。",
+      "duplicateProvider": "此 Oh My Pi 供应商标识已存在。",
+      "renameProvider": "Oh My Pi 供应商标识不能重命名。",
+      "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。"
     }
   }
 }

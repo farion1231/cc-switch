@@ -1,124 +1,34 @@
-import type { PresetTheme } from "./claudeProviderPresets";
-import type { PresetFamilyFields } from "./presetFamilies";
-import type { PiProviderPreset } from "./piProviderPresets";
-import { piProviderPresets } from "./piProviderPresets";
-import { PI_MODEL_CATALOG_REFERENCE } from "./piModelCatalog";
-import type { ProviderCategory } from "@/types";
+import { piProviderPresets, type PiProviderPreset } from "./piProviderPresets";
 
 /**
  * Oh My Pi provider catalog, derived from the Pi catalog.
  *
- * `models.yml` is validated by Oh My Pi's `ModelsConfigSchema`, and only
- * known fields must follow its native contract. Pi presets therefore translate
- * their thinking dialect and strip Pi-only model controls:
- *
- * - `thinkingLevelMap` (Pi-only model field) and the embedded model-catalog
- *   reference symbol;
- * - the `compat` keys `forceAdaptiveThinking`,
- *   `requiresReasoningContentOnAssistantMessages` and `deferredToolsMode`
- *   (Pi harness compat flags absent from omp's schema) — writing them into
- *   OMP's config would not apply those flags. Reasoning replay is translated
- *   to omp's tool-call replay controls instead.
- *
- * Oh My Pi presets that have no Pi counterpart are appended below so the omp
- * catalog keeps its own entries.
- *
- * Each preset carries its own registry `icon` + `iconColor`, so a provider
- * created from a preset renders its own logo in the provider list (not the
- * agent mark) — matching the other agent pages.
+ * omp validates models.yml against its own schema, so each Pi preset drops what omp doesn't
+ * define: the provider-level `name`, the model-level `thinkingLevelMap` (and the catalog
+ * reference symbol), and the Pi-only `compat` flags. Pi's DeepSeek thinking dialect and its
+ * reasoning-replay flag are translated to omp's equivalents.
  */
-
-export type OmpApiFormat =
-  | "openai-completions"
-  | "openai-responses"
-  | "anthropic-messages"
-  | "google-generative-ai"
-  | "bedrock-converse-stream";
-
-export interface OmpPresetModel {
-  id: string;
-  name: string;
-  reasoning: boolean;
-  input: ("text" | "image")[];
-  contextWindow: number;
-  maxTokens: number;
-  compat?: Record<string, unknown>;
-  headers?: Record<string, string>;
-}
-
-export interface OmpProviderPreset extends PresetFamilyFields {
-  name: string;
-  nameKey?: string;
-  providerKey: string;
-  websiteUrl: string;
-  apiKeyUrl?: string;
-  settingsConfig: {
-    name: string;
-    baseUrl: string;
-    api: OmpApiFormat;
-    apiKey: string;
-    headers?: Record<string, string>;
-    compat?: Record<string, unknown>;
-    models: OmpPresetModel[];
+export type OmpProviderPreset = Omit<PiProviderPreset, "settingsConfig"> & {
+  settingsConfig: Omit<
+    PiProviderPreset["settingsConfig"],
+    "name" | "models"
+  > & {
+    models: Record<string, unknown>[];
   };
-  category?: ProviderCategory;
-  isPartner?: boolean;
-  primePartner?: boolean;
-  partnerPromotionKey?: string;
-  theme?: PresetTheme;
-  icon?: string;
-  iconColor?: string;
-}
-
-/** Pi `compat` keys that omp's `ModelsConfigSchema` does not define. */
-const OMP_INCOMPATIBLE_COMPAT_KEYS: Record<string, true> = {
-  forceAdaptiveThinking: true,
-  requiresReasoningContentOnAssistantMessages: true,
-  deferredToolsMode: true,
 };
 
-interface OmpModelSeed {
-  id: string;
-  name: string;
-  reasoning: boolean;
-  input: ("text" | "image")[];
-  contextWindow: number;
-  maxTokens: number;
-  compat?: Record<string, unknown>;
-  headers?: Record<string, string>;
-}
+/** Pi `compat` keys that omp's schema does not define. */
+const PI_ONLY_COMPAT_KEYS = new Set([
+  "forceAdaptiveThinking",
+  "requiresReasoningContentOnAssistantMessages",
+  "deferredToolsMode",
+]);
 
-interface OmpPresetSeed extends PresetFamilyFields {
-  name: string;
-  nameKey?: string;
-  providerKey: string;
-  websiteUrl: string;
-  apiKeyUrl?: string;
-  settingsConfig: {
-    name: string;
-    baseUrl: string;
-    api: OmpApiFormat;
-    apiKey: string;
-    headers?: Record<string, string>;
-    compat?: Record<string, unknown>;
-    models: OmpModelSeed[];
-  };
-  category?: ProviderCategory;
-  isPartner?: boolean;
-  primePartner?: boolean;
-  partnerPromotionKey?: string;
-  icon?: string;
-  iconColor?: string;
-}
-
-// Pi's DeepSeek dialect and omp's zai dialect both send thinking.type.
-// Omp uses explicit reasoning replay controls instead of Pi's assistant flag.
 function toOmpCompat(compat: Record<string, unknown>): Record<string, unknown> {
   const result = Object.fromEntries(
-    Object.entries(compat).filter(
-      ([key]) => !(key in OMP_INCOMPATIBLE_COMPAT_KEYS),
-    ),
+    Object.entries(compat).filter(([key]) => !PI_ONLY_COMPAT_KEYS.has(key)),
   );
+  // Pi's DeepSeek dialect and omp's zai dialect both send thinking.type.
   if (result.thinkingFormat === "deepseek") result.thinkingFormat = "zai";
   if (compat.requiresReasoningContentOnAssistantMessages === true) {
     result.reasoningContentField = "reasoning_content";
@@ -129,118 +39,28 @@ function toOmpCompat(compat: Record<string, unknown>): Record<string, unknown> {
   return result;
 }
 
-function toOmpModel(model: Record<string, unknown>): OmpModelSeed {
-  const seed: OmpModelSeed = {
-    id: String(model.id),
-    name: String(model.name),
-    reasoning: model.reasoning === true,
-    input: (Array.isArray(model.input) ? model.input : ["text"]) as (
-      | "text"
-      | "image"
-    )[],
-    contextWindow: Number(model.contextWindow),
-    maxTokens: Number(model.maxTokens),
-  };
-  if (model.headers !== undefined) {
-    seed.headers = model.headers as Record<string, string>;
-  }
-  const compat = model.compat as Record<string, unknown> | undefined;
-  const stripped = toOmpCompat(compat ?? {});
-  if (Object.keys(stripped).length > 0) {
-    seed.compat = stripped;
-  }
-  return seed;
+function toOmpModel(
+  model: PiProviderPreset["settingsConfig"]["models"][number],
+): Record<string, unknown> {
+  // Spreading drops the catalog reference symbol; thinkingLevelMap is Pi-only.
+  const { thinkingLevelMap: _piOnly, compat, ...rest } = model;
+  const ompCompat = toOmpCompat(compat ?? {});
+  return Object.keys(ompCompat).length > 0
+    ? { ...rest, compat: ompCompat }
+    : rest;
 }
 
-function toOmpPreset(preset: PiProviderPreset): OmpPresetSeed {
-  const config = preset.settingsConfig;
+function toOmpPreset(preset: PiProviderPreset): OmpProviderPreset {
+  const { name: _piOnly, compat, models, ...config } = preset.settingsConfig;
   return {
     ...preset,
     settingsConfig: {
-      name: config.name,
-      baseUrl: config.baseUrl,
-      api: config.api,
-      apiKey: config.apiKey,
-      ...(config.headers !== undefined ? { headers: config.headers } : {}),
-      ...(config.compat !== undefined
-        ? {
-            compat: toOmpCompat(config.compat),
-          }
-        : {}),
-      models: config.models
-        .filter((model) => model.id !== undefined)
-        .map((model) =>
-          toOmpModel(
-            model as unknown as Record<string, unknown> & {
-              [PI_MODEL_CATALOG_REFERENCE]?: unknown;
-            },
-          ),
-        ),
+      ...config,
+      ...(compat !== undefined ? { compat: toOmpCompat(compat) } : {}),
+      models: models.map(toOmpModel),
     },
   };
 }
 
-/** Oh My Pi presets with no Pi counterpart, kept omp-native. */
-const ompOnlyPresetSeeds: OmpPresetSeed[] = [
-  {
-    name: "ETok.ai",
-    providerKey: "cc-switch-etok-ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      name: "ETok",
-      baseUrl: "https://api.etok.ai",
-      api: "anthropic-messages",
-      apiKey: "",
-      models: [
-        {
-          id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
-          id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-      ],
-    },
-    category: "third_party",
-  },
-  {
-    name: "Bailian",
-    providerKey: "cc-switch-bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
-    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
-    settingsConfig: {
-      name: "Bailian",
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      api: "openai-completions",
-      apiKey: "",
-      models: [
-        {
-          id: "qwen3-coder-plus",
-          name: "Qwen3 Coder Plus",
-          reasoning: false,
-          input: ["text"],
-          contextWindow: 1000000,
-          maxTokens: 65536,
-        },
-      ],
-    },
-    category: "cn_official",
-    icon: "bailian",
-    iconColor: "#624AFF",
-  },
-];
-
-export const ompProviderPresets: OmpProviderPreset[] = [
-  ...piProviderPresets.map(toOmpPreset),
-  ...ompOnlyPresetSeeds,
-];
+export const ompProviderPresets: OmpProviderPreset[] =
+  piProviderPresets.map(toOmpPreset);

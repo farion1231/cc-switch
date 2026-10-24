@@ -899,7 +899,6 @@
     "piConfigDir": "Pi Yapılandırma Dizini",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
     "ompConfigDir": "Oh My Pi Yapılandırma Dizini",
-    "ompConfigDirDescription": "Oh My Pi yapılandırma dizinini (models.yml, config.yml, istemler, beceriler ve oturumlar) geçersiz kılın.",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -4828,61 +4827,35 @@
     }
   },
   "omp": {
+    "empty": {
+      "title": "Henüz API anahtarı sağlayıcısı yok",
+      "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın."
+    },
+    "provider": {
+      "enabled": "Oh My Pi içinde etkinleştirildi",
+      "enableFailed": "Sağlayıcı Oh My Pi içinde etkinleştirilemedi",
+      "removed": "Oh My Pi içinden kaldırıldı"
+    },
     "current": {
       "readFailed": "Oh My Pi sağlayıcı yapılandırması okunamadı",
       "stateUnavailableHint": "Oh My Pi yapılandırması okunana kadar sağlayıcı değişiklikleri devre dışıdır."
     },
-    "empty": {
-      "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın.",
-      "title": "Henüz API anahtarı sağlayıcısı yok"
-    },
     "form": {
-      "modelsMode": "Model kaynağı",
-      "modelsModeManual": "Model listesini elle yapılandır",
-      "modelsModeDiscovery": "Modelleri otomatik keşfet",
-      "modelsModeNone": "Model yok",
-      "modelsDiscoveryHint": "Model listesi Oh My Pi tarafından çalışma anında keşfedilir; burada elle yapılandırma gerekmez. Aşağıdaki YAML içinde models veya modelOverrides ile yine de ince ayar yapabilirsiniz.",
-      "discoveryType": "Keşif yöntemi",
-      "discoveryHint": "Oh My Pi model listesini uç noktadan düzenli olarak çeker; uç noktanın döndürdüğü bağlam penceresi gibi üst veriler otomatik uygulanır. Elle eklenen model satırları ve aşağıdaki YAML içindeki modelOverrides yine geçerlidir.",
-      "discoveryApiRequired": "Otomatik keşif için bir API biçimi gerekir (proxy türü hariç)",
-      "apiInherit": "Belirtilmemiş (devral)",
-      "apiInheritHint": "\"Belirtilmemiş\" seçildiğinde api anahtarı yazılmaz: sağlayıcı kimliği yerleşik bir sağlayıcıyla eşleşiyorsa modelleri yerleşik API biçimlerini korur; proxy keşfinde her modelin API biçimi ayrı ayrı algılanır.",
-      "modelsHiddenHint": "Model listesi yapılandırılmadı: kaydederken models anahtarı yazılmaz. Sağlayıcı yalnızca kimliği bir Oh My Pi yerleşik sağlayıcıyla eşleştiğinde etkili olur (alanları o sağlayıcının geçersiz kılması olarak çalışır).",
-      "configYaml": "Yapılandırma YAML",
-      "fixYamlFirst": "Yapılandırılmış alanları düzenlemeden önce aşağıdaki yapılandırma YAML'ını düzeltin.",
-      "providerKeyDuplicate": "Bu kimlik zaten kullanılıyor",
-      "absoluteHttpUrlRequired": "{{label}} mutlak bir HTTP veya HTTPS adresi olmalıdır",
-      "addCompatibilityOption": "Ekle",
-      "addModel": "Model ekle",
-      "compatibility": "Uyumluluk",
-      "compatibilityHint": "Uyumlu veya yerel uç noktalar için istek davranışını ayarlayın.",
-      "contextWindow": "Bağlam penceresi",
-      "credential": "API Anahtarı",
-      "duplicateModel": "{{id}} model kimliği yineleniyor",
-      "imageInput": "Görsel girişini destekler",
-      "maxTokens": "En fazla çıktı token sayısı",
-      "modelId": "Model kimliği",
-      "modelIdRequired": "{{index}}. modelin bir kimliği olmalı",
-      "modelName": "Görünen ad",
-      "modelNamePlaceholder": "Görünen ad",
-      "nameRequired": "Görünen ad gerekli",
-      "noCompatibilityOptions": "Yapılandırılmış uyumluluk seçeneği yok",
-      "noModels": "Yapılandırılmış model yok",
-      "optionKey": "Seçenek",
-      "optionValue": "Değer",
-      "positiveNumberRequired": "{{label}} 0'dan büyük bir sayı olmalıdır",
-      "providerKey": "Sağlayıcı kimliği",
-      "providerKeyRequired": "Sağlayıcı kimliği gerekli",
-      "reasoning": "Genişletilmiş düşünmeyi destekler",
-      "removeCompatibilityOption": "Uyumluluk seçeneğini kaldır",
-      "removeModel": "Modeli kaldır",
-      "toggleModelDetails": "Model ayrıntılarını aç/kapat"
+      "discoveryType": "Model keşfi",
+      "discoveryOff": "Kapalı",
+      "discoveryHint": "Oh My Pi model listesini uç noktadan düzenli olarak alır ve bağlam penceresi gibi meta verileri uygular. Elle eklenen modeller geçerliliğini korur; keşif açıkken model listesi boş bırakılabilir."
     },
-    "provider": {
-      "enableFailed": "Sağlayıcı Oh My Pi içinde etkinleştirilemedi",
-      "enabled": "Oh My Pi içinde etkinleştirildi",
-      "removed": "Oh My Pi içinden kaldırıldı",
-      "writeConflict": "Başka bir süreç Oh My Pi yapılandırmasını güncelliyor. Kısa süre sonra tekrar deneyin."
+    "errors": {
+      "fileTooLarge": "Oh My Pi yapılandırması 1 MiB sınırını aşıyor.",
+      "externalChange": "Oh My Pi yapılandırması dışarıdan değiştirildi. Yenileyip tekrar deneyin.",
+      "rollbackConflict": "Veritabanı kaydı başarısız oldu ve Oh My Pi yapılandırması dışarıdan değiştirildi. Elle geri yükleyin.",
+      "invalidMcp": "Oh My Pi MCP JSON geçersiz. Kök ve mcpServers nesne olmalıdır.",
+      "invalidYaml": "Geçersiz Oh My Pi YAML. Kök ve providers birer eşleme olmalıdır.",
+      "invalidProvider": "Geçersiz Oh My Pi sağlayıcısı. Gerekli alanları, API biçimini ve alan türlerini kontrol edin.",
+      "manualEdit": "Bu YAML yapısını CC Switch güvenle düzenleyemiyor. models.yml dosyasını elle düzenleyin.",
+      "duplicateProvider": "Bu Oh My Pi sağlayıcı anahtarı zaten var.",
+      "renameProvider": "Oh My Pi sağlayıcı anahtarları yeniden adlandırılamaz.",
+      "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil."
     }
   }
 }

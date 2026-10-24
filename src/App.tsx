@@ -52,7 +52,6 @@ import {
   extractErrorMessage,
   translateKimiProviderMutationError,
   translatePiProviderMutationError,
-  translateOmpProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
@@ -126,8 +125,6 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
-import { invalidateOmpProviderCaches, ompKeys } from "@/lib/query/omp";
-import { ompApi } from "@/lib/api";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -136,7 +133,13 @@ import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel, {
   HermesMemorySaveButton,
 } from "@/components/hermes/HermesMemoryPanel";
-import { APP_IDS, DEFAULT_VISIBLE_APPS, isModeAppId } from "@/config/appConfig";
+import {
+  APP_IDS,
+  DEFAULT_VISIBLE_APPS,
+  isModeAppId,
+  isPiFamilyApp,
+} from "@/config/appConfig";
+import type { PiFamilyAppId } from "@/lib/api/pi";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -337,10 +340,13 @@ function App() {
     activeApp,
     isProxyRunning && isCurrentAppTakeoverActive,
   );
-  const handleEnablePiProvider = async (provider: Provider) => {
+  const handleEnablePiProvider = async (
+    provider: Provider,
+    app: PiFamilyAppId,
+  ) => {
     try {
-      await providersApi.switch(provider.id, "pi");
-      await invalidatePiProviderCaches(queryClient);
+      await providersApi.switch(provider.id, app);
+      await invalidatePiProviderCaches(queryClient, app);
       await providersApi.updateTrayMenu().catch((error) => {
         console.error(
           "Failed to update tray menu after enabling Pi provider",
@@ -348,7 +354,7 @@ function App() {
         );
       });
       toast.success(
-        t("pi.provider.enabled", {
+        t(`${app}.provider.enabled`, {
           defaultValue: "已在 Pi 中启用",
         }),
         { closeButton: true },
@@ -356,7 +362,7 @@ function App() {
     } catch (error) {
       const detail = extractErrorMessage(error);
       toast.error(
-        t("pi.provider.enableFailed", {
+        t(`${app}.provider.enableFailed`, {
           defaultValue: "无法在 Pi 中启用此供应商",
         }),
         {
@@ -387,39 +393,6 @@ function App() {
       t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
       { closeButton: true },
     );
-  };
-
-  const handleEnableOmpProvider = async (provider: Provider) => {
-    try {
-      await providersApi.switch(provider.id, "omp");
-      await invalidateOmpProviderCaches(queryClient);
-      await providersApi.updateTrayMenu().catch((error) => {
-        console.error(
-          "Failed to update tray menu after enabling Oh My Pi provider",
-          error,
-        );
-      });
-      toast.success(
-        t("omp.provider.enabled", {
-          defaultValue: "已在 Oh My Pi 中启用",
-        }),
-        { closeButton: true },
-      );
-    } catch (error) {
-      const detail = extractErrorMessage(error);
-      toast.error(
-        t("omp.provider.enableFailed", {
-          defaultValue: "无法在 Oh My Pi 中启用此供应商",
-        }),
-        {
-          description:
-            translateOmpProviderMutationError(detail, t) ||
-            detail ||
-            undefined,
-          closeButton: true,
-        },
-      );
-    }
   };
 
   const disableOmoMutation = useDisableCurrentOmo();
@@ -858,10 +831,8 @@ function App() {
 
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
   const refreshAdditiveLiveState = async (app: AppId) => {
-    if (app === "pi") {
-      await invalidatePiProviderCaches(queryClient);
-    } else if (app === "omp") {
-      await invalidateOmpProviderCaches(queryClient);
+    if (isPiFamilyApp(app)) {
+      await invalidatePiProviderCaches(queryClient, app);
     } else if (app === "opencode") {
       await Promise.all([
         queryClient.invalidateQueries({
@@ -899,13 +870,11 @@ function App() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         const description =
-          (activeApp === "pi"
+          (isPiFamilyApp(activeApp)
             ? translatePiProviderMutationError(detail, t)
             : activeApp === "kimi"
               ? translateKimiProviderMutationError(detail, t)
-              : activeApp === "omp"
-                ? translateOmpProviderMutationError(detail, t)
-                : "") || detail;
+              : "") || detail;
         // 默认模型可能在客户端里改过、页面还是旧的：失败了也重读，让「默认」和移除按钮跟上
         void refreshAdditiveLiveState(activeApp).catch(() => undefined);
         toast.error(t("notifications.removeFromConfigFailed"), {
@@ -916,17 +885,13 @@ function App() {
       }
       await refreshAdditiveLiveState(activeApp);
       toast.success(
-        activeApp === "pi"
-          ? t("pi.provider.removed", {
+        isPiFamilyApp(activeApp)
+          ? t(`${activeApp}.provider.removed`, {
               defaultValue: "已从 Pi 移除",
             })
-          : activeApp === "omp"
-            ? t("omp.provider.removed", {
-                defaultValue: "已从 Oh My Pi 移除",
-              })
-            : t("notifications.removeFromConfigSuccess", {
-                defaultValue: "已从配置移除",
-              }),
+          : t("notifications.removeFromConfigSuccess", {
+              defaultValue: "已从配置移除",
+            }),
         { closeButton: true },
       );
     } else {
@@ -1027,19 +992,15 @@ function App() {
                     queryKey: hermesKeys.liveProviderIds,
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
-                : activeApp === "omp"
-                  ? (
-                      await queryClient.ensureQueryData({
-                        queryKey: ompKeys.currentState,
-                        queryFn: () => ompApi.getCurrentState(),
-                      })
-                    ).enabledProviderIds
-                  : (
-                      await queryClient.ensureQueryData({
-                        queryKey: ["pi", "currentState"],
-                        queryFn: () => piApi.getCurrentState(),
-                      })
-                    ).enabledProviderIds;
+                : (
+                    await queryClient.ensureQueryData({
+                      queryKey: [activeApp, "currentState"],
+                      queryFn: () =>
+                        piApi.getCurrentState(
+                          activeApp === "omp" ? "omp" : "pi",
+                        ),
+                    })
+                  ).enabledProviderIds;
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -1419,13 +1380,11 @@ function App() {
             appId={activeApp}
             isLoading={isLoading}
             onSwitch={(provider) =>
-              void (activeApp === "pi"
-                ? handleEnablePiProvider(provider)
+              void (isPiFamilyApp(activeApp)
+                ? handleEnablePiProvider(provider, activeApp)
                 : activeApp === "kimi"
                   ? handleAddKimiProvider(provider)
-                  : activeApp === "omp"
-                    ? handleEnableOmpProvider(provider)
-                    : switchProvider(provider))
+                  : switchProvider(provider))
             }
             onRemoveFromConfig={
               activeApp === "opencode" ||
