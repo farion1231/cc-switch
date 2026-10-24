@@ -350,6 +350,11 @@ pub(crate) fn build_provider_from_request(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
+        AppType::MimoDesktop => {
+            return Err(AppError::InvalidInput(
+                "Add MiMo Desktop providers from the MiMo Desktop page".into(),
+            ))
+        }
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]

@@ -232,7 +232,7 @@ impl Provider {
                 str_at(settings.get("apiKey")),
             ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
-            AppType::OpenCode | AppType::Mcode => {
+            AppType::OpenCode | AppType::Mcode | AppType::MimoDesktop => {
                 let options = settings.get("options");
                 (
                     str_at(options.and_then(|o| o.get("baseURL"))),

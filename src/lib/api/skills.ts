@@ -13,6 +13,7 @@ export type AppType =
   | "hermes"
   | "pi"
   | "mcode"
+  | "mimo-desktop"
   | "kimi"
   | "agy";
 
@@ -28,6 +29,7 @@ export interface SkillApps {
   hermes: boolean;
   pi: boolean;
   mcode?: boolean;
+  "mimo-desktop"?: boolean;
   kimi?: boolean;
   agy?: boolean;
 }

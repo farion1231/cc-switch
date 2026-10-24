@@ -34,12 +34,13 @@ const COPILOT_UNIT_PREMIUM: &str = "requests";
 pub const TRAY_ID: &str = "cc-switch";
 
 /// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
-pub const TRAY_APPS: [AppType; 5] = [
+pub const TRAY_APPS: [AppType; 6] = [
     AppType::Claude,
     AppType::ClaudeDesktop,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
+    AppType::MimoDesktop,
 ];
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
@@ -50,6 +51,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Codex => "Codex",
         AppType::Gemini => "Gemini CLI",
         AppType::GrokBuild => "Grok Build",
+        AppType::MimoDesktop => "MiMo Desktop",
         AppType::OpenCode => "OpenCode",
         AppType::OpenClaw => "OpenClaw",
         AppType::Hermes => "Hermes",

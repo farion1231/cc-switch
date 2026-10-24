@@ -5458,9 +5458,11 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::list(state);
         }
-        if matches!(app_type, AppType::Mcode | AppType::Kimi) {
+        if matches!(app_type, AppType::Mcode | AppType::MimoDesktop | AppType::Kimi) {
             let native = if app_type == AppType::Kimi {
                 crate::kimi_config::get_providers()?
+            } else if app_type == AppType::MimoDesktop {
+                crate::mimo_config::get_providers()?
             } else {
                 crate::mcode_config::get_providers()?
             };
@@ -5538,6 +5540,26 @@ impl ProviderService {
                 state.db.save_provider("kimi", provider)?;
                 Ok(true)
             };
+        }
+        if app_type == &AppType::MimoDesktop {
+            let previous = state.db.get_provider_by_id(&provider.id, "mimo-desktop")?;
+            state.db.save_provider("mimo-desktop", provider)?;
+            if write_live {
+                let config = provider.settings_config.clone();
+                let written = if create {
+                    crate::mimo_config::add_provider(&provider.id, config)
+                } else {
+                    crate::mimo_config::set_provider(&provider.id, config)
+                };
+                if let Err(error) = written {
+                    match previous {
+                        Some(previous) => state.db.save_provider("mimo-desktop", &previous)?,
+                        None => state.db.delete_provider("mimo-desktop", &provider.id)?,
+                    }
+                    return Err(error);
+                }
+            }
+            return Ok(true);
         }
         let previous = state.db.get_provider_by_id(&provider.id, "mcode")?;
         state.db.save_provider("mcode", provider)?;
@@ -5619,7 +5641,7 @@ impl ProviderService {
             return Self::add_codex(state, provider);
         }
 
-        if matches!(app_type, AppType::Mcode | AppType::Kimi) {
+        if matches!(app_type, AppType::Mcode | AppType::MimoDesktop | AppType::Kimi) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
             // Adds are serialized here; the live write repeats the check under MCode's file lock.
             let _guard = futures::executor::block_on(
@@ -5631,6 +5653,8 @@ impl ProviderService {
                 .is_some()
                 || if app_type == AppType::Kimi {
                     crate::kimi_config::provider_key_exists(&provider.id)?
+                } else if app_type == AppType::MimoDesktop {
+                    crate::mimo_config::provider_key_exists(&provider.id)?
                 } else {
                     crate::mcode_config::provider_key_exists(&provider.id)?
                 }
@@ -6322,7 +6346,7 @@ impl ProviderService {
             )?;
             Self::set_provider_live_config_managed(&mut provider, live_config_managed);
 
-            if matches!(app_type, AppType::Mcode | AppType::Kimi) {
+            if matches!(app_type, AppType::Mcode | AppType::MimoDesktop | AppType::Kimi) {
                 return Self::save_native_provider(
                     state,
                     &app_type,
@@ -6515,6 +6539,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+                    AppType::MimoDesktop => crate::mimo_config::remove_provider(id)?,
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
                     _ => {}
                 }
@@ -6606,6 +6631,7 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+            AppType::MimoDesktop => crate::mimo_config::remove_provider(id)?,
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
@@ -6869,6 +6895,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
+                    AppType::MimoDesktop => crate::mimo_config::remove_provider(&provider.id),
                     AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
@@ -7133,7 +7160,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::MimoDesktop | AppType::Kimi | AppType::Agy => Ok(String::new()),
         }
     }
 
@@ -7151,7 +7178,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::MimoDesktop | AppType::Kimi | AppType::Agy => Ok(String::new()),
         }
     }
 
@@ -7923,6 +7950,9 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::MimoDesktop => {
+                crate::mimo_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -8138,7 +8168,7 @@ impl ProviderService {
                     .unwrap_or_default()
                     .into(),
             )),
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode | AppType::MimoDesktop => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config

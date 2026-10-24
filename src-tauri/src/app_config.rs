@@ -41,6 +41,7 @@ impl McpApps {
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
+            AppType::MimoDesktop => false,
             AppType::Kimi => self.kimi,
             AppType::Pi => self.pi,
             AppType::ClaudeDesktop => false,
@@ -59,6 +60,7 @@ impl McpApps {
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::MimoDesktop => {}
             AppType::Kimi => self.kimi = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
@@ -154,6 +156,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::MimoDesktop => false,
             AppType::Kimi => self.kimi,
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
@@ -172,6 +175,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::MimoDesktop => {}
             AppType::Kimi => self.kimi = enabled,
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
@@ -447,6 +451,8 @@ pub enum AppType {
     Hermes,
     Pi,
     Mcode,
+    #[serde(rename = "mimodesktop", alias = "mimo-desktop")]
+    MimoDesktop,
     Kimi,
     Agy,
 }
@@ -464,6 +470,7 @@ impl AppType {
             AppType::Hermes => "hermes",
             AppType::Pi => "pi",
             AppType::Mcode => "mcode",
+            AppType::MimoDesktop => "mimo-desktop",
             AppType::Kimi => "kimi",
             AppType::Agy => "agy",
         }
@@ -482,6 +489,7 @@ impl AppType {
                 | AppType::Hermes
                 | AppType::Pi
                 | AppType::Mcode
+                | AppType::MimoDesktop
                 | AppType::Kimi
         )
     }
@@ -513,6 +521,7 @@ impl AppType {
             AppType::Hermes,
             AppType::Pi,
             AppType::Mcode,
+            AppType::MimoDesktop,
             AppType::Kimi,
             AppType::Agy,
         ]
@@ -536,12 +545,13 @@ impl FromStr for AppType {
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
             "mcode" => Ok(AppType::Mcode),
+            "mimo-desktop" | "mimodesktop" => Ok(AppType::MimoDesktop),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, agy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, agy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, mimo-desktop, kimi, agy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, mimo-desktop, kimi, agy."),
             )),
         }
     }
@@ -581,7 +591,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => None,
+            AppType::Pi | AppType::Mcode | AppType::MimoDesktop | AppType::Kimi | AppType::Agy => None,
         }
     }
 
@@ -596,7 +606,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => {}
+            AppType::Pi | AppType::Mcode | AppType::MimoDesktop | AppType::Kimi | AppType::Agy => {}
         }
     }
 }
@@ -641,6 +651,9 @@ impl Default for MultiAppConfig {
         apps.insert("opencode".to_string(), ProviderManager::default());
         apps.insert("openclaw".to_string(), ProviderManager::default());
         apps.insert("hermes".to_string(), ProviderManager::default());
+        apps.insert("mcode".to_string(), ProviderManager::default());
+        apps.insert("mimo-desktop".to_string(), ProviderManager::default());
+        apps.insert("kimi".to_string(), ProviderManager::default());
         apps.insert("agy".to_string(), ProviderManager::default());
 
         Self {
@@ -923,7 +936,7 @@ impl MultiAppConfig {
             AppType::Hermes => &mut config.prompts.hermes.prompts,
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => return Ok(false),
+            AppType::Pi | AppType::Mcode | AppType::MimoDesktop | AppType::Kimi | AppType::Agy => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -967,7 +980,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
-                AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                AppType::Pi | AppType::Mcode | AppType::MimoDesktop | AppType::Kimi | AppType::Agy => continue,
             };
 
             for (id, entry) in old_servers {

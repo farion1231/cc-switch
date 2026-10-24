@@ -27,6 +27,7 @@ export const APP_IDS: AppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "mimo-desktop",
   "kimi",
   "agy",
 ];
@@ -42,6 +43,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   hermes: true,
   pi: true,
   mcode: true,
+  "mimo-desktop": true,
   kimi: true,
   agy: true,
 };
@@ -283,6 +285,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
     badgeClass:
       "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
+  },
+  "mimo-desktop": {
+    label: "MiMo Desktop",
+    icon: <ProviderIcon icon="mimo" name="MiMo Desktop" size={14} />,
+    activeClass:
+      "bg-emerald-500/10 ring-1 ring-emerald-500/20 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+    badgeClass:
+      "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 border-0 gap-1.5",
   },
 };
 

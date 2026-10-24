@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 11] = [
+const VALID_TOOLS: [&str; 12] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "agy",
+    "agy", "mimocode",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -689,6 +689,9 @@ const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
 #[cfg(target_os = "windows")]
 const AGY_INSTALL_WINDOWS_SCRIPT: &str = "irm https://antigravity.google/cli/install.ps1 | iex";
 #[cfg(target_os = "windows")]
+const MIMOCODE_INSTALL_WINDOWS_SCRIPT: &str =
+    "npm i -g @mimo-ai/cli @mimo-ai/mimocode-windows-x64@latest";
+#[cfg(target_os = "windows")]
 const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
@@ -739,6 +742,14 @@ fn kimi_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(KIMI_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn mimocode_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(MIMOCODE_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -877,6 +888,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
+        "mimocode" => Some("npm i -g @mimo-ai/cli @mimo-ai/mimocode-windows-x64@latest"),
         _ => None,
     }
 }
@@ -965,6 +977,7 @@ fn tool_action_shell_command_for_shell(
         let installer = match tool {
             "grok" => Some(grok_install_windows_command()),
             "mcode" => Some(mcode_install_windows_command()),
+            "mimocode" => Some(mimocode_install_windows_command()),
             _ => None,
         };
         if let Some(installer) = installer {
@@ -4590,6 +4603,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
+        "mimocode" => "npm i -g @mimo-ai/cli @mimo-ai/mimocode-windows-x64@latest".to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }

@@ -4109,7 +4109,8 @@
       "openclaw": "Npm ile yüklenir",
       "hermes": "Resmi komut dosyasıyla yüklenir",
       "pi": "Npm ile yüklenir",
-      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner"
+      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
+      "mimocode": "Npm ile yüklenir"
     }
   },
   "appPage": {

@@ -229,6 +229,7 @@ export type AppType =
   | "opencode"
   | "pi"
   | "mcode"
+  | "mimo-desktop"
   | "kimi"
   | "agy";
 
@@ -242,6 +243,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "opencode",
   "pi",
   "mcode",
+  "mimo-desktop",
   "kimi",
   "agy",
 ];

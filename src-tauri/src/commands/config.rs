@@ -152,6 +152,13 @@ pub async fn get_config_status(
                 path: file.parent().unwrap().to_string_lossy().into_owned(),
             })
         }
+        AppType::MimoDesktop => {
+            let dir = crate::mimo_config::config_dir();
+            Ok(ConfigStatus {
+                exists: crate::mimo_config::config_path().exists(),
+                path: dir.to_string_lossy().to_string(),
+            })
+        }
         AppType::Pi => {
             let config_path = crate::pi_config::get_pi_models_path().map_err(|e| e.to_string())?;
             let path = crate::pi_config::get_pi_agent_dir()
@@ -197,6 +204,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::MimoDesktop => crate::mimo_config::config_dir(),
         AppType::Agy => crate::agy_config::agy_dir(),
     };
 
@@ -222,6 +230,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::MimoDesktop => crate::mimo_config::config_dir(),
         AppType::Agy => crate::agy_config::agy_dir(),
     };
 

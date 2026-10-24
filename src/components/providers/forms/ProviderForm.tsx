@@ -101,6 +101,7 @@ import { KimiProviderForm } from "./KimiProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
 import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
+import { MimoDesktopProviderForm } from "./MimoDesktopProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
@@ -330,6 +331,7 @@ export interface ProviderFormProps {
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
   if (props.appId === "mcode") return <McodeProviderForm {...props} />;
+  if (props.appId === "mimo-desktop") return <MimoDesktopProviderForm {...props} />;
   if (props.appId === "pi") {
     return <PiProviderForm {...props} />;
   }

@@ -29,6 +29,7 @@ mod lightweight;
 mod linux_fix;
 pub mod live;
 mod mcode_config;
+mod mimo_config;
 mod mcp;
 pub mod mode;
 mod model_capabilities;

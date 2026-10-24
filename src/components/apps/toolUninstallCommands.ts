@@ -32,6 +32,7 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "pi", command: "npm uninstall -g @earendil-works/pi-coding-agent" },
     { tool: "mcode", command: "npm uninstall -g @minimax-ai/code" },
     { tool: "kimi", command: "npm uninstall -g @moonshot-ai/kimi-code" },
+    { tool: "mimocode", command: "npm uninstall -g @mimo-ai/cli @mimo-ai/mimocode-windows-x64" },
   ],
   pnpm: [
     { tool: "opencode", command: "pnpm remove -g opencode-ai" },

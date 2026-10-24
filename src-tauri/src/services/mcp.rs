@@ -285,6 +285,9 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
+            AppType::MimoDesktop => {
+                log::debug!("MiMo Desktop does not use CC Switch MCP sync, skipping");
+            }
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
@@ -331,6 +334,9 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
+            AppType::MimoDesktop => {
+                log::debug!("MiMo Desktop does not use CC Switch MCP sync, skipping remove");
+            }
             AppType::Kimi => mcp::kimi::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
