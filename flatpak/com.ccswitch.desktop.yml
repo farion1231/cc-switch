@@ -15,6 +15,10 @@ finish-args:
   # Tray icon permissions (required by Tauri tray-icon)
   - --talk-name=org.kde.StatusNotifierWatcher
   - --filesystem=xdg-run/tray-icon:create
+  # Private Git repository credentials are kept in the system keychain. Without
+  # this grant the sandbox cannot reach the Secret Service, so saving a token
+  # fails with "the system keychain is unavailable".
+  - --talk-name=org.freedesktop.secrets
   # GitHub Releases scenario: Users download and install manually.
   # For "download and run" convenience (needs read/write access to ~/.cc-switch, ~/.claude, ~/.claude.json, ~/.codex, ~/.gemini,
   # and supports custom directory overrides), we grant full Home access by default.

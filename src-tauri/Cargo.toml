@@ -6,7 +6,7 @@ authors = ["Jason Young"]
 license = "MIT"
 repository = "https://github.com/farion1231/cc-switch"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.88.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -79,6 +79,10 @@ png = "0.18"
 rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks"] }
 indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"
+# 私有 Git 仓库的访问凭据只存系统密钥链，不落数据库、不进导出与云同步。
+# 默认特性 v1 按平台自动选 store（Windows Credential Manager / macOS Keychain /
+# Linux Secret Service，走 zbus——与已有依赖同一大版本，不引入系统库）。
+keyring = "4.2"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
 hmac = "0.12"

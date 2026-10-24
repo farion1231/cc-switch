@@ -126,6 +126,8 @@ const makeRepo = (overrides: Partial<SkillRepo> = {}): SkillRepo => ({
   name: "repo-a",
   branch: "main",
   enabled: true,
+  private: false,
+  credentialId: null,
   ...overrides,
 });
 
@@ -394,6 +396,8 @@ describe("SkillsPage (Discover)", () => {
         name: "c",
         branch: "main",
         enabled: false,
+        private: false,
+        credentialId: null,
       }),
     );
   });

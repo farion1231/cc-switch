@@ -3,6 +3,7 @@ import {
   useQuery,
   useQueryClient,
   keepPreviousData,
+  type QueryClient,
 } from "@tanstack/react-query";
 import {
   skillsApi,
@@ -16,6 +17,7 @@ import {
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
+import type { GitCredential } from "@/lib/api/skills";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
 import { readLocalCache, writeLocalCache } from "@/lib/localCache";
 import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
@@ -339,6 +341,57 @@ export function useRemoveSkillRepo() {
       queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
       queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
     },
+  });
+}
+
+/**
+ * Git 凭据列表（私有仓库用）。token 本体不出后端，这里只有元数据。
+ */
+export function useGitCredentials() {
+  return useQuery({
+    queryKey: ["skills", "gitCredentials"],
+    queryFn: () => skillsApi.listGitCredentials(),
+  });
+}
+
+/** 凭据变动都会影响私有仓库读不读得到，仓库与发现列表跟着一起重拉。 */
+function invalidateCredentialDependents(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({
+    queryKey: ["skills", "gitCredentials"],
+  });
+  void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+  void queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+}
+
+/**
+ * 新建 Git 凭据
+ */
+export function useCreateGitCredential() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, token }: { name: string; token: string }) =>
+      skillsApi.createGitCredential(name, token),
+    onSuccess: (created) => {
+      // 新建的凭据立刻进缓存：调用方会在同一个事件里把它设成下拉框的选中值，而
+      // 列表要等重拉回来才包含它——中间那一帧里选中值对不上任何选项，触发器会
+      // 渲染成空白。
+      queryClient.setQueryData<GitCredential[]>(
+        ["skills", "gitCredentials"],
+        (old) => [...(old ?? []), created],
+      );
+      invalidateCredentialDependents(queryClient);
+    },
+  });
+}
+
+/**
+ * 删除 Git 凭据（撤销）
+ */
+export function useDeleteGitCredential() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.deleteGitCredential(id),
+    onSuccess: () => invalidateCredentialDependents(queryClient),
   });
 }
 

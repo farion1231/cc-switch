@@ -82,6 +82,11 @@ fn import_authorizer(context: rusqlite::hooks::AuthContext<'_>) -> rusqlite::hoo
     }
 }
 
+/// 设备本地的表：内容只对当前机器有意义。凭据的 token 只存在系统密钥链里，
+/// 元数据离开本机就是一堆读不出 secret 的记录，所以它既不随导出走，也
+/// 不会被导入的数据覆盖。
+const DEVICE_LOCAL_TABLES: &[&str] = &["git_credentials"];
+
 /// Tables whose data rows are skipped when exporting for WebDAV sync.
 const SYNC_SKIP_TABLES: &[&str] = &[
     "proxy_request_logs",
@@ -91,6 +96,11 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    // 凭据是设备本地的：token 只在当前机器的系统密钥链里，元数据跟着同步过去只会在
+    // 另一台机器上留下几条永远读不出 secret 的记录，而一次导入又会把本机的列表整个
+    // 覆盖掉。
+    "git_credentials",
+    "skill_repo_credentials",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +112,8 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "git_credentials",
+    "skill_repo_credentials",
 ];
 
 /// A database backup entry for the UI
@@ -117,7 +129,7 @@ impl Database {
     /// 导出为 SQLite 兼容的 SQL 文本（内存字符串，完整导出）
     pub fn export_sql_string(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, &[])
+        Self::dump_sql(&snapshot, DEVICE_LOCAL_TABLES)
     }
 
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
@@ -153,7 +165,7 @@ impl Database {
 
     /// 从 SQL 字符串导入，返回生成的备份 ID（若无备份则为空字符串）
     pub fn import_sql_string(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, &[])
+        self.import_sql_string_inner(sql_raw, DEVICE_LOCAL_TABLES)
     }
 
     /// Import SQL generated for sync, then restore local-only tables from the
@@ -2208,6 +2220,82 @@ mod tests {
             cursor,
             ("/local/sessions/manual-backup.jsonl".into(), 11, 22, 33,)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn git_credentials_never_leave_the_machine() {
+        // token 只在当前机器的系统密钥链里；元数据跟着同步过去，只会在另一台机器上
+        // 留下读不出 secret 的记录，而一次导入又会把本机的列表整个覆盖掉。
+        assert!(super::SYNC_SKIP_TABLES.contains(&"git_credentials"));
+        assert!(super::SYNC_PRESERVE_TABLES.contains(&"git_credentials"));
+    }
+
+    #[test]
+    fn a_sql_export_and_import_never_moves_credential_metadata() -> Result<(), AppError> {
+        // 文件导出走的是另一条路径（原先传的是空跳过列表），元数据会跟着文件跑到
+        // 另一台机器上，而那边的密钥链里没有对应的 secret。
+        use crate::services::git_credential::{GitCredential, GITHUB_HOST};
+
+        let source = Database::memory()?;
+        source.save_git_credential(&GitCredential::new("c1", GITHUB_HOST, "work", 1))?;
+        let sql = source.export_sql_string()?;
+
+        let target = Database::memory()?;
+        target.save_git_credential(&GitCredential::new("c2", GITHUB_HOST, "local", 2))?;
+        target.import_sql_string(&sql)?;
+
+        let ids: Vec<String> = target
+            .list_git_credentials()?
+            .into_iter()
+            .map(|credential| credential.id)
+            .collect();
+        assert_eq!(ids, vec!["c2".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn each_machine_keeps_its_own_credential_binding_across_sync_imports() -> Result<(), AppError> {
+        // 两台机器各绑一枚只存在于本机的令牌。令牌本体在钥匙串里，同步带不走，
+        // 所以远端的 credential_id 在本机一定解析不出来——绑定必须留在本机，
+        // 否则谁后同步谁把对方改坏，来回一次永远稳不下来。
+        use crate::services::git_credential::{GitCredential, GITHUB_HOST};
+        use crate::services::skill::SkillRepo;
+
+        let _test_home = TestHomeGuard::new();
+
+        let binding_of = |db: &Database| -> Option<String> {
+            db.get_skill_repo("acme", "skills")
+                .expect("read repo")
+                .expect("repo exists")
+                .credential_id
+        };
+
+        let machine = |credential: &str| -> Result<Database, AppError> {
+            let db = Database::memory()?;
+            db.save_git_credential(&GitCredential::new(credential, GITHUB_HOST, credential, 1))?;
+            db.save_skill_repo(&SkillRepo {
+                owner: "acme".into(),
+                name: "skills".into(),
+                branch: "main".into(),
+                enabled: true,
+                private: true,
+                credential_id: Some(credential.to_string()),
+            })?;
+            Ok(db)
+        };
+
+        let machine_a = machine("cred-a")?;
+        let machine_b = machine("cred-b")?;
+
+        // A -> B：B 自己的绑定不能被 A 的 uuid 顶掉
+        machine_b.import_sql_string_for_sync(&machine_a.export_sql_string_for_sync()?)?;
+        assert_eq!(binding_of(&machine_b).as_deref(), Some("cred-b"));
+
+        // B -> A：反过来也一样
+        machine_a.import_sql_string_for_sync(&machine_b.export_sql_string_for_sync()?)?;
+        assert_eq!(binding_of(&machine_a).as_deref(), Some("cred-a"));
         Ok(())
     }
 

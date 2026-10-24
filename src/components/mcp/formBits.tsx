@@ -134,14 +134,18 @@ export const LABEL_CLASS = "text-body font-medium text-fg-1";
 
 export function FieldError({
   id,
+  role,
   children,
 }: {
   id?: string;
+  /** 提交失败这类要立刻播报的错误传 "alert"；字段级校验由 aria-describedby 承担 */
+  role?: "alert";
   children: React.ReactNode;
 }) {
   return (
     <span
       id={id}
+      role={role}
       className="flex items-start gap-1 text-caption text-danger-text"
     >
       <CircleAlert
