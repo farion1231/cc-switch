@@ -1850,6 +1850,8 @@
     "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。"
   },
   "copilot": {
+    "automaticFormat": "由路由依模型自動選擇",
+    "automaticFormatHint": "Copilot 的上游格式由路由依模型自動選擇，手選格式不生效。",
     "authSection": "GitHub Copilot 驗證",
     "authStatus": "驗證狀態",
     "authenticated": "已驗證: {{username}}",
@@ -1925,7 +1927,12 @@
     "retry": "重試",
     "copyCode": "複製程式碼",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。"
+    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。",
+    "loginMethod": "登入方式",
+    "browserLogin": "瀏覽器登入",
+    "deviceCodeLogin": "裝置代碼登入",
+    "openBrowserLogin": "開啟瀏覽器登入",
+    "loginExpired": "登入已過期，請重試。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 驗證",
