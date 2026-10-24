@@ -202,6 +202,27 @@ describe("providerNeedsRouting", () => {
     );
   });
 
+  it("keeps unbound official login controls when the unified mirror disables WebSockets", () => {
+    const provider = mkProvider({
+      id: "unbound-official",
+      category: "official",
+      settingsConfig: {
+        auth: {},
+        config: `model_provider = "custom"
+[model_providers.custom]
+name = "OpenAI"
+requires_openai_auth = true
+supports_websockets = false
+wire_api = "responses"`,
+      },
+    });
+
+    expect(resolveCodexOfficialIdentity("codex", provider)).toBe(
+      "native_login",
+    );
+    expect(supportsOfficialProxyTakeover("codex", provider)).toBe(true);
+  });
+
   it("keeps category-less fixed and managed legacy cards recognizable", () => {
     const fixed = mkProvider({
       id: "codex-official",

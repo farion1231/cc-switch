@@ -105,6 +105,8 @@ pub enum Route {
 #[derive(Debug, Clone)]
 pub struct CodexProjection {
     pub route: Route,
+    /// 官方直连镜像的显式传输偏好；未设置时沿用内置 OpenAI 的默认值。
+    pub official_supports_websockets: Option<bool>,
     /// 顶层关键字段（模型名、推理档位、`disable_response_storage`）。
     pub top: Vec<(String, TomlValue)>,
     /// 嵌在用户表里的模型名（`agents.default_subagent_model` 等）。
@@ -185,6 +187,11 @@ impl CodexProjection {
         };
         Ok(Self {
             route,
+            official_supports_websockets: if input.official {
+                official_websocket_preference(&doc)
+            } else {
+                None
+            },
             top,
             nested,
             exclusive,
@@ -207,6 +214,16 @@ impl CodexProjection {
         }
         doc.to_string()
     }
+}
+
+/// 只读取官方镜像的传输布尔值，不采纳行里的地址、协议或认证字段。
+pub fn official_websocket_preference(doc: &DocumentMut) -> Option<bool> {
+    doc.get("model_providers")?
+        .as_table_like()?
+        .get(ROUTE_ID)?
+        .as_table_like()?
+        .get("supports_websockets")?
+        .as_bool()
 }
 
 fn undecorated(mut value: TomlValue) -> TomlValue {
@@ -453,7 +470,7 @@ pub enum RouteWrite {
     /// Key）：Codex 按 provider id 给会话分桶，表一删，第三方的旧会话就 resume 不了。
     Official { dormant_base_url: String },
     /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
-    OfficialMirror,
+    OfficialMirror { supports_websockets: bool },
     /// 第三方（直连或代理契约）：选路写 custom。
     Custom(Table),
     /// Codex 内置的其他 provider。
@@ -470,7 +487,7 @@ impl RouteWrite {
     fn selector(&self) -> Option<&str> {
         match self {
             Self::Official { .. } | Self::Default => None,
-            Self::OfficialMirror | Self::Custom(_) => Some(ROUTE_ID),
+            Self::OfficialMirror { .. } | Self::Custom(_) => Some(ROUTE_ID),
             Self::BuiltIn { id, .. } => Some(id),
             Self::OfficialProxy { unified, .. } => unified.then_some(ROUTE_ID),
         }
@@ -788,11 +805,13 @@ impl CodexConfigPatch {
             } => {
                 put_table(providers, id, table.clone(), container_inline);
             }
-            RouteWrite::OfficialMirror => {
+            RouteWrite::OfficialMirror {
+                supports_websockets,
+            } => {
                 put_table(
                     providers,
                     ROUTE_ID,
-                    official_mirror_table(None, true),
+                    official_mirror_table(None, *supports_websockets),
                     container_inline,
                 );
             }
@@ -832,7 +851,9 @@ impl CodexConfigPatch {
     fn owned_table(&self) -> Option<(&str, Table)> {
         match &self.route {
             RouteWrite::Custom(table) => Some((ROUTE_ID, table.clone())),
-            RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
+            RouteWrite::OfficialMirror {
+                supports_websockets,
+            } => Some((ROUTE_ID, official_mirror_table(None, *supports_websockets))),
             RouteWrite::OfficialProxy {
                 base_url,
                 unified: true,

@@ -3805,6 +3805,199 @@ command = "fs-server"
 
     #[tokio::test]
     #[serial]
+    async fn codex_official_editor_keeps_transport_preference_after_switching_and_routing() {
+        for supports_websockets in [false, true] {
+            let _home = Home::new();
+            crate::settings::update_settings(crate::settings::AppSettings {
+                preserve_codex_official_auth_on_switch: true,
+                unify_codex_session_history: true,
+                ..Default::default()
+            })
+            .unwrap();
+            seed_codex(
+                &CODEX_USER_LIVE.replace(
+                    "approval_policy = \"on-request\"",
+                    "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"",
+                ),
+                Some(&chatgpt_login("acct")),
+            );
+            let mut official = codex_official();
+            let relay = codex_row("relay", "https://relay.example/v1", "");
+            let state = state_with(AppType::Codex, &[official.clone(), relay], &official.id).await;
+            ProviderService::switch(&state, AppType::Codex, &official.id).unwrap();
+
+            let view = ProviderService::editor_view(
+                &state,
+                AppType::Codex,
+                &official.settings_config,
+                Some("official"),
+            )
+            .unwrap();
+            let mut edited: toml_edit::DocumentMut =
+                view.settings["config"].as_str().unwrap().parse().unwrap();
+            edited["model_providers"]["custom"]["supports_websockets"] =
+                toml_edit::value(supports_websockets);
+            official.settings_config = view.settings.clone();
+            official.settings_config["config"] = json!(edited.to_string());
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                None,
+                official.clone(),
+                Some(crate::services::provider::EditorSave {
+                    base: view.settings,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+            .unwrap();
+
+            let assert_preference = || {
+                let doc = codex_doc();
+                assert_eq!(
+                    doc["model_providers"]["custom"]["supports_websockets"].as_bool(),
+                    Some(supports_websockets)
+                );
+                assert_eq!(doc["approval_policy"].as_str(), Some("never"));
+                assert_eq!(doc["sandbox_mode"].as_str(), Some("danger-full-access"));
+                assert!(doc["mcp_servers"].get("fs").is_some());
+                assert_eq!(
+                    doc["projects"]["/work"]["trust_level"].as_str(),
+                    Some("trusted")
+                );
+            };
+            assert_preference();
+            official = state
+                .db
+                .get_provider_by_id(&official.id, "codex")
+                .unwrap()
+                .unwrap();
+            let reopened = ProviderService::editor_view(
+                &state,
+                AppType::Codex,
+                &official.settings_config,
+                Some("official"),
+            )
+            .unwrap();
+            let shown: toml::Table =
+                toml::from_str(reopened.settings["config"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                shown["model_providers"]["custom"]["supports_websockets"].as_bool(),
+                Some(supports_websockets)
+            );
+
+            ProviderService::switch(&state, AppType::Codex, "relay").unwrap();
+            ProviderService::switch(&state, AppType::Codex, &official.id).unwrap();
+            assert_preference();
+            enter(&state, &AppType::Codex, false).await.unwrap();
+            assert_eq!(
+                codex_doc()["model_providers"]["custom"]["supports_websockets"].as_bool(),
+                Some(false),
+                "the local proxy still uses HTTP regardless of the direct preference"
+            );
+            exit(&state, &AppType::Codex).await.unwrap();
+            assert_preference();
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_permission_policies_survive_switch_save_restart_and_recovery() {
+        for (sandbox, approval) in [
+            ("danger-full-access", "never"),
+            ("workspace-write", "on-request"),
+            ("read-only", "never"),
+        ] {
+            let _home = Home::new();
+            set_preservation(true);
+            let live = format!(
+                "sandbox_mode = \"{sandbox}\"\napprovals_reviewer = \"user\"\n{}\n\
+                 [sandbox_workspace_write]\nnetwork_access = true\n\
+                 [permissions.work.network]\nenabled = true\n\
+                 [features]\nmemories = false\n\
+                 [plugins.\"example@test\"]\nenabled = true\n\
+                 [marketplaces.test]\nsource = \"local\"\n\
+                 [desktop]\nmac-menu-bar-enabled = false\n\
+                 [windows]\nsandbox = \"elevated\"\n",
+                CODEX_USER_LIVE.replace(
+                    "approval_policy = \"on-request\"",
+                    &format!("approval_policy = \"{approval}\"")
+                )
+            );
+            let live = format!(
+                "{live}\n[projects.'C:\\Users\\Example\\工作台']\ntrust_level = \"trusted\"\n"
+            );
+            seed_codex(&live, None);
+            let before = codex_doc();
+            let check = |stage: &str| {
+                let after = codex_doc();
+                for key in [
+                    "sandbox_mode",
+                    "approval_policy",
+                    "approvals_reviewer",
+                    "sandbox_workspace_write",
+                    "permissions",
+                    "projects",
+                    "mcp_servers",
+                    "features",
+                    "plugins",
+                    "marketplaces",
+                    "desktop",
+                    "windows",
+                ] {
+                    assert_eq!(after.get(key), before.get(key), "{sandbox}: {stage}: {key}");
+                }
+            };
+            let mut rows = codex_a_b();
+            for row in &mut rows {
+                row.settings_config["config"] = json!(format!(
+                    "sandbox_mode = \"danger-full-access\"\napproval_policy = \"never\"\n{}",
+                    row.settings_config["config"].as_str().unwrap()
+                ));
+            }
+            let state = state_with(AppType::Codex, &rows, "a").await;
+            ProviderService::switch(&state, AppType::Codex, "b").unwrap();
+            check("direct switch");
+            enter(&state, &AppType::Codex, false).await.unwrap();
+            check("enter routing");
+            detach_all(&state).await;
+            check("detach on exit");
+            startup(&state).await;
+            check("reattach on startup");
+            exit(&state, &AppType::Codex).await.unwrap();
+            check("leave routing");
+
+            let mut row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+            let view =
+                ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+                    .unwrap();
+            row.name = "renamed without changing configuration".into();
+            row.settings_config = view.settings.clone();
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                None,
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base: view.settings,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+            .unwrap();
+            check("editor save");
+
+            failpoint::crash_at(Some("published:0"));
+            let interrupted = ProviderService::switch(&state, AppType::Codex, "a");
+            failpoint::crash_at(None);
+            assert!(interrupted.is_err());
+            crate::mode::operation::recover_on_startup(&state.db);
+            check("interrupted switch recovery");
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn codex_an_active_profile_overriding_the_route_is_refused_without_side_effects() {
         let _home = Home::new();
         set_preservation(true);
