@@ -444,6 +444,77 @@ describe("Codex TOML utils", () => {
     expect(removed).toContain("[model_providers.custom]");
   });
 
+  it.each([
+    ["1_000_000", 1000000],
+    ["+1_000_000", 1000000],
+    ["-1_000", -1000],
+    ["0xF_4240", 1000000],
+    ["0o3_641_100", 1000000],
+    ["0b1111_0100_0010_0100_0000", 1000000],
+  ])(
+    "edits the existing TOML integer literal %s without duplicating it",
+    (literal, value) => {
+      const input = `model_context_window = ${literal} # context\n\n[profiles.work]\nmodel_context_window = 64000\n`;
+
+      expect(parseToml(input).model_context_window).toBe(value);
+      expect(extractCodexTopLevelInt(input, "model_context_window")).toBe(
+        value,
+      );
+
+      const updated = parseToml(
+        setCodexTopLevelInt(input, "model_context_window", 2000000),
+      );
+      expect(updated.model_context_window).toBe(2000000);
+      expect(updated.profiles).toEqual({
+        work: { model_context_window: 64000 },
+      });
+
+      const removed = parseToml(
+        removeCodexTopLevelField(input, "model_context_window"),
+      );
+      expect(removed.model_context_window).toBeUndefined();
+      expect(removed.profiles).toEqual({
+        work: { model_context_window: 64000 },
+      });
+    },
+  );
+
+  it.each(['"""', "'''"])(
+    "leaves integer examples inside %s instructions untouched",
+    (delimiter) => {
+      const instructions =
+        "Example:\nmodel_auto_compact_token_limit = 650000\n";
+      const input = `developer_instructions = ${delimiter}\n${instructions}${delimiter}\n`;
+
+      expect(
+        extractCodexTopLevelInt(input, "model_auto_compact_token_limit"),
+      ).toBeUndefined();
+      expect(
+        parseToml(
+          removeCodexTopLevelField(input, "model_auto_compact_token_limit"),
+        ).developer_instructions,
+      ).toBe(instructions);
+
+      const updatedText = setCodexTopLevelInt(
+        input,
+        "model_auto_compact_token_limit",
+        900000,
+      );
+      const updated = parseToml(updatedText);
+      expect(updated.developer_instructions).toBe(instructions);
+      expect(updated.model_auto_compact_token_limit).toBe(900000);
+      expect(
+        extractCodexTopLevelInt(updatedText, "model_auto_compact_token_limit"),
+      ).toBe(900000);
+
+      const removed = parseToml(
+        removeCodexTopLevelField(updatedText, "model_auto_compact_token_limit"),
+      );
+      expect(removed.developer_instructions).toBe(instructions);
+      expect(removed.model_auto_compact_token_limit).toBeUndefined();
+    },
+  );
+
   // P3 回归: 不能在 config 没用 bearer token 模式时, 误为它新增一行
   it("updateCodexExperimentalBearerToken leaves config without the token alone", () => {
     const input = [
