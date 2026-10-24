@@ -91,9 +91,9 @@ fn parse_provider_deeplink(
     // Validate app type.
     //
     // Oh My Pi is refused with the same guidance as the import path
-    // (`deeplink/provider.rs`): its providers are created from the Oh My Pi
-    // page, where the models.yml text editor can compose the entry. Accepting
-    // the link here would only fail later with a generic "invalid app" error.
+    // (`deeplink/provider.rs`): a models.yml entry needs its models listed, which
+    // the Oh My Pi provider form composes. Accepting the link here would only
+    // fail later with a generic "invalid app" error.
     if matches!(app.as_str(), "omp" | "ohmypi" | "oh-my-pi" | "oh_my_pi") {
         return Err(AppError::InvalidInput(
             "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
@@ -253,13 +253,7 @@ fn parse_prompt_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter for prompt".to_string()))?
         .clone();
 
-    // Validate app type.
-    //
-    // Oh My Pi is deliberately absent: it has no prompt panel, so accepting a
-    // link for it would let an import write `<agent dir>/AGENTS.md` through
-    // `PromptService`, with no surface in the app showing what landed there and
-    // no way to undo it. The prompt file mapping stays in place for the day a
-    // panel exists; until then the link is refused at parse time.
+    // Validate app type
     if !matches!(
         app.as_str(),
         "claude"

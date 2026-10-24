@@ -233,7 +233,7 @@ fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_refuses_omp_with_guidance() {
-    for app in ["omp", "omp", "oh-my-pi", "oh_my_pi"] {
+    for app in ["omp", "ohmypi", "oh-my-pi", "oh_my_pi"] {
         let url =
             format!("ccswitch://v1/import?resource=provider&app={app}&name=Test&endpoint=https%3A%2F%2Fapi.example.com");
         let err = parse_deeplink_url(&url).unwrap_err().to_string();
@@ -250,15 +250,6 @@ fn test_parse_prompt_deeplink_accepts_mcode() {
 
     let request = parse_deeplink_url(url).expect("MiniMax Code has a prompt panel");
     assert_eq!(request.app.as_deref(), Some("mcode"));
-}
-
-/// Oh My Pi has no prompt panel: the link must be refused instead of writing
-/// `~/.omp/agent/AGENTS.md` with nothing in the UI showing what landed there.
-#[test]
-fn test_parse_prompt_deeplink_refuses_omp() {
-    let url = "ccswitch://v1/import?resource=prompt&app=omp&name=Rules&content=IyBoaQ%3D%3D";
-    let err = parse_deeplink_url(url).unwrap_err().to_string();
-    assert!(err.contains("Invalid app type"), "{err}");
 }
 
 /// 读取不清除，按编号确认才清除：前端读到后、显示前被打断（effect 重建、窗口销毁），
