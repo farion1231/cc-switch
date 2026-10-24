@@ -291,12 +291,11 @@ impl TrayTexts {
                 texts.tier_used = "{label} {value}% 사용";
                 texts.tier_used_up = "{label} 소진됨";
                 texts.balance = "잔액 {value}";
-                texts.balance_used_up = "잔액 소진됨";
                 texts.plan_expired = "요금제 만료됨";
                 texts.used_amount = "{value} 사용";
-                texts.quota_failed = "할당량을 확인할 수 없음";
-                texts.quota_failed_login_expired = "할당량을 확인할 수 없음: 로그인 만료";
-                texts.quota_failed_token_refresh_pending = "할당량을 확인할 수 없음: 토큰 갱신 대기 중";
+                texts.quota_failed = "할당량 조회 실패";
+                texts.quota_failed_login_expired = "할당량 조회 실패: 로그인 만료";
+                texts.quota_failed_token_refresh_pending = "할당량 조회 실패: 토큰 갱신 대기 중";
                 texts.reset_on_date = "{when}에 {label} 할당량 초기화";
                 texts.reset_at_time = "{when}에 {label} 할당량 초기화";
                 texts.date_format = "%-m월 %-d일";
