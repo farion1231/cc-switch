@@ -135,6 +135,18 @@ pub struct SkillRepo {
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
+    /// 是否为私有仓库：为真时归档改走 `api.github.com` 并携带所选凭据。
+    ///
+    /// `default` 是给存量数据与旧前端留的：`skill_repos` 的旧行、deeplink 与
+    /// 前端 `addSkillRepo` 的旧载荷都没有这个字段，缺省即公开。
+    #[serde(default)]
+    pub private: bool,
+    /// 这个仓库用哪一枚凭据（`git_credentials.id`）。
+    ///
+    /// `None` 表示还没选——私有仓库处在这个状态时下载会明确报「未配置访问令牌」，
+    /// 而不是含糊的 404。
+    #[serde(default, rename = "credentialId")]
+    pub credential_id: Option<String>,
 }
 
 /// 技能安装状态（旧版兼容）
@@ -166,24 +178,32 @@ impl Default for SkillStore {
                     name: "skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    private: false,
+                    credential_id: None,
                 },
                 SkillRepo {
                     owner: "ComposioHQ".to_string(),
                     name: "awesome-claude-skills".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    private: false,
+                    credential_id: None,
                 },
                 SkillRepo {
                     owner: "cexll".to_string(),
                     name: "myclaude".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    private: false,
+                    credential_id: None,
                 },
                 SkillRepo {
                     owner: "JimLiu".to_string(),
                     name: "baoyu-skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    private: false,
+                    credential_id: None,
                 },
             ],
         }
@@ -404,7 +424,125 @@ const FILE_ENTRY_BUDGET_COST: u64 = DIRECTORY_BUDGET_COST;
 const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
 
 /// 技能归档下载请求的 User-Agent。
+///
+/// 共享客户端不带默认 UA；GitHub 归档下载对无 UA 请求更容易被限流成 429（#8813）。
 const SKILL_DOWNLOAD_USER_AGENT: &str = concat!("CC-Switch/", env!("CARGO_PKG_VERSION"));
+
+/// 私有仓库归档走的 GitHub REST API 前缀。
+///
+/// 不能用 `https://github.com/{owner}/{name}/archive/...`：它对私有仓库会 302 到
+/// `codeload.github.com`，而 reqwest 按设计在跨站重定向时丢掉 `Authorization`，
+/// 于是带着 token 也仍然是 404。走 API 端点的额外好处是凭据只发给
+/// `api.github.com`——重定向落点的签名 URL 匿名即可下载（均为实测）。
+const GITHUB_API_BASE: &str = "https://api.github.com";
+
+/// GitHub REST API 版本。钉死版本避免 GitHub 改默认行为时静默影响解析。
+const GITHUB_API_VERSION: &str = "2022-11-28";
+
+/// 本次操作可用的凭据：凭据 id -> token。
+///
+/// 由命令层从系统密钥链读出后**显式**传进下载路径。不在下载函数内部读环境变量或
+/// 全局状态：桌面应用从启动环境继承的 token 可能是用户给别的工具或 CI 用的高权限
+/// 凭据，通用下载函数不该替调用方决定要不要发它。
+///
+/// 按仓库选的凭据不同，所以这里是一张表而不是单个 token；每个仓库只用自己那一枚，
+/// 公开仓库一律不带（见 [`RepoAuth::token_for`]）。
+#[derive(Clone, Default)]
+pub struct RepoAuth {
+    /// 凭据 id -> token。命令层从系统密钥链读出后放进来。
+    secrets: HashMap<String, String>,
+}
+
+impl RepoAuth {
+    /// 匿名：公开仓库走的路径。
+    pub fn anonymous() -> Self {
+        Self::default()
+    }
+
+    /// 从命令层读到的凭据构造。读不出来的凭据不会出现在表里——用到它的私有仓库
+    /// 会报"未配置访问令牌"，用户重新选一枚即可。
+    pub fn from_secrets(secrets: HashMap<String, String>) -> Self {
+        Self { secrets }
+    }
+
+    /// 单枚凭据的快捷构造，供测试与单仓库调用方使用。
+    pub fn with_token(token: impl Into<String>) -> Self {
+        let token = token.into();
+        let token = token.trim();
+        let mut secrets = HashMap::new();
+        if !token.is_empty() {
+            secrets.insert(SINGLE_CREDENTIAL_ID.to_string(), token.to_string());
+        }
+        Self::from_secrets(secrets)
+    }
+
+    /// 这个仓库该带的 token。
+    ///
+    /// 公开仓库一律返回 `None`——即便调用方手里有凭据也不外发，凭据只流向需要它的
+    /// 端点。私有仓库返回它自己选的那一枚。
+    fn token_for(&self, repo: &SkillRepo) -> Option<&str> {
+        if !repo.private {
+            return None;
+        }
+        let credential_id = repo.credential_id.as_deref()?;
+        self.secrets.get(credential_id).map(String::as_str)
+    }
+}
+
+/// 手写 `Debug`：token 不能跟着 `{:?}` 进日志或 panic 信息。
+impl std::fmt::Debug for RepoAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RepoAuth")
+            .field("credentials", &self.secrets.len())
+            .finish()
+    }
+}
+
+/// [`RepoAuth::with_token`] 使用的占位 id：调用方只关心"有一枚 token"。
+pub const SINGLE_CREDENTIAL_ID: &str = "single";
+
+/// 一次归档下载的计划：请求哪个 URL、要不要附带凭据。
+///
+/// 把「选端点」与「发请求」分开，是为了让这条规则不联网也能单测——出口断言把
+/// host 钉死，本地 HTTP 桩覆盖不了完整下载路径。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArchiveRequest {
+    url: String,
+    authenticated: bool,
+}
+
+impl ArchiveRequest {
+    /// 按仓库的公开/私有属性选端点。
+    fn for_branch(repo: &SkillRepo, branch: &str) -> Result<Self> {
+        if repo.private {
+            let url = format!(
+                "{GITHUB_API_BASE}/repos/{}/{}/zipball/{branch}",
+                repo.owner, repo.name
+            );
+            SkillService::assert_github_api_url(&url, &repo.owner, &repo.name)?;
+            Ok(Self {
+                url,
+                authenticated: true,
+            })
+        } else {
+            let url = format!(
+                "https://github.com/{}/{}/archive/refs/heads/{branch}.zip",
+                repo.owner, repo.name
+            );
+            SkillService::assert_github_archive_url(&url, &repo.owner, &repo.name)?;
+            Ok(Self {
+                url,
+                authenticated: false,
+            })
+        }
+    }
+}
+
+/// 私有仓库的元数据预检结果。
+struct RepoMetadata {
+    /// 仓库默认分支。用于把「配置分支 → main → master」的猜测换成实际值。
+    default_branch: Option<String>,
+}
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -868,6 +1006,7 @@ impl SkillService {
         db: &Arc<Database>,
         skill: &DiscoverableSkill,
         current_app: &AppType,
+        auth: &RepoAuth,
     ) -> Result<InstalledSkill> {
         let ssot_dir = Self::get_ssot_dir()?;
 
@@ -911,17 +1050,13 @@ impl SkillService {
 
         // 如果已存在则跳过下载
         if !dest.exists() {
-            let repo = SkillRepo {
-                owner: skill.repo_owner.clone(),
-                name: skill.repo_name.clone(),
-                branch: skill.repo_branch.clone(),
-                enabled: true,
-            };
+            let repo =
+                Self::repo_config_for(db, &skill.repo_owner, &skill.repo_name, &skill.repo_branch);
 
             // 下载仓库
             let (temp_guard, used_branch) = timeout(
                 std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
+                self.download_repo(&repo, auth),
             )
             .await
             .map_err(|_| {
@@ -1361,12 +1496,20 @@ impl SkillService {
     ///
     /// 仅检查有 repo_owner 的 Skill（本地 Skill 跳过），
     /// 按仓库分组下载，避免重复下载同一仓库。
-    pub async fn check_updates(&self, db: &Arc<Database>) -> Result<Vec<SkillUpdateInfo>> {
-        Ok(self.check_updates_report(db).await?.updates)
+    pub async fn check_updates(
+        &self,
+        db: &Arc<Database>,
+        auth: &RepoAuth,
+    ) -> Result<Vec<SkillUpdateInfo>> {
+        Ok(self.check_updates_report(db, auth).await?.updates)
     }
 
     /// 检查更新，并逐仓库报告没读到的仓库（下载失败 / 超时 / 扫描失败）。
-    pub async fn check_updates_report(&self, db: &Arc<Database>) -> Result<SkillUpdateCheckResult> {
+    pub async fn check_updates_report(
+        &self,
+        db: &Arc<Database>,
+        auth: &RepoAuth,
+    ) -> Result<SkillUpdateCheckResult> {
         let skills = db.get_all_installed_skills()?;
         let mut updates = Vec::new();
         let mut failures = Vec::new();
@@ -1391,17 +1534,12 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
 
         for ((owner, name, branch), group_skills) in &repo_groups {
-            let repo = SkillRepo {
-                owner: owner.clone(),
-                name: name.clone(),
-                branch: branch.clone(),
-                enabled: true,
-            };
+            let repo = Self::repo_config_for(db, owner, name, branch);
 
             // 下载仓库 ZIP
             let (temp_guard, _used_branch) = match timeout(
                 std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
+                self.download_repo(&repo, auth),
             )
             .await
             {
@@ -1507,6 +1645,66 @@ impl SkillService {
         )
     }
 
+    /// 校验一个待添加的仓库：坐标合法，且当前凭据确实能访问它。
+    ///
+    /// 公开仓库只做坐标校验（与改动前一致，不多发请求）。私有仓库多一次元数据
+    /// 预检：让"添加"这个动作当场把凭据问题暴露出来，而不是先落库、等发现技能时
+    /// 再报一个含糊的 404。
+    pub async fn validate_repo_access(repo: &SkillRepo, auth: &RepoAuth) -> Result<()> {
+        Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+        if repo.private {
+            let token = auth
+                .token_for(repo)
+                .ok_or_else(|| Self::auth_required_error(repo))?;
+            // 与四条下载路径同一个上限：没有它，唯一的约束是共享客户端的 600s
+            // 总超时，"添加仓库"可能转十分钟
+            timeout(
+                std::time::Duration::from_secs(60),
+                Self::fetch_repo_metadata(repo, Some(token)),
+            )
+            .await
+            .map_err(|_| {
+                anyhow!(format_skill_error(
+                    "DOWNLOAD_TIMEOUT",
+                    &[
+                        ("owner", &repo.owner),
+                        ("name", &repo.name),
+                        ("timeout", "60"),
+                    ],
+                    Some("checkNetwork"),
+                ))
+            })??;
+        }
+        Ok(())
+    }
+
+    /// 按坐标取仓库配置，用于从「已安装技能」反查仓库的场景。
+    ///
+    /// 检查更新、更新、安装这三条路都是从 `DiscoverableSkill` / `InstalledSkill` 里
+    /// 重建仓库的（只带 owner / name / branch），拿不到用户在管理面板里配置的私有
+    /// 标记。分支以调用方给的为准——已安装技能记录的是当时真正解析到的分支，可能
+    /// 比仓库配置更准确。
+    ///
+    /// 仓库已被用户从管理面板移除时回落到公开仓库，保持改动前的行为：那时候本来
+    /// 也只有这一种可能。
+    fn repo_config_for(db: &Database, owner: &str, name: &str, branch: &str) -> SkillRepo {
+        let configured = db.get_skill_repo(owner, name).ok().flatten();
+        match configured {
+            Some(mut repo) => {
+                repo.branch = branch.to_string();
+                repo
+            }
+            None => SkillRepo {
+                owner: owner.to_string(),
+                name: name.to_string(),
+                branch: branch.to_string(),
+                enabled: true,
+                private: false,
+                credential_id: None,
+            },
+        }
+    }
+
     /// 持久化更新后的 Skill 元数据，并重新读取数据库中的权威应用启用状态。
     ///
     /// 更新过程包含网络下载，期间用户可能切换启用状态或卸载 Skill。这里必须
@@ -1525,7 +1723,12 @@ impl SkillService {
     }
 
     /// 更新单个 Skill（重新下载并替换本地文件）
-    pub async fn update_skill(&self, db: &Arc<Database>, skill_id: &str) -> Result<InstalledSkill> {
+    pub async fn update_skill(
+        &self,
+        db: &Arc<Database>,
+        skill_id: &str,
+        auth: &RepoAuth,
+    ) -> Result<InstalledSkill> {
         let mut skill = db
             .get_installed_skill(skill_id)?
             .ok_or_else(|| anyhow!("Skill not found: {skill_id}"))?;
@@ -1549,12 +1752,7 @@ impl SkillService {
             _ => return Err(anyhow!("Cannot update local skill: {skill_id}")),
         };
 
-        let repo = SkillRepo {
-            owner: owner.clone(),
-            name: name.clone(),
-            branch: branch.clone(),
-            enabled: true,
-        };
+        let repo = Self::repo_config_for(db, &owner, &name, &branch);
 
         let ssot_dir = Self::get_ssot_dir()?;
         if skill.apps.pi {
@@ -1567,7 +1765,7 @@ impl SkillService {
         // 下载仓库
         let (temp_guard, used_branch) = timeout(
             std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
+            self.download_repo(&repo, auth),
         )
         .await
         .map_err(|_| {
@@ -3097,14 +3295,16 @@ impl SkillService {
     pub async fn discover_available(
         &self,
         repos: Vec<SkillRepo>,
+        auth: &RepoAuth,
     ) -> Result<Vec<DiscoverableSkill>> {
-        Ok(self.discover_available_report(repos).await?.skills)
+        Ok(self.discover_available_report(repos, auth).await?.skills)
     }
 
     /// 发现可安装的 Skill，并逐仓库报告没读到的仓库（停用的仓库不读也不报）。
     pub async fn discover_available_report(
         &self,
         repos: Vec<SkillRepo>,
+        auth: &RepoAuth,
     ) -> Result<SkillDiscoveryResult> {
         let mut skills = Vec::new();
         let mut failures = Vec::new();
@@ -3114,7 +3314,7 @@ impl SkillService {
 
         let fetch_tasks = enabled_repos
             .iter()
-            .map(|repo| self.fetch_repo_skills(repo));
+            .map(|repo| self.fetch_repo_skills(repo, auth));
 
         let results: Vec<Result<Vec<DiscoverableSkill>>> =
             futures::future::join_all(fetch_tasks).await;
@@ -3141,9 +3341,10 @@ impl SkillService {
         &self,
         repos: Vec<SkillRepo>,
         db: &Arc<Database>,
+        auth: &RepoAuth,
     ) -> Result<Vec<Skill>> {
         // 获取可发现的技能
-        let discoverable = self.discover_available(repos).await?;
+        let discoverable = self.discover_available(repos, auth).await?;
 
         // 获取已安装的技能
         let installed = db.get_all_installed_skills()?;
@@ -3204,11 +3405,17 @@ impl SkillService {
     }
 
     /// 从仓库获取技能列表
-    async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_guard, resolved_branch) =
-            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-                .await
-                .map_err(|_| anyhow!(Self::download_timeout_error(repo)))??;
+    async fn fetch_repo_skills(
+        &self,
+        repo: &SkillRepo,
+        auth: &RepoAuth,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let (temp_guard, resolved_branch) = timeout(
+            std::time::Duration::from_secs(60),
+            self.download_repo(repo, auth),
+        )
+        .await
+        .map_err(|_| anyhow!(Self::download_timeout_error(repo)))??;
 
         let mut skills = Vec::new();
         let scan_dir = temp_guard.path();
@@ -3522,6 +3729,82 @@ impl SkillService {
         Ok(())
     }
 
+    /// 出口断言：确认 URL 指向 `api.github.com` 上预期的仓库路径。
+    ///
+    /// 与 `assert_github_archive_url` 同一种纵深防御，覆盖私有仓库走的两条 API
+    /// 路径——`/repos/{owner}/{name}`（元数据预检）与
+    /// `/repos/{owner}/{name}/zipball/{ref}`（归档）。
+    fn assert_github_api_url(url: &str, owner: &str, name: &str) -> Result<()> {
+        let parsed = url::Url::parse(url).map_err(|e| anyhow!("Invalid GitHub API URL: {e}"))?;
+        let expected_prefix = format!("/repos/{owner}/{name}");
+        let path_matches = parsed.path() == expected_prefix
+            || parsed.path().starts_with(&format!("{expected_prefix}/"));
+        if parsed.scheme() != "https"
+            || parsed.host_str() != Some("api.github.com")
+            || !path_matches
+        {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_REPO_REF",
+                &[("owner", owner), ("name", name)],
+                Some("checkRepoUrl"),
+            )));
+        }
+        Ok(())
+    }
+
+    /// 把 `api.github.com` 的失败响应映射成可行动的错误码。
+    ///
+    /// 只带 `status` 上下文，owner / name 由调用方的 `with_repo_context` 补齐。
+    /// 归档端点上的 404 不走这里：它必须保持 `DOWNLOAD_FAILED` 语义，否则
+    /// `try_repo_branches` 的分支回落会失效。
+    fn api_status_error(
+        status: reqwest::StatusCode,
+        headers: &reqwest::header::HeaderMap,
+    ) -> anyhow::Error {
+        let status_text = status.as_u16().to_string();
+        let context = [("status", status_text.as_str())];
+        // GitHub 的限流有两种形状：主配额用尽回 403 且 x-ratelimit-remaining: 0，
+        // 二级限流回 429 或带 Retry-After 的 403。都提示稍后重试，别让用户以为
+        // 是令牌权限问题。
+        let limited = headers.contains_key("retry-after")
+            || headers
+                .get("x-ratelimit-remaining")
+                .and_then(|value| value.to_str().ok())
+                == Some("0");
+        let suggestion = match status.as_u16() {
+            429 => "retryLater",
+            403 if limited => "retryLater",
+            // 401 只表示令牌本身无效/过期/被撤销；权限不足是 403，两者提示不能混
+            401 => "reenterCredential",
+            403 => "checkTokenScope",
+            // 仓库不存在（坐标写错、已删除、改名）与令牌无权访问都是 404
+            404 => "checkRepoUrl",
+            _ => "checkNetwork",
+        };
+        anyhow!(format_skill_error(
+            "TOKEN_REJECTED",
+            &context,
+            Some(suggestion)
+        ))
+    }
+
+    /// 私有仓库缺凭据时的报错。
+    fn auth_required_error(repo: &SkillRepo) -> anyhow::Error {
+        // 仓库绑了凭据却解析不出 token，多半是换了机器（同步带来的 credential_id
+        // 在本机不存在）或密钥链条目被清掉了。此时"去配置一枚"是错的提示——枚
+        // 已经在他眼前列着，该做的是重新输入一次。
+        let suggestion = if repo.credential_id.is_some() {
+            "reenterCredential"
+        } else {
+            "configureCredential"
+        };
+        anyhow!(format_skill_error(
+            "AUTH_REQUIRED",
+            &[("owner", &repo.owner), ("name", &repo.name)],
+            Some(suggestion),
+        ))
+    }
+
     /// 在目录树中查找名称匹配且包含 SKILL.md 的子目录
     ///
     /// 用于 skills.sh 安装回退：API 只返回 skillId（如 "find-skills"），
@@ -3718,8 +4001,19 @@ impl SkillService {
     /// 这里是仓库坐标进入 URL 的**唯一收敛点**——`fetch_repo_skills`、`install`、
     /// `check_updates`、`update_skill` 四条路径都经过它，而 `skill_repos` / `skills`
     /// 两张表都会被同步导入的远端快照整表覆盖，入库校验管不住它们。所以主防线放这里。
-    async fn download_repo(&self, repo: &SkillRepo) -> Result<(tempfile::TempDir, String)> {
+    async fn download_repo(
+        &self,
+        repo: &SkillRepo,
+        auth: &RepoAuth,
+    ) -> Result<(tempfile::TempDir, String)> {
         Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+
+        // 私有仓库没有可用凭据就没必要发请求：匿名打到 api.github.com 只会拿到
+        // 404，界面会把它显示成「仓库或分支不存在」，而真实原因是没配凭据。
+        if repo.private && auth.token_for(repo).is_none() {
+            return Err(Self::auth_required_error(repo));
+        }
+        let token = auth.token_for(repo);
 
         // 守卫全程持有，成功后连同目录一起交给调用方（见 `extract_local_zip` 的说明）。
         // 原来这里立刻 keep()，任何一步失败——下载超时、ARCHIVE_TOO_LARGE、解压出错
@@ -3734,11 +4028,67 @@ impl SkillService {
             return Ok((temp_dir, repo.branch.clone()));
         }
 
-        let branch = Self::try_repo_branches(repo, temp_path, |url| async move {
-            self.download_and_extract(&url, temp_path).await
-        })
+        // 私有仓库先过元数据预检：codeload 对「token 无效」「无权访问」「分支不存在」
+        // 一律回 404，只有先确认仓库本身可读，后面的 404 才能被安全地解释成分支问题；
+        // 顺带把「配置分支 → main → master」的猜测换成仓库的真实默认分支。
+        let mut preferred_branch = None;
+        let mut repo = repo.clone();
+        if repo.private {
+            let metadata = Self::fetch_repo_metadata(&repo, token).await?;
+            preferred_branch = metadata.default_branch;
+            // 配置分支是空串或 HEAD 哨兵时，直接把默认分支当成配置分支用
+            if repo.branch.is_empty() || repo.branch.eq_ignore_ascii_case("HEAD") {
+                if let Some(default_branch) = &preferred_branch {
+                    repo.branch = default_branch.clone();
+                }
+            }
+        }
+
+        let branch = Self::try_repo_branches(
+            &repo,
+            preferred_branch.as_deref(),
+            temp_path,
+            |request| async move { self.download_and_extract(&request, temp_path, token).await },
+        )
         .await?;
         Ok((temp_dir, branch))
+    }
+
+    /// 读取仓库元数据（`GET /repos/{owner}/{name}`）。
+    ///
+    /// 私有仓库下载前的前置检查。除了把凭据类失败与分支缺失分开，它还让
+    /// `try_repo_branches` 的「404 即分支不存在」语义重新成立——否则一个权限不足
+    /// 的 token 会让三个候选分支全部 404，最后报成「仓库或分支不存在」。
+    async fn fetch_repo_metadata(repo: &SkillRepo, token: Option<&str>) -> Result<RepoMetadata> {
+        let token = token.ok_or_else(|| Self::auth_required_error(repo))?;
+        let url = format!("{GITHUB_API_BASE}/repos/{}/{}", repo.owner, repo.name);
+        Self::assert_github_api_url(&url, &repo.owner, &repo.name)?;
+
+        let response = crate::proxy::http_client::get()
+            .get(&url)
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT)
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+            .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(Self::with_repo_context(
+                Self::api_status_error(response.status(), response.headers()),
+                repo,
+            ));
+        }
+
+        let body: serde_json::Value = response.json().await?;
+        Ok(RepoMetadata {
+            // 默认分支会被拼进 zipball URL，先按分支名规则校验一遍再采信
+            default_branch: body
+                .get("default_branch")
+                .and_then(serde_json::Value::as_str)
+                .filter(|branch| Self::is_valid_git_branch(branch))
+                .map(str::to_string),
+        })
     }
 
     /// 依次尝试「配置分支 → main → master」，返回第一个下载成功的分支。
@@ -3748,16 +4098,24 @@ impl SkillService {
     /// 「仓库或分支不存在」。抽成接收 `attempt` 的函数是为了不联网也能单测这条规则。
     async fn try_repo_branches<F, Fut>(
         repo: &SkillRepo,
+        preferred_branch: Option<&str>,
         temp_path: &Path,
         mut attempt: F,
     ) -> Result<String>
     where
-        F: FnMut(String) -> Fut,
+        F: FnMut(ArchiveRequest) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
         let mut branches = Vec::new();
         if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
             branches.push(repo.branch.as_str());
+        }
+        // 预检拿到的真实默认分支排在 main / master 之前：配置分支写错时它会先命中，
+        // 而不是让三个猜测全部 404、最后报成"令牌无权访问"。
+        if let Some(preferred) = preferred_branch {
+            if !preferred.is_empty() && !branches.contains(&preferred) {
+                branches.push(preferred);
+            }
         }
         if !branches.contains(&"main") {
             branches.push("main");
@@ -3768,13 +4126,9 @@ impl SkillService {
 
         let mut last_error = None;
         for branch in branches {
-            let url = format!(
-                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
-                repo.owner, repo.name, branch
-            );
-            Self::assert_github_archive_url(&url, &repo.owner, &repo.name)?;
+            let request = ArchiveRequest::for_branch(repo, branch)?;
 
-            match attempt(url).await {
+            match attempt(request).await {
                 Ok(()) => return Ok(branch.to_string()),
                 Err(e) if Self::is_branch_not_found(&e) => {
                     // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
@@ -3821,17 +4175,40 @@ impl SkillService {
         anyhow::anyhow!(value.to_string())
     }
 
-    /// 下载并解压 ZIP
-    async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
+    /// 下载并解压 ZIP。
+    ///
+    /// `request` 决定端点与是否附带凭据，`auth` 由调用方显式传入——这个函数不去
+    /// 读环境变量或全局状态，也不自己决定要不要发凭据。公开仓库那条路即使调用方
+    /// 手里有 token 也不外发：凭据只流向需要它的端点。
+    async fn download_and_extract(
+        &self,
+        request: &ArchiveRequest,
+        dest: &Path,
+        token: Option<&str>,
+    ) -> Result<()> {
         let client = crate::proxy::http_client::get();
         // 共享客户端不带默认 User-Agent；GitHub 归档下载对无 UA 请求更容易被限流成 429（#8813）
-        let response = client
-            .get(url)
-            .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT)
-            .send()
-            .await?;
+        let mut builder = client
+            .get(&request.url)
+            .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT);
+        if request.authenticated {
+            if let Some(token) = token {
+                builder = builder
+                    .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+                    .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header("X-GitHub-Api-Version", GITHUB_API_VERSION);
+            }
+        }
+        let response = builder.send().await?;
         if !response.status().is_success() {
-            let status = response.status().as_u16().to_string();
+            let status = response.status();
+            // 归档端点上的 404 必须保持 DOWNLOAD_FAILED：`try_repo_branches` 靠它
+            // 判断「这个分支不存在」并回落。其余凭据类状态码用可行动的文案，
+            // owner / name 由上层 `with_repo_context` 补齐。
+            if request.authenticated && status != reqwest::StatusCode::NOT_FOUND {
+                return Err(Self::api_status_error(status, response.headers()));
+            }
+            let status = status.as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
                 "DOWNLOAD_FAILED",
                 &[("status", &status)],
@@ -4806,6 +5183,10 @@ fn save_repos_from_lock(
                     // 未知分支时使用 HEAD 语义，后续下载会回退到 main/master。
                     branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
                     enabled: true,
+                    // lock 文件来自 agents CLI，无从表达私有性；私有仓库要由用户在
+                    // 仓库管理面板里显式标记并配置凭据。
+                    private: false,
+                    credential_id: None,
                 };
                 // lock 文件由外部 agents CLI 写入，owner/repo/branch 均未经校验，
                 // 且 branch 是从 `/tree/`、fragment、`?ref=` 里抠出来的裸串。
@@ -5099,6 +5480,18 @@ mod tests {
             name: "skills".to_string(),
             branch: branch.to_string(),
             enabled: true,
+            private: false,
+            credential_id: None,
+        }
+    }
+
+    /// 私有仓库的分支回落：端点换成 api.github.com，凭据由 attempt 使用。
+    /// 挂上 [`SINGLE_CREDENTIAL_ID`]，与 `RepoAuth::with_token` 构造出的表对得上。
+    fn private_branch_fallback_repo(branch: &str) -> SkillRepo {
+        SkillRepo {
+            private: true,
+            credential_id: Some(SINGLE_CREDENTIAL_ID.to_string()),
+            ..branch_fallback_repo(branch)
         }
     }
 
@@ -5117,13 +5510,11 @@ mod tests {
     ) -> (Result<String>, Vec<String>) {
         let temp = tempdir().unwrap();
         let mut attempted = Vec::new();
-        let result = SkillService::try_repo_branches(repo, temp.path(), |url| {
-            let branch = url
-                .rsplit('/')
-                .next()
-                .and_then(|file| file.strip_suffix(".zip"))
-                .unwrap()
-                .to_string();
+        let result = SkillService::try_repo_branches(repo, None, temp.path(), |request| {
+            // 公开仓库的 URL 以 `{branch}.zip` 结尾，私有仓库以 `/zipball/{branch}`
+            // 结尾，取最后一段再去掉 zip 后缀对两者都成立。
+            let last = request.url.rsplit('/').next().unwrap();
+            let branch = last.strip_suffix(".zip").unwrap_or(last).to_string();
             let result = outcome(&branch);
             attempted.push(branch);
             async move { result }
@@ -5249,6 +5640,125 @@ mod tests {
                 "must reject url: {bad}"
             );
         }
+    }
+
+    #[test]
+    fn archive_request_selects_the_endpoint_by_visibility() {
+        let public = ArchiveRequest::for_branch(&branch_fallback_repo("main"), "main").unwrap();
+        assert_eq!(
+            public.url,
+            "https://github.com/acme/skills/archive/refs/heads/main.zip"
+        );
+        assert!(
+            !public.authenticated,
+            "公开仓库不得附带凭据：凭据只流向需要它的端点"
+        );
+
+        let private =
+            ArchiveRequest::for_branch(&private_branch_fallback_repo("main"), "main").unwrap();
+        assert_eq!(
+            private.url,
+            "https://api.github.com/repos/acme/skills/zipball/main"
+        );
+        assert!(private.authenticated);
+
+        // 分支名照旧先过坐标校验，不能借私有端点绕开
+        assert!(ArchiveRequest::for_branch(
+            &private_branch_fallback_repo("../../../releases/download/v1/evil"),
+            "../../../releases/download/v1/evil",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn assert_github_api_url_pins_host_and_path() {
+        // 元数据预检与 zipball 两条 API 路径都走同一个出口断言
+        for ok in [
+            "https://api.github.com/repos/owner/repo",
+            "https://api.github.com/repos/owner/repo/zipball/main",
+        ] {
+            assert!(
+                SkillService::assert_github_api_url(ok, "owner", "repo").is_ok(),
+                "must accept url: {ok}"
+            );
+        }
+
+        for bad in [
+            // 落点被改到别的仓库
+            "https://api.github.com/repos/other/repo/zipball/main",
+            // 前缀相同但是另一个仓库名
+            "https://api.github.com/repos/owner/repo-evil/zipball/main",
+            // 主机被换掉
+            "https://evil.example/repos/owner/repo/zipball/main",
+            "https://github.com/repos/owner/repo/zipball/main",
+            // 明文 http
+            "http://api.github.com/repos/owner/repo",
+            // 借点段把路径改到别处
+            "https://api.github.com/repos/owner/repo/../../other/repo",
+        ] {
+            assert!(
+                SkillService::assert_github_api_url(bad, "owner", "repo").is_err(),
+                "must reject url: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn api_status_error_maps_github_failures_to_actionable_codes() {
+        let headers = reqwest::header::HeaderMap::new();
+        let err_of = |status: u16, headers: &reqwest::header::HeaderMap| {
+            error_json(&SkillService::api_status_error(
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                headers,
+            ))
+        };
+
+        // 凭据类失败统一是一个码，建议按状态码分：401 是令牌本身失效，
+        // 403 才是权限范围不足
+        for status in [401, 403] {
+            assert_eq!(err_of(status, &headers)["code"], "TOKEN_REJECTED");
+        }
+        assert_eq!(err_of(401, &headers)["suggestion"], "reenterCredential");
+        assert_eq!(err_of(403, &headers)["suggestion"], "checkTokenScope");
+        // 仓库不存在（坐标写错、已删除、改名）与令牌无权访问都是 404
+        assert_eq!(err_of(404, &headers)["suggestion"], "checkRepoUrl");
+
+        // 限流有三种形状：429、带 Retry-After 的 403、主配额用尽的 403
+        assert_eq!(err_of(429, &headers)["suggestion"], "retryLater");
+        let mut secondary = reqwest::header::HeaderMap::new();
+        secondary.insert("retry-after", "60".parse().unwrap());
+        assert_eq!(err_of(403, &secondary)["suggestion"], "retryLater");
+        let mut exhausted = reqwest::header::HeaderMap::new();
+        exhausted.insert("x-ratelimit-remaining", "0".parse().unwrap());
+        assert_eq!(err_of(403, &exhausted)["suggestion"], "retryLater");
+    }
+
+    #[tokio::test]
+    async fn private_repo_without_a_credential_fails_before_any_request() {
+        // 守卫在发请求之前就返回：没有凭据时不该打一次注定 404 的请求，
+        // 否则界面会把它显示成「仓库或分支不存在」。
+        let error = SkillService::new()
+            .download_repo(
+                &private_branch_fallback_repo("main"),
+                &RepoAuth::anonymous(),
+            )
+            .await
+            .unwrap_err();
+        let parsed = error_json(&error);
+        assert_eq!(parsed["code"], "AUTH_REQUIRED");
+        assert_eq!(parsed["context"]["owner"], "acme");
+        assert_eq!(parsed["context"]["name"], "skills");
+    }
+
+    #[test]
+    fn repo_auth_debug_never_prints_the_token() {
+        let auth = RepoAuth::with_token("ghp_supersecrettoken");
+        let rendered = format!("{auth:?}");
+        assert!(!rendered.contains("ghp_supersecrettoken"));
+        assert!(rendered.contains("credentials: 1"));
+        assert!(format!("{:?}", RepoAuth::anonymous()).contains("credentials: 0"));
+        // 空白 token 等同于没配
+        assert!(format!("{:?}", RepoAuth::with_token("   ")).contains("credentials: 0"));
     }
 
     #[test]
@@ -6360,7 +6870,7 @@ mod tests {
         write_skill(&source, "old");
         SkillService::copy_dir_recursive(&source, &destination).unwrap();
         SkillService::new()
-            .update_skill(&db, &skill.id)
+            .update_skill(&db, &skill.id, &RepoAuth::anonymous())
             .await
             .unwrap();
         assert_eq!(
@@ -7573,6 +8083,8 @@ mod tests {
             name: "repo".to_string(),
             branch: "main".to_string(),
             enabled: true,
+            private: false,
+            credential_id: None,
         };
         let scan = || {
             let mut skills = Vec::new();
@@ -7626,6 +8138,8 @@ mod tests {
             name: "repo".to_string(),
             branch: "main".to_string(),
             enabled: true,
+            private: false,
+            credential_id: None,
         };
         let mut skills = Vec::new();
         SkillService::new()
@@ -7690,7 +8204,7 @@ mod tests {
                 write_skill(&remote.path().join(new_path), directory);
 
                 let updated = service
-                    .update_skill(&db, &installed.id)
+                    .update_skill(&db, &installed.id, &RepoAuth::anonymous())
                     .await
                     .expect("update moved skill");
                 let expected_path = if new_path == "." {
@@ -7716,13 +8230,17 @@ mod tests {
                     saved.content_hash,
                     Some(SkillService::compute_dir_hash(&local).unwrap())
                 );
-                assert!(service.check_updates(&db).await.unwrap().is_empty());
+                assert!(service
+                    .check_updates(&db, &RepoAuth::anonymous())
+                    .await
+                    .unwrap()
+                    .is_empty());
 
                 write_skill(&remote.path().join(new_path), "renamed-skill");
                 // Competing directory/name matches must not override the saved source.
                 write_skill(&remote.path().join(directory), directory);
                 let updates = service
-                    .check_updates(&db)
+                    .check_updates(&db, &RepoAuth::anonymous())
                     .await
                     .expect("check renamed skill");
                 assert_eq!(
@@ -7731,7 +8249,7 @@ mod tests {
                     "renamed skill must not silently disappear from update checks"
                 );
                 let updated = service
-                    .update_skill(&db, &installed.id)
+                    .update_skill(&db, &installed.id, &RepoAuth::anonymous())
                     .await
                     .expect("update renamed skill");
                 assert_eq!(updated.name, "renamed-skill");
@@ -7742,7 +8260,11 @@ mod tests {
                     SkillService::read_skill_name_desc(&local.join("SKILL.md"), directory).0,
                     "renamed-skill"
                 );
-                assert!(service.check_updates(&db).await.unwrap().is_empty());
+                assert!(service
+                    .check_updates(&db, &RepoAuth::anonymous())
+                    .await
+                    .unwrap()
+                    .is_empty());
             }
         }
     }
@@ -7912,6 +8434,8 @@ mod tests {
             name: name.to_string(),
             branch: "main".to_string(),
             enabled,
+            private: false,
+            credential_id: None,
         }
     }
 
@@ -7924,13 +8448,16 @@ mod tests {
         };
 
         let report = service
-            .discover_available_report(vec![
-                repo("owner", "repo", true),
-                // 坐标不合法：下载前就失败，不碰网络
-                repo("bad owner!", "broken", true),
-                // 停用的仓库不读，也不该出现在失败里
-                repo("bad owner?", "disabled", false),
-            ])
+            .discover_available_report(
+                vec![
+                    repo("owner", "repo", true),
+                    // 坐标不合法：下载前就失败，不碰网络
+                    repo("bad owner!", "broken", true),
+                    // 停用的仓库不读，也不该出现在失败里
+                    repo("bad owner?", "disabled", false),
+                ],
+                &RepoAuth::anonymous(),
+            )
             .await
             .expect("discover report");
 
@@ -7960,10 +8487,10 @@ mod tests {
 
         // 旧接口只取 skills，行为不变
         let skills = service
-            .discover_available(vec![
-                repo("owner", "repo", true),
-                repo("bad owner!", "x", true),
-            ])
+            .discover_available(
+                vec![repo("owner", "repo", true), repo("bad owner!", "x", true)],
+                &RepoAuth::anonymous(),
+            )
             .await
             .expect("discover");
         assert_eq!(skills.len(), 1);
@@ -7982,7 +8509,7 @@ mod tests {
         db.save_skill(&installed).expect("seed installed skill");
 
         let report = SkillService::new()
-            .check_updates_report(&db)
+            .check_updates_report(&db, &RepoAuth::anonymous())
             .await
             .expect("check updates report");
 

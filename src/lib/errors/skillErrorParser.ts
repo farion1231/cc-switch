@@ -43,6 +43,11 @@ function getErrorI18nKey(code: string): string {
     ARCHIVE_TOO_MANY_ENTRIES: "skills.error.archiveTooManyEntries",
     GET_HOME_DIR_FAILED: "skills.error.getHomeDirFailed",
     NO_SKILLS_IN_ZIP: "skills.error.noSkillsInZip",
+    // 私有仓库与凭据
+    AUTH_REQUIRED: "skills.error.authRequired",
+    TOKEN_REJECTED: "skills.error.tokenRejected",
+    CREDENTIAL_INVALID: "skills.error.credentialInvalid",
+    KEYRING_UNAVAILABLE: "skills.error.keyringUnavailable",
   };
 
   return mapping[code] || "skills.error.unknownError";
@@ -63,6 +68,11 @@ function getSuggestionI18nKey(suggestion: string): string {
     http403: "skills.error.http403",
     http404: "skills.error.http404",
     http429: "skills.error.http429",
+    // 私有仓库与凭据
+    configureCredential: "skills.error.suggestion.configureCredential",
+    reenterCredential: "skills.error.suggestion.reenterCredential",
+    checkTokenScope: "skills.error.suggestion.checkTokenScope",
+    checkKeyring: "skills.error.suggestion.checkKeyring",
   };
 
   return mapping[suggestion] || suggestion;

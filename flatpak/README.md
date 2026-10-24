@@ -54,6 +54,8 @@ flatpak run com.ccswitch.desktop
 
 The current manifest uses `--filesystem=home` by default for "download and run" convenience, allowing the app to directly read/write CLI configuration files and app data on the host (and supporting the "directory override" feature).
 
+It also grants `--talk-name=org.freedesktop.secrets`. Private Git repository tokens are stored in the system keychain, and the sandbox cannot reach the Secret Service without that grant — saving a token would fail with "the system keychain is unavailable". Keep this grant if you trim the manifest.
+
 If you prefer minimal permissions (e.g., for Flathub submission or security concerns), you can replace `--filesystem=home` in `flatpak/com.ccswitch.desktop.yml` with more precise grants:
 
 ```yaml

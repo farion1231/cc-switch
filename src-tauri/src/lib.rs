@@ -1243,6 +1243,11 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            // 初始化 Git 凭据存储（系统密钥链）
+            app.manage(commands::skill::SecretStoreState(Arc::new(
+                crate::services::git_credential::KeyringSecretStore,
+            )));
+
             // 初始化 CopilotAuthManager
             {
                 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
@@ -1707,6 +1712,9 @@ pub fn run() {
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
+            commands::list_git_credentials,
+            commands::create_git_credential,
+            commands::delete_git_credential,
             commands::install_skills_from_zip,
             // Auto launch
             commands::set_auto_launch,

@@ -189,6 +189,20 @@ export interface SkillRepo {
   name: string;
   branch: string;
   enabled: boolean;
+  /** 私有仓库：归档改走 GitHub API 并携带所选凭据 */
+  private: boolean;
+  /** 这个仓库用哪一枚凭据；空表示还没选 */
+  credentialId?: string | null;
+}
+
+/** 一枚 Git 凭据的元数据。**不含 token 本体**——本体只存在系统密钥链里。 */
+export interface GitCredential {
+  id: string;
+  host: string;
+  /** 用户起的名字，用于在下拉框里区分多枚令牌 */
+  name: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ========== API ==========
@@ -339,6 +353,26 @@ export const skillsApi = {
   /** 删除仓库 */
   async removeRepo(owner: string, name: string): Promise<boolean> {
     return await invoke("remove_skill_repo", { owner, name });
+  },
+
+  // ========== Git 凭据（私有仓库）==========
+
+  /** 列出所有凭据的元数据（不返回 token 本体） */
+  async listGitCredentials(): Promise<GitCredential[]> {
+    return await invoke("list_git_credentials");
+  },
+
+  /** 新建一枚凭据：元数据入库，token 落进系统密钥链 */
+  async createGitCredential(
+    name: string,
+    token: string,
+  ): Promise<GitCredential> {
+    return await invoke("create_git_credential", { name, token });
+  },
+
+  /** 删除一枚凭据（撤销）；返回因此失去凭据的仓库坐标 */
+  async deleteGitCredential(id: string): Promise<string[]> {
+    return await invoke("delete_git_credential", { id });
   },
 
   // ========== ZIP 安装 ==========

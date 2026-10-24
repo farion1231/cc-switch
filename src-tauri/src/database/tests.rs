@@ -184,6 +184,183 @@ fn existing_skill_repo_selection_is_not_supplemented() {
 }
 
 #[test]
+fn skill_repo_round_trips_the_private_flag() {
+    let db = Database::memory().expect("create memory db");
+
+    let mut repo = crate::services::skill::SkillStore::default().repos[0].clone();
+    repo.private = true;
+    db.save_skill_repo(&repo).expect("save private repo");
+
+    // 单条查询是检查更新/更新/安装反查私有标记的入口
+    let fetched = db
+        .get_skill_repo(&repo.owner, &repo.name)
+        .expect("get repo")
+        .expect("repo exists");
+    assert!(fetched.private);
+    assert!(db
+        .get_skill_repos()
+        .expect("get repos")
+        .iter()
+        .all(|r| r.private));
+
+    // 公开仓库照旧
+    let mut public = repo.clone();
+    public.name = "public-skills".to_string();
+    public.private = false;
+    db.save_skill_repo(&public).expect("save public repo");
+    assert!(
+        !db.get_skill_repo(&public.owner, &public.name)
+            .expect("get repo")
+            .expect("repo exists")
+            .private
+    );
+
+    assert!(db
+        .get_skill_repo("nobody", "nothing")
+        .expect("get missing repo")
+        .is_none());
+}
+
+#[test]
+fn schema_migration_keeps_existing_skill_repos_public() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(LEGACY_SCHEMA_SQL)
+        .expect("seed old schema");
+    conn.execute(
+        "INSERT INTO skill_repos (owner, name) VALUES ('acme', 'skills')",
+        [],
+    )
+    .expect("seed a pre-migration repo");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let private: i64 = conn
+        .query_row(
+            "SELECT private FROM skill_repos WHERE owner = 'acme' AND name = 'skills'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read migrated repo");
+    assert_eq!(private, 0, "existing repos must stay public");
+}
+
+#[test]
+fn git_credentials_round_trip_and_deleting_clears_repo_references() {
+    use crate::services::git_credential::GitCredential;
+    use crate::services::skill::SkillRepo;
+
+    let db = Database::memory().expect("create memory db");
+
+    let work = GitCredential::new("c1", "github.com", "work", 100);
+    let home = GitCredential::new("c2", "github.com", "home", 200);
+    db.save_git_credential(&work).expect("save work");
+    db.save_git_credential(&home).expect("save home");
+
+    // 下拉框直接照名称顺序展示
+    let listed = db.list_git_credentials().expect("list");
+    assert_eq!(
+        listed.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        ["home", "work"]
+    );
+    assert_eq!(db.get_git_credential("c1").expect("get").unwrap(), work);
+    assert!(db.get_git_credential("missing").expect("get").is_none());
+
+    let repo = |name: &str| SkillRepo {
+        owner: "acme".to_string(),
+        name: name.to_string(),
+        branch: "main".to_string(),
+        enabled: true,
+        private: true,
+        credential_id: Some("c1".to_string()),
+    };
+    db.save_skill_repo(&repo("a")).expect("save repo a");
+    db.save_skill_repo(&repo("b")).expect("save repo b");
+
+    let affected = db.delete_git_credential("c1").expect("delete");
+    assert_eq!(
+        affected,
+        vec![
+            ("acme".to_string(), "a".to_string()),
+            ("acme".to_string(), "b".to_string())
+        ]
+    );
+
+    // 元数据没了，引用也清空了：仓库不能停在一个指向不存在凭据的状态
+    assert!(db.get_git_credential("c1").expect("get").is_none());
+    for name in ["a", "b"] {
+        let stored = db.get_skill_repo("acme", name).expect("get repo").unwrap();
+        assert!(
+            stored.credential_id.is_none(),
+            "repo {name} still references c1"
+        );
+        assert!(
+            stored.private,
+            "the private flag is the user's intent, not the credential"
+        );
+    }
+
+    // 删除不存在的凭据是可重复执行的
+    assert!(db
+        .delete_git_credential("c1")
+        .expect("delete again")
+        .is_empty());
+}
+
+#[test]
+fn schema_migration_brings_an_existing_database_to_the_current_version() {
+    // 存量安装的真实形状：库停在上一版，skill_repos 还没有这次改动引入的两列。
+    // 只把列加进 migrate_v0_to_v1 是不够的——那条路只在 user_version=0 时跑，
+    // 存量库永远补不上，`SELECT ... private` 会当场报 no such column。
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute("ALTER TABLE skill_repos DROP COLUMN private", [])
+        .expect("drop the column to mimic a pre-upgrade database");
+    for table in ["git_credentials", "skill_repo_credentials"] {
+        conn.execute(&format!("DROP TABLE {table}"), [])
+            .expect("drop the table to mimic a pre-upgrade database");
+    }
+    conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1)
+        .expect("pin the previous schema version");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    for (table, column) in [
+        ("skill_repos", "private"),
+        ("git_credentials", "name"),
+        ("skill_repo_credentials", "credential_id"),
+    ] {
+        assert!(
+            Database::has_column(&conn, table, column).expect("check column"),
+            "an existing database must gain {table}.{column}"
+        );
+    }
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+
+    // 迁移后的库要能真的被 DAO 读出来，而不是只有列存在
+    let db = Database::memory().expect("memory db");
+    db.save_skill_repo(&crate::services::skill::SkillRepo {
+        owner: "acme".to_string(),
+        name: "skills".to_string(),
+        branch: "main".to_string(),
+        enabled: true,
+        private: true,
+        credential_id: Some("c1".to_string()),
+    })
+    .expect("save repo");
+    assert_eq!(
+        db.get_skill_repo("acme", "skills")
+            .expect("get repo")
+            .expect("repo exists")
+            .credential_id
+            .as_deref(),
+        Some("c1")
+    );
+}
+
+#[test]
 fn schema_migration_sets_user_version_when_missing() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
@@ -234,6 +411,7 @@ fn schema_migration_adds_missing_columns_for_providers() {
         ("prompts", "updated_at"),
         ("skills", "installed_at"),
         ("skill_repos", "enabled"),
+        ("skill_repos", "private"),
     ] {
         assert!(
             Database::has_column(&conn, table, column).expect("check column"),
@@ -297,6 +475,16 @@ fn schema_migration_aligns_column_defaults_and_types() {
     assert_eq!(
         normalize_default(&skill_repo_enabled.default).as_deref(),
         Some("1")
+    );
+
+    // 存量仓库必须是公开：改动前只有匿名下载这一条路径，把旧行当成私有会让它们
+    // 在用户没配凭据时直接报 AUTH_REQUIRED，整个技能面板空掉。
+    let skill_repo_private = get_column_info(&conn, "skill_repos", "private");
+    assert_eq!(skill_repo_private.r#type, "BOOLEAN");
+    assert_eq!(skill_repo_private.notnull, 1);
+    assert_eq!(
+        normalize_default(&skill_repo_private.default).as_deref(),
+        Some("0")
     );
 }
 
