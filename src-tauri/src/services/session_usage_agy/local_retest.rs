@@ -19,6 +19,7 @@ fn local_snapshot_reader_and_sql_usage_are_consistent() {
         (0, 0, 0, 0, 0);
     let mut errors = Vec::new();
     let mut profiles = Vec::new();
+    let (mut legacy_file_calls, mut incomplete_edit_calls) = (0, 0);
     for name in [
         "antigravity-cli",
         "antigravity",
@@ -76,10 +77,46 @@ fn local_snapshot_reader_and_sql_usage_are_consistent() {
             };
             let mut call_ids = HashSet::new();
             for block in messages.iter().flat_map(|m| &m.blocks) {
-                if let SessionBlock::ToolCall { id, .. } = block {
+                if let SessionBlock::ToolCall {
+                    id,
+                    raw_name,
+                    title,
+                    diff,
+                    input_preview,
+                    input_full,
+                    ..
+                } = block
+                {
                     calls_count += 1;
                     if !call_ids.insert(id) {
                         errors.push(json!({"profile":name,"session":session,"category":"duplicate_call_ids"}));
+                    }
+                    if matches!(raw_name.as_str(), "read_file" | "write_file" | "edit_file") {
+                        legacy_file_calls += 1;
+                        if title.is_empty() || (raw_name != "read_file" && diff.is_none()) {
+                            errors.push(json!({"profile":name,"session":session,"category":"legacy_file_shape"}));
+                        }
+                    }
+                    if raw_name == "multi_replace_file_content" {
+                        let input = match input_full {
+                            Some(reference) => {
+                                resolve_content_ref(&source, reference).unwrap_or_default()
+                            }
+                            None => input_preview.clone(),
+                        };
+                        let args: Value = serde_json::from_str(&input).unwrap_or_default();
+                        let complete = args["edits"].as_array().is_some_and(|edits| {
+                            !edits.is_empty()
+                                && edits.iter().all(|edit| {
+                                    edit["old_string"].is_string() && edit["new_string"].is_string()
+                                })
+                        });
+                        if !complete {
+                            incomplete_edit_calls += 1;
+                            if diff.is_some() {
+                                errors.push(json!({"profile":name,"session":session,"category":"partial_diff_summary"}));
+                            }
+                        }
                     }
                 }
             }
@@ -141,7 +178,8 @@ fn local_snapshot_reader_and_sql_usage_are_consistent() {
         .unwrap();
     let report = json!({"files":files,"unique_sessions":sessions.len(),"messages":messages_count,
         "tool_calls":calls_count,"tool_results":results_count,"full_content_refs":refs_count,
-        "usage_rows":usage_rows,"unknown_models":unknown_models,"profiles":profiles,"errors":errors});
+        "usage_rows":usage_rows,"unknown_models":unknown_models,"profiles":profiles,"errors":errors,
+        "legacy_file_calls":legacy_file_calls,"incomplete_edit_calls":incomplete_edit_calls});
     fs::write(report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     eprintln!("local snapshot: {files} files, {messages_count} messages, {refs_count} full-content refs, {usage_rows} usage rows, {} errors",errors.len());
     assert!(files > 0, "snapshot must contain transcripts");
