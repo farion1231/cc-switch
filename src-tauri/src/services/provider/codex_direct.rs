@@ -703,6 +703,8 @@ pub(crate) fn plan(
     }
     if let Some(catalog) = &stack_catalog {
         let (model, effort) = crate::settings::codex_stack_subagent();
+        // 原生 slug 只对应官方默认那家：默认换成第三方后，同名的第三方模型不能顶替。
+        let model = model.filter(|m| m.starts_with("ccs-") || provider.is_some_and(is_official));
         nested.extend(stack_subagent_nested(
             catalog,
             model.as_deref(),

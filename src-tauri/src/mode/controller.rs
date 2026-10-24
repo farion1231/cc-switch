@@ -8281,7 +8281,14 @@ model_provider = "c"
         }
         let _fake = fake_models(vec![response], CodexKeychainLogin::Missing, None);
         let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
-        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
+        let mut rows = codex_official_stack_rows();
+        rows.push(codex_native(
+            "relay",
+            "https://relay.example/v1",
+            "",
+            Some(json!({ "models": [{ "model": "gpt-6-sol" }] })),
+        ));
+        let state = state_with(AppType::Codex, &rows, official).await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         set_codex_member(&state, "deepseek", true).await;
         // 官方默认供应商的原生模型可以显式指定给子代理，保留其目录能力。
@@ -8311,18 +8318,47 @@ model_provider = "c"
             .get("agents")
             .and_then(|a| a.get("default_subagent_model"))
             .is_none());
-        set_stack_subagent(None, None);
+        // 保留官方选择：新默认供应商即使发布同名原生 slug，也不能接替官方子代理。
+        set_stack_subagent(Some(&choice.id), Some(&effort));
         resync_codex_stack_catalog(&state)
             .await
-            .expect("follow main");
-        enter_with_route(&state, &AppType::Codex, true, Some("a"))
+            .expect("restore official subagent");
+        enter_with_route(&state, &AppType::Codex, true, Some("relay"))
             .await
             .expect("third-party route");
+        assert!(catalog_slugs().contains(&choice.id));
         assert!(stack_views(&state, &AppType::Codex)
             .unwrap()
             .subagent_models
             .iter()
             .all(|m| m.id.starts_with("ccs-")));
+        let doc = codex_doc();
+        for key in [
+            "default_subagent_model",
+            "default_subagent_reasoning_effort",
+        ] {
+            assert!(doc
+                .get("agents")
+                .and_then(|agents| agents.get(key))
+                .is_none());
+        }
+        assert_eq!(
+            crate::settings::codex_stack_subagent(),
+            (Some(choice.id.clone()), Some(effort.clone()))
+        );
+
+        // 回到官方默认供应商后，之前记住的选择重新生效。
+        enter_with_route(&state, &AppType::Codex, true, Some(official))
+            .await
+            .expect("official route again");
+        assert_eq!(
+            codex_doc()["agents"]["default_subagent_model"].as_str(),
+            Some(choice.id.as_str())
+        );
+        assert_eq!(
+            codex_doc()["agents"]["default_subagent_reasoning_effort"].as_str(),
+            Some(effort.as_str())
+        );
     }
 
     #[tokio::test]
