@@ -1,10 +1,12 @@
 //! Import WorkBuddy's per-request model usage from its project session logs.
 //!
-//! WorkBuddy（`~/.workbuddy`）把每个会话存成 `projects/<项目>/<uuid>.jsonl`
-//! 的明文 JSONL，OpenAI Responses 风格事件流。token 用量挂在
-//! `function_call` / `message` 事件的 `providerData.usage`（归一化 camelCase；
-//! 部分事件只有 `message.usage` 蛇形版本），一次 API 请求一条——带工具调用的
-//! 中间轮在 function_call 上，最终回答在 message 上。
+//! WorkBuddy 在本机可能双版本共存：国内版落在 `~/.workbuddy`，海外版
+//! (WorkBuddy AI) 落在 `~/.workbuddy-ai`，目录结构与会话格式完全一致，合并
+//! 统计到同一个 app 下。每个会话是 `projects/<项目>/<uuid>.jsonl` 的明文
+//! JSONL，OpenAI Responses 风格事件流。token 用量挂在 `function_call` /
+//! `message` 事件的 `providerData.usage`（归一化 camelCase；部分事件只有
+//! `message.usage` 蛇形版本），一次 API 请求一条——带工具调用的中间轮在
+//! function_call 上，最终回答在 message 上。
 //!
 //! 语义与 ZCode 一致：inputTokens 已含缓存读取（OpenAI prompt_tokens 风格），
 //! cache read 从 inputTokensDetails 拆出，cache creation 单独上报；输出里的
@@ -28,36 +30,48 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-fn projects_root() -> PathBuf {
-    std::env::var_os("WORKBUDDY_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| get_home_dir().join(".workbuddy"))
-        .join("projects")
+/// 双版本的会话根目录：国内版 `~/.workbuddy`、海外版 `~/.workbuddy-ai`。
+/// 哪个不存在就空转哪个，互不影响。
+fn default_project_roots() -> Vec<PathBuf> {
+    let home = get_home_dir();
+    vec![
+        home.join(".workbuddy").join("projects"),
+        home.join(".workbuddy-ai").join("projects"),
+    ]
 }
 
 pub fn sync_workbuddy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_from_root(db, &projects_root())
+    // 测试/验证用的单根覆盖：指向哪个安装就只扫哪个
+    let roots = match std::env::var_os("WORKBUDDY_HOME") {
+        Some(home) if !home.is_empty() => vec![PathBuf::from(home).join("projects")],
+        _ => default_project_roots(),
+    };
+    sync_from_roots(db, &roots)
 }
 
-pub(super) fn sync_from_root(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
+pub(super) fn sync_from_roots(
+    db: &Database,
+    roots: &[PathBuf],
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     let cursors = load_sync_cursors(db)?;
     let mut conn = crate::database::lock_conn!(db.conn);
     let tx = conn.transaction()?;
-    let Ok(projects) = fs::read_dir(root) else {
-        return Ok(result);
-    };
-    for project in projects.flatten() {
-        let Ok(sessions) = fs::read_dir(project.path()) else {
+    for root in roots {
+        let Ok(projects) = fs::read_dir(root) else {
             continue;
         };
-        for session in sessions.flatten() {
-            let path = session.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        for project in projects.flatten() {
+            let Ok(sessions) = fs::read_dir(project.path()) else {
                 continue;
+            };
+            for session in sessions.flatten() {
+                let path = session.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                sync_session_file(&tx, &path, &cursors, &mut result)?;
             }
-            sync_session_file(&tx, &path, &cursors, &mut result)?;
         }
     }
     tx.commit()?;
@@ -283,7 +297,7 @@ mod tests {
             let conn = db.conn.lock().unwrap();
             conn.execute("DELETE FROM model_pricing", []).unwrap();
         }
-        let result = sync_from_root(&db, &root).unwrap();
+        let result = sync_from_roots(&db, &[root.clone()]).unwrap();
         assert_eq!(result.imported, 1);
         {
             let conn = db.conn.lock().unwrap();
@@ -329,7 +343,7 @@ mod tests {
             assert_eq!(fresh, 39590 - 4096);
         }
         // mtime 未变：整文件跳过
-        assert_eq!(sync_from_root(&db, &root).unwrap().imported, 0);
+        assert_eq!(sync_from_roots(&db, &[root.clone()]).unwrap().imported, 0);
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -354,7 +368,7 @@ mod tests {
             })],
         );
         let db = Database::memory().unwrap();
-        assert_eq!(sync_from_root(&db, &root).unwrap().imported, 1);
+        assert_eq!(sync_from_roots(&db, &[root.clone()]).unwrap().imported, 1);
         let conn = db.conn.lock().unwrap();
         let row = conn
             .query_row(
@@ -380,7 +394,7 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         write_project(&root, "sess-3", &[call(1, "c1", "hy3", 10, 10, 0)]);
         let db = Database::memory().unwrap();
-        assert_eq!(sync_from_root(&db, &root).unwrap().imported, 1);
+        assert_eq!(sync_from_roots(&db, &[root.clone()]).unwrap().imported, 1);
         // 模拟 rollup 剪明细 + 会话继续追加
         {
             let conn = db.conn.lock().unwrap();
@@ -395,7 +409,7 @@ mod tests {
                 call(2, "c2", "hy3", 20, 20, 0),
             ],
         );
-        let result = sync_from_root(&db, &root).unwrap();
+        let result = sync_from_roots(&db, &[root.clone()]).unwrap();
         assert_eq!(result.imported, 1, "只应导入新增行，被剪旧行不得重导");
         {
             let conn = db.conn.lock().unwrap();
@@ -411,6 +425,41 @@ mod tests {
             assert_eq!(inputs, vec![20]);
         }
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workbuddy_usage_merges_both_installs_and_skips_missing_root() {
+        // 国内版与海外版两个安装根合并统计；不存在的根直接跳过
+        let cn = std::env::temp_dir().join(format!("wb-cn-{}", std::process::id()));
+        let overseas = std::env::temp_dir().join(format!("wb-ai-{}", std::process::id()));
+        let missing = std::env::temp_dir().join(format!("wb-none-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&cn);
+        let _ = fs::remove_dir_all(&overseas);
+        let _ = fs::remove_dir_all(&missing);
+        write_project(&cn, "cn-sess", &[call(1, "cn-1", "hy3", 11, 11, 0)]);
+        write_project(
+            &overseas,
+            "ai-sess",
+            &[call(1, "ai-1", "deepseek-v4.1-flash", 22, 22, 0)],
+        );
+        let db = Database::memory().unwrap();
+        let result = sync_from_roots(&db, &[cn.clone(), missing, overseas.clone()]).unwrap();
+        assert_eq!(result.imported, 2);
+        {
+            let conn = db.conn.lock().unwrap();
+            let rows: Vec<String> = {
+                let mut stmt = conn
+                    .prepare("SELECT model FROM proxy_request_logs WHERE app_type='workbuddy' ORDER BY model")
+                    .unwrap();
+                stmt.query_map([], |r| r.get(0))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            };
+            assert_eq!(rows, ["deepseek-v4.1-flash", "hy3"]);
+        }
+        let _ = fs::remove_dir_all(&cn);
+        let _ = fs::remove_dir_all(&overseas);
     }
 }
 
