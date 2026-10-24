@@ -75,6 +75,8 @@ interface ProviderListProps {
   appId: AppId;
   /** 直连切换 / 共存式的添加 / Pi 的启用 / Claude Desktop 的切换 */
   onSwitch: (provider: Provider) => void;
+  onSwitchAndRestart?: (provider: Provider) => void;
+  desktopRunning?: boolean;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
@@ -105,6 +107,8 @@ export function ProviderList({
   currentProviderId,
   appId,
   onSwitch,
+  onSwitchAndRestart,
+  desktopRunning = true,
   onEdit,
   onDelete,
   onRemoveFromConfig,
@@ -331,6 +335,9 @@ export function ProviderList({
         t,
         providers: filteredProviders,
         queue: switchMode.queue.filter((id) => known.has(id)),
+        desktopAction: onSwitchAndRestart
+          ? { running: desktopRunning, onSelect: onSwitchAndRestart }
+          : undefined,
       });
     }
     if (appId === "agy") {
@@ -395,6 +402,8 @@ export function ProviderList({
     });
   }, [
     switchMode,
+    onSwitchAndRestart,
+    desktopRunning,
     appId,
     t,
     sortedProviders,

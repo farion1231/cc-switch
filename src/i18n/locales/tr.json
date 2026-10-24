@@ -4793,6 +4793,22 @@
       "refreshAria": "{{login}} için kotayı yenileyin"
     }
   },
+  "codexDesktop": {
+    "open": "Codex'i aç",
+    "opening": "Açılıyor...",
+    "openHint": "Yüklü Codex masaüstü uygulamasını açın.",
+    "opened": "Codex masaüstü uygulaması açıldı.",
+    "switchAndOpen": "Geçiş yap ve Codex'i aç",
+    "switchedAndOpened": "Hesap değiştirildi ve Codex masaüstü uygulaması açıldı.",
+    "restart": "Codex'i yeniden başlat",
+    "restarting": "Yeniden başlatılıyor...",
+    "restartHint": "Masaüstü uygulamasını kapatıp yeniden açın. Çalışan görevler kesilecektir.",
+    "restarted": "Codex masaüstü uygulaması yeniden açıldı.",
+    "failed": "Codex masaüstü uygulaması açılamadı veya yeniden başlatılamadı: {{error}}",
+    "switchAndRestart": "Geçiş yap ve Codex'i yeniden başlat",
+    "switchedAndRestarted": "Hesap değiştirildi ve Codex masaüstü uygulaması yeniden açıldı.",
+    "switchRestartFailed": "Hesap değiştirildi, ancak Codex masaüstü uygulaması açılamadı veya yeniden başlatılamadı: {{error}}"
+  },
   "kimi": {
     "oauth": {
       "useAccount": "Bu hesabı kullan",

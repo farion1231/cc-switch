@@ -4924,6 +4924,22 @@
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
     }
   },
+  "codexDesktop": {
+    "open": "打开 Codex",
+    "opening": "正在打开...",
+    "openHint": "打开已安装的 Codex 桌面应用。",
+    "opened": "Codex 桌面应用已打开。",
+    "switchAndOpen": "切换并打开 Codex",
+    "switchedAndOpened": "账号已切换，Codex 桌面应用已打开。",
+    "restart": "重启 Codex",
+    "restarting": "正在重启…",
+    "restartHint": "关闭并重新打开桌面应用，会中断正在运行的任务。",
+    "restarted": "Codex 桌面应用已重新打开。",
+    "failed": "Codex 桌面应用打开或重启失败：{{error}}",
+    "switchAndRestart": "切换并重启 Codex",
+    "switchedAndRestarted": "账号已切换，Codex 桌面应用已重新打开。",
+    "switchRestartFailed": "账号已切换，但 Codex 桌面应用打开或重启失败：{{error}}"
+  },
   "kimi": {
     "oauth": {
       "useAccount": "使用此账号",
