@@ -4,6 +4,7 @@ import "@testing-library/jest-dom";
 import type { ComponentProps } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SettingsPage } from "@/components/settings/SettingsPage";
+import { AppearanceProvider } from "@/components/appearance-provider";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -170,7 +171,9 @@ const renderSettingsPage = (
   };
   const view = render(
     <QueryClientProvider client={client}>
-      <SettingsPage {...allProps} />
+      <AppearanceProvider>
+        <SettingsPage {...allProps} />
+      </AppearanceProvider>
     </QueryClientProvider>,
   );
   return {
@@ -179,7 +182,9 @@ const renderSettingsPage = (
     rerenderWith: (next: Partial<ComponentProps<typeof SettingsPage>>) =>
       view.rerender(
         <QueryClientProvider client={client}>
-          <SettingsPage {...allProps} {...next} />
+          <AppearanceProvider>
+            <SettingsPage {...allProps} {...next} />
+          </AppearanceProvider>
         </QueryClientProvider>,
       ),
   };
@@ -187,6 +192,7 @@ const renderSettingsPage = (
 
 describe("SettingsPage", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     tMock.mockImplementation((key: string) => key);
     settingsMock = createSettingsMock();
     importExportMock = createImportExportMock();
@@ -218,6 +224,35 @@ describe("SettingsPage", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("global-proxy-settings")).toBeInTheDocument();
+  });
+
+  it("restores 50% page zoom after remounting the provider", async () => {
+    const view = renderSettingsPage();
+    const clickZoomOut = () =>
+      fireEvent.click(screen.getByRole("button", { name: "settings.zoomOut" }));
+
+    clickZoomOut();
+    clickZoomOut();
+    clickZoomOut();
+
+    await waitFor(() => {
+      expect(screen.getByText("50%")).toBeInTheDocument();
+      expect(
+        JSON.parse(
+          window.localStorage.getItem("cc-switch-appearance") ?? "{}",
+        ).pageZoom,
+      ).toBe(0.5);
+    });
+
+    view.unmount();
+    renderSettingsPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("50%")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.zoomIn" }));
+    expect(screen.getByText("60%")).toBeInTheDocument();
   });
 
   it("saves general switches immediately and links to the Apps page", async () => {
