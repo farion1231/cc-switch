@@ -185,11 +185,11 @@ export function AppsPage() {
     staleTime: 30_000,
   });
 
-  // 按「已安装 / 未安装」分两组。Claude Desktop 探不到是否安装，按有没有接入 CC Switch 分。
+  // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
   const rowInstalled = (row: Row): boolean | null => {
     if (row.kind === "desktop") {
-      return isDesktopStatusPending ? null : Boolean(desktopStatus?.configured);
+      return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
     }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;

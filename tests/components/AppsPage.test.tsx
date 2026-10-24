@@ -43,12 +43,13 @@ const mocks = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
+  desktopStatus: { supported: true, installed: true, configured: true },
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
-    getClaudeDesktopStatus: async () => ({ supported: true, configured: true }),
+    getClaudeDesktopStatus: async () => mocks.desktopStatus,
   },
 }));
 vi.mock("@/hooks/useSettings", () => ({
@@ -234,6 +235,11 @@ describe("AppsPage concurrent CLI upgrades", () => {
     missing.clear();
     mocks.settings = {};
     mocks.dragEndHandlers = [];
+    mocks.desktopStatus = {
+      supported: true,
+      installed: true,
+      configured: true,
+    };
     mocks.updateSettings.mockReset();
     mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
     mocks.copyText.mockReset().mockResolvedValue(undefined);
@@ -659,6 +665,29 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(installed.queryByText("Codex")).toBeNull();
     expect(notInstalled.getByText("Codex")).toBeInTheDocument();
     expect(notInstalled.queryByText("Claude Code")).toBeNull();
+  });
+
+  it("groups Claude Desktop by whether it is installed, not whether it is connected", async () => {
+    mocks.desktopStatus = {
+      supported: true,
+      installed: true,
+      configured: false,
+    };
+    await renderApps();
+    expect(rowApps("appsPage.sectionInstalled")).toContain("claude-desktop");
+    expect(
+      card("Claude Desktop").getByText("appsPage.desktopNotConnected"),
+    ).toBeInTheDocument();
+  });
+
+  it("puts Claude Desktop under not installed when it is not on this machine", async () => {
+    mocks.desktopStatus = {
+      supported: true,
+      installed: false,
+      configured: false,
+    };
+    await renderApps();
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["claude-desktop"]);
   });
 
   it("orders rows by the saved app order within each section", async () => {
