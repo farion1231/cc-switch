@@ -5016,7 +5016,8 @@
       "manualEdit": "This YAML uses a layout or construct CC Switch cannot safely edit. Edit models.yml by hand.",
       "duplicateProvider": "This Oh My Pi provider key already exists.",
       "renameProvider": "Oh My Pi provider keys cannot be renamed.",
-      "providerMissing": "This Oh My Pi provider is no longer saved."
+      "providerMissing": "This Oh My Pi provider is no longer saved.",
+      "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
     }
   }
 }

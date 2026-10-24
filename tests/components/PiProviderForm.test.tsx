@@ -862,6 +862,41 @@ describe("PiProviderForm", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("drops injectV1 when omp discovery leaves openai-models-list", async () => {
+    const user = userEvent.setup();
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save omp provider"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+        initialData={{
+          name: "gateway",
+          settingsConfig: {
+            baseUrl: "https://gateway.example.com/v3/compat",
+            api: "openai-completions",
+            discovery: {
+              type: "openai-models-list",
+              injectV1: false,
+              timeoutMs: 500,
+            },
+          },
+        }}
+      />,
+    );
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+
+    // omp 只允许 openai-models-list 带 injectV1，其余子键照旧保留
+    await user.click(document.querySelector("#omp-discovery-type")!);
+    await user.click(await screen.findByRole("option", { name: "ollama" }));
+    expect(JSON.parse(configEditor.value).discovery).toEqual({
+      type: "ollama",
+      timeoutMs: 500,
+    });
+  });
+
   it("writes omp presets without Pi-only fields and edits discovery", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);

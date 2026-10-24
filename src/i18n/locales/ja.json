@@ -5016,7 +5016,8 @@
       "manualEdit": "この YAML の構造は CC Switch で安全に編集できません。models.yml を手動で編集してください。",
       "duplicateProvider": "この Oh My Pi プロバイダキーは既に存在します。",
       "renameProvider": "Oh My Pi プロバイダキーは変更できません。",
-      "providerMissing": "この Oh My Pi プロバイダは保存済みリストにありません。"
+      "providerMissing": "この Oh My Pi プロバイダは保存済みリストにありません。",
+      "legacyModelsJson": "Oh My Pi にはまだ旧形式の models.json があり、omp は次回起動時にこれを models.yml へ移行します。omp を一度起動してから、もう一度プロバイダを追加してください。"
     }
   }
 }

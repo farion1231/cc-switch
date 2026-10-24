@@ -1215,13 +1215,17 @@ export function PiProviderForm({
   );
 
   // discovery 不受表单控制（在 passthrough 里），这里只改它的 type，其余子键原样保留。
+  // 例外是 injectV1：omp 只允许它出现在 openai-models-list 上，留着会让整份 models.yml 失效。
   const ompDiscoveryType = optionalText(
     asObject(providerPassthrough.discovery).type,
   );
   const handleOmpDiscoveryChange = useCallback(
     (value: string) => {
       const next = { ...providerPassthrough };
-      const { type: _previous, ...extra } = asObject(next.discovery);
+      const { type: _previous, injectV1, ...extra } = asObject(next.discovery);
+      if (value === "openai-models-list" && injectV1 !== undefined) {
+        extra.injectV1 = injectV1;
+      }
       if (value === OMP_DISCOVERY_OFF) delete next.discovery;
       else next.discovery = { type: value, ...extra };
       const applied = updateSettingsConfig((config) => {

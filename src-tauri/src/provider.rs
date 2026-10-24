@@ -257,10 +257,11 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
-            // Oh My Pi custom providers use the models.yml
+            // Oh My Pi custom providers use the models.yml field names. omp reads `apiKey` as
+            // an environment variable name first, so resolve it before sending.
             AppType::Omp => (
                 crate::omp_config::provider_base_url(settings).unwrap_or_default(),
-                str_at(settings.get("apiKey")),
+                crate::omp_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
         };
 

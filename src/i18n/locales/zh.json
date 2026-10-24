@@ -5016,7 +5016,8 @@
       "manualEdit": "此 YAML 使用了 CC Switch 无法安全编辑的格式或语法，请手动编辑 models.yml。",
       "duplicateProvider": "此 Oh My Pi 供应商标识已存在。",
       "renameProvider": "Oh My Pi 供应商标识不能重命名。",
-      "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。"
+      "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。",
+      "legacyModelsJson": "Oh My Pi 目录里还是旧的 models.json，omp 会在下次启动时把它迁移成 models.yml。请先运行一次 omp，再回来添加供应商。"
     }
   }
 }
