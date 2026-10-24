@@ -20,6 +20,10 @@ use std::{
     path::Path,
 };
 
+/// A journal larger than this belongs to no live agent and is skipped rather than read line
+/// by line. Mirrors the Pi reader's ceiling.
+const MAX_WIRE_BYTES: u64 = 128 * 1024 * 1024;
+
 pub fn sync_kimi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     sync_sessions(db, &crate::kimi_config::data_dir().join("sessions"))
 }
@@ -43,28 +47,39 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
             }
             // One wire journal per agent: agents/main for the main agent, one
             // agents/agent-N per sub-agent instance. Both belong to the same session.
-            let Ok(agents) = fs::read_dir(session.path().join("agents")) else {
-                continue;
+            let agents = match fs::read_dir(session.path().join("agents")) {
+                Ok(entries) => entries,
+                // Sessions that have not written a journal yet have no agents directory.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    result.errors.push(format!(
+                        "Kimi Code session {}: {error}",
+                        session.path().display()
+                    ));
+                    continue;
+                }
             };
             let name = session.file_name();
             let session_name = name.to_string_lossy();
             for agent in agents.flatten() {
-                let path = agent.path().join("wire.jsonl");
-                if !path.is_file() {
-                    continue;
-                }
                 let agent_name = agent.file_name();
                 let agent_id = agent_name.to_string_lossy();
-                let modified = fs::metadata(&path)
-                    .map(|meta| metadata_modified_nanos(&meta))
-                    .unwrap_or(0);
+                // `agents/` also holds task state and artefacts; journals are main and agent-N.
+                if agent_id != MAIN_AGENT && !agent_id.starts_with("agent-") {
+                    continue;
+                }
+                let path = agent.path().join("wire.jsonl");
+                // Never follow a symlink out of the session, and skip oversized files.
+                let Ok(meta) = fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if !meta.file_type().is_file() || meta.len() > MAX_WIRE_BYTES {
+                    continue;
+                }
+                let modified = metadata_modified_nanos(&meta);
                 let key = format!("kimi:{}", path.to_string_lossy());
                 if cursors.get(&key).is_some_and(|cursor| {
-                    cursor.last_modified == modified
-                        && cursor.last_line_offset
-                            == fs::metadata(&path)
-                                .map(|meta| meta.len() as i64)
-                                .unwrap_or(-1)
+                    cursor.last_modified == modified && cursor.last_line_offset == meta.len() as i64
                 }) {
                     continue;
                 }
@@ -373,7 +388,8 @@ mod tests {
         let mut stmt = conn
             .prepare(
                 "SELECT request_id, session_id, model, output_tokens FROM proxy_request_logs
-                 WHERE app_type = 'kimi' ORDER BY created_at",
+                 WHERE app_type = 'kimi' AND data_source = 'kimi_session'
+                 ORDER BY created_at, request_id",
             )
             .unwrap();
         let rows = stmt
@@ -777,6 +793,88 @@ mod tests {
     }
 
     #[test]
+    fn non_agent_directories_are_not_imported() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_records(
+            &agent_wire(dir.path(), MAIN_AGENT),
+            &request(
+                MAIN_AGENT,
+                "main",
+                "main-model",
+                1_700_000_000_000,
+                1_000,
+                1_000,
+                100,
+            ),
+        );
+        // Scratch directories may hold a journal-shaped file; only main and agent-N are agents.
+        write_records(
+            &dir.path().join("ws/session-1/agents/scratch/wire.jsonl"),
+            &request(
+                "scratch",
+                "scratch",
+                "scratch-model",
+                1_700_000_100_000,
+                1_000,
+                1_000,
+                900,
+            ),
+        );
+
+        let result = sync_sessions(&db, dir.path()).unwrap();
+        assert_eq!((result.imported, result.files_scanned), (1, 1));
+        assert_eq!(imported_rows(&db).len(), 1);
+    }
+
+    #[test]
+    fn unreadable_agents_directory_is_reported() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("ws/session-1");
+        fs::create_dir_all(&session).unwrap();
+        // A file where the agents directory belongs cannot be listed.
+        fs::write(session.join("agents"), "not a directory").unwrap();
+
+        let result = sync_sessions(&db, dir.path()).unwrap();
+        assert_eq!(result.imported, 0);
+        assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+        assert!(
+            result.errors[0].contains("session-1"),
+            "{:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn oversized_journals_are_skipped() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_records(
+            &agent_wire(dir.path(), MAIN_AGENT),
+            &request(
+                MAIN_AGENT,
+                "main",
+                "main-model",
+                1_700_000_000_000,
+                1_000,
+                1_000,
+                100,
+            ),
+        );
+        // No live agent writes a journal this large; it is skipped without being read.
+        let huge = agent_wire(dir.path(), "agent-1");
+        fs::create_dir_all(huge.parent().unwrap()).unwrap();
+        let file = fs::File::create(&huge).unwrap();
+        file.set_len(MAX_WIRE_BYTES + 1).unwrap();
+        drop(file);
+
+        let result = sync_sessions(&db, dir.path()).unwrap();
+        assert_eq!((result.imported, result.files_scanned), (1, 1));
+        assert_eq!(imported_rows(&db).len(), 1);
+    }
+
+    #[test]
     fn session_total_sums_main_and_subagent_usage() {
         let db = Database::memory().unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -808,7 +906,8 @@ mod tests {
             .unwrap()
             .query_row(
                 "SELECT SUM(input_tokens), SUM(output_tokens) FROM proxy_request_logs
-                 WHERE session_id = 'session-1'",
+                 WHERE session_id = 'session-1' AND app_type = 'kimi'
+                 AND data_source = 'kimi_session'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
