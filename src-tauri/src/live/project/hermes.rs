@@ -73,6 +73,7 @@ pub enum RoleTarget {
 }
 
 impl RoleTarget {
+    #[cfg_attr(not(test), allow(dead_code))] // 测试使用；lib 内无调用点
     fn mapping(&self) -> Option<&RoleMapping> {
         match self {
             RoleTarget::Route { mapping } => Some(mapping),

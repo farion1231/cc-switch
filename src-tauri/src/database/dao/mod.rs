@@ -3,6 +3,7 @@
 //! Database access operations for each domain
 
 pub mod custom_icons;
+pub mod endpoints;
 pub mod failover;
 pub mod mcp;
 pub mod profiles;

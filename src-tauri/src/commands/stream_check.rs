@@ -104,6 +104,8 @@ mod tests {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         };
         assert!(is_copilot_provider(&typed_provider));
 
@@ -124,6 +126,8 @@ mod tests {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         };
         assert!(is_copilot_provider(&url_provider));
     }
@@ -147,6 +151,8 @@ mod tests {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         };
 
         assert!(is_copilot_provider(&provider));

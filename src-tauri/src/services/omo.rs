@@ -562,6 +562,8 @@ impl OmoService {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         };
 
         state.db.save_provider("opencode", &provider)?;

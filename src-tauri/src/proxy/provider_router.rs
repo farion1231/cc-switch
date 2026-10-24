@@ -234,7 +234,6 @@ impl ProviderRouter {
     ///
     /// 注意：Gemini 的模型名在选号时刻尚未从 URI 解析（`with_model_from_uri`
     /// 在 ctx 创建之后），模型级并发覆盖对 Gemini 不生效，账号默认上限仍生效。
-
     #[cfg_attr(not(test), allow(dead_code))] // 测试与后续状态 UI 使用；生产走 _with_current 变体
     pub async fn select_providers_for_session(
         &self,

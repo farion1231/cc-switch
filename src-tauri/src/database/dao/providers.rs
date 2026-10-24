@@ -16,6 +16,16 @@ type OmoProviderRow = (
     String,
 );
 
+/// tier_mappings 序列化为可空 JSON 字符串（NULL 列，serde 侧 None 等价）
+fn tier_mappings_to_json(provider: &Provider) -> Result<Option<String>, AppError> {
+    provider
+        .tier_mappings
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| AppError::Database(format!("Failed to serialize tier_mappings: {e}")))
+}
+
 impl Database {
     /// Detach Codex providers bound to these deleted local accounts, atomically.
     /// Only this device's account IDs are passed in: provider rows sync across
@@ -109,7 +119,7 @@ impl Database {
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue, endpoint_ref, tier_mappings
              FROM providers WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
@@ -128,10 +138,15 @@ impl Database {
                 let icon_color: Option<String> = row.get(9)?;
                 let meta_str: String = row.get(10)?;
                 let in_failover_queue: bool = row.get(11)?;
+                let endpoint_ref: Option<String> = row.get(12)?;
+                let tier_mappings_str: Option<String> = row.get(13)?;
 
                 let settings_config =
                     serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
+                let tier_mappings: Option<crate::provider::TierMappings> = tier_mappings_str
+                    .filter(|s| !s.is_empty())
+                    .and_then(|s| serde_json::from_str(&s).ok());
 
                 Ok((
                     id,
@@ -148,6 +163,8 @@ impl Database {
                         icon,
                         icon_color,
                         in_failover_queue,
+                        endpoint_ref,
+                        tier_mappings,
                     },
                 ))
             })
@@ -220,7 +237,7 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue, endpoint_ref, tier_mappings
              FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
             |row| {
@@ -235,6 +252,11 @@ impl Database {
                 let icon_color: Option<String> = row.get(8)?;
                 let meta_str: String = row.get(9)?;
                 let in_failover_queue: bool = row.get(10)?;
+                let endpoint_ref: Option<String> = row.get(11)?;
+                let tier_mappings: Option<crate::provider::TierMappings> = row
+                    .get::<_, Option<String>>(12)?
+                    .filter(|s| !s.is_empty())
+                    .and_then(|s| serde_json::from_str(&s).ok());
 
                 let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
@@ -252,6 +274,8 @@ impl Database {
                     icon,
                     icon_color,
                     in_failover_queue,
+                    endpoint_ref,
+                    tier_mappings,
                 })
             },
         );
@@ -283,6 +307,7 @@ impl Database {
         let is_update = existing.is_some();
         let (is_current, in_failover_queue) =
             existing.unwrap_or((false, provider.in_failover_queue));
+        let tier_mappings_json = tier_mappings_to_json(provider)?;
 
         if is_update {
             tx.execute(
@@ -298,7 +323,9 @@ impl Database {
                     icon_color = ?9,
                     meta = ?10,
                     is_current = ?11,
-                    in_failover_queue = ?12
+                    in_failover_queue = ?12,
+                    endpoint_ref = ?15,
+                    tier_mappings = ?16
                 WHERE id = ?13 AND app_type = ?14",
                 params![
                     provider.name,
@@ -319,6 +346,8 @@ impl Database {
                     in_failover_queue,
                     provider.id,
                     app_type,
+                    provider.endpoint_ref,
+                    tier_mappings_json,
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -326,8 +355,9 @@ impl Database {
             tx.execute(
                 "INSERT INTO providers (
                     id, app_type, name, settings_config, website_url, category,
-                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue,
+                    endpoint_ref, tier_mappings
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 params![
                     provider.id,
                     app_type,
@@ -345,6 +375,8 @@ impl Database {
                         .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
                     is_current,
                     in_failover_queue,
+                    provider.endpoint_ref,
+                    tier_mappings_json,
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -417,8 +449,8 @@ impl Database {
             "INSERT INTO providers (
                 id, app_type, name, settings_config, website_url, category,
                 created_at, sort_index, notes, icon, icon_color, meta,
-                is_current, in_failover_queue
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                is_current, in_failover_queue, endpoint_ref, tier_mappings
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 provider.id,
                 app_type,
@@ -438,6 +470,8 @@ impl Database {
                 })?,
                 is_current,
                 in_failover_queue,
+                provider.endpoint_ref,
+                tier_mappings_to_json(provider)?,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -684,6 +718,8 @@ impl Database {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         }))
     }
 

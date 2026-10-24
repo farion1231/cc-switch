@@ -6,6 +6,7 @@ use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
 use rusqlite::{params, Connection};
 use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Serialize)]
 struct LegacySkillMigrationRow {
@@ -436,6 +437,29 @@ impl Database {
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
 
+        // 端点引用化（v25）：全局端点表 + 条目引用列（幂等；数据迁移见 migrate_v24_to_v25）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS endpoints (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                category TEXT,
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL DEFAULT '',
+                auth_binding TEXT,
+                website_url TEXT,
+                icon TEXT,
+                icon_color TEXT,
+                notes TEXT,
+                meta TEXT,
+                created_at INTEGER,
+                sort_index INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::add_column_if_missing(conn, "providers", "endpoint_ref", "TEXT")?;
+        Self::add_column_if_missing(conn, "providers", "tier_mappings", "TEXT")?;
+
         // 删除旧的 failover_queue 表（如果存在）
         let _ = conn.execute("DROP INDEX IF EXISTS idx_failover_queue_order", []);
         let _ = conn.execute("DROP TABLE IF EXISTS failover_queue", []);
@@ -627,6 +651,11 @@ impl Database {
                         log::info!("迁移数据库从 v23 到 v24（Hermes 按 profile 独立代理配置行）");
                         Self::migrate_v23_to_v24(conn)?;
                         Self::set_user_version(conn, 24)?;
+                    }
+                    24 => {
+                        log::info!("迁移数据库从 v24 到 v25（端点引用化：Universal 并入 + 存量条目保守归并）");
+                        Self::migrate_v24_to_v25(conn)?;
+                        Self::set_user_version(conn, 25)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1933,6 +1962,197 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("ALTER TABLE proxy_config_v24 RENAME TO proxy_config", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// v24 -> v25 迁移：端点引用化（表与列由 ensure 段幂等创建，此处只做数据迁移）。
+    ///
+    /// 1. UniversalProvider 全量并入 endpoints（id 保留，凭据/图标/备注随行）；
+    ///    settings blob 不删——universal 面板（P4 退役）期间双轨，endpoints 为新写入侧
+    /// 2. universal 子条目按 id 约定（universal-{app}-{uid}）直接指回该端点
+    /// 3. 其余存量条目按 (base_url, api_key) 完全一致保守归并（保守线：全等才并，
+    ///    同站不同账号不并；识别不到凭据形态的条目 endpoint_ref 留 NULL，行为不变）
+    fn migrate_v24_to_v25(conn: &Connection) -> Result<(), AppError> {
+        use crate::provider::{extract_connection, UniversalProvider};
+
+        // 自建依赖（迁移路径独立于 ensure 段调用；幂等）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS endpoints (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                category TEXT,
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL DEFAULT '',
+                auth_binding TEXT,
+                website_url TEXT,
+                icon TEXT,
+                icon_color TEXT,
+                notes TEXT,
+                meta TEXT,
+                created_at INTEGER,
+                sort_index INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        // 合成的旧版本测试库可能没有 providers 表（只建当版本涉及的表）——
+        // 无条目可归并，端点层为空集即正确终态
+        if !Self::table_exists(conn, "providers")? {
+            return Ok(());
+        }
+        Self::add_column_if_missing(conn, "providers", "endpoint_ref", "TEXT")?;
+        Self::add_column_if_missing(conn, "providers", "tier_mappings", "TEXT")?;
+
+        // ---- 1. Universal 并入 ----
+        let universal_blob: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'universal_providers'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        let mut universal_ids: Vec<String> = Vec::new();
+        if let Some(blob) = universal_blob {
+            match serde_json::from_str::<HashMap<String, UniversalProvider>>(&blob) {
+                Ok(universals) => {
+                    for (id, u) in &universals {
+                        let auth_binding = u
+                            .meta
+                            .as_ref()
+                            .and_then(|m| m.auth_binding.as_ref())
+                            .map(|b| serde_json::to_string(b).unwrap_or_default());
+                        conn.execute(
+                            "INSERT OR IGNORE INTO endpoints
+                             (id, name, category, base_url, api_key, auth_binding,
+                              website_url, icon, icon_color, notes, meta, created_at, sort_index)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                            rusqlite::params![
+                                id,
+                                u.name,
+                                u.provider_type,
+                                u.base_url.trim_end_matches('/'),
+                                u.api_key,
+                                auth_binding,
+                                u.website_url,
+                                u.icon,
+                                u.icon_color,
+                                u.notes,
+                                serde_json::to_string(&u.models).unwrap_or_default(),
+                                u.created_at,
+                                u.sort_index,
+                            ],
+                        )
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                        universal_ids.push(id.clone());
+                    }
+                }
+                Err(e) => {
+                    // blob 损坏不阻塞迁移：universal 面板继续读原 blob，端点层少一批种子
+                    log::warn!("[migrate_v25] universal_providers 数据解析失败，跳过并入: {e}");
+                }
+            }
+        }
+
+        // ---- 2. universal 子条目按 id 约定指回 ----
+        for uid in &universal_ids {
+            for app in ["claude", "codex", "gemini"] {
+                conn.execute(
+                    "UPDATE providers SET endpoint_ref = ?1
+                     WHERE id = ?2 AND app_type = ?3 AND endpoint_ref IS NULL",
+                    rusqlite::params![uid, format!("universal-{app}-{uid}"), app],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+
+        // ---- 3. 存量条目保守归并 ----
+        // 已有端点按归一化连接建索引（universal 端点优先命中，不重复建）
+        let mut by_connection: HashMap<(String, String), String> = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare("SELECT id, base_url, api_key FROM endpoints")
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            for row in rows {
+                let (id, base_url, api_key) = row.map_err(|e| AppError::Database(e.to_string()))?;
+                by_connection.insert((base_url.trim_end_matches('/').to_string(), api_key), id);
+            }
+        }
+
+        struct Row {
+            id: String,
+            app_type: String,
+            name: String,
+            settings: serde_json::Value,
+        }
+        let mut rows: Vec<Row> = Vec::new();
+        {
+            // 只引用最初 schema 就有的列（id/app_type/name/settings_config）——
+            // 合成的旧版本库（如 v4 测试）providers 可能没有 category/icon 列
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, app_type, name, settings_config
+                     FROM providers WHERE endpoint_ref IS NULL ORDER BY app_type, id",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let mapped = stmt
+                .query_map([], |row| {
+                    // settings_config 容忍非 TEXT 存储（备份往返测试会塞 BLOB）：
+                    // 读不出来视为不可解析，该条目跳过归并、endpoint_ref 留 NULL
+                    let settings = match row.get_ref(3)? {
+                        rusqlite::types::ValueRef::Text(text) => {
+                            serde_json::from_slice(text).unwrap_or(serde_json::Value::Null)
+                        }
+                        _ => serde_json::Value::Null,
+                    };
+                    Ok(Row {
+                        id: row.get(0)?,
+                        app_type: row.get(1)?,
+                        name: row.get(2)?,
+                        settings,
+                    })
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            for row in mapped {
+                rows.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+            }
+        }
+
+        let mut seq = by_connection.len();
+        for row in rows {
+            let Some((base_url, api_key)) = extract_connection(&row.settings) else {
+                continue; // 识别不到形态 / OAuth 托管条目：endpoint_ref 保持 NULL
+            };
+            let endpoint_id = match by_connection.get(&(base_url.clone(), api_key.clone())) {
+                Some(existing) => existing.clone(),
+                None => {
+                    seq += 1;
+                    let new_id = format!("ep-{seq}");
+                    conn.execute(
+                        "INSERT INTO endpoints (id, name, base_url, api_key, created_at)
+                         VALUES (?1, ?2, ?3, ?4, strftime('%s','now'))",
+                        rusqlite::params![new_id, row.name, base_url, api_key],
+                    )
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                    by_connection.insert((base_url.clone(), api_key.clone()), new_id.clone());
+                    new_id
+                }
+            };
+            conn.execute(
+                "UPDATE providers SET endpoint_ref = ?1 WHERE id = ?2 AND app_type = ?3",
+                rusqlite::params![endpoint_id, row.id, row.app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
         Ok(())
     }
 
@@ -4374,6 +4594,201 @@ mod tests {
             "INSERT INTO proxy_config (app_type) VALUES ('hermes:worker-coder')",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v24_to_v25_merges_universal_and_clusters_conservatively() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE providers (
+                id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                settings_config TEXT NOT NULL,
+                website_url TEXT,
+                category TEXT,
+                created_at INTEGER,
+                sort_index INTEGER,
+                notes TEXT,
+                icon TEXT,
+                icon_color TEXT,
+                meta TEXT NOT NULL DEFAULT '{}',
+                is_current BOOLEAN NOT NULL DEFAULT 0,
+                in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+                PRIMARY KEY (id, app_type)
+            );
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )?;
+
+        let anthropic = r#"{"env":{"ANTHROPIC_BASE_URL":"https://relay.example","ANTHROPIC_AUTH_TOKEN":"sk-same"}}"#;
+        let anthropic_trailing_slash = r#"{"env":{"ANTHROPIC_BASE_URL":"https://relay.example/","ANTHROPIC_AUTH_TOKEN":"sk-same"}}"#;
+        let codex = concat!(
+            r#"{"auth":{"OPENAI_API_KEY":"sk-same"},"config":""#,
+            r#"model = \"gpt-5\"\n[model_providers.custom]\nbase_url = \"https://relay.example/v1\"\n"}"#
+        );
+        let oauth_official = r#"{"auth":{},"config":"model = \"gpt-5\""}"#;
+
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config) VALUES
+             ('a1', 'claude', 'Relay A', ?1),
+             ('a2', 'claude-desktop', 'Relay A Desktop', ?2),
+             ('cx', 'codex', 'Relay A Codex', ?3),
+             ('oauth', 'codex', 'Official', ?4)",
+            rusqlite::params![anthropic, anthropic_trailing_slash, codex, oauth_official],
+        )?;
+
+        let universal_blob = serde_json::json!({
+            "uni-1": {
+                "id": "uni-1",
+                "name": "Uni",
+                "providerType": "newapi",
+                "apps": { "claude": true, "codex": true, "gemini": false },
+                "baseUrl": "https://uni.example",
+                "apiKey": "sk-uni",
+                "models": {}
+            }
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('universal_providers', ?1)",
+            rusqlite::params![universal_blob],
+        )?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config) VALUES
+             ('universal-claude-uni-1', 'claude', 'Uni', ?1)",
+            rusqlite::params![r#"{"env":{"ANTHROPIC_BASE_URL":"https://uni.example","ANTHROPIC_AUTH_TOKEN":"sk-uni"}}"#],
+        )?;
+
+        Database::set_user_version(&conn, 24)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+
+        // 1) universal 子条目按 id 约定指回并入的端点
+        let uni_ref: Option<String> = conn.query_row(
+            "SELECT endpoint_ref FROM providers WHERE id = 'universal-claude-uni-1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(uni_ref.as_deref(), Some("uni-1"));
+
+        // 2) 保守归并：claude（无尾斜杠）与 claude-desktop（尾斜杠）同 (base,key) → 同一端点；
+        //    codex 的 /v1 剥离后同 origin 同 key → 并入同一端点
+        let refs: (Option<String>, Option<String>, Option<String>) = conn.query_row(
+            "SELECT
+                (SELECT endpoint_ref FROM providers WHERE id = 'a1'),
+                (SELECT endpoint_ref FROM providers WHERE id = 'a2'),
+                (SELECT endpoint_ref FROM providers WHERE id = 'cx')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let (a1, a2, cx) = refs;
+        assert!(a1.is_some(), "claude 条目应归并出端点");
+        assert_eq!(a1, a2, "尾斜杠差异应归一");
+        assert_eq!(a1, cx, "codex /v1 剥离后应并入同一端点");
+
+        // 3) OAuth/无 key 条目不参与归并，行为不变
+        let oauth_ref: Option<String> = conn.query_row(
+            "SELECT endpoint_ref FROM providers WHERE id = 'oauth'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(oauth_ref, None);
+
+        // 4) 并入端点的凭据与 universal 一致
+        let (base, key): (String, String) = conn.query_row(
+            "SELECT base_url, api_key FROM endpoints WHERE id = 'uni-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(
+            (base.as_str(), key.as_str()),
+            ("https://uni.example", "sk-uni")
+        );
+
+        // 5) 归并出的端点恰为 2 个（relay 聚类 + universal），不重复建
+        let endpoint_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM endpoints", [], |row| row.get(0))?;
+        assert_eq!(endpoint_count, 2);
+
+        Ok(())
+    }
+
+    /// 真实库副本重放（对齐 Hermes v24 验证法）：
+    /// `CC_SWITCH_REPLAY_DB=/path/to/copy.db cargo test --lib replay_v25 -- --ignored --nocapture`
+    #[test]
+    #[ignore = "需显式提供 DB 副本路径"]
+    fn replay_v25_on_external_db() -> Result<(), AppError> {
+        let path =
+            std::env::var("CC_SWITCH_REPLAY_DB").expect("设置 CC_SWITCH_REPLAY_DB 指向真实库副本");
+        let conn = Connection::open(&path)
+            .map_err(|e| AppError::Database(format!("打开副本失败: {e}")))?;
+        let version = Database::get_user_version(&conn)?;
+        assert_eq!(version, 24, "副本应为 v24（当前 {version}）");
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let providers: i64 =
+            conn.query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))?;
+        let with_ref: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers WHERE endpoint_ref IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        let endpoints: i64 =
+            conn.query_row("SELECT COUNT(*) FROM endpoints", [], |row| row.get(0))?;
+        let dangling: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers p
+             WHERE p.endpoint_ref IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM endpoints e WHERE e.id = p.endpoint_ref)",
+            [],
+            |row| row.get(0),
+        )?;
+        println!(
+            "replay: providers={providers} endpoint_ref={with_ref} endpoints={endpoints} dangling={dangling}"
+        );
+        assert_eq!(dangling, 0, "不允许悬空引用");
+        // 凭据一致性（真不变量）：每个归并条目的提取连接 == 所指端点的 (base, key)
+        {
+            use crate::provider::extract_connection;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT p.settings_config, e.base_url, e.api_key
+                     FROM providers p JOIN endpoints e ON e.id = p.endpoint_ref",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let mut mismatches = Vec::new();
+            for (settings_text, base, key) in rows {
+                let settings: serde_json::Value =
+                    serde_json::from_str(&settings_text).unwrap_or(serde_json::Value::Null);
+                match extract_connection(&settings) {
+                    Some((eb, ek)) if eb == base.trim_end_matches('/') && ek == key => {}
+                    other => mismatches.push((base, other)),
+                }
+            }
+            println!(
+                "replay: 归并条目连接一致性 {}",
+                if mismatches.is_empty() {
+                    "OK".to_string()
+                } else {
+                    format!("{mismatches:?}")
+                }
+            );
+            assert!(mismatches.is_empty(), "存在与端点凭据不一致的归并条目");
+        }
         Ok(())
     }
 

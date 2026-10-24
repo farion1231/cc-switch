@@ -41,6 +41,14 @@ pub struct Provider {
     #[serde(default)]
     #[serde(rename = "inFailoverQueue")]
     pub in_failover_queue: bool,
+    /// 引用的全局端点（endpoints.id）；None = 独立条目（凭据自持，存量兼容）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "endpointRef")]
+    pub endpoint_ref: Option<String>,
+    /// 档位映射：某档模型指向（可选跨端点引用）。None = 未配置（等价现状）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "tierMappings")]
+    pub tier_mappings: Option<TierMappings>,
 }
 
 impl Provider {
@@ -64,6 +72,8 @@ impl Provider {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         }
     }
 
@@ -739,6 +749,276 @@ impl ProviderManager {
 // 统一供应商（Universal Provider）- 跨应用共享配置
 // ============================================================================
 
+/// 全局端点：厂商连接信息的单一事实源（endpoints 表）。
+/// 分组条目经 `Provider.endpoint_ref` 引用；凭据一处编辑，条目物化生效。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Endpoint {
+    pub id: String,
+    pub name: String,
+    /// 厂商类型（custom/newapi/aggregator…）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    /// OAuth 等托管凭据
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "authBinding")]
+    pub auth_binding: Option<AuthBinding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "websiteUrl")]
+    pub website_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "iconColor")]
+    pub icon_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// 预留（模型清单缓存等），不做强类型约束
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sortIndex")]
+    pub sort_index: Option<usize>,
+}
+
+impl Endpoint {
+    pub fn new(id: String, name: String, base_url: String, api_key: String) -> Self {
+        Self {
+            id,
+            name,
+            category: None,
+            base_url,
+            api_key,
+            auth_binding: None,
+            website_url: None,
+            icon: None,
+            icon_color: None,
+            notes: None,
+            meta: None,
+            created_at: None,
+            sort_index: None,
+        }
+    }
+}
+
+/// 单个档位的映射目标。
+/// - 无 `endpoint`：仅改模型名（现有 ModelMapping 行为）
+/// - 带 `endpoint`：代理模式下该档分流到目标端点（直连不生效，CLI 单条目一个 base_url）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TierMapping {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// 档位映射表（固定六档，防拼错键）。未列出的档位继承条目自身行为。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TierMappings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub haiku: Option<TierMapping>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sonnet: Option<TierMapping>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opus: Option<TierMapping>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fable: Option<TierMapping>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<TierMapping>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<TierMapping>,
+}
+
+/// 从 settings_config 提取 (base_url, api_key)，按数据形态识别（与 app_type 解耦）：
+/// 1. env.ANTHROPIC_BASE_URL + (ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY)
+/// 2. env.GOOGLE_GEMINI_BASE_URL + GEMINI_API_KEY
+/// 3. 顶级 base_url + api_key（Hermes 等形态）
+/// 4. auth.OPENAI_API_KEY + config TOML 的 model_providers.*.base_url（Codex）
+///
+/// base_url 去尾部 '/'；Codex 的 `/v1` 是生成时确定性补全的产物，比对前剥离
+/// （还原为 universal 输入的原始 origin 形态）。base_url 或 key 任一为空返回 None
+/// （保守归并线：不聚无鉴权条目，不猜）。
+pub fn extract_connection(settings: &Value) -> Option<(String, String)> {
+    let non_empty = |v: Option<&str>| v.filter(|s| !s.trim().is_empty()).map(str::to_string);
+
+    if let Some(env) = settings.get("env").and_then(Value::as_object) {
+        let base = non_empty(
+            env.get("ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str)
+                .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL").and_then(Value::as_str)),
+        );
+        if let Some(base) = base {
+            let key = non_empty(
+                env.get("ANTHROPIC_AUTH_TOKEN")
+                    .and_then(Value::as_str)
+                    .or_else(|| env.get("ANTHROPIC_API_KEY").and_then(Value::as_str))
+                    .or_else(|| env.get("GEMINI_API_KEY").and_then(Value::as_str)),
+            );
+            if let Some(key) = key {
+                return Some((normalize_base_url(&base), key));
+            }
+        }
+    }
+
+    if let (Some(base), Some(key)) = (
+        non_empty(settings.get("base_url").and_then(Value::as_str)),
+        non_empty(
+            settings
+                .get("api_key")
+                .and_then(Value::as_str)
+                .or_else(|| settings.get("apiKey").and_then(Value::as_str)),
+        ),
+    ) {
+        return Some((normalize_base_url(&base), key));
+    }
+
+    if let Some(key) = non_empty(
+        settings
+            .get("auth")
+            .and_then(|a| a.get("OPENAI_API_KEY"))
+            .and_then(Value::as_str),
+    ) {
+        let config = settings.get("config").and_then(Value::as_str)?;
+        if let Ok(table) = toml::from_str::<toml::Value>(config) {
+            let providers = table.get("model_providers").and_then(|p| p.as_table());
+            if let Some(base) = providers.and_then(|p| {
+                p.values().find_map(|v| v.get("base_url")).and_then(|u| {
+                    u.as_str()
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string)
+                })
+            }) {
+                return Some((normalize_base_url(&base), key));
+            }
+        }
+    }
+
+    None
+}
+
+fn normalize_base_url(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    // Codex 生成路径对纯 origin 补 /v1（to_codex_provider 的确定性变换），
+    // 归并比对前剥离以还原原始形态；带自定义前缀的 URL 不受影响。
+    trimmed.strip_suffix("/v1").unwrap_or(trimmed).to_string()
+}
+
+/// 端点凭据按数据形态写回 settings_config（物化，幂等）。
+/// 与 [`extract_connection`] 识别同一组形态；识别不到的形态原样返回 false
+/// （条目凭据自持，物化不越界改写）。
+// P2 写路径收口时在 save_provider 接线；当前仅测试调用
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn apply_endpoint_to_settings(settings: &mut Value, endpoint: &Endpoint) -> bool {
+    let Some(obj) = settings.as_object_mut() else {
+        return false;
+    };
+
+    // 1. ANTHROPIC_* / GEMINI env 形态
+    if let Some(env) = obj.get_mut("env").and_then(Value::as_object_mut) {
+        let mut touched = false;
+        if env.contains_key("ANTHROPIC_BASE_URL") {
+            env.insert(
+                "ANTHROPIC_BASE_URL".to_string(),
+                Value::String(endpoint.base_url.clone()),
+            );
+            // 尊重条目选用的鉴权字段（meta.apiKeyField 的两种落点），不注入新键
+            for key_field in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+                if env.contains_key(key_field) {
+                    env.insert(
+                        key_field.to_string(),
+                        Value::String(endpoint.api_key.clone()),
+                    );
+                }
+            }
+            touched = true;
+        }
+        if env.contains_key("GOOGLE_GEMINI_BASE_URL") {
+            env.insert(
+                "GOOGLE_GEMINI_BASE_URL".to_string(),
+                Value::String(endpoint.base_url.clone()),
+            );
+            if env.contains_key("GEMINI_API_KEY") {
+                env.insert(
+                    "GEMINI_API_KEY".to_string(),
+                    Value::String(endpoint.api_key.clone()),
+                );
+            }
+            touched = true;
+        }
+        if touched {
+            return true;
+        }
+    }
+
+    // 2. 顶级 base_url 形态
+    if obj.contains_key("base_url") {
+        obj.insert(
+            "base_url".to_string(),
+            Value::String(endpoint.base_url.clone()),
+        );
+        if obj.contains_key("api_key") {
+            obj.insert(
+                "api_key".to_string(),
+                Value::String(endpoint.api_key.clone()),
+            );
+        }
+        return true;
+    }
+
+    // 3. Codex auth + TOML 形态
+    if let Some(key) = obj
+        .get_mut("auth")
+        .and_then(Value::as_object_mut)
+        .and_then(|a| a.get_mut("OPENAI_API_KEY"))
+    {
+        *key = Value::String(endpoint.api_key.clone());
+        let Some(config) = obj
+            .get("config")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
+            return true;
+        };
+        if let Ok(mut doc) = config.parse::<toml_edit::DocumentMut>() {
+            let base_url = endpoint.base_url.clone();
+            let origin_only = !base_url
+                .split_once("://")
+                .is_some_and(|(_, rest)| rest.contains('/'));
+            let codex_url = if base_url.ends_with("/v1") {
+                base_url.clone()
+            } else if origin_only {
+                format!("{base_url}/v1")
+            } else {
+                base_url.clone()
+            };
+            let mut rewritten = false;
+            if let Some(providers) = doc
+                .get_mut("model_providers")
+                .and_then(|p| p.as_table_like_mut())
+            {
+                for (_, provider) in providers.iter_mut() {
+                    if let Some(url) = provider.get_mut("base_url") {
+                        *url = toml_edit::value(codex_url.clone());
+                        rewritten = true;
+                    }
+                }
+            }
+            if rewritten {
+                obj.insert("config".to_string(), Value::String(doc.to_string()));
+            }
+        }
+        return true;
+    }
+
+    false
+}
+
 /// 统一供应商的应用启用状态
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UniversalProviderApps {
@@ -920,6 +1200,8 @@ impl UniversalProvider {
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         })
     }
 
@@ -985,6 +1267,8 @@ requires_openai_auth = true"#
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         })
     }
 
@@ -1020,6 +1304,8 @@ requires_openai_auth = true"#
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            endpoint_ref: None,
+            tier_mappings: None,
         })
     }
 }
@@ -1134,12 +1420,180 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
-        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderLoadBalance,
-        ProviderManager, ProviderMeta, UniversalProvider,
+        apply_endpoint_to_settings, extract_connection, ClaudeModelConfig, CodexCopilotApiFormat,
+        CodexModelConfig, Endpoint, GeminiModelConfig, LocalProxyRequestOverrides,
+        OpenCodeProviderConfig, Provider, ProviderLoadBalance, ProviderManager, ProviderMeta,
+        TierMapping, TierMappings, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn extract_connection_anthropic_env() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example/",
+                "ANTHROPIC_AUTH_TOKEN": "sk-same"
+            }
+        });
+        assert_eq!(
+            extract_connection(&settings),
+            Some(("https://relay.example".to_string(), "sk-same".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_connection_respects_api_key_field_variant() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example",
+                "ANTHROPIC_API_KEY": "sk-key"
+            }
+        });
+        assert_eq!(
+            extract_connection(&settings),
+            Some(("https://relay.example".to_string(), "sk-key".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_connection_gemini_env() {
+        let settings = json!({
+            "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://g.example",
+                "GEMINI_API_KEY": "g-key"
+            }
+        });
+        assert_eq!(
+            extract_connection(&settings),
+            Some(("https://g.example".to_string(), "g-key".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_connection_codex_strips_v1_suffix() {
+        let settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-same" },
+            "config": "model = \"gpt-5\"\n[model_providers.custom]\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n"
+        });
+        // /v1 是生成时确定性补全的产物，归并比对前剥离
+        assert_eq!(
+            extract_connection(&settings),
+            Some(("https://relay.example".to_string(), "sk-same".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_connection_top_level_base_url() {
+        let settings = json!({
+            "base_url": "https://h.example",
+            "api_key": "h-key"
+        });
+        assert_eq!(
+            extract_connection(&settings),
+            Some(("https://h.example".to_string(), "h-key".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_connection_rejects_missing_key() {
+        // 无鉴权条目不参与保守归并（不猜）
+        let settings = json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://relay.example" }
+        });
+        assert_eq!(extract_connection(&settings), None);
+    }
+
+    #[test]
+    fn apply_endpoint_round_trips_anthropic_env() {
+        let endpoint = Endpoint::new(
+            "ep-1".to_string(),
+            "Relay".to_string(),
+            "https://new.example".to_string(),
+            "sk-new".to_string(),
+        );
+        let mut settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://old.example",
+                "ANTHROPIC_AUTH_TOKEN": "sk-old",
+                "ANTHROPIC_MODEL": "keep-me"
+            }
+        });
+        assert!(apply_endpoint_to_settings(&mut settings, &endpoint));
+        assert_eq!(settings["env"]["ANTHROPIC_BASE_URL"], "https://new.example");
+        assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-new");
+        // 非凭据字段不动
+        assert_eq!(settings["env"]["ANTHROPIC_MODEL"], "keep-me");
+        // 物化后可再提取回同一连接
+        assert_eq!(
+            extract_connection(&settings),
+            Some(("https://new.example".to_string(), "sk-new".to_string()))
+        );
+    }
+
+    #[test]
+    fn apply_endpoint_rewrites_codex_toml_base_url() {
+        let endpoint = Endpoint::new(
+            "ep-1".to_string(),
+            "Relay".to_string(),
+            "https://new.example".to_string(),
+            "sk-new".to_string(),
+        );
+        let mut settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-old" },
+            "config": "model = \"gpt-5\"\nmodel_provider = \"custom\"\n\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"https://old.example/v1\"\nwire_api = \"responses\"\n"
+        });
+        assert!(apply_endpoint_to_settings(&mut settings, &endpoint));
+        assert_eq!(settings["auth"]["OPENAI_API_KEY"], "sk-new");
+        let config = settings["config"].as_str().unwrap();
+        assert!(
+            config.contains("base_url = \"https://new.example/v1\""),
+            "{config}"
+        );
+        // 提取（含 /v1 剥离）与物化互逆
+        assert_eq!(
+            extract_connection(&settings),
+            Some(("https://new.example".to_string(), "sk-new".to_string()))
+        );
+    }
+
+    #[test]
+    fn apply_endpoint_leaves_unrecognized_shapes_untouched() {
+        let endpoint = Endpoint::new(
+            "ep-1".to_string(),
+            "Relay".to_string(),
+            "https://new.example".to_string(),
+            "sk-new".to_string(),
+        );
+        let mut settings = json!({ "models": ["a"], "provider": "official" });
+        assert!(!apply_endpoint_to_settings(&mut settings, &endpoint));
+        assert_eq!(settings, json!({ "models": ["a"], "provider": "official" }));
+    }
+
+    #[test]
+    fn tier_mappings_serde_round_trip() {
+        let mappings = TierMappings {
+            haiku: Some(TierMapping {
+                endpoint: Some("ep-cheap".to_string()),
+                model: Some("gemini-3-flash".to_string()),
+            }),
+            opus: Some(TierMapping {
+                endpoint: None,
+                model: Some("kimi-k2.5".to_string()),
+            }),
+            ..Default::default()
+        };
+        let serialized = serde_json::to_value(&mappings).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "haiku": { "endpoint": "ep-cheap", "model": "gemini-3-flash" },
+                "opus": { "model": "kimi-k2.5" }
+            })
+        );
+        let parsed: TierMappings = serde_json::from_value(serialized).unwrap();
+        assert_eq!(parsed, mappings);
+    }
 
     #[test]
     fn max_concurrent_two_level_lookup() {
