@@ -103,9 +103,13 @@ impl ProviderRouter {
             return Err(AppError::NoProvidersConfigured);
         }
 
-        // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
+        // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）。
+        // Hermes 例外：接管指针（proxy_route）优先于池序——见 prioritize_hermes_route。
         let (result, total_providers, circuit_open_count) =
             self.circuit_filtered_queue(app_type).await?;
+        let result = self
+            .prioritize_hermes_route(app_type, current_provider.clone(), result)
+            .await;
         if result.is_empty() {
             if total_providers > 0 && circuit_open_count == total_providers {
                 log::warn!("[{app_type}] [FO-004] 所有供应商均已熔断");
@@ -121,6 +125,49 @@ impl ProviderRouter {
             return Err(AppError::NoProvidersConfigured);
         }
         Ok(result)
+    }
+
+    /// Hermes 接管语义：路由指针（proxy_route，经 `current_provider_of` 读出）
+    /// 优先于池序——代理模式下整个应用跟随 UI 选定的那家，池（队列/全量）
+    /// 其余条目只作故障转移链。指针条目熔断打开时不置首（保持池序，让健康的
+    /// 首位继续服务，指针恢复后自动回位）。
+    ///
+    /// 背景：接管把客户端模型名固定为指针条目的发布名（如 deepseek-v4-pro），
+    /// 若队列首位是别家（如 SGLM），"仅按队列序"会把该模型名发到不认它的
+    /// 上游——指针必须赢，队列只兜底。
+    ///
+    /// 非 Hermes 应用不受影响（"failover 开启仅按队列序"的既有语义保留）。
+    async fn prioritize_hermes_route(
+        &self,
+        app_type: &str,
+        current: Option<Provider>,
+        pool: Vec<Provider>,
+    ) -> Vec<Provider> {
+        let is_hermes_key = app_type == AppType::Hermes.as_str()
+            || crate::services::provider::hermes_profile::profile_of(app_type).is_some();
+        let Some(route) = current else {
+            return pool;
+        };
+        if !is_hermes_key || pool.is_empty() || pool[0].id == route.id {
+            return pool;
+        }
+        let breaker = self
+            .get_or_create_circuit_breaker(&format!("{app_type}:{}", route.id))
+            .await;
+        if !breaker.is_available().await {
+            log::warn!(
+                "[{app_type}] 接管路由 {} 已熔断，保持池序由队列首位服务",
+                route.name
+            );
+            return pool;
+        }
+        log::debug!(
+            "[{app_type}] 接管路由 {} 置首（池序降为故障转移链）",
+            route.name
+        );
+        let mut result = vec![route.clone()];
+        result.extend(pool.into_iter().filter(|p| p.id != route.id));
+        result
     }
 
     /// 故障转移队列 -> 熔断过滤后的候选池（返回 (池, 总数, 熔断数)）。
@@ -299,6 +346,11 @@ impl ProviderRouter {
 
         let (pool, total_providers, circuit_open_count) =
             self.circuit_filtered_queue(app_type).await?;
+        // Hermes 接管指针优先（同 select_providers_with_current）；session 模式下
+        // 粘性命中仍可跟随实际成功家，新会话游标从指针开始
+        let pool = self
+            .prioritize_hermes_route(app_type, current_provider.clone(), pool)
+            .await;
         if pool.is_empty() {
             if total_providers > 0 && circuit_open_count == total_providers {
                 return Err(AppError::AllProvidersCircuitOpen);
@@ -545,6 +597,104 @@ pub(crate) fn current_provider_of(
 mod tests {
     use super::*;
     use crate::database::Database;
+    #[tokio::test]
+    #[serial]
+    async fn hermes_route_pointer_wins_over_queue_order() {
+        // 场景回放（2026-10-24 线上 400）：接管指针 moa-deepseek（模型发布名
+        // deepseek-v4-pro），队列 [SGLM, XGLM]，failover 开——"仅按队列序"
+        // 会把 deepseek 模型名发到只认 glm-5.3 的智谱。指针必须赢。
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let route = Provider::with_id(
+            "route".to_string(),
+            "moa-deepseek".to_string(),
+            json!({"base_url": "https://ds.example", "api_key": "sk"}),
+            None,
+        );
+        let mut b = Provider::with_id("b".to_string(), "SGLM".to_string(), json!({}), None);
+        b.sort_index = Some(0);
+        let mut c = Provider::with_id("c".to_string(), "XGLM".to_string(), json!({}), None);
+        c.sort_index = Some(1);
+        for p in [&route, &b, &c] {
+            db.save_provider("hermes", p).unwrap();
+        }
+        db.add_to_failover_queue("hermes", "b").unwrap();
+        db.add_to_failover_queue("hermes", "c").unwrap();
+        let mut config = db.get_proxy_config_for_app("hermes").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        // 接管：代理模式 + proxy_route 指向 route
+        crate::mode::state::update(&crate::live::engine::DeviceStore::for_device(), |s| {
+            use crate::mode::state::{Mode, ModeState};
+            s.apps
+                .entry("hermes".to_string())
+                .or_default()
+                .set_mode_state(ModeState {
+                    mode: Some(Mode::Proxy),
+                    attached: true,
+                    proxy_route: Some("route".to_string()),
+                    contract: None,
+                });
+        })
+        .unwrap();
+
+        let selected = ProviderRouter::new(db)
+            .select_providers("hermes")
+            .await
+            .unwrap();
+        let ids: Vec<&str> = selected.iter().map(|p| p.id.as_str()).collect();
+        // 指针置首（池外插入），队列其余条目降为故障转移链
+        assert_eq!(ids, vec!["route", "b", "c"]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hermes_route_pointer_circuit_open_keeps_queue_order() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let route = Provider::with_id(
+            "route".to_string(),
+            "moa-deepseek".to_string(),
+            json!({}),
+            None,
+        );
+        let mut b = Provider::with_id("b".to_string(), "SGLM".to_string(), json!({}), None);
+        b.sort_index = Some(0);
+        for p in [&route, &b] {
+            db.save_provider("hermes", p).unwrap();
+        }
+        db.add_to_failover_queue("hermes", "b").unwrap();
+        let mut config = db.get_proxy_config_for_app("hermes").await.unwrap();
+        config.auto_failover_enabled = true;
+        config.circuit_failure_threshold = 1;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        crate::mode::state::update(&crate::live::engine::DeviceStore::for_device(), |s| {
+            use crate::mode::state::{Mode, ModeState};
+            s.apps
+                .entry("hermes".to_string())
+                .or_default()
+                .set_mode_state(ModeState {
+                    mode: Some(Mode::Proxy),
+                    attached: true,
+                    proxy_route: Some("route".to_string()),
+                    contract: None,
+                });
+        })
+        .unwrap();
+
+        // 指针条目熔断：保持队列序
+        let router = ProviderRouter::new(db);
+        router
+            .record_result("route", "hermes", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+        let selected = router.select_providers("hermes").await.unwrap();
+        let ids: Vec<&str> = selected.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["b"]);
+    }
+
     #[tokio::test]
     async fn failover_enabled_with_empty_queue_falls_back_to_current() {
         // 开关开着、队列没配是常见过渡状态：不应 503，回落当前供应商单路由。
