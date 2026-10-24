@@ -133,3 +133,78 @@ describe("CodexAuthSettings session compression toggle", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe("CodexAuthSettings unified history desktop compatibility", () => {
+  beforeEach(() => {
+    getCompressionMock.mockResolvedValue(false);
+    diskUsageMock.mockResolvedValue(0);
+  });
+
+  it("shows the desktop voice warning for an already-enabled setting", async () => {
+    await act(async () => {
+      render(
+        <CodexAuthSettings
+          settings={{ unifyCodexSessionHistory: true } as SettingsFormState}
+          onChange={vi.fn()}
+        />,
+      );
+    });
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "settings.unifyCodexNativeIdentityNote",
+    );
+  });
+
+  it("warns before enabling without changing settings on cancel", async () => {
+    const onChange = await renderWith(false);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "settings.unifyCodexSessionHistory" }),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "settings.unifyCodexNativeIdentityNote",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("still allows CLI users to enable without migrating existing sessions", async () => {
+    const onChange = await renderWith(false);
+    fireEvent.click(
+      screen.getByRole("switch", { name: "settings.unifyCodexSessionHistory" }),
+    );
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "confirm.unifyCodexHistory.confirm" }),
+    );
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      unifyCodexSessionHistory: true,
+      unifyCodexMigrateExisting: false,
+    });
+  });
+
+  it("does not change settings when displaying a warning for existing users", async () => {
+    const onChange = vi.fn();
+    const props = { onChange };
+    let rerender!: (ui: React.ReactElement) => void;
+    await act(async () => {
+      ({ rerender } = render(
+        <CodexAuthSettings
+          {...props}
+          settings={{ unifyCodexSessionHistory: true } as SettingsFormState}
+        />,
+      ));
+    });
+    expect(screen.getByRole("note")).toBeInTheDocument();
+    await act(async () => {
+      rerender(
+        <CodexAuthSettings
+          {...props}
+          settings={{ unifyCodexSessionHistory: false } as SettingsFormState}
+        />,
+      );
+    });
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
