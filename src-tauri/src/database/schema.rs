@@ -72,7 +72,8 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_cline BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -610,17 +611,36 @@ impl Database {
                         Self::set_user_version(conn, 22)?;
                     }
                     22 => {
-                        for table in ["mcp_servers", "skills"] {
+                        // Oh My Pi：只有 MCP 存开关；Skills 的启用状态按原生目录现算（同 Pi）。
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        // Cline: MCP and Skills both store a flag. Development builds of
+                        // the Cline branch used v23 for enabled_cline alone, so add
+                        // enabled_omp here as well when it is missing.
+                        for (table, column) in [
+                            ("mcp_servers", "enabled_cline"),
+                            ("skills", "enabled_cline"),
+                            ("mcp_servers", "enabled_omp"),
+                        ] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
                                     conn,
                                     table,
-                                    "enabled_cline",
+                                    column,
                                     "BOOLEAN NOT NULL DEFAULT 0",
                                 )?;
                             }
                         }
-                        Self::set_user_version(conn, 23)?;
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3994,6 +4014,27 @@ mod tests {
             assert_eq!(flags, (1, 0));
         }
         Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cline_branch_v23_database_gains_the_omp_flag() -> Result<(), AppError> {
+        // Development builds of the Cline branch stored enabled_cline at v23,
+        // without the enabled_omp column that upstream v23 adds.
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_cline BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_cline BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let flags = conn.query_row(
+            "SELECT enabled_cline, enabled_omp FROM mcp_servers",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        assert_eq!(flags, (1, 0));
+        let cline: i64 =
+            conn.query_row("SELECT enabled_cline FROM skills", [], |row| row.get(0))?;
+        assert_eq!(cline, 1);
         Ok(())
     }
 

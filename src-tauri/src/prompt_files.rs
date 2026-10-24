@@ -43,6 +43,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Agy => crate::agy_config::customizations_dir(),
         // Cline injects every Markdown file under ~/.cline/rules; CC Switch owns one of them.
         AppType::Cline => crate::cline_config::rules_dir(),
+        // omp 只读按 profile 切换的 agent 目录里的 AGENTS.md（上游 discovery/builtin.ts）
+        AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -52,7 +54,12 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
-        AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Cline => "AGENTS.md",
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Agy
+        | AppType::Kimi
+        | AppType::Cline
+        | AppType::Omp => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

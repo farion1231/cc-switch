@@ -12,4 +12,5 @@ export type AppId =
   | "kimi"
   | "cline"
   | "mcode"
-  | "agy";
+  | "agy"
+  | "omp";

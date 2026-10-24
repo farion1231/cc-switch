@@ -15,7 +15,8 @@ export type AppType =
   | "mcode"
   | "kimi"
   | "cline"
-  | "agy";
+  | "agy"
+  | "omp";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -32,6 +33,7 @@ export interface SkillApps {
   kimi?: boolean;
   cline?: boolean;
   agy?: boolean;
+  omp?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
