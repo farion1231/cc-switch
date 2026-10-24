@@ -10,6 +10,8 @@ import { EndpointFormModal } from "./EndpointFormModal";
 
 interface EndpointPanelProps {
   onRefChanged?: () => void;
+  /** 嵌入模式（授权中心等）：隐藏自带标题与描述，只留列表与操作 */
+  embedded?: boolean;
 }
 
 /**
@@ -19,7 +21,7 @@ interface EndpointPanelProps {
  * 分组条目经 endpointRef 引用并各自配策略与档位映射。
  * 编辑端点凭据会级联重物化所有引用条目——改一处全局生效。
  */
-export function EndpointPanel({ onRefChanged }: EndpointPanelProps) {
+export function EndpointPanel({ onRefChanged, embedded }: EndpointPanelProps) {
   const { t } = useTranslation();
 
   const [endpoints, setEndpoints] = useState<EndpointsMap>({});
@@ -93,22 +95,26 @@ export function EndpointPanel({ onRefChanged }: EndpointPanelProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Cable className="h-5 w-5 text-primary" />
-        <h2 className="text-lg font-semibold">
-          {t("endpoints.title", { defaultValue: "全局端点" })}
-        </h2>
-        <span className="rounded-full bg-subtle px-2 py-0.5 text-xs text-fg-2">
-          {list.length}
-        </span>
-      </div>
+      {!embedded && (
+        <>
+          <div className="flex items-center gap-2">
+            <Cable className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold">
+              {t("endpoints.title", { defaultValue: "全局端点" })}
+            </h2>
+            <span className="rounded-full bg-subtle px-2 py-0.5 text-xs text-fg-2">
+              {list.length}
+            </span>
+          </div>
 
-      <p className="text-sm text-fg-2">
-        {t("endpoints.description", {
-          defaultValue:
-            "端点保存厂商的连接信息（地址、密钥、协议格式），各分组的供应商条目引用它。在这里改一次密钥，所有引用条目同时生效。",
-        })}
-      </p>
+          <p className="text-sm text-fg-2">
+            {t("endpoints.description", {
+              defaultValue:
+                "端点保存厂商的连接信息（地址、密钥、协议格式），各分组的供应商条目引用它。在这里改一次密钥，所有引用条目同时生效。",
+            })}
+          </p>
+        </>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12">

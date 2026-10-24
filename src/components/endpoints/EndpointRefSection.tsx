@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { endpointsApi } from "@/lib/api";
+import { EndpointFormModal } from "./EndpointFormModal";
 import type { EndpointsMap } from "@/types";
 
 const STANDALONE = "__standalone__";
@@ -32,6 +33,7 @@ export function EndpointRefSection({
 }: EndpointRefSectionProps) {
   const { t } = useTranslation();
   const [endpoints, setEndpoints] = useState<EndpointsMap>({});
+  const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,9 +70,13 @@ export function EndpointRefSection({
         </Label>
         <Select
           value={endpointRef ?? STANDALONE}
-          onValueChange={(value) =>
-            onChange(value === STANDALONE ? undefined : value)
-          }
+          onValueChange={(value) => {
+            if (value === "__create__") {
+              setCreateOpen(true);
+              return;
+            }
+            onChange(value === STANDALONE ? undefined : value);
+          }}
         >
           <SelectTrigger>
             <SelectValue />
@@ -86,6 +92,9 @@ export function EndpointRefSection({
                 {endpoint.name}
               </SelectItem>
             ))}
+            <SelectItem value="__create__">
+              + {t("endpoints.add", { defaultValue: "新建端点" })}
+            </SelectItem>
           </SelectContent>
         </Select>
         <p className="text-xs text-fg-3">
@@ -100,6 +109,18 @@ export function EndpointRefSection({
               })}
         </p>
       </div>
+
+      <EndpointFormModal
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        editing={null}
+        onSave={async (endpoint) => {
+          await endpointsApi.save(endpoint);
+          setEndpoints((prev) => ({ ...prev, [endpoint.id]: endpoint }));
+          onChange(endpoint.id);
+          setCreateOpen(false);
+        }}
+      />
     </div>
   );
 }

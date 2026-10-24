@@ -470,6 +470,12 @@ export function EditProviderDialog({
           onTierMappingsChange={(mappings) =>
             setEndpointState((prev) => ({ ...prev, tierMappings: mappings }))
           }
+          onEndpointsChanged={() => {
+            endpointsApi
+              .getAll()
+              .then((map) => setTierEndpoints(Object.values(map)))
+              .catch(() => undefined);
+          }}
           showButtons={false}
           isProxyTakeover={isProxyTakeover}
           inactiveFields={editorView?.inactive}

@@ -5,6 +5,7 @@ import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSectio
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
+import { EndpointPanel } from "@/components/endpoints";
 import { isMac } from "@/lib/platform";
 import type { AuthCenterTarget } from "@/lib/api";
 
@@ -86,6 +87,10 @@ export function AuthCenterPanel({
           <AgyOAuthSection helpSide="top" />
         </div>
       )}
+      {/* 全局端点：厂商连接信息的公共配置（改一处密钥全部生效） */}
+      <div className="scroll-mt-4">
+        <EndpointPanel embedded />
+      </div>
     </div>
   );
 }

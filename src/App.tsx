@@ -11,6 +11,7 @@ import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Cable,
   ExternalLink,
   KeyRound,
   MoreHorizontal,
@@ -78,6 +79,8 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { EndpointPanel } from "@/components/endpoints";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import {
   hasOpencodeDefinition,
@@ -172,6 +175,7 @@ function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
+  const [endpointsPanelOpen, setEndpointsPanelOpen] = useState(false);
   const [connectionStatusSlot, setConnectionStatusSlot] =
     useState<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -1247,14 +1251,24 @@ function App() {
               </HoverTip>
             )}
           {currentView === "providers" && (
-            <Button
-              variant="solid"
-              size="regular"
-              onClick={() => openAddProvider(currentModeView)}
-            >
-              <Plus className="h-4 w-4" />
-              {t("provider.addProvider")}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="regular"
+                onClick={() => setEndpointsPanelOpen(true)}
+              >
+                <Cable className="h-4 w-4" />
+                {t("endpoints.manage", { defaultValue: "全局端点" })}
+              </Button>
+              <Button
+                variant="solid"
+                size="regular"
+                onClick={() => openAddProvider(currentModeView)}
+              >
+                <Plus className="h-4 w-4" />
+                {t("provider.addProvider")}
+              </Button>
+            </>
           )}
           {currentView === "hermesMemory" && <HermesMemorySaveButton />}
           {appMenu}
@@ -1638,6 +1652,13 @@ function App() {
         </main>
       </div>
 
+      <FullScreenPanel
+        isOpen={endpointsPanelOpen}
+        title={t("endpoints.manage", { defaultValue: "全局端点" })}
+        onClose={() => setEndpointsPanelOpen(false)}
+      >
+        <EndpointPanel embedded />
+      </FullScreenPanel>
       <AddProviderDialog
         open={isAddOpen}
         onOpenChange={setIsAddOpen}

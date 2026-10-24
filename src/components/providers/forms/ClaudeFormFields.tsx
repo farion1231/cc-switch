@@ -59,6 +59,8 @@ import {
 } from "@/lib/api/model-fetch";
 import type { Endpoint, TierMappings } from "@/types";
 import { CustomUserAgentField } from "./CustomUserAgentField";
+import { EndpointFormModal } from "@/components/endpoints/EndpointFormModal";
+import { endpointsApi } from "@/lib/api";
 import {
   ClaudeStackModelsField,
   type ClaudeStackModelRow,
@@ -127,6 +129,8 @@ interface ClaudeFormFieldsProps {
   tierEndpoints?: Endpoint[];
   tierMappings?: TierMappings;
   onTierMappingsChange?: (mappings: TierMappings | undefined) => void;
+  /** 就地新建端点保存后通知父层刷新端点列表 */
+  onEndpointsChanged?: () => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -223,6 +227,7 @@ export function ClaudeFormFields({
   tierEndpoints,
   tierMappings,
   onTierMappingsChange,
+  onEndpointsChanged,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -321,6 +326,13 @@ export function ClaudeFormFields({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   // 档位模型下拉的展开行（row.role）；null = 全收起
   const [openModelPicker, setOpenModelPicker] = useState<string | null>(null);
+  // 档位端点下拉就地新建
+  const [createTierEndpointOpen, setCreateTierEndpointOpen] = useState(false);
+  const [createTierTarget, setCreateTierTarget] = useState<{
+    role: "sonnet" | "opus" | "fable" | "haiku" | "subagent" | "default";
+    envField: ClaudeModelEnvField;
+    currentModel: string;
+  } | null>(null);
 
   // 聚合布局的模型列表拉取成功后直接打开选择弹窗，不再提示成功。
   const opensModelPicker = variant === "stack" && !!onStackModelRowsChange;
@@ -1365,14 +1377,25 @@ export function ClaudeFormFields({
                     {tierEnabled && (
                       <Select
                         value={crossEndpointId ?? "__self__"}
-                        onValueChange={(value) =>
+                        onValueChange={(value) => {
+                          if (value === "__create__") {
+                            setCreateTierTarget({
+                              role: row.role,
+                              envField: row.modelField,
+                              currentModel: crossEndpointId
+                                ? crossModel
+                                : modelBase,
+                            });
+                            setCreateTierEndpointOpen(true);
+                            return;
+                          }
                           handleTierEndpointChange(
                             row.role,
                             row.modelField,
                             crossEndpointId ? crossModel : modelBase,
                             value === "__self__" ? undefined : value,
-                          )
-                        }
+                          );
+                        }}
                       >
                         <SelectTrigger className="h-9">
                           <SelectValue />
@@ -1388,6 +1411,9 @@ export function ClaudeFormFields({
                               {endpoint.name}
                             </SelectItem>
                           ))}
+                          <SelectItem value="__create__">
+                            + {t("endpoints.add", { defaultValue: "新建端点" })}
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                     )}
@@ -1535,7 +1561,18 @@ export function ClaudeFormFields({
                     return (
                       <Select
                         value={crossId ?? "__self__"}
-                        onValueChange={(value) =>
+                        onValueChange={(value) => {
+                          if (value === "__create__") {
+                            setCreateTierTarget({
+                              role: "default",
+                              envField: "ANTHROPIC_MODEL",
+                              currentModel: crossId
+                                ? (tierEntry?.model ?? "")
+                                : stripClaudeOneMMarker(claudeModel),
+                            });
+                            setCreateTierEndpointOpen(true);
+                            return;
+                          }
                           handleTierEndpointChange(
                             "default",
                             "ANTHROPIC_MODEL",
@@ -1543,8 +1580,8 @@ export function ClaudeFormFields({
                               ? (tierEntry?.model ?? "")
                               : stripClaudeOneMMarker(claudeModel),
                             value === "__self__" ? undefined : value,
-                          )
-                        }
+                          );
+                        }}
                       >
                         <SelectTrigger className="h-9">
                           <SelectValue />
@@ -1700,6 +1737,31 @@ export function ClaudeFormFields({
             )}
           </CollapsibleContent>
         </Collapsible>
+      )}
+
+      {tierEnabled && (
+        <EndpointFormModal
+          isOpen={createTierEndpointOpen}
+          onClose={() => {
+            setCreateTierEndpointOpen(false);
+            setCreateTierTarget(null);
+          }}
+          editing={null}
+          onSave={async (endpoint) => {
+            await endpointsApi.save(endpoint);
+            onEndpointsChanged?.();
+            if (createTierTarget) {
+              handleTierEndpointChange(
+                createTierTarget.role,
+                createTierTarget.envField,
+                createTierTarget.currentModel,
+                endpoint.id,
+              );
+            }
+            setCreateTierEndpointOpen(false);
+            setCreateTierTarget(null);
+          }}
+        />
       )}
     </>
   );

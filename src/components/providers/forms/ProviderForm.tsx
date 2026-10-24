@@ -297,6 +297,7 @@ export interface ProviderFormProps {
   tierEndpoints?: Endpoint[];
   tierMappings?: TierMappings;
   onTierMappingsChange?: (mappings: TierMappings | undefined) => void;
+  onEndpointsChanged?: () => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
   onManageAuthAccounts?: (target: AuthCenterTarget) => void;
@@ -361,6 +362,7 @@ function ProviderFormFull({
   tierEndpoints,
   tierMappings,
   onTierMappingsChange,
+  onEndpointsChanged,
   onCancel,
   onUniversalPresetSelect,
   onManageUniversalProviders,
@@ -2712,6 +2714,7 @@ function ProviderFormFull({
               tierEndpoints={tierEndpoints}
               tierMappings={tierMappings}
               onTierMappingsChange={onTierMappingsChange}
+              onEndpointsChanged={onEndpointsChanged}
               templateValueEntries={templateValueEntries}
               templateValues={templateValues}
               templatePresetName={templatePreset?.name || ""}

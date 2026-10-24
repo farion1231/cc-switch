@@ -552,6 +552,12 @@ export function AddProviderDialog({
       tierEndpoints={tierEndpoints}
       tierMappings={tierMappings}
       onTierMappingsChange={setTierMappings}
+      onEndpointsChanged={() => {
+        endpointsApi
+          .getAll()
+          .then((map) => setTierEndpoints(Object.values(map)))
+          .catch(() => undefined);
+      }}
       onManageAuthAccounts={setAuthSettingsTarget}
       onSubmittingChange={setIsFormSubmitting}
       onSubmitReadyChange={handleSubmitReadyChange}
