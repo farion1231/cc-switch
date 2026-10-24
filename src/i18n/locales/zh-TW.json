@@ -1167,9 +1167,9 @@
       "contextWindow": "上下文長度",
       "maxTokens": "最大輸出 Token 數",
       "compatibility": "介面相容性",
-      "compatibilityHint": "調整相容端點或本機服務的請求行為。",
+      "compatibilityHint": "只有在介面自稱相容 OpenAI、卻拒收某些請求時才需要填。每一項說明這家介面的一個特殊之處，例如 supportsDeveloperRole 填 false 表示它不接受 developer 角色，maxTokensField 填 max_tokens 表示它只認舊的欄位名稱。選用預設供應商時，需要的項目會自動填好；留空則採用預設行為。",
       "addCompatibilityOption": "新增",
-      "noCompatibilityOptions": "暫無相容性選項",
+      "noCompatibilityOptions": "未設定，採用預設行為",
       "optionKey": "選項",
       "optionValue": "值",
       "removeCompatibilityOption": "移除相容性選項",
@@ -4213,6 +4213,9 @@
     "moreActions": "更多操作",
     "manualCommands": "手動安裝指令",
     "columnApp": "應用",
+    "sectionInstalled": "已安裝 · {{count}}",
+    "sectionNotInstalled": "未安裝 · {{count}}",
+    "dragHandle": "拖曳調整 {{name}} 的順序",
     "columnVersion": "版本",
     "columnVisible": "顯示",
     "visibleHelp": "關掉後，這個應用不再出現在側欄、系統匣選單、MCP / Skills 的應用欄，以及提示詞和工作階段的應用下拉選單裡。只是不顯示：它的供應商、MCP 等設定都還在，它自己的設定檔也不會被改動。",
@@ -4239,10 +4242,7 @@
       "agy": "安裝時執行官方安裝腳本",
       "copilot": "透過 npm 安裝",
       "omp": "安裝時執行官方安裝腳本"
-    },
-    "ompDiscoveryHelpTitle": "Oh My Pi 的實際載入範圍",
-    "ompDiscoveryHelp": "Oh My Pi 除了 ~/.omp/agent 自己的設定，還會從其他 Agent 的目錄發現 MCP 伺服器、技能、命令、鉤子、規則和設定（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要讓 Oh My Pi 的實際生效內容與 CC Switch 介面一致，請在 ~/.omp/agent/config.yml 用 disabledProviders 停用不需要的發現來源（id 與文件一致，如 claude、codex、gemini、opencode、github、agents）。",
-    "ompDiscoveryDocsLink": "參考文件：context-files（disabledProviders）"
+    }
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4481,9 +4481,8 @@
     "used": "已用 {{value}}%",
     "usedUp": "已用完",
     "balance": "餘額 {{value}}",
-    "balanceUsedUp": "餘額已用完",
     "planExpired": "方案已過期",
-    "failed": "額度沒查到",
+    "failed": "額度查詢失敗",
     "reason": {
       "loginExpired": "登入已過期",
       "tokenRefreshPending": "權杖待重新整理"
@@ -4540,6 +4539,11 @@
       "on": "{{name}} · {{app}}：已啟用",
       "off": "{{name}} · {{app}}：未啟用",
       "fail": "{{name}} · {{app}}：寫入失敗，點按重試"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi 的實際載入範圍",
+      "help": "Oh My Pi 除了 ~/.omp/agent 自己的設定，還會從其他 Agent 的目錄發現 MCP 伺服器、技能、命令、鉤子、規則和設定（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要讓 Oh My Pi 的實際生效內容與 CC Switch 介面一致，請在 ~/.omp/agent/config.yml 用 disabledProviders 停用不需要的發現來源（id 與文件一致，如 claude、codex、gemini、opencode、github、agents）。",
+      "docsLink": "怎樣讓 Oh My Pi 不讀取其他 Agent 的設定"
     }
   },
   "mcpPage": {
@@ -5027,7 +5031,16 @@
     "form": {
       "discoveryType": "模型自動探索",
       "discoveryOff": "不自動探索",
-      "discoveryHint": "由 Oh My Pi 定期從端點擷取模型列表，端點回傳的上下文長度等中繼資料會自動套用；手動新增的模型仍然生效。開啟後可以不設定模型。"
+      "discoveryHint": "開啟後，Oh My Pi 會自己向介面查詢有哪些模型，不必逐一手動填寫，新上架的模型也會自動出現。線上服務大多選「OpenAI 模型列表」，本機執行的模型選對應的軟體；Anthropic 格式的介面通常查不到列表，維持「不自動探索」即可。手動新增的模型仍然生效。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI 模型列表（大多數線上服務）",
+        "proxy": "代理（每個模型自帶格式）",
+        "ollama": "Ollama（本機）",
+        "llamaCpp": "llama.cpp（本機）",
+        "lmStudio": "LM Studio（本機）",
+        "litellm": "LiteLLM 閘道",
+        "appleFoundationModels": "Apple 裝置端模型（macOS）"
+      }
     },
     "errors": {
       "fileTooLarge": "Oh My Pi 設定超過 1 MiB 大小限制。",
@@ -5039,7 +5052,8 @@
       "manualEdit": "此 YAML 使用了 CC Switch 無法安全編輯的格式或語法，請手動編輯 models.yml。",
       "duplicateProvider": "此 Oh My Pi 供應商識別碼已存在。",
       "renameProvider": "Oh My Pi 供應商識別碼不能重新命名。",
-      "providerMissing": "此 Oh My Pi 供應商已不在儲存的清單中。"
+      "providerMissing": "此 Oh My Pi 供應商已不在儲存的清單中。",
+      "legacyModelsJson": "Oh My Pi 目錄裡仍是舊的 models.json，omp 會在下次啟動時將它遷移為 models.yml。請先執行一次 omp，再回來新增供應商。"
     }
   }
 }
