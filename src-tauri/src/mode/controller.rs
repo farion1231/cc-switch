@@ -1236,10 +1236,9 @@ fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> 
     }
     match app {
         AppType::Codex => codex_direct::check_stack_member(provider).map_err(err)?,
-        // 映射表不完整的卡发布不出模型，做默认时写入也会失败
+        // 没有启用模型的卡发布不出条目。拒绝加入，不改这张卡。
         AppType::ClaudeDesktop => {
-            claude_desktop_config::validate_proxy_provider(provider).map_err(err)?;
-            claude_desktop_config::configured_proxy_model_routes(provider).map_err(err)?;
+            claude_desktop_config::ensure_desktop_stack_member(provider).map_err(err)?;
         }
         _ => {}
     }
@@ -6122,6 +6121,8 @@ model_provider = "c"
                     model: upstream.to_string(),
                     label_override: None,
                     supports_1m: None,
+                    max_effort: None,
+                    enabled: None,
                 },
             )]
             .into_iter()
@@ -6263,19 +6264,11 @@ model_provider = "c"
         assert!(profile["inferenceGatewayBaseUrl"]
             .as_str()
             .is_some_and(|url| url.ends_with("/claude-desktop")));
-        let models = profile["inferenceModels"]
-            .as_array()
-            .expect("default native model routes");
-        assert_eq!(
-            profile["inferenceModels"],
-            json!([
-                "claude-fable-5",
-                "claude-haiku-4-5",
-                "claude-opus-5",
-                "claude-sonnet-5"
-            ])
+        // 没存模型映射：不写模型列表，Desktop 里那份归用户；请求按原样直通。
+        assert!(
+            profile.get("inferenceModels").is_none(),
+            "a card without a saved mapping must not get a written model list: {profile}"
         );
-        assert!(models.iter().all(Value::is_string), "no synthetic 1M claim");
 
         let stored_native = state
             .db
@@ -6305,6 +6298,8 @@ model_provider = "c"
                 model: "edited-native-model".to_string(),
                 label_override: None,
                 supports_1m: None,
+                max_effort: None,
+                enabled: None,
             },
         )]
         .into_iter()

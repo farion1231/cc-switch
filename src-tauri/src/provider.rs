@@ -412,6 +412,14 @@ pub struct ClaudeDesktopModelRoute {
     /// Claude Desktop 3P 识别的 1M 上下文能力标记。
     #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
     pub supports_1m: Option<bool>,
+    /// 这个模型允许的最高努力程度，写入 profile 的 `maxEffort`
+    /// （`low` / `medium` / `high` / `xhigh` / `max`）；不填表示不设上限。
+    #[serde(rename = "maxEffort", skip_serializing_if = "Option::is_none")]
+    pub max_effort: Option<String>,
+    /// 这一档是否启用。`false` 时仍保存在映射里（下次编辑还能看到），但不写进
+    /// Claude Desktop 的模型列表；缺省按启用处理，兼容没有这个字段的旧配置。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 /// Codex Copilot protocol selection; independent of legacy `apiFormat` metadata.

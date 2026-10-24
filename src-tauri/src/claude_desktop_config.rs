@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -26,6 +26,14 @@ const CONFIG_FILE: &str = "claude_desktop_config.json";
 #[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
+/// 上次成功写进 Desktop profile 的 `inferenceModels`。不在 profile 里，避免 Desktop 拒收未知键。
+/// 活数据在设备本地文件；这个键只留给升级前写在 settings 表里的旧副本。
+const OWNED_INFERENCE_MODELS_KEY: &str = "claude_desktop.owned_inference_models";
+/// 用户自己的模型列表。有映射的卡覆盖菜单时先放这里，切回没配映射的卡再还原。
+/// 活数据在设备本地文件；这个键只留给升级前的旧副本。
+const USER_INFERENCE_MODELS_KEY: &str = "claude_desktop.user_inference_models";
+/// 本机的模型列表快照和用户暂存。不进数据库，避免被 WebDAV / S3 整表覆盖。
+const INFERENCE_MODELS_STATE_FILE: &str = "claude-desktop-inference-models.json";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
 pub const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
 /// `inferenceModels` 的上限（Desktop 的 schema 写着 `maxItems: 200`）。
@@ -123,6 +131,20 @@ pub struct ResolvedModelRoute {
     pub upstream_model: String,
     pub label_override: Option<String>,
     pub supports_1m: bool,
+    /// 写进 profile 的 `maxEffort`；不在 `MAX_EFFORT_LEVELS` 里的一律当没填。
+    pub max_effort: Option<String>,
+}
+
+/// Claude Desktop 认的努力程度档位，和 profile 的 `inferenceModels[].maxEffort` 一致。
+const MAX_EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// 把用户填的最大强度收敛成 Desktop 认的档位；认不出来的返回 None（不写这个键），
+/// 免得写个 Desktop 当 low 处理的值上去。
+fn normalize_max_effort(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim().to_ascii_lowercase();
+    MAX_EFFORT_LEVELS
+        .contains(&trimmed.as_str())
+        .then_some(trimmed)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +152,7 @@ struct InferenceModelSpec {
     name: String,
     label_override: Option<String>,
     supports_1m: bool,
+    max_effort: Option<String>,
 }
 
 /// 直连模式下把 `provider` 写进 Desktop 的配置（同步、编辑当前那家）。模型映射卡要经路由，
@@ -375,7 +398,7 @@ pub fn is_claude_safe_model_id(model: &str) -> bool {
 }
 
 fn inference_model_json(spec: &InferenceModelSpec) -> Value {
-    if spec.supports_1m || spec.label_override.is_some() {
+    if spec.supports_1m || spec.label_override.is_some() || spec.max_effort.is_some() {
         let mut item = json!({ "name": spec.name });
         if let Some(label_override) = spec.label_override.as_deref() {
             item["labelOverride"] = json!(label_override);
@@ -385,6 +408,10 @@ fn inference_model_json(spec: &InferenceModelSpec) -> Value {
             // 只有 `supports1m` 时 Desktop 每个模型列两行（原名 + 「1M context window」）。
             // 加上 `prefer1m`（1.21459.0 起）只列原名，交给内嵌 CLI 时自动补 `[1m]`。
             item["prefer1m"] = json!(true);
+        }
+        if let Some(max_effort) = spec.max_effort.as_deref() {
+            // 这个模型允许的最高努力程度；更高的档在 Desktop 里会被隐藏。
+            item["maxEffort"] = json!(max_effort);
         }
         item
     } else {
@@ -539,7 +566,26 @@ pub fn validate_proxy_provider(provider: &Provider) -> Result<(), AppError> {
         }
     }
 
-    proxy_model_routes(provider)?;
+    let routes = proxy_model_routes(provider)?;
+    if routes.is_empty() {
+        // 没配映射时请求按原样直通，上游收到的是 Anthropic Messages 请求，所以仍要求这张卡
+        // 是原生 Anthropic 格式（地址和凭据在下面单独校验）。
+        if let Some(api_format) = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.api_format.as_deref())
+        {
+            if !matches!(api_format, "" | "anthropic") {
+                return Err(AppError::localized(
+                    "claude_desktop.provider.api_format_unsupported",
+                    format!("Claude Desktop 第一阶段只支持原生 Anthropic Messages API（{api_format}）"),
+                    format!(
+                        "Claude Desktop phase 1 only supports native Anthropic Messages API ({api_format})"
+                    ),
+                ));
+            }
+        }
+    }
 
     if !has_proxy_base_url_and_key(provider) {
         return Err(AppError::localized(
@@ -660,6 +706,7 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             supports_1m,
+            max_effort: normalize_max_effort(route.max_effort.as_deref()),
         });
     }
 
@@ -674,31 +721,43 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
     Ok(result)
 }
 
-fn uses_default_proxy_routes(provider: &Provider) -> bool {
-    !is_official_provider(provider)
-        && !needs_routing(provider)
-        && provider
-            .meta
-            .as_ref()
-            .is_none_or(|meta| meta.claude_desktop_model_routes.is_empty())
+/// 这张卡没有已启用且填了模型的档：请求里的模型名按原样直通上游。
+/// 停用档仍留在映射里，不算已配置。完全没填和全部取消勾选都走这里。
+fn has_no_explicit_routes(provider: &Provider) -> bool {
+    !has_enabled_proxy_route(provider)
+}
+
+pub(crate) fn has_enabled_proxy_route(provider: &Provider) -> bool {
+    provider.meta.as_ref().is_some_and(|meta| {
+        meta.claude_desktop_model_routes
+            .values()
+            .any(route_publishes_model)
+    })
+}
+
+fn route_publishes_model(route: &crate::provider::ClaudeDesktopModelRoute) -> bool {
+    !route.model.trim().is_empty() && route.enabled != Some(false)
+}
+
+/// 加入聚合：没有启用的档就拒绝，不改这张卡。直通卡和全部停用的卡都发不出模型。
+pub fn ensure_desktop_stack_member(provider: &Provider) -> Result<(), AppError> {
+    validate_proxy_provider(provider)?;
+    if has_no_explicit_routes(provider) {
+        return Err(AppError::localized(
+            "claude_desktop.provider.no_enabled_model",
+            "没有启用的模型",
+            "This provider has no enabled model",
+        ));
+    }
+    configured_proxy_model_routes(provider)?;
+    Ok(())
 }
 
 pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
-    // 原生直连卡允许留空模型列表。先用同名角色路由进入代理，之后才能保存模型映射，
-    // 否则「先开路由」和「先存映射」会互相阻挡。显式映射卡仍须配置模型。
-    if uses_default_proxy_routes(provider) {
-        validate_direct_provider(provider)?;
-        let mut routes = DEFAULT_PROXY_ROUTES
-            .iter()
-            .map(|route| ResolvedModelRoute {
-                route_id: route.route_id.to_string(),
-                upstream_model: route.route_id.to_string(),
-                label_override: None,
-                supports_1m: false,
-            })
-            .collect::<Vec<_>>();
-        routes.sort_by(|a, b| a.route_id.cmp(&b.route_id));
-        return Ok(routes);
+    // 没配映射就不再拿 `DEFAULT_PROXY_ROUTES` 补满四条：那会让 Desktop 的模型列表每次
+    // 同步都被刷成固定的四档，用户在 Desktop 里删掉的又回来。空列表表示直通。
+    if has_no_explicit_routes(provider) {
+        return Ok(Vec::new());
     }
 
     configured_proxy_model_routes(provider)
@@ -733,7 +792,8 @@ pub(crate) fn configured_proxy_model_routes(
         let supports_1m = route.supports_1m.unwrap_or(false);
         let route_id = route_id.trim();
         let upstream_model = route.model.trim();
-        if route_id.is_empty() || upstream_model.is_empty() {
+        // 停用的档仍保存在映射里，但不发布：模型列表和请求映射都看不到它。
+        if route_id.is_empty() || upstream_model.is_empty() || route.enabled == Some(false) {
             continue;
         }
         let repaired_route_id = if is_claude_safe_model_id(route_id) {
@@ -754,6 +814,7 @@ pub(crate) fn configured_proxy_model_routes(
                     (!is_claude_safe_model_id(route_id)).then(|| upstream_model.to_string())
                 }),
             supports_1m,
+            max_effort: normalize_max_effort(route.max_effort.as_deref()),
         });
     }
 
@@ -865,8 +926,8 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
     let requested = strip_one_m_suffix_for_route_lookup(&requested_raw);
 
     let routes = proxy_model_routes(provider)?;
-    // 默认列表只提供进入路由时的角色菜单，不把原生的日期后缀或版本别名改成默认 ID。
-    if uses_default_proxy_routes(provider) && is_claude_safe_model_id(requested) {
+    // 没配映射：请求里的模型名原样发出去，不改成默认 ID，也不拒绝非 Claude 名字。
+    if routes.is_empty() {
         body["model"] = json!(requested);
         return Ok(normalize_upstream_request(body, provider));
     }
@@ -908,6 +969,9 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
                 })
                 .map(|route| route.upstream_model.clone())
         })
+        // 同角色和 fable→opus 都没有时，才落到已启用档。顺序固定，不用路由列表的字母序。
+        // 已配好的卡在上面就命中，不会改道。没配任何已启用档时 routes 为空，前面已直通。
+        .or_else(|| preferred_enabled_upstream(&routes, requested))
         .ok_or_else(|| {
             AppError::localized(
                 "claude_desktop.provider.route_unknown",
@@ -953,6 +1017,8 @@ fn legacy_raw_route_upstream_model(provider: &Provider, requested: &str) -> Opti
         .claude_desktop_model_routes
         .iter()
         .find(|(route_id, _)| route_id.trim() == requested)
+        // 停用档不按原键命中，否则旧会话用停用前的名字会发到已停用的上游。
+        .filter(|(_, route)| route.enabled != Some(false))
         .and_then(|(_, route)| {
             let upstream_model = route.model.trim();
             (!upstream_model.is_empty()).then(|| upstream_model.to_string())
@@ -983,6 +1049,21 @@ fn claude_role_keyword(model: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// 请求是 Claude Desktop 认的角色名、但这一档没启用时，落到已启用档。
+/// Sonnet 优先，然后 opus、haiku、fable。非角色名不回落。
+fn preferred_enabled_upstream(routes: &[ResolvedModelRoute], requested: &str) -> Option<String> {
+    if !is_claude_safe_model_id(requested) || claude_role_keyword(requested).is_none() {
+        return None;
+    }
+    const ORDER: [&str; 4] = ["sonnet", "opus", "haiku", "fable"];
+    ORDER.iter().find_map(|role| {
+        routes
+            .iter()
+            .find(|route| claude_role_keyword(&route.route_id) == Some(*role))
+            .map(|route| route.upstream_model.clone())
+    })
 }
 
 fn should_normalize_mimo_anthropic_thinking_history(
@@ -1139,6 +1220,8 @@ pub fn gateway_base_url(proxy_url: &str) -> String {
 ///
 /// 聚合模式下 `stack` 是其他几家发布的模型，排在路由那家后面（第一项是默认模型，仍是路由
 /// 那家的），并关掉模型发现：列表完全由这里决定。Desktop 最多收 200 条，多出的不写。
+/// 路由那家和聚合都没给出模型时，这份 profile 不带 `inferenceModels`。磁盘上已有的列表
+/// 由写入路径处理：我们写过的清掉，用户自己的留下。
 pub fn route_profile(
     db: &Database,
     route: &Provider,
@@ -1159,11 +1242,13 @@ pub fn route_profile(
             name: route.route_id,
             label_override: route.label_override,
             supports_1m: route.supports_1m,
+            max_effort: route.max_effort,
         })
         .chain(stack.iter().map(|model| InferenceModelSpec {
             name: model.id.clone(),
             label_override: Some(model.label.clone()),
             supports_1m: model.supports_1m,
+            max_effort: None,
         }))
         .collect::<Vec<_>>();
     if model_specs.len() > MAX_INFERENCE_MODELS {
@@ -1173,15 +1258,34 @@ pub fn route_profile(
         );
         model_specs.truncate(MAX_INFERENCE_MODELS);
     }
+    // 一个模型都没有时，这份 profile 不带 `inferenceModels`。要不要清磁盘上的旧列表，写入路径另判。
+    let specs = (!model_specs.is_empty()).then_some(model_specs.as_slice());
     let mut profile = build_gateway_profile(
         &gateway_base_url(proxy_url),
         &get_or_create_gateway_token(db)?,
-        Some(model_specs.as_slice()),
+        specs,
     );
     if !stack.is_empty() {
         profile["modelDiscoveryEnabled"] = json!(false);
     }
     Ok(profile)
+}
+
+/// 本次对 profile 里 `inferenceModels` 的处理。快照和用户暂存写在这台设备的本地文件里。
+struct InferenceModelsDecision {
+    write: InferenceModelsWrite,
+    /// 写入成功后认领的列表。`None` 表示磁盘上剩下的不是我们写的。
+    owned: Option<Vec<Value>>,
+    stash: Vec<Value>,
+}
+
+enum InferenceModelsWrite {
+    /// 把这个键写成这份列表。
+    Set(Vec<Value>),
+    /// 删掉这个键。
+    Remove,
+    /// 磁盘上的列表归用户，本次不碰。
+    Leave,
 }
 
 fn write_profile_at_paths(
@@ -1191,8 +1295,15 @@ fn write_profile_at_paths(
     profile: Value,
     target: PendingTarget,
 ) -> Result<(), AppError> {
+    let decision = reconcile_inference_models(db, paths, profile.get("inferenceModels"));
+    let profile = profile_with_inference_models(profile, &decision);
+    let mut profile_patch = gateway_profile_patch(profile);
+    if matches!(decision.write, InferenceModelsWrite::Remove) {
+        profile_patch
+            .remove
+            .push(KeyPath::new(&["inferenceModels"]));
+    }
     let deployment = deployment_mode_patch("3p");
-    let profile = gateway_profile_patch(profile);
     let meta = MetaPatch { applied: true };
     write_desktop_files(
         db,
@@ -1209,7 +1320,7 @@ fn write_profile_at_paths(
             },
             FileChange {
                 file: LiveFile::private(&paths.profile_path),
-                patch: &profile,
+                patch: &profile_patch,
             },
             FileChange {
                 file: LiveFile::shared(&paths.meta_path),
@@ -1217,7 +1328,9 @@ fn write_profile_at_paths(
             },
         ],
         target,
-    )
+    )?;
+    persist_inference_models_decision(db, &paths.device, &decision);
+    Ok(())
 }
 
 /// 切回官方：两个配置文件改回 `1p`，清掉旧版写进 `enterpriseConfig` 的网关设置，
@@ -1239,13 +1352,26 @@ fn restore_official_at_paths(
         .map(|key| KeyPath::new(&["enterpriseConfig", key]))
         .collect();
     let threep = DropEmptyEnterpriseConfig(threep);
-    let profile = JsonPatch {
+    let decision = reconcile_inference_models(db, paths, None);
+    let mut profile = JsonPatch {
         clear: vec![ClearScope {
             parent: KeyPath::root(),
             is_floor: floor::desktop_profile_floor,
         }],
         ..JsonPatch::default()
     };
+    match &decision.write {
+        InferenceModelsWrite::Set(models) => {
+            profile.set.push((
+                KeyPath::new(&["inferenceModels"]),
+                Value::Array(models.clone()),
+            ));
+        }
+        InferenceModelsWrite::Remove => {
+            profile.remove.push(KeyPath::new(&["inferenceModels"]));
+        }
+        InferenceModelsWrite::Leave => {}
+    }
     let meta = MetaPatch { applied: false };
 
     let mut changes = vec![
@@ -1268,7 +1394,347 @@ fn restore_official_at_paths(
             patch: &profile,
         });
     }
-    write_desktop_files(db, paths, op, &changes, target)
+    write_desktop_files(db, paths, op, &changes, target)?;
+    persist_inference_models_decision(db, &paths.device, &decision);
+    Ok(())
+}
+
+fn profile_with_inference_models(mut profile: Value, decision: &InferenceModelsDecision) -> Value {
+    let Some(obj) = profile.as_object_mut() else {
+        return profile;
+    };
+    match &decision.write {
+        InferenceModelsWrite::Set(models) => {
+            obj.insert("inferenceModels".to_string(), Value::Array(models.clone()));
+        }
+        InferenceModelsWrite::Remove | InferenceModelsWrite::Leave => {
+            obj.shift_remove("inferenceModels");
+        }
+    }
+    profile
+}
+
+/// 区分磁盘上的 `inferenceModels` 哪些是我们写的、哪些是用户的。
+///
+/// 有快照时逐条比：和快照一致的是我们的。没有快照（升级后第一次）才用还没提交的上一家重算；
+/// 整份对不上就不删。`claude-fable-ccs-*` 不在本次要写的列表里就去掉，退出聚合也不会把这个 id 发给上游。
+fn reconcile_inference_models(
+    db: &Database,
+    paths: &ClaudeDesktopPaths,
+    incoming: Option<&Value>,
+) -> InferenceModelsDecision {
+    let disk_entries = read_disk_inference_models(&paths.profile_path);
+    let incoming_entries = incoming.and_then(Value::as_array).cloned();
+    let record = load_inference_models_record(db, &paths.device);
+    let snapshot = record.owned;
+    let previous_stash = record.user;
+    let incoming_names: Vec<String> = incoming_entries
+        .iter()
+        .flatten()
+        .map(inference_model_entry_name)
+        .collect();
+
+    let mut user_from_disk = Vec::new();
+    let mut dropped_owned = false;
+    for entry in &disk_entries {
+        if stack_entry_not_in_incoming(entry, &incoming_names) {
+            dropped_owned = true;
+            continue;
+        }
+        if snapshot
+            .as_ref()
+            .is_some_and(|owned| owned.iter().any(|item| item == entry))
+        {
+            dropped_owned = true;
+            continue;
+        }
+        user_from_disk.push(entry.clone());
+    }
+
+    if snapshot.is_none() && !disk_entries.is_empty() {
+        if let Some(recomputed) = recompute_previous_inference_models(db, paths) {
+            let kept: Vec<Value> = disk_entries
+                .iter()
+                .filter(|entry| !stack_entry_not_in_incoming(entry, &incoming_names))
+                .cloned()
+                .collect();
+            if !kept.is_empty() && kept == recomputed {
+                user_from_disk.clear();
+                dropped_owned = true;
+            }
+        }
+    }
+
+    let our_list_is_showing = snapshot.as_ref().is_some_and(|owned| {
+        disk_entries
+            .iter()
+            .any(|entry| owned.iter().any(|item| item == entry))
+    });
+    let stash = if our_list_is_showing {
+        merge_user_inference_models(previous_stash, user_from_disk)
+    } else {
+        user_from_disk
+    };
+
+    if let Some(incoming_entries) = incoming_entries {
+        return InferenceModelsDecision {
+            write: InferenceModelsWrite::Set(incoming_entries.clone()),
+            owned: Some(incoming_entries),
+            stash,
+        };
+    }
+
+    let write = if stash.is_empty() && dropped_owned {
+        InferenceModelsWrite::Remove
+    } else if stash == disk_entries {
+        InferenceModelsWrite::Leave
+    } else if !stash.is_empty() {
+        InferenceModelsWrite::Set(stash.clone())
+    } else {
+        InferenceModelsWrite::Leave
+    };
+    InferenceModelsDecision {
+        write,
+        owned: None,
+        stash,
+    }
+}
+
+fn stack_entry_not_in_incoming(entry: &Value, incoming_names: &[String]) -> bool {
+    let name = inference_model_entry_name(entry);
+    crate::mode::stack::is_desktop_stack_id(&name)
+        && !incoming_names.iter().any(|item| item == &name)
+}
+
+fn inference_model_entry_name(entry: &Value) -> String {
+    entry
+        .as_str()
+        .or_else(|| entry.get("name").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string()
+}
+
+fn merge_user_inference_models(existing: Vec<Value>, found: Vec<Value>) -> Vec<Value> {
+    let mut merged = existing;
+    for entry in found {
+        let name = inference_model_entry_name(&entry);
+        if name.is_empty() {
+            merged.push(entry);
+            continue;
+        }
+        if let Some(slot) = merged
+            .iter_mut()
+            .find(|item| inference_model_entry_name(item) == name)
+        {
+            *slot = entry;
+        } else {
+            merged.push(entry);
+        }
+    }
+    merged
+}
+
+fn read_disk_inference_models(path: &Path) -> Vec<Value> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    read_json_or_empty(path)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("inferenceModels")
+                .and_then(Value::as_array)
+                .cloned()
+        })
+        .unwrap_or_default()
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct InferenceModelsRecord {
+    /// 上次我们写进菜单的列表。没有这个字段表示还没有快照。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owned: Option<Vec<Value>>,
+    /// 覆盖菜单前暂存的用户列表。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    user: Vec<Value>,
+}
+
+fn load_inference_models_record(db: &Database, device: &DeviceStore) -> InferenceModelsRecord {
+    let path = device.file(INFERENCE_MODELS_STATE_FILE);
+    match std::fs::read(&path) {
+        Ok(bytes) => match serde_json::from_slice::<InferenceModelsRecord>(&bytes) {
+            Ok(record) => {
+                clear_legacy_inference_model_settings(db);
+                record
+            }
+            Err(error) => {
+                log::warn!(
+                    "Claude Desktop 模型列表记录无法解析，本次不按我们写过的列表清理: {error}"
+                );
+                InferenceModelsRecord::default()
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            migrate_legacy_inference_model_settings(db, device)
+        }
+        Err(error) => {
+            log::warn!("读取 Claude Desktop 模型列表记录失败，本次不按我们写过的列表清理: {error}");
+            InferenceModelsRecord::default()
+        }
+    }
+}
+
+/// 设备文件还不存在时，把升级前写在 settings 表里的旧副本迁过来。写成功才删旧键，
+/// 避免迁移失败后两头都没有。
+fn migrate_legacy_inference_model_settings(
+    db: &Database,
+    device: &DeviceStore,
+) -> InferenceModelsRecord {
+    let record = InferenceModelsRecord {
+        owned: load_legacy_model_list(db, OWNED_INFERENCE_MODELS_KEY),
+        user: load_legacy_model_list(db, USER_INFERENCE_MODELS_KEY).unwrap_or_default(),
+    };
+    if record.owned.is_none() && record.user.is_empty() {
+        return record;
+    }
+    match write_inference_models_record(device, &record) {
+        Ok(()) => clear_legacy_inference_model_settings(db),
+        Err(error) => {
+            log::warn!("把 Claude Desktop 模型列表记录迁出设置表失败，下次切换再试: {error}");
+        }
+    }
+    record
+}
+
+fn load_legacy_model_list(db: &Database, key: &str) -> Option<Vec<Value>> {
+    match db.get_setting(key) {
+        Ok(Some(raw)) => serde_json::from_str(&raw).ok(),
+        Ok(None) => None,
+        Err(error) => {
+            log::warn!(
+                "读取 Claude Desktop 模型列表旧设置失败，本次不按我们写过的列表清理: {error}"
+            );
+            None
+        }
+    }
+}
+
+fn persist_inference_models_decision(
+    db: &Database,
+    device: &DeviceStore,
+    decision: &InferenceModelsDecision,
+) {
+    let record = InferenceModelsRecord {
+        owned: decision.owned.clone(),
+        user: decision.stash.clone(),
+    };
+    if let Err(error) = write_inference_models_record(device, &record) {
+        log::warn!(
+            "保存 Claude Desktop 模型列表记录失败，下次切换可能暂时分不清我们写的列表: {error}"
+        );
+        return;
+    }
+    clear_legacy_inference_model_settings(db);
+}
+
+fn write_inference_models_record(
+    device: &DeviceStore,
+    record: &InferenceModelsRecord,
+) -> Result<(), AppError> {
+    // 空记录也留下文件：文件在，就不再读 settings。否则云同步把旧键写回来之后，
+    // 下一次切换又会把另一台设备的列表当成这台的。
+    crate::config::write_json_file_private(&device.file(INFERENCE_MODELS_STATE_FILE), record)
+}
+
+fn clear_legacy_inference_model_settings(db: &Database) {
+    for key in [OWNED_INFERENCE_MODELS_KEY, USER_INFERENCE_MODELS_KEY] {
+        match db.get_setting(key) {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                if let Err(error) = db.delete_setting(key) {
+                    log::warn!(
+                        "清除 Claude Desktop 模型列表旧设置失败，云同步仍可能带回这份本机状态: {error}"
+                    );
+                }
+            }
+            Err(error) => {
+                log::warn!("检查 Claude Desktop 模型列表旧设置失败: {error}");
+            }
+        }
+    }
+}
+
+/// 升级后还没有快照时，用还没提交的上一家重算它会写进菜单的列表。算不出就返回 `None`，调用方不删。
+fn recompute_previous_inference_models(
+    db: &Database,
+    paths: &ClaudeDesktopPaths,
+) -> Option<Vec<Value>> {
+    let mode =
+        crate::mode::state::mode_state(&paths.device, AppType::ClaudeDesktop.as_str()).ok()?;
+    let provider = if mode.is_proxy() {
+        let id = mode.proxy_route.clone()?;
+        db.get_provider_by_id(&id, AppType::ClaudeDesktop.as_str())
+            .ok()
+            .flatten()?
+    } else {
+        crate::mode::current::direct_provider(db, &AppType::ClaudeDesktop)
+            .ok()
+            .flatten()?
+    };
+    if is_official_provider(&provider) {
+        return Some(Vec::new());
+    }
+    let mut specs = if mode.is_proxy() {
+        proxy_model_routes(&provider)
+            .ok()?
+            .into_iter()
+            .map(|route| InferenceModelSpec {
+                name: route.route_id,
+                label_override: route.label_override,
+                supports_1m: route.supports_1m,
+                max_effort: route.max_effort,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        direct_inference_model_specs(&provider).ok()?
+    };
+    if mode.is_proxy() {
+        if let Ok(stack) = crate::mode::state::stack(&paths.device, AppType::ClaudeDesktop.as_str())
+        {
+            if stack.enabled {
+                specs.extend(stack_inference_specs(db, &stack));
+            }
+        }
+    }
+    if specs.len() > MAX_INFERENCE_MODELS {
+        specs.truncate(MAX_INFERENCE_MODELS);
+    }
+    Some(specs.iter().map(inference_model_json).collect())
+}
+
+fn stack_inference_specs(
+    db: &Database,
+    stack: &crate::mode::state::StackState,
+) -> Vec<InferenceModelSpec> {
+    let mut specs = Vec::new();
+    for member_id in &stack.members {
+        let Ok(Some(provider)) = db.get_provider_by_id(member_id, AppType::ClaudeDesktop.as_str())
+        else {
+            continue;
+        };
+        let Some(key) = stack.key_of(member_id) else {
+            continue;
+        };
+        for model in crate::mode::stack::desktop_models(key, &provider) {
+            specs.push(InferenceModelSpec {
+                name: model.id,
+                label_override: Some(model.label),
+                supports_1m: model.supports_1m,
+                max_effort: None,
+            });
+        }
+    }
+    specs
 }
 
 /// Desktop 的几个文件作为一次操作写入，`target`（直连指针、模式状态）在文件都写完之后
@@ -1679,13 +2145,8 @@ mod tests {
         )
     }
 
-    fn restore_official(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
-        restore_official_at_paths(
-            &test_db(),
-            paths,
-            state::op::APPLY,
-            PendingTarget::default(),
-        )
+    fn restore_official(db: &Database, paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
+        restore_official_at_paths(db, paths, state::op::APPLY, PendingTarget::default())
     }
 
     #[cfg(any(target_os = "linux", all(test, unix)))]
@@ -1795,6 +2256,8 @@ mod tests {
                     model: "kimi-k2".to_string(),
                     label_override: Some("Kimi K2".to_string()),
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -1820,6 +2283,8 @@ mod tests {
                     model: "mimo-v2.5-pro".to_string(),
                     label_override: Some("MiMo v2.5 Pro".to_string()),
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -1848,6 +2313,8 @@ mod tests {
                     model: "gpt-5.4".to_string(),
                     label_override: Some("GPT-5.4".to_string()),
                     supports_1m: Some(false),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -1866,6 +2333,8 @@ mod tests {
                     model: "claude-sonnet-4-6".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -1980,24 +2449,12 @@ mod tests {
                 profile["inferenceGatewayBaseUrl"],
                 json!("http://127.0.0.1:15721/claude-desktop")
             );
-            assert_eq!(
-                profile["inferenceModels"],
-                json!([
-                    "claude-fable-5",
-                    "claude-haiku-4-5",
-                    "claude-opus-5",
-                    "claude-sonnet-5"
-                ])
-            );
+            // 没配映射就不写模型列表：Desktop 里那份归用户，同步和重启都不刷。
+            assert!(profile.get("inferenceModels").is_none(), "{profile}");
             let models = model_list_response(&provider).expect("local model discovery");
             configured_proxy_model_routes(&provider)
-                .expect_err("bootstrap defaults must not become a configured catalog");
-            assert_eq!(models["data"].as_array().expect("models").len(), 4);
-            assert!(models["data"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|model| model.get("supports1m").is_none()));
+                .expect_err("an empty catalog must not become a configured catalog");
+            assert!(models["data"].as_array().expect("models").is_empty());
             assert_eq!(serde_json::to_value(&provider).unwrap(), before);
             assert!(direct_profile(&provider)
                 .expect("direct profile remains valid")
@@ -2007,49 +2464,137 @@ mod tests {
     }
 
     #[test]
-    fn claude_desktop_native_default_routes_preserve_requested_model_versions() {
+    fn claude_desktop_no_routes_passes_the_requested_model_through() {
         let provider = direct_provider("native");
         for model in [
             "claude-haiku-4-5-20251001",
             "claude-opus-4-8",
             "anthropic/claude-sonnet-4-6",
+            "deepseek-v4-pro",
         ] {
             let mapped = map_proxy_request_model(
                 json!({"model": format!("{model} [1M]"), "messages": []}),
                 &provider,
             )
-            .expect("native model should pass through without a version rewrite");
+            .expect("no configured route should pass the model through unchanged");
             assert_eq!(mapped["model"], json!(model));
         }
-        map_proxy_request_model(json!({"model": "unconfigured-model"}), &provider)
-            .expect_err("default native routes must not accept arbitrary model names");
     }
 
     #[test]
-    fn claude_desktop_mapping_provider_still_requires_explicit_routes() {
-        let mut provider = proxy_provider("mapping");
+    fn claude_desktop_native_card_without_routes_passes_through() {
+        let mut provider = direct_provider("native");
+        let meta = provider.meta.as_mut().expect("meta");
+        meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
+        meta.claude_desktop_model_routes.clear();
+
+        validate_proxy_provider(&provider).expect("an empty mapping falls back to pass-through");
+        let profile = route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[])
+            .expect("an empty mapping must not become a written model list");
+        assert!(profile.get("inferenceModels").is_none(), "{profile}");
+    }
+
+    #[test]
+    fn claude_desktop_pass_through_requires_a_native_provider() {
+        let mut provider = direct_provider("invalid-native");
+        provider.meta.as_mut().expect("meta").api_format = Some("openai_chat".to_string());
+        validate_proxy_provider(&provider).expect_err("pass-through requires native API format");
+
+        provider.meta.as_mut().expect("meta").api_format = Some("anthropic".to_string());
+        provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
+        validate_proxy_provider(&provider).expect_err("pass-through requires credentials");
+    }
+
+    #[test]
+    fn claude_desktop_disabled_route_stays_stored_but_is_not_published() {
+        let mut provider = proxy_provider("proxy");
         provider
             .meta
             .as_mut()
             .expect("meta")
-            .claude_desktop_model_routes
-            .clear();
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-sonnet-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".to_string(),
+                    label_override: None,
+                    supports_1m: None,
+                    max_effort: None,
+                    enabled: None,
+                },
+            ),
+            (
+                "claude-opus-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "grok-4.7".to_string(),
+                    label_override: Some("Opus 5.5".to_string()),
+                    supports_1m: Some(true),
+                    max_effort: Some("max".to_string()),
+                    enabled: Some(false),
+                },
+            ),
+        ]);
 
-        let error = validate_proxy_provider(&provider).expect_err("mapping is required");
-        assert!(error.to_string().contains("至少需要一个模型路由映射"));
-        route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[])
-            .expect_err("an empty mapping must not silently become native defaults");
+        let routes = proxy_model_routes(&provider).expect("routes");
+        assert_eq!(routes.len(), 1, "{routes:?}");
+        assert_eq!(routes[0].route_id, "claude-sonnet-5");
+        let profile =
+            route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[]).expect("profile");
+        let models = profile["inferenceModels"].as_array().expect("models");
+        assert_eq!(models.len(), 1, "{models:?}");
+        let published = models[0]
+            .as_str()
+            .unwrap_or_else(|| models[0]["name"].as_str().unwrap());
+        assert_eq!(published, "claude-sonnet-5");
     }
 
     #[test]
-    fn claude_desktop_default_routes_do_not_bypass_native_provider_validation() {
-        let mut provider = direct_provider("invalid-native");
-        provider.meta.as_mut().expect("meta").api_format = Some("openai_chat".to_string());
-        proxy_model_routes(&provider).expect_err("native defaults require native API format");
+    fn claude_desktop_writes_each_route_max_effort_and_drops_unknown_levels() {
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-opus-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".to_string(),
+                    label_override: None,
+                    supports_1m: Some(false),
+                    max_effort: Some("MAX".to_string()),
+                    enabled: None,
+                },
+            ),
+            (
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".to_string(),
+                    label_override: None,
+                    supports_1m: Some(false),
+                    max_effort: Some("turbo".to_string()),
+                    enabled: None,
+                },
+            ),
+        ]);
 
-        provider.meta.as_mut().expect("meta").api_format = Some("anthropic".to_string());
-        provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
-        proxy_model_routes(&provider).expect_err("native defaults require credentials");
+        let profile =
+            route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[]).expect("profile");
+        let models = profile["inferenceModels"].as_array().expect("models");
+        // 只有 name 的模型是纯字符串条目，其余是对象。
+        let by_role = |role: &str| {
+            models
+                .iter()
+                .find(|model| match model {
+                    Value::String(name) => name.contains(role),
+                    other => other["name"].as_str().unwrap_or_default().contains(role),
+                })
+                .unwrap_or_else(|| panic!("{role}: {models:?}"))
+        };
+        // 写进去时统一小写；Desktop 只认这几个档位。
+        assert_eq!(by_role("opus")["maxEffort"], json!("max"), "{models:?}");
+        // 认不出来的档位不写这个键，免得 Desktop 当成 low 处理。
+        assert!(by_role("haiku").get("maxEffort").is_none(), "{models:?}");
     }
 
     #[test]
@@ -2122,9 +2667,13 @@ mod tests {
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
 
-        let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
-            .expect_err("unknown route should fail");
-        assert!(err.to_string().contains("claude-opus-4-8"));
+        let mapped_opus = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
+            .expect("an unconfigured Claude role falls back to the enabled tier");
+        assert_eq!(mapped_opus["model"], json!("kimi-k2"));
+
+        let err = map_proxy_request_model(json!({"model": "gpt-5"}), &provider)
+            .expect_err("a name without a role keyword should still fail");
+        assert!(err.to_string().contains("gpt-5"));
     }
 
     #[test]
@@ -2133,6 +2682,8 @@ mod tests {
             model: model.to_string(),
             label_override: None,
             supports_1m: None,
+            max_effort: None,
+            enabled: None,
         };
         let mut provider = proxy_provider("proxy");
         provider
@@ -2217,6 +2768,8 @@ mod tests {
                     model: "deepseek-v4-pro".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2225,6 +2778,8 @@ mod tests {
                     model: "deepseek-v4-pro".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2233,6 +2788,8 @@ mod tests {
                     model: "deepseek-v4-flash".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
         ]);
@@ -2273,6 +2830,8 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2281,6 +2840,8 @@ mod tests {
                     model: "upstream-sonnet".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
         ]);
@@ -2309,8 +2870,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_desktop_proxy_fable_without_opus_route_still_errors() {
-        // 没有 opus 档可回落时保持精确报错语义，不静默落到其他档。
+    fn claude_desktop_proxy_falls_back_to_the_preferred_enabled_tier() {
+        // 只启用了 Sonnet 时，子 agent 的 Haiku / Opus，以及没有 opus 的 fable，都落到 Sonnet。
+        // 已有 opus 时 fable 仍先降到 opus，不走这条。
         let mut provider = proxy_provider("proxy");
         provider
             .meta
@@ -2322,15 +2884,86 @@ mod tests {
                 model: "upstream-sonnet".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                max_effort: None,
+                enabled: None,
             },
         )]);
 
-        let err = map_proxy_request_model(
-            json!({"model": "claude-fable-5", "messages": []}),
+        for requested in [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-8",
+            "claude-fable-5",
+        ] {
+            let mapped =
+                map_proxy_request_model(json!({"model": requested, "messages": []}), &provider)
+                    .expect(requested);
+            assert_eq!(mapped["model"], json!("upstream-sonnet"), "{requested}");
+        }
+
+        let err = map_proxy_request_model(json!({"model": "gpt-5"}), &provider)
+            .expect_err("a name without a role keyword should still fail");
+        assert!(err.to_string().contains("gpt-5"));
+
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([(
+            "claude-haiku-4-5".to_string(),
+            ClaudeDesktopModelRoute {
+                model: "upstream-haiku".to_string(),
+                label_override: None,
+                supports_1m: None,
+                max_effort: None,
+                enabled: None,
+            },
+        )]);
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-sonnet-4-6", "messages": []}),
             &provider,
         )
-        .expect_err("fable without an opus route should fail");
-        assert!(err.to_string().contains("claude-fable-5"));
+        .expect("sonnet should fall back to the only enabled tier");
+        assert_eq!(mapped["model"], json!("upstream-haiku"));
+    }
+
+    #[test]
+    fn claude_desktop_disabled_exact_route_falls_back_to_an_enabled_tier() {
+        // 停用前选过 Haiku，或旧会话继续用 claude-haiku-4-5 这个名字时，
+        // 不能发到已停用的 Haiku 上游，要落到已启用的 Sonnet。
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-sonnet-4-6".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-sonnet".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
+                },
+            ),
+            (
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-haiku".to_string(),
+                    label_override: None,
+                    supports_1m: None,
+                    max_effort: None,
+                    enabled: Some(false),
+                },
+            ),
+        ]);
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5", "messages": []}),
+            &provider,
+        )
+        .expect("exact name of a disabled tier should fall back");
+        assert_eq!(mapped["model"], json!("upstream-sonnet"));
     }
 
     #[test]
@@ -2349,6 +2982,8 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2357,6 +2992,8 @@ mod tests {
                     model: "upstream-fable".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
         ]);
@@ -2387,6 +3024,8 @@ mod tests {
                 model: "upstream-opus-new".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                max_effort: None,
+                enabled: None,
             },
         )]);
         provider
@@ -2408,6 +3047,8 @@ mod tests {
                 model: "upstream-opus-legacy".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                max_effort: None,
+                enabled: None,
             },
         )]);
         provider
@@ -2531,6 +3172,8 @@ mod tests {
                         model: "deepseek-v4-pro".to_string(),
                         label_override: None,
                         supports_1m: Some(true),
+                        max_effort: None,
+                        enabled: None,
                     },
                 ),
                 (
@@ -2539,6 +3182,8 @@ mod tests {
                         model: "legacy-upstream".to_string(),
                         label_override: None,
                         supports_1m: Some(false),
+                        max_effort: None,
+                        enabled: None,
                     },
                 ),
                 (
@@ -2547,6 +3192,8 @@ mod tests {
                         model: "claude-sonnet-5".to_string(),
                         label_override: None,
                         supports_1m: Some(false),
+                        max_effort: None,
+                        enabled: None,
                     },
                 ),
             ]),
@@ -2599,6 +3246,8 @@ mod tests {
                     model: "upstream-sonnet".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2607,6 +3256,8 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
         ]);
@@ -2705,7 +3356,7 @@ mod tests {
         let db = test_db();
 
         apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
-        restore_official(&paths).expect("restore official");
+        restore_official(&db, &paths).expect("restore official");
 
         let normal: Value = read_json_file(&paths.normal_config_path).expect("read normal config");
         let threep: Value = read_json_file(&paths.threep_config_path).expect("read 3p config");
@@ -2744,7 +3395,7 @@ mod tests {
         .unwrap();
 
         apply_provider_to_paths(&db, &direct_provider_with_models("b"), &paths).expect("apply b");
-        restore_official(&paths).expect("restore official");
+        restore_official(&db, &paths).expect("restore official");
         apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("apply a again");
 
         let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
@@ -2752,9 +3403,160 @@ mod tests {
         assert_eq!(profile["coworkEgressAllowedHosts"], json!(["corp.example"]));
         assert_eq!(profile["disableDeploymentModeChooser"], json!(true));
         assert_eq!(profile["inferenceProvider"], json!("gateway"));
-        assert!(
-            profile.get("inferenceModels").is_none(),
-            "the previous provider's models must not linger"
+        // 上一家写进菜单的列表是我们的，切走后不能留在没配映射的卡上。
+        assert!(profile.get("inferenceModels").is_none());
+    }
+
+    #[test]
+    fn claude_desktop_keeps_a_user_model_list_and_restores_it() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+        let user_list = json!([
+            { "name": "claude-sonnet-4-6", "labelOverride": "Mine" },
+            "claude-opus-4-8"
+        ]);
+
+        apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("apply a");
+        let mut profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        profile["inferenceModels"] = user_list.clone();
+        fs::write(
+            &paths.profile_path,
+            serde_json::to_string_pretty(&profile).unwrap(),
+        )
+        .unwrap();
+
+        apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("reapply a");
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["inferenceModels"], user_list);
+
+        apply_provider_to_paths(&db, &direct_provider_with_models("b"), &paths).expect("apply b");
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([{ "name": "claude-sonnet-4-6", "supports1m": true, "prefer1m": true }])
+        );
+
+        apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("back to a");
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["inferenceModels"], user_list);
+    }
+
+    #[test]
+    fn claude_desktop_inference_model_records_stay_on_this_device() {
+        let temp = TempDir::new().expect("tempdir");
+        let device = DeviceStore::at(temp.path().join(".cc-switch"));
+        let db = test_db();
+        let owned = json!([{ "name": "claude-sonnet-4-6" }]);
+        let user = json!(["claude-opus-4-8"]);
+        db.set_setting(
+            OWNED_INFERENCE_MODELS_KEY,
+            &serde_json::to_string(&owned).unwrap(),
+        )
+        .unwrap();
+        db.set_setting(
+            USER_INFERENCE_MODELS_KEY,
+            &serde_json::to_string(&user).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = load_inference_models_record(&db, &device);
+        assert_eq!(loaded.owned, owned.as_array().cloned());
+        assert_eq!(loaded.user, user.as_array().cloned().unwrap());
+        assert!(db
+            .get_setting(OWNED_INFERENCE_MODELS_KEY)
+            .unwrap()
+            .is_none());
+        assert!(db.get_setting(USER_INFERENCE_MODELS_KEY).unwrap().is_none());
+        assert!(device.file(INFERENCE_MODELS_STATE_FILE).exists());
+
+        // 云同步把旧键写回来时，本机文件优先，并把设置表里的键清掉。
+        db.set_setting(OWNED_INFERENCE_MODELS_KEY, "[]").unwrap();
+        let again = load_inference_models_record(&db, &device);
+        assert_eq!(again.owned, owned.as_array().cloned());
+        assert!(db
+            .get_setting(OWNED_INFERENCE_MODELS_KEY)
+            .unwrap()
+            .is_none());
+
+        persist_inference_models_decision(
+            &db,
+            &device,
+            &InferenceModelsDecision {
+                write: InferenceModelsWrite::Leave,
+                owned: Some(vec![json!("claude-sonnet-5")]),
+                stash: vec![json!("mine")],
+            },
+        );
+        assert!(db
+            .get_setting(OWNED_INFERENCE_MODELS_KEY)
+            .unwrap()
+            .is_none());
+        assert!(db.get_setting(USER_INFERENCE_MODELS_KEY).unwrap().is_none());
+        let on_disk: Value =
+            read_json_file(&device.file(INFERENCE_MODELS_STATE_FILE)).expect("device record");
+        assert_eq!(on_disk["owned"], json!(["claude-sonnet-5"]));
+        assert_eq!(on_disk["user"], json!(["mine"]));
+    }
+
+    #[test]
+    fn claude_desktop_strips_aggregation_ids_without_touching_user_entries() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("apply a");
+        let mut profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        profile["inferenceModels"] = json!([
+            { "name": "claude-sonnet-4-6", "labelOverride": "Mine" },
+            "claude-fable-ccs-473908"
+        ]);
+        fs::write(
+            &paths.profile_path,
+            serde_json::to_string_pretty(&profile).unwrap(),
+        )
+        .unwrap();
+
+        apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("reapply a");
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Mine" }])
+        );
+    }
+
+    #[test]
+    fn claude_desktop_all_disabled_routes_pass_through_and_cannot_join_stack() {
+        let mut provider = proxy_provider("disabled");
+        let meta = provider.meta.as_mut().expect("meta");
+        meta.api_format = Some("anthropic".to_string());
+        let route = meta
+            .claude_desktop_model_routes
+            .get_mut("claude-sonnet-4-6")
+            .expect("route");
+        route.enabled = Some(false);
+
+        validate_proxy_provider(&provider).expect("all disabled tiers are pass-through");
+        assert!(proxy_model_routes(&provider).expect("routes").is_empty());
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5-20251001", "messages": []}),
+            &provider,
+        )
+        .expect("pass through");
+        assert_eq!(mapped["model"], json!("claude-haiku-4-5-20251001"));
+
+        let err = ensure_desktop_stack_member(&provider).expect_err("no enabled model");
+        assert!(err.to_string().contains("没有启用的模型"));
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .expect("meta")
+                .claude_desktop_model_routes
+                .get("claude-sonnet-4-6")
+                .expect("route")
+                .enabled,
+            Some(false)
         );
     }
 
@@ -2788,7 +3590,7 @@ mod tests {
         );
         assert_eq!(meta["appliedId"], json!(PROFILE_ID));
 
-        restore_official(&paths).expect("restore");
+        restore_official(&db, &paths).expect("restore");
         let meta: Value = read_json_file(&paths.meta_path).expect("read meta");
         assert_eq!(
             meta["entries"],
