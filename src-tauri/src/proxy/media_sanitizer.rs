@@ -484,6 +484,49 @@ mod tests {
     }
 
     #[test]
+    fn codex_catalog_modalities_control_image_rectification() {
+        for (row, expected_replacements) in [
+            (
+                json!({ "model": "gpt-5.6-sol", "inputModalities": ["text", "image"] }),
+                0,
+            ),
+            (
+                json!({ "model": "gpt-5.6-sol", "inputModalities": ["text"] }),
+                1,
+            ),
+            (json!({ "model": "gpt-5.6-sol" }), 0),
+        ] {
+            let provider = provider(json!({ "modelCatalog": { "models": [row] } }));
+            let original = json!({
+                "model": "gpt-5.6-sol",
+                "input": [{
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "look" },
+                        { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                    ]
+                }]
+            });
+            for allow_heuristic in [false, true] {
+                let mut body = original.clone();
+                assert_eq!(
+                    replace_images_for_text_only_model(&mut body, &provider, allow_heuristic),
+                    expected_replacements
+                );
+                if expected_replacements == 0 {
+                    assert_eq!(body, original);
+                } else {
+                    assert_eq!(body["input"][0]["content"][1]["type"], "input_text");
+                    assert_eq!(
+                        body["input"][0]["content"][1]["text"],
+                        UNSUPPORTED_IMAGE_MARKER
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn confirmed_text_only_models_replace_images_before_send() {
         let provider = provider(json!({}));
         let mut body = json!({
