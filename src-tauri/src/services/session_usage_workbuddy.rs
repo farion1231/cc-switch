@@ -128,6 +128,12 @@ fn sync_session_file(
         if read == 0 {
             break;
         }
+        // 尾部未写完的半行留给下一轮：WorkBuddy 正在追加时最后一段可能只落了
+        // 半行 JSON，此时推进偏移会让这行永远丢失（与 Claude 导入器的
+        // test_partial_line_completed_later_is_not_lost 同源问题）
+        if !line.ends_with('\n') {
+            break;
+        }
         offset += read as i64;
         if let Ok(event) = serde_json::from_str::<Value>(&line) {
             import_event(tx, &event, &session_id, offset, result)?;
@@ -297,7 +303,7 @@ mod tests {
             let conn = db.conn.lock().unwrap();
             conn.execute("DELETE FROM model_pricing", []).unwrap();
         }
-        let result = sync_from_roots(&db, &[root.clone()]).unwrap();
+        let result = sync_from_roots(&db, std::slice::from_ref(&root)).unwrap();
         assert_eq!(result.imported, 1);
         {
             let conn = db.conn.lock().unwrap();
@@ -343,7 +349,12 @@ mod tests {
             assert_eq!(fresh, 39590 - 4096);
         }
         // mtime 未变：整文件跳过
-        assert_eq!(sync_from_roots(&db, &[root.clone()]).unwrap().imported, 0);
+        assert_eq!(
+            sync_from_roots(&db, std::slice::from_ref(&root))
+                .unwrap()
+                .imported,
+            0
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -368,7 +379,12 @@ mod tests {
             })],
         );
         let db = Database::memory().unwrap();
-        assert_eq!(sync_from_roots(&db, &[root.clone()]).unwrap().imported, 1);
+        assert_eq!(
+            sync_from_roots(&db, std::slice::from_ref(&root))
+                .unwrap()
+                .imported,
+            1
+        );
         let conn = db.conn.lock().unwrap();
         let row = conn
             .query_row(
@@ -394,7 +410,12 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         write_project(&root, "sess-3", &[call(1, "c1", "hy3", 10, 10, 0)]);
         let db = Database::memory().unwrap();
-        assert_eq!(sync_from_roots(&db, &[root.clone()]).unwrap().imported, 1);
+        assert_eq!(
+            sync_from_roots(&db, std::slice::from_ref(&root))
+                .unwrap()
+                .imported,
+            1
+        );
         // 模拟 rollup 剪明细 + 会话继续追加
         {
             let conn = db.conn.lock().unwrap();
@@ -409,7 +430,7 @@ mod tests {
                 call(2, "c2", "hy3", 20, 20, 0),
             ],
         );
-        let result = sync_from_roots(&db, &[root.clone()]).unwrap();
+        let result = sync_from_roots(&db, std::slice::from_ref(&root)).unwrap();
         assert_eq!(result.imported, 1, "只应导入新增行，被剪旧行不得重导");
         {
             let conn = db.conn.lock().unwrap();
@@ -460,6 +481,30 @@ mod tests {
         }
         let _ = fs::remove_dir_all(&cn);
         let _ = fs::remove_dir_all(&overseas);
+    }
+
+    #[test]
+    fn workbuddy_usage_partial_tail_line_completed_later_is_not_lost() {
+        // WorkBuddy 追加中途被扫描：最后一行只有半截 JSON，偏移必须停在
+        // 半行行首，等下一轮补全后再导入（对应 Claude 导入器的同名回归）
+        let root = std::env::temp_dir().join(format!("wb-tail-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let dir = root.join("proj");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sess-tail.jsonl");
+        let full = call(1, "t1", "hy3", 10, 10, 0).to_string();
+        let partial_second = r#"{"id":"t2","timestamp":1792155734222,"type":"fun"#;
+        fs::write(&path, format!("{full}\n{partial_second}")).unwrap();
+        let db = Database::memory().unwrap();
+        let first = sync_from_roots(&db, std::slice::from_ref(&root)).unwrap();
+        assert_eq!(first.imported, 1);
+        // 半行随后写完（带换行）+ 追加第三行
+        let second = call(2, "t2", "hy3", 20, 20, 0).to_string();
+        let third = call(3, "t3", "hy3", 30, 30, 0).to_string();
+        fs::write(&path, format!("{full}\n{second}\n{third}\n")).unwrap();
+        let resumed = sync_from_roots(&db, std::slice::from_ref(&root)).unwrap();
+        assert_eq!(resumed.imported, 2, "补全的半行和新增行都要能导入");
+        let _ = fs::remove_dir_all(&root);
     }
 }
 

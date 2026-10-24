@@ -58,7 +58,7 @@ pub(super) fn sync_from_root(db: &Database, root: &Path) -> Result<SessionSyncRe
             };
             for entry in entries.flatten() {
                 let path = entry.path();
-                if !is_session_log(&path.file_name().and_then(|n| n.to_str()).unwrap_or("")) {
+                if !is_session_log(path.file_name().and_then(|n| n.to_str()).unwrap_or("")) {
                     continue;
                 }
                 sync_session_file(&tx, &path, &cursors, &mut result)?;

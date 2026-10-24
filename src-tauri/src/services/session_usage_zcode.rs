@@ -111,34 +111,46 @@ fn sync_from_database(
             })
             .unwrap_or_else(|| "0".into());
         let request_id = format!("zcode:{id}");
-        let changed = tx.execute(
-            "INSERT OR IGNORE INTO proxy_request_logs (
-                request_id, provider_id, app_type, model, request_model,
-                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
-                total_cost_usd, latency_ms, first_token_ms, duration_ms, status_code,
-                error_message, session_id, provider_type, is_streaming, cost_multiplier,
-                created_at, data_source, input_token_semantics
-             ) VALUES (?1, '_zcode_session', 'zcode', ?2, ?2, ?3, ?4, ?5, ?6,
-                       '0', '0', '0', '0', ?7, ?8, ?9, ?8, ?10, ?11, ?12,
-                       'zcode_session', 1, '1', ?13, 'zcode_session', ?14)",
-            params![
-                request_id,
-                model,
-                usage.input_tokens,
-                usage.output_tokens,
-                usage.cache_read_tokens,
-                usage.cache_creation_tokens,
-                cost,
-                duration_ms.unwrap_or(0),
-                first_token_ms,
-                status_code,
-                error_message,
-                session_id,
-                started_at / 1000,
-                INPUT_TOKEN_SEMANTICS_TOTAL
-            ],
-        )?;
+        // 永久回执（与 Kimi / Antigravity 导入器一致）：卡死的 running 行会让
+        // 水位反复回扫后续行，rollup 剪掉明细后单靠 request_id 去重挡不住重导，
+        // 汇总表会每次剪枝后重复累加——账本在同一事务里先记账再插明细。
+        let first_import = tx.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+             VALUES ('zcode_session', ?1, ?1, 1)",
+            [&request_id],
+        )? == 1;
+        let changed = if first_import {
+            tx.execute(
+                "INSERT OR IGNORE INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, first_token_ms, duration_ms, status_code,
+                    error_message, session_id, provider_type, is_streaming, cost_multiplier,
+                    created_at, data_source, input_token_semantics
+                 ) VALUES (?1, '_zcode_session', 'zcode', ?2, ?2, ?3, ?4, ?5, ?6,
+                           '0', '0', '0', '0', ?7, ?8, ?9, ?8, ?10, ?11, ?12,
+                           'zcode_session', 1, '1', ?13, 'zcode_session', ?14)",
+                params![
+                    request_id,
+                    model,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.cache_read_tokens,
+                    usage.cache_creation_tokens,
+                    cost,
+                    duration_ms.unwrap_or(0),
+                    first_token_ms,
+                    status_code,
+                    error_message,
+                    session_id,
+                    started_at / 1000,
+                    INPUT_TOKEN_SEMANTICS_TOTAL
+                ],
+            )?
+        } else {
+            0
+        };
         result.imported += changed as u32;
         result.skipped += u32::from(changed == 0);
         cursor = rowid;
@@ -390,6 +402,41 @@ mod tests {
         );
         let fourth = sync_from_database(&db, &source, "watermark").unwrap();
         assert_eq!(fourth.imported, 1);
+    }
+
+    #[test]
+    fn zcode_usage_never_reimports_pruned_rows_behind_a_stuck_running_row() {
+        // ZCode 中途被杀时 running 行会永久卡住，水位被它压着反复回扫后续行；
+        // rollup 剪掉明细后只有 dedup 账本能挡住重导，否则汇总表重复累加
+        let source = Connection::open_in_memory().unwrap();
+        insert(
+            &source,
+            &format!(
+                "{SCHEMA} INSERT INTO model_usage VALUES
+            ('r1','s1','GLM-5.3','running',1792510000000,NULL,NULL,NULL,0,0,0,0,0),
+            ('r2','s1','GLM-5.3','completed',1792510633226,100,10,NULL,10,10,0,0,0);"
+            ),
+        );
+        let db = Database::memory().unwrap();
+        let first = sync_from_database(&db, &source, "stuck").unwrap();
+        assert_eq!(first.imported, 1);
+        // 模拟 rollup_and_prune 剪掉明细行
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("DELETE FROM proxy_request_logs", []).unwrap();
+        }
+        let rescan = sync_from_database(&db, &source, "stuck").unwrap();
+        assert_eq!(rescan.imported, 0, "账本必须拦住被剪明细的重导");
+        assert_eq!(rescan.skipped, 1);
+        // 卡住的行完成后仍能正常补录
+        source
+            .execute(
+                "UPDATE model_usage SET status='completed', input_tokens=7 WHERE id='r1'",
+                [],
+            )
+            .unwrap();
+        let recovered = sync_from_database(&db, &source, "stuck").unwrap();
+        assert_eq!(recovered.imported, 1);
     }
 }
 
