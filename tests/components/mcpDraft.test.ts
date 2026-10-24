@@ -128,6 +128,29 @@ describe("mcpDraft form ⇄ JSON", () => {
     startup_timeout_ms: 30000,
   };
 
+  it.each([
+    { args: ["", "server.js"] },
+    { args: ["server.js", "--label", "", "--mode", "read-only"] },
+    { args: ["server.js", ""] },
+    { args: ["", ""] },
+  ])("preserves empty argument positions in $args", ({ args }) => {
+    const original = { type: "stdio" as const, command: "node", args };
+    const conn = connectionOf(original);
+    expect(specOf(conn)).toEqual(original);
+
+    const json = jsonTextOf(conn, false);
+    expect(JSON.parse(json)).toEqual(original);
+    const parsed = parseJsonText(json, conn);
+    expect(parsed.ok && specOf(connectionOf(parsed.spec))).toEqual(original);
+  });
+
+  it("omits args when there are no argument rows", () => {
+    expect(specOf(connectionOf({ command: "node", args: [] }))).toEqual({
+      type: "stdio",
+      command: "node",
+    });
+  });
+
   it("keeps unknown fields and masks secrets only for display", () => {
     const conn = connectionOf(spec);
     expect(conn.extra).toEqual({ startup_timeout_ms: 30000 });
