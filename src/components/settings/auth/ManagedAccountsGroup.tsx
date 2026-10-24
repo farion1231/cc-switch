@@ -58,7 +58,14 @@ export interface GroupLoginFlow {
   > | null;
   error: string | null;
   onCancel: () => void;
+  /** 等待块里取消按钮的文案（CodeBuddy 退出过原登录时是「恢复原来的登录」） */
+  cancelLabel?: string;
   onRetry: () => void;
+  /** 没有验证码时等待块里的说明（默认是「已在浏览器打开登录页」；CodeBuddy 是在终端里登录） */
+  pendingNote?: string;
+  /** 等待块里「重新打开」按钮的文案和动作（默认重新打开登录页） */
+  reopenLabel?: string;
+  onReopen?: () => void;
 }
 
 interface ManagedAccountsGroupProps {
@@ -89,7 +96,8 @@ interface ManagedAccountsGroupProps {
   /** ⋯ 里有没有「重新登录」（Copilot 没有） */
   canReauth: boolean;
   onReauth: (accountId: string) => void;
-  onSetDefault: (accountId: string) => void;
+  /** ⋯ 里的「设为默认」；不传就没有这一项（CodeBuddy 在供应商列表里切换） */
+  onSetDefault?: (accountId: string) => void;
   settingDefault: boolean;
   onRemove: (accountId: string, login: string) => void;
   /** 标题行 ⋯ 里的「删除全部账号」；不传就没有这个菜单（Kimi） */
@@ -383,29 +391,32 @@ export function ManagedAccountsGroup({
                 size="compact"
                 onClick={login.onCancel}
               >
-                {t("common.cancel", { defaultValue: "取消" })}
+                {login.cancelLabel ??
+                  t("common.cancel", { defaultValue: "取消" })}
               </Button>
             </div>
             {login.deviceCode && !login.deviceCode.user_code && (
               <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
                 <span className="min-w-0 flex-1">
-                  {t("authCenter.pending.browserNote", {
-                    defaultValue:
-                      "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
-                    service: name,
-                  })}
+                  {login.pendingNote ??
+                    t("authCenter.pending.browserNote", {
+                      defaultValue:
+                        "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
+                      service: name,
+                    })}
                 </span>
                 <Button
                   type="button"
                   variant="quiet"
                   size="compact"
                   className="gap-1"
-                  onClick={openPage}
+                  onClick={login.onReopen ?? openPage}
                 >
                   <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  {t("authCenter.pending.reopen", {
-                    defaultValue: "重新打开登录页",
-                  })}
+                  {login.reopenLabel ??
+                    t("authCenter.pending.reopen", {
+                      defaultValue: "重新打开登录页",
+                    })}
                 </Button>
               </div>
             )}
@@ -544,7 +555,7 @@ interface AccountRowProps {
   settingDefault: boolean;
   removing: boolean;
   onReauth: (accountId: string) => void;
-  onSetDefault: (accountId: string) => void;
+  onSetDefault?: (accountId: string) => void;
   onRemove: (accountId: string, login: string) => void;
 }
 
@@ -563,7 +574,8 @@ function AccountRow({
 }: AccountRowProps) {
   const { t } = useTranslation();
   const subId = useId();
-  const canSetDefault = !account.isDefault && !account.needsReauth;
+  const canSetDefault =
+    Boolean(onSetDefault) && !account.isDefault && !account.needsReauth;
   const separator = " · ";
 
   return (
@@ -646,7 +658,7 @@ function AccountRow({
           {canSetDefault && (
             <DropdownMenuItem
               disabled={settingDefault}
-              onSelect={() => onSetDefault(account.id)}
+              onSelect={() => onSetDefault?.(account.id)}
               className="h-[30px] rounded-control px-2.5 text-body"
             >
               {setDefaultLabel ??

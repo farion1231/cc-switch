@@ -9,12 +9,17 @@ import {
 } from "@/config/appConfig";
 
 describe("appConfig provider lifecycle", () => {
-  it.each(["opencode", "openclaw", "hermes", "pi", "mcode", "kimi"])(
-    "classifies %s as additive",
-    (appId) => {
-      expect(isAdditiveAppId(appId)).toBe(true);
-    },
-  );
+  it.each([
+    "opencode",
+    "openclaw",
+    "hermes",
+    "pi",
+    "mcode",
+    "kimi",
+    "codebuddy",
+  ])("classifies %s as additive", (appId) => {
+    expect(isAdditiveAppId(appId)).toBe(true);
+  });
 
   it.each(["claude", "claude-desktop", "codex", "gemini", "grokbuild"])(
     "does not classify %s as additive",

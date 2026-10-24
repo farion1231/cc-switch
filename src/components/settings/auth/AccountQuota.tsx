@@ -22,6 +22,7 @@ import {
   formatRelativeTime,
   lineHint,
   tierLine,
+  toneForLeft,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -30,9 +31,11 @@ import {
   quotaRows,
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
+import type { CodebuddyQuota } from "@/lib/api/auth";
 import { useCopilotQuota } from "@/lib/query/copilot";
 import {
   useAgyAccountQuota,
+  useCodebuddyAccountQuota,
   useKimiAccountQuota,
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
@@ -406,6 +409,150 @@ export function AgyAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** 积分数：一万以上用紧凑写法（「12.3万」「12.3K」），放得下数值那一格 */
+function formatCredits(value: number, locale: string): string {
+  try {
+    return new Intl.NumberFormat(
+      locale,
+      value >= 10_000
+        ? { notation: "compact", maximumFractionDigits: 1 }
+        : { maximumFractionDigits: value < 100 ? 2 : 0 },
+    ).format(value);
+  } catch {
+    return String(Math.round(value));
+  }
+}
+
+/** CodebuddyQuota → 额度列状态：一行「套餐名  额度条  剩余积分」，悬停写全总量 / 剩余 / 已用 */
+export function codebuddyQuotaState(
+  t: TFunction,
+  quota: CodebuddyQuota | undefined,
+  loading: boolean,
+  locale: string,
+  display: QuotaDisplay = "left",
+): AccountQuotaState {
+  if (!quota) return loading ? { kind: "loading" } : null;
+  if (
+    quota.credentialStatus === "not_found" ||
+    quota.credentialStatus === "parse_error"
+  ) {
+    return null;
+  }
+  if (!quota.success) {
+    const reason =
+      quota.credentialStatus === "expired"
+        ? t("quota.reason.loginExpired")
+        : quota.credentialStatus === "refresh_pending"
+          ? t("authCenter.codebuddy.quota.refreshPending", {
+              defaultValue: "令牌待 CodeBuddy 续期，切到这个号用一次后再查",
+            })
+          : quota.error || t("subscription.queryFailed");
+    return { kind: "failed", reason };
+  }
+
+  const label =
+    quota.planName ||
+    (quota.enterprise
+      ? t("authCenter.codebuddy.quota.enterprise", { defaultValue: "企业版" })
+      : t("authCenter.codebuddy.quota.credits", { defaultValue: "积分" }));
+  const remaining = formatCredits(quota.remaining, locale);
+  const used = formatCredits(quota.used, locale);
+  const total = formatCredits(quota.total, locale);
+
+  if (quota.unlimited) {
+    const caption = t("authCenter.codebuddy.quota.unlimited", {
+      defaultValue: "不限量",
+    });
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label,
+          line: {
+            key: "codebuddy_credits",
+            left: Infinity,
+            tone: "normal",
+            text: caption,
+            caption,
+            value: used,
+            detail: t("authCenter.codebuddy.quota.usedDetail", {
+              defaultValue: "本周期已用 {{used}} 积分",
+              used,
+            }),
+          },
+        },
+      ],
+    };
+  }
+
+  const leftPct =
+    quota.total > 0
+      ? Math.max(0, Math.min(100, (quota.remaining / quota.total) * 100))
+      : 0;
+  const showUsed = display === "used";
+  const value =
+    quota.remaining <= 0 ? t("quota.usedUp") : showUsed ? used : remaining;
+  return {
+    kind: "rows",
+    rows: [
+      {
+        label,
+        line: {
+          key: "codebuddy_credits",
+          left: leftPct,
+          bar: showUsed ? 100 - leftPct : leftPct,
+          tone: toneForLeft(quota.remaining <= 0 ? 0 : leftPct),
+          text: value,
+          value,
+          detail: t("authCenter.codebuddy.quota.detail", {
+            defaultValue:
+              "积分剩余 {{remaining}} / 共 {{total}}，已用 {{used}}",
+            remaining,
+            total,
+            used,
+          }),
+        },
+      },
+    ],
+  };
+}
+
+/** CodeBuddy 账号的套餐与积分（codebuddy_account_quota(accountId)，不用先切号） */
+export function CodebuddyAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const lang = i18n.language?.toLowerCase().startsWith("zh") ? "zh" : "en";
+  const {
+    data: quota,
+    isFetching: loading,
+    isError,
+    error,
+    refresh,
+  } = useCodebuddyAccountQuota(accountId, lang);
+  const state: AccountQuotaState =
+    !quota && isError
+      ? {
+          kind: "failed",
+          reason: extractErrorMessage(error) || t("subscription.queryFailed"),
+        }
+      : codebuddyQuotaState(t, quota, loading, i18n.language, display);
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={state}
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refresh()}
     />
   );
 }

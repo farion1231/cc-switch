@@ -5466,11 +5466,14 @@ impl ProviderService {
         if app_type == AppType::Omp {
             return omp::list(state);
         }
-        if matches!(app_type, AppType::Mcode | AppType::Kimi) {
-            let native = if app_type == AppType::Kimi {
-                crate::kimi_config::get_providers()?
-            } else {
-                crate::mcode_config::get_providers()?
+        if matches!(
+            app_type,
+            AppType::Mcode | AppType::Kimi | AppType::Codebuddy
+        ) {
+            let native = match app_type {
+                AppType::Kimi => crate::kimi_config::get_providers()?,
+                AppType::Codebuddy => crate::codebuddy_config::get_providers()?,
+                _ => crate::mcode_config::get_providers()?,
             };
             let mut saved = state.db.get_all_providers(app_type.as_str())?;
             let nicknames = if app_type == AppType::Kimi {
@@ -5555,19 +5558,26 @@ impl ProviderService {
                 Ok(true)
             };
         }
-        let previous = state.db.get_provider_by_id(&provider.id, "mcode")?;
-        state.db.save_provider("mcode", provider)?;
+        let app = app_type.as_str();
+        let write_live = write_live && !Self::is_codebuddy_official(app_type, provider);
+        let previous = state.db.get_provider_by_id(&provider.id, app)?;
+        state.db.save_provider(app, provider)?;
         if write_live {
             let config = provider.settings_config.clone();
-            let written = if create {
-                crate::mcode_config::add_provider(&provider.id, config)
-            } else {
-                crate::mcode_config::set_provider(&provider.id, config)
+            let written = match (app_type, create) {
+                (AppType::Codebuddy, true) => {
+                    crate::codebuddy_config::add_provider(&provider.id, config)
+                }
+                (AppType::Codebuddy, false) => {
+                    crate::codebuddy_config::set_provider(&provider.id, config)
+                }
+                (_, true) => crate::mcode_config::add_provider(&provider.id, config),
+                (_, false) => crate::mcode_config::set_provider(&provider.id, config),
             };
             if let Err(error) = written {
                 match previous {
-                    Some(previous) => state.db.save_provider("mcode", &previous)?,
-                    None => state.db.delete_provider("mcode", &provider.id)?,
+                    Some(previous) => state.db.save_provider(app, &previous)?,
+                    None => state.db.delete_provider(app, &provider.id)?,
                 }
                 return Err(error);
             }
@@ -5624,6 +5634,8 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::add(state, provider, add_to_live);
         }
+        // CodeBuddy 官方登录卡只绑定账号，永远不写进 models.json
+        let add_to_live = add_to_live && !Self::is_codebuddy_official(&app_type, &provider);
 
         if app_type == AppType::Omp {
             return omp::add(state, provider, add_to_live);
@@ -5639,7 +5651,10 @@ impl ProviderService {
             return Self::add_codex(state, provider);
         }
 
-        if matches!(app_type, AppType::Mcode | AppType::Kimi) {
+        if matches!(
+            app_type,
+            AppType::Mcode | AppType::Kimi | AppType::Codebuddy
+        ) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
             // Adds are serialized here; the live write repeats the check under MCode's file lock.
             let _guard = futures::executor::block_on(
@@ -5649,10 +5664,12 @@ impl ProviderService {
                 .db
                 .get_provider_by_id(&provider.id, app_type.as_str())?
                 .is_some()
-                || if app_type == AppType::Kimi {
-                    crate::kimi_config::provider_key_exists(&provider.id)?
-                } else {
-                    crate::mcode_config::provider_key_exists(&provider.id)?
+                || match app_type {
+                    AppType::Kimi => crate::kimi_config::provider_key_exists(&provider.id)?,
+                    AppType::Codebuddy => {
+                        crate::codebuddy_config::provider_key_exists(&provider.id)?
+                    }
+                    _ => crate::mcode_config::provider_key_exists(&provider.id)?,
                 }
             {
                 return Err(AppError::InvalidInput(format!(
@@ -6347,18 +6364,22 @@ impl ProviderService {
                 }
                 return Ok(true);
             }
-            let live_config_managed = Self::check_live_config_exists(
-                &app_type,
-                &provider.id,
-                Self::provider_live_config_managed(&provider).or_else(|| {
-                    existing_provider
-                        .as_ref()
-                        .and_then(Self::provider_live_config_managed)
-                }),
-            )?;
+            let live_config_managed = !Self::is_codebuddy_official(&app_type, &provider)
+                && Self::check_live_config_exists(
+                    &app_type,
+                    &provider.id,
+                    Self::provider_live_config_managed(&provider).or_else(|| {
+                        existing_provider
+                            .as_ref()
+                            .and_then(Self::provider_live_config_managed)
+                    }),
+                )?;
             Self::set_provider_live_config_managed(&mut provider, live_config_managed);
 
-            if matches!(app_type, AppType::Mcode | AppType::Kimi) {
+            if matches!(
+                app_type,
+                AppType::Mcode | AppType::Kimi | AppType::Codebuddy
+            ) {
                 return Self::save_native_provider(
                     state,
                     &app_type,
@@ -6561,13 +6582,17 @@ impl ProviderService {
             let live_managed = existing
                 .as_ref()
                 .and_then(Self::provider_live_config_managed);
-            if Self::check_live_config_exists(&app_type, id, live_managed)? {
+            let codebuddy_official = existing
+                .as_ref()
+                .is_some_and(|provider| Self::is_codebuddy_official(&app_type, provider));
+            if !codebuddy_official && Self::check_live_config_exists(&app_type, id, live_managed)? {
                 match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+                    AppType::Codebuddy => crate::codebuddy_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -6635,6 +6660,14 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::remove(state, id);
         }
+        if app_type == AppType::Codebuddy
+            && state
+                .db
+                .get_provider_by_id(id, app_type.as_str())?
+                .is_some_and(|provider| crate::codebuddy_config::is_official_provider(&provider))
+        {
+            return Err(Self::codebuddy_official_not_a_model());
+        }
         if app_type == AppType::Kimi {
             // An official account leaves Kimi's config but keeps its login and card,
             // so「添加」can put it back.
@@ -6688,6 +6721,7 @@ impl ProviderService {
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+            AppType::Codebuddy => crate::codebuddy_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6793,6 +6827,10 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        if Self::is_codebuddy_official(&app_type, _provider) {
+            return Err(Self::codebuddy_official_not_a_model());
+        }
 
         if app_type == AppType::Kimi {
             crate::services::kimi_oauth::ensure_profile_signed_in(&_provider.settings_config)?;
@@ -6973,6 +7011,7 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
                     AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
+                    AppType::Codebuddy => crate::codebuddy_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -7236,9 +7275,12 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy | AppType::Omp => {
-                Ok(String::new())
-            }
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Agy
+            | AppType::Omp
+            | AppType::Codebuddy => Ok(String::new()),
         }
     }
 
@@ -7256,9 +7298,12 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy | AppType::Omp => {
-                Ok(String::new())
-            }
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Agy
+            | AppType::Omp
+            | AppType::Codebuddy => Ok(String::new()),
         }
     }
 
@@ -7891,6 +7936,19 @@ impl ProviderService {
         .await
     }
 
+    /// CodeBuddy 官方登录卡：绑定一个托管账号，切的是 CodeBuddy 的全局登录，不进 models.json。
+    fn is_codebuddy_official(app_type: &AppType, provider: &Provider) -> bool {
+        *app_type == AppType::Codebuddy && crate::codebuddy_config::is_official_provider(provider)
+    }
+
+    fn codebuddy_official_not_a_model() -> AppError {
+        AppError::localized(
+            "codebuddy.official.not_a_model",
+            "CodeBuddy 官方登录卡不会写进 models.json，请在供应商列表里点这张卡的「添加」切换到它的账号",
+            "CodeBuddy official sign-in cards are not written to models.json; click Add on the card in the provider list to sign in with its account",
+        )
+    }
+
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         icon::validate_icon(provider.icon.as_deref())?;
         match app_type {
@@ -8029,6 +8087,11 @@ impl ProviderService {
             }
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
+            // 官方登录卡没有模型配置，只绑定账号
+            AppType::Codebuddy if crate::codebuddy_config::is_official_provider(provider) => {}
+            AppType::Codebuddy => {
+                crate::codebuddy_config::validate_provider(&provider.id, &provider.settings_config)?
             }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
@@ -8234,6 +8297,20 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::Codebuddy => Ok((
+                provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into(),
+                provider
+                    .settings_config
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into(),
+            )),
             AppType::Kimi => Ok((
                 provider
                     .settings_config

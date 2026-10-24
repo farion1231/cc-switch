@@ -766,7 +766,8 @@ function App() {
         if (
           activeApp === "mcode" ||
           activeApp === "kimi" ||
-          activeApp === "agy"
+          activeApp === "agy" ||
+          activeApp === "codebuddy"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -995,7 +996,7 @@ function App() {
         queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
         queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
       ]);
-    } else if (app === "mcode" || app === "kimi") {
+    } else if (app === "mcode" || app === "kimi" || app === "codebuddy") {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
   };
@@ -1164,7 +1165,11 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode" || activeApp === "kimi") {
+    } else if (
+      activeApp === "mcode" ||
+      activeApp === "kimi" ||
+      activeApp === "codebuddy"
+    ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
@@ -1535,7 +1540,8 @@ function App() {
               activeApp === "pi" ||
               activeApp === "mcode" ||
               activeApp === "kimi" ||
-              activeApp === "omp"
+              activeApp === "omp" ||
+              activeApp === "codebuddy"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

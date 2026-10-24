@@ -51,6 +51,7 @@ export const TOOL_NAMES = [
   "kimi",
   "agy",
   "omp",
+  "codebuddy",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -165,7 +166,9 @@ ${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
 # Antigravity CLI
 ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent@latest`;
+bun install -g @oh-my-pi/pi-coding-agent@latest
+# CodeBuddy Code
+npm i -g @tencent-ai/codebuddy-code@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -190,7 +193,9 @@ ${KIMI_WINDOWS_INSTALL_COMMAND}
 # Antigravity CLI
 ${AGY_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent@latest`;
+bun install -g @oh-my-pi/pi-coding-agent@latest
+# CodeBuddy Code
+npm i -g @tencent-ai/codebuddy-code@latest`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -209,6 +214,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   kimi: "Kimi Code",
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
+  codebuddy: "CodeBuddy Code",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -230,6 +236,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   kimi: "kimi",
   agy: "agy",
   omp: "omp",
+  codebuddy: "codebuddy",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

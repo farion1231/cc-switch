@@ -5,7 +5,7 @@ import type { SessionMeta } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
 
-/** 会话来源：10 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
+/** 会话来源：13 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
 export const SESSION_APP_IDS = [
   "claude",
   "codex",
@@ -18,6 +18,7 @@ export const SESSION_APP_IDS = [
   "openclaw",
   "mcode",
   "kimi",
+  "codebuddy",
   "agy",
 ] as const satisfies readonly AppId[];
 
@@ -39,15 +40,16 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   omp: ["~/.omp/agent/sessions"],
   mcode: ["~/.minimax"],
   kimi: ["~/.kimi-code/sessions"],
+  codebuddy: ["~/.codebuddy/projects"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
   ],
 };
 
-/** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
+/** MiniMax Code、Antigravity、Kimi Code、CodeBuddy Code 的会话只能在原应用里管理（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "kimi"].includes(session.providerId);
+  !["mcode", "agy", "kimi", "codebuddy"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

@@ -226,6 +226,8 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // CodeBuddy models.json entries keep the full endpoint in `url`.
+            AppType::Codebuddy => (str_at(settings.get("url")), str_at(settings.get("apiKey"))),
             // Pi custom providers use the native models.json field names. Pi expands
             // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
             AppType::Pi => (

@@ -182,6 +182,13 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::Codebuddy => Ok(ConfigStatus {
+            exists: crate::codebuddy_config::config_path().exists()
+                || crate::codebuddy_config::settings_path().exists(),
+            path: crate::codebuddy_config::data_dir()
+                .to_string_lossy()
+                .into_owned(),
+        }),
     }
 }
 
@@ -211,6 +218,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Codebuddy => crate::codebuddy_config::data_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -237,6 +245,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Codebuddy => crate::codebuddy_config::data_dir(),
     };
 
     if !config_dir.exists() {

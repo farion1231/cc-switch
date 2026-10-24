@@ -7,6 +7,7 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+mod codebuddy_config;
 mod codex_config;
 mod codex_history_migration;
 mod codex_rollout_file;
@@ -1098,6 +1099,7 @@ pub fn run() {
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
+                    crate::app_config::AppType::Codebuddy,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1314,6 +1316,13 @@ pub fn run() {
                 use crate::services::agy_account::AgyAccountManager;
                 let manager = AgyAccountManager::new(crate::config::get_app_config_dir());
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
+            }
+
+            // CodeBuddy Code 官方账号（授权中心收录、切 CodeBuddy 的全局登录）
+            {
+                use crate::services::codebuddy_account::CodebuddyAccountManager;
+                let manager = CodebuddyAccountManager::new(crate::config::get_app_config_dir());
+                app.manage(commands::CodebuddyAccountState(Arc::new(manager)));
             }
 
             // 初始化全局出站代理 HTTP 客户端
@@ -1876,6 +1885,11 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::codebuddy_account_live,
+            commands::codebuddy_account_import_current,
+            commands::codebuddy_account_open_login_terminal,
+            commands::codebuddy_account_quota,
+            commands::codebuddy_account_switch_provider,
             commands::kimi_oauth_status,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,

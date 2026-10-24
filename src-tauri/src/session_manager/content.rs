@@ -659,6 +659,7 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "mcode" => mcode::scan_sessions(),
         "kimi" => kimi::scan_sessions(),
         "omp" => omp::scan_sessions(),
+        "codebuddy" => super::providers::codebuddy::scan_sessions(),
         "agy" => super::providers::agy::scan_sessions(),
         _ => return None,
     };

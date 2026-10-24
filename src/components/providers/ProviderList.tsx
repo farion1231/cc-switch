@@ -52,6 +52,7 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isPiFamilyApp } from "@/config/appConfig";
+import { useCodebuddyOfficialCards } from "@/lib/query/codebuddy";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
@@ -159,6 +160,14 @@ export function ProviderList({
     error: piCurrentStateError,
   } = usePiCurrentState(isPiFamilyApp(appId), appId === "omp" ? "omp" : "pi");
   const isPiStateReady = !isPiFamilyApp(appId) || isPiCurrentStateSuccess;
+  // CodeBuddy 官方登录卡：绑定的账号是不是 CodeBuddy 现在登着的号（决定「已添加 / 可添加」）、卡片上的「添加」
+  const hasCodebuddyOfficial =
+    appId === "codebuddy" &&
+    Object.values(providers).some(
+      (provider) => provider.category === "official",
+    );
+  const { state: codebuddyAccounts, switchAccount: switchCodebuddyAccount } =
+    useCodebuddyOfficialCards(hasCodebuddyOfficial);
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -173,6 +182,7 @@ export function ProviderList({
       switch (appId) {
         case "kimi":
         case "mcode":
+        case "codebuddy":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;
@@ -380,6 +390,7 @@ export function ProviderList({
         isHermesReadOnlyProvider(provider.settingsConfig),
       piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
       kimiCurrentId: currentProviderId,
+      codebuddyAccounts,
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -391,6 +402,7 @@ export function ProviderList({
             ? onDisableOmoSlim?.()
             : onDisableOmo?.(),
         setDefault: (provider, modelId) => onSetAsDefault?.(provider, modelId),
+        switchAccount: switchCodebuddyAccount,
       },
     });
   }, [
@@ -409,6 +421,8 @@ export function ProviderList({
     hermesModelConfig?.provider,
     isPiStateReady,
     currentProviderId,
+    codebuddyAccounts,
+    switchCodebuddyAccount,
     onRemoveFromConfig,
     onDelete,
     onDisableOmo,
@@ -456,7 +470,10 @@ export function ProviderList({
           appId={appId}
           onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
           onImport={
-            isPiFamilyApp(appId) || appId === "mcode" || appId === "kimi"
+            isPiFamilyApp(appId) ||
+            appId === "mcode" ||
+            appId === "kimi" ||
+            appId === "codebuddy"
               ? undefined
               : () => importMutation.mutate()
           }
