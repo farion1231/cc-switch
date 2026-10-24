@@ -2242,6 +2242,45 @@ fn mcode_extra_search_paths(
     paths.into_iter().collect()
 }
 
+/// PATHEXT 里 `.CMD` 是否排在 `.EXE` 之前。未设置或两者都不在时按 Windows 默认
+/// （`.EXE` 在前）处理。
+#[cfg(any(target_os = "windows", test))]
+fn pathext_prefers_cmd_over_exe(pathext: Option<&str>) -> bool {
+    let Some(pathext) = pathext else {
+        return false;
+    };
+    let position = |ext: &str| {
+        pathext
+            .split(';')
+            .map(str::trim)
+            .position(|entry| entry.eq_ignore_ascii_case(ext))
+    };
+    match (position(".cmd"), position(".exe")) {
+        (Some(cmd), Some(exe)) => cmd < exe,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+/// 同一目录里 `<tool>.cmd` 和 `<tool>.exe` 并存时，命令行敲 `<tool>` 只会按 PATHEXT
+/// 顺序命中其中一个，另一个被遮住。调用方只对已知是同一处安装多出来的入口用它
+/// （Hermes 换成 `.exe` 启动器后留下的旧 `hermes.cmd`，#8839）。
+#[cfg(any(target_os = "windows", test))]
+fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    let cmd_first = pathext_prefers_cmd_over_exe(pathext);
+    let shadowing_ext = if ext.eq_ignore_ascii_case("cmd") && !cmd_first {
+        "exe"
+    } else if ext.eq_ignore_ascii_case("exe") && cmd_first {
+        "cmd"
+    } else {
+        return false;
+    };
+    path.with_extension(shadowing_ext).is_file()
+}
+
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -3250,6 +3289,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
+    #[cfg(target_os = "windows")]
+    let pathext = std::env::var("PATHEXT").ok();
 
     for dir in &search_paths {
         #[cfg(target_os = "windows")]
@@ -3259,6 +3300,13 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
         for tool_path in tool_executable_candidates(tool, dir) {
             if !tool_path.exists() {
+                continue;
+            }
+            // Hermes 发布启动器时换成 .exe 不会删掉旧的 .cmd，两者同在它自己的 bin 目录，
+            // 只算命令行实际命中的那个（#8839）。其他工具同目录并存可能是两处真实安装
+            // （如 npm prefix 与原生安装同目录），保持分开列出。
+            #[cfg(target_os = "windows")]
+            if tool == "hermes" && shadowed_by_pathext_sibling(&tool_path, pathext.as_deref()) {
                 continue;
             }
             // canonicalize 解析软链后去重：/opt/homebrew/bin/x → Cellar/...、nvm shim 等
@@ -10365,6 +10413,43 @@ mod tests {
         let candidates = tool_executable_candidates("opencode", &dir);
 
         assert_eq!(candidates, vec![PathBuf::from("/usr/local/bin/opencode")]);
+    }
+
+    #[test]
+    fn pathext_order_decides_whether_cmd_beats_exe() {
+        assert!(!pathext_prefers_cmd_over_exe(None));
+        assert!(!pathext_prefers_cmd_over_exe(Some(
+            ".COM;.EXE;.BAT;.CMD;.VBS;.JS"
+        )));
+        assert!(pathext_prefers_cmd_over_exe(Some(".com;.cmd;.exe")));
+        assert!(pathext_prefers_cmd_over_exe(Some(".COM;.CMD")));
+        assert!(!pathext_prefers_cmd_over_exe(Some(".COM;.BAT")));
+    }
+
+    #[test]
+    fn same_dir_cmd_is_shadowed_by_exe_sibling_issue_8839() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let cmd = dir.path().join("hermes.cmd");
+        let exe = dir.path().join("hermes.exe");
+        std::fs::write(&cmd, "").expect("cmd launcher should be created");
+
+        let default_pathext = Some(".COM;.EXE;.BAT;.CMD");
+        // A lone launcher is the install itself.
+        assert!(!shadowed_by_pathext_sibling(&cmd, default_pathext));
+
+        std::fs::write(&exe, "").expect("exe launcher should be created");
+        assert!(shadowed_by_pathext_sibling(&cmd, default_pathext));
+        assert!(!shadowed_by_pathext_sibling(&exe, default_pathext));
+
+        // A PATHEXT that lists .CMD first makes the .cmd the one that runs.
+        let cmd_first = Some(".COM;.CMD;.EXE");
+        assert!(!shadowed_by_pathext_sibling(&cmd, cmd_first));
+        assert!(shadowed_by_pathext_sibling(&exe, cmd_first));
+
+        // A different tool's launcher in the same directory never shadows.
+        let other = dir.path().join("codex.cmd");
+        std::fs::write(&other, "").expect("other launcher should be created");
+        assert!(!shadowed_by_pathext_sibling(&other, default_pathext));
     }
 
     #[cfg(target_os = "windows")]
