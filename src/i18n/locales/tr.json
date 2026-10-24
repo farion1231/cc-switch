@@ -420,6 +420,13 @@
       "trayStylePanel": "Panel",
       "trayStyleMenu": "Menü",
       "trayStyleHelp": "Tepsi simgesine tıkladığınızda ne açılacağını belirler (Windows'ta sol tıklama her zaman ana pencereyi, sağ tıklama ise seçilen görünümü açar). Panel: her uygulamanın etkin sağlayıcısını, kotasını ve kullanımını arama ve geçiş seçenekleriyle gösterir. Menü: sistemin yerel menüsünü açar. Değişiklik hemen uygulanır.",
+      "trayUsageTitle": "Menü çubuğu kullanımı",
+      "trayUsageTitleHelp": "Menü çubuğundaki tepsi simgesinin solunda bir kullanım rakamı gösterir. Bugün: yerel gece yarısından itibaren tüm uygulamaların oturum kullanımı; toplam: tüm geçmiş. Maliyet, kullanım görüntülemede seçilen para birimine göre dönüştürülür. Yalnızca macOS.",
+      "trayUsageTitleOff": "Yalnızca simge",
+      "trayUsageTitleTodayTokens": "Bugünün token'ları",
+      "trayUsageTitleTodayCost": "Bugünün maliyeti",
+      "trayUsageTitleTotalTokens": "Toplam token",
+      "trayUsageTitleTotalCost": "Toplam maliyet",
       "minimizeToTrayHelp": "Açık olduğunda, kapat düğmesi yalnızca pencereyi gizler ve CC Switch sistem tepsisinde çalışmaya devam eder (hafif mod tepsi menüsündedir). Kapatıldığında kapatma düğmesi kapanır.",
       "terminalHelp": "Sağlayıcı kartlarındaki “Açık terminal”in kullandığı terminal. Mevcut değilse sistemin varsayılan terminali kullanılır."
     },

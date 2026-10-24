@@ -420,6 +420,13 @@
       "trayStylePanel": "面板",
       "trayStyleMenu": "菜单",
       "trayStyleHelp": "点托盘图标时弹出什么（Windows 上左键始终打开主界面，右键弹出所选样式）。面板：各应用在用的供应商、额度和用量，可以搜索、切换。菜单：系统原生菜单。切换后立即生效。",
+      "trayUsageTitle": "菜单栏显示用量",
+      "trayUsageTitleHelp": "在菜单栏托盘图标左侧显示一串用量数字。今日＝本地 0 点起所有应用的会话用量；总＝全部历史记录。成本按「用量显示」设置的币种换算。仅 macOS 可用。",
+      "trayUsageTitleOff": "只显示图标",
+      "trayUsageTitleTodayTokens": "今日 Tokens",
+      "trayUsageTitleTodayCost": "今日成本",
+      "trayUsageTitleTotalTokens": "总 Tokens",
+      "trayUsageTitleTotalCost": "总成本",
       "minimizeToTrayHelp": "打开时，点关闭按钮只隐藏窗口，CC Switch 留在系统托盘里继续运行（轻量模式在托盘菜单里）；关闭时点关闭按钮直接退出。",
       "terminalHelp": "点供应商卡片上的「打开终端」时用哪个终端。选的终端不可用时，改用系统默认终端。"
     },

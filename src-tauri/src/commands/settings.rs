@@ -81,11 +81,17 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let tray_usage_title_changed = merged.tray_usage_title != existing.tray_usage_title;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
+    }
+
+    // 菜单栏用量数字当场换掉，别等每分钟的兜底刷新。
+    if tray_usage_title_changed {
+        crate::tray::schedule_tray_refresh(&app);
     }
 
     // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。

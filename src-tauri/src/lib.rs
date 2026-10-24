@@ -1259,6 +1259,8 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+            // 菜单栏用量数字：跨天翻新和长时间无事件时的兜底刷新（开关关时每次只读一次设置）
+            tray::spawn_tray_usage_title_refresher(app.handle().clone());
             crate::services::webdav_auto_sync::start_worker(
                 app_state.db.clone(),
                 app.handle().clone(),
