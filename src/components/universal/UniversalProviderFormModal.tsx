@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import {
   Select,
   SelectContent,
@@ -405,30 +406,45 @@ requires_openai_auth = true`;
           </div>
         )}
 
-        {/* 基本信息 */}
+        {/* 基本信息——双列网格，与添加供应商表单同排版 */}
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">
-              {t("universalProvider.name", { defaultValue: "名称" })}
-            </Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t("universalProvider.namePlaceholder", {
-                defaultValue: "例如：我的 NewAPI",
-              })}
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">
+                {t("universalProvider.name", { defaultValue: "名称" })}
+              </Label>
+              <ImeSafeInput
+                id="name"
+                value={name}
+                onValueChange={setName}
+                placeholder={t("universalProvider.namePlaceholder", {
+                  defaultValue: "例如：我的 NewAPI",
+                })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="notes">
+                {t("universalProvider.notes", { defaultValue: "备注" })}
+              </Label>
+              <ImeSafeInput
+                id="notes"
+                value={notes}
+                onValueChange={setNotes}
+                placeholder={t("universalProvider.notesPlaceholder", {
+                  defaultValue: "可选：添加备注信息",
+                })}
+              />
+            </div>
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="baseUrl">
               {t("universalProvider.baseUrl", { defaultValue: "API 地址" })}
             </Label>
-            <Input
+            <ImeSafeInput
               id="baseUrl"
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
+              onValueChange={setBaseUrl}
               placeholder="https://api.example.com"
             />
           </div>
@@ -462,65 +478,54 @@ requires_openai_auth = true`;
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="universalApiFormat">
-              {t("endpoints.apiFormat", { defaultValue: "协议格式" })}
-            </Label>
-            <Select
-              value={apiFormat ?? "anthropic"}
-              onValueChange={(value) =>
-                setApiFormat(value as UniversalProvider["apiFormat"])
-              }
-            >
-              <SelectTrigger id="universalApiFormat">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="anthropic">Anthropic Messages</SelectItem>
-                <SelectItem value="openai_chat">
-                  OpenAI Chat Completions
-                </SelectItem>
-                <SelectItem value="openai_responses">
-                  OpenAI Responses
-                </SelectItem>
-                <SelectItem value="gemini_native">Gemini Native</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-fg-3">
-              {t("endpoints.apiFormatHint", {
-                defaultValue:
-                  "代理按此格式在 Claude / OpenAI / Gemini 协议间转换；大多数中转站选 Anthropic",
-              })}
-            </p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="universalApiFormat">
+                {t("endpoints.apiFormat", { defaultValue: "协议格式" })}
+              </Label>
+              <Select
+                value={apiFormat ?? "anthropic"}
+                onValueChange={(value) =>
+                  setApiFormat(value as UniversalProvider["apiFormat"])
+                }
+              >
+                <SelectTrigger id="universalApiFormat">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="anthropic">Anthropic Messages</SelectItem>
+                  <SelectItem value="openai_chat">
+                    OpenAI Chat Completions
+                  </SelectItem>
+                  <SelectItem value="openai_responses">
+                    OpenAI Responses
+                  </SelectItem>
+                  <SelectItem value="gemini_native">Gemini Native</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="websiteUrl">
+                {t("universalProvider.websiteUrl", {
+                  defaultValue: "官网地址",
+                })}
+              </Label>
+              <ImeSafeInput
+                id="websiteUrl"
+                value={websiteUrl}
+                onValueChange={setWebsiteUrl}
+                placeholder={t("universalProvider.websiteUrlPlaceholder", {
+                  defaultValue: "https://example.com（可选）",
+                })}
+              />
+            </div>
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="websiteUrl">
-              {t("universalProvider.websiteUrl", { defaultValue: "官网地址" })}
-            </Label>
-            <Input
-              id="websiteUrl"
-              value={websiteUrl}
-              onChange={(e) => setWebsiteUrl(e.target.value)}
-              placeholder={t("universalProvider.websiteUrlPlaceholder", {
-                defaultValue: "https://example.com（可选，用于在列表中显示）",
-              })}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="notes">
-              {t("universalProvider.notes", { defaultValue: "备注" })}
-            </Label>
-            <Input
-              id="notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder={t("universalProvider.notesPlaceholder", {
-                defaultValue: "可选：添加备注信息",
-              })}
-            />
-          </div>
+          <p className="text-xs text-fg-3">
+            {t("endpoints.apiFormatHint", {
+              defaultValue:
+                "代理按此格式在 Claude / OpenAI / Gemini 协议间转换；大多数中转站选 Anthropic",
+            })}
+          </p>
         </div>
 
         {/* 应用启用 */}
