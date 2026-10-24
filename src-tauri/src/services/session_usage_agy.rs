@@ -236,6 +236,66 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn structured_reader_preserves_native_sql_model_recovery_and_usage_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir
+            .path()
+            .join("brain/subagent/.system_generated/logs/transcript_full.jsonl");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let native = native_models::write_test_database(
+            &dir.path().join("conversations/subagent.db"),
+            &[(1, 0, "base-model")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "base-model",
+            &native_models::test_model_id("gemini-4-argon-high"),
+        );
+        let row = json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE",
+            "created_at":"2026-10-10T10:00:00Z","ts":"2026-10-10T11:00:00Z",
+            "thinking":"check", "content":"calling tool", "input_tokens":80,"output_tokens":12,
+            "cache_read_tokens":20,"reasoning_tokens":5,
+            "tool_calls":[{"name":"run_command","args":{"CommandLine":"pwd"}}]});
+        let original = format!("{row}\n");
+        std::fs::write(&source, &original).unwrap();
+        let before = agy::records(&source).unwrap();
+        let db = Database::memory().unwrap();
+        assert_eq!(
+            import_records(&db, "subagent", &before, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        let messages = agy::load_messages(&source).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].blocks.iter().any(|block| matches!(
+            block,
+            crate::session_manager::model::SessionBlock::ToolCall { .. }
+        )));
+        let after = agy::records(&source).unwrap();
+        assert_eq!(before, after);
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), original);
+        assert_eq!(
+            import_records(&db, "subagent", &after, Some(&source)).unwrap(),
+            (0, 1)
+        );
+        let conn = db.conn.lock().unwrap();
+        let got = conn.query_row("SELECT request_id,model,input_tokens,output_tokens,cache_read_tokens,created_at FROM proxy_request_logs",[],
+            |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?))).unwrap();
+        assert_eq!(
+            got,
+            (
+                "agy:subagent:1".into(),
+                "gemini-4-argon-high".into(),
+                80,
+                12,
+                20,
+                agy::timestamp(&row).unwrap() / 1000
+            )
+        );
+        assert_eq!(got.5, 1_791_626_400);
+    }
+    #[test]
     fn native_models_backfill_unknown_rows_without_changing_tokens_or_deduplication() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("conversations")).unwrap();
