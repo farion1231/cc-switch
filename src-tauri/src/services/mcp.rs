@@ -85,6 +85,7 @@ impl McpService {
         let save_with_pi = || {
             if server.apps.pi || prev_apps.pi {
                 mcp::pi::sync_and_commit(
+                    &state.db,
                     &server.id,
                     mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
                     save_with_agy,
@@ -161,7 +162,12 @@ impl McpService {
             };
             let delete_with_pi = || {
                 if server.apps.pi {
-                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, delete_with_agy)
+                    mcp::pi::sync_and_commit(
+                        &state.db,
+                        id,
+                        mcp::pi::PiChange::Remove,
+                        delete_with_agy,
+                    )
                 } else {
                     delete_with_agy()
                 }
@@ -244,6 +250,7 @@ impl McpService {
                     )?;
                 } else {
                     mcp::pi::sync_and_commit(
+                        &state.db,
                         server_id,
                         mcp::pi::PiChange::from_enabled(spec),
                         commit,
