@@ -16,3 +16,4 @@ mod utils;
 
 pub mod kimi;
 pub mod mcode;
+pub mod workbuddy;

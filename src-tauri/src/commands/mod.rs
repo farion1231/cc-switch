@@ -39,6 +39,7 @@ mod lightweight;
 mod s3_sync;
 mod usage;
 mod webdav_sync;
+mod workbuddy_account;
 mod workspace;
 
 pub use agy_account::*;
@@ -79,4 +80,5 @@ pub use lightweight::*;
 pub use s3_sync::*;
 pub use usage::*;
 pub use webdav_sync::*;
+pub use workbuddy_account::*;
 pub use workspace::*;

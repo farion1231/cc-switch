@@ -31,6 +31,7 @@ export const APP_IDS: AppId[] = [
   "kimi",
   "agy",
   "omp",
+  "workbuddy",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -47,6 +48,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   kimi: true,
   agy: true,
   omp: true,
+  workbuddy: true,
 };
 
 /**
@@ -85,6 +87,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "kimi",
   "agy",
   "omp",
+  "workbuddy",
 ];
 
 export type ProxyAppId = Extract<
@@ -134,7 +137,14 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "omp"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "omp"
+  | "workbuddy"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -145,6 +155,7 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "hermes",
   "pi",
   "omp",
+  "workbuddy",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
@@ -187,6 +198,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "kimi",
   "agy",
   "omp",
+  "workbuddy",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -304,6 +316,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  workbuddy: {
+    label: "WorkBuddy",
+    icon: <ProviderIcon icon="workbuddy" name="WorkBuddy" size={14} />,
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
   agy: {
     label: "Antigravity",

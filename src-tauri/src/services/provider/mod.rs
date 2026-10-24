@@ -5667,6 +5667,28 @@ impl ProviderService {
         // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
 
+        // WorkBuddy 官方登录卡只存绑定，不进 models.json
+        if app_type == AppType::WorkBuddy
+            && crate::workbuddy_config::is_official_provider(&provider)
+        {
+            Self::set_provider_live_config_managed(&mut provider, false);
+            state.db.save_provider(app_type.as_str(), &provider)?;
+            return Ok(true);
+        }
+
+        // WorkBuddy: models.json may refuse the entries (model ID owned by someone else);
+        // write it first so a refusal leaves no orphan row behind.
+        if app_type == AppType::WorkBuddy && add_to_live {
+            write_live_for_state(state, &app_type, &provider)?;
+            if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
+                if let Err(rollback) = crate::workbuddy_config::remove_provider(&provider.id) {
+                    log::warn!("Failed to roll back WorkBuddy models.json: {rollback}");
+                }
+                return Err(error);
+            }
+            return Ok(true);
+        }
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
@@ -6347,6 +6369,13 @@ impl ProviderService {
                 }
                 return Ok(true);
             }
+            if app_type == AppType::WorkBuddy
+                && crate::workbuddy_config::is_official_provider(&provider)
+            {
+                Self::set_provider_live_config_managed(&mut provider, false);
+                state.db.save_provider(app_type.as_str(), &provider)?;
+                return Ok(true);
+            }
             let live_config_managed = Self::check_live_config_exists(
                 &app_type,
                 &provider.id,
@@ -6366,6 +6395,15 @@ impl ProviderService {
                     live_config_managed,
                     false,
                 );
+            }
+
+            // WorkBuddy's write can be refused (a model ID owned by someone else in
+            // models.json) without touching the file: write it first so a refusal
+            // leaves the saved row unchanged too.
+            if app_type == AppType::WorkBuddy && live_config_managed {
+                write_live_for_state(state, &app_type, &provider)?;
+                state.db.save_provider(app_type.as_str(), &provider)?;
+                return Ok(true);
             }
 
             // Save to database after live-config presence is resolved so parse errors
@@ -6561,13 +6599,18 @@ impl ProviderService {
             let live_managed = existing
                 .as_ref()
                 .and_then(Self::provider_live_config_managed);
-            if Self::check_live_config_exists(&app_type, id, live_managed)? {
+            let workbuddy_official = app_type == AppType::WorkBuddy
+                && existing
+                    .as_ref()
+                    .is_some_and(crate::workbuddy_config::is_official_provider);
+            if !workbuddy_official && Self::check_live_config_exists(&app_type, id, live_managed)? {
                 match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+                    AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -6651,6 +6694,16 @@ impl ProviderService {
             return omp::remove(state, id);
         }
 
+        if app_type == AppType::WorkBuddy {
+            if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
+                if crate::workbuddy_config::is_official_provider(&provider) {
+                    Self::set_provider_live_config_managed(&mut provider, false);
+                    state.db.save_provider(app_type.as_str(), &provider)?;
+                    return Ok(());
+                }
+            }
+        }
+
         match app_type {
             AppType::OpenCode => {
                 let provider_category = state
@@ -6688,6 +6741,7 @@ impl ProviderService {
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+            AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6793,6 +6847,16 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        // WorkBuddy 官方登录卡不写 models.json，卡片的「添加」走账号切换（还原绑定账号的登录文件）
+        if app_type == AppType::WorkBuddy
+            && crate::workbuddy_config::is_official_provider(_provider)
+        {
+            return Err(AppError::localized(
+                "workbuddy.switch.official",
+                "WorkBuddy 官方登录卡不写进模型配置；在供应商列表点这张卡的「添加」会切换到它绑定的账号",
+                "WorkBuddy official sign-in cards are not written to the model config; click Add on the card in the provider list to switch to its account",
+            ));
+        }
 
         if app_type == AppType::Kimi {
             crate::services::kimi_oauth::ensure_profile_signed_in(&_provider.settings_config)?;
@@ -6973,6 +7037,7 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
                     AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
+                    AppType::WorkBuddy => crate::workbuddy_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -7236,9 +7301,12 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy | AppType::Omp => {
-                Ok(String::new())
-            }
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Agy
+            | AppType::Omp
+            | AppType::WorkBuddy => Ok(String::new()),
         }
     }
 
@@ -7256,9 +7324,12 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy | AppType::Omp => {
-                Ok(String::new())
-            }
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Agy
+            | AppType::Omp
+            | AppType::WorkBuddy => Ok(String::new()),
         }
     }
 
@@ -8030,6 +8101,17 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            // 官方登录卡只存账号绑定，没有模型配置
+            AppType::WorkBuddy if crate::workbuddy_config::is_official_provider(provider) => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::InvalidInput(
+                        "WorkBuddy configuration must be a JSON object".into(),
+                    ));
+                }
+            }
+            AppType::WorkBuddy => {
+                crate::workbuddy_config::validate_provider(&provider.settings_config)?
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -8248,6 +8330,17 @@ impl ProviderService {
                     .unwrap_or_default()
                     .into(),
             )),
+            AppType::WorkBuddy => {
+                let (base_url, api_key) = provider.resolve_usage_credentials(&AppType::WorkBuddy);
+                if api_key.is_empty() {
+                    return Err(AppError::localized(
+                        "provider.openclaw.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    ));
+                }
+                Ok((api_key, base_url))
+            }
             AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode | AppType::Omp => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
