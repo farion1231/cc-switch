@@ -92,6 +92,7 @@ fn sync_from_database(
         result.skipped += u32::from(changed == 0);
         cursor = id;
     }
+    enrich_unknown_models(&tx, &mut history, &mut result)?;
     // Commit the watermark with the imported rows; pruned logs must never be reimported.
     tx.execute(
         "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
@@ -103,6 +104,79 @@ fn sync_from_database(
     Ok(result)
 }
 
+/// 已导入的 unknown 行补全（#8790）：用量行可能先于历史落库，或旧版回查失败；
+/// 游标只进不退 + INSERT OR IGNORE 让这些行永远停在 unknown。每次 sync 结尾对
+/// 最近的 unknown 行按秒窗口重查历史，命中就更新模型；原成本是按 unknown 兜底
+/// 成 "0" 的行顺带用新模型补算。补全计入 imported，让打开的表格和详情面板刷新。
+fn enrich_unknown_models(
+    tx: &rusqlite::Transaction,
+    history: &mut HistoryModels,
+    result: &mut SessionSyncResult,
+) -> Result<(), AppError> {
+    let mut pending = tx.prepare(
+        "SELECT request_id, session_id, created_at, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, total_cost_usd
+         FROM proxy_request_logs
+         WHERE data_source = 'mcode_session' AND model = 'unknown'
+         ORDER BY rowid DESC LIMIT 500",
+    )?;
+    let rows = pending
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(pending);
+
+    let mut changed = 0u32;
+    for (request_id, session_id, created_at, input, output, cache_read, cache_write, cost) in rows {
+        let Some(model) = history.lookup_by_second(&session_id, created_at) else {
+            continue;
+        };
+        if cost == "0" {
+            let usage = TokenUsage {
+                input_tokens: input.clamp(0, u32::MAX as i64) as u32,
+                output_tokens: output.clamp(0, u32::MAX as i64) as u32,
+                cache_read_tokens: cache_read.clamp(0, u32::MAX as i64) as u32,
+                cache_creation_tokens: cache_write.clamp(0, u32::MAX as i64) as u32,
+                cache_creation_1h_tokens: 0,
+                model: Some(model.clone()),
+                message_id: None,
+            };
+            if let Some(pricing) = find_model_pricing(tx, &model) {
+                let total =
+                    CostCalculator::calculate_for_app("mcode", &usage, &pricing, Decimal::ONE)
+                        .total_cost
+                        .to_string();
+                tx.execute(
+                    "UPDATE proxy_request_logs
+                     SET model = ?2, request_model = ?2, total_cost_usd = ?3
+                     WHERE request_id = ?1 AND model = 'unknown'",
+                    params![request_id, model, total],
+                )?;
+                changed += 1;
+                continue;
+            }
+        }
+        tx.execute(
+            "UPDATE proxy_request_logs SET model = ?2, request_model = ?2
+             WHERE request_id = ?1 AND model = 'unknown'",
+            params![request_id, model],
+        )?;
+        changed += 1;
+    }
+    result.imported += changed;
+    Ok(())
+}
+
 /// MCode 只在本轮带 executionModel 时才写用量行的 model 列，缺了就是 NULL。用量行的 ts
 /// 取自产生它的那条 assistant 消息的 timestamp，而 pi 历史里的消息自带 model，按
 /// （会话, 时间戳）回查同一条消息。新版历史存在 pi_history_rows：MCode 写行时把消息的
@@ -110,6 +184,8 @@ fn sync_from_database(
 /// 存在 pi_history_json，每个会话只解析一次。哪张表不存在就跳过哪张。
 struct HistoryModels<'a> {
     rows: Option<rusqlite::Statement<'a>>,
+    /// unknown 行补全用：这些行只存得住秒级 created_at（ts/1000），按秒窗口重查。
+    rows_second: Option<rusqlite::Statement<'a>>,
     legacy: Option<rusqlite::Statement<'a>>,
     legacy_by_session: HashMap<String, HashMap<i64, String>>,
 }
@@ -121,6 +197,12 @@ impl<'a> HistoryModels<'a> {
                 .prepare(
                     "SELECT json_extract(data_json, '$.model') FROM local_runtime_pi_history_rows
                      WHERE session_id = ?1 AND created_at_ms = ?2 AND role = 'assistant'",
+                )
+                .ok(),
+            rows_second: source
+                .prepare(
+                    "SELECT json_extract(data_json, '$.model') FROM local_runtime_pi_history_rows
+                     WHERE session_id = ?1 AND created_at_ms BETWEEN ?2 AND ?3 AND role = 'assistant'",
                 )
                 .ok(),
             legacy: source
@@ -140,6 +222,30 @@ impl<'a> HistoryModels<'a> {
             .or_else(|| self.lookup_legacy(session_id, ts))
     }
 
+    /// 补全已导入的 unknown 行用：按秒窗口重查历史，命中窗口内最早的一条。
+    fn lookup_by_second(&mut self, session_id: &str, second: i64) -> Option<String> {
+        let window_start = second.saturating_mul(1000);
+        let window_end = window_start.saturating_add(999);
+        if let Some(statement) = self.rows_second.as_mut() {
+            if let Ok(mut rows) = statement.query(params![session_id, window_start, window_end]) {
+                while let Ok(Some(row)) = rows.next() {
+                    if let Some(model) = non_empty(row.get(0).ok().flatten()) {
+                        return Some(model);
+                    }
+                }
+            }
+        }
+        self.ensure_legacy_cache(session_id);
+        let models = self.legacy_by_session.get(session_id)?;
+        let mut hits: Vec<i64> = models
+            .keys()
+            .copied()
+            .filter(|ts| *ts >= window_start && *ts <= window_end)
+            .collect();
+        hits.sort_unstable();
+        hits.first().and_then(|ts| models.get(ts)).cloned()
+    }
+
     fn lookup_rows(&mut self, session_id: &str, ts: i64) -> Option<String> {
         let mut rows = self.rows.as_mut()?.query(params![session_id, ts]).ok()?;
         while let Ok(Some(row)) = rows.next() {
@@ -150,27 +256,31 @@ impl<'a> HistoryModels<'a> {
         None
     }
 
-    fn lookup_legacy(&mut self, session_id: &str, ts: i64) -> Option<String> {
-        if !self.legacy_by_session.contains_key(session_id) {
-            let mut models = HashMap::new();
-            if let Some(statement) = self.legacy.as_mut() {
-                if let Ok(mut rows) = statement.query([session_id]) {
-                    while let Ok(Some(row)) = rows.next() {
-                        let ts = row
-                            .get::<_, Option<f64>>(0)
-                            .ok()
-                            .flatten()
-                            .filter(|ts| ts.is_finite());
-                        if let (Some(ts), Some(model)) = (ts, non_empty(row.get(1).ok().flatten()))
-                        {
-                            models.entry(ts as i64).or_insert(model);
-                        }
+    fn ensure_legacy_cache(&mut self, session_id: &str) {
+        if self.legacy_by_session.contains_key(session_id) {
+            return;
+        }
+        let mut models = HashMap::new();
+        if let Some(statement) = self.legacy.as_mut() {
+            if let Ok(mut rows) = statement.query([session_id]) {
+                while let Ok(Some(row)) = rows.next() {
+                    let ts = row
+                        .get::<_, Option<f64>>(0)
+                        .ok()
+                        .flatten()
+                        .filter(|ts| ts.is_finite());
+                    if let (Some(ts), Some(model)) = (ts, non_empty(row.get(1).ok().flatten())) {
+                        models.entry(ts as i64).or_insert(model);
                     }
                 }
             }
-            self.legacy_by_session
-                .insert(session_id.to_string(), models);
         }
+        self.legacy_by_session
+            .insert(session_id.to_string(), models);
+    }
+
+    fn lookup_legacy(&mut self, session_id: &str, ts: i64) -> Option<String> {
+        self.ensure_legacy_cache(session_id);
         self.legacy_by_session.get(session_id)?.get(&ts).cloned()
     }
 }
@@ -313,6 +423,76 @@ mod tests {
                 .unwrap()
                 .imported,
             1
+        );
+    }
+
+    /// #8790：用量行先于历史落库时导入为 unknown，游标不会重读它们；
+    /// 历史补上之后，下一次 sync 要把旧行补全（含秒窗口命中同秒内错位的时间戳）。
+    #[test]
+    fn mcode_usage_enriches_unknown_rows_once_history_lands() {
+        let source = rusqlite::Connection::open_in_memory().unwrap();
+        source
+            .execute_batch(
+                "CREATE TABLE local_runtime_token_usage (
+            id INTEGER PRIMARY KEY,session_id TEXT,model TEXT,ts INTEGER,input_tokens INTEGER,
+            output_tokens INTEGER,reasoning_tokens INTEGER,cache_read_tokens INTEGER,
+            cache_write_tokens INTEGER,cost_usd REAL);
+            CREATE TABLE local_runtime_pi_history_rows (
+            id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,created_at_ms INTEGER,data_json TEXT);
+            INSERT INTO local_runtime_token_usage VALUES
+            (1,'s1',NULL,100000,10,20,0,0,0,NULL),
+            (2,'s1',NULL,100050,1,2,0,0,0,NULL);",
+            )
+            .unwrap();
+        let db = Database::memory().unwrap();
+        let first = sync_from_database(&db, &source, "enrich").unwrap();
+        assert_eq!(first.imported, 2);
+        {
+            let conn = db.conn.lock().unwrap();
+            let models: Vec<String> = {
+                let mut query = conn
+                    .prepare("SELECT model FROM proxy_request_logs ORDER BY rowid")
+                    .unwrap();
+                query
+                    .query_map([], |row| row.get(0))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            };
+            assert_eq!(models, vec!["unknown", "unknown"]);
+        }
+
+        // 历史这时才落库：一条精确命中秒起点，一条落在同秒中段（补全走秒窗口）。
+        source
+            .execute_batch(
+                "INSERT INTO local_runtime_pi_history_rows VALUES
+            (1,'s1','assistant',100000,'{\"role\":\"assistant\",\"model\":\"MiniMax-M3\"}'),
+            (2,'s1','assistant',100090,'{\"role\":\"assistant\",\"model\":\"MiniMax-M3\"}');
+            INSERT INTO local_runtime_token_usage VALUES
+            (3,'s1','custom_provider:router/new/model',200000,1,2,0,0,0,0.1);",
+            )
+            .unwrap();
+        let second = sync_from_database(&db, &source, "enrich").unwrap();
+        assert_eq!(second.imported, 3, "two enrichments + one new row");
+
+        let conn = db.conn.lock().unwrap();
+        let rows: Vec<(String, String)> = {
+            let mut query = conn
+                .prepare("SELECT model, request_model FROM proxy_request_logs ORDER BY rowid")
+                .unwrap();
+            query
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            rows,
+            vec![
+                ("MiniMax-M3".into(), "MiniMax-M3".into()),
+                ("MiniMax-M3".into(), "MiniMax-M3".into()),
+                ("new/model".into(), "new/model".into()),
+            ]
         );
     }
 }
