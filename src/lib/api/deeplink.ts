@@ -16,7 +16,9 @@ export interface DeepLinkImportRequest {
     | "opencode"
     | "openclaw"
     | "hermes"
-    | "pi";
+    | "pi"
+    | "rpi"
+    | "mcode";
   name?: string;
   enabled?: boolean;
 

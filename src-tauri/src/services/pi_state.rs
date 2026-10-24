@@ -1,11 +1,10 @@
 //! Read-only Pi provider membership and global default reference.
 
+use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::pi_config::{read_pi_native_defaults, read_pi_native_providers};
+use crate::pi_config::{read_native_providers, read_pi_native_defaults};
 use crate::store::AppState;
 use serde::Serialize;
-
-const PI_APP: &str = "pi";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,15 +17,31 @@ pub(crate) struct PiStateService;
 
 impl PiStateService {
     pub(crate) fn current(state: &AppState) -> Result<PiCurrentState, AppError> {
-        let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
-        let native = read_pi_native_providers()?;
+        Self::current_for_app(state, &AppType::Pi)
+    }
+
+    pub(crate) fn current_for_app(
+        state: &AppState,
+        app: &AppType,
+    ) -> Result<PiCurrentState, AppError> {
+        let _guard =
+            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app.as_str()));
+        let native = read_native_providers(app)?;
         let enabled_provider_ids = native.keys().cloned().collect::<Vec<_>>();
-        let default_provider_id = match read_pi_native_defaults() {
-            Ok(defaults) => defaults.default_provider,
-            Err(error) => {
-                log::warn!("Failed to read Pi global default provider for advisory UI: {error}");
-                None
+        // Only Pi exposes its global default as advisory UI. rpi membership must
+        // never depend on Pi's settings.json (or its directory override).
+        let default_provider_id = if app == &AppType::Pi {
+            match read_pi_native_defaults() {
+                Ok(defaults) => defaults.default_provider,
+                Err(error) => {
+                    log::warn!(
+                        "Failed to read Pi global default provider for advisory UI: {error}"
+                    );
+                    None
+                }
             }
+        } else {
+            None
         };
         Ok(PiCurrentState {
             enabled_provider_ids,
@@ -43,6 +58,53 @@ mod tests {
     use serial_test::serial;
     use std::fs;
     use std::sync::Arc;
+
+    #[test]
+    #[serial]
+    fn rpi_state_uses_only_its_native_membership() {
+        let _pi = TestAgentDir::new();
+        let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().expect("database")));
+        let pi_path = crate::pi_config::models_path(&AppType::Pi).expect("Pi path");
+        let rpi_path = crate::pi_config::models_path(&AppType::Rpi).expect("rpi path");
+        for path in [&pi_path, &rpi_path] {
+            fs::create_dir_all(path.parent().unwrap()).expect("agent directory");
+        }
+        fs::write(&pi_path, r#"{"providers":{"pi-only":{}}}"#).unwrap();
+        fs::write(
+            &rpi_path,
+            r#"{"providers":{"native-rpi":{},"external-rpi":{"future":true}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            crate::pi_config::get_pi_settings_path().unwrap(),
+            "invalid JSON",
+        )
+        .unwrap();
+
+        let current = PiStateService::current_for_app(&state, &AppType::Rpi).unwrap();
+        assert_eq!(
+            current.enabled_provider_ids,
+            vec!["native-rpi", "external-rpi"]
+        );
+        assert_eq!(current.default_provider_id, None);
+        assert_eq!(
+            PiStateService::current(&state)
+                .unwrap()
+                .enabled_provider_ids,
+            vec!["pi-only"]
+        );
+
+        // External changes must be observed, even without changing any database row.
+        fs::write(&rpi_path, r#"{"providers":{}}"#).unwrap();
+        assert!(PiStateService::current_for_app(&state, &AppType::Rpi)
+            .unwrap()
+            .enabled_provider_ids
+            .is_empty());
+        fs::write(&rpi_path, "invalid JSON").unwrap();
+        assert!(PiStateService::current_for_app(&state, &AppType::Rpi).is_err());
+        assert!(PiStateService::current(&state).is_ok());
+    }
 
     #[test]
     #[serial]

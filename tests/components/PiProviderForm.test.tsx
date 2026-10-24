@@ -70,47 +70,81 @@ describe("PiProviderForm", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it("shows a preset's provider key and blocks saving when it is already taken", async () => {
-    const user = userEvent.setup();
-    const preset = piProviderPresets.find((entry) => entry.name === "Kimi")!;
-    server.use(
-      http.post("http://tauri.local/get_providers", () =>
-        HttpResponse.json({
-          [preset.providerKey]: {
-            id: preset.providerKey,
-            name: "Kimi",
-            settingsConfig: {},
-          },
-        }),
-      ),
-    );
-    const onSubmit = vi.fn();
+  it("uses rpi conflict notices in the shared provider editor", async () => {
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("rpi models.json changed outside CC Switch"),
+      );
     render(
       <PiProviderForm
-        appId="pi"
-        submitLabel="Save Pi provider"
+        appId="rpi"
+        providerId="custom"
+        submitLabel="Save rpi"
         onSubmit={onSubmit}
         onCancel={() => {}}
+        initialData={{
+          name: "rpi provider",
+          settingsConfig: {
+            baseUrl: "https://example.com/v1",
+            models: [completeModel("model")],
+          },
+        }}
       />,
     );
-    await user.click(
-      screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
-    );
-    await user.click(screen.getByRole("button", { name: "Kimi" }));
-    expect(screen.getByLabelText("pi.form.providerKey")).toHaveValue(
-      preset.providerKey,
-    );
-    expect(
-      await screen.findByText("pi.form.providerKeyDuplicate"),
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Save Pi provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save rpi" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "pi.form.providerKeyDuplicate",
+      "rpi.provider.writeConflict",
     );
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it.each(["pi", "rpi"] as const)(
+    "blocks a preset key already taken in %s",
+    async (appId) => {
+      const user = userEvent.setup();
+      const preset = piProviderPresets.find((entry) => entry.name === "Kimi")!;
+      server.use(
+        http.post("http://tauri.local/get_providers", async ({ request }) => {
+          const { app } = (await request.json()) as { app: string };
+          if (app !== appId) return HttpResponse.json({});
+          return HttpResponse.json({
+            [preset.providerKey]: {
+              id: preset.providerKey,
+              name: "Kimi",
+              settingsConfig: {},
+            },
+          });
+        }),
+      );
+      const onSubmit = vi.fn();
+      render(
+        <PiProviderForm
+          appId={appId}
+          submitLabel="Save Pi provider"
+          onSubmit={onSubmit}
+          onCancel={() => {}}
+        />,
+      );
+      await user.click(
+        screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
+      );
+      await user.click(screen.getByRole("button", { name: "Kimi" }));
+      expect(screen.getByLabelText("pi.form.providerKey")).toHaveValue(
+        preset.providerKey,
+      );
+      expect(
+        await screen.findByText("pi.form.providerKeyDuplicate"),
+      ).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("button", { name: "Save Pi provider" }),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "pi.form.providerKeyDuplicate",
+      );
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
   it("checks provider keys against the current app only", async () => {
     const user = userEvent.setup();
     server.use(

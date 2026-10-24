@@ -60,16 +60,21 @@ export const promptsApi = {
     return await invoke("get_prompt_file_location", { app });
   },
 
-  async getPiPromptFile(kind: PiPromptFileKind): Promise<PiPromptFileSnapshot> {
-    return await invoke("get_pi_prompt_file", { kind });
+  async getPiPromptFile(
+    app: AppId,
+    kind: PiPromptFileKind,
+  ): Promise<PiPromptFileSnapshot> {
+    return await invoke("get_pi_prompt_file", { app, kind });
   },
 
   async replacePiPromptFile(
+    app: AppId,
     kind: PiPromptFileKind,
     expectedRevision: string,
     content: string,
   ): Promise<PiPromptFileSnapshot> {
     return await invoke("replace_pi_prompt_file", {
+      app,
       kind,
       expectedRevision,
       content,
@@ -77,23 +82,30 @@ export const promptsApi = {
   },
 
   async deletePiPromptFile(
+    app: AppId,
     kind: PiPromptFileKind,
     expectedRevision: string,
   ): Promise<boolean> {
-    return await invoke("delete_pi_prompt_file", { kind, expectedRevision });
+    return await invoke("delete_pi_prompt_file", {
+      app,
+      kind,
+      expectedRevision,
+    });
   },
 
-  async listPiPromptTemplates(): Promise<PiPromptTemplate[]> {
-    return await invoke("list_pi_prompt_templates");
+  async listPiPromptTemplates(app: AppId): Promise<PiPromptTemplate[]> {
+    return await invoke("list_pi_prompt_templates", { app });
   },
 
   async upsertPiPromptTemplate(
+    app: AppId,
     slug: string,
     expectedRevision: string,
     content: string,
     originalSlug?: string,
   ): Promise<PiPromptTemplate> {
     return await invoke("upsert_pi_prompt_template", {
+      app,
       slug,
       originalSlug: originalSlug ?? null,
       expectedRevision,
@@ -102,10 +114,12 @@ export const promptsApi = {
   },
 
   async deletePiPromptTemplate(
+    app: AppId,
     slug: string,
     expectedRevision: string,
   ): Promise<boolean> {
     return await invoke("delete_pi_prompt_template", {
+      app,
       slug,
       expectedRevision,
     });

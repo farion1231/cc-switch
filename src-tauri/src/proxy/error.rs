@@ -273,7 +273,10 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let error = reqwest::Client::new()
+        let error = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build local test client")
             .get(format!(
                 "http://127.0.0.1:{port}/v1/responses?key=secret-token"
             ))

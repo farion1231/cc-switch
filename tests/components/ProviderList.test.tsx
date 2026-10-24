@@ -1183,6 +1183,142 @@ describe("ProviderList Component", () => {
     });
   });
 
+  it("derives rpi membership only from the native provider ID list", async () => {
+    const provider = createProvider({
+      id: "drifted-rpi",
+      name: "Saved rpi",
+      settingsConfig: { models: [{ id: "saved-model" }] },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_rpi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: ["drifted-rpi"],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="rpi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const latestCardProps = providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === provider.id)
+        .at(-1);
+      expect(latestCardProps).toMatchObject({
+        isCurrent: false,
+        isInConfig: true,
+      });
+      expect(latestCardProps.presentation.deleteDisabledReason).toBeUndefined();
+    });
+  });
+
+  it("sets an inactive rpi provider through the ordinary provider action", async () => {
+    const provider = createProvider({
+      id: "inactive-rpi",
+      name: "Inactive rpi",
+      settingsConfig: {
+        models: [
+          { id: "model-a", name: "Model A" },
+          { id: "model-b", name: "Model B" },
+        ],
+      },
+    });
+    const onSwitch = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_rpi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: ["other-rpi"],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="rpi"
+        onSwitch={onSwitch}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    // 读到 rpi 当前配置之前不能改
+    const enable = await screen.findByTestId("add-inactive-rpi");
+    await waitFor(() => expect(enable).toBeEnabled());
+    fireEvent.click(enable);
+    expect(onSwitch).toHaveBeenCalledWith(provider);
+  });
+
+  it("does not use legacy metadata when rpi's authoritative state is unavailable", async () => {
+    const provider = createProvider({
+      id: "legacy-rpi",
+      name: "Legacy rpi",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_rpi_current_state`, () =>
+        HttpResponse.json("current state unavailable", { status: 500 }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="rpi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("无法读取 rpi 当前配置");
+    await waitFor(() => {
+      const latestCardProps = providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === provider.id)
+        .at(-1);
+      expect(latestCardProps).toMatchObject({
+        isCurrent: false,
+        isInConfig: false,
+      });
+      expect(latestCardProps.presentation.deleteDisabledReason).toBe(
+        "rpi.current.stateUnavailableHint",
+      );
+    });
+  });
+
   it("keeps Pi provider creation on the page-level add action", async () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>

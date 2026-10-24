@@ -130,6 +130,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
       piConfigDir: sanitizeDir(data.piConfigDir),
+      rpiConfigDir: sanitizeDir(data.rpiConfigDir),
       language: normalizedLanguage,
     };
 
@@ -200,6 +201,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
         openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
         piConfigDir: sanitizeDir(serverData.piConfigDir),
+        rpiConfigDir: sanitizeDir(serverData.rpiConfigDir),
         language: normalizedLanguage,
       };
 

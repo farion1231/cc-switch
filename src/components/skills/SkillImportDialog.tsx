@@ -11,8 +11,8 @@ import { cn } from "@/lib/utils";
 import { MatrixSearch } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS, V7Dialog } from "@/components/mcp/formBits";
 
-/** Pi 与 Oh My Pi 的启用状态由各自原生 skills 目录里有没有这个目录决定，导入时不勾选 */
-const NATIVE_DIR_APPS: AppId[] = ["pi", "omp"];
+/** Pi-family activation follows native directory presence, not import-time flags. */
+const NATIVE_DIR_APPS: AppId[] = ["pi", "rpi", "omp"];
 const IMPORT_APP_IDS = SKILLS_APP_IDS.filter(
   (app) => !NATIVE_DIR_APPS.includes(app),
 );
@@ -102,6 +102,7 @@ export function SkillImportDialog({
               openclaw: false,
               hermes: chosen.has("hermes"),
               pi: false,
+              rpi: false,
               mcode: chosen.has("mcode"),
               kimi: chosen.has("kimi"),
               agy: chosen.has("agy"),

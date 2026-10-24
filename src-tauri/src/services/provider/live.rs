@@ -30,9 +30,11 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::Rpi => crate::pi_config::provider_exists(&AppType::Rpi, provider_id),
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
+
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
@@ -304,6 +306,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Rpi
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Agy
@@ -383,6 +386,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Rpi
         | AppType::Mcode
         | AppType::Kimi
         | AppType::ClaudeDesktop
@@ -708,7 +712,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
-        AppType::Pi => {
+        AppType::Pi | AppType::Rpi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
             ));
@@ -855,7 +859,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in AppType::all() {
         if matches!(
             app_type,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp
+            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Omp
         ) {
             continue;
         }
@@ -1013,7 +1017,8 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
-        AppType::Pi => Err(AppError::InvalidInput(
+        AppType::Pi | AppType::Rpi => Err(AppError::InvalidInput(
+
             "Pi providers are read from Pi's native models file".to_string(),
         )),
         AppType::Agy => crate::agy_config::read_live_settings(),
@@ -1138,6 +1143,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Rpi
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Omp => {

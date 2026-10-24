@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { UsageScript } from "@/types";
 import type { AppId } from "./types";
 
-/** Pi and Oh My Pi share the provider form, membership state and usage-script command. */
-export type PiFamilyAppId = Extract<AppId, "pi" | "omp">;
+/** Pi, RPI and Oh My Pi share provider-state and usage-script behavior. */
+export type PiFamilyAppId = Extract<AppId, "pi" | "rpi" | "omp">;
 
 export interface PiCurrentState {
   enabledProviderIds: string[];
@@ -25,7 +25,13 @@ export type PiSessionDiscovery =
 
 export const piApi = {
   async getCurrentState(app: PiFamilyAppId = "pi"): Promise<PiCurrentState> {
-    return await invoke(`get_${app}_current_state`);
+    return await invoke(
+      app === "rpi"
+        ? "get_rpi_current_state"
+        : app === "omp"
+          ? "get_omp_current_state"
+          : "get_pi_current_state",
+    );
   },
 
   async updateProviderUsageScript(
@@ -40,7 +46,19 @@ export const piApi = {
     });
   },
 
+  async updateRpiProviderUsageScript(
+    id: string,
+    usageScript: UsageScript,
+  ): Promise<boolean> {
+    return await invoke("update_rpi_provider_usage_script", {
+      id,
+      usageScript,
+    });
+  },
+
   async getSessionDiscovery(): Promise<PiSessionDiscovery> {
     return await invoke("get_pi_session_discovery");
   },
 };
+
+export type { AppId };

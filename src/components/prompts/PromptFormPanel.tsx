@@ -62,7 +62,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   const appName = APP_DISPLAY_NAME[appId];
   const fileName = promptFileName(appId);
   const isHermes = appId === "hermes";
-  const isPi = appId === "pi";
+  const isPi = appId === "pi" || appId === "rpi";
   const isActive = Boolean(editingId && initialData?.enabled);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

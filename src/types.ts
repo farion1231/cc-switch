@@ -314,6 +314,7 @@ export interface VisibleApps {
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;
+  rpi?: boolean;
   mcode: boolean;
   kimi: boolean;
   agy: boolean;
@@ -483,6 +484,7 @@ export interface Settings {
   hermesConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
+  rpiConfigDir?: string;
   // 覆盖 Oh My Pi agent 配置目录（可选）
   ompConfigDir?: string;
 
@@ -781,6 +783,7 @@ export interface McpApps {
   openclaw: boolean;
   hermes: boolean;
   pi?: boolean;
+  rpi?: boolean;
   omp?: boolean;
 }
 

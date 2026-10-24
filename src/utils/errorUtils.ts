@@ -40,6 +40,7 @@ export const extractErrorMessage = (error: unknown): string => {
 export const translatePiProviderMutationError = (
   message: string,
   t: (key: string, options?: Record<string, unknown>) => string,
+  app: string = "pi",
 ): string => {
   if (!message) return "";
   // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
@@ -52,10 +53,13 @@ export const translatePiProviderMutationError = (
     message.includes("no longer present in models.json") ||
     message.includes("another value now owns the key")
   ) {
-    return t("pi.provider.writeConflict");
+    return t(`${app === "rpi" ? "rpi" : "pi"}.provider.writeConflict`);
   }
 
-  if (message.includes("Pi provider") && message.includes("already exists")) {
+  if (
+    (message.includes("Pi provider") || message.includes("rpi provider")) &&
+    message.includes("already exists")
+  ) {
     return t("pi.form.providerKeyDuplicate");
   }
 

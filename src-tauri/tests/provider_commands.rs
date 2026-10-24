@@ -546,6 +546,7 @@ command = "say"
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,

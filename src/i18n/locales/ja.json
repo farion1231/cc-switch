@@ -932,6 +932,8 @@
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
+    "rpiConfigDir": "rpi 設定ディレクトリ",
+    "rpiConfigDirDescription": "rpi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
     "ompConfigDir": "Oh My Pi 設定ディレクトリ",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
@@ -941,6 +943,7 @@
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
+    "browsePlaceholderRpi": "例: /home/<your-username>/.rpi/agent",
     "browsePlaceholderOmp": "例: /home/<your-username>/.omp/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
@@ -1099,6 +1102,7 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
+    "rpi": "rpi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "omp": "Oh My Pi"
@@ -1107,6 +1111,18 @@
     "empty": {
       "title": "カスタムプロバイダーはまだありません",
       "description": "MiniMax アカウントのログインは MiniMax Code 自身が管理するため、インポートは不要です。config.yaml に既にあるカスタムプロバイダーはここに自動で表示されます。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    }
+  },
+  "rpi": {
+    "provider": {
+      "enabled": "rpi で有効にしました",
+      "enableFailed": "rpi でこのプロバイダーを有効にできませんでした",
+      "removed": "rpi から削除しました",
+      "writeConflict": "別のプロセスが rpi の設定を更新しています。しばらくしてから再試行してください。"
+    },
+    "current": {
+      "readFailed": "rpi のプロバイダー設定を読み込めません",
+      "stateUnavailableHint": "CC Switch が rpi のプロバイダー設定を読み込むまで、プロバイダーの変更は無効です。"
     }
   },
   "pi": {
@@ -3560,7 +3576,8 @@
       "envHijack": "この設定には、プロセスの読み込み動作を変える環境変数（ライブラリの注入、CA 証明書の差し替えなど）が含まれています。信頼できる提供元か確認してください。",
       "privateEndpoint": "このアドレスはローカルホストまたは内部ネットワークを指しています。自分で立てたローカルサービス以外はインポートしないでください。",
       "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。"
-    }
+    },
+    "enableInRpiAfterImport": "インポート後に rpi で有効にする"
   },
   "iconPicker": {
     "search": "アイコンを検索",

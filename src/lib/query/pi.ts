@@ -1,5 +1,6 @@
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { piApi, type PiFamilyAppId } from "@/lib/api/pi";
+import { promptKeys } from "@/lib/query/prompts";
 
 export const piKeys = {
   all: ["pi"] as const,
@@ -7,12 +8,17 @@ export const piKeys = {
   sessionDiscovery: ["pi", "sessionDiscovery"] as const,
 };
 
+export const piFamilyKeys = {
+  all: (app: PiFamilyAppId) => [app] as const,
+  currentState: (app: PiFamilyAppId) => [app, "currentState"] as const,
+};
+
 export const invalidatePiProviderCaches = async (
   queryClient: QueryClient,
   app: PiFamilyAppId = "pi",
 ) => {
   await Promise.all([
-    queryClient.invalidateQueries({ queryKey: [app, "currentState"] }),
+    queryClient.invalidateQueries({ queryKey: piFamilyKeys.currentState(app) }),
     queryClient.invalidateQueries({ queryKey: ["providers", app] }),
   ]);
 };
@@ -22,16 +28,18 @@ export const invalidatePiDirectoryCaches = async (
   app: PiFamilyAppId = "pi",
 ) => {
   await Promise.all([
-    queryClient.invalidateQueries({ queryKey: [app] }),
+    queryClient.invalidateQueries({ queryKey: piFamilyKeys.all(app) }),
     queryClient.invalidateQueries({ queryKey: ["providers", app] }),
-    queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+    queryClient.invalidateQueries({ queryKey: promptKeys.list(app) }),
+    queryClient.invalidateQueries({ queryKey: promptKeys.location(app) }),
+    queryClient.invalidateQueries({ queryKey: ["skills"] }),
     queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   ]);
 };
 
 export function usePiCurrentState(enabled = true, app: PiFamilyAppId = "pi") {
   return useQuery({
-    queryKey: [app, "currentState"],
+    queryKey: piFamilyKeys.currentState(app),
     queryFn: () => piApi.getCurrentState(app),
     enabled,
   });

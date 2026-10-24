@@ -63,6 +63,6 @@ export function toggleEffectText(
   if (appId === "hermes") {
     return t(enabled ? "prompts.toast.hermesOn" : "prompts.toast.hermesOff");
   }
-  if (appId === "pi") return t("pi.prompts.reloadNotice");
+  if (appId === "pi" || appId === "rpi") return t("pi.prompts.reloadNotice");
   return "";
 }

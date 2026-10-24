@@ -13,6 +13,12 @@ pub(crate) fn get_pi_current_state(state: State<'_, AppState>) -> Result<PiCurre
 }
 
 #[tauri::command]
+pub(crate) fn get_rpi_current_state(state: State<'_, AppState>) -> Result<PiCurrentState, String> {
+    PiStateService::current_for_app(state.inner(), &crate::app_config::AppType::Rpi)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn update_pi_provider_usage_script(
     state: State<'_, AppState>,
     app: String,
@@ -21,6 +27,16 @@ pub(crate) fn update_pi_provider_usage_script(
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::update_pi_usage_script(state.inner(), app_type, &id, usageScript)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn update_rpi_provider_usage_script(
+    state: State<'_, AppState>,
+    id: String,
+    #[allow(non_snake_case)] usageScript: UsageScript,
+) -> Result<bool, String> {
+    ProviderService::update_rpi_usage_script(state.inner(), &id, usageScript)
         .map_err(|error| error.to_string())
 }
 

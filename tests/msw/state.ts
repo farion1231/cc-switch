@@ -74,6 +74,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   openclaw: {},
   hermes: {},
   pi: {},
+  rpi: {},
   mcode: {},
   kimi: {},
   agy: {},
@@ -90,6 +91,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   openclaw: "",
   hermes: "",
   pi: "",
+  rpi: "",
   mcode: "",
   kimi: "",
   agy: "",
@@ -163,6 +165,7 @@ const createDefaultSessionMessages = (): Record<string, SessionMessage[]> => ({
 let sessionsState = createDefaultSessions();
 let sessionMessagesState = createDefaultSessionMessages();
 let mcpConfigs: McpConfigState = {
+  rpi: {},
   claude: {
     sample: {
       id: "sample",
@@ -293,6 +296,7 @@ export const resetProviderState = () => {
   };
   appConfigDirOverride = null;
   mcpConfigs = {
+    rpi: {},
     claude: {
       sample: {
         id: "sample",

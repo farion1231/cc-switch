@@ -9,7 +9,19 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 
 const storage = new Map<string, string>();
 
-if (
+// Node 25 also exposes localStorage. Use jsdom's implementation so keys are
+// enumerable and Storage.prototype mocks affect the storage used by components.
+const browserStorage = (
+  globalThis as typeof globalThis & {
+    jsdom?: { window: { localStorage: Storage } };
+  }
+).jsdom?.window.localStorage;
+if (browserStorage) {
+  Object.defineProperty(globalThis, "localStorage", {
+    value: browserStorage,
+    configurable: true,
+  });
+} else if (
   typeof globalThis.localStorage === "undefined" ||
   typeof globalThis.localStorage?.getItem !== "function"
 ) {

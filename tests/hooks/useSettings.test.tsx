@@ -383,7 +383,23 @@ describe("useSettings hook", () => {
     expect(invalidatePiDirectoryCachesMock).toHaveBeenCalledTimes(1);
   });
 
-  it("auto-saves the persisted directory, not an unsaved draft", async () => {
+it("invalidates only rpi native caches after its directory changes", async () => {
+    settingsFormMock = createSettingsFormMock({
+      settings: { ...serverSettings, rpiConfigDir: "  /custom/rpi  " },
+    });
+    const { result } = renderHook(() => useSettings());
+    await act(async () => {
+      await result.current.saveSettings(undefined, { silent: true });
+    });
+    expect((mutateAsyncMock.mock.calls[0][0] as Settings).rpiConfigDir).toBe(
+      "/custom/rpi",
+    );
+    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
+    expect(invalidatePiDirectoryCachesMock).toHaveBeenCalledTimes(1);
+    expect(invalidatePiDirectoryCachesMock.mock.calls[0][1]).toBe("rpi");
+  });
+
+it("auto-saves the persisted directory, not an unsaved draft", async () => {
     // Directory rows only commit on the explicit Save button. An unrelated
     // auto-save (a General tab toggle) must not smuggle the half-typed path in.
     serverSettings = {

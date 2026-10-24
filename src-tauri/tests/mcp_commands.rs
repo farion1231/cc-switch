@@ -16,6 +16,94 @@ use support::{
 };
 
 #[test]
+fn pi_rpi_agy_mcp_lifecycle_and_later_file_failure_preserve_siblings() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let temp = tempfile::tempdir().unwrap();
+    let pi_dir = temp.path().join("pi");
+    let rpi_dir = temp.path().join("rpi");
+    update_settings(AppSettings {
+        pi_config_dir: Some(pi_dir.to_string_lossy().into_owned()),
+        rpi_config_dir: Some(rpi_dir.to_string_lossy().into_owned()),
+        ..Default::default()
+    })
+    .unwrap();
+    let paths = [
+        pi_dir.join("mcp.json"),
+        rpi_dir.join("mcp.json"),
+        ensure_test_home().join(".gemini/config/mcp_config.json"),
+    ];
+    for path in &paths {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            r#"{"future":true,"mcpServers":{"other":{"command":"keep"}}}"#,
+        )
+        .unwrap();
+    }
+    let state = create_test_state().unwrap();
+    let mut server: McpServer = serde_json::from_value(json!({
+        "id":"shared", "name":"Shared", "server":{"command":"echo"},
+        "apps":{"pi":true,"rpi":true,"agy":true}
+    }))
+    .unwrap();
+    McpService::upsert_server(&state, server.clone()).unwrap();
+    assert_eq!(
+        state.db.get_all_mcp_servers().unwrap()["shared"].apps,
+        server.apps
+    );
+    let snapshots: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+
+    // AGY is written after the Pi-family batch: its failure must roll both back.
+    fs::write(&paths[2], "invalid JSON").unwrap();
+    let mut edited = server.clone();
+    edited.server["command"] = json!("edited");
+    assert!(McpService::upsert_server(&state, edited).is_err());
+    assert!(McpService::delete_server(&state, "shared").is_err());
+    for i in 0..2 {
+        assert_eq!(fs::read(&paths[i]).unwrap(), snapshots[i]);
+    }
+    assert_eq!(fs::read_to_string(&paths[2]).unwrap(), "invalid JSON");
+    assert_eq!(
+        state.db.get_all_mcp_servers().unwrap()["shared"].server,
+        server.server
+    );
+    fs::write(&paths[2], &snapshots[2]).unwrap();
+
+    server.apps.rpi = false;
+    McpService::upsert_server(&state, server.clone()).unwrap();
+    let rpi: serde_json::Value = serde_json::from_slice(&fs::read(&paths[1]).unwrap()).unwrap();
+    assert_eq!(rpi["mcpServers"]["shared"]["enabled"], false);
+    assert_eq!(
+        state.db.get_all_mcp_servers().unwrap()["shared"].apps,
+        server.apps
+    );
+    server.apps.rpi = true;
+    server.apps.agy = false;
+    McpService::upsert_server(&state, server.clone()).unwrap();
+    let agy: serde_json::Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    assert_eq!(agy["mcpServers"]["shared"]["disabled"], true);
+    assert_eq!(
+        state.db.get_all_mcp_servers().unwrap()["shared"].apps,
+        server.apps
+    );
+    server.apps.agy = true;
+    McpService::upsert_server(&state, server).unwrap();
+    assert!(McpService::delete_server(&state, "shared").unwrap());
+    assert!(!state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key("shared"));
+    for path in &paths {
+        let doc: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert!(doc["mcpServers"].get("shared").is_none());
+        assert_eq!(doc["mcpServers"]["other"]["command"], "keep");
+        assert_eq!(doc["future"], true);
+    }
+}
+
+#[test]
 fn deleting_other_app_mcp_preserves_matching_unmanaged_disabled_agy_entry() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -762,6 +850,7 @@ command = "echo"
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -912,6 +1001,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -983,6 +1073,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1034,6 +1125,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1074,6 +1166,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1260,6 +1353,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1321,6 +1415,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1382,6 +1477,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1444,6 +1540,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1529,6 +1626,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1674,6 +1772,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1702,6 +1801,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 mcode: false,
                 kimi: false,
                 pi: false,
+                rpi: false,
                 omp: false,
             },
             description: None,
@@ -1747,6 +1847,7 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "opencode",
             "hermes",
             "pi",
+            "rpi",
             "mcode",
             "kimi",
             "agy",

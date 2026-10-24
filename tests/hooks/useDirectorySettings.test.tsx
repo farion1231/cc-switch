@@ -73,6 +73,7 @@ describe("useDirectorySettings", () => {
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
       if (app === "pi") return "/remote/pi";
+      if (app === "rpi") return "/remote/rpi";
       if (app === "omp") return "/remote/omp";
       return "/remote/hermes";
     });
@@ -99,9 +100,60 @@ describe("useDirectorySettings", () => {
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
       pi: "/remote/pi",
+      rpi: "/remote/rpi",
       omp: "/remote/omp",
     });
   });
+
+  it.each(["pi", "rpi"] as const)(
+    "isolates a failed %s lookup without losing other directories or the saved data directory",
+    async (failedApp) => {
+      getAppConfigDirOverrideMock.mockResolvedValue("/saved/app-data");
+      const healthyLookup = getConfigDirMock.getMockImplementation()!;
+      getConfigDirMock.mockImplementation((app: string) =>
+        app === failedApp
+          ? Promise.reject(new Error(`${app} override must be absolute`))
+          : healthyLookup(app),
+      );
+      const settings = createSettings({
+        [failedApp === "pi" ? "piConfigDir" : "rpiConfigDir"]:
+          "relative/invalid",
+      });
+      const { result } = renderHook(() =>
+        useDirectorySettings({ settings, onUpdateSettings }),
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      expect(result.current.appConfigDir).toBe("/saved/app-data");
+      expect(result.current.initialAppConfigDir).toBe("/saved/app-data");
+      expect(result.current.resolvedDirs.appConfig).toBe("/saved/app-data");
+      for (const app of [
+        "claude",
+        "codex",
+        "gemini",
+        "grokbuild",
+        "opencode",
+        "openclaw",
+        "hermes",
+        "pi",
+        "rpi",
+      ] as const) {
+        expect(result.current.resolvedDirs[app]).toBe(
+          app === failedApp
+            ? ""
+            : `/remote/${app === "grokbuild" ? "grok" : app}`,
+        );
+      }
+      expect(onUpdateSettings).not.toHaveBeenCalled();
+      // A failed resolution must not claim the hard-coded default is active,
+      // but defaults for healthy directories must still support local reset.
+      await act(() => result.current.resetDirectory("codex"));
+      expect(result.current.resolvedDirs.codex).toBe("/home/mock/.codex");
+      act(() => result.current.updateAppConfigDir("/unsaved/app-data"));
+      act(() => result.current.resetAllDirectories());
+      expect(result.current.appConfigDir).toBe("/saved/app-data");
+    },
+  );
 
   it.each([
     ["claude", "claudeConfigDir"],
@@ -112,6 +164,7 @@ describe("useDirectorySettings", () => {
     ["openclaw", "openclawConfigDir"],
     ["hermes", "hermesConfigDir"],
     ["pi", "piConfigDir"],
+    ["rpi", "rpiConfigDir"],
   ] as const)(
     "syncs the %s display when form drafts are discarded",
     async (app, field) => {

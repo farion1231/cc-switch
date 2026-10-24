@@ -54,6 +54,8 @@ pub struct VisibleApps {
     #[serde(default)]
     pub omp: bool,
     #[serde(default = "default_true")]
+    pub rpi: bool,
+    #[serde(default = "default_true")]
     pub mcode: bool,
     #[serde(default = "default_true")]
     pub kimi: bool,
@@ -73,6 +75,7 @@ impl Default for VisibleApps {
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
+            rpi: true,
             mcode: true,
             kimi: true,
             agy: true,
@@ -94,6 +97,7 @@ impl VisibleApps {
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
+            AppType::Rpi => self.rpi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Agy => self.agy,
@@ -546,6 +550,8 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rpi_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omp_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
@@ -683,6 +689,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
+            rpi_config_dir: None,
             omp_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
@@ -779,6 +786,12 @@ impl AppSettings {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
+        self.rpi_config_dir = self
+            .rpi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
         self.omp_config_dir = self
             .omp_config_dir
             .as_ref()
@@ -1284,6 +1297,14 @@ pub fn get_omp_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+pub fn get_rpi_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .rpi_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -1366,7 +1387,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => None,
+        AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Omp => None,
     }
 }
 
@@ -1386,7 +1407,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => {}
+        AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Omp => {}
     })
 }
 
@@ -1548,6 +1569,24 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn rpi_visibility_is_independent_and_roundtrips() {
+        let legacy: VisibleApps = serde_json::from_value(serde_json::json!({"pi": false})).unwrap();
+        assert!(!legacy.is_visible(&AppType::Pi));
+        assert!(legacy.is_visible(&AppType::Rpi));
+        let apps = VisibleApps {
+            pi: true,
+            rpi: false,
+            ..VisibleApps::default()
+        };
+        let saved = serde_json::to_value(&apps).unwrap();
+        assert_eq!(saved["pi"], true);
+        assert_eq!(saved["rpi"], false);
+        let loaded: VisibleApps = serde_json::from_value(saved).unwrap();
+        assert!(loaded.is_visible(&AppType::Pi));
+        assert!(!loaded.is_visible(&AppType::Rpi));
+    }
 
     #[test]
     fn codex_stack_classic_tools_default_on_and_ignore_the_old_off_key() {

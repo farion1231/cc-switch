@@ -932,6 +932,8 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "rpiConfigDir": "rpi Configuration Directory",
+    "rpiConfigDirDescription": "Override the rpi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
     "ompConfigDir": "Oh My Pi Configuration Directory",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
@@ -941,6 +943,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
+    "browsePlaceholderRpi": "e.g., /home/<your-username>/.rpi/agent",
     "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
@@ -1099,6 +1102,7 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
+    "rpi": "rpi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "omp": "Oh My Pi"
@@ -1107,6 +1111,18 @@
     "empty": {
       "title": "No custom providers yet",
       "description": "Your MiniMax account sign-in is managed by MiniMax Code itself, so there is nothing to import. Custom providers already in config.yaml appear here automatically. Use the + button in the top-right corner to add a preset or custom provider."
+    }
+  },
+  "rpi": {
+    "provider": {
+      "enabled": "Enabled in rpi",
+      "enableFailed": "Could not enable this provider in rpi",
+      "removed": "Removed from rpi",
+      "writeConflict": "Another process is updating rpi's configuration. Try again shortly."
+    },
+    "current": {
+      "readFailed": "Could not read rpi's provider configuration",
+      "stateUnavailableHint": "Provider changes are disabled until CC Switch can read rpi's provider configuration."
     }
   },
   "pi": {
@@ -3560,7 +3576,8 @@
       "envHijack": "This config sets environment variables that change how processes load code (e.g. injecting libraries or replacing CA certificates). Import only from a source you trust.",
       "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
       "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line."
-    }
+    },
+    "enableInRpiAfterImport": "Enable in rpi after import"
   },
   "iconPicker": {
     "search": "Search Icons",

@@ -151,13 +151,17 @@ export function ProviderList({
   const isOpenCode = appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
   const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
+  const isPiFamily = appId === "pi" || appId === "rpi";
   const {
     data: piCurrentState,
     isSuccess: isPiCurrentStateSuccess,
     isPending: isPiCurrentStatePending,
     isError: isPiCurrentStateError,
     error: piCurrentStateError,
-  } = usePiCurrentState(isPiFamilyApp(appId), appId === "omp" ? "omp" : "pi");
+  } = usePiCurrentState(
+    isPiFamilyApp(appId),
+    isPiFamilyApp(appId) ? appId : "pi",
+  );
   const isPiStateReady = !isPiFamilyApp(appId) || isPiCurrentStateSuccess;
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
@@ -180,6 +184,7 @@ export function ProviderList({
           return openclawLiveIds?.includes(provider.id) ?? false;
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
+        case "rpi":
         case "pi":
         case "omp":
           return isPiStateReady
@@ -408,6 +413,7 @@ export function ProviderList({
     currentOmoSlimId,
     hermesModelConfig?.provider,
     isPiStateReady,
+    isPiFamily,
     currentProviderId,
     onRemoveFromConfig,
     onDelete,
@@ -427,7 +433,7 @@ export function ProviderList({
       <Notice
         tone="warning"
         title={t(`${appId}.current.readFailed`, {
-          defaultValue: "无法读取 Pi 当前配置",
+          defaultValue: `无法读取 ${appId === "rpi" ? "rpi" : appId === "omp" ? "Oh My Pi" : "Pi"} 当前配置`,
         })}
       >
         {t(`${appId}.current.stateUnavailableHint`)}

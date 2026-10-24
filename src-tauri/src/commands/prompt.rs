@@ -85,49 +85,81 @@ pub async fn get_prompt_file_location(app: String) -> Result<PromptFileLocation,
     })
 }
 
+/// Resolve the `app` argument of the Pi-family commands: only Pi and RPI own
+/// this native layout, and each one reads and writes its own directory.
+fn pi_family_app(app: &str) -> Result<AppType, String> {
+    let app_type = AppType::from_str(app).map_err(|e| e.to_string())?;
+    if matches!(app_type, AppType::Pi | AppType::Rpi) {
+        Ok(app_type)
+    } else {
+        Err(format!("{app} does not use Pi-family prompt files"))
+    }
+}
+
 #[tauri::command]
-pub async fn get_pi_prompt_file(kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, String> {
-    PiPromptFileService::read(kind).map_err(|error| error.to_string())
+pub async fn get_pi_prompt_file(
+    app: String,
+    kind: PiPromptFileKind,
+) -> Result<PiPromptFileSnapshot, String> {
+    let app_type = pi_family_app(&app)?;
+    PiPromptFileService::read(&app_type, kind).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn replace_pi_prompt_file(
+    app: String,
     kind: PiPromptFileKind,
     #[allow(non_snake_case)] expectedRevision: String,
     content: String,
 ) -> Result<PiPromptFileSnapshot, String> {
-    PiPromptFileService::replace(kind, &expectedRevision, &content)
+    let app_type = pi_family_app(&app)?;
+    PiPromptFileService::replace(&app_type, kind, &expectedRevision, &content)
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_pi_prompt_file(
+    app: String,
     kind: PiPromptFileKind,
     #[allow(non_snake_case)] expectedRevision: String,
 ) -> Result<bool, String> {
-    PiPromptFileService::delete(kind, &expectedRevision).map_err(|error| error.to_string())
+    let app_type = pi_family_app(&app)?;
+    PiPromptFileService::delete(&app_type, kind, &expectedRevision)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn list_pi_prompt_templates() -> Result<Vec<PiPromptTemplate>, String> {
-    PiPromptTemplateService::list().map_err(|error| error.to_string())
+pub async fn list_pi_prompt_templates(app: String) -> Result<Vec<PiPromptTemplate>, String> {
+    let app_type = pi_family_app(&app)?;
+    PiPromptTemplateService::list(&app_type).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn upsert_pi_prompt_template(
+    app: String,
     slug: String,
     #[allow(non_snake_case)] originalSlug: Option<String>,
     #[allow(non_snake_case)] expectedRevision: String,
     content: String,
 ) -> Result<PiPromptTemplate, String> {
-    PiPromptTemplateService::upsert(&slug, originalSlug.as_deref(), &expectedRevision, &content)
-        .map_err(|error| error.to_string())
+    let app_type = pi_family_app(&app)?;
+    PiPromptTemplateService::upsert(
+        &app_type,
+        &slug,
+        originalSlug.as_deref(),
+        &expectedRevision,
+        &content,
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_pi_prompt_template(
+    app: String,
     slug: String,
     #[allow(non_snake_case)] expectedRevision: String,
 ) -> Result<bool, String> {
-    PiPromptTemplateService::delete(&slug, &expectedRevision).map_err(|error| error.to_string())
+    let app_type = pi_family_app(&app)?;
+    PiPromptTemplateService::delete(&app_type, &slug, &expectedRevision)
+        .map_err(|error| error.to_string())
 }

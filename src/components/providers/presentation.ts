@@ -679,7 +679,7 @@ export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
   ];
 }
 
-// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi）─────
+// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / rpi / MiniMax Code / Kimi）─────
 
 export interface AdditiveInput {
   app: AppId;
@@ -712,8 +712,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
+  const isPiFamily = isPiFamilyApp(app);
   const piBlocked =
-    isPiFamilyApp(app) && input.piStateUnavailable
+    isPiFamily && input.piStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
