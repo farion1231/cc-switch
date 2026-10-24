@@ -552,6 +552,13 @@ async fn handle_claude_transform(
         .as_ref()
         .and_then(|meta| meta.provider_type.as_deref())
         == Some("codex_oauth");
+    let client_model_alias = super::client_model_alias::ClientModelAlias::for_request(
+        ctx.app_type_str,
+        is_codex_oauth,
+        api_format,
+        &ctx.request_model,
+        ctx.outbound_model.as_deref(),
+    );
     // Codex OAuth 会把 openai_responses 响应强制升级为 SSE，即使客户端发的是 stream:false。
     // should_use_claude_transform_streaming 默认会把这个组合路由到流式转换器——虽然能避免
     // JSON parse 报 422，但会让非流客户端收到 text/event-stream，违反 Anthropic 非流语义。
@@ -687,7 +694,10 @@ async fn handle_claude_transform(
             axum::http::HeaderValue::from_static("no-cache"),
         );
 
-        let body = axum::body::Body::from_stream(logged_stream);
+        // Collect usage with the actual upstream model before restoring the client alias.
+        let client_stream =
+            super::client_model_alias::alias_stream(logged_stream, client_model_alias);
+        let body = axum::body::Body::from_stream(client_stream);
         return Ok((headers, body).into_response());
     }
 
@@ -808,7 +818,7 @@ async fn handle_claude_transform(
             "Missing upstream response after Claude format conversion".to_string(),
         )),
     };
-    let anthropic_response = match transform_result {
+    let mut anthropic_response = match transform_result {
         Ok(response) => response,
         Err(error) => {
             log::error!("[Claude] 转换响应失败: {error}");
@@ -829,6 +839,9 @@ async fn handle_claude_transform(
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
     // 在上游缺 stream_options.include_usage 时没有 usage，写入只会产生无意义空行
     spawn_claude_usage_log(state, ctx, &anthropic_response, status.as_u16(), false);
+    if let Some(alias) = client_model_alias {
+        alias.rewrite_message(&mut anthropic_response);
+    }
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
