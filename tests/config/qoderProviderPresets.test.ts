@@ -46,10 +46,11 @@ describe("Qoder provider presets", () => {
       authType: "api-key",
       baseUrl: "https://openrouter.ai/api",
     });
-    expect(find("EveryAPI").settingsConfig).toMatchObject({
+    expect(find("RightCode").settingsConfig).toMatchObject({
       protocol: "openai-responses",
       authType: "bearer",
     });
+    expect(find("EveryAPI")).toBeUndefined();
     expect(find("Ollama").settingsConfig).toMatchObject({
       protocol: "openai",
       baseUrl: "http://localhost:11434/v1",

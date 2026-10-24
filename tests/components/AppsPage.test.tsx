@@ -46,7 +46,7 @@ const mocks = vi.hoisted(() => ({
   error: vi.fn(),
   settings: {} as { visibleApps?: undefined; appOrder?: string[] },
   updateSettings: vi.fn(),
-  autoSaveSettings: vi.fn(async () => null),
+  autoSaveSettings: vi.fn(async (_updates: Record<string, unknown>) => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
 }));
@@ -73,8 +73,9 @@ vi.mock("@/hooks/useSettings", async () => {
           setSettings((previous) => ({ ...previous, ...updates }));
         },
         autoSaveSettings: (updates: Partial<typeof settings>) => {
-          void mocks.autoSaveSettings(updates);
-          return mocks.saveSettings(updates);
+          return mocks
+            .autoSaveSettings(updates)
+            .then(() => mocks.saveSettings(updates));
         },
       };
     },
@@ -251,8 +252,7 @@ afterAll(() => {
 describe("AppsPage concurrent CLI upgrades", () => {
   beforeEach(() => {
     vi.resetModules();
-    mocks.appSettings.language = "en";
-    mocks.appSettings.qoderEdition = undefined;
+    mocks.appSettings = { language: "en", qoderEdition: undefined };
     mocks.saveSettings.mockReset().mockImplementation(async (updates) => {
       Object.assign(mocks.appSettings, updates);
       return { requiresRestart: false };
@@ -934,7 +934,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       within(
         screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
       ).getAllByRole("button", { name: "appsPage.dragHandle" }),
-    ).toHaveLength(APP_IDS.length - 2);
+    ).toHaveLength(APP_IDS.length - 3);
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),
@@ -964,6 +964,40 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(mocks.updateSettings).toHaveBeenCalledWith({ appOrder: next });
     expect(mocks.autoSaveSettings).toHaveBeenCalledWith({ appOrder: next });
   });
+
+  it.each(["global", "cn"] as const)(
+    "keeps both Qoder editions in sidebar order when dragging the %s row",
+    async (edition) => {
+      mocks.appSettings.qoderEdition = edition;
+      await renderApps();
+      const onDragEnd = mocks.dragEndHandlers.at(-1);
+      expect(onDragEnd).toBeDefined();
+      act(() => {
+        onDragEnd?.({
+          active: { id: "qoder" },
+          over: { id: "codex" },
+        } as unknown as DragEndEvent);
+      });
+      const next = [
+        "claude",
+        "claude-desktop",
+        "qoder",
+        "qoder-cn",
+        ...APP_IDS.filter(
+          (app) =>
+            !["claude", "claude-desktop", "qoder", "qoder-cn"].includes(app),
+        ),
+      ];
+      expect(mocks.updateSettings).toHaveBeenCalledWith({ appOrder: next });
+      expect(mocks.autoSaveSettings).toHaveBeenCalledWith({ appOrder: next });
+      expect(rowApps("appsPage.sectionInstalled").slice(0, 4)).toEqual([
+        "claude",
+        "claude-desktop",
+        edition === "cn" ? "qoder-cn" : "qoder",
+        "codex",
+      ]);
+    },
+  );
 
   it("shows the selected path and command while retaining the resolved target for uninstall validation", async () => {
     const pending = deferred<ToolUninstallCandidate[]>();

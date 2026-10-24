@@ -4017,19 +4017,31 @@ mod tests {
 
     #[test]
     fn qoder_migration_and_flags_keep_editions_independent() -> Result<(), AppError> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
-        Database::set_user_version(&conn, 22)?;
-        Database::apply_schema_migrations_on_conn(&conn)?;
-        for table in ["mcp_servers", "skills"] {
-            let flags: (bool, bool, bool) = conn.query_row(
-                &format!("SELECT enabled_kimi, enabled_qoder, enabled_qoder_cn FROM {table}"),
+        for version in [22, 23] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+            if version == 23 {
+                conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN enabled_omp BOOLEAN NOT NULL DEFAULT 0; UPDATE mcp_servers SET enabled_omp = 1;")?;
+            }
+            Database::set_user_version(&conn, version)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            for table in ["mcp_servers", "skills"] {
+                let flags: (bool, bool, bool) = conn.query_row(
+                    &format!("SELECT enabled_kimi, enabled_qoder, enabled_qoder_cn FROM {table}"),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(flags, (true, false, false));
+            }
+            let omp_enabled: bool = conn.query_row(
+                "SELECT enabled_omp FROM mcp_servers WHERE id = 'm'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| row.get(0),
             )?;
-            assert_eq!(flags, (true, false, false));
+            assert_eq!(omp_enabled, version == 23);
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            Database::apply_schema_migrations_on_conn(&conn)?;
         }
-        Database::apply_schema_migrations_on_conn(&conn)?;
         let db = Database::memory()?;
         let server = serde_json::from_value(serde_json::json!({"id":"m","name":"m","server":{"command":"node"},"apps":{"qoder":true,"qoder-cn":true,"kimi":true}})).unwrap();
         db.save_mcp_server(&server)?;

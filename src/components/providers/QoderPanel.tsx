@@ -256,6 +256,7 @@ export function QoderPanel({
                 ? `${id}/${provider.model}`
                 : providerModels[0]?.key;
               const buttons: CardPresentation["buttons"] = [];
+              const menuItems: CardPresentation["menuItems"] = [];
               if (!active) {
                 buttons.push({
                   key: "switch",
@@ -274,12 +275,12 @@ export function QoderPanel({
                 });
               }
               if (providerModels.length) {
-                buttons.push({
+                menuItems.push({
                   key: "setDefault",
                   label: t("qoder.selectModelAction"),
-                  onClick: () => {},
+                  onSelect: () => {},
                   disabledReason: busy ? t("common.loading") : undefined,
-                  menu: {
+                  submenu: {
                     title: t("qoder.selectModelAction"),
                     options: providerModels.map((model) => ({
                       key: model.key,
@@ -289,6 +290,15 @@ export function QoderPanel({
                         void runAction(() => qoderApi.setModel(app, model.key)),
                     })),
                   },
+                });
+              }
+              if (active) {
+                menuItems.push({
+                  key: "autoModel",
+                  label: t("qoder.autoModel"),
+                  disabledReason: busy ? t("common.loading") : undefined,
+                  onSelect: () =>
+                    void runAction(() => qoderApi.setModel(app, "auto")),
                 });
               }
               const presentation: CardPresentation = {
@@ -306,17 +316,7 @@ export function QoderPanel({
                 buttons,
                 editDisabledReason: busy ? t("common.loading") : undefined,
                 deleteDisabledReason: busy ? t("common.loading") : undefined,
-                menuItems: active
-                  ? [
-                      {
-                        key: "autoModel",
-                        label: t("qoder.autoModel"),
-                        disabledReason: busy ? t("common.loading") : undefined,
-                        onSelect: () =>
-                          void runAction(() => qoderApi.setModel(app, "auto")),
-                      },
-                    ]
-                  : undefined,
+                menuItems,
               };
               return (
                 <ProviderCard
