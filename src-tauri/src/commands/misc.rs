@@ -170,9 +170,19 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 11] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
+const VALID_TOOLS: [&str; 12] = [
+    "claude",
+    "codex",
+    "gemini",
+    "grok",
+    "opencode",
+    "openclaw",
+    "hermes",
+    "pi",
+    "mcode",
+    "kimi",
     "agy",
+    "codebuddy",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -629,6 +639,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
         "agy" => "Antigravity CLI",
+        "codebuddy" => "CodeBuddy Code",
         _ => "Unknown",
     }
 }
@@ -874,6 +885,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
+        "codebuddy" => Some("npm i -g @tencent-ai/codebuddy-code@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -906,9 +918,14 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
 // MiniMax Code 虽有 `mcode update`，却刻意不列在这里：它在 stdin/stdout 非 TTY 时只打印
 // "No interactive confirmation is available" 就 exit 0、并不安装。静默 lifecycle 的
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
+//
+// CodeBuddy Code 的 `codebuddy update` 无交互确认：按自身安装方式升级（npm 会用
+// `--prefix` 钉在正在运行的那份上，pnpm/bun 各用自己的命令，原生版走官方 installer），
+// 装完核对版本；失败或认不出安装方式（会提示手动 `npm install -g`）时 exit 1，
+// 由 `|| <npm fallback>` 兜底。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "grok" | "hermes" | "agy" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" | "agy" | "codebuddy" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         "kimi" => Some("upgrade --yes"),
@@ -1282,6 +1299,9 @@ async fn get_single_tool_version_impl(
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
+        "codebuddy" => {
+            fetch_npm_latest_for_tool(&client, "@tencent-ai/codebuddy-code", tool, local).await
+        }
         "agy" => fetch_agy_latest_version(&client).await,
         _ => None,
     };
@@ -3316,6 +3336,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
+        "codebuddy" => Some("@tencent-ai/codebuddy-code"),
         _ => None,
     }
 }
@@ -3690,7 +3711,10 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi")
+            matches!(
+                tool,
+                "claude" | "opencode" | "openclaw" | "kimi" | "codebuddy"
+            )
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -3699,7 +3723,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi"
+                "claude" | "openclaw" | "kimi" | "codebuddy"
             )
         }
     }
@@ -7158,6 +7182,52 @@ mod tests {
     }
 
     #[test]
+    fn codebuddy_lifecycle_metadata_uses_self_update_with_npm_fallback() {
+        let requested = vec!["unsupported".to_string(), "codebuddy".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["codebuddy"]);
+        assert_eq!(tool_display_name("codebuddy"), "CodeBuddy Code");
+        assert_eq!(
+            npm_package_for("codebuddy"),
+            Some("@tencent-ai/codebuddy-code")
+        );
+        let npm = "npm i -g @tencent-ai/codebuddy-code@latest";
+        assert_eq!(npm_install_command_for("codebuddy"), Some(npm));
+        // No dependency runs an install script, so npm 12 needs no `--allow-scripts`.
+        assert_eq!(npm_install_extra_args("codebuddy"), "");
+        // `codebuddy update` never prompts and exits 1 when it cannot update.
+        assert_eq!(official_update_args("codebuddy"), Some("update"));
+
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Install,
+                LifecycleCommandShell::Posix,
+            )
+            .as_deref(),
+            Some(npm)
+        );
+        assert_eq!(posix_install_command_for("codebuddy"), npm);
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Update,
+                LifecycleCommandShell::Posix,
+            )
+            .as_deref(),
+            Some(format!("codebuddy update || {npm}").as_str())
+        );
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Update,
+                LifecycleCommandShell::WindowsBatch,
+            )
+            .as_deref(),
+            Some(format!("codebuddy update || call {npm}").as_str())
+        );
+    }
+
+    #[test]
     fn mcode_lifecycle_metadata_skips_non_tty_self_update() {
         let requested = vec!["unsupported".to_string(), "mcode".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["mcode"]);
@@ -8440,6 +8510,37 @@ mod tests {
                 "/Users/me/.local/share/claude/versions/2.1.146",
             );
             assert_eq!(cmd.as_deref(), Some("/Users/me/.local/bin/claude update"));
+        }
+
+        #[test]
+        fn codebuddy_npm_install_anchors_self_update_then_sibling_npm() {
+            let bin = "/Users/me/.local/share/mise/installs/node/26.10.0/bin/codebuddy";
+            let real = "/Users/me/.local/share/mise/installs/node/26.10.0/lib/node_modules/@tencent-ai/codebuddy-code/bin/codebuddy";
+            let cmd = anchored_command_from_paths("codebuddy", bin, real);
+            assert_eq!(
+                cmd.as_deref(),
+                Some(
+                    "/Users/me/.local/share/mise/installs/node/26.10.0/bin/codebuddy update || \
+                     PATH='/Users/me/.local/share/mise/installs/node/26.10.0/bin':\"$PATH\" \
+                     /Users/me/.local/share/mise/installs/node/26.10.0/bin/npm i -g \
+                     @tencent-ai/codebuddy-code@latest"
+                )
+            );
+        }
+
+        #[test]
+        fn codebuddy_native_build_uses_self_update_only() {
+            // `codebuddy install` puts a native build outside node_modules; no sibling npm
+            // owns it, so the CLI's own updater (which reruns the official installer) is used.
+            let cmd = anchored_command_from_paths(
+                "codebuddy",
+                "/Users/me/.local/bin/codebuddy",
+                "/Users/me/.local/bin/codebuddy",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/Users/me/.local/bin/codebuddy update")
+            );
         }
 
         #[test]
