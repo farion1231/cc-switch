@@ -80,6 +80,9 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
+type AppDensity = "compact" | "cards";
+const DENSITY_STORAGE_KEY = "cc-switch-apps-density";
+
 type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
 
 const ROWS: Row[] = [
@@ -114,6 +117,23 @@ export function AppsPage() {
   const { t, i18n } = useTranslation();
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
+  const [density, setDensity] = useState<AppDensity>(() => {
+    try {
+      return window.localStorage.getItem(DENSITY_STORAGE_KEY) === "cards"
+        ? "cards"
+        : "compact";
+    } catch {
+      return "compact";
+    }
+  });
+  const changeDensity = (next: AppDensity) => {
+    setDensity(next);
+    try {
+      window.localStorage.setItem(DENSITY_STORAGE_KEY, next);
+    } catch {
+      // The display choice still works when local storage is unavailable.
+    }
+  };
   const tableRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -135,7 +155,7 @@ export function AppsPage() {
     const observer = new ResizeObserver(updateActionWidth);
     actions.forEach((action) => observer.observe(action));
     return () => observer.disconnect();
-  }, []);
+  }, [density]);
 
   const [showCommands, setShowCommands] = useState(false);
   const [showUninstallCommands, setShowUninstallCommands] = useState(false);
@@ -316,9 +336,29 @@ export function AppsPage() {
       >
         <div ref={tableRef} className="px-6 pb-10 pt-4">
           <div
+            role="group"
+            aria-label={t("appsPage.displayDensity")}
+            className="mb-4 flex flex-wrap items-center justify-end gap-1"
+          >
+            {(["compact", "cards"] as const).map((value) => (
+              <Button
+                key={value}
+                variant={density === value ? "neutral" : "quiet"}
+                size="compact"
+                aria-pressed={density === value}
+                onClick={() => changeDensity(value)}
+              >
+                {t(
+                  `appsPage.density${value === "compact" ? "Compact" : "Cards"}`,
+                )}
+              </Button>
+            ))}
+          </div>
+          <div
             className={cn(
               APP_ROW_GRID,
               "mx-px h-8 px-4 text-caption font-medium text-fg-2",
+              density === "cards" && "hidden",
             )}
           >
             <span>{t("appsPage.columnApp")}</span>
@@ -348,11 +388,19 @@ export function AppsPage() {
             <span />
           </div>
 
-          <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+          <div
+            data-app-density={density}
+            className={cn(
+              density === "cards"
+                ? "grid grid-cols-1 items-start gap-4 xl:grid-cols-2"
+                : "divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface",
+            )}
+          >
             {ROWS.map((row) =>
               row.kind === "desktop" ? (
                 <AppRow
                   key="claude-desktop"
+                  density={density}
                   app="claude-desktop"
                   name={
                     <span className="truncate">
@@ -379,6 +427,7 @@ export function AppsPage() {
               ) : (
                 <ToolRow
                   key={row.tool}
+                  density={density}
                   tool={row.tool}
                   tools={tools}
                   onUninstall={() => setPendingUninstall(row.tool)}
@@ -466,6 +515,7 @@ export function AppsPage() {
 }
 
 function AppRow({
+  density,
   app,
   name,
   meta,
@@ -475,6 +525,7 @@ function AppRow({
   menu,
   footer,
 }: {
+  density: AppDensity;
   app: AppId;
   name: React.ReactNode;
   meta?: React.ReactNode;
@@ -484,11 +535,36 @@ function AppRow({
   menu?: React.ReactNode;
   footer?: React.ReactNode;
 }) {
+  const { t } = useTranslation();
+  const cards = density === "cards";
   return (
-    <div data-tool-row className="px-4 py-3">
-      <div className={cn(APP_ROW_GRID, "min-h-10")}>
-        <div className="flex min-w-0 items-center gap-4">
-          <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
+    <div
+      data-tool-row
+      className={cn(
+        cards
+          ? "rounded-panel border border-border bg-surface p-5"
+          : "px-4 py-3",
+      )}
+    >
+      <div
+        className={cn(
+          cards
+            ? "grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4"
+            : APP_ROW_GRID,
+          "min-h-10",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-4",
+            cards && "col-span-3",
+          )}
+        >
+          <AppGlyph
+            app={app}
+            size={cards ? 40 : 20}
+            badgeClassName="bg-surface"
+          />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
@@ -500,17 +576,32 @@ function AppRow({
             )}
           </div>
         </div>
-        <div className="text-end">{version}</div>
+        <div className={cn(cards ? "col-span-3 text-start" : "text-end")}>
+          {version}
+        </div>
         <div
           data-tool-actions
-          className="flex w-max items-center justify-self-end gap-2 [&>button]:shrink-0"
+          className={cn(
+            "flex w-max items-center gap-2 [&>button]:shrink-0",
+            !cards && "justify-self-end",
+          )}
         >
           {action}
         </div>
-        <div className="flex justify-end">{visibility}</div>
+        <div className="flex items-center justify-end gap-2">
+          {cards && (
+            <span className="inline-flex items-center gap-0.5 text-caption text-fg-2">
+              {t("appsPage.columnVisible")}
+              <HelpTip title={t("appsPage.columnVisible")} align="end">
+                {t("appsPage.visibleHelp")}
+              </HelpTip>
+            </span>
+          )}
+          {visibility}
+        </div>
         <div className="flex justify-end">{menu}</div>
       </div>
-      {footer && <div className="ms-9 mt-2">{footer}</div>}
+      {footer && <div className={cn("mt-2", !cards && "ms-9")}>{footer}</div>}
     </div>
   );
 }
@@ -524,6 +615,7 @@ function Pill({ children }: { children: React.ReactNode }) {
 }
 
 function ToolRow({
+  density,
   tool,
   tools,
   onUninstall,
@@ -531,6 +623,7 @@ function ToolRow({
   onToggleExpanded,
   visibility,
 }: {
+  density: AppDensity;
   tool: ToolName;
   tools: ReturnType<typeof useToolManagement>;
   onUninstall: () => void;
@@ -760,6 +853,7 @@ function ToolRow({
 
   return (
     <AppRow
+      density={density}
       app={TOOL_APP_IDS[tool]}
       name={
         <>
