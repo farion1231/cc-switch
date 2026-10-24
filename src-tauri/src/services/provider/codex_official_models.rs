@@ -11,6 +11,10 @@
 //!
 //! 不用 `~/.codex/models_cache.json`：它是哪个账号、哪个版本写的，CC Switch 证明不了。
 //!
+//! 服务端按 `client_version` 裁剪列表，版本取本机在用的 Codex 里最新的那个（见
+//! [`newest_codex_version`]）。一个来源里没有一条能在模型选择器里选的模型（`visibility`
+//! 都不是 `list`）就不算合格：照写的话官方模型全被藏起来，选择器里只剩第三方的（#8014）。
+//!
 //! 凭据取自操作之后 Codex 实际会用的登录（目标登录，见 `codex_direct`）。托管账号的
 //! token 归 CC Switch 管，照常取；其余登录只读、绝不刷新：refresh token 会轮换，CC Switch
 //! 刷新了，Codex 手里那份就作废，用户会被登出。token 过期或被拒时退回自带列表，等 Codex
@@ -24,7 +28,9 @@
 //! `config.toml` 暂时解析不了），而缓存这时已经是新的，之后的刷新只会得到 304 或同样的
 //! 列表。所以「客户端落后于缓存」单独记一个标记，重写成功才清掉，每个检查点都看它。
 
+use std::cmp::Ordering as CmpOrdering;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -33,8 +39,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::codex_config::{
-    extract_codex_auth_user_identity, load_codex_bundled_models, normalize_codex_native_rows,
+    extract_codex_auth_user_identity, get_codex_config_dir, load_codex_bundled_models,
+    normalize_codex_native_rows, read_codex_config_text, CodexBundledModelsError,
 };
+use crate::codex_state_db::{codex_state_db_is_lockable, codex_state_db_paths};
+use crate::database::Database;
 use crate::live::engine::DeviceStore;
 use crate::services::subscription::{
     parse_codex_credentials_json, CodexKeychainLogin, CredentialStatus,
@@ -47,6 +56,9 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// 后台检查的间隔（只读缓存文件；过期了才联网）。
 pub(crate) const CHECK_EVERY: Duration = Duration::from_secs(15 * 60);
+/// 取版本时看 Codex 最近创建的这么多个线程：够覆盖最近用过的各个客户端，又不让早已
+/// 升级掉的版本混进来。
+const RECENT_THREADS: u32 = 20;
 
 /// 取官方列表用的登录。
 #[derive(Clone)]
@@ -62,17 +74,22 @@ impl OfficialLogin {
     /// 从登录 JSON 取：要有有效的 access token、工作区 ID 和稳定的用户身份。取不到稳定
     /// 用户身份（没有 id_token，或里面没有 `sub`）时不拉取，和 Codex「身份不可用就不复用
     /// 缓存」同一取向。
-    pub fn of(auth: &Value) -> Option<Self> {
+    pub fn of(auth: &Value) -> Result<Self, OfficialSkip> {
         let (access_token, account_id, status, _) = parse_codex_credentials_json(&auth.to_string());
-        if !matches!(status, CredentialStatus::Valid) {
-            return None;
+        match status {
+            CredentialStatus::Valid => {}
+            CredentialStatus::Expired => return Err(OfficialSkip::LoginStale),
+            _ => return Err(OfficialSkip::NoLogin),
         }
-        let access_token = access_token.filter(|token| !token.trim().is_empty())?;
+        let access_token = access_token
+            .filter(|token| !token.trim().is_empty())
+            .ok_or(OfficialSkip::NoLogin)?;
         let account_id = account_id
             .map(|id| id.trim().to_string())
-            .filter(|id| !id.is_empty())?;
-        let user = extract_codex_auth_user_identity(auth)?;
-        Some(Self {
+            .filter(|id| !id.is_empty())
+            .ok_or(OfficialSkip::LoginIncomplete)?;
+        let user = extract_codex_auth_user_identity(auth).ok_or(OfficialSkip::LoginIncomplete)?;
+        Ok(Self {
             identity: format!("{account_id}|{user}"),
             access_token,
             account_id,
@@ -98,7 +115,7 @@ pub(crate) type FetchFn = dyn Fn(&OfficialLogin, &str, Option<&str>) -> Fetch + 
 pub(crate) struct Env {
     pub codex_version: Box<dyn Fn() -> Option<String> + Send + Sync>,
     pub fetch: Box<FetchFn>,
-    pub bundled: Box<dyn Fn() -> Option<Vec<Value>> + Send + Sync>,
+    pub bundled: Box<dyn Fn() -> Result<Vec<Value>, BundledSkip> + Send + Sync>,
     pub keychain: Box<dyn Fn() -> CodexKeychainLogin + Send + Sync>,
     /// Unix 秒。
     pub now: Box<dyn Fn() -> u64 + Send + Sync>,
@@ -108,10 +125,21 @@ impl Env {
     fn real() -> Self {
         Self {
             codex_version: Box::new(|| {
-                crate::commands::local_tool_version("codex").filter(|v| usable_version(v))
+                newest_codex_version(
+                    crate::commands::local_tool_version("codex"),
+                    recent_thread_versions(),
+                )
             }),
             fetch: Box::new(fetch_models),
-            bundled: Box::new(load_codex_bundled_models),
+            bundled: Box::new(|| {
+                load_codex_bundled_models().map_err(|error| {
+                    log::warn!("读取 Codex 自带的模型列表失败: {error}");
+                    match error {
+                        CodexBundledModelsError::NoCli => BundledSkip::NoCli,
+                        CodexBundledModelsError::Failed(_) => BundledSkip::CliFailed,
+                    }
+                })
+            }),
             keychain: Box::new(crate::services::subscription::read_codex_keychain_login),
             now: Box::new(|| {
                 SystemTime::now()
@@ -148,6 +176,9 @@ pub(crate) fn reset_test_env() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     CLIENT_BEHIND.store(false, Ordering::SeqCst);
+    *last_source_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
 /// 服务端按版本过滤列表：报低了少模型（`0.60.0` 返回 0 条），报高了会列出本机驱动不了的
@@ -161,6 +192,107 @@ fn usable_version(version: &str) -> bool {
             .split('.')
             .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
         && core.split('.').any(|part| part.bytes().any(|b| b != b'0'))
+}
+
+/// 本机在用的 Codex 里最新的版本：PATH 上的 `codex`，和 Codex 最近创建的线程记下的版本
+/// （每个线程带创建它的客户端的 `cli_version`）。桌面版、编辑器插件自带的 Codex 不在 PATH
+/// 上，只装桌面版的人 PATH 上又常留着早年装的旧 CLI：只看它，`0.140` 及更早拉到的官方
+/// 模型全是隐藏的。目录是各个客户端共用的，按最新的拉；更旧的客户端读到驱动不了的模型时
+/// 该升级。
+fn newest_codex_version(path: Option<String>, threads: Vec<String>) -> Option<String> {
+    path.into_iter()
+        .chain(threads)
+        .map(|version| version.trim().to_string())
+        .filter(|version| usable_version(version))
+        .max_by(|a, b| compare_versions(a, b))
+}
+
+/// 按 semver 比较 Codex 版本：先比数字段，同一版本的预发布（`-alpha.2`）比正式版旧，
+/// 预发布之间逐段比（数字段按数值）。`+` 之后的构建信息不参与比较。
+fn compare_versions(a: &str, b: &str) -> CmpOrdering {
+    fn split(version: &str) -> (Vec<u64>, Option<&str>) {
+        let version = version.split('+').next().unwrap_or_default();
+        let (core, pre) = match version.split_once('-') {
+            Some((core, pre)) => (core, Some(pre)),
+            None => (version, None),
+        };
+        let core = core
+            .split('.')
+            .map(|part| part.parse().unwrap_or(0))
+            .collect();
+        (core, pre)
+    }
+    fn compare_pre(a: &str, b: &str) -> CmpOrdering {
+        let mut a = a.split('.');
+        let mut b = b.split('.');
+        loop {
+            match (a.next(), b.next()) {
+                (None, None) => return CmpOrdering::Equal,
+                (None, Some(_)) => return CmpOrdering::Less,
+                (Some(_), None) => return CmpOrdering::Greater,
+                (Some(x), Some(y)) => {
+                    let order = match (x.parse::<u64>(), y.parse::<u64>()) {
+                        (Ok(x), Ok(y)) => x.cmp(&y),
+                        (Ok(_), Err(_)) => CmpOrdering::Less,
+                        (Err(_), Ok(_)) => CmpOrdering::Greater,
+                        (Err(_), Err(_)) => x.cmp(y),
+                    };
+                    if order != CmpOrdering::Equal {
+                        return order;
+                    }
+                }
+            }
+        }
+    }
+    let (core_a, pre_a) = split(a);
+    let (core_b, pre_b) = split(b);
+    core_a.cmp(&core_b).then_with(|| match (pre_a, pre_b) {
+        (None, None) => CmpOrdering::Equal,
+        (None, Some(_)) => CmpOrdering::Greater,
+        (Some(_), None) => CmpOrdering::Less,
+        (Some(a), Some(b)) => compare_pre(a, b),
+    })
+}
+
+/// Codex 最近创建的线程记下的客户端版本（各个 state DB 合起来）。读不了就是空的。
+fn recent_thread_versions() -> Vec<String> {
+    let config_text = read_codex_config_text().unwrap_or_default();
+    codex_state_db_paths(&get_codex_config_dir(), &config_text)
+        .into_iter()
+        .filter(|path| path.exists() && codex_state_db_is_lockable(path))
+        .flat_map(|path| thread_versions(&path))
+        .collect()
+}
+
+fn thread_versions(db_path: &Path) -> Vec<String> {
+    let read = || -> rusqlite::Result<Vec<String>> {
+        let conn = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        // Codex 运行时一直开着这个库，写的时候不等一会儿就读不到。
+        conn.busy_timeout(Duration::from_secs(2))?;
+        let has_columns = Database::has_column(&conn, "threads", "cli_version").unwrap_or(false)
+            && Database::has_column(&conn, "threads", "created_at").unwrap_or(false);
+        if !has_columns {
+            return Ok(Vec::new());
+        }
+        let mut stmt = conn.prepare(
+            "SELECT cli_version FROM threads WHERE cli_version <> '' \
+             ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let versions = stmt
+            .query_map([RECENT_THREADS], |row| row.get::<_, String>(0))?
+            .collect();
+        versions
+    };
+    read().unwrap_or_else(|error| {
+        log::debug!(
+            "读取 Codex 线程的客户端版本失败 {}: {error}",
+            db_path.display()
+        );
+        Vec::new()
+    })
 }
 
 /// 系统钥匙串里 Codex 的登录（`cli_auth_credentials_store` 为 keyring / auto 时）。
@@ -308,12 +440,95 @@ impl NativeRows {
     }
 }
 
-/// 最近一次切换用的是哪种来源（界面提示用）。
+/// 没用上官方列表的原因（界面提示和日志用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfficialSkip {
+    /// 操作之后 Codex 没有能用的 ChatGPT 登录（没登录、用 API Key 登录、钥匙串读不出、
+    /// 登录只存在内存里）。
+    NoLogin,
+    /// 登录超过 8 天没刷新，access token 多半已过期，等 Codex 自己刷新。
+    LoginStale,
+    /// 登录里缺工作区 ID 或用户身份（`sub`）。
+    LoginIncomplete,
+    /// 拿不到本机 Codex 的版本（PATH 上没有 `codex`，也还没有线程记录）。
+    NoVersion,
+    /// 联网拉取失败（网络、HTTP 错误、被重定向）。
+    FetchFailed,
+    /// 拉到了，但列表不合格（缺必填字段或指令字段）。
+    InvalidList,
+}
+
+impl OfficialSkip {
+    /// 给前端的原因码（`provider.officialModelsReason.<码>`）。
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NoLogin => "noLogin",
+            Self::LoginStale => "loginStale",
+            Self::LoginIncomplete => "loginIncomplete",
+            Self::NoVersion => "noVersion",
+            Self::FetchFailed => "fetchFailed",
+            Self::InvalidList => "invalidList",
+        }
+    }
+}
+
+impl std::fmt::Display for OfficialSkip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NoLogin => "没有能用的 ChatGPT 登录",
+            Self::LoginStale => "登录超过 8 天没有刷新",
+            Self::LoginIncomplete => "登录里缺工作区 ID 或用户身份",
+            Self::NoVersion => "拿不到本机 Codex 的版本",
+            Self::FetchFailed => "拉取失败",
+            Self::InvalidList => "列表不合格",
+        })
+    }
+}
+
+/// 没用上 Codex 自带列表的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BundledSkip {
+    /// 本机找不到 Codex 命令行。
+    NoCli,
+    /// 找到了命令行，但没跑出列表。
+    CliFailed,
+    /// 跑出来了，但不合格或者没有一条能选的模型。
+    NothingUsable,
+}
+
+impl BundledSkip {
+    /// 给前端的原因码（`provider.officialModelsReason.<码>`）。
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NoCli => "noCli",
+            Self::CliFailed => "cliFailed",
+            Self::NothingUsable => "nothingUsable",
+        }
+    }
+}
+
+impl std::fmt::Display for BundledSkip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NoCli => "找不到 Codex 命令行",
+            Self::CliFailed => "Codex 命令行没有输出列表",
+            Self::NothingUsable => "列表里没有能用的模型",
+        })
+    }
+}
+
+/// 最近一次切换用的是哪种来源（界面提示用）。没用上的来源带着原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeSource {
     Fetched,
-    Bundled,
-    Unavailable,
+    Bundled(OfficialSkip),
+    Unavailable {
+        official: OfficialSkip,
+        bundled: BundledSkip,
+    },
+    /// 拉到的官方列表里没有一条能选的模型：本机 Codex 太旧，服务端只回了隐藏条目。官方
+    /// 行退回自带列表（也没有能选的就不写目录），界面提示升级 Codex。
+    Outdated,
 }
 
 fn last_source_slot() -> &'static Mutex<Option<NativeSource>> {
@@ -327,17 +542,44 @@ pub(crate) fn last_source() -> Option<NativeSource> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// 最近一次写目录时官方列表没用上（登录过期、拿不到版本、拉取失败……）。
+fn fell_back_from_official() -> bool {
+    matches!(
+        last_source(),
+        Some(NativeSource::Bundled(_) | NativeSource::Unavailable { .. })
+    )
+}
+
 /// 切换时（拿着切换锁、在写锁之前）按目标登录取官方行。能用而新的条目直接用；能用而
 /// 过期的先照用、后台刷新；没有能用的就联网拉一次（10 秒），拉不到退回自带列表。
-pub(crate) fn rows_for_switch(login: Option<&OfficialLogin>) -> NativeRows {
+/// `login` 取不到时带着原因，和自带列表的失败原因一起记进 [`last_source`]。
+pub(crate) fn rows_for_switch(login: &Result<OfficialLogin, OfficialSkip>) -> NativeRows {
     let env = env();
-    let rows = login
-        .and_then(|login| official_rows(&env, login))
-        .unwrap_or_else(|| bundled_rows(&env));
-    let source = match &rows {
-        NativeRows::Fetched { .. } => NativeSource::Fetched,
-        NativeRows::Bundled { .. } => NativeSource::Bundled,
-        NativeRows::Unavailable => NativeSource::Unavailable,
+    let official = match login {
+        Ok(login) => official_rows(&env, login),
+        Err(skip) => Err(*skip),
+    };
+    let (rows, source) = match official {
+        Ok(Official::Listed(rows)) => (rows, NativeSource::Fetched),
+        Ok(Official::NothingListed) => (
+            bundled_rows(&env).unwrap_or(NativeRows::Unavailable),
+            NativeSource::Outdated,
+        ),
+        Err(official) => match bundled_rows(&env) {
+            Ok(rows) => {
+                log::warn!("没用上 Codex 官方模型列表（{official}），改用自带列表");
+                (rows, NativeSource::Bundled(official))
+            }
+            Err(bundled) => {
+                log::warn!(
+                    "Codex 模型列表都没取到，聚合的模型暂不可用：官方列表{official}，自带列表{bundled}"
+                );
+                (
+                    NativeRows::Unavailable,
+                    NativeSource::Unavailable { official, bundled },
+                )
+            }
+        },
     };
     *last_source_slot()
         .lock()
@@ -345,62 +587,87 @@ pub(crate) fn rows_for_switch(login: Option<&OfficialLogin>) -> NativeRows {
     rows
 }
 
-fn official_rows(env: &Env, login: &OfficialLogin) -> Option<NativeRows> {
-    let version = (env.codex_version)()?;
+/// 能用的官方列表。
+enum Official {
+    Listed(NativeRows),
+    /// 列表合格，但没有一条能在模型选择器里选（版本太旧时服务端只回隐藏条目）。
+    NothingListed,
+}
+
+/// 至少有一行能在模型选择器里选（Codex 的 `show_in_picker` 就是 `visibility == list`）。
+/// 全是隐藏行的列表写进目录，官方模型在选择器里一个都看不到。
+fn has_listed_model(rows: &[Value]) -> bool {
+    rows.iter()
+        .any(|row| row.get("visibility").and_then(Value::as_str) == Some("list"))
+}
+
+fn official_rows(env: &Env, login: &OfficialLogin) -> Result<Official, OfficialSkip> {
+    let version = (env.codex_version)().ok_or(OfficialSkip::NoVersion)?;
     let now = (env.now)();
+    let listed = |rows: Vec<Value>| {
+        if has_listed_model(&rows) {
+            Official::Listed(NativeRows::Fetched {
+                identity: login.identity.clone(),
+                rows,
+            })
+        } else {
+            log::warn!("Codex {version} 拉到的官方模型列表里没有可选的模型（Codex 版本过旧），改用自带列表");
+            Official::NothingListed
+        }
+    };
     if let Some(entry) = usable_entry(&login.identity, &version) {
         let fresh = is_fresh(&entry, now);
         if let Some(rows) = normalize_codex_native_rows(entry.models) {
             if !fresh {
                 // 同一身份、同一版本的旧列表最多少几个新模型，比自带列表准。刷新带的是
                 // 这次的目标登录：切换还没落定，事后重新预测会得到切换前的登录。
-                spawn_refresh(login.clone(), version);
+                spawn_refresh(login.clone(), version.clone());
             }
-            return Some(NativeRows::Fetched {
-                identity: login.identity.clone(),
-                rows,
-            });
+            return Ok(listed(rows));
         }
         log::warn!("Codex 官方模型缓存里的列表不合格，重新拉取");
     }
     match (env.fetch)(login, &version, None) {
         Fetch::Models { models, etag } => {
-            let rows = normalize_codex_native_rows(models.clone()).or_else(|| {
+            let rows = normalize_codex_native_rows(models.clone()).ok_or_else(|| {
                 log::warn!("Codex 官方模型列表不合格（缺必填字段或指令字段），改用自带列表");
-                None
+                OfficialSkip::InvalidList
             })?;
+            // 没有可选模型的列表也存：同一版本再拉还是这样，不必每次切换都等网络。
             store_entry(
                 &login.identity,
                 Entry {
                     fetched_at: now,
                     etag,
-                    client_version: version,
+                    client_version: version.clone(),
                     models,
                 },
             );
-            Some(NativeRows::Fetched {
-                identity: login.identity.clone(),
-                rows,
-            })
+            Ok(listed(rows))
         }
-        Fetch::NotModified => None,
+        // 没带 etag，不该收到 304。
+        Fetch::NotModified => Err(OfficialSkip::FetchFailed),
         Fetch::Failed(error) => {
             log::warn!("拉取 Codex 官方模型列表失败，改用自带列表: {error}");
-            None
+            Err(OfficialSkip::FetchFailed)
         }
     }
 }
 
-fn bundled_rows(env: &Env) -> NativeRows {
-    match (env.bundled)().and_then(normalize_codex_native_rows) {
-        Some(rows) => NativeRows::Bundled { rows },
-        None => NativeRows::Unavailable,
-    }
+fn bundled_rows(env: &Env) -> Result<NativeRows, BundledSkip> {
+    let rows = (env.bundled)()?;
+    normalize_codex_native_rows(rows)
+        .filter(|rows| has_listed_model(rows))
+        .map(|rows| NativeRows::Bundled { rows })
+        .ok_or(BundledSkip::NothingUsable)
 }
 
 /// 刷新一个身份的条目：一定联网，带 `If-None-Match`。304 只更新 `fetched_at`；失败保留
 /// 旧条目和旧的 `fetched_at`，等下一个检查点再试。返回列表有没有变；变了同时记下客户端
 /// 落后于缓存（见 [`take_client_behind`]）。
+///
+/// 上次写目录时官方列表没用上，这次又取到了，列表没变也记下落后：比如当时 Codex 的登录
+/// 过期，之后它自己刷新了登录，缓存里的旧列表照样是 304，不这样客户端会一直停在自带列表上。
 pub(crate) fn refresh(login: &OfficialLogin, version: &str) -> Result<bool, String> {
     let env = env();
     let now = (env.now)();
@@ -416,6 +683,9 @@ pub(crate) fn refresh(login: &OfficialLogin, version: &str) -> Result<bool, Stri
                         ..entry
                     },
                 );
+                if fell_back_from_official() {
+                    mark_client_behind();
+                }
             }
             Ok(false)
         }
@@ -433,7 +703,7 @@ pub(crate) fn refresh(login: &OfficialLogin, version: &str) -> Result<bool, Stri
                     models,
                 },
             );
-            if changed {
+            if changed || fell_back_from_official() {
                 mark_client_behind();
             }
             Ok(changed)
@@ -449,6 +719,25 @@ pub(crate) fn needs_refresh(login: &OfficialLogin) -> Option<String> {
     match usable_entry(&login.identity, &version) {
         Some(entry) if is_fresh(&entry, (env.now)()) => None,
         _ => Some(version),
+    }
+}
+
+/// 后台检查不用刷新时（条目还新，或拿不到版本）调：上次写目录时官方列表没用上，而这个
+/// 登录现在有能用的条目，就记下客户端落后，让检查按它重写。不联网。不补的话要等条目过了
+/// 新鲜期、刷新拿到 304 才重写（见 [`refresh`]），最多晚 6 小时：比如写目录那一刻钥匙串没读
+/// 出来，过一会儿又读得出了。
+pub(crate) fn catch_up_after_fallback(login: &OfficialLogin) {
+    if !fell_back_from_official() {
+        return;
+    }
+    let Some(version) = (env().codex_version)() else {
+        return;
+    };
+    let usable = usable_entry(&login.identity, &version)
+        .and_then(|entry| normalize_codex_native_rows(entry.models))
+        .is_some();
+    if usable {
+        mark_client_behind();
     }
 }
 
@@ -557,7 +846,7 @@ pub(crate) mod testing {
                     }
                     response
                 }),
-                bundled: Box::new(move || bundled.clone()),
+                bundled: Box::new(move || bundled.clone().ok_or(BundledSkip::NoCli)),
                 keychain: Box::new(move || {
                     keychain_reads.fetch_add(1, Ordering::SeqCst);
                     keychain.lock().unwrap().clone()
@@ -590,6 +879,7 @@ pub(crate) mod testing {
                 serde_json::json!({
                     "slug": slug,
                     "priority": priority,
+                    "visibility": "list",
                     "comp_hash": "3000",
                     "model_messages": { "instructions_template": "T" },
                     "supports_reasoning_summaries": true,
@@ -656,6 +946,7 @@ mod tests {
                 json!({
                     "slug": slug,
                     "priority": 1,
+                    "visibility": "list",
                     "model_messages": { "instructions_template": "T" },
                     "supports_reasoning_summaries": true,
                     "supports_parallel_tool_calls": true,
@@ -736,13 +1027,31 @@ mod tests {
         // 没有 id_token：身份不稳定，不拉取。
         let mut no_id = login("ws-1", "alice");
         no_id["tokens"].as_object_mut().unwrap().remove("id_token");
-        assert!(OfficialLogin::of(&no_id).is_none());
+        assert_eq!(
+            OfficialLogin::of(&no_id).err(),
+            Some(OfficialSkip::LoginIncomplete)
+        );
+        let mut no_workspace = login("ws-1", "alice");
+        no_workspace["tokens"]
+            .as_object_mut()
+            .unwrap()
+            .remove("account_id");
+        assert_eq!(
+            OfficialLogin::of(&no_workspace).err(),
+            Some(OfficialSkip::LoginIncomplete)
+        );
         // 很久没刷新的 token 不用，等 Codex 自己刷新。
         let mut stale = login("ws-1", "alice");
         stale["last_refresh"] = json!("2026-01-01T00:00:00Z");
-        assert!(OfficialLogin::of(&stale).is_none());
+        assert_eq!(
+            OfficialLogin::of(&stale).err(),
+            Some(OfficialSkip::LoginStale)
+        );
         // API Key 登录没有官方列表。
-        assert!(OfficialLogin::of(&json!({ "OPENAI_API_KEY": "sk" })).is_none());
+        assert_eq!(
+            OfficialLogin::of(&json!({ "OPENAI_API_KEY": "sk" })).err(),
+            Some(OfficialSkip::NoLogin)
+        );
     }
 
     #[test]
@@ -752,7 +1061,7 @@ mod tests {
         let setup = install(Some("0.158.0"), vec![fetched(&["gpt-6-sol"])], None);
         let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
 
-        let rows = rows_for_switch(Some(&login));
+        let rows = rows_for_switch(&Ok(login.clone()));
         assert_eq!(slugs(&rows), vec!["gpt-6-sol"]);
         assert_eq!(rows.identity(), Some("ws|sub:alice"));
         assert_eq!(
@@ -763,7 +1072,10 @@ mod tests {
 
         // 一小时后：新的，不联网。
         *setup.now.lock().unwrap() = T0 + HOUR;
-        assert_eq!(slugs(&rows_for_switch(Some(&login))), vec!["gpt-6-sol"]);
+        assert_eq!(
+            slugs(&rows_for_switch(&Ok(login.clone()))),
+            vec!["gpt-6-sol"]
+        );
         assert_eq!(setup.calls.lock().unwrap().len(), 1);
         assert!(needs_refresh(&login).is_none());
     }
@@ -776,7 +1088,7 @@ mod tests {
         seed_cache("ws|sub:bob", T0, "0.158.0", models(&["bobs"]));
         install(Some("0.158.0"), vec![fetched(&["alices"])], None);
         let alice = OfficialLogin::of(&login("ws", "alice")).unwrap();
-        assert_eq!(slugs(&rows_for_switch(Some(&alice))), vec!["alices"]);
+        assert_eq!(slugs(&rows_for_switch(&Ok(alice.clone()))), vec!["alices"]);
         // 各存各的，互不覆盖。
         assert_eq!(cache_fetched_at("ws|sub:bob"), Some(T0));
     }
@@ -801,7 +1113,7 @@ mod tests {
         let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
 
         // 这次先用旧条目完成切换，不等网络。
-        assert_eq!(slugs(&rows_for_switch(Some(&login))), vec!["cached"]);
+        assert_eq!(slugs(&rows_for_switch(&Ok(login.clone()))), vec!["cached"]);
         rx.recv_timeout(Duration::from_secs(5))
             .expect("background refresh");
         // 刷新带的是这次的目标登录和旧条目的 etag。
@@ -821,7 +1133,7 @@ mod tests {
         }
         assert_eq!(cache_fetched_at("ws|sub:alice"), Some(T0));
         assert_eq!(
-            slugs(&rows_for_switch(Some(&login))),
+            slugs(&rows_for_switch(&Ok(login.clone()))),
             vec!["cached", "new-model"]
         );
         // 后台检查还没开始（CC Switch 正在启动）时刷新完了：不重写，标记留给第一次检查。
@@ -881,6 +1193,66 @@ mod tests {
         assert!(setup.responses.lock().unwrap().is_empty());
     }
 
+    /// 上次写目录时没用上官方列表，而登录恢复后缓存里的条目还新：后台检查不联网，直接按它
+    /// 重写；用上之后不再重写。
+    #[test]
+    #[serial]
+    fn a_fresh_entry_after_falling_back_rewrites_the_client_without_fetching() {
+        let _scope = Scope::new();
+        seed_cache("ws|sub:alice", T0 - HOUR, "0.158.0", models(&["cached"]));
+        let setup = install(Some("0.158.0"), Vec::new(), Some(models(&["bundled"])));
+        let bob = OfficialLogin::of(&login("ws", "bob")).unwrap();
+        let alice = OfficialLogin::of(&login("ws", "alice")).unwrap();
+
+        // 还没写过目录、上次用的就是官方列表：都不补。
+        catch_up_after_fallback(&alice);
+        assert!(!take_client_behind());
+        rows_for_switch(&Ok(alice.clone()));
+        assert_eq!(last_source(), Some(NativeSource::Fetched));
+        catch_up_after_fallback(&alice);
+        assert!(!take_client_behind());
+
+        rows_for_switch(&Err(OfficialSkip::NoLogin));
+        assert_eq!(needs_refresh(&alice), None, "the entry is still fresh");
+        catch_up_after_fallback(&alice);
+        assert!(take_client_behind());
+        assert!(setup.calls.lock().unwrap().is_empty());
+
+        // 别人的登录在缓存里没有条目：不补。
+        rows_for_switch(&Err(OfficialSkip::NoLogin));
+        catch_up_after_fallback(&bob);
+        assert!(!take_client_behind());
+    }
+
+    /// 上次写目录时登录过期、退回了自带列表；Codex 之后自己刷新了登录，后台刷新拿到的还是
+    /// 缓存里那份（304），客户端也要重写，不能一直停在自带列表上。
+    #[test]
+    #[serial]
+    fn a_refresh_after_falling_back_rewrites_the_client_even_if_nothing_changed() {
+        let _scope = Scope::new();
+        seed_cache(
+            "ws|sub:alice",
+            T0 - 7 * HOUR,
+            "0.158.0",
+            models(&["cached"]),
+        );
+        install(
+            Some("0.158.0"),
+            vec![Fetch::NotModified, fetched(&["cached"])],
+            Some(models(&["bundled"])),
+        );
+        let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
+
+        rows_for_switch(&Err(OfficialSkip::LoginStale));
+        assert_eq!(refresh(&login, "0.158.0"), Ok(false));
+        assert!(take_client_behind(), "304 after a fallback");
+
+        // 重写之后用上了官方列表：再刷新到同样的列表就不必重写。
+        assert_eq!(slugs(&rows_for_switch(&Ok(login.clone()))), vec!["cached"]);
+        assert_eq!(refresh(&login, "0.158.0"), Ok(false));
+        assert!(!take_client_behind());
+    }
+
     #[test]
     #[serial]
     fn without_a_usable_official_list_the_bundled_list_is_used() {
@@ -890,25 +1262,43 @@ mod tests {
 
         // 拿不到版本：不请求。
         let setup = install(None, vec![fetched(&["x"])], bundled.clone());
-        assert_eq!(slugs(&rows_for_switch(Some(&login))), vec!["bundled"]);
+        assert_eq!(slugs(&rows_for_switch(&Ok(login.clone()))), vec!["bundled"]);
         assert!(setup.calls.lock().unwrap().is_empty());
-        assert_eq!(last_source(), Some(NativeSource::Bundled));
+        assert_eq!(
+            last_source(),
+            Some(NativeSource::Bundled(OfficialSkip::NoVersion))
+        );
 
-        // 没有能用的登录、请求失败、列表不合格：都退回自带列表。
+        // 没有能用的登录、请求失败、列表不合格：都退回自带列表，记下原因。
         install(Some("0.158.0"), Vec::new(), bundled.clone());
-        assert_eq!(slugs(&rows_for_switch(None)), vec!["bundled"]);
+        assert_eq!(
+            slugs(&rows_for_switch(&Err(OfficialSkip::LoginStale))),
+            vec!["bundled"]
+        );
+        assert_eq!(
+            last_source(),
+            Some(NativeSource::Bundled(OfficialSkip::LoginStale))
+        );
         install(
             Some("0.158.0"),
             vec![Fetch::Failed("401".to_string())],
             bundled.clone(),
         );
-        assert_eq!(slugs(&rows_for_switch(Some(&login))), vec!["bundled"]);
+        assert_eq!(slugs(&rows_for_switch(&Ok(login.clone()))), vec!["bundled"]);
+        assert_eq!(
+            last_source(),
+            Some(NativeSource::Bundled(OfficialSkip::FetchFailed))
+        );
         let invalid = Fetch::Models {
             models: vec![json!({ "slug": "no-instructions" })],
             etag: None,
         };
         install(Some("0.158.0"), vec![invalid], bundled);
-        assert_eq!(slugs(&rows_for_switch(Some(&login))), vec!["bundled"]);
+        assert_eq!(slugs(&rows_for_switch(&Ok(login.clone()))), vec!["bundled"]);
+        assert_eq!(
+            last_source(),
+            Some(NativeSource::Bundled(OfficialSkip::InvalidList))
+        );
         assert!(
             cache_fetched_at("ws|sub:alice").is_none(),
             "an invalid list is not cached"
@@ -916,8 +1306,178 @@ mod tests {
 
         // 两个来源都没有：不可用。
         install(Some("0.158.0"), Vec::new(), None);
-        assert_eq!(rows_for_switch(Some(&login)), NativeRows::Unavailable);
-        assert_eq!(last_source(), Some(NativeSource::Unavailable));
+        assert_eq!(rows_for_switch(&Ok(login.clone())), NativeRows::Unavailable);
+        assert_eq!(
+            last_source(),
+            Some(NativeSource::Unavailable {
+                official: OfficialSkip::FetchFailed,
+                bundled: BundledSkip::NoCli,
+            })
+        );
+    }
+
+    fn hidden(rows: Vec<Value>) -> Vec<Value> {
+        rows.into_iter()
+            .map(|mut row| {
+                row["visibility"] = json!("hide");
+                row
+            })
+            .collect()
+    }
+
+    /// #8014：旧版本拉到的官方列表只有隐藏条目，写进目录后官方模型在选择器里全看不到。
+    #[test]
+    #[serial]
+    fn a_source_without_a_listed_model_is_not_used() {
+        let _scope = Scope::new();
+        let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
+        let only_hidden = Fetch::Models {
+            models: hidden(models(&["gpt-5.5", "codex-auto-review"])),
+            etag: None,
+        };
+
+        // 官方列表没有能选的：退回自带列表，提示升级。列表照样缓存，同一版本不再联网。
+        let setup = install(
+            Some("0.130.0"),
+            vec![only_hidden],
+            Some(models(&["bundled"])),
+        );
+        assert_eq!(slugs(&rows_for_switch(&Ok(login.clone()))), vec!["bundled"]);
+        assert_eq!(last_source(), Some(NativeSource::Outdated));
+        assert!(cache_fetched_at("ws|sub:alice").is_some());
+        assert_eq!(slugs(&rows_for_switch(&Ok(login.clone()))), vec!["bundled"]);
+        assert_eq!(setup.calls.lock().unwrap().len(), 1);
+        assert_eq!(last_source(), Some(NativeSource::Outdated));
+
+        // 自带列表也没有能选的：不可用，提示的仍是升级。
+        install(
+            Some("0.130.0"),
+            Vec::new(),
+            Some(hidden(models(&["bundled"]))),
+        );
+        assert_eq!(rows_for_switch(&Ok(login.clone())), NativeRows::Unavailable);
+        assert_eq!(last_source(), Some(NativeSource::Outdated));
+
+        // 没有登录、只有全隐藏的自带列表：不可用。
+        assert_eq!(
+            rows_for_switch(&Err(OfficialSkip::NoLogin)),
+            NativeRows::Unavailable
+        );
+        assert_eq!(
+            last_source(),
+            Some(NativeSource::Unavailable {
+                official: OfficialSkip::NoLogin,
+                bundled: BundledSkip::NothingUsable,
+            })
+        );
+
+        // 有一行能选就算合格，隐藏的行照样保留（官方自己就这样发）。
+        let mut mixed = hidden(models(&["codex-auto-review"]));
+        mixed.extend(models(&["gpt-6-sol"]));
+        install(
+            Some("0.160.0"),
+            vec![Fetch::Models {
+                models: mixed,
+                etag: None,
+            }],
+            None,
+        );
+        assert_eq!(
+            slugs(&rows_for_switch(&Ok(login.clone()))),
+            vec!["codex-auto-review", "gpt-6-sol"]
+        );
+        assert_eq!(last_source(), Some(NativeSource::Fetched));
+    }
+
+    #[test]
+    fn versions_compare_like_semver() {
+        let ordered = [
+            "0.60.0",
+            "0.140.0",
+            "0.159.0-alpha.2",
+            "0.159.0-alpha.12.1",
+            "0.159.0-beta",
+            "0.159.0",
+            "0.159.2",
+            "0.162.0-alpha.2",
+            "0.162.0",
+        ];
+        for pair in ordered.windows(2) {
+            assert_eq!(
+                compare_versions(pair[0], pair[1]),
+                CmpOrdering::Less,
+                "{} < {}",
+                pair[0],
+                pair[1]
+            );
+        }
+        assert_eq!(
+            compare_versions("0.160.0+build.7", "0.160.0"),
+            CmpOrdering::Equal
+        );
+    }
+
+    /// 只装桌面版的人 PATH 上常留着旧 CLI：取 Codex 线程里记下的更新的版本。
+    #[test]
+    fn the_newest_codex_in_use_wins() {
+        let threads = |versions: &[&str]| versions.iter().map(|v| v.to_string()).collect();
+        assert_eq!(
+            newest_codex_version(
+                Some("0.128.0".to_string()),
+                threads(&["0.162.0-alpha.2", "0.159.2", ""])
+            ),
+            Some("0.162.0-alpha.2".to_string())
+        );
+        assert_eq!(
+            newest_codex_version(Some("0.162.0".to_string()), threads(&["0.162.0-alpha.2"])),
+            Some("0.162.0".to_string())
+        );
+        // 没有 CLI 也行；认不出的版本号不算。
+        assert_eq!(
+            newest_codex_version(None, threads(&["0.160.0", "dev", "0.0.0"])),
+            Some("0.160.0".to_string())
+        );
+        assert_eq!(newest_codex_version(None, Vec::new()), None);
+    }
+
+    #[test]
+    fn thread_versions_come_from_the_most_recently_created_threads() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = dir.path().join("state_5.sqlite");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, \
+             cli_version TEXT NOT NULL DEFAULT '');",
+        )
+        .unwrap();
+        // 最老的一个是 0.99.0，排在最近的 RECENT_THREADS 个之后，不算；没记版本的不算。
+        conn.execute("INSERT INTO threads VALUES ('old', 0, '0.99.0')", [])
+            .unwrap();
+        for i in 1..=RECENT_THREADS {
+            conn.execute(
+                "INSERT INTO threads VALUES (?1, ?2, '0.160.0')",
+                rusqlite::params![format!("t{i}"), i],
+            )
+            .unwrap();
+        }
+        conn.execute("INSERT INTO threads VALUES ('blank', 999, '')", [])
+            .unwrap();
+        drop(conn);
+        let versions = thread_versions(&db);
+        assert_eq!(versions.len(), RECENT_THREADS as usize);
+        assert!(versions.iter().all(|v| v == "0.160.0"));
+
+        // 旧版 Codex 的库没有这一列：读不到，不报错。
+        let old = dir.path().join("old.sqlite");
+        rusqlite::Connection::open(&old)
+            .unwrap()
+            .execute_batch("CREATE TABLE threads (id TEXT, created_at INTEGER);")
+            .unwrap();
+        assert!(thread_versions(&old).is_empty());
+        assert!(thread_versions(&dir.path().join("missing.sqlite")).is_empty());
     }
 
     #[test]
@@ -934,6 +1494,6 @@ mod tests {
         .unwrap();
         install(Some("0.158.0"), Vec::new(), None);
         let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
-        assert_eq!(rows_for_switch(Some(&login)), NativeRows::Unavailable);
+        assert_eq!(rows_for_switch(&Ok(login.clone())), NativeRows::Unavailable);
     }
 }

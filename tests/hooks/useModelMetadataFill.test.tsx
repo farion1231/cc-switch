@@ -77,7 +77,9 @@ describe("useModelMetadataFill", () => {
     const { result } = renderFill();
     const apply = vi.fn(() => true);
 
-    result.current("model-x", apply, "https://other.example.com/v1");
+    result.current("model-x", apply, {
+      baseUrl: "https://other.example.com/v1",
+    });
     expect(apply).not.toHaveBeenCalled();
   });
 
@@ -107,6 +109,17 @@ describe("useModelMetadataFill", () => {
 
     toastInfo.mockClear();
     result.current("model-y", () => false);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(toastInfo).not.toHaveBeenCalled();
+  });
+  it("fills without a reminder when asked to stay silent", async () => {
+    server.use(http.get(MODELS_DEV_API_URL, () => HttpResponse.error()));
+    toastInfo.mockClear();
+    const { result } = renderFill();
+    const apply = vi.fn(() => true);
+
+    result.current("model-x", apply, { silent: true });
+    expect(apply).toHaveBeenCalledTimes(1);
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(toastInfo).not.toHaveBeenCalled();
   });

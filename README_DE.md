@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Der All-in-One-Manager für Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, Pi & MiniMax Code
+### Der All-in-One-Manager für Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, Pi, MiniMax Code & Kimi Code
 
 **API-Anbieter mit einem Klick wechseln und MCP, Skills und Prompts zentral verwalten — ohne JSON-, TOML- oder YAML-Konfigurationsdateien von Hand zu bearbeiten.**
 
@@ -46,11 +46,6 @@ Arbeiten Sie hauptsächlich mit Programmierung? Probieren Sie einen **Kimi Code 
 </tr>
 
 <tr>
-<td width="180"><a href="https://zetaapi.ai/go/u117"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
-<td>Danke an ZetaAPI für die Unterstützung dieses Projekts! ZetaAPI legt den Fokus auf echte Modelltreue — keine verwässerten Antworten, keine Qualitätsminderung — und Preise von nur 35 % der offiziellen Tarife. Die Plattform mischt keinen Traffic, ersetzt Modelle nicht heimlich durch minderwertige Alternativen und nutzt kein gefälschtes Modell-Routing. Sie unterstützt Claude Code, Codex, Gemini, ChatGPT und weitere gängige KI-Modelle und hilft Nutzern, die API-Kosten deutlich zu senken und gleichzeitig eine zuverlässige Modellqualität zu gewährleisten. Gleichzeitig bietet ZetaAPI eine SLA-gestützte Stabilität auf Unternehmensniveau, Standard-API-Kompatibilität, einen API-Key für mehrere Modelle, schnelle Integration und nutzungsbasierte Abrechnung — geeignet für KI-Produkte, Coding-Agents, interne Unternehmenstools, Kundenservice-Systeme, Content-Erstellung und Automatisierungs-Workflows. Falls bei einem Modell nachgewiesen wird, dass es nicht der angegebenen Qualität entspricht, sichert ZetaAPI dies mit einer 10-fachen Entschädigungsgarantie ab und bietet Nutzern ein stabileres, transparenteres und vertrauenswürdigeres Erlebnis. Registrieren Sie sich über <a href="https://zetaapi.ai/go/u117">diesen Link</a> und verwenden Sie bei Ihrer ersten Aufladung den Promo-Code CC-SWITCH, um als CC-Switch-Nutzer einen exklusiven Rabatt von 10 % auf Ihre erste Aufladung zu erhalten!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://apinebula.ai/VjM74M"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
 <td>Danke an APINEBULA für die Unterstützung dieses Projekts! APINEBULA ist eine Enterprise-KI-Aggregationsplattform unter Galaxy Video Bureau und nutzt umfangreiche Plattformressourcen, um Entwicklern, Teams und Unternehmen stabilen und kosteneffizienten Zugang zu APIs großer Sprachmodelle zu bieten. Die Plattform bündelt führende vollwertige Modelle wie Claude, GPT und Gemini. Über eine einzige API erhalten Sie Zugriff auf weltweit führende KI-Modelle, mit Preisen ab 10 % des Originalpreises. APINEBULA ist für KI-Programmierung, Agent-Entwicklung und Integration in Geschäftssysteme ausgelegt und unterstützt enterprise-grade hohe Parallelität, formale Verträge, Firmenüberweisungen und Rechnungsstellung. APINEBULA bietet Nutzern dieser Software besondere Rabatte: Registrieren Sie sich über <a href="https://apinebula.ai/VjM74M">diesen Link</a> und geben Sie beim ersten Aufladen den Aktionscode <strong>"ccswitch"</strong> ein, um <strong>10 % Rabatt</strong> zu erhalten.</td>
 </tr>
@@ -69,6 +64,11 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
+<td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
+<td>Danke an hao.ai für die Unterstützung dieses Projekts! hao.ai ist ein schnelles, stabiles, einheitliches LLM-API-Gateway für Entwickler und Teams. Mit einem API-Key und einer einheitlichen Schnittstelle greifen Sie auf GPT, Claude, xAI Grok und weitere führende Modelle zu – kompatibel mit gängigen Protokollen und SDKs wie OpenAI und Anthropic. Die Plattform bietet Modell-Routing, Failover, Teamverwaltung und vollständige Aufrufprotokolle, mit Modellpreisen ab 15 % der offiziellen Referenzpreise – so lassen sich AI-Anwendungen einfacher, stabiler und günstiger bauen. hao.ai bietet CC Switch-Nutzern einen besonderen Vorteil: Wer sich über <a href="https://hao.ai/invite/DTBZS3OR">diesen Link</a> registriert, erhält bei der ersten Bestellung 5 % Bonusguthaben!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Danke an Fenno.ai für die Unterstützung dieses Projekts! Fenno.ai ist ein stabiler und effizienter API-Relay-Dienstleister, der sich derzeit hauptsächlich auf Codex-Relay konzentriert. Er ist mit den OpenAI- und Anthropic-Protokollen kompatibel und lässt sich flexibel mit Codex, Claude Code, OpenCode und anderen gängigen Coding-Tools nutzen. Er unterstützt zuverlässig Workloads auf Unternehmensniveau von Hunderten Milliarden Tokens pro Tag und bietet B2B-Abrechnung sowie Rechnungsstellung für Unternehmen im In- und Ausland. Fenno.ai bietet einen exklusiven Vorteil für CC-Switch-Nutzer: Abonnieren Sie über <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">diesen Link</a> den $1,99-Trial-Plan im Wert von $50 Guthaben (7 Tage gültig) und erhalten Sie bis zu 20% Empfehlungsprämien — je mehr Einladungen, desto mehr Belohnung!</td>
 </tr>
@@ -79,13 +79,43 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
-<td>Danke an Shengsuanyun für die Unterstützung dieses Projekts! Shengsuanyun ist eine Superfabrik für KI-native Teams — eine Plattform zur parallelen Ausführung von KI-Aufgaben in industrieller Qualität. Ihr Modellmarktplatz bündelt die Fähigkeiten von Claude, ChatGPT, Gemini und weiteren in- und ausländischen LLM- und Multimedia-Modellen mit Direktbezug. Absolut kein Reverse Engineering und keine Verwässerung — die plattformweite Modell-SLA-Verfügbarkeit erreicht 99,7 %, und die <a href="https://watch.shengsuanyun.com/status/shengsuanyun">Monitoring-Dashboards</a> zeigen durchgehend grün an. Es bietet außerdem unternehmensgerechte, anpassbare Gateways für fein abgestufte Kosten- und Berechtigungsverwaltung im Team, intelligentes Routing, Sicherheitsschutz und BYOK-Hosting (Bring Your Own Key). Die Plattform rechnet nach Nutzung sowie über einen Token-Plan (in Kürze verfügbar) ab, und Rechnungsstellung ist möglich. Registrieren Sie sich über <a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">diesen Link</a> als Neukunde und erhalten Sie ein Guthaben von ¥10 sowie 10 % Bonus auf Ihre erste Aufladung.</td>
+<td width="180"><a href="https://www.openmodel.ai?ref=cc-switch"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
+<td>Danke an OpenModel für die Unterstützung dieses Projekts! OpenModel bietet clientspezifische Rabatte von bis zu 90 % für Codex und bis zu 60 % für Claude Code auf unterstützte Modelle und hilft Entwicklern, ihre API-Kosten zu senken, ohne ihre Arbeitsweise zu ändern. Verbinden Sie einfach Ihren OpenModel-API-Schlüssel und nutzen Sie Codex oder Claude Code wie gewohnt weiter — unterstützte Clients werden automatisch erkannt und rabattierte Routen ohne zusätzliche Parameter oder manuelles Routing angewendet. Außerdem können Sie das Fallback-Verhalten pro API-Schlüssel festlegen und wählen, ob bei vorübergehend nicht verfügbarer Rabattroute zum Standardpreis weitergearbeitet oder die Anfrage gestoppt werden soll. CC-Switch-Nutzer können sich über <a href="https://www.openmodel.ai?ref=cc-switch">diesen Link</a> registrieren und mit dem Promo-Code <strong>"cc-switch"</strong> 10 % Rabatt auf ihre erste Aufladung erhalten!</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.app/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.app/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
+<td width="180"><a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite"><img src="assets/partners/logos/everyapi-banner.jpg" alt="EveryAPI" width="150"></a></td>
+<td>Danke an EveryAPI für die Unterstützung dieses Projekts! EveryAPI hat sich zum Ziel gesetzt, Entwicklern einen stabilen, effizienten und preiswerten API-Relay-Dienst zu bieten, und unterstützt gängige AI-Coding-Tools wie Claude, Codex und Gemini sowie eine Vielzahl moderner Modelle. Ohne aufwendige Konfiguration ist die Anbindung schnell erledigt — so programmieren Sie effizienter und bauen AI-Anwendungen schneller. Ob alltägliche Entwicklung, Projekt-Debugging oder AI-gestütztes Programmieren: EveryAPI sorgt für ein bequemes, reibungsloses Nutzungserlebnis. EveryAPI macht AI-Entwicklung einfacher und jeden Aufruf wertvoller! Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite">diesen Link</a> und erhalten Sie 14 ¥ Startguthaben, mit dem Code <strong>ccswitch</strong> 20 % Rabatt auf die erste Aufladung und GPT-Modelle ab 15 % des offiziellen Preises!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
+<td>Danke an GrooRoute Pro für die Unterstützung dieses Projekts! GrooRoute Pro ist eine zuverlässige und reibungslose AI-API-Relay-Plattform mit Zugang zu OpenAI, Claude, DeepSeek und weiteren gängigen Modellen. Die Plattform läuft auf Servern im Ausland, lässt Sie die Preismultiplikator-Stufe selbst wählen und bietet sowohl nutzungsbasierte Abrechnung als auch Abo-Pakete — flexibel nutzbar, mit stabilen Verbindungen und schnellen Antwortzeiten, damit Sie KI-Funktionen aller Art bequem nutzen können. Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://grooroute.pro/sign-up?aff=qqm9">diesen Link</a> und erhalten Sie ein kostenloses Testguthaben von 5 ¥!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://dit.ai?utm_source=ccswitch"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
+<td>Danke an DIT.ai für die Unterstützung dieses Projekts! DIT.ai ist eine AI-Token-Börse und ein Marktplatz für kostengünstiges Multi-Provider-Routing. Über eine einzige OpenAI-kompatible API erhalten Entwickler Zugriff auf mehr als 50 führende AI-Modelle — darunter GPT, Claude, Gemini, DeepSeek, Grok, Llama und weitere für Text, Bild, Video und Audio. Geprüfte Anbieter konkurrieren über mehr als 160 Routen um jede Anfrage, und DIT wählt in Echtzeit die beste verfügbare Preis-Leistungs-Option, typischerweise 30–70 % unter den offiziellen Listenpreisen. Gebaut für Entwickler, Startups und Teams, die Agenten oder AI-Produkte im großen Maßstab betreiben: Base-URL und API-Schlüssel austauschen, den bestehenden Stack behalten und Modelle mit automatischem Routing und Failover aufrufen. CC-Switch-Nutzer können sich über <a href="https://dit.ai?utm_source=ccswitch">diesen Link</a> registrieren und mit dem Promo-Code <strong>ccswitch</strong> einen Willkommensgutschein über 5 $ erhalten!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://buytoken.work/sign-up?aff=cc-switch"><img src="assets/partners/logos/buytoken-banner.png" alt="BuyToken" width="150"></a></td>
+<td>Danke an BuyToken für die Unterstützung dieses Projekts! BuyToken bietet Relay-Dienste für Claude Code, Codex, DeepSeek und mehr, mit Parallelität auf Enterprise-Niveau und schneller Rechnungsstellung – ausgelegt als stabiler, langfristiger Dienst. Für CC Switch-Nutzer gibt es ein besonderes Angebot: Wer sich über <a href="https://buytoken.work/sign-up?aff=cc-switch">diesen Link</a> registriert, erhält 3 ¥ Testguthaben und 10 % Rabatt auf die erste Aufladung!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
+<td>Danke an V-API für die Unterstützung dieses Projekts! V-API ist eine seit drei Jahren etablierte Marke, die Privatpersonen, Entwicklern und Unternehmen eine stabile, schnelle und sichere Plattform für hochwertige LLM-API-Dienste bietet – inklusive Vertragsabschluss und offizieller Rechnungen (normale / spezielle Mehrwertsteuerrechnung). Für CC Switch-Nutzer gibt es ein besonderes Angebot: Wer sich über <a href="https://gpt.ge/signup?aff=URNP">diesen Link</a> registriert, erhält bei der ersten Bestellung 2 ¥ Nachlass und zusätzlich 10 % Rabatt!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
+<td>Danke an FluxA &amp; Baidu AI Cloud für die Unterstützung dieses Projekts! FluxA und Baidu AI Cloud haben gemeinsam AgenticPlan gestartet: KI-Agenten erhalten damit die Fähigkeit, Modelle, APIs und Werkzeuge eigenständig zu kaufen, zu verwalten und zu nutzen. Enthalten ist der Baidu-Qianfan-TokenPlan mit bis zu 40 % Rabatt und Zugriff auf Spitzenmodelle wie DeepSeek V4, GLM 5.2 und Kimi. Dazu kommt Guthaben für die APIs des FluxA AgentMarket, das mehr als 13.000 kostenpflichtige APIs freischaltet – für Suche, Daten-Scraping, soziale Medien, Finanzen, Krypto, Bildgenerierung, Video und mehr.<br>Mit Zustimmung der Nutzerinnen und Nutzer kann ein KI-Agent außerdem mit der offiziellen Visa-Karte bezahlen, um selbstständig Ressourcen zu beschaffen, API-Schlüssel zu verwalten, die Nutzung zu überwachen und Verlängerungen zu planen. So entwickelt sich der Agent von „Aufgaben eigenständig erledigen“ zu „eigenständig Budgets planen und Aufgaben erledigen“. Kaufen Sie über <a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">diesen Link</a>!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.net/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
 </tr>
 
 <tr>
@@ -99,8 +129,8 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
-<td>Danke an FluxA &amp; Baidu AI Cloud für die Unterstützung dieses Projekts! FluxA und Baidu AI Cloud haben gemeinsam AgenticPlan gestartet: KI-Agenten erhalten damit die Fähigkeit, Modelle, APIs und Werkzeuge eigenständig zu kaufen, zu verwalten und zu nutzen. Enthalten ist der Baidu-Qianfan-TokenPlan mit bis zu 40 % Rabatt und Zugriff auf Spitzenmodelle wie DeepSeek V4, GLM 5.2 und Kimi. Dazu kommt Guthaben für die APIs des FluxA AgentMarket, das mehr als 13.000 kostenpflichtige APIs freischaltet – für Suche, Daten-Scraping, soziale Medien, Finanzen, Krypto, Bildgenerierung, Video und mehr.<br>Mit Zustimmung der Nutzerinnen und Nutzer kann ein KI-Agent außerdem mit der offiziellen Visa-Karte bezahlen, um selbstständig Ressourcen zu beschaffen, API-Schlüssel zu verwalten, die Nutzung zu überwachen und Verlängerungen zu planen. So entwickelt sich der Agent von „Aufgaben eigenständig erledigen“ zu „eigenständig Budgets planen und Aufgaben erledigen“. Kaufen Sie über <a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">diesen Link</a>!</td>
+<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
+<td>Danke an Shengsuanyun für die Unterstützung dieses Projekts! Shengsuanyun ist eine Superfabrik für KI-native Teams — eine Plattform zur parallelen Ausführung von KI-Aufgaben in industrieller Qualität. Ihr Modellmarktplatz bündelt die Fähigkeiten von Claude, ChatGPT, Gemini und weiteren in- und ausländischen LLM- und Multimedia-Modellen mit Direktbezug. Absolut kein Reverse Engineering und keine Verwässerung — die plattformweite Modell-SLA-Verfügbarkeit erreicht 99,7 %, und die <a href="https://watch.shengsuanyun.com/status/shengsuanyun">Monitoring-Dashboards</a> zeigen durchgehend grün an. Es bietet außerdem unternehmensgerechte, anpassbare Gateways für fein abgestufte Kosten- und Berechtigungsverwaltung im Team, intelligentes Routing, Sicherheitsschutz und BYOK-Hosting (Bring Your Own Key). Die Plattform rechnet nach Nutzung sowie über einen Token-Plan (in Kürze verfügbar) ab, und Rechnungsstellung ist möglich. Registrieren Sie sich über <a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">diesen Link</a> als Neukunde und erhalten Sie ein Guthaben von ¥10 sowie 10 % Bonus auf Ihre erste Aufladung.</td>
 </tr>
 
 <tr>
@@ -116,16 +146,6 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 <tr>
 <td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
 <td>Danke an 9527CODE für die Unterstützung dieses Projekts! 9527 CODE ist eine KI-Relay-Plattform auf Enterprise-Niveau mit vollem Funktionsumfang, die auf Stabilität und Servicequalität ausgerichtet ist und für Claude Code, Codex und andere gängige KI-Modelle schnelle, stabile und hochwertige Relay-Dienste bereitstellt. Besonderer Wert liegt auf langfristiger Stabilität, Leitungsqualität und dauerhafter Verfügbarkeit, um Unternehmen und intensiven KI-Nutzern eine stabile, effiziente All-in-one-Lösung für den Modellzugriff zu bieten. Seit einem Jahr im Dauerbetrieb, mit 99,9 % Servicestabilität und technischem Support rund um die Uhr (7×24) durch echte Mitarbeiter. Wer sich über den <a href="https://9527.codes/register?aff=e5zI">exklusiven Link</a> dieses Projekts registriert, erhält als Neukunde nach Kontaktaufnahme mit dem Kundenservice ein Testguthaben; die Empfehlungsprämie ist unbegrenzt!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
-<td>Dieses Projekt wird von <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">Claude API</a> gesponsert. Direkter Claude-API-Zugriff — verbinden Sie Claude Code und Agent-Apps in 3 Minuten. Neukunden können ein kostenloses Testguthaben einlösen. Betrieben mit offiziellen Anthropic-API-Schlüsseln + offiziellen AWS-Bedrock-Kanälen. Kein Reverse Engineering, keine Modellverschlechterung. Volle Unterstützung der Modellreihe Opus / Sonnet / Haiku, mit erhaltenen offiziellen Fähigkeiten einschließlich Tool Use, 1M-Kontextfenster und mehr. Entwickelt für Claude-Code-Power-User, Agent-Ingenieure und technische Unternehmensteams. Rechnungsstellung und dedizierter Team-Support verfügbar. Klicken Sie <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">hier</a>, um sich zu registrieren!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
-<td>Vielen Dank an <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai</a> für die Unterstützung dieses Projekts! code0.ai ist eine für Entwickler entwickelte AI-Coding-Service-Plattform, die Claude Code, Codex, Gemini und weitere gängige AI-Coding-Funktionen unterstützt. Sie hilft einzelnen Entwicklern und Teams, AI-Agents stabiler und effizienter für Programmierung, Debugging, Refactoring und Automatisierungs-Workflows zu nutzen. ccswitch-Nutzer können über die <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai-Website</a> den Kundensupport kontaktieren, um Testguthaben zu erhalten und einen zuverlässigen AI-Coding-Service zu erleben.</td>
 </tr>
 
 <tr>
@@ -218,20 +238,32 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 
 Claude Code, Codex, Gemini CLI und andere KI-Programmierwerkzeuge haben jeweils ihr eigenes Konfigurationsformat. Wer den API-Anbieter wechselt, muss JSON-, TOML-, YAML- oder `.env`-Dateien von Hand bearbeiten; auch MCP, Skills und Prompts müssen in jedem Werkzeug einzeln gepflegt werden.
 
-**CC Switch** bündelt all das in einer einzigen Desktop-App: Preset auswählen, Schlüssel eintragen und mit einem Klick wechseln — Ihre bestehende Konfiguration geht dabei nicht verloren.
+**CC Switch** bündelt all das in einer einzigen Desktop-App: Preset auswählen, Schlüssel eintragen und mit einem Klick wechseln. Beim Wechsel werden nur die Verbindungsdaten — Endpunkt, Schlüssel und Modell — ersetzt; selbst hinzugefügte Plugins, Hooks, MCP und Kommentare bleiben unverändert.
 
-- **Eine App, zehn Werkzeuge** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, MiniMax Code
+- **Eine App, elf Werkzeuge** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, Kimi Code
 - **Kein manuelles Bearbeiten mehr** — 90+ Anbieter-Presets einschließlich AWS Bedrock, NVIDIA NIM und Community-Relays
-- **GPT in Claude Code, Claude in Codex** — Integriertes lokales Routing, das die Schnittstellenformate von Anthropic, OpenAI und Gemini automatisch konvertiert, mit automatischem Failover
+- **Direct, Routing oder Aggregation — ganz nach Bedarf** — Bei Direct verbindet sich das Werkzeug direkt mit dem Anbieter; Routing leitet die Anfragen über Ihren Rechner, konvertiert dabei Schnittstellenformate und bietet automatisches Failover, sodass Claude Code GPT und Codex Claude nutzen kann; Aggregation bringt die Modelle mehrerer Anbieter in eine gemeinsame Modellliste von Claude Code oder Codex — welches Modell Sie wählen, entscheidet, an welchen Anbieter die Anfrage geht
 - **MCP, Skills & Prompts zentral verwalten** — MCP und Skills einmal hinzufügen und pro Werkzeug per Häkchen synchronisieren; Prompts werden je Werkzeug separat gepflegt
-- **Nutzung und Kontingente auf einen Blick** — Token-Verbrauch und Kosten werden auch ohne lokales Routing erfasst; Abo-Kontingente und Guthaben erscheinen direkt auf den Anbieterkarten und im System-Tray
+- **Sessions, die man lesen kann** — Die Sitzungsprotokolle der Werkzeuge werden zu einer Leseansicht aufbereitet: Was in jeder Runde passiert ist, welche Dateien geändert wurden und welcher Schritt fehlgeschlagen ist, sehen Sie auf einen Blick
+- **Nutzung und Kontingente auf einen Blick** — Token-Verbrauch und Kosten werden auch ohne lokales Routing erfasst; das verbleibende Abo-Kontingent und das Kontoguthaben erscheinen direkt auf den Anbieterkarten und im System-Tray
 - **Plattformübergreifend** — Native Desktop-App für Windows, macOS und Linux, gebaut mit Tauri 2
 
 ## Screenshots
 
-|                  Hauptoberfläche                   |                  Anbieter hinzufügen                  |
-| :-----------------------------------------------: | :--------------------------------------------: |
-| ![Hauptoberfläche](assets/screenshots/main-en.png) | ![Anbieter hinzufügen](assets/screenshots/add-en.png) |
+<table>
+<tr>
+<td align="center" width="50%"><img src="assets/release-notes/v4.0.0/main-en.png" alt="Hauptoberfläche: Seitenleiste, die Tabs Direct / Routing / Aggregation und Anbieterkarten" width="400"><br>Hauptoberfläche</td>
+<td align="center" width="50%"><img src="assets/release-notes/v4.0.0/apps-en.png" alt="Apps-Seite: Version, Installation und Upgrade aller KI-Programmierwerkzeuge an einem Ort" width="400"><br>Apps-Seite</td>
+</tr>
+<tr>
+<td align="center"><img src="assets/release-notes/v4.0.0/agg-en.png" alt="Aggregationsmodus: ein Standardanbieter, mehrere weitere Anbieter hinzugefügt" width="400"><br>Aggregationsmodus</td>
+<td align="center"><img src="assets/release-notes/v4.0.0/agg-codex-en.png" alt="Die Modellauswahl von Codex listet Modelle mehrerer Anbieter gleichzeitig" width="400"><br>Aggregierte Modellliste in Codex</td>
+</tr>
+<tr>
+<td align="center"><img src="assets/release-notes/v4.0.0/session-en.png" alt="Session-Leseansicht: Zusammenfassung der Ausführung, Details der Tool-Aufrufe und Gesprächsverzeichnis" width="400"><br>Session-Leseansicht</td>
+<td align="center"><img src="assets/release-notes/v4.0.0/usage-en.png" alt="Nutzungsstatistik: Heatmap und Anfrageprotokoll" width="400"><br>Nutzungsstatistik</td>
+</tr>
+</table>
 
 ## Download & Installation
 
@@ -287,21 +319,23 @@ Laden Sie den neuesten Linux-Build von der Seite [Releases](../../releases) heru
 
 ### Grundlegende Verwendung
 
-1. **Anbieter hinzufügen**: Klicken Sie in der Symbolleiste auf „Add New Provider“ (die +-Schaltfläche) → Wählen Sie ein Preset oder erstellen Sie eine eigene Konfiguration
+1. **Anbieter hinzufügen**: Wählen Sie in der Seitenleiste das Werkzeug aus, das Sie verwalten möchten, und klicken Sie oben rechts auf der Seite auf „+“ („Add Provider“) → Wählen Sie ein Preset oder erstellen Sie eine eigene Konfiguration
 2. **Anbieter wechseln**:
-   - Hauptoberfläche: Anbieter auswählen → auf „Enable“ klicken (bei OpenCode, OpenClaw, Hermes und MiniMax Code heißt die Schaltfläche „Add“; diese vier Werkzeuge und Pi arbeiten im Parallelmodus, sodass Sie mehrere Anbieter gleichzeitig hinzufügen können)
-   - System-Tray: Anbietername direkt anklicken (Claude Code, Codex, Gemini CLI, Grok Build)
+   - Hauptoberfläche: Anbieter auswählen → auf „Enable“ klicken (bei OpenCode, OpenClaw, Hermes, MiniMax Code und Kimi Code heißt die Schaltfläche „Add“, bei Pi „Enable“ / „Remove“; diese sechs Werkzeuge arbeiten im Parallelmodus, sodass Sie mehrere Anbieter gleichzeitig hinzufügen können)
+   - System-Tray: Jedes Werkzeug hat eine eigene Zeile mit Name, Modus, Anbieter und Kontingent; klicken Sie im Untermenü direkt auf den Anbieternamen (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build)
 3. **Wirksam werden**: Claude Code erfordert keinen Neustart; bei Codex, Gemini CLI und Grok Build starten Sie das Terminal oder das CLI-Werkzeug neu, bei Claude Desktop die App selbst (siehe FAQ)
 4. **Zurück zum offiziellen Login**: Wechseln Sie zum mitgelieferten offiziellen Anbieter in der Liste (z. B. „Claude Official“), starten Sie das Werkzeug neu und folgen Sie dann seinem Login-/OAuth-Vorgang
-5. **Lokales Routing (optional)**: Wenn Sie in Claude Code Anbieter im OpenAI- oder Gemini-Format nutzen oder Claude in Codex verwenden möchten, müssen Sie das lokale Routing aktivieren. Schalten Sie dazu unter „Settings → Routing → Local Routing“ den „Routing Master Switch“ ein und aktivieren Sie anschließend unter „Routing Enabled“ das jeweilige Werkzeug. Wenn Sie das Routing direkt oben auf der Hauptseite umschalten möchten, aktivieren Sie „Show Routing Toggle on Main Page“
+5. **Routing und Aggregation (optional)**: Die Seiten von Claude Code, Codex, Gemini CLI und Grok Build haben oben die Tabs „Direct“ / „Routing“, Claude Code und Codex zusätzlich „Aggregation“. Ein Klick auf einen Tab wechselt nur die Ansicht und ändert keine Konfiguration; um tatsächlich umzuschalten, klicken Sie auf der Seite auf „Start routing“ oder „Switch to Aggregation“, zurück geht es mit „Back to direct“. Wenn Sie in Claude Code Anbieter im OpenAI- oder Gemini-Format nutzen oder Claude in Codex verwenden möchten, nehmen Sie Routing; wenn Sie Modelle mehrerer Anbieter in derselben Modellliste mischen möchten, nehmen Sie Aggregation
+6. **Werkzeuge verwalten**: Die Seite „Apps“ in der Seitenleiste zeigt für jedes KI-Programmierwerkzeug Version, Installationsort und Quelle; dort können Sie installieren, aktualisieren oder alle auf einmal aktualisieren und auswählen, welche Werkzeuge in der Seitenleiste erscheinen
 
 ### MCP, Prompts, Skills, Projekte & Sessions
 
-- **MCP**: Klicken Sie auf „MCP Management“ → Server über Vorlagen oder eigene Konfiguration hinzufügen (oder „Import Existing“) → Synchronisierung pro Werkzeug umschalten
-- **Prompts**: Klicken Sie auf „Prompts“ → Prompts mit dem Markdown-Editor erstellen → nach dem Aktivieren wird der Prompt in die Prompt-Datei des Werkzeugs geschrieben
-- **Skills**: Klicken Sie auf „Skills“ → „Discover Skills“ → skills.sh durchsuchen oder GitHub-Repositorys durchstöbern → mit einem Klick in unterstützte Werkzeuge installieren
-- **Projekte**: Öffnen Sie auf der Seite von Claude Code, Claude Desktop oder Codex den Projektumschalter oben auf der Hauptseite → „New project“, um die aktuelle Konfiguration zu speichern; später wählen Sie das Projekt einfach im Umschalter aus, um die gesamte Konfiguration auf einmal zu wechseln
-- **Sessions**: Klicken Sie auf „Session Manager“ → Gesprächsverlauf der einzelnen Werkzeuge durchsehen, durchsuchen und fortsetzen
+- **MCP**: Klicken Sie in der Seitenleiste auf „MCP“ → Server über Vorlagen oder eigene Konfiguration hinzufügen (oder „Import Existing“) → Synchronisierung pro Werkzeug umschalten
+- **Prompts**: Klicken Sie in der Seitenleiste auf „Prompts“ → Prompts mit dem Markdown-Editor erstellen → nach dem Aktivieren wird der Prompt in die Prompt-Datei des Werkzeugs geschrieben
+- **Skills**: Klicken Sie in der Seitenleiste auf „Skills“ → „Discover Skills“ → skills.sh durchsuchen oder GitHub-Repositorys durchstöbern → mit einem Klick in unterstützte Werkzeuge installieren
+- **Projekte**: Aktivieren Sie zuerst unter „Settings → General“ die Option „Show project switcher“; öffnen Sie dann auf der Seite von Claude Code, Claude Desktop oder Codex den Projektumschalter oben → „New project“, um die aktuelle Konfiguration zu speichern; später wählen Sie das Projekt einfach im Umschalter aus, um die gesamte Konfiguration auf einmal zu wechseln
+- **Sessions**: Klicken Sie in der Seitenleiste auf „Sessions“ → Sitzungsverlauf durchsehen und durchsuchen, die Leseansicht öffnen oder Sessions der einzelnen Werkzeuge fortsetzen
+- **Accounts**: Klicken Sie in der Seitenleiste auf „Accounts“ und melden Sie sich bei GitHub-Copilot-, ChatGPT-, xAI-(Grok-) und Kimi-Code-Konten an, um die Abonnements als Anbieter zu nutzen. Kimi Code unterstützt mehrere offizielle Konten mit jeweils eigenen Zugangsdaten und einem eigenen nativen Anbieter. Die erste Anmeldung verwendet den nativen Standard-Speicherplatz für Zugangsdaten. Hinzufügen, erneute Anmeldung und Abmeldung erfolgen hier. Offizielle Kimi-OAuth-Knoten in der nativen Konfiguration sind auf der Anbieterseite geschützt; nach dem Entfernen eines nativen Knotens kann sein gespeichertes Profil gelöscht werden.
 
 > **Hinweis**: Beim Erststart importiert CC Switch Ihre bestehende Konfiguration von Claude Code, Codex, Gemini CLI und Grok Build automatisch als Anbieter namens `default` und fügt für diese Werkzeuge sowie für Claude Desktop jeweils den offiziellen Anbieter hinzu, sodass nichts von Ihrer bisherigen Konfiguration verloren geht.
 
@@ -309,81 +343,93 @@ Ausführliche Anleitungen zu allen Funktionen finden Sie im **[Benutzerhandbuch]
 
 ## Funktionen
 
-[Vollständiges Changelog](CHANGELOG.md) | [Release Notes](docs/release-notes/v3.20.4-en.md)
+[Vollständiges Changelog](CHANGELOG.md) | [Release Notes zu v4.0](docs/release-notes/v4.0.4-en.md)
 
 ### Funktionen je Werkzeug
 
-| Werkzeug | Anbieter | Lokales Routing | Tray-Umschaltung | MCP | Skills | Prompts | Sessions | Nutzungsstatistik |
-| --- | --- | :---: | :---: | :---: | :---: | --- | :---: | :---: |
-| Claude Code | Wechsel | ✓ | ✓ | ✓ | ✓ | CLAUDE.md | ✓ | ✓ |
-| Claude Desktop | Wechsel | nur Model Mapping | – | – | – | – | – | nur Model Mapping |
-| Codex | Wechsel | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
-| Gemini CLI | Wechsel | ✓ | ✓ | ✓ | ✓ | GEMINI.md | ✓ | ✓ |
-| Grok Build | Wechsel | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
-| OpenCode | Parallel | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
-| OpenClaw | Parallel | – | – | – | – | Workspace-Editor | ✓ | – |
-| Hermes | Parallel | – | – | ✓ | ✓ | Memory-Verwaltung | ✓ | – |
-| Pi | Parallel | – | – | – | ✓ | AGENTS.md, SYSTEM.md, Prompt-Vorlagen | ✓ | ✓ |
-| MiniMax Code | Parallel | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Werkzeug | Anbieter | Lokales Routing | Aggregation | Tray-Umschaltung | MCP | Skills | Prompts | Sessions | Nutzungsstatistik |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | --- | :---: | :---: |
+| Claude Code | Wechsel | ✓ | ✓ | ✓ | ✓ | ✓ | CLAUDE.md | ✓ | ✓ |
+| Claude Desktop | Wechsel | nur Model Mapping | – | ✓ | – | – | – | – | nur Model Mapping |
+| Codex | Wechsel | ✓ | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Gemini CLI | Wechsel | ✓ | – | ✓ | ✓ | ✓ | GEMINI.md | ✓ | ✓ |
+| Grok Build | Wechsel | ✓ | – | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| OpenCode | Parallel | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| OpenClaw | Parallel | – | – | – | – | – | Workspace-Editor | ✓ | – |
+| Hermes | Parallel | – | – | – | ✓ | ✓ | Memory-Verwaltung | ✓ | – |
+| Pi | Parallel | – | – | – | ✓ | ✓ | AGENTS.md, SYSTEM.md, Prompt-Vorlagen | ✓ | ✓ |
+| MiniMax Code | Parallel | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Kimi Code | Parallel | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 
 - **Wechsel**: Es ist jeweils nur ein Anbieter aktiv; **Parallel**: Mehrere Anbieter werden gleichzeitig in die eigene Konfiguration des Werkzeugs geschrieben; welcher verwendet wird, wählen Sie im Werkzeug aus.
 - **Lokales Routing**: CC Switch leitet Anfragen auf Ihrem Rechner weiter und konvertiert dabei die Schnittstellenformate, siehe [Lokales Routing & Failover](#lokales-routing--failover) weiter unten. Für Anbieter von Claude Desktop können Sie „Direct“ oder „Model Mapping“ wählen; bei „Model Mapping“ laufen die Anfragen über das lokale Routing.
-- **Sessions**: Sitzungsverlauf durchsehen und durchsuchen, Befehl zum Fortsetzen kopieren und das Gespräch weiterführen (Sessions von OpenClaw und Hermes lassen sich derzeit nicht fortsetzen). Um Hermes-Sessions zu sehen, wählen Sie im Session Manager „All“.
+- **Aggregation**: Bringt die Modelle mehrerer Anbieter in eine gemeinsame Modellliste und verteilt die Anfragen je nach gewähltem Modell, siehe [Aggregationsmodus](#aggregationsmodus) weiter unten.
+- **Sessions**: Sitzungsverlauf durchsehen und durchsuchen, die Leseansicht öffnen, Befehl zum Fortsetzen kopieren und das Gespräch weiterführen (Sessions von OpenClaw und Hermes lassen sich derzeit nicht fortsetzen). Bei Hermes werden nur die neuesten 500 Sessions angezeigt.
 - **Nutzungsstatistik**: Ohne lokales Routing wird sie aus den lokalen Sitzungsprotokollen der einzelnen Werkzeuge erstellt; Anfragen über das lokale Routing werden ebenfalls erfasst.
 - Die auf der Claude-Desktop-Seite geöffneten Panels für MCP, Skills, Prompts und Sessions wirken auf Claude Code.
 
 ### Anbieterverwaltung
 
-- **90+ Anbieter-Presets** — Preset auswählen und Schlüssel eintragen, um einen Anbieter hinzuzufügen; alternativ können Sie eine eigene Konfiguration erstellen
-- **Nur Kernfelder** — Beim Wechsel werden nur die Verbindungsdaten wie Endpunkt, Schlüssel und Modell ersetzt; Plugins, Hooks, MCP, selbst hinzugefügte Einstellungen und Kommentare bleiben unverändert
-- **Projekte** — Speichern Sie den aktuellen Anbieter sowie MCP, Skills und Prompt-Dateien von Claude Code oder Codex als Projekt (bei Claude Desktop nur den Anbieter) und wechseln Sie später über den Projektumschalter oben auf der Hauptseite oder über das System-Tray mit einem Klick die gesamte Konfiguration; beim Wechsel zu einem anderen Projekt wird der aktuelle Zustand automatisch im bisherigen Projekt gespeichert
-- **OAuth Authentication Center (Beta)** — Melden Sie sich unter „Settings → Auth“ bei mehreren GitHub-Copilot-, ChatGPT- und xAI-(Grok-)Konten an und nutzen Sie die Abonnements als Anbieter in Claude Code, Claude Desktop und Codex (außer bei OpenAI Official in Codex ist dafür jeweils das lokale Routing erforderlich). Die Nutzung von Abonnements außerhalb der offiziellen Clients kann gegen die Nutzungsbedingungen des Herstellers verstoßen — bitte schätzen Sie das Risiko selbst ein
+- **90+ Anbieter-Presets** — Preset auswählen und Schlüssel eintragen, um einen Anbieter hinzuzufügen; alternativ können Sie eine eigene Konfiguration erstellen. Im Hinzufügen-Panel lässt sich nach chinesischen Namen und Domains suchen; verschiedene Tarife und Regionen desselben Anbieters sind in einer Zeile zusammengefasst
+- **Nur Kernfelder** — Beim Wechsel werden nur die Verbindungsdaten wie Endpunkt, Schlüssel und Modell ersetzt; Plugins, Hooks, MCP, selbst hinzugefügte Einstellungen und Kommentare bleiben unverändert. Unten im Editor sehen Sie, wie die Konfigurationsdatei nach dem Wechsel aussieht, und bevor CC Switch eine Konfigurationsdatei zum ersten Mal umschreibt, sichert es automatisch das Original
+- **Projekte** — Speichern Sie den aktuellen Anbieter sowie MCP, Skills und Prompt-Dateien von Claude Code oder Codex als Projekt (bei Claude Desktop nur den Anbieter) und wechseln Sie später über den Projektumschalter oben auf der Seite oder über das System-Tray mit einem Klick die gesamte Konfiguration; beim Wechsel zu einem anderen Projekt wird der aktuelle Zustand automatisch im bisherigen Projekt gespeichert. Der Projektumschalter ist standardmäßig ausgeblendet; aktivieren Sie ihn unter „Settings → General“ mit „Show project switcher“
+- **Accounts (Beta)** — Melden Sie sich auf der Seite „Accounts“ in der Seitenleiste bei mehreren GitHub-Copilot-, ChatGPT- und xAI-(Grok-)Konten an und nutzen Sie die Abonnements als Anbieter in Claude Code, Claude Desktop und Codex (außer bei OpenAI Official in Codex jeweils im Routing-Modus). Die Nutzung von Abonnements außerhalb der offiziellen Clients kann gegen die Nutzungsbedingungen des Herstellers verstoßen — bitte schätzen Sie das Risiko selbst ein
 - **Claude Desktop mit Drittanbietern** — Direkte Verbindung zu Anthropic-kompatiblen Endpunkten möglich; für Nicht-Claude-Modelle wählen Sie „Model Mapping“, dann bildet das lokale Routing Stufen wie Sonnet, Opus und Haiku auf die tatsächlichen Modelle des Anbieters ab
 - **Universelle Anbieter** — Eine Konfiguration synchronisiert sich mit Claude Code, Codex und Gemini CLI
-- Umschaltung mit einem Klick, Schnellumschaltung über System-Tray (Claude Code, Codex, Gemini CLI, Grok Build), Sortierung per Drag-and-drop, Import/Export
+- Umschaltung mit einem Klick, Schnellumschaltung über System-Tray (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), Sortierung per Drag-and-drop, Import/Export
 
 ### Lokales Routing & Failover
 
 - **Formatkonvertierung** — Das lokale Routing konvertiert Anfragen zwischen Anthropic Messages, OpenAI Chat Completions, OpenAI Responses und Gemini Native: Claude Code und Claude Desktop können Anbieter im OpenAI- oder Gemini-Format nutzen, Codex und Grok Build Anbieter im Chat-Completions- oder Anthropic-Messages-Format
-- **Pro Werkzeug aktivierbar** — Für Claude Code, Codex, Gemini CLI und Grok Build lässt sich das lokale Routing jeweils einzeln aktivieren; danach wirkt ein Anbieterwechsel sofort auf die folgenden Anfragen (ändert der Wechsel das Modell, kann bei Codex, Gemini CLI und Grok Build trotzdem ein Neustart nötig sein)
+- **Pro Werkzeug aktivierbar** — Claude Code, Codex, Gemini CLI und Grok Build lassen sich jeweils einzeln in den Routing-Modus schalten: Klicken Sie oben auf der Seite im Tab „Routing“ auf „Start routing“. Im Routing-Modus wirkt ein Anbieterwechsel sofort auf die folgenden Anfragen (ändert der Wechsel das Modell, kann bei Codex, Gemini CLI und Grok Build trotzdem ein Neustart nötig sein). Beim Beenden von CC Switch wird zuerst die Direct-Konfiguration zurückgeschrieben; beim nächsten Start verbindet sich das Routing wieder
 - **Automatisches Failover** — Konfigurieren Sie für jedes Werkzeug eine Failover-Warteschlange; schlägt eine Anfrage fehl, wird automatisch der nächste Anbieter in der Warteschlange verwendet — ergänzt durch Circuit Breaker und Anbieter-Health-Monitoring
 - **Request-Rectifier** — Korrigiert automatisch bestimmte Anfragen, die mit dem Upstream nicht kompatibel sind (z. B. Thinking-Signaturen, Herabstufung, wenn keine Bilder unterstützt werden)
 - Offizielle Anbieter (z. B. Claude Official) können nicht über das lokale Routing laufen (ausgenommen OpenAI Official von Codex)
+- Status, Listen-Adresse und Failover-Parameter des Routing-Dienstes finden Sie gesammelt unter „Settings → Local routing“
 - Anleitungen (auf Englisch): [GPT in Claude Code nutzen](docs/guides/claude-codex-routing-guide-en.md) · [Claude in Codex nutzen](docs/guides/codex-claude-routing-guide-en.md)
+
+### Aggregationsmodus
+
+- **Eine Modellliste, mehrere Anbieter** — Wechseln Sie auf der Seite von Claude Code oder Codex zu „Aggregation“ und fügen Sie einige Anbieter hinzu; ihre Modelle erscheinen dann gemeinsam in der Modellauswahl des Clients. Welches Modell Sie wählen, entscheidet, an welchen Anbieter die Anfrage geht — ohne Umweg über CC Switch
+- **Jederzeit hinzufügen und entfernen** — Klicken Sie auf der Anbieterkarte auf „Add“ oder „Remove“ und bestimmen Sie einen Anbieter als Standard; er übernimmt alle Anfragen, die kein aggregiertes Modell angeben. OpenAI Official in Codex kann nur Standardanbieter sein; offizielle Claude-Abonnements werden im Aggregationsmodus derzeit nicht unterstützt
+- **Hinweise** — Aggregation bietet kein Failover; Claude Code wird ab Version 2.1.243 benötigt; Codex muss nach Änderungen an der aggregierten Liste neu gestartet werden, Claude Code nicht. Wechseln Sie innerhalb einer Session das Modell, muss das neue Modell den Prompt-Cache neu aufbauen, sodass die erste Runde etwas mehr kostet
+- Viele Designideen des Aggregationsmodus stammen von [opencodex](https://github.com/lidge-jun/opencodex) — danke an den Autor und alle Mitwirkenden
+- Dokumentation: [Handbuch zum Aggregationsmodus (Englisch)](docs/user-manual/en/4-proxy/4.6-aggregation.md) · [Illustrierte Anleitung (Chinesisch)](docs/guides/aggregation-mode-guide-zh.md)
 
 ### MCP, Prompts & Skills
 
-- **Einheitliches MCP-Panel** — Alle MCP-Server an einer Stelle verwalten, pro Werkzeug per Häkchen synchronisieren, bestehende Konfigurationen aus den einzelnen Werkzeugen importieren, Import per Deep Link
+- **Einheitliches MCP-Panel** — Alle MCP-Server an einer Stelle verwalten, pro Werkzeug per Häkchen synchronisieren (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code), bestehende Konfigurationen aus den einzelnen Werkzeugen importieren, Import per Deep Link
 - **Prompts** — Je Werkzeug separat verwaltete Prompt-Bibliothek mit Markdown-Editor; nach dem Aktivieren wird der Prompt in die Prompt-Datei des Werkzeugs geschrieben (CLAUDE.md / AGENTS.md / GEMINI.md), wobei der bisherige Inhalt der Datei vorher in die Prompt-Bibliothek zurückgesichert wird und nicht verloren geht. Bei Pi lassen sich außerdem SYSTEM.md, APPEND_SYSTEM.md und Prompt-Vorlagen bearbeiten
-- **Skills** — skills.sh durchsuchen oder mit einem Klick aus GitHub-Repositorys bzw. ZIP-Dateien installieren; nach Updates suchen und alle mit einem Klick aktualisieren; Synchronisierung in die einzelnen Werkzeuge per Symlink oder Dateikopie, als Speicherort ist optional `~/.agents/skills` wählbar
-- Alle drei Panels unterstützen die Suche; bei MCP und Skills können Sie zudem pro Werkzeug alle Einträge mit einem Klick aktivieren oder deaktivieren
+- **Skills** — skills.sh durchsuchen oder mit einem Klick aus GitHub-Repositorys bzw. ZIP-Dateien installieren; nach Updates suchen und alle mit einem Klick aktualisieren; die Synchronisierung in die einzelnen Werkzeuge erfolgt wahlweise automatisch, nur per Symlink oder nur per Kopie, als Speicherort ist optional `~/.agents/skills` wählbar
+- Alle drei Panels unterstützen die Suche; bei MCP und Skills können Sie zudem pro Werkzeug alle Einträge mit einem Klick aktivieren oder deaktivieren. Anbieter, MCP und Prompts werden ganzseitig im Inhaltsbereich bearbeitet; wenn Sie die Seite mit ungespeicherten Änderungen verlassen, werden Sie vorher gewarnt
 
 ### Nutzungs- & Kostenverfolgung
 
-- **Nutzungs-Dashboard** — Funktioniert auch ohne lokales Routing: Standardmäßig werden die lokalen Sitzungsprotokolle der einzelnen Werkzeuge automatisch gescannt und Anfragen, Token, Cache-Trefferquote und Kosten nach Anbieter und Modell ausgewertet — mit Trenddiagrammen und einem Protokoll jeder einzelnen Anfrage
-- **Kontingente & Guthaben** — Anbieterkarten und System-Tray zeigen direkt offizielle Abo-Kontingente (Claude, ChatGPT, Gemini, SuperGrok), 5-Stunden-, Wochen- und Monatskontingente von Coding Plans (Kimi, Zhipu GLM, MiniMax, Volcengine Ark u. a.) sowie Kontoguthaben (DeepSeek, OpenRouter, SiliconFlow u. a.) an; manche davon müssen zuerst über „Configure usage query“ auf der Anbieterkarte aktiviert werden. Für andere Anbieter können Sie ein eigenes Nutzungsskript schreiben
+- **Nutzungs-Dashboard** — Funktioniert auch ohne lokales Routing: Standardmäßig werden die lokalen Sitzungsprotokolle der einzelnen Werkzeuge automatisch gescannt und Anfragen, Token, Cache-Trefferquote, Ausgabegeschwindigkeit und Kosten nach Anbieter und Modell ausgewertet — mit Trenddiagrammen, einer Jahres-Heatmap und einem Protokoll jeder einzelnen Anfrage
+- **Kontingente & Guthaben** — Anbieterkarten und System-Tray zeigen direkt das verbleibende Kontingent und den Countdown bis zum Zurücksetzen, etwa „5h 94% left“: offizielle Abo-Kontingente (Claude, ChatGPT, Gemini, SuperGrok), 5-Stunden-, Wochen- und Monatskontingente von Coding Plans (Kimi, Zhipu GLM, MiniMax, Volcengine Ark u. a.) sowie Kontoguthaben (DeepSeek, OpenRouter, SiliconFlow u. a.) an; manche davon müssen zuerst über „Configure usage query“ auf der Anbieterkarte aktiviert werden. Für andere Anbieter können Sie ein eigenes Nutzungsskript schreiben. Bei ChatGPT-Abonnements werden außerdem die verbleibenden Resets und das Codex-Credits-Guthaben angezeigt
 - **Eigene Preise** — Preise pro Modell festlegen, Import von models.dev möglich
 
 ### Session Manager & Workspace
 
-- **Session Manager** — Gesprächsverlauf der einzelnen Werkzeuge durchsehen und durchsuchen, Befehl zum Fortsetzen kopieren und das Gespräch weiterführen; unter macOS lässt sich eine Session mit einem Klick im Terminal fortsetzen
+- **Session-Leseansicht** — Die Sitzungsprotokolle der Werkzeuge werden in strukturierte Inhalte zerlegt: Text, Thinking, Tool-Aufrufe, Tool-Ergebnisse und Bilder werden getrennt dargestellt; jede Arbeitsrunde ist zu einer einzeiligen Zusammenfassung eingeklappt (wie viele Schritte, wie viele geänderte Dateien, wie viele Fehler), fehlgeschlagene Schritte sind rot markiert; rechts befindet sich ein Gesprächsverzeichnis, dazu Suche innerhalb der Session, Markdown-Export sowie Kopieren einzelner Runden oder des ganzen Gesprächs
+- **Liste & Fortsetzen** — Gruppierung nach Projekt oder Zeit, Suche nach Titel, Verzeichnis, Nachricht oder Session-ID, Löschen mehrerer Sessions auf einmal; Befehl zum Fortsetzen kopieren und das Gespräch weiterführen, unter macOS lässt sich eine Session mit einem Klick im Terminal fortsetzen
 - **Workspace-Editor** (OpenClaw) — Agent-Dateien (AGENTS.md, SOUL.md usw.) und „Daily Memory“ bearbeiten
 - **Memory-Verwaltung** (Hermes) — MEMORY.md und USER.md von Hermes bearbeiten
 
 ### System & Plattform
 
 - **Cloud-Synchronisierung** — Geräteübergreifende Synchronisierung über WebDAV (Jianguoyun, Nextcloud, Synology NAS usw.) oder S3-kompatiblen Speicher (AWS S3, Cloudflare R2, Alibaba Cloud OSS, Tencent Cloud COS usw.); alternativ können Sie das CC-Switch-Konfigurationsverzeichnis in einen Cloud-Speicher-Ordner wie Dropbox, OneDrive oder iCloud legen
-- **CLI-Werkzeugverwaltung** — Auf der Seite „About“ sehen Sie die installierte und die neueste Version von Kommandozeilenwerkzeugen wie Claude Code und Codex, können sie mit einem Klick installieren, aktualisieren oder alle auf einmal aktualisieren und doppelte Installationen diagnostizieren; unter Windows lassen sich auch Werkzeuge in WSL verwalten (siehe FAQ)
-- **Deep Link** (`ccswitch://`) — Anbieter, MCP-Server und Prompts per Link mit einem Klick importieren oder Skill-Repositorys hinzufügen
+- **CLI-Werkzeugverwaltung** — Auf der Seite „Apps“ in der Seitenleiste sehen Sie die installierte und die neueste Version von Kommandozeilenwerkzeugen wie Claude Code und Codex, können sie mit einem Klick installieren, aktualisieren oder alle auf einmal aktualisieren und doppelte Installationen diagnostizieren; unter Windows lassen sich auch Werkzeuge in WSL verwalten (siehe FAQ)
+- **Deep Link** (`ccswitch://`) — Anbieter, MCP-Server und Prompts per Link mit einem Klick importieren oder Skill-Repositorys hinzufügen; Links lassen sich mit dem [Online-Generator](https://ccswitch.io/deplink.html) erstellen; Website-Betreiber, die einen Import-Button einbauen möchten, finden alles im [Integrationsleitfaden (Englisch)](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-en.md)
 - **Hilfsprogramme** — Überspringen der Erststart-Bestätigung von Claude Code, Ausblenden der KI-Attribution, Übernahme des in CC Switch gewählten Anbieters durch die Claude-Code-Erweiterung für VS Code und mehr
-- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups, i18n (zh/zh-TW/en/ja)
+- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups (unter „Settings → Data“ sehen Sie Speicherort und Platzbedarf aller Backups), i18n (zh/zh-TW/en/ja, dazu Türkisch als Community-Übersetzung)
 
 ## FAQ
 
 <details>
 <summary><strong>Welche KI-Werkzeuge unterstützt CC Switch?</strong></summary>
 
-CC Switch unterstützt zehn Werkzeuge: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**. Jedes Werkzeug verfügt über dedizierte Anbieter-Presets und Konfigurationsverwaltung; welche Funktionen jeweils unterstützt werden, sehen Sie unter [Funktionen je Werkzeug](#funktionen-je-werkzeug).
+CC Switch unterstützt elf Werkzeuge: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**, **Kimi Code**. Jedes Werkzeug verfügt über dedizierte Anbieter-Presets und Konfigurationsverwaltung; welche Funktionen jeweils unterstützt werden, sehen Sie unter [Funktionen je Werkzeug](#funktionen-je-werkzeug).
 
 </details>
 
@@ -393,9 +439,23 @@ CC Switch unterstützt zehn Werkzeuge: **Claude Code**, **Claude Desktop**, **Co
 Das hängt vom Werkzeug ab:
 
 - **Claude Code**: unterstützt Hot-Switching von Anbieterdaten — kein Neustart nötig.
-- **Codex, Gemini CLI, Grok Build**: Starten Sie Ihr Terminal oder das CLI-Werkzeug neu, damit die Änderungen wirksam werden (CC Switch erinnert Sie nach dem Wechsel daran). Mit aktiviertem lokalem Routing gehen Anfragen sofort an den neuen Anbieter; ändert der Wechsel jedoch das Modell, kann bei allen drei Werkzeugen trotzdem ein Neustart nötig sein.
+- **Codex, Gemini CLI, Grok Build**: Starten Sie Ihr Terminal oder das CLI-Werkzeug neu, damit die Änderungen wirksam werden (CC Switch erinnert Sie nach dem Wechsel daran). Im Routing-Modus gehen Anfragen sofort an den neuen Anbieter; ändert der Wechsel jedoch das Modell, kann bei allen drei Werkzeugen trotzdem ein Neustart nötig sein.
+- **Aggregationsmodus**: In Claude Code werden Änderungen an den aggregierten Modellen sofort wirksam; Codex muss nach dem Wechsel in die Aggregation oder aus ihr heraus und nach jeder Änderung der aggregierten Modellliste vollständig neu gestartet werden, siehe nächste Frage.
 - **Claude Desktop**: Beenden Sie Claude Desktop vollständig und öffnen Sie es erneut; bei Verwendung von „Model Mapping“ muss CC Switch außerdem weiterlaufen.
-- **OpenCode, OpenClaw, Hermes, Pi, MiniMax Code**: Dies sind Werkzeuge im Parallelmodus — ein Klick auf „Add“ (bei Pi „Enable“) trägt den Anbieter zusätzlich zu den bereits vorhandenen in die eigene Konfiguration des Werkzeugs ein; das gewünschte Modell wählen Sie anschließend im Werkzeug aus.
+- **OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, Kimi Code**: Dies sind Werkzeuge im Parallelmodus — ein Klick auf „Add“ (bei Pi „Enable“) trägt den Anbieter zusätzlich zu den bereits vorhandenen in die eigene Konfiguration des Werkzeugs ein; das gewünschte Modell wählen Sie anschließend im Werkzeug aus. Kimi Code bietet dafür auch „Switch“; Modelle, die noch als Haupt- oder Sekundärmodell referenziert werden, können nicht entfernt werden. Einzelheiten zu Konfiguration und Konten stehen im [Kimi-Code-Leitfaden](docs/kimi-code-integration-zh.md) (Chinesisch).
+
+</details>
+
+<details>
+<summary><strong>Codex im Aggregationsmodus: Warum erscheinen die aggregierten Modelle nicht in /model?</strong></summary>
+
+Codex liest die Modellliste nur beim Start ein. Nach dem Wechsel in die Aggregation oder aus ihr heraus, nach dem Hinzufügen oder Entfernen eines aggregierten Anbieters und nach Änderungen an den aggregierten Modellen eines Anbieters müssen Sie Codex vollständig neu starten, damit die neue Liste erscheint:
+
+- **Codex CLI**: Es reicht nicht, das Terminal zu schließen und `codex` erneut zu öffnen. Alle `codex`-Instanzen in allen Terminals teilen sich einen Hintergrund-Daemon, der neu gestartet werden muss, damit er die neue Liste liest. Erkennt CC Switch, dass Codex noch die alte Liste verwendet, erscheint oben auf der Codex-Seite ein Hinweis; klicken Sie darin auf „Restart Codex daemon“. Der Neustart unterbricht laufende Aufgaben im Daemon.
+- **Codex Desktop-App**: Beenden Sie die App vollständig und öffnen Sie sie erneut (unter macOS mit ⌘Q — nur das Fenster zu schließen reicht nicht).
+- **Editor-Erweiterungen**: Öffnen Sie das Editorfenster neu.
+
+Claude Code ist davon nicht betroffen; Änderungen an den aggregierten Modellen werden dort sofort wirksam.
 
 </details>
 
@@ -420,11 +480,11 @@ Das Modell ist ein Kernfeld und gehört zum Anbieter. Ein im Werkzeug gewähltes
 </details>
 
 <details>
-<summary><strong>Warum kann ich den aktuell aktiven Anbieter nicht löschen?</strong></summary>
+<summary><strong>Warum kann ich den aktuell verwendeten Anbieter nicht löschen?</strong></summary>
 
 CC Switch folgt dem Designprinzip der „minimalen Eingriffstiefe“ — selbst wenn Sie die App deinstallieren, funktionieren Ihre Werkzeuge weiterhin normal.
 
-Bei Werkzeugen mit jeweils einem aktiven Anbieter (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build) behält das System daher immer eine aktive Konfiguration bei, da das Löschen aller Konfigurationen das entsprechende Werkzeug unbrauchbar machen würde. Werkzeuge im Parallelmodus wie OpenCode, OpenClaw, Hermes, Pi und MiniMax Code sind davon nicht betroffen — dort können Sie jeden Anbieter direkt löschen. Wenn Sie ein Werkzeug selten verwenden, können Sie es in den Einstellungen ausblenden. Wie Sie zurück zum offiziellen Login wechseln, erfahren Sie in der nächsten Frage.
+Bei Werkzeugen mit jeweils einem aktiven Anbieter (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build) behält das System daher immer eine verwendete Konfiguration bei, da das Löschen aller Konfigurationen das entsprechende Werkzeug unbrauchbar machen würde; um diesen Anbieter zu löschen, wechseln Sie zuerst zu einem anderen. Auch der Standardanbieter im Aggregationsmodus lässt sich nicht entfernen; legen Sie zuerst einen anderen Anbieter als Standard fest. Werkzeuge im Parallelmodus wie OpenCode, OpenClaw, Hermes, Pi und MiniMax Code sind davon nicht betroffen — dort können Sie jeden Anbieter direkt löschen. Wenn Sie ein Werkzeug selten verwenden, können Sie es auf der Seite „Apps“ in der Seitenleiste aus der Seitenleiste ausblenden. Wie Sie zurück zum offiziellen Login wechseln, erfahren Sie in der nächsten Frage.
 
 </details>
 
@@ -435,34 +495,34 @@ In CC Switch enthält die Anbieterliste von Claude Code, Claude Desktop, Codex, 
 
 Codex kann sich in CC Switch außerdem über „Sign in with ChatGPT“ bei mehreren ChatGPT-Konten anmelden; für jede **OpenAI Official**-Karte wählen Sie dann unter „Account to use“ ein Konto aus, sodass der Wechsel zwischen mehreren Plus-, Pro- oder Team-Konten mit einem Klick gelingt. Karten mit „Follow Codex login“ verwenden weiterhin den eigenen Login der Codex CLI.
 
-Hinweis: Solange das lokale Routing aktiviert ist, kann nicht zu offiziellen Anbietern gewechselt werden — ausgenommen die OpenAI-Official-Karten von Codex.
+Hinweis: Offizielle Abonnements nutzen den eigenen Login des Werkzeugs und laufen nicht über das lokale Routing. Im Routing-Modus kann nicht zu offiziellen Anbietern gewechselt werden (ausgenommen die OpenAI-Official-Karten von Codex); kehren Sie dafür einfach zuerst zu Direct zurück.
 
 </details>
 
 <details>
-<summary><strong>Warum steht nach dem Aktivieren des lokalen Routings 127.0.0.1 als Adresse in der Konfigurationsdatei?</strong></summary>
+<summary><strong>Warum steht nach „Start routing“ 127.0.0.1 als Adresse in der Konfigurationsdatei?</strong></summary>
 
-Bei aktiviertem lokalem Routing sendet das Werkzeug seine Anfragen zunächst an das lokale Routing von CC Switch (standardmäßig `http://127.0.0.1:15721`), und CC Switch leitet sie an den ausgewählten Anbieter weiter. Deshalb enthält die Konfigurationsdatei des Werkzeugs nur die lokale Adresse und den Platzhalterschlüssel `PROXY_MANAGED`; bei Claude Code wird der Modellname außerdem als fester Alias wie `claude-sonnet-5` eingetragen (im `/model`-Menü wird weiterhin der tatsächliche Modellname angezeigt). Die tatsächliche Anbieteradresse, der Schlüssel und das Modell sind in CC Switch gespeichert.
+Im Routing-Modus sendet das Werkzeug seine Anfragen zunächst an das lokale Routing von CC Switch (standardmäßig `http://127.0.0.1:15721`), und CC Switch leitet sie an den ausgewählten Anbieter weiter. Deshalb enthält die Konfigurationsdatei des Werkzeugs nur die lokale Adresse und den Platzhalterschlüssel `PROXY_MANAGED`; bei Claude Code wird der Modellname außerdem als fester Alias wie `claude-sonnet-5` eingetragen (im `/model`-Menü wird weiterhin der tatsächliche Modellname angezeigt). Die tatsächliche Anbieteradresse, der Schlüssel und das Modell sind in CC Switch gespeichert. Für den Aggregationsmodus gilt dasselbe.
 
-Unter „Settings → Usage Statistics → Request Logs“ sehen Sie für jede Anfrage „angefragtes Modell → tatsächliches Modell“.
+In den „Request Logs“ auf der Seite „Usage“ in der Seitenleiste sehen Sie für jede Anfrage „angefragtes Modell → tatsächliches Modell“.
 
-Solange das lokale Routing aktiv ist, wechseln Sie den Anbieter, den das lokale Routing verwendet; der Anbieter, den Sie vor dem Aktivieren genutzt haben, bleibt unverändert und ist auf seiner Karte mit „Direct“ gekennzeichnet. Nach dem Deaktivieren des lokalen Routings wird die Konfigurationsdatei auf die Konfiguration dieses direkten Anbieters zurückgeschrieben. Auch beim Beenden von CC Switch wird zuerst der direkte Anbieter zurückgeschrieben; beim nächsten Start verbindet sich das lokale Routing wieder.
+Im Routing-Modus wechseln Sie den Anbieter, den das Routing verwendet; der Anbieter, den Sie vor dem Wechsel ins Routing genutzt haben, bleibt unverändert und ist auf seiner Karte mit „Direct“ gekennzeichnet. Nach einem Klick auf „Back to direct“ wird die Konfigurationsdatei auf die Konfiguration dieses direkten Anbieters zurückgeschrieben. Auch beim Beenden von CC Switch wird zuerst der direkte Anbieter zurückgeschrieben; beim nächsten Start verbindet sich das Routing wieder.
 
 </details>
 
 <details>
 <summary><strong>Kann ich in Claude Code OpenAI-kompatible Schnittstellen, Gemini oder lokale Modelle verwenden?</strong></summary>
 
-Ja, dafür muss jedoch das lokale Routing aktiviert sein. Wählen Sie beim Bearbeiten des Anbieters unter „Advanced Options“ im Feld „Upstream Format“ das Schnittstellenformat, das der Anbieter verwendet: Für Dienste, die nur eine Chat-Completions-Schnittstelle anbieten (was bei vielen lokalen Modelldiensten der Fall ist), wählen Sie „OpenAI Chat Completions“, für Dienste mit Responses-Schnittstelle „OpenAI Responses API“ und für Gemini „Gemini Native generateContent“. Aktivieren Sie anschließend wie in Schritt 5 des [Schnellstarts](#schnellstart) beschrieben das lokale Routing für Claude Code. Ist das falsche Format gewählt oder das lokale Routing nicht aktiviert, erscheint in der Regel ein 404- oder 405-Fehler.
+Ja, dafür brauchen Sie jedoch das Routing. Wählen Sie beim Bearbeiten des Anbieters unter „Advanced Options“ im Feld „Upstream Format“ das Schnittstellenformat, das der Anbieter verwendet: Für Dienste, die nur eine Chat-Completions-Schnittstelle anbieten (was bei vielen lokalen Modelldiensten der Fall ist), wählen Sie „OpenAI Chat Completions“, für Dienste mit Responses-Schnittstelle „OpenAI Responses API“ und für Gemini „Gemini Native generateContent“. Klicken Sie anschließend auf der Claude-Code-Seite im Tab „Routing“ auf „Start routing“. Ist das falsche Format gewählt oder das Routing nicht gestartet, erscheint in der Regel ein 404- oder 405-Fehler.
 
-Umgekehrt können Sie in Codex oder Grok Build unter „Upstream Format“ die Option „Anthropic Messages“ wählen, um Anbieter im Claude-Format zu nutzen — auch dafür muss das lokale Routing aktiviert sein. Details finden Sie in den Anleitungen [GPT in Claude Code nutzen](docs/guides/claude-codex-routing-guide-en.md) und [Claude in Codex nutzen](docs/guides/codex-claude-routing-guide-en.md) (auf Englisch).
+Umgekehrt können Sie in Codex oder Grok Build unter „Upstream Format“ die Option „Anthropic Messages“ wählen, um Anbieter im Claude-Format zu nutzen — auch dafür brauchen Sie das Routing. Details finden Sie in den Anleitungen [GPT in Claude Code nutzen](docs/guides/claude-codex-routing-guide-en.md) und [Claude in Codex nutzen](docs/guides/codex-claude-routing-guide-en.md) (auf Englisch).
 
 </details>
 
 <details>
 <summary><strong>Der „Connectivity check“ war erfolgreich — warum schlagen Anfragen trotzdem fehl?</strong></summary>
 
-Der „Connectivity check“ auf der Anbieterkarte prüft nur, ob die Anbieteradresse erreichbar ist, und sendet keine echte Modellanfrage; ob API-Schlüssel und Modellname korrekt sind, lässt sich damit also nicht überprüfen. Wenn Anfragen fehlschlagen, prüfen Sie Schlüssel, Modellname und Upstream-Format; bei aktiviertem lokalem Routing finden Sie die konkrete Fehlermeldung außerdem unter „Settings → Usage Statistics → Request Logs“.
+Der „Connectivity check“ auf der Anbieterkarte prüft nur, ob die Anbieteradresse erreichbar ist, und sendet keine echte Modellanfrage; ob API-Schlüssel und Modellname korrekt sind, lässt sich damit also nicht überprüfen. Wenn Anfragen fehlschlagen, prüfen Sie Schlüssel, Modellname und Upstream-Format; bei Anfragen über das Routing finden Sie die konkrete Fehlermeldung außerdem in den „Request Logs“ auf der Seite „Usage“ in der Seitenleiste.
 
 </details>
 
@@ -473,24 +533,24 @@ Standardmäßig liegen alle Daten im Ordner `.cc-switch` in Ihrem Benutzerverzei
 
 - **Datenbank**: `cc-switch.db` (SQLite — Anbieter, MCP, Prompts, Skills, Projekte, Nutzungsdaten usw.)
 - **Lokale Einstellungen**: `settings.json` (gerätebezogene Einstellungen, z. B. die Konfigurationsverzeichnisse der einzelnen Werkzeuge, Backup-Richtlinie, Verbindungsdaten für die Cloud-Synchronisierung)
-- **Backups**: `backups/` (standardmäßig automatisch alle 24 Stunden, die 10 neuesten werden behalten; anpassbar unter „Settings → Advanced → Backup & Restore“)
+- **Backups**: `backups/` (standardmäßig automatisch alle 24 Stunden, die 10 neuesten werden behalten; anpassbar unter „Settings → Data → Backup & Restore“; darunter listet „Other Backups“ Speicherort und Größe aller übrigen Backups auf, die sich nach Kategorie bereinigen lassen)
 - **Skills**: `skills/` (in den Einstellungen auf `~/.agents/skills` umstellbar); standardmäßig per Symlink mit den einzelnen Werkzeugen synchronisiert; schlägt das fehl, wird stattdessen kopiert
 - **Skill-Backups**: `skill-backups/` (vor dem Deinstallieren oder Aktualisieren eines Skills automatisch erstellt, die 20 neuesten werden behalten)
 - **OAuth-Anmeldedaten**: `copilot_auth.json`, `codex_oauth_auth.json`, `xai_oauth_auth.json`
 - **Logs**: `logs/cc-switch.log` und `crash.log` — bitte fügen Sie sie bei Problemmeldungen bei
-- **Gerätezustand**: `live-state.json` (ob jedes Werkzeug direkt oder über das lokale Routing verbunden ist und was zuletzt geschrieben wurde), `codex-login-stash.json` (der offizielle Codex-Login, der beim Wechsel zu einem Drittanbieter beiseitegelegt und beim Zurückwechseln zu einem offiziellen Anbieter wiederhergestellt wird)
+- **Gerätezustand**: `live-state.json` (ob jedes Werkzeug gerade im Modus Direct, Routing oder Aggregation läuft und was zuletzt geschrieben wurde), `codex-login-stash.json` (der offizielle Codex-Login, der beim Wechsel zu einem Drittanbieter beiseitegelegt und beim Zurückwechseln zu einem offiziellen Anbieter wiederhergestellt wird)
 - **Original-Konfigurationsdateien**: `backups/live-first-write/` (die Konfigurationsdateien der Werkzeuge, bevor CC Switch sie zum ersten Mal umgeschrieben hat)
 
-Wenn Sie unter „Settings → Advanced → Configuration Directory“ das „CC Switch Configuration Directory“ ändern, werden alle oben genannten Dateien außer `settings.json`, dem Gerätezustand und den Original-Konfigurationsdateien im neuen Verzeichnis abgelegt. CC Switch verschiebt vorhandene Dateien nicht automatisch; kopieren Sie sie vorher manuell dorthin. `settings.json`, der Gerätezustand und die Original-Konfigurationsdateien gehören nur zu diesem Rechner: Sie bleiben immer im Standardverzeichnis und werden nicht per Cloud synchronisiert.
+Wenn Sie unter „Settings → Data → Location“ das „CC Switch Configuration Directory“ ändern, werden alle oben genannten Dateien außer `settings.json`, dem Gerätezustand und den Original-Konfigurationsdateien im neuen Verzeichnis abgelegt. CC Switch verschiebt vorhandene Dateien nicht automatisch; kopieren Sie sie vorher manuell dorthin. `settings.json`, der Gerätezustand und die Original-Konfigurationsdateien gehören nur zu diesem Rechner: Sie bleiben immer im Standardverzeichnis und werden nicht per Cloud synchronisiert.
 
 </details>
 
 <details>
 <summary><strong>Wie verwalte ich unter Windows Werkzeuge in WSL?</strong></summary>
 
-CC Switch erkennt WSL nicht automatisch. Ändern Sie unter „Settings → Advanced → Configuration Directory → Configuration Directory Override (Advanced)“ das Verzeichnis des jeweiligen Werkzeugs auf einen Pfad in WSL, z. B. `\\wsl.localhost\Ubuntu\home\<Benutzername>\.claude`; nach dem Speichern liest und schreibt CC Switch die Konfiguration in WSL (einstellbar für Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes und Pi). Anschließend erkennt und aktualisiert auch die Seite „About“ das Werkzeug in der entsprechenden WSL-Distribution.
+CC Switch erkennt WSL nicht automatisch. Ändern Sie unter „Settings → App config“ das Konfigurationsverzeichnis des jeweiligen Werkzeugs auf einen Pfad in WSL, z. B. `\\wsl.localhost\Ubuntu\home\<Benutzername>\.claude`; nach dem Speichern liest und schreibt CC Switch die Konfiguration in WSL (einstellbar für Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes und Pi). Anschließend erkennt und aktualisiert auch die Seite „Apps“ in der Seitenleiste das Werkzeug in der entsprechenden WSL-Distribution.
 
-Hinweis: Das lokale Routing trägt als Adresse `127.0.0.1` in die Konfiguration ein. Im standardmäßigen NAT-Netzwerkmodus von WSL2 erreicht `127.0.0.1` in WSL das lokale Routing unter Windows nicht; wechseln Sie daher in den Mirrored-Netzwerkmodus von WSL.
+Hinweis: Routing und Aggregation tragen als Adresse `127.0.0.1` in die Konfiguration ein. Im standardmäßigen NAT-Netzwerkmodus von WSL2 erreicht `127.0.0.1` in WSL das lokale Routing unter Windows nicht; wechseln Sie daher in den Mirrored-Netzwerkmodus von WSL.
 
 </details>
 

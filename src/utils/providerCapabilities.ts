@@ -13,6 +13,7 @@ import {
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
+export const KIMI_OFFICIAL_PROVIDER_ID = "managed:kimi-code";
 
 export type CodexOfficialIdentity =
   | "native_login"
@@ -92,6 +93,12 @@ export function isOfficialAccount(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
+  if (appId === "kimi") {
+    const config = provider.settingsConfig.provider as
+      | { type?: string; oauth?: { key?: unknown } }
+      | undefined;
+    return config?.type === "kimi" && nonEmptyString(config?.oauth?.key);
+  }
   return (
     provider.category === "official" ||
     resolveCodexOfficialIdentity(appId, provider) !== null
