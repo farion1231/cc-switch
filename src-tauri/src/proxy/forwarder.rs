@@ -4897,6 +4897,88 @@ mod tests {
     }
 
     #[test]
+    fn issue_7459_replayed_tool_arguments_survive_real_outbound_filter() {
+        // Codex replays a prior tool call on the next turn. The original
+        // composed schema must still reach Anthropic with its arguments.
+        let body = json!({
+            "model": "claude-sonnet",
+            "tools": [{
+                "type": "function",
+                "name": "automation_update",
+                "parameters": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"id": {"type": "string"}},
+                            "required": ["id"]
+                        },
+                        {
+                            "type": "object",
+                            "properties": {"title": {"type": "string"}},
+                            "required": ["title"]
+                        }
+                    ]
+                }
+            }],
+            "input": [
+                {"role": "user", "content": "Update the task"},
+                {
+                    "type": "function_call",
+                    "call_id": "call_7459",
+                    "name": "automation_update",
+                    "arguments": r#"{"id":"task_1","_external_id":"ext-7","nested":{"__lookup_key":"item-3"}}"#
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_7459",
+                    "output": "updated"
+                }
+            ]
+        });
+        let transformed =
+            crate::proxy::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                body, 4096,
+            )
+            .expect("the Responses/Anthropic converter should accept replayed tools");
+
+        let original_assistant = transformed["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "assistant")
+            .unwrap();
+        assert!(
+            original_assistant["content"][0]["input"]
+                .as_object()
+                .is_some_and(|input| !input.is_empty()),
+            "conversion must produce a nonempty tool_use envelope before filtering"
+        );
+
+        // Exercise the exact outbound body preparation used by the forwarder,
+        // not just the converter's in-memory output.
+        let prepared = prepare_upstream_request_body(transformed);
+        let assistant = prepared["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "assistant")
+            .unwrap();
+        assert_eq!(
+            assistant["content"][0]["input"],
+            json!({"cc_switch_args": {
+                "id": "task_1",
+                "_external_id": "ext-7",
+                "nested": {"__lookup_key": "item-3"}
+            }}),
+            "outbound private-field filtering must not erase the replayed arguments"
+        );
+        assert_eq!(
+            prepared["tools"][0]["input_schema"]["required"],
+            json!(["cc_switch_args"])
+        );
+    }
+
+    #[test]
     fn prepare_upstream_request_body_filters_private_fields_and_canonicalizes_order() {
         let body = json!({
             "z": 1,
