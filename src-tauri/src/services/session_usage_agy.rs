@@ -14,6 +14,9 @@ use std::path::Path;
 
 mod native_models;
 
+#[cfg(test)]
+mod local_retest;
+
 pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     for session in agy::scan_sessions() {
