@@ -410,6 +410,59 @@ describe("ClaudeDesktopProviderForm", () => {
     });
   });
 
+  it.each([true, false])(
+    "代理模式保存时分别保留标准 Sonnet 和兼容路由字段（兼容路由在前：%s）",
+    async (compatibilityFirst) => {
+      const standard = {
+        model: "claude-sonnet-5-5",
+        labelOverride: "标准 Sonnet",
+        supports1m: false,
+      };
+      const compatible = {
+        model: "claude-sonnet-4-6",
+        labelOverride: "兼容 Sonnet",
+        supports1m: true,
+      };
+      const routes = compatibilityFirst
+        ? {
+            "claude-sonnet-4-6": compatible,
+            "claude-sonnet-5": standard,
+          }
+        : {
+            "claude-sonnet-5": standard,
+            "claude-sonnet-4-6": compatible,
+          };
+      const onSubmit = vi.fn();
+      renderForm(
+        {
+          name: "Command Code",
+          settingsConfig: {
+            env: {
+              ANTHROPIC_BASE_URL: "https://api.commandcode.ai/provider",
+              ANTHROPIC_AUTH_TOKEN: "sk-test",
+            },
+          },
+          meta: {
+            claudeDesktopMode: "proxy",
+            claudeDesktopModelRoutes: routes,
+          },
+        },
+        onSubmit,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+      const saved = onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes;
+      expect(saved["claude-sonnet-5"]).toMatchObject({
+        model: standard.model,
+        labelOverride: standard.labelOverride,
+      });
+      expect(saved["claude-sonnet-5"].supports1m).toBeUndefined();
+      expect(saved["claude-sonnet-4-6"]).toMatchObject(compatible);
+    },
+  );
+
   it("代理模式初始无路由且默认路由未就绪时不渲染空四档", () => {
     // mock 的 getClaudeDesktopDefaultRoutes 返回 []，模拟默认路由尚未就绪。
     // 修复前：normalizeProxyRows([]) 会渲染空行并把 routes.length 撑起来，

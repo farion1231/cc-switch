@@ -221,9 +221,11 @@ function normalizeProxyRows(rows: RouteRow[]): RouteRow[] {
 
   return [
     ...ROLE_ORDER.map((role) => {
-      const match = rows.find(
-        (row) => row.route.trim() && routeRoleFromId(row.route) === role,
-      );
+      const match =
+        rows.find((row) => row.route.trim() === ROLE_ROUTE_IDS[role]) ??
+        rows.find(
+          (row) => row.route.trim() && routeRoleFromId(row.route) === role,
+        );
       return createRouteRow({
         route: ROLE_ROUTE_IDS[role],
         model: match?.model ?? "",
