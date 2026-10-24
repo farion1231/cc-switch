@@ -8,6 +8,7 @@ import {
   ProviderList,
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { server } from "../msw/server";
 
 vi.mock("sonner", () => ({
@@ -955,6 +956,40 @@ describe("ProviderList Component", () => {
 
     rerender(ui(false));
     expect(screen.getByTestId("provider-card-other")).toBeInTheDocument();
+  });
+
+  it("ignores list search shortcuts while a full-screen panel is open", () => {
+    const provider = createProvider({ id: "alpha", name: "Alpha Labs" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <>
+        <ProviderList
+          providers={{ alpha: provider }}
+          currentProviderId=""
+          appId="claude"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />
+        <FullScreenPanel isOpen title="Edit provider" onClose={vi.fn()}>
+          <input aria-label="Provider name" />
+        </FullScreenPanel>
+      </>,
+    );
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
+
+    expect(
+      screen.queryByPlaceholderText("Search name, notes, or URL..."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
   });
 
   it("does not manufacture a Pi selection summary card", async () => {
