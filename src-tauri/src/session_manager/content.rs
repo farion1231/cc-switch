@@ -221,6 +221,11 @@ pub fn resolve_content_ref(
             let path = jsonl_path(source)?;
             let line = read_jsonl_line(&path, *offset, *len)?;
             let value: Value = serde_json::from_slice(&line).map_err(|_| STALE.to_string())?;
+            if source.provider_id == "agy"
+                && pointer.starts_with(super::providers::agy::ANTIGRAVITY_READER_REF_PREFIX)
+            {
+                return super::providers::agy::resolve_antigravity_reader_content(&value, pointer);
+            }
             extract_text(&value, pointer)
         }
         ContentRef::Sqlite {
