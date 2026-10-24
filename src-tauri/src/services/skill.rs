@@ -1165,7 +1165,8 @@ impl SkillService {
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
-                                | AppType::Dsh | AppType::Omp
+                                | AppType::Dsh
+                                | AppType::Omp
                         ) {
                             continue;
                         }
@@ -1740,7 +1741,12 @@ impl SkillService {
         for app in updated_skill.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Omp
+                AppType::Pi
+                    | AppType::Mcode
+                    | AppType::Agy
+                    | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Omp
             ) {
                 continue;
             }
@@ -2457,7 +2463,12 @@ impl SkillService {
             for app in AppType::all() {
                 if matches!(
                     app,
-                    AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Omp
+                    AppType::Pi
+                        | AppType::Mcode
+                        | AppType::Agy
+                        | AppType::Kimi
+                        | AppType::Dsh
+                        | AppType::Omp
                 ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
                 {
@@ -2564,7 +2575,12 @@ impl SkillService {
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
         if !matches!(
             app,
-            AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Omp
+            AppType::Pi
+                | AppType::Mcode
+                | AppType::Agy
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Omp
         ) {
             return Ok(());
         }
@@ -2741,7 +2757,12 @@ impl SkillService {
 
         if matches!(
             app,
-            AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Omp
+            AppType::Pi
+                | AppType::Mcode
+                | AppType::Agy
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Omp
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
@@ -2944,7 +2965,12 @@ impl SkillService {
         if skill_path.exists() || Self::is_symlink(&skill_path) {
             if matches!(
                 app,
-                AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Omp
+                AppType::Pi
+                    | AppType::Mcode
+                    | AppType::Agy
+                    | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Omp
             ) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;

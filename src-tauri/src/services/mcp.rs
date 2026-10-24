@@ -235,7 +235,12 @@ impl McpService {
     ) -> Result<(), AppError> {
         if matches!(
             app,
-            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp | AppType::Pi | AppType::Agy
+            AppType::Mcode
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Omp
+                | AppType::Pi
+                | AppType::Agy
         ) {
             if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
                 let spec = enabled.then_some(&server.server);
@@ -292,7 +297,12 @@ impl McpService {
         for app in server.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp | AppType::Pi | AppType::Agy
+                AppType::Mcode
+                    | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Omp
+                    | AppType::Pi
+                    | AppType::Agy
             ) {
                 continue; // Already written before saving the managed state.
             }
@@ -372,7 +382,12 @@ impl McpService {
         for app in server.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp | AppType::Pi | AppType::Agy
+                AppType::Mcode
+                    | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Omp
+                    | AppType::Pi
+                    | AppType::Agy
             ) {
                 continue; // Already removed before deleting the managed record.
             }
@@ -518,7 +533,12 @@ impl McpService {
                 Self::sync_server_to_app(state, server, app)
             } else if !matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp | AppType::Pi | AppType::Agy
+                AppType::Mcode
+                    | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Omp
+                    | AppType::Pi
+                    | AppType::Agy
             ) {
                 Self::remove_server_from_app(state, &server.id, app)
             } else {
@@ -828,7 +848,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 11] = [
+        let results: [(&str, Result<usize, AppError>); 12] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),

@@ -457,7 +457,10 @@ export function ProviderList({
           appId={appId}
           onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
           onImport={
-            isPiFamilyApp(appId) || appId === "mcode" || appId === "kimi" || appId === "dsh"
+            isPiFamilyApp(appId) ||
+            appId === "mcode" ||
+            appId === "kimi" ||
+            appId === "dsh"
               ? undefined
               : () => importMutation.mutate()
           }
