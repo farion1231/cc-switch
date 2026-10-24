@@ -811,6 +811,54 @@ describe("PiProviderForm", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("writes omp presets without Pi-only fields and edits discovery", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save omp preset"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Kimi", { selector: "span" }));
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    const preset = JSON.parse(configEditor.value);
+    // omp 的 models.yml 没有供应商级 name，也没有 thinkingLevelMap
+    expect(preset).not.toHaveProperty("name");
+    expect(preset.models.length).toBeGreaterThan(0);
+    for (const model of preset.models) {
+      expect(model).not.toHaveProperty("thinkingLevelMap");
+    }
+
+    await user.click(document.querySelector("#omp-discovery-type")!);
+    await user.click(
+      await screen.findByRole("option", { name: "openai-models-list" }),
+    );
+    expect(JSON.parse(configEditor.value).discovery).toEqual({
+      type: "openai-models-list",
+    });
+
+    await user.click(document.querySelector("#omp-discovery-type")!);
+    await user.click(
+      await screen.findByRole("option", { name: "omp.form.discoveryOff" }),
+    );
+    expect(JSON.parse(configEditor.value)).not.toHaveProperty("discovery");
+
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save omp preset" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(onSubmit.mock.calls[0][0].settingsConfig),
+    ).not.toHaveProperty("name");
+  });
+
   it("keeps preset model order without exposing a default-model field", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
