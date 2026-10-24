@@ -762,7 +762,7 @@ command = "echo"
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -912,7 +912,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -983,7 +983,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1034,7 +1034,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1074,7 +1074,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1260,7 +1260,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1321,7 +1321,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1382,7 +1382,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1444,7 +1444,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1529,7 +1529,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1674,7 +1674,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1702,7 +1702,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1750,7 +1750,7 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "mcode",
             "kimi",
             "agy",
-            "ohmypi"
+            "omp"
         ]
     );
     assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);
@@ -1818,7 +1818,7 @@ fn omp_test_state() -> (cc_switch_lib::AppState, std::path::PathBuf) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "{}").unwrap();
     update_settings(AppSettings {
-        ohmypi_config_dir: Some(path.parent().unwrap().to_string_lossy().into_owned()),
+        omp_config_dir: Some(path.parent().unwrap().to_string_lossy().into_owned()),
         ..Default::default()
     })
     .unwrap();
@@ -1826,14 +1826,14 @@ fn omp_test_state() -> (cc_switch_lib::AppState, std::path::PathBuf) {
 }
 
 #[test]
-fn ohmypi_mcp_disable_reenable_preserves_options_and_suppresses_discovered_sources() {
+fn omp_mcp_disable_reenable_preserves_options_and_suppresses_discovered_sources() {
     let _guard = test_mutex().lock().unwrap();
     let (state, path) = omp_test_state();
     let native = json!({"mcpServers":{"demo":{"command":"node","args":["mcp.js"],"enabled":false,"timeout":0,"requestIdFormat":"string","instructions":false}},"disabledServers":["demo","other"],"enabledServers":["other"]});
     fs::write(&path, native.to_string()).unwrap();
-    assert_eq!(McpService::import_from_ohmypi(&state).unwrap(), 1);
-    assert!(!state.db.get_all_mcp_servers().unwrap()["demo"].apps.ohmypi);
-    McpService::toggle_app(&state, "demo", AppType::OhMyPi, true).unwrap();
+    assert_eq!(McpService::import_from_omp(&state).unwrap(), 1);
+    assert!(!state.db.get_all_mcp_servers().unwrap()["demo"].apps.omp);
+    McpService::toggle_app(&state, "demo", AppType::Omp, true).unwrap();
     let read =
         || serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
     let enabled = read();
@@ -1845,7 +1845,7 @@ fn ohmypi_mcp_disable_reenable_preserves_options_and_suppresses_discovered_sourc
             native["mcpServers"]["demo"][field]
         );
     }
-    McpService::toggle_app(&state, "demo", AppType::OhMyPi, false).unwrap();
+    McpService::toggle_app(&state, "demo", AppType::Omp, false).unwrap();
     let disabled = read();
     assert_eq!(disabled["mcpServers"]["demo"]["enabled"], false);
     assert!(
@@ -1855,24 +1855,24 @@ fn ohmypi_mcp_disable_reenable_preserves_options_and_suppresses_discovered_sourc
             .contains(&json!("demo")),
         "the denylist must also suppress project/foreign discovery"
     );
-    McpService::toggle_app(&state, "demo", AppType::OhMyPi, true).unwrap();
+    McpService::toggle_app(&state, "demo", AppType::Omp, true).unwrap();
     let mut edited = state.db.get_all_mcp_servers().unwrap()["demo"].clone();
-    edited.apps.ohmypi = false;
+    edited.apps.omp = false;
     McpService::upsert_server(&state, edited).unwrap();
     assert_eq!(read()["mcpServers"]["demo"]["enabled"], false);
     let mut disabled_edit = state.db.get_all_mcp_servers().unwrap()["demo"].clone();
     disabled_edit.server["args"] = json!(["updated.js"]);
     McpService::upsert_server(&state, disabled_edit).unwrap();
-    McpService::toggle_app(&state, "demo", AppType::OhMyPi, true).unwrap();
+    McpService::toggle_app(&state, "demo", AppType::Omp, true).unwrap();
     assert_eq!(read()["mcpServers"]["demo"]["args"], json!(["updated.js"]));
-    McpService::toggle_app(&state, "demo", AppType::OhMyPi, false).unwrap();
+    McpService::toggle_app(&state, "demo", AppType::Omp, false).unwrap();
     assert!(McpService::delete_server(&state, "demo").unwrap());
     assert!(read()["mcpServers"].get("demo").is_none());
     assert_eq!(read()["disabledServers"], json!(["other"]));
 }
 
 #[test]
-fn ohmypi_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
+fn omp_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
     let _guard = test_mutex().lock().unwrap();
     let (state, path) = omp_test_state();
     let native =
@@ -1880,15 +1880,11 @@ fn ohmypi_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
     fs::write(&path, native.to_string()).unwrap();
     let server: McpServer = serde_json::from_value(json!({"id":"context7","name":"Context7","server":{"command":"managed"},"apps":{"claude":true}})).unwrap();
     state.db.save_mcp_server(&server).unwrap();
-    McpService::sync_enabled_for_app(&state, &AppType::OhMyPi).unwrap();
+    McpService::sync_enabled_for_app(&state, &AppType::Omp).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), native.to_string());
-    assert!(McpService::toggle_app(&state, &server.id, AppType::OhMyPi, true).is_err());
-    assert!(
-        !state.db.get_all_mcp_servers().unwrap()[&server.id]
-            .apps
-            .ohmypi
-    );
-    assert!(McpService::import_from_ohmypi(&state)
+    assert!(McpService::toggle_app(&state, &server.id, AppType::Omp, true).is_err());
+    assert!(!state.db.get_all_mcp_servers().unwrap()[&server.id].apps.omp);
+    assert!(McpService::import_from_omp(&state)
         .unwrap_err()
         .to_string()
         .contains("context7"));
@@ -1896,11 +1892,11 @@ fn ohmypi_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
 }
 
 #[test]
-fn ohmypi_mcp_delete_removes_enabled_native_entry_and_write_failure_keeps_db() {
+fn omp_mcp_delete_removes_enabled_native_entry_and_write_failure_keeps_db() {
     let _guard = test_mutex().lock().unwrap();
     let (state, path) = omp_test_state();
     let server: McpServer = serde_json::from_value(
-        json!({"id":"demo","name":"Demo","server":{"command":"node"},"apps":{"ohmypi":true}}),
+        json!({"id":"demo","name":"Demo","server":{"command":"node"},"apps":{"omp":true}}),
     )
     .unwrap();
     McpService::upsert_server(&state, server.clone()).unwrap();
@@ -1911,12 +1907,8 @@ fn ohmypi_mcp_delete_removes_enabled_native_entry_and_write_failure_keeps_db() {
         .get_all_mcp_servers()
         .unwrap()
         .contains_key(&server.id));
-    assert!(McpService::toggle_app(&state, &server.id, AppType::OhMyPi, false).is_err());
-    assert!(
-        state.db.get_all_mcp_servers().unwrap()[&server.id]
-            .apps
-            .ohmypi
-    );
+    assert!(McpService::toggle_app(&state, &server.id, AppType::Omp, false).is_err());
+    assert!(state.db.get_all_mcp_servers().unwrap()[&server.id].apps.omp);
     fs::write(
         &path,
         json!({"mcpServers":{"demo":{"command":"node","enabled":true}}}).to_string(),

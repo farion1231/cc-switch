@@ -241,7 +241,7 @@ export interface ProviderMeta {
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
   // Oh My Pi：编辑器“其他字段（YAML，原样保留）”的原文（含注释），写 models.yml 时原样保留
-  ohmypiPassthroughYaml?: string;
+  ompPassthroughYaml?: string;
 }
 
 // Stack 模式下 Claude Code 供应商发布的一个模型
@@ -319,7 +319,7 @@ export interface VisibleApps {
   mcode: boolean;
   kimi: boolean;
   agy: boolean;
-  ohmypi: boolean;
+  omp: boolean;
 }
 
 // WebDAV 同步状态
@@ -484,7 +484,7 @@ export interface Settings {
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
   // 覆盖 Oh My Pi agent 配置目录（可选）
-  ohmypiConfigDir?: string;
+  ompConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -781,7 +781,7 @@ export interface McpApps {
   openclaw: boolean;
   hermes: boolean;
   pi?: boolean;
-  ohmypi?: boolean;
+  omp?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）

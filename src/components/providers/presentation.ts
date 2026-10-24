@@ -712,7 +712,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
   const stateBlocked =
-    (app === "pi" || app === "ohmypi") && input.nativeStateUnavailable
+    (app === "pi" || app === "omp") && input.nativeStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
@@ -846,7 +846,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
             {
               key: "add",
               label:
-                app === "pi" || app === "ohmypi"
+                app === "pi" || app === "omp"
                   ? t("providerCard.action.enable")
                   : t("providerCard.action.add"),
               onClick: () => actions.add(p),

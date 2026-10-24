@@ -347,9 +347,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: (config as any).api_key,
             baseUrl: (config as any).base_url,
           };
-        } else if (appId === "pi" || appId === "ohmypi") {
+        } else if (appId === "pi" || appId === "omp") {
           // Pi / Oh My Pi: provider values are camelCase; a model may override
-          // baseUrl. Mirrors the backend resolver's `Pi | OhMyPi` handling, and
+          // baseUrl. Mirrors the backend resolver's `Pi | Omp` handling, and
           // is what unblocks the balance/Coding-Plan tests on an omp card.
           return {
             apiKey: configStringField(config, "apiKey"),

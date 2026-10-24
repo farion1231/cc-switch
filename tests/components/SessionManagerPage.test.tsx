@@ -181,7 +181,7 @@ describe("SessionManagerPage", () => {
     setSessionFixtures(
       [
         {
-          providerId: "ohmypi",
+          providerId: "omp",
           sessionId: "omp-native-session",
           title: "Native OMP conversation",
           sourcePath: "/mock/omp/sessions/project/native.jsonl",
@@ -190,8 +190,8 @@ describe("SessionManagerPage", () => {
       ],
       {},
     );
-    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS, ohmypi: true } });
-    renderPage("ohmypi");
+    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS, omp: true } });
+    renderPage("omp");
     expect(
       await screen.findByText("Native OMP conversation"),
     ).toBeInTheDocument();
@@ -322,7 +322,7 @@ describe("SessionManagerPage", () => {
         mcode: false,
         kimi: false,
         agy: false,
-        ohmypi: false,
+        omp: false,
       },
     });
     renderPage("codex");

@@ -148,7 +148,7 @@ export function extractBaseUrlForUsageDetection(
       raw = settingsConfig.options?.baseURL;
       break;
     case "pi":
-    case "ohmypi":
+    case "omp":
     case "openclaw":
       raw = settingsConfig.baseUrl;
       break;

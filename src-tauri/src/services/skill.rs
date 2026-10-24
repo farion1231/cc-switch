@@ -697,8 +697,8 @@ impl SkillService {
                     .join("config")
                     .join("skills"));
             }
-            AppType::OhMyPi => {
-                return Ok(crate::ohmypi_config::get_ohmypi_agent_dir()?.join("skills"));
+            AppType::Omp => {
+                return Ok(crate::omp_config::get_omp_agent_dir()?.join("skills"));
             }
         }
 
@@ -720,7 +720,7 @@ impl SkillService {
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
-            AppType::OhMyPi => crate::ohmypi_config::get_ohmypi_agent_dir()?.join("skills"),
+            AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
         })
     }
 
@@ -1071,7 +1071,7 @@ impl SkillService {
                     let ssot_dir = Self::get_ssot_dir()?;
                     let source = ssot_dir.join(&directory);
                     let mut managed_destinations = Vec::new();
-                    for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::OhMyPi] {
+                    for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Omp] {
                         if skill.apps.is_enabled_for(&app) {
                             let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
                                 .join(&directory);
@@ -1157,7 +1157,7 @@ impl SkillService {
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
-                                | AppType::OhMyPi
+                                | AppType::Omp
                         ) {
                             continue;
                         }
@@ -1629,7 +1629,7 @@ impl SkillService {
             AppType::Mcode,
             AppType::Agy,
             AppType::Kimi,
-            AppType::OhMyPi,
+            AppType::Omp,
         ] {
             if skill.apps.is_enabled_for(&app) {
                 let destination =
@@ -1645,7 +1645,7 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        let owned_apps: Vec<_> = [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::OhMyPi]
+        let owned_apps: Vec<_> = [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Omp]
             .into_iter()
             .filter(|app| skill.apps.is_enabled_for(app))
             .collect();
@@ -1723,7 +1723,7 @@ impl SkillService {
         for app in updated_skill.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::OhMyPi
+                AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Omp
             ) {
                 continue;
             }
@@ -2387,11 +2387,11 @@ impl SkillService {
             // Pi follows directory presence; OMP native imports are claimed after ownership checks.
             let mut apps = selection.apps;
             apps.pi = Self::skill_exists_in_app(&dir_name, &AppType::Pi);
-            apps.ohmypi = Self::skill_exists_in_app(&dir_name, &AppType::OhMyPi) || apps.ohmypi;
+            apps.omp = Self::skill_exists_in_app(&dir_name, &AppType::Omp) || apps.omp;
 
             // An explicitly imported native link must point at the managed copy
             // so subsequent toggles and updates can verify its ownership.
-            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::OhMyPi] {
+            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Omp] {
                 if !apps.is_enabled_for(&app) {
                     continue;
                 }
@@ -2543,7 +2543,7 @@ impl SkillService {
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
         if !matches!(
             app,
-            AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::OhMyPi
+            AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Omp
         ) {
             return Ok(());
         }
@@ -2720,7 +2720,7 @@ impl SkillService {
 
         if matches!(
             app,
-            AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::OhMyPi
+            AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Omp
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
@@ -2920,7 +2920,7 @@ impl SkillService {
         if skill_path.exists() || Self::is_symlink(&skill_path) {
             if matches!(
                 app,
-                AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::OhMyPi
+                AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Omp
             ) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;
@@ -2995,7 +2995,7 @@ impl SkillService {
         if app_dir.exists()
             && !matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::OhMyPi
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Omp
             )
         {
             for entry in fs::read_dir(&app_dir)? {
@@ -5747,23 +5747,23 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn ohmypi_skill_state_preserves_managed_desired_flags() {
+    fn omp_skill_state_preserves_managed_desired_flags() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
-        let _omp_dir = crate::ohmypi_config::test_support::TestAgentDir::new();
+        let _omp_dir = crate::omp_config::test_support::TestAgentDir::new();
 
         let db = std::sync::Arc::new(Database::memory().expect("memory db"));
 
-        // DB 标志保持权威：enabled_ohmypi=true 且无原生目录时仍应视为启用
+        // DB 标志保持权威：enabled_omp=true 且无原生目录时仍应视为启用
         let mut managed = poisoned_skill("owner/repo:skill", "managed-skill");
-        managed.apps.ohmypi = true;
+        managed.apps.omp = true;
         db.save_skill(&managed).expect("save skill");
 
         // Independently authored native directories do not claim the managed switch.
         let native = poisoned_skill("owner/repo:native", "native-skill");
         db.save_skill(&native).expect("save skill");
         write_skill(
-            &SkillService::get_app_skills_dir(&AppType::OhMyPi)
+            &SkillService::get_app_skills_dir(&AppType::Omp)
                 .unwrap()
                 .join("native-skill"),
             "native",
@@ -5780,7 +5780,7 @@ mod tests {
                 .find(|s| s.directory == directory)
                 .expect("skill present")
                 .apps
-                .ohmypi
+                .omp
         };
         assert!(state("managed-skill"), "a DB flag must stay authoritative");
         assert!(
@@ -6604,14 +6604,14 @@ mod tests {
     #[test]
     #[cfg(unix)]
     #[serial_test::serial]
-    fn ohmypi_imported_external_symlink_adopts_only_matching_contents() {
+    fn omp_imported_external_symlink_adopts_only_matching_contents() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _omp = crate::ohmypi_config::test_support::TestAgentDir::new();
+        let _omp = crate::omp_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let external = temp.path().join("external");
         write_skill(&external, "native");
-        let native = SkillService::get_app_skills_dir(&AppType::OhMyPi)
+        let native = SkillService::get_app_skills_dir(&AppType::Omp)
             .unwrap()
             .join("native-skill");
         fs::create_dir_all(native.parent().unwrap()).unwrap();
@@ -6626,10 +6626,10 @@ mod tests {
         .unwrap();
         let ssot = SkillService::get_ssot_dir().unwrap().join("native-skill");
         assert_eq!(fs::read_link(&native).unwrap(), ssot);
-        SkillService::toggle_app(&db, &imported[0].id, &AppType::OhMyPi, false).unwrap();
+        SkillService::toggle_app(&db, &imported[0].id, &AppType::Omp, false).unwrap();
         assert!(!native.exists());
         assert!(external.join("SKILL.md").exists());
-        let conflicting = SkillService::get_app_skills_dir(&AppType::OhMyPi)
+        let conflicting = SkillService::get_app_skills_dir(&AppType::Omp)
             .unwrap()
             .join("different");
         write_skill(&conflicting, "authored");
@@ -6657,26 +6657,26 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn ohmypi_unclaimed_skill_survives_toggle_resync_and_uninstall() {
+    fn omp_unclaimed_skill_survives_toggle_resync_and_uninstall() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _omp = crate::ohmypi_config::test_support::TestAgentDir::new();
+        let _omp = crate::omp_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let skill = poisoned_skill("owner/repo:skill", "same-name");
         db.save_skill(&skill).unwrap();
         let ssot = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
-        let native = SkillService::get_app_skills_dir(&AppType::OhMyPi)
+        let native = SkillService::get_app_skills_dir(&AppType::Omp)
             .unwrap()
             .join(&skill.directory);
         write_skill(&ssot, "managed");
         write_skill(&native, "authored");
         let original = fs::read(native.join("SKILL.md")).unwrap();
-        assert!(!SkillService::get_all_installed(&db).unwrap()[0].apps.ohmypi);
+        assert!(!SkillService::get_all_installed(&db).unwrap()[0].apps.omp);
         for enabled in [true, false] {
-            assert!(SkillService::toggle_app(&db, &skill.id, &AppType::OhMyPi, enabled).is_err());
+            assert!(SkillService::toggle_app(&db, &skill.id, &AppType::Omp, enabled).is_err());
             assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
         }
-        SkillService::sync_to_app(&db, &AppType::OhMyPi).unwrap();
+        SkillService::sync_to_app(&db, &AppType::Omp).unwrap();
         assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
         SkillService::uninstall(&db, &skill.id).unwrap();
         assert!(!ssot.exists());
@@ -6685,23 +6685,23 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn ohmypi_modified_managed_skill_rejects_resync_and_uninstall() {
+    fn omp_modified_managed_skill_rejects_resync_and_uninstall() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _omp = crate::ohmypi_config::test_support::TestAgentDir::new();
+        let _omp = crate::omp_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let mut skill = poisoned_skill("owner/repo:skill", "same-name");
-        skill.apps.ohmypi = true;
+        skill.apps.omp = true;
         db.save_skill(&skill).unwrap();
         let ssot = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
-        let native = SkillService::get_app_skills_dir(&AppType::OhMyPi)
+        let native = SkillService::get_app_skills_dir(&AppType::Omp)
             .unwrap()
             .join(&skill.directory);
         write_skill(&ssot, "managed");
         write_skill(&native, "edited");
         let outcome = SkillService::resync_all_apps(&db)
             .into_iter()
-            .find(|item| item.app == "ohmypi")
+            .find(|item| item.app == "omp")
             .unwrap();
         assert!(!outcome.ok);
         assert!(SkillService::uninstall(&db, &skill.id).is_err());
@@ -6711,16 +6711,10 @@ mod tests {
             .unwrap()
             .contains("name: edited"));
         write_skill(&native, "managed");
-        SkillService::toggle_app(&db, &skill.id, &AppType::OhMyPi, false).unwrap();
+        SkillService::toggle_app(&db, &skill.id, &AppType::Omp, false).unwrap();
         assert!(!native.exists());
-        assert!(
-            !db.get_installed_skill(&skill.id)
-                .unwrap()
-                .unwrap()
-                .apps
-                .ohmypi
-        );
-        SkillService::toggle_app(&db, &skill.id, &AppType::OhMyPi, true).unwrap();
+        assert!(!db.get_installed_skill(&skill.id).unwrap().unwrap().apps.omp);
+        SkillService::toggle_app(&db, &skill.id, &AppType::Omp, true).unwrap();
         assert!(native.exists());
         SkillService::uninstall(&db, &skill.id).unwrap();
         assert!(!native.exists());
@@ -6728,13 +6722,13 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn ohmypi_copy_update_keeps_ownership_after_ssot_replacement() {
+    fn omp_copy_update_keeps_ownership_after_ssot_replacement() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _omp = crate::ohmypi_config::test_support::TestAgentDir::new();
+        let _omp = crate::omp_config::test_support::TestAgentDir::new();
         let ssot = SkillService::get_ssot_dir().unwrap().join("test-skill");
         let source = temp.path().join("download");
-        let native = SkillService::get_app_skills_dir(&AppType::OhMyPi)
+        let native = SkillService::get_app_skills_dir(&AppType::Omp)
             .unwrap()
             .join("test-skill");
         write_skill(&ssot, "old");
@@ -6748,7 +6742,7 @@ mod tests {
             &ssot,
             "test-skill",
             &[(native.clone(), deployment)],
-            &[AppType::OhMyPi],
+            &[AppType::Omp],
             || Err(anyhow!("metadata failure")),
         );
         assert!(result.is_err());
@@ -6764,7 +6758,7 @@ mod tests {
             &ssot,
             "test-skill",
             &[(native.clone(), deployment)],
-            &[AppType::OhMyPi],
+            &[AppType::Omp],
             || Ok(()),
         )
         .unwrap();
@@ -6782,9 +6776,9 @@ mod tests {
     fn importing_a_native_omp_skill_returns_its_derived_active_state() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
-        let _omp_dir = crate::ohmypi_config::test_support::TestAgentDir::new();
+        let _omp_dir = crate::omp_config::test_support::TestAgentDir::new();
         let db = std::sync::Arc::new(Database::memory().expect("memory db"));
-        let omp_skill = SkillService::get_app_skills_dir(&AppType::OhMyPi)
+        let omp_skill = SkillService::get_app_skills_dir(&AppType::Omp)
             .unwrap()
             .join("native-skill");
         write_skill(&omp_skill, "native");
@@ -6796,11 +6790,11 @@ mod tests {
                 apps: SkillApps::default(),
             }],
         )
-        .expect("import native OhMyPi skill");
+        .expect("import native Omp skill");
 
         assert_eq!(imported.len(), 1);
-        assert!(imported[0].apps.ohmypi);
-        assert!(SkillService::get_all_installed(&db).unwrap()[0].apps.ohmypi);
+        assert!(imported[0].apps.omp);
+        assert!(SkillService::get_all_installed(&db).unwrap()[0].apps.omp);
     }
 
     #[test]

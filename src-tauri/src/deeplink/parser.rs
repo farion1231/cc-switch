@@ -94,7 +94,7 @@ fn parse_provider_deeplink(
     // (`deeplink/provider.rs`): its providers are created from the Oh My Pi
     // page, where the models.yml text editor can compose the entry. Accepting
     // the link here would only fail later with a generic "invalid app" error.
-    if matches!(app.as_str(), "ohmypi" | "omp" | "oh-my-pi" | "oh_my_pi") {
+    if matches!(app.as_str(), "omp" | "ohmypi" | "oh-my-pi" | "oh_my_pi") {
         return Err(AppError::InvalidInput(
             "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
         ));
@@ -359,10 +359,10 @@ fn parse_mcp_deeplink(
                 | "pi"
                 | "mcode"
                 | "kimi"
-                | "ohmypi"
+                | "omp"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'hermes', 'pi', 'kimi', 'mcode', or 'ohmypi', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'hermes', 'pi', 'kimi', 'mcode', or 'omp', got '{trimmed}'"
             )));
         }
     }

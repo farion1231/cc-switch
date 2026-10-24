@@ -221,20 +221,19 @@ fn test_parse_rejects_config_url_up_front() {
 
 /// 下游 parse_mcp_apps 与 McpService 都支持 Pi / MiniMax Code / Oh My Pi，解析层不能先把它们拦掉
 #[test]
-fn test_parse_mcp_deeplink_accepts_pi_mcode_and_ohmypi() {
+fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
     let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
-    let url =
-        format!("ccswitch://v1/import?resource=mcp&apps=claude,pi,mcode,ohmypi&config={config}");
+    let url = format!("ccswitch://v1/import?resource=mcp&apps=claude,pi,mcode,omp&config={config}");
 
     let request = parse_deeplink_url(&url).expect("pi, mcode and ohmpi are valid MCP targets");
     let apps = parse_mcp_apps(request.apps.as_deref().unwrap()).unwrap();
-    assert!(apps.claude && apps.pi && apps.mcode && apps.ohmypi);
+    assert!(apps.claude && apps.pi && apps.mcode && apps.omp);
 }
 
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
-fn test_parse_provider_deeplink_refuses_ohmypi_with_guidance() {
-    for app in ["ohmypi", "omp", "oh-my-pi", "oh_my_pi"] {
+fn test_parse_provider_deeplink_refuses_omp_with_guidance() {
+    for app in ["omp", "omp", "oh-my-pi", "oh_my_pi"] {
         let url =
             format!("ccswitch://v1/import?resource=provider&app={app}&name=Test&endpoint=https%3A%2F%2Fapi.example.com");
         let err = parse_deeplink_url(&url).unwrap_err().to_string();
@@ -256,8 +255,8 @@ fn test_parse_prompt_deeplink_accepts_mcode() {
 /// Oh My Pi has no prompt panel: the link must be refused instead of writing
 /// `~/.omp/agent/AGENTS.md` with nothing in the UI showing what landed there.
 #[test]
-fn test_parse_prompt_deeplink_refuses_ohmypi() {
-    let url = "ccswitch://v1/import?resource=prompt&app=ohmypi&name=Rules&content=IyBoaQ%3D%3D";
+fn test_parse_prompt_deeplink_refuses_omp() {
+    let url = "ccswitch://v1/import?resource=prompt&app=omp&name=Rules&content=IyBoaQ%3D%3D";
     let err = parse_deeplink_url(url).unwrap_err().to_string();
     assert!(err.contains("Invalid app type"), "{err}");
 }

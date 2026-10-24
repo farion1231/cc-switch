@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { OhMyPiProviderForm } from "@/components/providers/forms/OhMyPiProviderForm";
+import { OmpProviderForm } from "@/components/providers/forms/OmpProviderForm";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -34,8 +34,8 @@ vi.mock("@/components/JsonEditor", () => ({
 function mount(settingsConfig: Record<string, unknown>, id = "custom") {
   const onSubmit = vi.fn();
   const view = render(
-    <OhMyPiProviderForm
-      appId="ohmypi"
+    <OmpProviderForm
+      appId="omp"
       providerId={id}
       initialData={{ name: "Review", settingsConfig }}
       submitLabel="Save probe"
@@ -50,7 +50,7 @@ async function save(onSubmit: ReturnType<typeof vi.fn>) {
   await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
   return JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
 }
-describe("OhMyPi native edits", () => {
+describe("Omp native edits", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
   });
@@ -69,7 +69,7 @@ describe("OhMyPi native edits", () => {
       api: "openai-completions",
       auth: "none",
     });
-    fireEvent.change(container.querySelector("#ohmypi-settings-config")!, {
+    fireEvent.change(container.querySelector("#omp-settings-config")!, {
       target: { value: "" },
     });
     const config = await save(onSubmit);
@@ -82,16 +82,16 @@ describe("OhMyPi native edits", () => {
       apiKey: "x",
       models: [{ id: "m" }],
     });
-    fireEvent.change(container.querySelector('[id^="ohmypi-model-id-"]')!, {
+    fireEvent.change(container.querySelector('[id^="omp-model-id-"]')!, {
       target: { value: "" },
     });
     fireEvent.keyDown(
-      container.querySelector("#ohmypi-models-mode") as HTMLElement,
+      container.querySelector("#omp-models-mode") as HTMLElement,
       { key: "ArrowDown" },
     );
     fireEvent.click(await screen.findByRole("option", { name: "不配置模型" }));
     const editor = container.querySelector(
-      "#ohmypi-settings-config",
+      "#omp-settings-config",
     ) as HTMLTextAreaElement;
     await waitFor(() => expect(editor.value).not.toContain("models:"));
     const config = await save(onSubmit);
@@ -100,15 +100,14 @@ describe("OhMyPi native edits", () => {
   it("shows raw passthrough text with comments and saves it back into meta", async () => {
     const onSubmit = vi.fn();
     const { container } = render(
-      <OhMyPiProviderForm
-        appId="ohmypi"
+      <OmpProviderForm
+        appId="omp"
         providerId="custom"
         initialData={{
           name: "Review",
           settingsConfig: { baseUrl: "https://local.example.test" },
           meta: {
-            ohmypiPassthroughYaml:
-              "# keep me\nauth: none\n",
+            ompPassthroughYaml: "# keep me\nauth: none\n",
           },
         }}
         submitLabel="Save probe"
@@ -117,7 +116,7 @@ describe("OhMyPi native edits", () => {
       />,
     );
     const editor = container.querySelector(
-      "#ohmypi-settings-config",
+      "#omp-settings-config",
     )! as HTMLTextAreaElement;
     expect(editor.value).toContain("# keep me");
 
@@ -127,7 +126,7 @@ describe("OhMyPi native edits", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save probe" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     const payload = onSubmit.mock.calls[0][0];
-    expect(payload.meta?.ohmypiPassthroughYaml).toContain("# edited comment");
+    expect(payload.meta?.ompPassthroughYaml).toContain("# edited comment");
     const config = JSON.parse(payload.settingsConfig);
     expect(config.auth).toBe("none");
   });
@@ -140,13 +139,12 @@ describe("OhMyPi native edits", () => {
       auth: "none",
     });
     const editor = container.querySelector(
-      "#ohmypi-settings-config",
+      "#omp-settings-config",
     )! as HTMLTextAreaElement;
     expect(editor.value).toContain("baseUrl: http://127.0.0.1:8080");
-    fireEvent.change(
-      container.querySelector("#ohmypi-provider-base-url")!,
-      { target: { value: "http://127.0.0.1:8081" } },
-    );
+    fireEvent.change(container.querySelector("#omp-provider-base-url")!, {
+      target: { value: "http://127.0.0.1:8081" },
+    });
     await waitFor(() =>
       expect(editor.value).toContain("baseUrl: http://127.0.0.1:8081"),
     );
@@ -163,11 +161,12 @@ describe("OhMyPi native edits", () => {
       discovery: { type: "llama.cpp" },
     });
     const editor = container.querySelector(
-      "#ohmypi-settings-config",
+      "#omp-settings-config",
     )! as HTMLTextAreaElement;
     fireEvent.change(editor, {
       target: {
-        value: "baseUrl: http://127.0.0.1:8081\nauth: none\ndiscovery:\n  type: llama.cpp",
+        value:
+          "baseUrl: http://127.0.0.1:8081\nauth: none\ndiscovery:\n  type: llama.cpp",
       },
     });
     const config = await save(onSubmit);
@@ -183,54 +182,50 @@ describe("OhMyPi native edits", () => {
       models: [{ id: "m1", name: "Model One" }],
     });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "展开或收起模型详情" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "展开或收起模型详情" }));
     // The YAML mirror emits an echo once the expanded inputs render.
     const editor = container.querySelector(
-      "#ohmypi-settings-config",
+      "#omp-settings-config",
     ) as HTMLTextAreaElement;
     const contextWindow = container.querySelector(
-      '[id^="ohmypi-model-context-window-"]',
+      '[id^="omp-model-context-window-"]',
     ) as HTMLInputElement;
     expect(contextWindow).toBeTruthy();
 
     // Toggle "支持扩展思考" inside the expanded area.
-    fireEvent.click(
-      container.querySelector('[id^="ohmypi-model-reasoning-"]')!,
-    );
+    fireEvent.click(container.querySelector('[id^="omp-model-reasoning-"]')!);
     expect(
-      container.querySelector('[id^="ohmypi-model-context-window-"]'),
+      container.querySelector('[id^="omp-model-context-window-"]'),
     ).toBeTruthy();
     await waitFor(() => expect(editor.value).toContain("reasoning: true"));
 
     // Toggle "支持图片输入".
-    fireEvent.click(
-      container.querySelector('[id^="ohmypi-model-image-input-"]')!,
-    );
+    fireEvent.click(container.querySelector('[id^="omp-model-image-input-"]')!);
     await waitFor(() => expect(editor.value).toContain("image"));
     expect(
-      container.querySelector('[id^="ohmypi-model-context-window-"]'),
+      container.querySelector('[id^="omp-model-context-window-"]'),
     ).toBeTruthy();
 
     // Type into 上下文长度 / 最大输出 Token 数.
     fireEvent.change(contextWindow, { target: { value: "200000" } });
-    await waitFor(() => expect(editor.value).toContain("contextWindow: 200000"));
+    await waitFor(() =>
+      expect(editor.value).toContain("contextWindow: 200000"),
+    );
     fireEvent.change(
-      container.querySelector('[id^="ohmypi-model-max-tokens-"]')!,
+      container.querySelector('[id^="omp-model-max-tokens-"]')!,
       { target: { value: "16384" } },
     );
     await waitFor(() => expect(editor.value).toContain("maxTokens: 16384"));
     expect(
-      container.querySelector('[id^="ohmypi-model-context-window-"]'),
+      container.querySelector('[id^="omp-model-context-window-"]'),
     ).toBeTruthy();
   });
 
   it("rejects a created model without contextWindow or maxTokens", async () => {
     const onSubmit = vi.fn();
     const { container } = render(
-      <OhMyPiProviderForm
-        appId="ohmypi"
+      <OmpProviderForm
+        appId="omp"
         providerId="custom"
         submitLabel="Save probe"
         onSubmit={onSubmit}
@@ -242,38 +237,36 @@ describe("OhMyPi native edits", () => {
       screen.getByRole("button", { name: "providerPreset.custom" }),
     );
 
-    fireEvent.change(container.querySelector("#ohmypi-provider-key")!, {
+    fireEvent.change(container.querySelector("#omp-provider-key")!, {
       target: { value: "llama-cpp" },
     });
     fireEvent.change(screen.getByLabelText("provider.name"), {
       target: { value: "llama.cpp" },
     });
-    await user.click(
-      screen.getByRole("button", { name: "ohmypi.form.addModel" }),
-    );
-    fireEvent.change(container.querySelector('[id^="ohmypi-model-id-"]')!, {
+    await user.click(screen.getByRole("button", { name: "omp.form.addModel" }));
+    fireEvent.change(container.querySelector('[id^="omp-model-id-"]')!, {
       target: { value: "m1" },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Save probe" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("ohmypi.form.positiveNumberRequired");
+    expect(alert).toHaveTextContent("omp.form.positiveNumberRequired");
     expect(onSubmit).not.toHaveBeenCalled();
     // The invalid model row re-expands and focuses the missing field.
     await waitFor(() =>
       expect(
-        container.querySelector('[id^="ohmypi-model-context-window-"]'),
+        container.querySelector('[id^="omp-model-context-window-"]'),
       ).toHaveFocus(),
     );
 
     fireEvent.change(
-      container.querySelector('[id^="ohmypi-model-context-window-"]')!,
+      container.querySelector('[id^="omp-model-context-window-"]')!,
       { target: { value: "128000" } },
     );
     fireEvent.click(screen.getByRole("button", { name: "Save probe" }));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "ohmypi.form.positiveNumberRequired",
+        "omp.form.positiveNumberRequired",
       ),
     );
     expect(onSubmit).not.toHaveBeenCalled();
@@ -318,7 +311,7 @@ describe("OhMyPi native edits", () => {
     });
 
     fireEvent.keyDown(
-      container.querySelector("#ohmypi-models-mode") as HTMLElement,
+      container.querySelector("#omp-models-mode") as HTMLElement,
       { key: "ArrowDown" },
     );
     fireEvent.click(
@@ -326,7 +319,7 @@ describe("OhMyPi native edits", () => {
     );
     // The discovery-type selector appears and defaults to openai-models-list.
     await waitFor(() =>
-      expect(container.querySelector("#ohmypi-discovery-type")).toBeTruthy(),
+      expect(container.querySelector("#omp-discovery-type")).toBeTruthy(),
     );
     const config = await save(onSubmit);
     expect(config.discovery).toEqual({ type: "openai-models-list" });
@@ -338,7 +331,11 @@ describe("OhMyPi native edits", () => {
       name: "llama.cpp",
       baseUrl: "http://127.0.0.1:8080",
       api: "openai-completions",
-      discovery: { type: "openai-models-list", timeoutMs: 5000, injectV1: true },
+      discovery: {
+        type: "openai-models-list",
+        timeoutMs: 5000,
+        injectV1: true,
+      },
     });
 
     // A no-op save must not drop `timeoutMs` / `injectV1`: the form owns
@@ -362,7 +359,7 @@ describe("OhMyPi native edits", () => {
     // The mode select reflects the imported discovery; switching to none
     // removes the discovery key entirely.
     fireEvent.keyDown(
-      container.querySelector("#ohmypi-models-mode") as HTMLElement,
+      container.querySelector("#omp-models-mode") as HTMLElement,
       { key: "ArrowDown" },
     );
     fireEvent.click(await screen.findByRole("option", { name: "不配置模型" }));

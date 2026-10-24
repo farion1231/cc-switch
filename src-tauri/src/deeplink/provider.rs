@@ -361,7 +361,7 @@ pub(crate) fn build_provider_from_request(
             }
             settings
         }
-        AppType::OhMyPi => {
+        AppType::Omp => {
             return Err(AppError::InvalidInput(
                 "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
             ));

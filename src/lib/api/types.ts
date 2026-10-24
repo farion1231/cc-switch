@@ -12,4 +12,4 @@ export type AppId =
   | "kimi"
   | "mcode"
   | "agy"
-  | "ohmypi";
+  | "omp";

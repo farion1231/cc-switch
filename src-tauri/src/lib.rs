@@ -32,7 +32,7 @@ mod mcode_config;
 mod mcp;
 pub mod mode;
 mod model_capabilities;
-mod ohmypi_config;
+mod omp_config;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -972,7 +972,7 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
-            match crate::services::provider::import_ohmypi_providers_from_live(&app_state) {
+            match crate::services::provider::import_omp_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Synced {count} Oh My Pi provider(s) from native config");
                 }
@@ -1627,8 +1627,8 @@ pub fn run() {
             commands::update_pi_provider_usage_script,
             commands::get_pi_session_discovery,
             // Oh My Pi native provider and session views
-            commands::get_ohmypi_current_state,
-            commands::update_ohmypi_provider_usage_script,
+            commands::get_omp_current_state,
+            commands::update_omp_provider_usage_script,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,

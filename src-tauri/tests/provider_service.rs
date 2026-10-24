@@ -171,7 +171,7 @@ command = "say"
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1584,7 +1584,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1650,7 +1650,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 mcode: false,
                 kimi: false,
                 pi: false,
-                ohmypi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -3702,7 +3702,7 @@ fn codex_editor_official_auth_shows_disk_login_and_keeps_row_auth() {
 }
 
 #[test]
-fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
+fn omp_edit_save_preserves_comments_without_false_conflict() {
     use cc_switch_lib::update_settings;
     use std::fs;
 
@@ -3718,19 +3718,19 @@ fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
     )
     .unwrap();
     update_settings(cc_switch_lib::AppSettings {
-        ohmypi_config_dir: Some(agent_dir.to_string_lossy().into_owned()),
+        omp_config_dir: Some(agent_dir.to_string_lossy().into_owned()),
         ..Default::default()
     })
     .unwrap();
     let state = create_test_state().expect("create test state");
 
     // list() syncs the DB row from models.yml and captures the raw entry.
-    let providers = ProviderService::list(&state, AppType::OhMyPi).expect("list");
+    let providers = ProviderService::list(&state, AppType::Omp).expect("list");
     let original = providers.get("duolalab").expect("provider").clone();
     assert!(original
         .meta
         .as_ref()
-        .and_then(|meta| meta.ohmypi_passthrough_yaml.as_deref())
+        .and_then(|meta| meta.omp_passthrough_yaml.as_deref())
         .expect("raw entry captured")
         .contains("# proxy endpoint"));
 
@@ -3739,7 +3739,7 @@ fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
     let raw = original
         .meta
         .as_ref()
-        .and_then(|meta| meta.ohmypi_passthrough_yaml.clone())
+        .and_then(|meta| meta.omp_passthrough_yaml.clone())
         .unwrap();
     let edited_raw = raw.replace("# proxy endpoint", "# edited comment");
     let mut edited = original.clone();
@@ -3747,9 +3747,9 @@ fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
     edited
         .meta
         .get_or_insert_with(ProviderMeta::default)
-        .ohmypi_passthrough_yaml = Some(edited_raw);
+        .omp_passthrough_yaml = Some(edited_raw);
 
-    ProviderService::update(&state, AppType::OhMyPi, Some("duolalab"), edited)
+    ProviderService::update(&state, AppType::Omp, Some("duolalab"), edited)
         .expect("update without false conflict");
 
     let after = fs::read_to_string(&models_path).unwrap();
@@ -3759,7 +3759,7 @@ fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
     assert!(after.contains("name: Duolalab"), "{after}");
 
     // External edit after the DB sync still conflicts.
-    let synced = ProviderService::list(&state, AppType::OhMyPi)
+    let synced = ProviderService::list(&state, AppType::Omp)
         .expect("list again")
         .get("duolalab")
         .cloned()
@@ -3767,7 +3767,7 @@ fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
     fs::write(&models_path, after.replace("sk-live", "sk-external")).unwrap();
     let mut stale = synced.clone();
     stale.settings_config["name"] = json!("Stale");
-    let err = ProviderService::update(&state, AppType::OhMyPi, Some("duolalab"), stale)
+    let err = ProviderService::update(&state, AppType::Omp, Some("duolalab"), stale)
         .expect_err("external edit must conflict");
     assert!(
         err.to_string().contains("changed outside CC Switch"),

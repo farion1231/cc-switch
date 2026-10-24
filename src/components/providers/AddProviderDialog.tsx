@@ -289,7 +289,7 @@ export function AddProviderDialog({
           appId === "pi" ||
           appId === "mcode" ||
           appId === "kimi" ||
-          appId === "ohmypi") &&
+          appId === "omp") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -555,7 +555,7 @@ export function AddProviderDialog({
       contentClassName={
         step === "pick"
           ? "flex h-full flex-col space-y-0 p-0"
-          : appId === "pi" || appId === "ohmypi"
+          : appId === "pi" || appId === "omp"
             ? "pb-0 pt-4"
             : "pt-4"
       }

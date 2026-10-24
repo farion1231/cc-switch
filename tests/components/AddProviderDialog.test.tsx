@@ -550,7 +550,7 @@ context_window = 500000
       <AddProviderDialog
         open
         onOpenChange={vi.fn()}
-        appId="ohmypi"
+        appId="omp"
         onSubmit={vi.fn()}
       />,
     );
@@ -569,7 +569,7 @@ context_window = 500000
       <AddProviderDialog
         open
         onOpenChange={vi.fn()}
-        appId="ohmypi"
+        appId="omp"
         onSubmit={vi.fn()}
       />,
     );

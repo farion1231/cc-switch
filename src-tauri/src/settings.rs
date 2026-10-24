@@ -52,7 +52,7 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub pi: bool,
     #[serde(default)]
-    pub ohmypi: bool,
+    pub omp: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
     #[serde(default = "default_true")]
@@ -76,7 +76,7 @@ impl Default for VisibleApps {
             mcode: true,
             kimi: true,
             agy: true,
-            ohmypi: false, // 默认不显示，需用户手动启用
+            omp: true,
         }
     }
 }
@@ -97,7 +97,7 @@ impl VisibleApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Agy => self.agy,
-            AppType::OhMyPi => self.ohmypi,
+            AppType::Omp => self.omp,
         }
     }
 }
@@ -543,7 +543,7 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ohmypi_config_dir: Option<String>,
+    pub omp_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -679,7 +679,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
-            ohmypi_config_dir: None,
+            omp_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -775,8 +775,8 @@ impl AppSettings {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
-        self.ohmypi_config_dir = self
-            .ohmypi_config_dir
+        self.omp_config_dir = self
+            .omp_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1272,10 +1272,10 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .as_ref()
         .map(|path| resolve_override_path(path))
 }
-pub fn get_ohmypi_override_dir() -> Option<PathBuf> {
+pub fn get_omp_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
-        .ohmypi_config_dir
+        .omp_config_dir
         .as_ref()
         .map(|path| resolve_override_path(path))
 }
@@ -1362,7 +1362,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::OhMyPi => None,
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => None,
     }
 }
 
@@ -1382,7 +1382,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::OhMyPi => {}
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => {}
     })
 }
 

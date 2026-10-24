@@ -28,14 +28,14 @@ import type { ProviderCategory } from "@/types";
  * agent mark) — matching the other agent pages.
  */
 
-export type OhMyPiApiFormat =
+export type OmpApiFormat =
   | "openai-completions"
   | "openai-responses"
   | "anthropic-messages"
   | "google-generative-ai"
   | "bedrock-converse-stream";
 
-export interface OhMyPiPresetModel {
+export interface OmpPresetModel {
   id: string;
   name: string;
   reasoning: boolean;
@@ -46,7 +46,7 @@ export interface OhMyPiPresetModel {
   headers?: Record<string, string>;
 }
 
-export interface OhMyPiProviderPreset extends PresetFamilyFields {
+export interface OmpProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string;
   providerKey: string;
@@ -55,11 +55,11 @@ export interface OhMyPiProviderPreset extends PresetFamilyFields {
   settingsConfig: {
     name: string;
     baseUrl: string;
-    api: OhMyPiApiFormat;
+    api: OmpApiFormat;
     apiKey: string;
     headers?: Record<string, string>;
     compat?: Record<string, unknown>;
-    models: OhMyPiPresetModel[];
+    models: OmpPresetModel[];
   };
   category?: ProviderCategory;
   isPartner?: boolean;
@@ -77,7 +77,7 @@ const OMP_INCOMPATIBLE_COMPAT_KEYS: Record<string, true> = {
   deferredToolsMode: true,
 };
 
-interface OhMyPiModelSeed {
+interface OmpModelSeed {
   id: string;
   name: string;
   reasoning: boolean;
@@ -88,7 +88,7 @@ interface OhMyPiModelSeed {
   headers?: Record<string, string>;
 }
 
-interface OhMyPiPresetSeed extends PresetFamilyFields {
+interface OmpPresetSeed extends PresetFamilyFields {
   name: string;
   nameKey?: string;
   providerKey: string;
@@ -97,11 +97,11 @@ interface OhMyPiPresetSeed extends PresetFamilyFields {
   settingsConfig: {
     name: string;
     baseUrl: string;
-    api: OhMyPiApiFormat;
+    api: OmpApiFormat;
     apiKey: string;
     headers?: Record<string, string>;
     compat?: Record<string, unknown>;
-    models: OhMyPiModelSeed[];
+    models: OmpModelSeed[];
   };
   category?: ProviderCategory;
   isPartner?: boolean;
@@ -113,9 +113,7 @@ interface OhMyPiPresetSeed extends PresetFamilyFields {
 
 // Pi's DeepSeek dialect and omp's zai dialect both send thinking.type.
 // Omp uses explicit reasoning replay controls instead of Pi's assistant flag.
-function toOhMyPiCompat(
-  compat: Record<string, unknown>,
-): Record<string, unknown> {
+function toOmpCompat(compat: Record<string, unknown>): Record<string, unknown> {
   const result = Object.fromEntries(
     Object.entries(compat).filter(
       ([key]) => !(key in OMP_INCOMPATIBLE_COMPAT_KEYS),
@@ -131,8 +129,8 @@ function toOhMyPiCompat(
   return result;
 }
 
-function toOhMyPiModel(model: Record<string, unknown>): OhMyPiModelSeed {
-  const seed: OhMyPiModelSeed = {
+function toOmpModel(model: Record<string, unknown>): OmpModelSeed {
+  const seed: OmpModelSeed = {
     id: String(model.id),
     name: String(model.name),
     reasoning: model.reasoning === true,
@@ -147,14 +145,14 @@ function toOhMyPiModel(model: Record<string, unknown>): OhMyPiModelSeed {
     seed.headers = model.headers as Record<string, string>;
   }
   const compat = model.compat as Record<string, unknown> | undefined;
-  const stripped = toOhMyPiCompat(compat ?? {});
+  const stripped = toOmpCompat(compat ?? {});
   if (Object.keys(stripped).length > 0) {
     seed.compat = stripped;
   }
   return seed;
 }
 
-function toOhMyPiPreset(preset: PiProviderPreset): OhMyPiPresetSeed {
+function toOmpPreset(preset: PiProviderPreset): OmpPresetSeed {
   const config = preset.settingsConfig;
   return {
     ...preset,
@@ -166,13 +164,13 @@ function toOhMyPiPreset(preset: PiProviderPreset): OhMyPiPresetSeed {
       ...(config.headers !== undefined ? { headers: config.headers } : {}),
       ...(config.compat !== undefined
         ? {
-            compat: toOhMyPiCompat(config.compat),
+            compat: toOmpCompat(config.compat),
           }
         : {}),
       models: config.models
         .filter((model) => model.id !== undefined)
         .map((model) =>
-          toOhMyPiModel(
+          toOmpModel(
             model as unknown as Record<string, unknown> & {
               [PI_MODEL_CATALOG_REFERENCE]?: unknown;
             },
@@ -183,7 +181,7 @@ function toOhMyPiPreset(preset: PiProviderPreset): OhMyPiPresetSeed {
 }
 
 /** Oh My Pi presets with no Pi counterpart, kept omp-native. */
-const ohmypiOnlyPresetSeeds: OhMyPiPresetSeed[] = [
+const ompOnlyPresetSeeds: OmpPresetSeed[] = [
   {
     name: "ETok.ai",
     providerKey: "cc-switch-etok-ai",
@@ -242,7 +240,7 @@ const ohmypiOnlyPresetSeeds: OhMyPiPresetSeed[] = [
   },
 ];
 
-export const ohmypiProviderPresets: OhMyPiProviderPreset[] = [
-  ...piProviderPresets.map(toOhMyPiPreset),
-  ...ohmypiOnlyPresetSeeds,
+export const ompProviderPresets: OmpProviderPreset[] = [
+  ...piProviderPresets.map(toOmpPreset),
+  ...ompOnlyPresetSeeds,
 ];

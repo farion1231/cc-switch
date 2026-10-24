@@ -6,11 +6,11 @@ use crate::store::AppState;
 use indexmap::IndexMap;
 use serde_json::Value;
 
-const OHMYPI_APP: &str = "ohmypi";
+const OMP_APP: &str = "omp";
 
 pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(OHMYPI_APP));
-    match crate::ohmypi_config::read_ohmypi_native_providers() {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(OMP_APP));
+    match crate::omp_config::read_omp_native_providers() {
         Ok(native) => {
             if let Err(error) = sync_native_locked(state, &native) {
                 log::warn!("Failed to sync Oh My Pi providers from native config: {error}");
@@ -20,19 +20,19 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
             log::warn!("Failed to read Oh My Pi providers; showing saved catalog: {error}");
         }
     }
-    let mut providers = state.db.get_all_providers(OHMYPI_APP)?;
+    let mut providers = state.db.get_all_providers(OMP_APP)?;
     // Show the raw models.yml entry (comments included) in the YAML editor.
     // models.yml is the source of truth: re-read on every list so external
     // edits to an entry (comments, formatting, unmanaged fields) reach the
     // editor; the stored snapshot is only a fallback when the file or the
     // entry cannot be read.
     let ids: Vec<String> = providers.keys().cloned().collect();
-    match crate::ohmypi_config::read_ohmypi_provider_entries_raw(&ids) {
+    match crate::omp_config::read_omp_provider_entries_raw(&ids) {
         Ok(entries) => {
             for (id, provider) in providers.iter_mut() {
                 if let Some(text) = entries.get(id) {
                     let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
-                    meta.ohmypi_passthrough_yaml = Some(text.clone());
+                    meta.omp_passthrough_yaml = Some(text.clone());
                 }
                 // Entry absent from models.yml (not yet written to live):
                 // keep the stored snapshot so pending editor text survives.
@@ -46,8 +46,8 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
 }
 
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(OHMYPI_APP));
-    let native = crate::ohmypi_config::read_ohmypi_native_providers()?;
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(OMP_APP));
+    let native = crate::omp_config::read_omp_native_providers()?;
     sync_native_locked(state, &native)
 }
 
@@ -56,10 +56,10 @@ pub(super) fn add(
     mut provider: Provider,
     add_to_live: bool,
 ) -> Result<bool, AppError> {
-    let app_type = AppType::OhMyPi;
+    let app_type = AppType::Omp;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    strip_unsupported_ohmypi_metadata(&mut provider);
+    strip_unsupported_omp_metadata(&mut provider);
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
@@ -74,7 +74,7 @@ pub(super) fn add(
         )));
     }
 
-    if !add_to_live && crate::ohmypi_config::ohmypi_provider_exists(&provider.id)? {
+    if !add_to_live && crate::omp_config::omp_provider_exists(&provider.id)? {
         return Err(AppError::InvalidInput(format!(
             "Oh My Pi provider key '{}' already exists in models.yml",
             provider.id
@@ -84,9 +84,9 @@ pub(super) fn add(
     let passthrough_yaml = provider
         .meta
         .as_ref()
-        .and_then(|meta| meta.ohmypi_passthrough_yaml.clone());
+        .and_then(|meta| meta.omp_passthrough_yaml.clone());
     let native_inserted = if add_to_live {
-        crate::ohmypi_config::write_ohmypi_provider_entry(
+        crate::omp_config::write_omp_provider_entry(
             &provider.id,
             &provider.settings_config,
             passthrough_yaml.as_deref(),
@@ -97,7 +97,7 @@ pub(super) fn add(
 
     if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
         if native_inserted {
-            if let Err(rollback) = crate::ohmypi_config::remove_ohmypi_provider_if_matches(
+            if let Err(rollback) = crate::omp_config::remove_omp_provider_if_matches(
                 &provider.id,
                 &provider.settings_config,
             ) {
@@ -116,7 +116,7 @@ pub(super) fn update_usage_script(
     id: &str,
     script: UsageScript,
 ) -> Result<bool, AppError> {
-    let app_type = AppType::OhMyPi;
+    let app_type = AppType::Omp;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     super::validate_usage_script(&script)?;
@@ -129,7 +129,7 @@ pub(super) fn update_usage_script(
         .meta
         .get_or_insert_with(ProviderMeta::default)
         .usage_script = Some(script);
-    strip_unsupported_ohmypi_metadata(&mut provider);
+    strip_unsupported_omp_metadata(&mut provider);
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
     state.db.save_provider(app_type.as_str(), &provider)?;
     Ok(true)
@@ -140,7 +140,7 @@ pub(super) fn update(
     original_id: Option<&str>,
     mut provider: Provider,
 ) -> Result<bool, AppError> {
-    let app_type = AppType::OhMyPi;
+    let app_type = AppType::Omp;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     let original_id = original_id.unwrap_or(&provider.id).to_string();
@@ -156,17 +156,17 @@ pub(super) fn update(
         .ok_or_else(|| {
             AppError::InvalidInput(format!("Oh My Pi provider '{original_id}' not found"))
         })?;
-    strip_unsupported_ohmypi_metadata(&mut provider);
+    strip_unsupported_omp_metadata(&mut provider);
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
     let passthrough_yaml = provider
         .meta
         .as_ref()
-        .and_then(|meta| meta.ohmypi_passthrough_yaml.clone());
+        .and_then(|meta| meta.omp_passthrough_yaml.clone());
     // 冲突检查的底是数据库那一行（list() 时与 models.yml 同步过），不是编辑器重组的
     // 新配置：表单控件对字段顺序/表示的归一化不应被当成外部修改。
-    let previous_native = crate::ohmypi_config::replace_ohmypi_provider_if_present(
+    let previous_native = crate::omp_config::replace_omp_provider_if_present(
         &original_id,
         &existing.settings_config,
         &provider.settings_config,
@@ -174,7 +174,7 @@ pub(super) fn update(
     )?;
     if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
         if let Some(previous_native) = previous_native.as_ref() {
-            if let Err(rollback) = crate::ohmypi_config::replace_ohmypi_provider(
+            if let Err(rollback) = crate::omp_config::replace_omp_provider(
                 &original_id,
                 &provider.settings_config,
                 previous_native,
@@ -190,19 +190,17 @@ pub(super) fn update(
 }
 
 pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
-    let app_type = AppType::OhMyPi;
+    let app_type = AppType::Omp;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     let Some(_) = state.db.get_provider_by_id(id, app_type.as_str())? else {
         return Ok(());
     };
-    let removed = crate::ohmypi_config::remove_ohmypi_provider(id)?;
+    let removed = crate::omp_config::remove_omp_provider(id)?;
 
     if let Err(error) = state.db.delete_provider(app_type.as_str(), id) {
         if let Some(removed) = removed.as_ref() {
-            if let Err(rollback) =
-                crate::ohmypi_config::restore_ohmypi_provider_if_missing(id, removed)
-            {
+            if let Err(rollback) = crate::omp_config::restore_omp_provider_if_missing(id, removed) {
                 return Err(AppError::Config(format!(
                     "failed to delete Oh My Pi provider: {error}; native rollback failed: {rollback}"
                 )));
@@ -214,22 +212,20 @@ pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
 }
 
 pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
-    let app_type = AppType::OhMyPi;
+    let app_type = AppType::Omp;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     let provider = state
         .db
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Oh My Pi provider '{id}' not found")))?;
-    let Some(removed) = crate::ohmypi_config::remove_ohmypi_provider(id)? else {
+    let Some(removed) = crate::omp_config::remove_omp_provider(id)? else {
         return Ok(());
     };
     let mut synced = provider;
     merge_native_config(&mut synced, removed.clone());
     if let Err(error) = state.db.save_provider(app_type.as_str(), &synced) {
-        if let Err(rollback) =
-            crate::ohmypi_config::restore_ohmypi_provider_if_missing(id, &removed)
-        {
+        if let Err(rollback) = crate::omp_config::restore_omp_provider_if_missing(id, &removed) {
             return Err(AppError::Config(format!(
                 "failed to preserve Oh My Pi provider before removal: {error}; native rollback failed: {rollback}"
             )));
@@ -240,7 +236,7 @@ pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
 }
 
 pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppError> {
-    let app_type = AppType::OhMyPi;
+    let app_type = AppType::Omp;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     let provider = state
@@ -248,23 +244,23 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Oh My Pi provider '{id}' not found")))?;
 
-    if let Some(native) = crate::ohmypi_config::read_ohmypi_native_provider(id)? {
+    if let Some(native) = crate::omp_config::read_omp_native_provider(id)? {
         let mut synced = provider;
         merge_native_config(&mut synced, native);
         // models.yml 是真相源：切换后刷新 passthrough 快照，编辑器读到的是
         // 当前文件内容，不会用旧 meta 文本把外部修改盖回去。
-        if let Ok(Some(text)) = crate::ohmypi_config::read_ohmypi_provider_entry_raw(id) {
+        if let Ok(Some(text)) = crate::omp_config::read_omp_provider_entry_raw(id) {
             synced
                 .meta
                 .get_or_insert_with(ProviderMeta::default)
-                .ohmypi_passthrough_yaml = Some(text);
+                .omp_passthrough_yaml = Some(text);
         }
         state.db.save_provider(app_type.as_str(), &synced)?;
         return Ok(SwitchResult::default());
     }
 
     ProviderService::validate_provider_settings(&app_type, &provider)?;
-    crate::ohmypi_config::insert_ohmypi_provider(id, &provider.settings_config)?;
+    crate::omp_config::insert_omp_provider(id, &provider.settings_config)?;
     // D3: enable = add only. `modelRoles.default` is left unchanged; the
     // read-only state service still shows the active provider, and a separate
     // "set as default" action is future frontend work.
@@ -275,7 +271,7 @@ fn sync_native_locked(
     state: &AppState,
     native: &IndexMap<String, Value>,
 ) -> Result<usize, AppError> {
-    let saved = state.db.get_all_providers(OHMYPI_APP)?;
+    let saved = state.db.get_all_providers(OMP_APP)?;
     let mut changed = 0;
 
     for (id, config) in native {
@@ -293,7 +289,7 @@ fn sync_native_locked(
             continue;
         }
 
-        state.db.save_provider(OHMYPI_APP, &provider)?;
+        state.db.save_provider(OMP_APP, &provider)?;
         changed += 1;
     }
 
@@ -314,7 +310,7 @@ fn native_provider_name(config: &Value) -> Option<&str> {
         .filter(|name| !name.trim().is_empty())
 }
 
-fn strip_unsupported_ohmypi_metadata(provider: &mut Provider) {
+fn strip_unsupported_omp_metadata(provider: &mut Provider) {
     provider.in_failover_queue = false;
     let Some(meta) = provider.meta.take() else {
         return;
@@ -323,7 +319,7 @@ fn strip_unsupported_ohmypi_metadata(provider: &mut Provider) {
         usage_script: meta.usage_script,
         is_partner: meta.is_partner,
         partner_promotion_key: meta.partner_promotion_key,
-        ohmypi_passthrough_yaml: meta.ohmypi_passthrough_yaml,
+        omp_passthrough_yaml: meta.omp_passthrough_yaml,
         ..ProviderMeta::default()
     });
 }

@@ -87,7 +87,7 @@ describe("extractBaseUrlForUsageDetection", () => {
     // Oh My Pi reads the same camelCase field shape as Pi; without this case
     // the dialog cannot auto-pick a template from an omp provider's base URL.
     expect(
-      extractBaseUrlForUsageDetection("ohmypi", {
+      extractBaseUrlForUsageDetection("omp", {
         baseUrl: "https://opencode.ai/zen/go/v1",
       }),
     ).toBe("https://opencode.ai/zen/go/v1");

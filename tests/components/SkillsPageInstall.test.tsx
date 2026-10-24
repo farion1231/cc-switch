@@ -334,7 +334,7 @@ describe("SkillsPage (Discover)", () => {
           openclaw: false,
           hermes: false,
           pi: false,
-          ohmypi: false,
+          omp: false,
         },
         installedAt: 1,
         updatedAt: 1,

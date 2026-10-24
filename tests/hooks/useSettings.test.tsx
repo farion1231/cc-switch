@@ -388,7 +388,7 @@ describe("useSettings hook", () => {
     // auto-save (a General tab toggle) must not smuggle the half-typed path in.
     serverSettings = {
       ...serverSettings,
-      ohmypiConfigDir: "/server/omp",
+      ompConfigDir: "/server/omp",
       hermesConfigDir: "/server/hermes",
     };
     useSettingsQueryMock.mockReturnValue({
@@ -398,7 +398,7 @@ describe("useSettings hook", () => {
     settingsFormMock = createSettingsFormMock({
       settings: {
         ...serverSettings,
-        ohmypiConfigDir: "/draft/omp",
+        ompConfigDir: "/draft/omp",
         hermesConfigDir: "/draft/hermes",
       },
     });
@@ -410,7 +410,7 @@ describe("useSettings hook", () => {
     });
 
     const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
-    expect(payload.ohmypiConfigDir).toBe("/server/omp");
+    expect(payload.ompConfigDir).toBe("/server/omp");
     expect(payload.hermesConfigDir).toBe("/server/hermes");
   });
 

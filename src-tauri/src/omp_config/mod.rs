@@ -29,7 +29,7 @@ static TEST_AGENT_DIR: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex
 // Path resolution
 // ============================================================================
 
-pub(crate) fn get_ohmypi_agent_dir() -> Result<PathBuf, AppError> {
+pub(crate) fn get_omp_agent_dir() -> Result<PathBuf, AppError> {
     #[cfg(test)]
     if let Some(path) = TEST_AGENT_DIR
         .lock()
@@ -39,14 +39,14 @@ pub(crate) fn get_ohmypi_agent_dir() -> Result<PathBuf, AppError> {
         return Ok(path);
     }
 
-    if let Some(dir) = crate::settings::get_ohmypi_override_dir() {
+    if let Some(dir) = crate::settings::get_omp_override_dir() {
         return Ok(dir);
     }
 
-    get_ohmypi_native_agent_dir()
+    get_omp_native_agent_dir()
 }
 
-pub(crate) fn get_ohmypi_active_profile() -> Result<Option<String>, AppError> {
+pub(crate) fn get_omp_active_profile() -> Result<Option<String>, AppError> {
     let selected = std::env::var_os("OMP_PROFILE").or_else(|| std::env::var_os("PI_PROFILE"));
     normalize_profile(
         selected
@@ -118,8 +118,8 @@ fn native_agent_dir(
     Ok(root.join("agent"))
 }
 
-pub(crate) fn get_ohmypi_native_agent_dir() -> Result<PathBuf, AppError> {
-    let profile = get_ohmypi_active_profile()?;
+pub(crate) fn get_omp_native_agent_dir() -> Result<PathBuf, AppError> {
+    let profile = get_omp_active_profile()?;
     let config_dir = std::env::var("PI_CONFIG_DIR").ok();
     let agent_dir = std::env::var_os("PI_CODING_AGENT_DIR").map(PathBuf::from);
     let inherited_profile = normalize_profile(std::env::var("PI_PROFILE").ok().as_deref())
@@ -134,11 +134,11 @@ pub(crate) fn get_ohmypi_native_agent_dir() -> Result<PathBuf, AppError> {
     )
 }
 
-pub(crate) fn get_ohmypi_data_dir() -> Result<PathBuf, AppError> {
-    let agent = get_ohmypi_agent_dir()?;
+pub(crate) fn get_omp_data_dir() -> Result<PathBuf, AppError> {
+    let agent = get_omp_agent_dir()?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        let profile = get_ohmypi_active_profile()?;
+        let profile = get_omp_active_profile()?;
         let config_dir = std::env::var("PI_CONFIG_DIR").ok();
         let default_agent = native_agent_dir(
             &get_home_dir(),
@@ -183,8 +183,8 @@ fn data_dir(
 }
 
 /// Existing `models.yml` → `models.yaml` wins; greenfield defaults to `models.yml`.
-pub(crate) fn get_ohmypi_models_path() -> Result<PathBuf, AppError> {
-    let agent = get_ohmypi_agent_dir()?;
+pub(crate) fn get_omp_models_path() -> Result<PathBuf, AppError> {
+    let agent = get_omp_agent_dir()?;
     for name in ["models.yml", "models.yaml"] {
         let path = agent.join(name);
         if path.exists() {
@@ -195,8 +195,8 @@ pub(crate) fn get_ohmypi_models_path() -> Result<PathBuf, AppError> {
 }
 
 /// Existing `config.yml` → `config.yaml` wins; greenfield defaults to `config.yml`.
-pub(crate) fn get_ohmypi_settings_path() -> Result<PathBuf, AppError> {
-    let agent = get_ohmypi_agent_dir()?;
+pub(crate) fn get_omp_settings_path() -> Result<PathBuf, AppError> {
+    let agent = get_omp_agent_dir()?;
     for name in ["config.yml", "config.yaml"] {
         let path = agent.join(name);
         if path.exists() {
@@ -207,8 +207,8 @@ pub(crate) fn get_ohmypi_settings_path() -> Result<PathBuf, AppError> {
 }
 
 /// User-level MCP config path (`~/.omp/agent/mcp.json`).
-pub(crate) fn get_ohmypi_mcp_path() -> Result<PathBuf, AppError> {
-    Ok(get_ohmypi_agent_dir()?.join("mcp.json"))
+pub(crate) fn get_omp_mcp_path() -> Result<PathBuf, AppError> {
+    Ok(get_omp_agent_dir()?.join("mcp.json"))
 }
 
 // ============================================================================
@@ -630,11 +630,9 @@ fn provider_entry_range(raw: &str, provider_key: &str) -> Option<(usize, usize)>
 /// The raw text of one provider entry (as written in models.yml), or `None`
 /// when the entry is absent. Indentation is stripped so the result can be
 /// shown in the "other fields" YAML editor.
-pub(crate) fn read_ohmypi_provider_entry_raw(
-    provider_key: &str,
-) -> Result<Option<String>, AppError> {
+pub(crate) fn read_omp_provider_entry_raw(provider_key: &str) -> Result<Option<String>, AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     if !path.exists() {
         return Ok(None);
     }
@@ -649,11 +647,11 @@ pub(crate) fn read_ohmypi_provider_entry_raw(
 
 /// The raw text of every requested provider entry, from a single file read.
 /// Missing keys are simply absent from the result.
-pub(crate) fn read_ohmypi_provider_entries_raw(
+pub(crate) fn read_omp_provider_entries_raw(
     provider_keys: &[String],
 ) -> Result<IndexMap<String, String>, AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let mut entries = IndexMap::new();
     if !path.exists() {
         return Ok(entries);
@@ -1039,14 +1037,14 @@ fn reclaim_trailing_comments(raw: &str, entry_end: usize, entry_indent: usize) -
 /// the result still parses and every other provider keeps its exact meaning.
 ///
 /// Returns `Ok(false)` when nothing changed on disk.
-pub(crate) fn write_ohmypi_provider_entry(
+pub(crate) fn write_omp_provider_entry(
     provider_key: &str,
     config: &Value,
     passthrough_raw: Option<&str>,
 ) -> Result<bool, AppError> {
     validate_provider_node(provider_key, config)?;
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let raw = if path.exists() {
         String::from_utf8(read_file_limited(&path, "Oh My Pi models")?).map_err(|error| {
             AppError::Config(format!(
@@ -1071,9 +1069,9 @@ pub(crate) fn write_ohmypi_provider_entry(
     Ok(true)
 }
 
-pub(crate) fn read_ohmypi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
+pub(crate) fn read_omp_native_providers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let document = read_document_with_revision(&path, "Oh My Pi models", true)?.0;
     Ok(providers(&document, &path)?
         .iter()
@@ -1081,24 +1079,24 @@ pub(crate) fn read_ohmypi_native_providers() -> Result<IndexMap<String, Value>, 
         .collect())
 }
 
-pub(crate) fn read_ohmypi_native_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
+pub(crate) fn read_omp_native_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let document = read_document_with_revision(&path, "Oh My Pi models", true)?.0;
     Ok(providers(&document, &path)?.get(provider_key).cloned())
 }
 
-pub(crate) fn ohmypi_provider_exists(provider_key: &str) -> Result<bool, AppError> {
+pub(crate) fn omp_provider_exists(provider_key: &str) -> Result<bool, AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let document = read_document_with_revision(&path, "Oh My Pi models", true)?.0;
     Ok(providers(&document, &path)?.contains_key(provider_key))
 }
 
-pub(crate) fn insert_ohmypi_provider(provider_key: &str, config: &Value) -> Result<bool, AppError> {
+pub(crate) fn insert_omp_provider(provider_key: &str, config: &Value) -> Result<bool, AppError> {
     validate_provider_node(provider_key, config)?;
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let (document, _) = read_document_with_revision(&path, "Oh My Pi models", true)?;
     match providers(&document, &path)?.get(provider_key) {
         Some(current) if current == config => return Ok(false),
@@ -1113,16 +1111,16 @@ pub(crate) fn insert_ohmypi_provider(provider_key: &str, config: &Value) -> Resu
     // Text-level writer: only the `providers.<key>` block is composed; the
     // rest of the file — comments included — is preserved byte for byte.
     drop(_guard);
-    write_ohmypi_provider_entry(provider_key, config, None)?;
+    write_omp_provider_entry(provider_key, config, None)?;
     Ok(true)
 }
 
-pub(crate) fn replace_ohmypi_provider(
+pub(crate) fn replace_omp_provider(
     provider_key: &str,
     expected: &Value,
     replacement: &Value,
 ) -> Result<(), AppError> {
-    replace_ohmypi_provider_if_present(provider_key, expected, replacement, None)?.ok_or_else(
+    replace_omp_provider_if_present(provider_key, expected, replacement, None)?.ok_or_else(
         || {
             AppError::Conflict(format!(
                 "Oh My Pi provider '{provider_key}' is no longer present in models.yml"
@@ -1134,7 +1132,7 @@ pub(crate) fn replace_ohmypi_provider(
 
 /// Replace a provider entry at the text level so comments survive. Returns the
 /// previous entry value.
-pub(crate) fn replace_ohmypi_provider_if_present(
+pub(crate) fn replace_omp_provider_if_present(
     provider_key: &str,
     expected: &Value,
     replacement: &Value,
@@ -1142,7 +1140,7 @@ pub(crate) fn replace_ohmypi_provider_if_present(
 ) -> Result<Option<Value>, AppError> {
     validate_provider_node(provider_key, replacement)?;
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let (document, _) = read_document_with_revision(&path, "Oh My Pi models", true)?;
     let Some(current) = providers(&document, &path)?.get(provider_key).cloned() else {
         return Ok(None);
@@ -1160,27 +1158,27 @@ pub(crate) fn replace_ohmypi_provider_if_present(
     // change `replacement` yet must reach the file (the writer's own
     // `new_raw == raw` check is the real no-op guard).
     drop(_guard);
-    write_ohmypi_provider_entry(provider_key, replacement, passthrough_raw)?;
+    write_omp_provider_entry(provider_key, replacement, passthrough_raw)?;
     Ok(Some(current))
 }
 
-pub(crate) fn remove_ohmypi_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
-    remove_ohmypi_provider_inner(provider_key, None)
+pub(crate) fn remove_omp_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
+    remove_omp_provider_inner(provider_key, None)
 }
 
-pub(crate) fn remove_ohmypi_provider_if_matches(
+pub(crate) fn remove_omp_provider_if_matches(
     provider_key: &str,
     expected: &Value,
 ) -> Result<bool, AppError> {
-    remove_ohmypi_provider_inner(provider_key, Some(expected)).map(|removed| removed.is_some())
+    remove_omp_provider_inner(provider_key, Some(expected)).map(|removed| removed.is_some())
 }
 
-fn remove_ohmypi_provider_inner(
+fn remove_omp_provider_inner(
     provider_key: &str,
     expected: Option<&Value>,
 ) -> Result<Option<Value>, AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let (document, expected_revision) =
         read_document_with_revision(&path, "Oh My Pi models", true)?;
     let Some(current) = providers(&document, &path)?.get(provider_key).cloned() else {
@@ -1228,13 +1226,13 @@ fn remove_ohmypi_provider_inner(
     Ok(Some(current))
 }
 
-pub(crate) fn restore_ohmypi_provider_if_missing(
+pub(crate) fn restore_omp_provider_if_missing(
     provider_key: &str,
     config: &Value,
 ) -> Result<(), AppError> {
     validate_provider_node(provider_key, config)?;
     let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
+    let path = get_omp_models_path()?;
     let (document, _) = read_document_with_revision(&path, "Oh My Pi models", true)?;
     match providers(&document, &path)?.get(provider_key) {
         Some(current) if current == config => Ok(()),
@@ -1245,7 +1243,7 @@ pub(crate) fn restore_ohmypi_provider_if_missing(
             // Text-level writer: only the `providers.<key>` block is composed;
             // the rest of the file — comments included — is preserved.
             drop(_guard);
-            write_ohmypi_provider_entry(provider_key, config, None)?;
+            write_omp_provider_entry(provider_key, config, None)?;
             Ok(())
         }
     }
@@ -1308,9 +1306,9 @@ fn empty_json_object() -> &'static Map<String, Value> {
 // ============================================================================
 
 /// Read the full `config.yml` as a JSON value.
-fn read_ohmypi_settings() -> Result<Value, AppError> {
+fn read_omp_settings() -> Result<Value, AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_settings_path()?;
+    let path = get_omp_settings_path()?;
     if !path.exists() {
         return Ok(Value::Object(Map::new()));
     }
@@ -1318,9 +1316,9 @@ fn read_ohmypi_settings() -> Result<Value, AppError> {
 }
 
 /// Read `modelRoles.default` (the full `<provider>/<model>` selector, if set).
-pub(crate) fn read_ohmypi_default_model() -> Result<Option<String>, AppError> {
-    let document = read_ohmypi_settings()?;
-    let path = get_ohmypi_settings_path()?;
+pub(crate) fn read_omp_default_model() -> Result<Option<String>, AppError> {
+    let document = read_omp_settings()?;
+    let path = get_omp_settings_path()?;
     let Some(object) = document.as_object() else {
         return Ok(None);
     };
@@ -1346,9 +1344,9 @@ pub(crate) fn provider_from_selector(selector: &str) -> &str {
 // ============================================================================
 
 #[cfg(test)]
-pub(crate) fn read_ohmypi_mcp_servers() -> Result<IndexMap<String, Value>, AppError> {
+pub(crate) fn read_omp_mcp_servers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_mcp_path()?;
+    let path = get_omp_mcp_path()?;
     let document = read_document_with_revision(&path, "Oh My Pi MCP", false)?.0;
     let root = document.as_object().ok_or_else(|| {
         AppError::Config(format!(
@@ -1370,11 +1368,11 @@ pub(crate) fn read_ohmypi_mcp_servers() -> Result<IndexMap<String, Value>, AppEr
 }
 
 /// Mutate the native MCP document while preserving other root keys and checking external writes.
-pub(crate) fn update_ohmypi_mcp_document(
+pub(crate) fn update_omp_mcp_document(
     update: impl FnOnce(&mut Value) -> Result<bool, AppError>,
 ) -> Result<(), AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_mcp_path()?;
+    let path = get_omp_mcp_path()?;
     let (mut document, expected_revision) =
         read_document_with_revision(&path, "Oh My Pi MCP", false)?;
     if !document.is_object() {
@@ -1390,9 +1388,9 @@ pub(crate) fn update_ohmypi_mcp_document(
 }
 
 #[cfg(test)]
-pub(crate) fn set_ohmypi_mcp_server(id: &str, config: &Value) -> Result<(), AppError> {
+pub(crate) fn set_omp_mcp_server(id: &str, config: &Value) -> Result<(), AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_mcp_path()?;
+    let path = get_omp_mcp_path()?;
     let (mut document, expected_revision) =
         read_document_with_revision(&path, "Oh My Pi MCP", false)?;
     let root = document.as_object_mut().ok_or_else(|| {
@@ -1415,9 +1413,9 @@ pub(crate) fn set_ohmypi_mcp_server(id: &str, config: &Value) -> Result<(), AppE
 }
 
 #[cfg(test)]
-pub(crate) fn remove_ohmypi_mcp_server(id: &str) -> Result<(), AppError> {
+pub(crate) fn remove_omp_mcp_server(id: &str) -> Result<(), AppError> {
     let _guard = lock_files()?;
-    let path = get_ohmypi_mcp_path()?;
+    let path = get_omp_mcp_path()?;
     let (mut document, expected_revision) =
         read_document_with_revision(&path, "Oh My Pi MCP", false)?;
     let root = document.as_object_mut().ok_or_else(|| {
@@ -1594,13 +1592,13 @@ mod tests {
     }
 
     fn write_agent_file(name: &str, content: &str) {
-        let agent = get_ohmypi_agent_dir().expect("agent dir");
+        let agent = get_omp_agent_dir().expect("agent dir");
         std::fs::create_dir_all(&agent).expect("create agent dir");
         std::fs::write(agent.join(name), content).expect("write file");
     }
 
     fn read_agent_file(name: &str) -> String {
-        let agent = get_ohmypi_agent_dir().expect("agent dir");
+        let agent = get_omp_agent_dir().expect("agent dir");
         std::fs::read_to_string(agent.join(name)).expect("read file")
     }
 
@@ -1614,12 +1612,12 @@ mod tests {
             "models.yml",
             "providers:\n  demo:\n    baseUrl: https://a.example\n    api: openai-completions\n    apiKey: k\n  # about other\n  other:\n    baseUrl: https://b.example\n",
         );
-        let config = read_ohmypi_native_provider("demo")
+        let config = read_omp_native_provider("demo")
             .expect("read demo")
             .expect("demo present");
         let mut edited = config.clone();
         edited["apiKey"] = json!("rotated");
-        replace_ohmypi_provider_if_present("demo", &config, &edited, None).expect("save demo");
+        replace_omp_provider_if_present("demo", &config, &edited, None).expect("save demo");
 
         let source = read_agent_file("models.yml");
         assert!(
@@ -1642,15 +1640,15 @@ mod tests {
             "models.yml",
             "providers:\n  demo: # key comment\n    # inner note\n    baseUrl: https://a.example  # endpoint\n    api: openai-completions\n    apiKey: k  # secret\n",
         );
-        let config = read_ohmypi_native_provider("demo")
+        let config = read_omp_native_provider("demo")
             .expect("read demo")
             .expect("demo present");
         let mut edited = config.clone();
         edited["apiKey"] = json!("rotated");
-        let passthrough = read_ohmypi_provider_entry_raw("demo")
+        let passthrough = read_omp_provider_entry_raw("demo")
             .expect("read entry")
             .expect("entry present");
-        replace_ohmypi_provider_if_present("demo", &config, &edited, Some(&passthrough))
+        replace_omp_provider_if_present("demo", &config, &edited, Some(&passthrough))
             .expect("save demo");
 
         let source = read_agent_file("models.yml");
@@ -1679,7 +1677,7 @@ mod tests {
             "models.yml",
             "providers:\n  # demo docs\n  demo:\n    baseUrl: https://a.example\n    # inside demo\n  # about other\n  other:\n    baseUrl: https://b.example\n",
         );
-        assert!(remove_ohmypi_provider("demo").expect("remove").is_some());
+        assert!(remove_omp_provider("demo").expect("remove").is_some());
 
         let source = read_agent_file("models.yml");
         assert!(!source.contains("# demo docs"), "{source}");
@@ -1696,24 +1694,24 @@ mod tests {
         let _agent = TestAgentDir::new();
         let config = provider();
 
-        assert!(insert_ohmypi_provider("example", &config).expect("insert"));
-        assert!(!insert_ohmypi_provider("example", &config).expect("identical insert no-op"));
+        assert!(insert_omp_provider("example", &config).expect("insert"));
+        assert!(!insert_omp_provider("example", &config).expect("identical insert no-op"));
 
-        let providers = read_ohmypi_native_providers().expect("read providers");
+        let providers = read_omp_native_providers().expect("read providers");
         assert_eq!(providers.len(), 1);
         assert_eq!(providers.get("example"), Some(&config));
 
         let mut updated = config.clone();
         updated["apiKey"] = json!("new-secret");
-        replace_ohmypi_provider("example", &config, &updated).expect("replace");
+        replace_omp_provider("example", &config, &updated).expect("replace");
         assert_eq!(
-            read_ohmypi_native_provider("example").expect("read provider"),
+            read_omp_native_provider("example").expect("read provider"),
             Some(updated.clone())
         );
 
-        let removed = remove_ohmypi_provider("example").expect("remove");
+        let removed = remove_omp_provider("example").expect("remove");
         assert_eq!(removed, Some(updated));
-        assert!(!ohmypi_provider_exists("example").expect("exists"));
+        assert!(!omp_provider_exists("example").expect("exists"));
     }
 
     /// A key `serde_yaml` chooses to quote (`'true':`) must still be found, or
@@ -1736,29 +1734,27 @@ mod tests {
                 compose_provider_entry("true", &config, None).expect("compose")
             ),
         );
-        assert!(read_ohmypi_provider_entry_raw("true")
-            .expect("read")
-            .is_some());
+        assert!(read_omp_provider_entry_raw("true").expect("read").is_some());
 
         let mut updated = config.clone();
         updated["apiKey"] = json!("rotated");
-        replace_ohmypi_provider("true", &config, &updated).expect("replace quoted key");
+        replace_omp_provider("true", &config, &updated).expect("replace quoted key");
         assert_eq!(
-            read_ohmypi_native_provider("true").expect("read"),
+            read_omp_native_provider("true").expect("read"),
             Some(updated.clone())
         );
         // The sibling must still be there: a text-prefix match used to append a
         // duplicate key instead, which left the file unparsable for omp.
-        assert!(read_ohmypi_native_provider("peer")
+        assert!(read_omp_native_provider("peer")
             .expect("read peer")
             .is_some());
 
         assert_eq!(
-            remove_ohmypi_provider("true").expect("remove quoted key"),
+            remove_omp_provider("true").expect("remove quoted key"),
             Some(updated)
         );
-        assert!(!ohmypi_provider_exists("true").expect("exists"));
-        assert!(ohmypi_provider_exists("peer").expect("peer survives"));
+        assert!(!omp_provider_exists("true").expect("exists"));
+        assert!(omp_provider_exists("peer").expect("peer survives"));
     }
 
     /// An anchor defined on one provider and referenced by another cannot be
@@ -1772,7 +1768,7 @@ mod tests {
         write_agent_file("models.yml", raw);
         let before = read_agent_file("models.yml");
 
-        let error = remove_ohmypi_provider("base").expect_err("alias must be refused");
+        let error = remove_omp_provider("base").expect_err("alias must be refused");
         assert!(
             error.to_string().contains("base"),
             "error should name the provider: {error}"
@@ -1782,8 +1778,8 @@ mod tests {
             before,
             "a refused removal must leave the file untouched"
         );
-        assert!(ohmypi_provider_exists("base").expect("base survives"));
-        assert!(ohmypi_provider_exists("other").expect("other survives"));
+        assert!(omp_provider_exists("base").expect("base survives"));
+        assert!(omp_provider_exists("other").expect("other survives"));
     }
 
     #[test]
@@ -1791,8 +1787,8 @@ mod tests {
     fn override_only_provider_is_accepted() {
         let _agent = TestAgentDir::new();
         let config = override_only_provider();
-        assert!(insert_ohmypi_provider("proxy", &config).expect("insert override-only"));
-        let providers = read_ohmypi_native_providers().expect("read providers");
+        assert!(insert_omp_provider("proxy", &config).expect("insert override-only"));
+        let providers = read_omp_native_providers().expect("read providers");
         assert_eq!(providers.get("proxy"), Some(&config));
     }
 
@@ -1814,14 +1810,14 @@ mod tests {
         // Editor text mirrors the file plus a new trailing comment on `api`.
         let passthrough = "api: openai-responses #asd\nname: llama.cpp\nbaseUrl: http://127.0.0.1:8080\nauth: none #ab\ndiscovery: #ab\n  type: llama.cpp";
         assert!(
-            write_ohmypi_provider_entry("llama.cpp", &config, Some(passthrough)).expect("write"),
+            write_omp_provider_entry("llama.cpp", &config, Some(passthrough)).expect("write"),
             "must not be a no-op"
         );
         let source = read_agent_file("models.yml");
         assert!(source.contains("api: openai-responses  #asd"), "{source}");
         assert!(source.contains("auth: none #ab"), "{source}");
         assert_eq!(
-            read_ohmypi_native_provider("llama.cpp").expect("read"),
+            read_omp_native_provider("llama.cpp").expect("read"),
             Some(config)
         );
     }
@@ -1836,7 +1832,7 @@ mod tests {
         );
 
         // The key line never reaches the editor text.
-        let raw = read_ohmypi_provider_entry_raw("example")
+        let raw = read_omp_provider_entry_raw("example")
             .expect("read raw")
             .expect("entry present");
         assert!(!raw.contains("example:"), "{raw}");
@@ -1846,15 +1842,14 @@ mod tests {
         let config = json!({"baseUrl": "https://b.example"});
         let edited = format!("{raw}\n");
         assert!(
-            write_ohmypi_provider_entry("example", &config, Some(&edited))
-                .expect("text-level write")
+            write_omp_provider_entry("example", &config, Some(&edited)).expect("text-level write")
         );
 
         let source = read_agent_file("models.yml");
         assert!(source.contains("example: #local"), "{source}");
         assert!(source.contains("https://b.example"), "{source}");
         assert_eq!(
-            read_ohmypi_native_provider("example").expect("read"),
+            read_omp_native_provider("example").expect("read"),
             Some(config.clone())
         );
 
@@ -1865,7 +1860,7 @@ mod tests {
         );
         let changed_config = json!({"baseUrl": "https://c.example"});
         assert!(
-            write_ohmypi_provider_entry("example", &changed_config, Some(&edited))
+            write_omp_provider_entry("example", &changed_config, Some(&edited))
                 .expect("write again")
         );
         assert!(
@@ -1880,13 +1875,13 @@ mod tests {
     fn comment_only_edit_reaches_file_despite_unchanged_config() {
         let _agent = TestAgentDir::new();
         let config = json!({"baseUrl": "https://a.example", "auth": "none"});
-        insert_ohmypi_provider("example", &config).expect("insert");
+        insert_omp_provider("example", &config).expect("insert");
 
         // User only adds a comment in the editor: parsed config is unchanged,
         // but the new comment must reach the file.
         let passthrough = "# my note\nauth: none\n";
         let previous =
-            replace_ohmypi_provider_if_present("example", &config, &config, Some(passthrough))
+            replace_omp_provider_if_present("example", &config, &config, Some(passthrough))
                 .expect("replace")
                 .expect("present");
         assert_eq!(previous, config);
@@ -1894,7 +1889,7 @@ mod tests {
         let source = read_agent_file("models.yml");
         assert!(source.contains("# my note"), "{source}");
         assert_eq!(
-            read_ohmypi_native_provider("example").expect("read"),
+            read_omp_native_provider("example").expect("read"),
             Some(config)
         );
     }
@@ -1912,7 +1907,7 @@ mod tests {
         config["auth"] = json!("none");
         let passthrough = "# unmanaged key\nauth: none\n";
         assert!(
-            write_ohmypi_provider_entry("example", &config, Some(passthrough))
+            write_omp_provider_entry("example", &config, Some(passthrough))
                 .expect("text-level write")
         );
 
@@ -1924,19 +1919,19 @@ mod tests {
         assert!(source.contains("auth: none"), "{source}");
 
         // Parsed content must round-trip the full config object.
-        let providers = read_ohmypi_native_providers().expect("read providers");
+        let providers = read_omp_native_providers().expect("read providers");
         assert_eq!(providers.get("example"), Some(&config));
         assert!(providers.contains_key("existing"));
 
         // Raw entry (for the editor) keeps the comment.
-        let raw = read_ohmypi_provider_entry_raw("example")
+        let raw = read_omp_provider_entry_raw("example")
             .expect("read raw entry")
             .expect("entry present");
         assert!(raw.contains("# unmanaged key"), "{raw}");
 
         // Re-writing with the same passthrough is a no-op.
         assert!(
-            !write_ohmypi_provider_entry("example", &config, Some(passthrough))
+            !write_omp_provider_entry("example", &config, Some(passthrough))
                 .expect("idempotent write")
         );
     }
@@ -1947,7 +1942,7 @@ mod tests {
         let _agent = TestAgentDir::new();
         write_agent_file("config.yml", "modelRoles:\n  smol: openai/gpt-4o-mini\n");
 
-        assert_eq!(read_ohmypi_default_model().expect("read default"), None);
+        assert_eq!(read_omp_default_model().expect("read default"), None);
         assert_eq!(provider_from_selector("example/example-model"), "example");
     }
 
@@ -1961,12 +1956,12 @@ mod tests {
             "args": ["-y", "@modelcontextprotocol/server"],
             "env": {"API_KEY": "secret"}
         });
-        set_ohmypi_mcp_server("filesystem", &spec).expect("set server");
-        let servers = read_ohmypi_mcp_servers().expect("read servers");
+        set_omp_mcp_server("filesystem", &spec).expect("set server");
+        let servers = read_omp_mcp_servers().expect("read servers");
         assert_eq!(servers.get("filesystem"), Some(&spec));
 
-        remove_ohmypi_mcp_server("filesystem").expect("remove server");
-        assert!(read_ohmypi_mcp_servers().expect("read servers").is_empty());
+        remove_omp_mcp_server("filesystem").expect("remove server");
+        assert!(read_omp_mcp_servers().expect("read servers").is_empty());
     }
 
     #[test]
@@ -1979,7 +1974,7 @@ mod tests {
         );
 
         let config = provider();
-        insert_ohmypi_provider("example", &config).expect("insert second provider");
+        insert_omp_provider("example", &config).expect("insert second provider");
 
         let source = read_agent_file("models.yml");
         assert!(source.contains("supportsStore: true"));

@@ -29,7 +29,7 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
-  "ohmypi",
+  "omp",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -45,7 +45,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   agy: true,
-  ohmypi: false,
+  omp: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -60,7 +60,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
-  "ohmypi",
+  "omp",
 ];
 
 export type ProxyAppId = Extract<
@@ -110,7 +110,7 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "ohmypi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "omp"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -120,7 +120,7 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "openclaw",
   "hermes",
   "pi",
-  "ohmypi",
+  "omp",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
@@ -152,7 +152,7 @@ export function usesEditorView(appId: AppId): boolean {
  */
 export const SUBMIT_READY_APPS: Readonly<Partial<Record<AppId, true>>> = {
   pi: true,
-  ohmypi: true,
+  omp: true,
 };
 
 /** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
@@ -168,7 +168,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "mcode",
   "kimi",
   "agy",
-  "ohmypi",
+  "omp",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -302,15 +302,10 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
   },
-  ohmypi: {
+  omp: {
     label: "Oh My Pi",
     icon: (
-      <ProviderIcon
-        icon="ohmypi"
-        name="Oh My Pi"
-        size={14}
-        showFallback={false}
-      />
+      <ProviderIcon icon="omp" name="Oh My Pi" size={14} showFallback={false} />
     ),
     activeClass:
       "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",

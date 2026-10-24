@@ -197,7 +197,7 @@ export function EditProviderDialog({
         appId === "pi" ||
         appId === "mcode" ||
         appId === "kimi" ||
-        appId === "ohmypi"
+        appId === "omp"
       ) {
         if (!cancelled) {
           setLiveSettings(null);
