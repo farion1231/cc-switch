@@ -1861,7 +1861,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       name.includes("CodeBuddy Code"),
     );
     expect(codebuddy).toBe(names.length - 1);
-    expect(names[codebuddy - 1]).toContain("Antigravity CLI");
+    expect(names[codebuddy - 1]).toContain("Oh My Pi");
     expect(card("CodeBuddy Code").getByText("1.0.0")).toBeInTheDocument();
 
     fireEvent.click(updateButton("CodeBuddy Code"));
@@ -2023,6 +2023,7 @@ describe("AppsPage visibility column", () => {
         "mcode",
         "kimi",
         "agy",
+        "omp",
       ].map((app) => [app, false]),
     );
     try {
