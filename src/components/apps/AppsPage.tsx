@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowUpCircle,
@@ -10,20 +10,11 @@ import {
   LayoutGrid,
   Loader2,
   MoreHorizontal,
-  Play,
-  Power,
   RefreshCw,
   Trash2,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import { workbuddyAppApi } from "@/lib/api/workbuddyApp";
-import {
-  refreshWorkBuddyApp,
-  useWorkBuddyAppStatus,
-} from "@/lib/query/workbuddyApp";
-import { toast } from "@/lib/toast";
-import { extractErrorMessage } from "@/utils/errorUtils";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
@@ -87,6 +78,7 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
+// WorkBuddy 是桌面应用、自己负责更新，这里和 Claude Desktop 一样只管侧栏显示
 type Row =
   | { kind: "tool"; tool: ToolName }
   | { kind: "desktop" }
@@ -124,7 +116,6 @@ function formatCheckedAt(timestamp: number, locale: string): string {
 export function AppsPage() {
   const { t, i18n } = useTranslation();
   const tools = useToolManagement();
-  const queryClient = useQueryClient();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const tableRef = useRef<HTMLDivElement>(null);
 
@@ -259,10 +250,7 @@ export function AppsPage() {
               variant="neutral"
               size="regular"
               disabled={tools.isLoadingTools || tools.isAnyBusy}
-              onClick={() => {
-                void refreshWorkBuddyApp(queryClient);
-                void tools.checkForUpdates();
-              }}
+              onClick={() => void tools.checkForUpdates()}
             >
               <RefreshCw
                 className={cn(
@@ -366,8 +354,14 @@ export function AppsPage() {
           <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
             {ROWS.map((row) =>
               row.kind === "workbuddy" ? (
-                <WorkBuddyRow
+                <AppRow
                   key="workbuddy"
+                  app="workbuddy"
+                  name={
+                    <span className="truncate">
+                      {APP_DISPLAY_NAME.workbuddy}
+                    </span>
+                  }
                   visibility={visibilitySwitch("workbuddy")}
                 />
               ) : row.kind === "desktop" ? (
@@ -532,125 +526,6 @@ function AppRow({
       </div>
       {footer && <div className="ms-9 mt-2">{footer}</div>}
     </div>
-  );
-}
-
-/**
- * WorkBuddy 是桌面应用、自己负责更新：这里只检测安装 / 版本 / 运行状态，并提供启动和关闭。
- * 关闭只请求 WorkBuddy 正常退出（macOS），不强制结束；不提供升级、下载和卸载。
- */
-function WorkBuddyRow({ visibility }: { visibility: React.ReactNode }) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { data: status, isLoading } = useWorkBuddyAppStatus();
-  const [busy, setBusy] = useState<"start" | "quit" | null>(null);
-  const name = APP_DISPLAY_NAME.workbuddy;
-
-  const start = async () => {
-    setBusy("start");
-    try {
-      await workbuddyAppApi.start();
-      // 启动要一会儿才认得出在运行，稍后再查一次
-      setTimeout(() => void refreshWorkBuddyApp(queryClient), 1500);
-    } catch (error) {
-      toast.error(extractErrorMessage(error));
-    } finally {
-      setBusy(null);
-    }
-  };
-  const quit = async () => {
-    setBusy("quit");
-    try {
-      const outcome = await workbuddyAppApi.quit();
-      if (outcome.stillRunning) {
-        toast.warning(t("appsPage.workbuddy.quitStillRunning"), {
-          duration: 8000,
-        });
-      }
-    } catch (error) {
-      toast.error(extractErrorMessage(error), { duration: 8000 });
-    } finally {
-      setBusy(null);
-      void refreshWorkBuddyApp(queryClient);
-    }
-  };
-
-  const version = isLoading ? (
-    <span
-      role="status"
-      aria-label={t("common.loading")}
-      className="inline-flex justify-end"
-    >
-      <Loader2 className="h-4 w-4 animate-spin text-fg-3" />
-    </span>
-  ) : status?.installed ? (
-    status.version ? (
-      <div className="font-mono text-body font-medium tabular-nums text-fg-1">
-        {status.version}
-      </div>
-    ) : (
-      <span className="text-caption text-fg-2">
-        {t("appsPage.workbuddy.installed")}
-      </span>
-    )
-  ) : (
-    <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
-  );
-
-  const busyIcon = <Loader2 className="h-3.5 w-3.5 animate-spin" />;
-  const action =
-    isLoading || !status?.installed ? null : status.running ? (
-      status.quitSupported ? (
-        <Button
-          variant="neutral"
-          size="compact"
-          onClick={() => void quit()}
-          disabled={busy !== null}
-          aria-busy={busy === "quit"}
-        >
-          {busy === "quit" ? busyIcon : <Power className="h-3.5 w-3.5" />}
-          {t("appsPage.workbuddy.quit")}
-        </Button>
-      ) : null
-    ) : (
-      <Button
-        variant="neutral"
-        size="compact"
-        onClick={() => void start()}
-        disabled={busy !== null}
-        aria-busy={busy === "start"}
-      >
-        {busy === "start" ? busyIcon : <Play className="h-3.5 w-3.5" />}
-        {t("appsPage.workbuddy.start")}
-      </Button>
-    );
-
-  const meta =
-    status?.installed && status.path ? (
-      <span className="min-w-0 truncate font-mono" title={status.path}>
-        {status.path}
-      </span>
-    ) : null;
-
-  return (
-    <AppRow
-      app="workbuddy"
-      name={
-        <>
-          <span className="truncate">{name}</span>
-          {status?.running && <Pill>{t("appsPage.workbuddy.running")}</Pill>}
-          <HelpTip title={name}>
-            {status && !status.quitSupported
-              ? `${t("appsPage.workbuddy.help")} ${t("appsPage.workbuddy.quitUnsupported")}`
-              : t("appsPage.workbuddy.help")}
-          </HelpTip>
-        </>
-      }
-      meta={meta}
-      version={version}
-      action={action}
-      visibility={visibility}
-    />
   );
 }
 

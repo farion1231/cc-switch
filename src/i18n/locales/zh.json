@@ -4259,15 +4259,6 @@
       "pi": "通过 npm 安装",
       "mcode": "安装时运行官方安装脚本，失败时改用 npm",
       "agy": "安装时运行官方安装脚本"
-    },
-    "workbuddy": {
-      "help": "WorkBuddy 是桌面应用，会自己更新。这里显示它的版本和运行状态，可以启动或关闭它；关闭是请 WorkBuddy 正常退出，不会强制结束。要卸载请像其他桌面应用一样在系统里删除。",
-      "installed": "已安装",
-      "start": "启动",
-      "quit": "关闭",
-      "running": "运行中",
-      "quitStillRunning": "WorkBuddy 还在运行，可能弹出了确认框或拒绝了退出。请在 WorkBuddy 里手动退出（包括菜单栏 / 托盘图标）。",
-      "quitUnsupported": "这个系统上不能在这里关闭 WorkBuddy，请在 WorkBuddy 里手动退出。"
     }
   },
   "appPage": {

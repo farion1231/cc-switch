@@ -4167,15 +4167,6 @@
       "hermes": "Resmi komut dosyasıyla yüklenir",
       "pi": "Npm ile yüklenir",
       "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner"
-    },
-    "workbuddy": {
-      "help": "WorkBuddy kendini güncelleyen bir masaüstü uygulamasıdır. Burada sürümü ve çalışıp çalışmadığı gösterilir; başlatabilir veya kapatabilirsiniz. Kapatma, WorkBuddy'den normal şekilde çıkmasını ister; asla zorla kapatmaz. Kaldırmak için diğer masaüstü uygulamaları gibi sistemden silin.",
-      "installed": "Yüklü",
-      "start": "Başlat",
-      "quit": "Kapat",
-      "running": "Çalışıyor",
-      "quitStillRunning": "WorkBuddy hâlâ çalışıyor. Bir onay penceresi göstermiş veya çıkmayı reddetmiş olabilir. WorkBuddy'den (menü çubuğu / tepsi simgesi dahil) elle çıkın.",
-      "quitUnsupported": "Bu sistemde WorkBuddy buradan kapatılamaz; WorkBuddy'den elle çıkın."
     }
   },
   "appPage": {

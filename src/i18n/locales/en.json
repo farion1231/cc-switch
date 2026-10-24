@@ -4259,15 +4259,6 @@
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
       "agy": "Installs with the official script"
-    },
-    "workbuddy": {
-      "help": "WorkBuddy is a desktop app that updates itself. This row shows its version and whether it's running, and lets you start or close it. Closing asks WorkBuddy to quit normally; it never force-quits. To uninstall, remove it from your system like any other desktop app.",
-      "installed": "Installed",
-      "start": "Start",
-      "quit": "Close",
-      "running": "Running",
-      "quitStillRunning": "WorkBuddy is still running. It may be showing a confirmation or declined to quit. Quit it from WorkBuddy (including the menu bar / tray icon).",
-      "quitUnsupported": "Closing WorkBuddy from here isn't supported on this system; quit it from WorkBuddy."
     }
   },
   "appPage": {
