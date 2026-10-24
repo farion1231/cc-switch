@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SubscriptionQuota } from "@/types/subscription";
+import type { KimiProviderConfig } from "@/config/kimiProviderPresets";
 
 export type KimiRegion = "mainland-cn" | "global";
 
@@ -50,6 +51,9 @@ export const kimiOAuthApi = {
     invoke<void>("kimi_oauth_remove", { accountId }),
   quota: (accountId: string) =>
     invoke<SubscriptionQuota>("kimi_oauth_quota", { accountId }),
+  /** 账号当前的官方模型目录（键和内容与登录时写入的一致），只读不存 */
+  models: (accountId: string) =>
+    invoke<KimiProviderConfig["models"]>("kimi_oauth_models", { accountId }),
   useAccount: (accountId: string) =>
     invoke<void>("kimi_oauth_use_account", { accountId }),
 };
