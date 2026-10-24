@@ -49,6 +49,7 @@ import {
   useUpdateSkill,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
+import { formatSkillError } from "@/lib/errors/skillErrorParser";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
@@ -595,8 +596,13 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           updated.push(result.name);
         } catch (error) {
           const name = installedSkills.find((skill) => skill.id === id)?.name;
-          toast.error(t("skills.updateFailed"), {
-            description: `${name ?? id}: ${String(error)}`,
+          const { title, description } = formatSkillError(
+            error instanceof Error ? error.message : String(error),
+            t,
+            "skills.updateFailed",
+          );
+          toast.error(title, {
+            description: `${name ?? id}: ${description}`,
           });
         }
         setUpdateProgress({ done: index + 1, total: ids.length });

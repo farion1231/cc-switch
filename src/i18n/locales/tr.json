@@ -3219,6 +3219,7 @@
       "downloadTimeoutHint": "Lütfen ağ bağlantısını kontrol edin veya daha sonra tekrar deneyin",
       "skillPathNotFound": "Beceri yolu '{{path}}' {{owner}}/{{name}} deposunda bulunamadı",
       "skillDirNotFound": "Beceri dizini bulunamadı: {{path}}",
+      "ambiguousSkillName": "Bu depodaki birden fazla SKILL.md dosyası '{{name}}' adını tanımlıyor; bu nedenle hangi becerinin kullanılacağı belirlenemiyor. Deponun beceri listesinden belirli bir dizin seçip yeniden deneyin.",
       "directoryConflict": "'{{directory}}' beceri dizini zaten {{existing_repo}} tarafından kullanılıyor, {{new_repo}}'den yüklenemiyor",
       "emptyArchive": "İndirilen arşiv boş",
       "invalidRepoRef": "Geçersiz depo referansı: {{owner}}/{{name}}",
