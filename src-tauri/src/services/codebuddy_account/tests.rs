@@ -271,10 +271,13 @@ async fn a_held_lock_blocks_the_switch_and_a_stale_one_is_cleared() {
 #[tokio::test]
 async fn terminal_login_completes_on_a_new_account_or_session() {
     let fx = Fixture::new();
-    fx.set_live(&credential("100", CN, "a1", "s1"));
+    let alice = credential("100", CN, "a1", "s1");
+    fx.set_live(&alice);
     let start = fx.manager.start_login().await.unwrap();
-    // 开始登录时把现在登着的号收进来
+    // 开始登录时把现在登着的号收进来，再写登出标记让 CLI 进登录界面；凭据文件不动
     assert_eq!(fx.manager.status().await.unwrap().accounts.len(), 1);
+    assert!(fx.marker().exists());
+    assert_eq!(fx.live(), alice);
     assert!(fx
         .manager
         .poll_login(&start.flow_id)
@@ -282,25 +285,17 @@ async fn terminal_login_completes_on_a_new_account_or_session() {
         .unwrap()
         .is_none());
 
-    // 同一会话的续期不算登录完成
-    fx.set_live(&credential("100", CN, "a2", "s1"));
-    assert!(fx
-        .manager
-        .poll_login(&start.flow_id)
-        .await
-        .unwrap()
-        .is_none());
-
-    // 登出后登录了另一个号
-    std::fs::write(fx.marker(), "").unwrap();
-    assert!(fx
-        .manager
-        .poll_login(&start.flow_id)
-        .await
-        .unwrap()
-        .is_none());
-    std::fs::remove_file(fx.marker()).unwrap();
+    // CLI 登录成功：写新凭据、自己删掉标记
     fx.set_live(&credential("200", INTL, "b1", "s2"));
+    assert!(
+        fx.manager
+            .poll_login(&start.flow_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "标记还在就还没登录完"
+    );
+    std::fs::remove_file(fx.marker()).unwrap();
     let account = fx
         .manager
         .poll_login(&start.flow_id)
@@ -309,9 +304,21 @@ async fn terminal_login_completes_on_a_new_account_or_session() {
         .unwrap();
     assert_eq!(account.id, "200@www.codebuddy.ai");
     assert!(fx.manager.poll_login(&start.flow_id).await.is_err());
+    // 原来的号还在
+    assert_eq!(fx.manager.status().await.unwrap().accounts.len(), 2);
 
     // 同一个号重新登录（新会话）
     let again = fx.manager.start_login().await.unwrap();
+    assert!(fx.marker().exists());
+    std::fs::remove_file(fx.marker()).unwrap();
+    // 只是续期（同一会话）不算登录完成
+    fx.set_live(&credential("200", INTL, "b1b", "s2"));
+    assert!(fx
+        .manager
+        .poll_login(&again.flow_id)
+        .await
+        .unwrap()
+        .is_none());
     fx.set_live(&credential("200", INTL, "b2", "s9"));
     let account = fx
         .manager
@@ -320,7 +327,129 @@ async fn terminal_login_completes_on_a_new_account_or_session() {
         .unwrap()
         .unwrap();
     assert_eq!(account.id, "200@www.codebuddy.ai");
-    assert!(!fx.manager.cancel_login(&again.flow_id).await);
+    assert!(!fx.manager.cancel_login(&again.flow_id).await.unwrap());
+}
+
+#[tokio::test]
+async fn login_without_a_current_sign_in_writes_no_marker() {
+    let fx = Fixture::new();
+    // 凭据目录还不存在：不拿锁、不建目录、不写标记
+    std::fs::remove_dir(&fx.auth_dir).unwrap();
+    let start = fx.manager.start_login().await.unwrap();
+    assert!(!fx.auth_dir.exists());
+    assert!(fx.manager.cancel_login(&start.flow_id).await.unwrap());
+
+    // 已经登出（标记是用户自己 /logout 写的）：不重写，取消时也不删别人的标记
+    std::fs::create_dir_all(&fx.auth_dir).unwrap();
+    fx.set_live(&credential("100", CN, "a1", "s1"));
+    std::fs::write(fx.marker(), "user-logout").unwrap();
+    let start = fx.manager.start_login().await.unwrap();
+    assert_eq!(std::fs::read_to_string(fx.marker()).unwrap(), "user-logout");
+    assert!(fx.manager.cancel_login(&start.flow_id).await.unwrap());
+    assert_eq!(std::fs::read_to_string(fx.marker()).unwrap(), "user-logout");
+}
+
+#[tokio::test]
+async fn logout_marker_is_an_iso_timestamp_written_atomically() {
+    let fx = Fixture::new();
+    let alice = credential("100", CN, "a1", "s1");
+    fx.set_live(&alice);
+    fx.manager.start_login().await.unwrap();
+    let content = std::fs::read_to_string(fx.marker()).unwrap();
+    assert!(chrono::DateTime::parse_from_rfc3339(&content).is_ok());
+    assert!(content.ends_with('Z'));
+    // 凭据文件原样、没有别的文件（临时文件已 rename，锁已释放）
+    assert_eq!(fx.live(), alice);
+    let mut names: Vec<String> = std::fs::read_dir(&fx.auth_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec![CREDENTIAL_FILENAME, LOGGED_OUT_FILENAME]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(fx.marker()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
+#[tokio::test]
+async fn cancelling_a_login_restores_the_original_sign_in() {
+    let fx = Fixture::new();
+    let alice = credential("100", CN, "a1", "s1");
+    fx.set_live(&alice);
+    let start = fx.manager.start_login().await.unwrap();
+    assert_eq!(
+        fx.manager.live_summary().await.unwrap().state,
+        LiveState::LoggedOut
+    );
+    assert_eq!(fx.manager.status().await.unwrap().current_account_id, None);
+
+    assert!(fx.manager.cancel_login(&start.flow_id).await.unwrap());
+    assert!(!fx.marker().exists());
+    assert_eq!(fx.live(), alice);
+    assert_eq!(
+        fx.manager
+            .status()
+            .await
+            .unwrap()
+            .current_account_id
+            .as_deref(),
+        Some("100@www.codebuddy.cn")
+    );
+    // 再取消一次什么都没有
+    assert!(!fx.manager.cancel_login(&start.flow_id).await.unwrap());
+}
+
+#[tokio::test]
+async fn cancel_leaves_a_marker_that_is_not_ours() {
+    let fx = Fixture::new();
+    fx.set_live(&credential("100", CN, "a1", "s1"));
+    let start = fx.manager.start_login().await.unwrap();
+    // 等待期间用户在 CLI 里又 /logout 了一次：标记换成了别人的
+    std::fs::write(fx.marker(), "2026-01-01T00:00:00.000Z").unwrap();
+    assert!(fx.manager.cancel_login(&start.flow_id).await.unwrap());
+    assert!(fx.marker().exists());
+}
+
+#[tokio::test]
+async fn starting_again_restores_the_previous_marker_first() {
+    let fx = Fixture::new();
+    let alice = credential("100", CN, "a1", "s1");
+    fx.set_live(&alice);
+    let first = fx.manager.start_login().await.unwrap();
+    let second = fx.manager.start_login().await.unwrap();
+    // 第二次开始前先恢复了原登录，所以又收录、又写了一份自己的标记
+    assert!(fx.marker().exists());
+    assert!(!fx.manager.cancel_login(&first.flow_id).await.unwrap());
+    assert!(fx.manager.cancel_login(&second.flow_id).await.unwrap());
+    assert!(!fx.marker().exists());
+    assert_eq!(fx.live(), alice);
+}
+
+#[tokio::test]
+async fn a_held_lock_blocks_writing_the_marker_and_restoring_it() {
+    let fx = Fixture::new();
+    let alice = credential("100", CN, "a1", "s1");
+    fx.set_live(&alice);
+    let lock = fx.auth_dir.join(LOCK_DIRNAME);
+    std::fs::create_dir(&lock).unwrap();
+    assert!(fx.manager.start_login().await.is_err());
+    assert!(!fx.marker().exists());
+    assert!(lock.exists(), "别人的锁不能被删");
+    std::fs::remove_dir(&lock).unwrap();
+
+    let start = fx.manager.start_login().await.unwrap();
+    assert!(!lock.exists(), "写完标记就放锁");
+    std::fs::create_dir(&lock).unwrap();
+    assert!(fx.manager.cancel_login(&start.flow_id).await.is_err());
+    assert!(fx.marker().exists(), "拿不到锁就不删标记");
+    std::fs::remove_dir(&lock).unwrap();
+    // 锁放了再点一次就能恢复
+    assert!(fx.manager.cancel_login(&start.flow_id).await.unwrap());
+    assert!(!fx.marker().exists());
+    assert_eq!(fx.live(), alice);
 }
 
 #[tokio::test]

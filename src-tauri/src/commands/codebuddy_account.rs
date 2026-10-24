@@ -1,5 +1,5 @@
 //! CodeBuddy Code 官方账号的状态与专用命令（列号、删号走授权中心的通用 `auth_*` 命令；
-//! 切号从供应商列表里的官方登录卡发起，见 [`codebuddy_account_switch_provider`]）。
+//! 切号由供应商列表里官方登录卡的「添加」发起，见 [`codebuddy_account_switch_provider`]）。
 
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ use crate::store::AppState;
 
 pub struct CodebuddyAccountState(pub Arc<CodebuddyAccountManager>);
 
-/// 终端里跑的命令：用户在里面执行 `/login`。优先用解析出的绝对路径，绕开终端 PATH 里
+/// 终端里跑的命令：没登录时 CLI 直接进登录界面。优先用解析出的绝对路径，绕开终端 PATH 里
 /// 已失效的版本管理器 shim；找不到安装时退回裸命令名。
 fn login_command() -> String {
     let program = crate::commands::misc::locate_cli_for_terminal("codebuddy");
@@ -45,7 +45,7 @@ fn login_command_for(program: Option<&std::path::Path>) -> String {
     }
 }
 
-/// 打开用户首选终端运行 `codebuddy`，让用户执行 `/login`。
+/// 打开用户首选终端运行 `codebuddy`，让用户在里面登录。
 pub(crate) async fn open_codebuddy_login_terminal() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
         crate::commands::misc::launch_terminal_running(&login_command(), "codebuddy_login")
@@ -116,8 +116,9 @@ fn official_card_account_id(provider: &crate::provider::Provider) -> Result<Stri
     })
 }
 
-/// 供应商列表里官方登录卡的「切换」：把 CodeBuddy 的全局登录换成卡片绑定的账号
-/// （切号的锁、吸收、原子写、读回核对都在 `switch_to` 里）。返回切到的账号 ID。
+/// 供应商列表里官方登录卡的「添加」：把 CodeBuddy 的全局登录换成卡片绑定的账号，这张卡
+/// 就成了「已添加」，原来那张自动回到「可添加」（切号的锁、吸收、原子写、读回核对都在
+/// `switch_to` 里）。返回切到的账号 ID。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn codebuddy_account_switch_provider(
     provider_id: String,

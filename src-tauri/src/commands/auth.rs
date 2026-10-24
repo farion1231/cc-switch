@@ -207,7 +207,8 @@ pub async fn auth_start_login(
                 interval: 1,
             })
         }
-        // 终端登录：打开终端跑 `codebuddy`，用户执行 `/login`，凭据文件变了就收录。
+        // 终端登录：打开终端跑 `codebuddy`，凭据文件变了就收录。已经登着号时先写登出标记，
+        // CLI 才会直接进登录界面（见 `CodebuddyAccountManager::start_login`）。
         // 既没有用户码也没有授权页，device_code 放这次登录的 id。
         AUTH_PROVIDER_CODEBUDDY_OAUTH => {
             if target_account_id.is_some() {
@@ -221,7 +222,10 @@ pub async fn auth_start_login(
             if let Err(error) =
                 crate::commands::codebuddy_account::open_codebuddy_login_terminal().await
             {
-                codebuddy_state.0.cancel_login(&start.flow_id).await;
+                // 终端没打开：把刚写的登出标记收回去，原来的登录不受影响
+                if let Err(restore) = codebuddy_state.0.cancel_login(&start.flow_id).await {
+                    log::warn!("[CodebuddyAccount] 终端打开失败后恢复原登录失败: {restore}");
+                }
                 return Err(error);
             }
             Ok(ManagedAuthDeviceCodeResponse {
@@ -351,7 +355,12 @@ pub async fn auth_cancel_login(
     match auth_provider {
         AUTH_PROVIDER_CODEX_OAUTH => Ok(codex_state.0.cancel_device_flow(&device_code).await),
         AUTH_PROVIDER_AGY_OAUTH => Ok(agy_state.0.cancel_login(&device_code).await),
-        AUTH_PROVIDER_CODEBUDDY_OAUTH => Ok(codebuddy_state.0.cancel_login(&device_code).await),
+        // 放弃登录：开始时为了让 CLI 进登录界面写的登出标记也删掉，原来的登录回来
+        AUTH_PROVIDER_CODEBUDDY_OAUTH => codebuddy_state
+            .0
+            .cancel_login(&device_code)
+            .await
+            .map_err(|e| e.to_string()),
         _ => Err("Login cancellation is only supported for Codex OAuth".to_string()),
     }
 }

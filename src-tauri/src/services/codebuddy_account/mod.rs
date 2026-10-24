@@ -8,7 +8,9 @@
 //!
 //! 几条规矩：
 //! - 官方登录走 CodeBuddy 私有接口，CC Switch 不自己做 OAuth：加号靠「收录当前登录」或在终端里
-//!   让用户执行 `/login`，等凭据文件变了再收录。
+//!   运行 `codebuddy` 让用户登录，等凭据文件变了再收录。已经登着号时 CLI 不会再进登录界面，
+//!   所以先收录现在的号，再写一份登出标记（和 CLI 的 `/logout` 一样：凭据文件不动、不调服务端，
+//!   CLI 见到标记就当没登录）；用户放弃时删掉自己写的标记，原来的登录就回来了。
 //! - 令牌由 CodeBuddy 自己续期，CC Switch 从不续期。所以写之前先把文件里现在那份收回来（CLI 可能
 //!   已经续过期）；不认识的号直接收录，切走也不会丢。
 //! - 认不出格式的内容（比如 WorkBuddy 托管时的 `$wbEncrypted` 加密信封）整份原样暂存到
@@ -187,6 +189,8 @@ pub struct LoginStart {
 struct PendingLogin {
     baseline: Baseline,
     started: Instant,
+    /// 这次登录为了让 CLI 进登录界面写下的登出标记内容；没写过时为 `None`
+    marker: Option<String>,
 }
 
 /// 开始登录时凭据文件的样子。之后文件变成一个认得出的登录、且不只是同一会话的续期，
@@ -359,12 +363,32 @@ impl CodebuddyAccountManager {
 
     // ---------- 终端登录 ----------
 
-    /// 开始一次「在终端里 /login」：先把现在登着的号收进来（新登录会覆盖文件，不收就丢了），
-    /// 再记下文件内容，之后文件变了且认得出就算登录完成。打开终端由调用方负责。
+    /// 开始一次终端登录：先把现在登着的号收进来（新登录会覆盖文件，不收就丢了），再记下文件
+    /// 内容，之后文件变了且认得出就算登录完成。打开终端由调用方负责。
+    ///
+    /// 现在登着一个认得出的号时，拿目录锁写一份登出标记，让 CLI 直接进登录界面；凭据文件
+    /// 不动（CLI restore 时还要靠它），也不调任何服务端接口。放弃时 [`Self::cancel_login`]
+    /// 会删掉这份标记。认不出的内容（WorkBuddy 托管）只暂存，不写标记。
     pub async fn start_login(&self) -> Result<LoginStart, AppError> {
-        let baseline = {
+        let mut pending = self.pending.lock().await;
+        // 同时只留一个进行中的登录：再点一次「添加账号」就丢掉上一个（先恢复它写的标记）
+        for (_, previous) in pending.drain() {
+            if let Err(error) = self.restore_marker(&previous).await {
+                log::warn!("[CodebuddyAccount] 恢复上一次登录前的登出标记失败: {error}");
+            }
+        }
+        let (baseline, marker) = {
             let mut store = self.store.lock().await;
-            let live = self.read_live();
+            // 只有要写标记时才拿锁（没登录时连 CodeBuddy 的目录都不建）；拿到锁再读一遍
+            let mut live = self.read_live();
+            let _lock = match live {
+                LiveLogin::Known { .. } => {
+                    let lock = DirLock::acquire(&self.auth_dir).await?;
+                    live = self.read_live();
+                    Some(lock)
+                }
+                _ => None,
+            };
             if let LiveLogin::Unrecognized(raw) = &live {
                 self.stash_unrecognized(raw)?;
             }
@@ -372,17 +396,19 @@ impl CodebuddyAccountManager {
             if changed {
                 self.persist(&store)?;
             }
-            Baseline::of(&live)
+            let marker = match &live {
+                LiveLogin::Known { raw, .. } => Some(self.write_logout_marker(raw)?),
+                _ => None,
+            };
+            (Baseline::of(&live), marker)
         };
         let flow_id = uuid::Uuid::new_v4().to_string();
-        let mut pending = self.pending.lock().await;
-        // 同时只留一个进行中的登录：再点一次「添加账号」就丢掉上一个
-        pending.clear();
         pending.insert(
             flow_id.clone(),
             PendingLogin {
                 baseline,
                 started: Instant::now(),
+                marker,
             },
         );
         Ok(LoginStart {
@@ -402,7 +428,11 @@ impl CodebuddyAccountManager {
             ));
         };
         if entry.started.elapsed() > LOGIN_TIMEOUT {
-            pending.remove(flow_id);
+            if let Some(expired) = pending.remove(flow_id) {
+                if let Err(error) = self.restore_marker(&expired).await {
+                    log::warn!("[CodebuddyAccount] 登录超时后恢复原登录失败: {error}");
+                }
+            }
             return Err(AppError::localized(
                 "codebuddy.account.login_timeout",
                 "等待登录超时，请重新添加账号",
@@ -427,8 +457,19 @@ impl CodebuddyAccountManager {
         account_of(&store, &id).map(Some)
     }
 
-    pub async fn cancel_login(&self, flow_id: &str) -> bool {
-        self.pending.lock().await.remove(flow_id).is_some()
+    /// 放弃这次登录。开始时写过登出标记、而且标记还是那一份时删掉它，原来的登录就回来了
+    /// （CLI 已经登上新号时它自己会删标记，这里什么都不动）。返回有没有这次登录。
+    pub async fn cancel_login(&self, flow_id: &str) -> Result<bool, AppError> {
+        let mut pending = self.pending.lock().await;
+        let Some(entry) = pending.remove(flow_id) else {
+            return Ok(false);
+        };
+        if let Err(error) = self.restore_marker(&entry).await {
+            // 没恢复成（比如 CodeBuddy 正拿着锁）：留着这次登录，用户可以再点一次
+            pending.insert(flow_id.to_string(), entry);
+            return Err(error);
+        }
+        Ok(true)
     }
 
     // ---------- 切换与删除 ----------
@@ -579,6 +620,43 @@ impl CodebuddyAccountManager {
     }
 
     // ---------- 内部 ----------
+
+    /// 写登出标记（内容是当前时间，临时文件 + rename），返回写下的内容。调用方持有目录锁。
+    /// 凭据文件一个字节都不动，写完核对它还是原样。
+    fn write_logout_marker(&self, raw: &str) -> Result<String, AppError> {
+        let content = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let marker = self.auth_dir.join(LOGGED_OUT_FILENAME);
+        crate::config::atomic_write_private(&marker, content.as_bytes())?;
+        let credential = std::fs::read_to_string(self.credential_path()).ok();
+        if credential.as_deref() != Some(raw) {
+            log::warn!("[CodebuddyAccount] 写登出标记时凭据文件被别人改了");
+        }
+        log::info!("[CodebuddyAccount] 已写登出标记，等待在终端登录新账号");
+        Ok(content)
+    }
+
+    /// 删掉这次登录自己写的登出标记（拿目录锁；标记内容不是自己写的那份就不碰）。
+    async fn restore_marker(&self, entry: &PendingLogin) -> Result<bool, AppError> {
+        let Some(ours) = entry.marker.as_deref() else {
+            return Ok(false);
+        };
+        let _lock = DirLock::acquire(&self.auth_dir).await?;
+        let marker = self.auth_dir.join(LOGGED_OUT_FILENAME);
+        match std::fs::read_to_string(&marker) {
+            Ok(content) if content == ours => {}
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(AppError::io(&marker, error)),
+        }
+        match std::fs::remove_file(&marker) {
+            Ok(()) => {
+                log::info!("[CodebuddyAccount] 已删除登出标记，恢复原来的登录");
+                Ok(true)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(AppError::io(&marker, error)),
+        }
+    }
 
     fn credential_path(&self) -> PathBuf {
         self.auth_dir.join(CREDENTIAL_FILENAME)
