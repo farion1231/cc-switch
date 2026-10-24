@@ -29,6 +29,10 @@ export interface Provider {
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
   // 是否加入故障转移队列
   inFailoverQueue?: boolean;
+  // 引用的全局端点（endpoints.id）；缺省 = 独立条目（凭据自持）
+  endpointRef?: string;
+  // 档位映射：某档模型指向（可选跨端点引用）；缺省 = 未配置
+  tierMappings?: TierMappings;
 }
 
 export interface AppConfig {
@@ -871,6 +875,57 @@ export interface UniversalProvider {
 
 // 统一供应商映射（id -> UniversalProvider）
 export type UniversalProvidersMap = Record<string, UniversalProvider>;
+
+// ============================================================================
+// 端点引用化（全局端点 + 档位映射）
+// 端点=厂商连接信息（全局一处，改密钥全局生效）；条目=策略+映射（引用端点）
+// ============================================================================
+
+// 上游 wire 格式：决定代理转发时是否做协议转换
+export type EndpointApiFormat =
+  | "anthropic"
+  | "openai_chat"
+  | "openai_responses"
+  | "gemini_native";
+
+// 全局端点（endpoints 表）
+export interface Endpoint {
+  id: string;
+  name: string;
+  category?: string;
+  baseUrl: string;
+  apiKey: string;
+  authBinding?: ProviderMeta["authBinding"];
+  apiFormat?: EndpointApiFormat;
+  websiteUrl?: string;
+  icon?: string;
+  iconColor?: string;
+  notes?: string;
+  meta?: Record<string, any>;
+  createdAt?: number;
+  sortIndex?: number;
+}
+
+export type EndpointsMap = Record<string, Endpoint>;
+
+// 单个档位的映射目标：无 endpoint=仅改模型名；带 endpoint=代理模式跨端点分流
+export interface TierMapping {
+  endpoint?: string;
+  model?: string;
+}
+
+// 档位映射表（六档；未列出的档位继承条目自身行为）
+export interface TierMappings {
+  haiku?: TierMapping;
+  sonnet?: TierMapping;
+  opus?: TierMapping;
+  fable?: TierMapping;
+  subagent?: TierMapping;
+  default?: TierMapping;
+}
+
+// 引用某端点的条目（app_type, provider_id）
+export type EndpointReference = [string, string];
 
 // ============================================================================
 // OpenCode 专属配置（v3.9.2+）

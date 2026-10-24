@@ -1,6 +1,7 @@
 export type { AppId } from "./types";
 export { piApi } from "./pi";
 export { providersApi, universalProvidersApi } from "./providers";
+export { endpointsApi } from "./endpoints";
 export { settingsApi } from "./settings";
 export { backupsApi } from "./settings";
 export { mcpApi } from "./mcp";

@@ -1184,8 +1184,10 @@ impl Database {
 mod tests {
     use super::{lock_backup_file_operations, Database};
     use crate::error::AppError;
+    use crate::provider::Provider;
     use crate::settings::{get_settings, update_settings, AppSettings};
     use rusqlite::Connection;
+    use serde_json::json;
     use serial_test::serial;
 
     struct TestHomeGuard {
@@ -3409,6 +3411,115 @@ mod tests {
             t.elapsed()
         );
 
+        Ok(())
+    }
+
+    // ==================== 端点引用化（P5）：备份/同步往返 ====================
+
+    #[test]
+    #[serial]
+    fn sql_backup_round_trips_endpoints_and_tier_mappings() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        {
+            // 端点 + 引用它的条目（含跨端点档位映射）
+            let mut endpoint = crate::provider::Endpoint::new(
+                "ep-cheap".to_string(),
+                "Cheap Relay".to_string(),
+                "https://cheap.example".to_string(),
+                "sk-cheap".to_string(),
+            );
+            endpoint.api_format = Some("openai_chat".to_string());
+            source.save_endpoint(&endpoint)?;
+
+            let mut provider = Provider::with_id(
+                "p1".to_string(),
+                "P1".to_string(),
+                json!({"env": {"ANTHROPIC_BASE_URL": "https://cheap.example", "ANTHROPIC_AUTH_TOKEN": "sk-cheap"}}),
+                None,
+            );
+            provider.endpoint_ref = Some("ep-cheap".to_string());
+            provider.tier_mappings = Some(crate::provider::TierMappings {
+                haiku: Some(crate::provider::TierMapping {
+                    endpoint: Some("ep-cheap".to_string()),
+                    model: Some("gemini-3-flash".to_string()),
+                }),
+                ..Default::default()
+            });
+            source.save_provider("claude", &provider)?;
+        }
+
+        let sql = source.export_sql_string()?;
+        let target = Database::memory()?;
+        target.import_sql_string(&sql)?;
+
+        // 端点行原样往返
+        let endpoint = target
+            .get_endpoint("ep-cheap")?
+            .expect("endpoint survives round trip");
+        assert_eq!(endpoint.base_url, "https://cheap.example");
+        assert_eq!(endpoint.api_key, "sk-cheap");
+        assert_eq!(endpoint.api_format.as_deref(), Some("openai_chat"));
+
+        // 条目引用与档位映射往返（tier_mappings 已物化进 env 的 haiku 档一并校验）
+        let provider = target
+            .get_provider_by_id("p1", "claude")?
+            .expect("provider survives round trip");
+        assert_eq!(provider.endpoint_ref.as_deref(), Some("ep-cheap"));
+        assert_eq!(
+            provider
+                .tier_mappings
+                .as_ref()
+                .and_then(|t| t.haiku.as_ref())
+                .and_then(|m| m.model.as_deref()),
+            Some("gemini-3-flash")
+        );
+        assert_eq!(
+            provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "sk-cheap"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn old_export_without_endpoints_table_imports_cleanly() -> Result<(), AppError> {
+        // 旧版本（v24 之前）导出没有 endpoints 表：导入必须成功并补建空表
+        let _test_home = TestHomeGuard::new();
+        let conn = rusqlite::Connection::open_in_memory()?;
+        conn.execute_batch(
+        "CREATE TABLE providers (
+            id TEXT NOT NULL, app_type TEXT NOT NULL, name TEXT NOT NULL,
+            settings_config TEXT NOT NULL, website_url TEXT, category TEXT,
+            created_at INTEGER, sort_index INTEGER, notes TEXT,
+            icon TEXT, icon_color TEXT,
+            meta TEXT NOT NULL DEFAULT '{}',
+            is_current BOOLEAN NOT NULL DEFAULT 0,
+            in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+            PRIMARY KEY (id, app_type)
+        );
+        INSERT INTO providers (id, app_type, name, settings_config)
+            VALUES ('legacy', 'claude', 'Legacy', '{\"env\":{}}');
+        CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, name TEXT NOT NULL, server_config TEXT NOT NULL);
+        CREATE TABLE prompts (id TEXT PRIMARY KEY, name TEXT NOT NULL, content TEXT NOT NULL);
+        CREATE TABLE skills (id TEXT PRIMARY KEY, name TEXT NOT NULL, directory TEXT, app_type TEXT, installed BOOLEAN NOT NULL DEFAULT 0);
+        CREATE TABLE skill_repos (owner TEXT PRIMARY KEY, repo TEXT NOT NULL);
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE provider_endpoints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider_id TEXT NOT NULL, app_type TEXT NOT NULL, url TEXT NOT NULL
+        );",
+    )?;
+
+        // dump_sql 产出即完整可导入导出（表结构为旧版形态、无 endpoints 表）
+        let output = Database::dump_sql(&conn, &[])?;
+
+        let target = Database::memory()?;
+        target.import_sql_string(&output)?;
+
+        // 补建的 endpoints 表可写；旧数据在
+        assert!(target.get_endpoint("nope")?.is_none());
+        assert!(target.get_provider_by_id("legacy", "claude")?.is_some());
         Ok(())
     }
 }
