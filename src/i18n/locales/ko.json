@@ -975,7 +975,7 @@
     "copyToolUninstallCommand": "{{tool}}에 대한 제거 명령을 복사합니다.",
     "uninstallCommandCopied": "제거 명령이 복사되었습니다.",
     "uninstallCommandCopyFailed": "복사에 실패했습니다. 명령을 수동으로 선택하고 복사하십시오.",
-    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code 설치 또는 업그레이드",
+    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi 설치 또는 업그레이드",
     "localEnvCheck": "로컬 환경 확인",
     "updateAllTools": "모두 업데이트({{count}})",
     "currentVersion": "현재 버전",
@@ -1084,7 +1084,9 @@
     },
     "data": {
       "location": "저장 위치"
-    }
+    },
+    "ompConfigDir": "Oh My Pi 설정 디렉토리",
+    "browsePlaceholderOmp": "예: /home/<사용자 이름>/.omp/agent"
   },
   "apps": {
     "claude": "Claude",
@@ -1099,7 +1101,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1631,7 +1634,6 @@
       "fluxa": "FluxA와 Baidu AI Cloud는 AI 에이전트가 모델, API 및 도구를 스스로 구매, 관리 및 사용할 수 있도록 AgenticPlan을 공동 출시했습니다. 여기에는 DeepSeek V4, GLM 5.2 및 Kimi와 같은 주력 모델에 대해 최대 40% 할인된 Baidu Qianfan TokenPlan과 검색, 데이터 스크래핑, 소셜 미디어, 금융, 암호화폐, 이미지 생성 및 비디오를 위한 13,000개 이상의 유료 API를 잠금 해제하는 보너스 FluxA AgentMarket API 크레딧이 포함됩니다.",
       "88api": "88API는 홍콩 회사가 운영하는 원스톱 다중 모델 API 플랫폼으로, 텍스트, 이미지, 음성 및 비디오 모델에 대한 통합 액세스를 제공합니다. 주요 국제 결제 수단을 수용하고 송장 발행이 가능하며 기업 수준의 안정적인 서비스를 제공합니다. 보너스 크레딧을 받으시려면 전용 링크를 통해 가입하세요!",
       "modelflare": "Modelflare는 안정적이고 저렴한 AI 모델 게이트웨이입니다. 하나의 키가 GPT, Claude, Gemini, Grok 및 기타 주요 모델에 도달합니다. CC Switch 사용자 전용: 첫 번째 충전 시 \"CCSWITCH\" 코드를 사용하면 10% 할인을 받을 수 있습니다!",
-      "everyapi": "EveryAPI는 Claude Code, Codex, Cursor 등 20개 이상의 도구를 한 번의 클릭으로 자동 설정하는 데스크톱 클라이언트를 제공합니다. 키 하나로 Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, Doubao를 호출하며 모델을 바꿀 때 설정을 수정할 필요가 없습니다. 가입 시 무료 크레딧 14위안을 받고 GPT 모델을 공식 가격의 최저 15%에 이용할 수 있습니다. CC Switch 사용자는 첫 충전 시 코드 ‘ccswitch’로 20% 할인을 받을 수 있으며, 이 혜택에는 기한이 없습니다!",
       "alltokens": "AllTokens는 모든 AI 호출을 안정적이고 진실되고 신뢰할 수 있게 만드는 것을 목표로 안정성과 정직성을 기반으로 구축되었습니다. 신뢰할 수 있는 서비스, 투명한 청구, GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi 및 기타 주요 모델을 위한 단일 플랫폼과 종량제 가격 책정 및 지출 한도가 적용됩니다. 가입 시 무료 평가판 크레딧 1달러를 받으세요!",
       "alltokens_si": "AllTokens SI는 안정성과 정직성을 바탕으로 구축되었으며 기업용 AI 토큰 릴레이 및 팀 협업 플랫폼입니다. 구성원, 키, 사용량 및 잔액은 모두 하나의 회사 콘솔에 있으며 명확한 권한과 지출 한도를 통해 팀 사용량을 추적하고 제어할 수 있습니다.",
       "openmodel": "OpenModel은 지원되는 모델 전반에 걸쳐 Codex의 경우 최대 90%, Claude Code의 경우 최대 60%의 클라이언트별 할인을 제공합니다. 이 링크를 통해 등록하고 프로모션 코드 \"cc-switch\"를 사용하는 CC Switch 사용자는 첫 충전 시 10% 할인을 받습니다!",
@@ -4202,8 +4204,12 @@
       "hermes": "공식 스크립트로 설치",
       "pi": "npm으로 설치",
       "mcode": "공식 스크립트로 설치하며, 실패하면 npm을 사용합니다",
-      "agy": "공식 스크립트로 설치"
-    }
+      "agy": "공식 스크립트로 설치",
+      "omp": "공식 스크립트로 설치"
+    },
+    "ompDiscoveryHelpTitle": "Oh My Pi가 실제로 불러오는 항목",
+    "ompDiscoveryHelp": "Oh My Pi는 자체 설정 디렉토리인 ~/.omp/agent 외에도 다른 에이전트의 디렉토리(예: Claude의 ~/.claude, Codex의 ~/.codex)에서 MCP 서버, Skills, 명령어, 훅, 규칙 및 설정을 자동으로 찾습니다. Oh My Pi에 실제로 적용되는 항목이 CC Switch 화면과 일치하도록 하려면 ~/.omp/agent/config.yml의 disabledProviders에서 불필요한 검색 소스를 비활성화하세요. ID는 문서에 명시된 값(예: claude, codex, gemini, opencode, github, agents)을 사용합니다.",
+    "ompDiscoveryDocsLink": "참고 문서: context-files (disabledProviders)"
   },
   "appPage": {
     "moreActions": "{{name}}에 대한 추가 작업",
@@ -4940,11 +4946,13 @@
       "primaryHidden": "Kimi Code 자체 로그인 계정을 목록에서 제거했습니다. 같은 계정으로 다시 로그인하면 되찾을 수 있습니다.",
       "removeCurrentHint": "사용 중인 계정입니다. 제거하기 전에 다른 계정으로 전환하세요.",
       "manageAccounts": "Kimi 계정 관리",
-      "managedHint": "인증 센터에서 Kimi 공식 계정을 관리합니다.",
+      "managedHint": "먼저 이 공식 계정을 제거하거나, 인증 센터에서 로그인 정보와 함께 삭제하세요.",
       "current": "Kimi에서 사용 중",
       "primaryShort": "Kimi Code 자체 로그인",
       "empty": "아직 Kimi 계정이 없습니다. Kimi Code에 로그인된 계정이 자동으로 여기에 표시됩니다.",
-      "help": "Kimi 코딩 요금제 계정을 여러 개 추가할 수 있습니다. 각 계정에는 Kimi Code의 개별 공급자와 모델이 생깁니다. “이 계정 사용”을 누르면 Kimi Code의 기본 모델이 해당 계정으로 전환되며 이후 새 세션에서 사용됩니다. Kimi Code 자체 로그인 계정은 자동으로 표시되며 웹 검색과 가져오기에 항상 사용됩니다. 여기에서 제거해도 목록에서만 숨겨지며 Kimi Code에서 로그아웃되지 않습니다."
+      "help": "Kimi 코딩 요금제 계정을 여러 개 추가할 수 있습니다. 각 계정에는 Kimi Code의 개별 공급자와 모델이 생깁니다. “이 계정 사용”을 누르면 Kimi Code의 기본 모델이 해당 계정으로 전환되며 이후 새 세션에서 사용됩니다. Kimi Code 자체 로그인 계정은 자동으로 표시되며 웹 검색과 가져오기에 항상 사용됩니다. 여기에서 제거해도 목록에서만 숨겨지며 Kimi Code에서 로그아웃되지 않습니다.",
+      "noSubscription": "구독 없음",
+      "connectionManaged": "연결 및 로그인은 인증 센터에서 관리하며, 여기서는 모델만 편집합니다. ‘모델 목록 가져오기’를 누르면 이 계정에서 현재 사용할 수 있는 공식 모델 목록을 불러옵니다."
     },
     "modelSelectionHint": "공급자 카드의 전환 버튼을 눌러 기본 공급자를 선택하세요. 다른 모델을 지정하려면 Kimi Code에서 /model을 사용하세요.",
     "contextSize": "컨텍스트 크기",
@@ -4967,6 +4975,38 @@
     "error": {
       "defaultModelInUse": "Kimi Code가 이 공급자의 모델을 사용 중입니다. 먼저 Kimi Code에서 /model로 다른 모델로 전환하세요.",
       "secondaryModelInUse": "Kimi Code의 서브에이전트가 이 공급자의 모델을 사용 중입니다. 먼저 Kimi Code에서 /secondary-model로 변경하세요."
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "아직 API 키 공급자가 없습니다.",
+      "description": "프리셋 또는 사용자 정의 공급자를 추가하려면 오른쪽 상단에 있는 + 버튼을 사용하세요."
+    },
+    "provider": {
+      "enabled": "Oh My Pi에서 활성화됨",
+      "enableFailed": "Oh My Pi에서 이 공급자를 활성화할 수 없습니다.",
+      "removed": "Oh My Pi에서 제거됨"
+    },
+    "current": {
+      "readFailed": "Oh My Pi의 공급자 설정을 읽을 수 없습니다.",
+      "stateUnavailableHint": "CC Switch가 Oh My Pi의 공급자 설정을 읽을 수 있을 때까지 공급자 변경은 비활성화됩니다."
+    },
+    "form": {
+      "discoveryType": "모델 자동 검색",
+      "discoveryOff": "끔",
+      "discoveryHint": "Oh My Pi가 엔드포인트에서 주기적으로 모델 목록을 가져오고, 응답에 포함된 컨텍스트 창 크기 등의 메타데이터를 자동으로 적용합니다. 수동으로 추가한 모델도 계속 적용됩니다. 자동 검색을 활성화하면 모델 목록을 비워 둘 수 있습니다."
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi 설정이 크기 제한인 1 MiB를 초과합니다.",
+      "externalChange": "다른 프로그램에서 Oh My Pi 설정을 변경했습니다. 새로고침한 후 다시 시도하세요.",
+      "rollbackConflict": "데이터베이스 저장에 실패했으며, 다른 프로그램에서 Oh My Pi 설정을 변경했습니다. 설정을 수동으로 복구하세요.",
+      "invalidMcp": "Oh My Pi MCP JSON 형식이 올바르지 않습니다. 루트와 mcpServers는 객체여야 합니다.",
+      "invalidYaml": "Oh My Pi YAML이 올바르지 않습니다. 루트와 providers는 매핑이어야 합니다.",
+      "invalidProvider": "Oh My Pi 공급자 설정이 올바르지 않습니다. 필수 필드, API 형식 및 필드 유형을 확인하세요.",
+      "manualEdit": "이 YAML은 CC Switch에서 안전하게 편집할 수 없는 형식이나 구문을 사용합니다. models.yml을 직접 편집하세요.",
+      "duplicateProvider": "이 Oh My Pi 공급자 키가 이미 존재합니다.",
+      "renameProvider": "Oh My Pi 공급자 키는 변경할 수 없습니다.",
+      "providerMissing": "이 Oh My Pi 공급자는 더 이상 저장된 목록에 없습니다."
     }
   }
 }
