@@ -161,8 +161,10 @@ export const usageKeys = {
     [...usageKeys.all, "session", appType, sessionId] as const,
   limits: (providerId: string, appType: string) =>
     [...usageKeys.all, "limits", providerId, appType] as const,
+  // 用量脚本查询带 "script" 一段：与 summary/detail 等统计类查询区分开，
+  // 页头「刷新所有额度」按钮按 ["usage","script"] 前缀整类失效重查
   script: (providerId: string, appType: string) =>
-    [...usageKeys.all, providerId, appType] as const,
+    [...usageKeys.all, "script", providerId, appType] as const,
 };
 
 /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */

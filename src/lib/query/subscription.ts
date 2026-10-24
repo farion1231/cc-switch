@@ -277,6 +277,9 @@ export function useKimiAccountQuota(
  * codex-resets.com 社区重置预测。全局数据（不分账号），所有卡片共享同一份
  * 请求缓存；后端还有 10 分钟内存缓存，这里同样按 10 分钟轮询。失败不保留
  * 占位数据：预测行显示「暂时没有数据」，不影响额度行。
+ *
+ * 轮询只在窗口可见时进行（托盘面板窗口只隐藏不销毁、设置又只在弹出时重读，
+ * 开着后台轮询会在开关关掉后继续请求第三方）；后端命令另有设置门控兜底。
  */
 export function useCodexResetsStatus(enabled: boolean) {
   return useQuery({
@@ -284,7 +287,7 @@ export function useCodexResetsStatus(enabled: boolean) {
     queryFn: () => subscriptionApi.getCodexResetsStatus(),
     enabled,
     refetchInterval: 10 * 60 * 1000,
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: 10 * 60 * 1000,
     retry: 1,
@@ -294,10 +297,16 @@ export function useCodexResetsStatus(enabled: boolean) {
 /**
  * 立即强制刷新重置预测（绕过后端缓存），成功后写回共享的 query 缓存。
  * 给额度刷新按钮联动用：失败静默保留上次的预测，不打扰额度刷新本身。
+ * 「Codex 重置预测」关着（或设置还没读到）时直接跳过，省一次 IPC——
+ * 后端命令入口对开关再做一次门控兜底。
  */
 export async function forceRefreshCodexResets(
   queryClient: QueryClient,
 ): Promise<void> {
+  const settings = queryClient.getQueryData<{ codexResetPrediction?: boolean }>(
+    ["settings"],
+  );
+  if (!settings?.codexResetPrediction) return;
   try {
     const status = await subscriptionApi.getCodexResetsStatus(true);
     queryClient.setQueryData(subscriptionKeys.codexResets(), status);

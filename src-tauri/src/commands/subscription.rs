@@ -46,9 +46,15 @@ pub async fn get_subscription_quota(
 
 /// 社区重置预测（codex-resets.com）：全局数据，与账号无关，后端内存缓存 10 分钟。
 /// 前端按「Codex 重置预测」设置开关决定是否查询；`force` 供额度刷新按钮联动时绕过缓存。
+///
+/// 开关关闭时在这里直接拒绝（`force` 也不放行）：前端的 ↻ 联动、页头「刷新所有
+/// 额度」按钮和隐藏着的托盘面板轮询都汇聚到这一个入口，兜住所有路径不出网请求。
 #[tauri::command]
 pub async fn get_codex_resets_status(
     force: Option<bool>,
 ) -> Result<crate::services::codex_resets::CodexResetsStatus, String> {
+    if !crate::settings::get_settings().codex_reset_prediction {
+        return Err("codex reset prediction is disabled".to_string());
+    }
     crate::services::codex_resets::get_status(force.unwrap_or(false)).await
 }
