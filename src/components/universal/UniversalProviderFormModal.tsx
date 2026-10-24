@@ -143,6 +143,11 @@ export function UniversalProviderFormModal({
   const [selectedLibraryPresetId, setSelectedLibraryPresetId] = useState<
     string | null
   >(null);
+  // 官方厂商预设的端点只支持其声明的协议——锁定不可改；
+  // 自定义网关（null）支持全部四种
+  const [lockedApiFormat, setLockedApiFormat] = useState<
+    UniversalProvider["apiFormat"] | null
+  >(null);
   const libraryPresetEntries = useMemo(
     () =>
       providerPresets
@@ -154,13 +159,17 @@ export function UniversalProviderFormModal({
     (entryId: string) => {
       setSelectedLibraryPresetId(entryId);
       const entry = libraryPresetEntries.find((item) => item.id === entryId);
-      if (!entry || entryId === "custom") return;
+      if (!entry || entryId === "custom") {
+        setLockedApiFormat(null); // 自定义：全部协议可选
+        return;
+      }
       const preset = entry.preset as (typeof providerPresets)[number];
       const env =
         (preset.settingsConfig as { env?: Record<string, unknown> }).env ?? {};
       const str = (v: unknown) =>
         typeof v === "string" && v.trim() ? v : undefined;
       setSelectedPreset(null); // 库预设优先于通用预设（NewAPI 等）
+      setLockedApiFormat(preset.apiFormat ?? "anthropic");
       setName(preset.name);
       setWebsiteUrl(preset.websiteUrl || "");
       if (preset.icon) {
@@ -581,21 +590,40 @@ requires_openai_auth = true`;
                 onValueChange={(value) =>
                   setApiFormat(value as UniversalProvider["apiFormat"])
                 }
+                disabled={!!lockedApiFormat}
               >
                 <SelectTrigger id="universalApiFormat">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="anthropic">Anthropic Messages</SelectItem>
-                  <SelectItem value="openai_chat">
-                    OpenAI Chat Completions
-                  </SelectItem>
-                  <SelectItem value="openai_responses">
-                    OpenAI Responses
-                  </SelectItem>
-                  <SelectItem value="gemini_native">Gemini Native</SelectItem>
+                  {(lockedApiFormat
+                    ? [lockedApiFormat]
+                    : ([
+                        "anthropic",
+                        "openai_chat",
+                        "openai_responses",
+                        "gemini_native",
+                      ] as const)
+                  ).map((format) => (
+                    <SelectItem key={format} value={format}>
+                      {format === "anthropic"
+                        ? "Anthropic Messages"
+                        : format === "openai_chat"
+                          ? "OpenAI Chat Completions"
+                          : format === "openai_responses"
+                            ? "OpenAI Responses"
+                            : "Gemini Native"}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              {lockedApiFormat && (
+                <p className="text-xs text-fg-3">
+                  {t("providerForm.apiFormatLocked", {
+                    defaultValue: "官方厂商端点只支持该协议，已按官方预设锁定",
+                  })}
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="websiteUrl">
