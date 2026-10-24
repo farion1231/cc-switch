@@ -1,8 +1,54 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCodexCatalogModelsForSave } from "@/components/providers/forms/ProviderForm";
+import {
+  findCodexCatalogDuplicateGroups,
+  normalizeCodexCatalogModelsForSave,
+} from "@/components/providers/forms/ProviderForm";
 import { mapCodexCatalogModelForForm } from "@/components/providers/forms/hooks/useCodexConfigState";
 
 describe("ProviderForm Codex catalog helpers", () => {
+  it("groups duplicate actual models with their row indexes", () => {
+    expect(
+      findCodexCatalogDuplicateGroups([
+        { model: "deepseek-v4-pro" },
+        { model: " deepseek-v4-flash " },
+        { model: "deepseek-v4-flash", displayName: "Duplicate" },
+      ]),
+    ).toEqual([
+      {
+        model: "deepseek-v4-flash",
+        rows: [{ displayName: undefined }, { displayName: "Duplicate" }],
+      },
+    ]);
+    expect(
+      findCodexCatalogDuplicateGroups([
+        { model: "deepseek-v4-pro" },
+        { model: "deepseek-v4-flash" },
+        { model: "" },
+        { model: "DeepSeek-V4-Flash" },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("returns every duplicate group", () => {
+    expect(
+      findCodexCatalogDuplicateGroups([
+        { model: "m-a", displayName: "A1" },
+        { model: "m-b" },
+        { model: "m-a", displayName: "A2" },
+        { model: "m-b", displayName: "B2" },
+      ]),
+    ).toEqual([
+      {
+        model: "m-a",
+        rows: [{ displayName: "A1" }, { displayName: "A2" }],
+      },
+      {
+        model: "m-b",
+        rows: [{ displayName: undefined }, { displayName: "B2" }],
+      },
+    ]);
+  });
+
   it("normalizes catalog rows and removes empty or duplicate models", () => {
     expect(
       normalizeCodexCatalogModelsForSave([
