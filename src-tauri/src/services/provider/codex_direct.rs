@@ -742,6 +742,8 @@ pub(crate) fn plan(
         route,
         catalog: catalog.is_some(),
         retired: facts.retired,
+        preserve_retired_routes:
+            crate::codex_history_migration::history_may_reference_legacy_routes(),
     };
     let official_login = match &auth {
         AuthGoal::Official(row_auth) => codex_login::official_login_requirement(row_auth),

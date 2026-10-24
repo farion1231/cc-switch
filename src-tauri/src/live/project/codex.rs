@@ -34,7 +34,7 @@ pub const WEB_SEARCH_DISABLED: &str = "disabled";
 pub const MODEL_CATALOG_JSON: &str = "model_catalog_json";
 
 /// Codex 内置的 provider id（大小写敏感，和上游一致：`OpenAI` 是合法的自定义 id）。
-const BUILT_IN_IDS: &[&str] = &[
+pub(crate) const BUILT_IN_IDS: &[&str] = &[
     "amazon-bedrock",
     "amazon-bedrock-runtime",
     "openai",
@@ -537,8 +537,9 @@ pub struct CodexConfigPatch {
     pub route: RouteWrite,
     /// 生成了模型目录：行里没有自己的指针时，`model_catalog_json` 写成 CC Switch 的目录。
     pub catalog: bool,
-    /// 旧版按别的 id 写进去的表，能证明是 CC Switch 写的就删掉（里面可能有真实 Key）。
+    /// 旧版按别的 id 写进去的表，只有能排除存量历史引用时才可清理。
     pub retired: Vec<KnownTable>,
+    pub preserve_retired_routes: bool,
 }
 
 impl TomlDocPatch for CodexConfigPatch {
@@ -603,6 +604,39 @@ pub fn row_catalog_pointer(top: &[(String, TomlValue)]) -> Option<&(String, Toml
 
 impl CodexConfigPatch {
     pub fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        if let Some(profiles) = doc.get("profiles").and_then(Item::as_table_like) {
+            for (profile, item) in profiles.iter() {
+                let Some(id) = item
+                    .as_table_like()
+                    .and_then(|p| p.get("model_provider"))
+                    .and_then(Item::as_str)
+                else {
+                    continue;
+                };
+                let Some(item) = doc
+                    .get("model_providers")
+                    .and_then(Item::as_table_like)
+                    .and_then(|p| p.get(id))
+                else {
+                    continue;
+                };
+                let Some(table) = item.as_table_like() else {
+                    continue;
+                };
+                if !is_built_in_id(id)
+                    && id != ROUTE_ID
+                    && self.is_retired(id, item)
+                    && table_bool(table, "requires_openai_auth")
+                    && non_empty_str(table.get("experimental_bearer_token")).is_none()
+                    && non_empty_str(table.get("env_key")).is_none()
+                {
+                    return Err(LiveWriteError::UnsafeCodexProfile {
+                        profile: profile.into(),
+                        provider: id.into(),
+                    });
+                }
+            }
+        }
         let target_top: Vec<&str> = self
             .top
             .iter()
@@ -749,8 +783,10 @@ impl CodexConfigPatch {
             providers.insert(&renamed, item);
         }
 
-        // 旧版按别的 id 写进去的表（含旧版代理官方路由表）、残留的代理占位表。被 profile
-        // 引用的不动。
+        // Only remove dedicated proxy aliases/placeholders. A retired custom
+        // table may still be referenced by saved threads or imported forks;
+        // retaining its original definition avoids breaking their resume path.
+        // Profiles remain protected as before.
         let doomed: Vec<String> = providers
             .iter()
             .filter(|(id, item)| {
@@ -758,12 +794,33 @@ impl CodexConfigPatch {
                     && !referenced.iter().any(|name| name == id)
                     && (*id == OFFICIAL_PROXY_ROUTE_ID
                         || holds_placeholder(item)
-                        || self.is_retired(id, item))
+                        || (!self.preserve_retired_routes && self.is_retired(id, item)))
             })
             .map(|(id, _)| id.to_string())
             .collect();
         for id in doomed {
             providers.remove(&id);
+        }
+
+        if self.preserve_retired_routes {
+            let retained: Vec<String> = providers
+                .iter()
+                .filter(|(id, item)| {
+                    *id != ROUTE_ID
+                        && !BUILT_IN_IDS.contains(id)
+                        && !referenced.iter().any(|name| name == id)
+                        && self.is_retired(id, item)
+                })
+                .map(|(id, _)| id.to_string())
+                .collect();
+            for id in retained {
+                if let Some(table) = providers.get_mut(&id).and_then(Item::as_table_like_mut) {
+                    // History needs the old routing id, never the current login.
+                    // Keep any route-owned credentials; keyless routes require
+                    // the user to configure credentials or explicitly migrate.
+                    table.insert("requires_openai_auth", toml_edit::value(false));
+                }
+            }
         }
 
         match &self.route {
@@ -981,6 +1038,127 @@ mod tests {
     const RELAY: &str = "model_provider = \"relay\"\nmodel = \"gpt-5\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n";
 
     #[test]
+    fn retired_custom_definition_remains_resolvable_for_saved_threads() {
+        let mut patch = CodexConfigPatch {
+            top: Vec::new(),
+            nested: Vec::new(),
+            exclusive: Vec::new(),
+            outgoing: Vec::new(),
+            route: RouteWrite::OfficialMirror,
+            catalog: false,
+            retired: Vec::new(),
+            preserve_retired_routes: true,
+        };
+        patch.retired.push(KnownTable {
+            id: "legacy-relay".into(),
+            base_url: "https://api.example/v1".into(),
+        });
+        let source = "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n";
+        let mut doc: DocumentMut = source.parse().unwrap();
+        patch.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            doc["model_providers"]["legacy-relay"]["base_url"].as_str(),
+            Some("https://api.example/v1")
+        );
+    }
+
+    #[test]
+    fn preserved_retired_routes_never_fall_back_to_current_official_credentials() {
+        for credentials in [
+            "",
+            "experimental_bearer_token = \"synthetic-token\"\n",
+            "env_key = \"SYNTHETIC_RELAY_KEY\"\n",
+            "http_headers = { Authorization = \"Bearer synthetic-token\" }\n",
+        ] {
+            let patch = CodexConfigPatch {
+                top: Vec::new(),
+                nested: Vec::new(),
+                exclusive: Vec::new(),
+                outgoing: Vec::new(),
+                route: RouteWrite::OfficialMirror,
+                catalog: false,
+                retired: vec![KnownTable {
+                    id: "legacy-relay".into(),
+                    base_url: "https://api.example/v1".into(),
+                }],
+                preserve_retired_routes: true,
+            };
+            let source = format!("[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\nrequires_openai_auth = true\n{credentials}");
+            let mut doc: DocumentMut = source.parse().unwrap();
+            patch.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+            let old = &doc["model_providers"]["legacy-relay"];
+            assert_eq!(
+                old["requires_openai_auth"].as_bool(),
+                Some(false),
+                "{credentials}"
+            );
+            let expected: DocumentMut = source.parse().unwrap();
+            for key in [
+                "base_url",
+                "experimental_bearer_token",
+                "env_key",
+                "http_headers",
+            ] {
+                assert_eq!(
+                    old.get(key).map(ToString::to_string),
+                    expected["model_providers"]["legacy-relay"]
+                        .get(key)
+                        .map(ToString::to_string)
+                );
+            }
+            assert_eq!(
+                doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+                Some(true)
+            );
+        }
+    }
+
+    #[test]
+    fn unsafe_legacy_profile_is_rejected_before_the_patch_changes_anything() {
+        for credentials in [
+            "",
+            "experimental_bearer_token = \"synthetic-token\"\n",
+            "env_key = \"SYNTHETIC_RELAY_KEY\"\n",
+        ] {
+            let patch = CodexConfigPatch {
+                top: Vec::new(),
+                nested: Vec::new(),
+                exclusive: Vec::new(),
+                outgoing: Vec::new(),
+                route: RouteWrite::OfficialMirror,
+                catalog: false,
+                retired: vec![KnownTable {
+                    id: "legacy-relay".into(),
+                    base_url: "https://api.example/v1".into(),
+                }],
+                preserve_retired_routes: true,
+            };
+            let source = format!("model = \"synthetic-model\"\n[profiles.legacy]\nmodel_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\nrequires_openai_auth = true\n{credentials}");
+            let mut doc: DocumentMut = source.parse().unwrap();
+            let before = doc.to_string();
+            let result = patch.apply_to(Path::new("config.toml"), &mut doc);
+            if credentials.is_empty() {
+                let error =
+                    result.expect_err("keyless profile must not retain official login fallback");
+                let error = crate::error::AppError::from(error).to_string();
+                assert!(error.contains("legacy"));
+                assert_eq!(doc.to_string(), before);
+            } else {
+                result.unwrap();
+                assert_eq!(
+                    doc["profiles"]["legacy"]["model_provider"].as_str(),
+                    Some("legacy-relay")
+                );
+                assert_eq!(
+                    doc["model_providers"]["legacy-relay"]["requires_openai_auth"].as_bool(),
+                    Some(true)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn requires_openai_auth_follows_the_login_only_for_own_credentials() {
         for (auth, login, expected) in [
             (RouteAuth::Bearer, true, true),
@@ -1105,6 +1283,7 @@ mod tests {
             route,
             catalog: false,
             retired: Vec::new(),
+            preserve_retired_routes: false,
         };
         let mut doc = live.parse::<DocumentMut>().unwrap();
         patch

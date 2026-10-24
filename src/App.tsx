@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
@@ -588,6 +589,42 @@ function App() {
     };
 
     checkMigration();
+  }, [t]);
+
+  const codexHistoryNoticeShown = useRef(false);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    const showFailure = () => {
+      if (disposed || codexHistoryNoticeShown.current) return;
+      codexHistoryNoticeShown.current = true;
+      toast.error(t("settings.codexHistoryMigrationFailed"), {
+        description: t("settings.codexHistoryMigrationRecovery"),
+        closeButton: true,
+        duration: Infinity,
+      });
+    };
+    void (async () => {
+      try {
+        // Subscribe before reading the retained result: neither early startup
+        // completion nor completion during this request can lose the notice.
+        const off = await listen("codex-history-migration-failed", showFailure);
+        if (disposed) {
+          off();
+          return;
+        }
+        unlisten = off;
+        if (await invoke<boolean>("has_codex_history_migration_error")) {
+          showFailure();
+        }
+      } catch (error) {
+        console.error("Failed to check Codex history migration:", error);
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, [t]);
 
   useEffect(() => {

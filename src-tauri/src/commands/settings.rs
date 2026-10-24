@@ -131,11 +131,13 @@ pub async fn save_settings(
             // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
             // 失败时不写完成标记，下次启动自动重试。
-            tauri::async_runtime::spawn_blocking(|| {
+            tauri::async_runtime::spawn_blocking(move || {
                 match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                     Ok(outcome) => {
                         if let Some(reason) = outcome.skipped_reason {
                             log::debug!("○ Codex official history unify migration skipped: {reason}");
+                        } else if outcome.retry_pending {
+                            log::debug!("○ Codex official history unify migration has temporary skips; retry pending");
                         } else {
                             log::info!(
                                 "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
@@ -146,6 +148,7 @@ pub async fn save_settings(
                     }
                     Err(e) => {
                         log::warn!("✗ Codex official history unify migration failed: {e}");
+                        crate::init_status::report_codex_history_migration_error(&app);
                     }
                 }
             });
@@ -168,6 +171,8 @@ pub async fn save_settings(
 pub struct CodexUnifyHistoryRestoreResult {
     pub restored_jsonl_files: usize,
     pub restored_state_rows: usize,
+    pub skipped_jsonl_files: usize,
+    pub skipped_state_rows: usize,
     /// 还原被跳过的原因（如当前目录没有账本），前端据此提示而非报"成功 0 项"。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_reason: Option<String>,
@@ -177,6 +182,27 @@ pub struct CodexUnifyHistoryRestoreResult {
 #[tauri::command]
 pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
     Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
+}
+
+/// Explicit settings action; provider switches and startup never invoke this
+/// broader migration of user-defined routing ids.
+#[tauri::command]
+pub async fn migrate_managed_codex_history(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<crate::codex_history_migration::CodexHistoryProviderBucketMigrationOutcome, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::codex_history_migration::migrate_managed_codex_history_to_unified_bucket(&db)
+    })
+    .await
+    .map_err(|error| {
+        log::warn!("Codex managed history migration task failed: {error}");
+        error.to_string()
+    })?
+    .map_err(|error| {
+        log::warn!("Codex managed history migration failed: {error}");
+        error.to_string()
+    })
 }
 
 /// Codex 的 `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具
@@ -244,6 +270,8 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
     Ok(CodexUnifyHistoryRestoreResult {
         restored_jsonl_files: outcome.restored_jsonl_files,
         restored_state_rows: outcome.restored_state_rows,
+        skipped_jsonl_files: outcome.skipped_jsonl_files,
+        skipped_state_rows: outcome.skipped_state_rows,
         skipped_reason: outcome.skipped_reason,
     })
 }
@@ -603,6 +631,7 @@ mod tests {
             local_migrations: Some(LocalMigrations {
                 codex_third_party_history_provider_bucket_v1: Some(
                     CodexThirdPartyHistoryProviderBucketMigration {
+                        codex_config_dir: None,
                         completed_at: "2026-05-20T00:00:00Z".to_string(),
                         target_provider_id: "custom".to_string(),
                         source_provider_ids: vec!["rightcode".to_string()],

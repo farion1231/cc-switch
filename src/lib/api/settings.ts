@@ -22,7 +22,18 @@ export interface WebDavTestResult {
 export interface CodexUnifyHistoryRestoreResult {
   restoredJsonlFiles: number;
   restoredStateRows: number;
+  skippedJsonlFiles: number;
+  skippedStateRows: number;
   /** 还原被跳过的原因（如当前目录没有账本）；存在时不应报成功 */
+  skippedReason?: string;
+}
+
+export interface CodexHistoryMigrationResult {
+  migratedJsonlFiles: number;
+  migratedStateRows: number;
+  skippedJsonlFiles: number;
+  skippedStateRows: number;
+  retryPending: boolean;
   skippedReason?: string;
 }
 
@@ -42,6 +53,11 @@ export const settingsApi = {
   /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */
   async hasCodexUnifyHistoryBackup(): Promise<boolean> {
     return await invoke("has_codex_unify_history_backup");
+  },
+
+  /** Explicitly migrate managed third-party routing ids after user confirmation. */
+  async migrateManagedCodexHistory(): Promise<CodexHistoryMigrationResult> {
+    return await invoke("migrate_managed_codex_history");
   },
 
   /** Codex 的 config.toml 是否用 [features] multi_agent_v2 强制了新版子 agent 工具 */

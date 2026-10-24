@@ -380,13 +380,16 @@
     },
     "unifyCodexHistory": {
       "title": "統一 Codex 會話歷史",
-      "message": "開啟後，Codex CLI 的 resume 清單會把官方訂閱與第三方的會話合併顯示（Codex 桌面版更新後已經可以顯示全部會話，不受影響）。注意：跨供應商繼續舊會話時，可能因對方後端無法解密 encrypted_content 推理內容而失敗。\n\n可選擇同時把現有官方會話歷史遷入共享清單（遷移前自動備份到 ~/.cc-switch/backups，關閉開關時可選擇恢復）。",
+      "message": "官方訂閱和第三方 API 將共用 custom 連線識別，Codex CLI 與桌面版均適用。切換連線後，已開啟的聊天可能需要重新開啟。目標後端可能不支援原有加密推理內容。\n\n可同時遷入現有官方對話歷史；遷移前自動備份，關閉時可依備份還原。",
       "migrateExisting": "同時遷入現有官方會話歷史",
       "confirm": "我已了解，繼續開啟"
     },
+    "codexManagedHistory": {
+      "message": "請先結束 Codex。此操作會備份並將 CC Switch 卡片中有定義的第三方舊連線識別碼遷入共用連線，之後這些對話將使用目前選取的連線。不會遷移未受管理的連線，也不會改寫訊息或加密內容。無法安全處理的檔案將略過並計數，其餘檔案繼續遷移；請查看日誌，自行核對舊設定和備份後重試。"
+    },
     "unifyCodexHistoryOff": {
       "title": "關閉統一會話歷史",
-      "message": "關閉後，Codex CLI 中官方訂閱與第三方將恢復各自獨立的會話清單（桌面版仍顯示全部會話）。開啟期間產生的會話因無法區分來源，將留在第三方歷史中，CLI 在官方訂閱下將看不到它們。",
+      "message": "官方訂閱將重新使用 openai 連線識別。在 custom 下建立的對話仍保留該識別；桌面版能顯示它們，不代表連線已更新。之前遷入的官方對話可依備份帳本還原。",
       "restoreBackup": "把開啟時遷入的官方會話還原回官方歷史（按備份精確還原）",
       "confirm": "關閉"
     },
@@ -856,7 +859,18 @@
     "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
-    "unifyCodexSessionHistoryDescription": "只影響 Codex CLI：CLI 的 resume 清單只顯示目前供應商的會話，開啟後官方訂閱改以共享的 custom 供應商標識執行，官方與第三方會話出現在同一清單中。Codex 桌面版更新後已經可以顯示全部會話，只用桌面版無需開啟。可選擇把現有官方會話一併遷入（遷移前自動備份），關閉時可按備份恢復。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
+    "unifyCodexSessionHistoryDescription": "官方訂閱和第三方 API 共用 custom 連線識別，使儲存的對話能夠跟隨連線切換。Codex 桌面版也適用：顯示全部對話不等於更新對話的連線。已開啟的聊天可能需要重新開啟才能採用新設定。可選擇遷入現有官方對話（遷移前自動備份），關閉時依備份還原。跨供應商續聊亦取決於目標後端是否支援原有加密推理內容。",
+    "codexManagedHistory": "遷入第三方舊對話",
+    "codexManagedHistoryAction": "遷入舊對話",
+    "codexManagedHistoryCompleted": "已檢查第三方舊對話，遷移 {{files}} 個檔案、{{rows}} 筆索引記錄。請重新開啟對話載入連線；若仍使用舊設定，請自行重新啟動 Codex。",
+    "codexManagedHistoryPartial": "已遷移 {{files}} 個檔案、{{rows}} 筆索引記錄；略過 {{skippedFiles}} 個檔案、{{skippedRows}} 筆索引記錄。請查看 CC Switch 日誌，依原連線設定手動處理略過項目。",
+    "codexHistoryStateUnavailable": "無法安全鎖定 Codex 工作階段索引，本次未修改歷史。請在 Codex 用戶端所在環境操作。",
+    "codexHistoryRetryPending": "部分檔案暫時無法使用，請結束 Codex 後重試。",
+    "unifyCodexHistoryRestorePartial": "已還原 {{files}} 個檔案與 {{rows}} 筆索引；略過 {{skippedFiles}} 個檔案與 {{skippedRows}} 筆索引。請查看 CC Switch 記錄，結束 Codex 後重試或依原連線設定手動處理。",
+    "unifyCodexHistoryRestoreAction": "依備份還原官方工作階段",
+    "unifyCodexHistoryRestoreConfirm": "請先結束 Codex。僅還原備份帳本內原屬官方的工作階段，略過無法驗證的檔案與索引。確認後執行，可再次確認以重試剩餘項目。",
+    "codexHistoryMigrationFailed": "部分 Codex 歷史連線無法遷移",
+    "codexHistoryMigrationRecovery": "請先結束 Codex，再查看 CC Switch 日誌核對衝突。可還原舊供應商定義並透過原連線繼續對話；處理後在設定 → 應用程式設定 → Codex 手動重試。不會自動重新啟動用戶端或強制覆寫歷史。",
     "codexStackClassicSubagents": "聚合模式下子 agent 用經典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供應商時必須開啟，否則子 agent 收不到任務。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 裡開啟了 [features] multi_agent_v2，它比這個開關優先，開關不會生效",
