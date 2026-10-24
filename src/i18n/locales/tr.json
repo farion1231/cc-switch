@@ -898,6 +898,8 @@
     "hermesConfigDirDescription": "Hermes yapılandırma dizinini (config.yaml) geçersiz kılın.",
     "piConfigDir": "Pi Yapılandırma Dizini",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
+    "ohmypiConfigDir": "Oh My Pi Yapılandırma Dizini",
+    "ohmypiConfigDirDescription": "Oh My Pi yapılandırma dizinini (models.yml, config.yml, istemler, beceriler ve oturumlar) geçersiz kılın.",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -906,6 +908,7 @@
     "browsePlaceholderOpenclaw": "ör. /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "ör. /home/<your-username>/.hermes",
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
+    "browsePlaceholderOhMyPi": "ör. /home/<your-username>/.omp/agent",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",
     "checkForUpdates": "Güncellemeleri Kontrol Et",
@@ -1062,7 +1065,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "ohmypi": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -4109,8 +4113,12 @@
       "openclaw": "Npm ile yüklenir",
       "hermes": "Resmi komut dosyasıyla yüklenir",
       "pi": "Npm ile yüklenir",
-      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner"
-    }
+      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
+      "omp": "Bun ile yüklenir (Bun 1.3.14+ gerekir)"
+    },
+    "ompDiscoveryHelpTitle": "Oh My Pi'nin gerçekte yükledikleri",
+    "ompDiscoveryHelp": "Oh My Pi, kendi ~/.omp/agent yapılandırmasının yanı sıra diğer ajanların dizinlerinden (ör. Claude'un ~/.claude, Codex'in ~/.codex) MCP sunucularını, becerileri, komutları, kancaları, kuralları ve ayarları da keşfeder. Oh My Pi'nin gerçekte yüklediklerini CC Switch arayüzüyle uyumlu tutmak için ~/.omp/agent/config.yml içinde disabledProviders ile gereksiz keşif kaynaklarını kapatın (kimlikler belgelerle aynıdır, ör. claude, codex, gemini, opencode, github, agents).",
+    "ompDiscoveryDocsLink": "Belgeler: context-files (disabledProviders)"
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -4817,6 +4825,64 @@
       "always_thinking": "Her zaman düşünme",
       "tool_use": "Araç kullanımı",
       "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
+    }
+  },
+  "ohmypi": {
+    "current": {
+      "readFailed": "Oh My Pi sağlayıcı yapılandırması okunamadı",
+      "stateUnavailableHint": "Oh My Pi yapılandırması okunana kadar sağlayıcı değişiklikleri devre dışıdır."
+    },
+    "empty": {
+      "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın.",
+      "title": "Henüz API anahtarı sağlayıcısı yok"
+    },
+    "form": {
+      "modelsMode": "Model kaynağı",
+      "modelsModeManual": "Model listesini elle yapılandır",
+      "modelsModeDiscovery": "Modelleri otomatik keşfet",
+      "modelsModeNone": "Model yok",
+      "modelsDiscoveryHint": "Model listesi Oh My Pi tarafından çalışma anında keşfedilir; burada elle yapılandırma gerekmez. Aşağıdaki YAML içinde models veya modelOverrides ile yine de ince ayar yapabilirsiniz.",
+      "discoveryType": "Keşif yöntemi",
+      "discoveryHint": "Oh My Pi model listesini uç noktadan düzenli olarak çeker; uç noktanın döndürdüğü bağlam penceresi gibi üst veriler otomatik uygulanır. Elle eklenen model satırları ve aşağıdaki YAML içindeki modelOverrides yine geçerlidir.",
+      "discoveryApiRequired": "Otomatik keşif için bir API biçimi gerekir (proxy türü hariç)",
+      "apiInherit": "Belirtilmemiş (devral)",
+      "apiInheritHint": "\"Belirtilmemiş\" seçildiğinde api anahtarı yazılmaz: sağlayıcı kimliği yerleşik bir sağlayıcıyla eşleşiyorsa modelleri yerleşik API biçimlerini korur; proxy keşfinde her modelin API biçimi ayrı ayrı algılanır.",
+      "modelsHiddenHint": "Model listesi yapılandırılmadı: kaydederken models anahtarı yazılmaz. Sağlayıcı yalnızca kimliği bir Oh My Pi yerleşik sağlayıcıyla eşleştiğinde etkili olur (alanları o sağlayıcının geçersiz kılması olarak çalışır).",
+      "configYaml": "Yapılandırma YAML",
+      "fixYamlFirst": "Yapılandırılmış alanları düzenlemeden önce aşağıdaki yapılandırma YAML'ını düzeltin.",
+      "providerKeyDuplicate": "Bu kimlik zaten kullanılıyor",
+      "absoluteHttpUrlRequired": "{{label}} mutlak bir HTTP veya HTTPS adresi olmalıdır",
+      "addCompatibilityOption": "Ekle",
+      "addModel": "Model ekle",
+      "compatibility": "Uyumluluk",
+      "compatibilityHint": "Uyumlu veya yerel uç noktalar için istek davranışını ayarlayın.",
+      "contextWindow": "Bağlam penceresi",
+      "credential": "API Anahtarı",
+      "duplicateModel": "{{id}} model kimliği yineleniyor",
+      "imageInput": "Görsel girişini destekler",
+      "maxTokens": "En fazla çıktı token sayısı",
+      "modelId": "Model kimliği",
+      "modelIdRequired": "{{index}}. modelin bir kimliği olmalı",
+      "modelName": "Görünen ad",
+      "modelNamePlaceholder": "Görünen ad",
+      "nameRequired": "Görünen ad gerekli",
+      "noCompatibilityOptions": "Yapılandırılmış uyumluluk seçeneği yok",
+      "noModels": "Yapılandırılmış model yok",
+      "optionKey": "Seçenek",
+      "optionValue": "Değer",
+      "positiveNumberRequired": "{{label}} 0'dan büyük bir sayı olmalıdır",
+      "providerKey": "Sağlayıcı kimliği",
+      "providerKeyRequired": "Sağlayıcı kimliği gerekli",
+      "reasoning": "Genişletilmiş düşünmeyi destekler",
+      "removeCompatibilityOption": "Uyumluluk seçeneğini kaldır",
+      "removeModel": "Modeli kaldır",
+      "toggleModelDetails": "Model ayrıntılarını aç/kapat"
+    },
+    "provider": {
+      "enableFailed": "Sağlayıcı Oh My Pi içinde etkinleştirilemedi",
+      "enabled": "Oh My Pi içinde etkinleştirildi",
+      "removed": "Oh My Pi içinden kaldırıldı",
+      "writeConflict": "Başka bir süreç Oh My Pi yapılandırmasını güncelliyor. Kısa süre sonra tekrar deneyin."
     }
   }
 }

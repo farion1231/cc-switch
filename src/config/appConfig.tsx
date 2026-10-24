@@ -29,6 +29,7 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "ohmypi",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -44,6 +45,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   agy: true,
+  ohmypi: false,
 };
 
 /** App IDs shown in Skills panels. */
@@ -58,6 +60,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "ohmypi",
 ];
 
 export type ProxyAppId = Extract<
@@ -107,7 +110,7 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "ohmypi"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -117,6 +120,7 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "ohmypi",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
@@ -138,6 +142,19 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
+/**
+ * 表单会通过 `onSubmitReadyChange` 报告「现在能不能提交」的应用。
+ *
+ * 这些表单的必填项不在对话框能看见的字段里（Pi 的激活模型、Oh My Pi 的标识与
+ * YAML），所以「保存」按钮必须先等表单说可以。不在此表里的应用保持按钮可用，
+ * 由表单自己在提交时报错。
+ *
+ */
+export const SUBMIT_READY_APPS: Readonly<Partial<Record<AppId, true>>> = {
+  pi: true,
+  ohmypi: true,
+};
+
 /** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
 export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
 export const MCP_APP_IDS: McpAppId[] = [
@@ -151,6 +168,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "ohmypi",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -283,6 +301,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
     badgeClass:
       "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
+  },
+  ohmypi: {
+    label: "Oh My Pi",
+    icon: (
+      <ProviderIcon
+        icon="ohmypi"
+        name="Oh My Pi"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+    badgeClass:
+      "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
   },
 };
 

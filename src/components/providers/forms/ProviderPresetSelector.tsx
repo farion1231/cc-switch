@@ -17,6 +17,7 @@ import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
 import type { McodeProviderPreset } from "@/config/mcodeProviderPresets";
 import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
+import type { OhMyPiProviderPreset } from "@/config/ohmypiProviderPresets";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
@@ -73,7 +74,8 @@ export type AnyPreset =
   | HermesProviderPreset
   | PiProviderPreset
   | McodeProviderPreset
-  | KimiProviderPreset;
+  | KimiProviderPreset
+  | OhMyPiProviderPreset;
 
 export type PresetEntry = {
   id: string;

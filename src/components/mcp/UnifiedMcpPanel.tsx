@@ -90,14 +90,19 @@ const IMPORT_SOURCE_FILES: Record<
   agy: { file: "~/.gemini/config/mcp_config.json" },
   kimi: { file: "~/.kimi-code/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
+  ohmypi: { file: "~/.omp/agent/mcp.json" },
 };
 
-/** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
+/**
+ * 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写。
+ * Oh My Pi 走 `sync_and_commit`（`mcp/ohmypi.rs`），与 MiniMax Code / Pi 同一份契约。
+ */
 const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "kimi",
   "pi",
   "agy",
+  "ohmypi",
 ]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
@@ -335,7 +340,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       const entries = rowFailsFor(app);
       let ok = true;
       if (WRITE_THEN_SAVE_APPS.has(app) && entries.length > 0) {
-        // MiniMax Code / Pi 写失败时开关没入库：按每行想要的值再写一次
+        // 写失败时开关没入库：按每行想要的值再写一次
         for (const [key, failure] of entries) {
           const id = key.split("\u0000")[0];
           const { failed } = await writeMany([{ id, app }], failure.desired);

@@ -71,7 +71,8 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_ohmypi BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -104,6 +105,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_ohmypi BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -582,6 +584,7 @@ impl Database {
                         Self::set_user_version(conn, 20)?;
                     }
                     20 => {
+                        log::info!("迁移数据库从 v20 到 v21（添加 Antigravity 支持）");
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
@@ -595,12 +598,20 @@ impl Database {
                         Self::set_user_version(conn, 21)?;
                     }
                     21 => {
+                        // Kimi Code support (upstream) then Oh My Pi support (local),
+                        // both idempotent via add_column_if_missing.
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
                                     conn,
                                     table,
                                     "enabled_kimi",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_ohmypi",
                                     "BOOLEAN NOT NULL DEFAULT 0",
                                 )?;
                             }

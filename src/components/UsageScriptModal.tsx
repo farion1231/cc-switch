@@ -48,6 +48,28 @@ const VOLCENGINE_KEY_CONSOLE_URL =
 // 智谱团队套餐用量页（组织 ID / 项目 ID 在此页 URL 或管理后台可见）
 const ZHIPU_TEAM_USAGE_URL = "https://bigmodel.cn/coding-plan/team/usage-stats";
 
+/**
+ * 从 settingsConfig 里读字符串字段。供应商配置来自磁盘上的 JSON/YAML（外部输入），
+ * 这里只按需取字段，不做整份 schema 校验：`Record<string, unknown>` 断言只用于
+ * 「本来是 object，编译器丢了形状」这一步，值本身仍按 string 复核。
+ */
+const configStringField = (
+  source: unknown,
+  key: string,
+): string | undefined => {
+  if (typeof source !== "object" || source === null) return undefined;
+  const value = (source as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+};
+
+/** 第一个模型的 baseUrl（模型可覆盖供应商级 baseUrl）。 */
+const firstModelBaseUrl = (source: unknown): string | undefined => {
+  if (typeof source !== "object" || source === null) return undefined;
+  const models = (source as Record<string, unknown>).models;
+  if (!Array.isArray(models) || models.length === 0) return undefined;
+  return configStringField(models[0], "baseUrl");
+};
+
 interface UsageScriptModalProps {
   provider: Provider;
   appId: AppId;
@@ -325,15 +347,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: (config as any).api_key,
             baseUrl: (config as any).base_url,
           };
-        } else if (appId === "pi") {
-          // Pi: provider values are camelCase; a model may override baseUrl.
-          const root = config as any;
-          const firstModel = Array.isArray(root.models)
-            ? root.models[0]
-            : undefined;
+        } else if (appId === "pi" || appId === "ohmypi") {
+          // Pi / Oh My Pi: provider values are camelCase; a model may override
+          // baseUrl. Mirrors the backend resolver's `Pi | OhMyPi` handling, and
+          // is what unblocks the balance/Coding-Plan tests on an omp card.
           return {
-            apiKey: root.apiKey,
-            baseUrl: firstModel?.baseUrl || root.baseUrl,
+            apiKey: configStringField(config, "apiKey"),
+            baseUrl:
+              firstModelBaseUrl(config) ?? configStringField(config, "baseUrl"),
           };
         } else if (appId === "openclaw") {
           // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）

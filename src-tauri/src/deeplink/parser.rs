@@ -88,7 +88,17 @@ fn parse_provider_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter".to_string()))?
         .clone();
 
-    // Validate app type
+    // Validate app type.
+    //
+    // Oh My Pi is refused with the same guidance as the import path
+    // (`deeplink/provider.rs`): its providers are created from the Oh My Pi
+    // page, where the models.yml text editor can compose the entry. Accepting
+    // the link here would only fail later with a generic "invalid app" error.
+    if matches!(app.as_str(), "ohmypi" | "omp" | "oh-my-pi" | "oh_my_pi") {
+        return Err(AppError::InvalidInput(
+            "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
+        ));
+    }
     if !matches!(
         app.as_str(),
         "agy"
@@ -243,7 +253,13 @@ fn parse_prompt_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter for prompt".to_string()))?
         .clone();
 
-    // Validate app type
+    // Validate app type.
+    //
+    // Oh My Pi is deliberately absent: it has no prompt panel, so accepting a
+    // link for it would let an import write `<agent dir>/AGENTS.md` through
+    // `PromptService`, with no surface in the app showing what landed there and
+    // no way to undo it. The prompt file mapping stays in place for the day a
+    // panel exists; until then the link is refused at parse time.
     if !matches!(
         app.as_str(),
         "claude"
@@ -324,7 +340,9 @@ fn parse_mcp_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'apps' parameter for MCP".to_string()))?
         .clone();
 
-    // Validate apps format
+    // Validate apps format. Keep this list in step with `parse_mcp_apps`
+    // (`deeplink/mcp.rs`), which is what actually maps the names onto `McpApps`:
+    // rejecting a name here makes the importer's arm for it unreachable.
     for app in apps.split(',') {
         let trimmed = app.trim();
         if !matches!(
@@ -341,9 +359,10 @@ fn parse_mcp_deeplink(
                 | "pi"
                 | "mcode"
                 | "kimi"
+                | "ohmypi"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'hermes', 'pi', 'kimi', or 'mcode', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'hermes', 'pi', 'kimi', 'mcode', or 'ohmypi', got '{trimmed}'"
             )));
         }
     }

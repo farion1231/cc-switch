@@ -256,6 +256,11 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
+            // Oh My Pi custom providers use the models.yml
+            AppType::OhMyPi => (
+                crate::ohmypi_config::provider_base_url(settings).unwrap_or_default(),
+                str_at(settings.get("apiKey")),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a
@@ -617,6 +622,14 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub stack_models: Option<Vec<ClaudeStackModel>>,
+    /// Oh My Pi：编辑器里“其他字段（YAML，原样保留）”的原文（含注释与顺序）。
+    /// 仅存于数据库，写 models.yml 时用于文本级定点替换，不参与其他应用。
+    #[serde(
+        rename = "ohmypiPassthroughYaml",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ohmypi_passthrough_yaml: Option<String>,
 }
 
 /// Stack 模式下 Claude Code 供应商发布的一个模型。
