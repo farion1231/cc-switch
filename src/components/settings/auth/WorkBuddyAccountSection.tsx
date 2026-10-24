@@ -35,7 +35,7 @@ const message = (error: unknown) =>
 
 /**
  * 授权中心的 WorkBuddy 账号组。WorkBuddy 的登录由桌面端完成，CC Switch 只能把当前登录的那组
- * 凭据文件收录成快照。切换账号在供应商列表里：添加「WorkBuddy 官方登录」卡绑定账号再「切换」。
+ * 凭据文件收录成快照。切换账号在供应商列表里：「添加」绑定了这个账号的「WorkBuddy 官方登录」卡。
  * 「WorkBuddy 在用」就是它现在登着的号。快照只在本机有效；删账号只删 CC Switch 的副本，
  * 不让 WorkBuddy 登出。
  */
@@ -268,7 +268,7 @@ export function WorkBuddyAccountSection({
       iconName="workbuddy"
       help={t("authCenter.group.workbuddyHelp", {
         defaultValue:
-          "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在供应商列表里添加「WorkBuddy 官方登录」卡并点「切换」。快照只在这台电脑上有效，不会随云同步。",
+          "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       })}
       helpSide={helpSide}
       accounts={rows}

@@ -19,7 +19,7 @@ export const openWorkBuddyApp = () =>
   });
 
 /**
- * 官方卡的「切换」：沿用授权中心的通用切号命令（还原绑定账号的整组登录文件，要求 WorkBuddy
+ * 官方卡的「添加」（= 切号）：沿用授权中心的通用切号命令（还原绑定账号的整组登录文件，要求 WorkBuddy
  * 已退出、凭据锁不新鲜，出错回滚）。WorkBuddy 在运行时先拦下来提示退出。
  */
 export function useWorkBuddyOfficial(enabled: boolean) {

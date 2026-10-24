@@ -810,7 +810,7 @@ describe("buildAdditiveSections — WorkBuddy official sign-in", () => {
     return { sections, actions };
   };
 
-  it("puts official cards in their own section, apart from added custom models", () => {
+  it("puts the signed-in official card in Added and the others in Available, with custom models", () => {
     const { sections } = build(base(), [
       wbCard("a", "u-1"),
       wbCard("b", "u-2"),
@@ -818,51 +818,63 @@ describe("buildAdditiveSections — WorkBuddy official sign-in", () => {
     expect(
       sections.map((s) => [s.key, s.items.map((i) => i.provider.id)]),
     ).toEqual([
-      ["official", ["a", "b"]],
-      ["added", ["custom"]],
-      ["available", []],
+      ["added", ["custom", "a"]],
+      ["available", ["b"]],
     ]);
     // 自定义模型卡的「移除」不变
-    expect(button(sections, "custom", "remove")).toBeTruthy();
+    expect(button(sections, "custom", "remove").disabledReason).toBeUndefined();
   });
 
-  it("marks the card whose account WorkBuddy is signed in with as in use", () => {
-    const { sections } = build(base(), [
+  it("keeps at most one official card in Added", () => {
+    const { sections } = build(base({ currentAccountId: "u-2" }), [
       wbCard("a", "u-1"),
       wbCard("b", "u-2"),
+      wbCard("c", "u-1"),
     ]);
-    expect(item(sections, "a")).toMatchObject({
-      tone: "direct",
-      status: { label: "workbuddy.official.inUse" },
-      buttons: [],
-    });
-    expect(item(sections, "b").status).toBeUndefined();
+    const added = sections.find((s) => s.key === "added")!;
+    expect(added.items.map((i) => i.provider.id)).toEqual(["custom", "b"]);
   });
 
-  it("switches to the bound account from another card", () => {
+  it("does not let the in-use official card be removed on its own", () => {
+    const { sections, actions } = build(base(), [wbCard("a", "u-1")]);
+    const remove = button(sections, "a", "remove");
+    expect(remove.disabledReason).toBe("workbuddy.official.onlyOne");
+    expect(item(sections, "a").status).toBeUndefined();
+    remove.onClick();
+    expect(actions.remove).not.toHaveBeenCalled();
+    expect(actions.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("switches to the bound account when another official card is added", () => {
     const card = wbCard("b", "u-2");
     const { sections, actions } = build(base(), [card]);
-    const switchButton = button(sections, "b", "switchAccount");
-    expect(switchButton.disabledReason).toBeUndefined();
-    switchButton.onClick();
+    const add = button(sections, "b", "add");
+    expect(add.label).toBe("providerCard.action.add");
+    expect(add.disabledReason).toBeUndefined();
+    add.onClick();
     expect(actions.switchAccount).toHaveBeenCalledWith(card);
     expect(actions.add).not.toHaveBeenCalled();
   });
 
-  it("asks to quit WorkBuddy before switching while it is running", () => {
+  it("asks to quit WorkBuddy before adding while it is running", () => {
     const { sections } = build(base({ running: true }), [wbCard("b", "u-2")]);
-    expect(button(sections, "b", "switchAccount").disabledReason).toBe(
+    expect(button(sections, "b", "add").disabledReason).toBe(
       "workbuddy.official.quitFirst",
     );
   });
 
-  it("asks to choose again when the bound account was deleted", () => {
+  it("cannot add a card whose account was deleted", () => {
     const { sections } = build(base(), [wbCard("gone", "u-9")]);
-    expect(button(sections, "gone", "switchAccount").disabledReason).toBe(
+    expect(button(sections, "gone", "add").disabledReason).toBe(
       "workbuddy.official.accountDeleted",
     );
     expect(item(sections, "gone").chips.map((c) => c.key)).toContain(
       "accountMissing",
+    );
+    // 账号删了，即便 id 恰好对得上当前登录也不进「已添加」
+    const unset = build(base(), [wbCard("none")]).sections;
+    expect(button(unset, "none", "add").disabledReason).toBe(
+      "workbuddy.official.accountUnset",
     );
   });
 });

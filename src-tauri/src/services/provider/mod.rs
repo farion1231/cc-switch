@@ -6788,14 +6788,14 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
-        // WorkBuddy 官方登录卡不写 models.json，「切换」走账号切换（还原绑定账号的登录文件）
+        // WorkBuddy 官方登录卡不写 models.json，卡片的「添加」走账号切换（还原绑定账号的登录文件）
         if app_type == AppType::WorkBuddy
             && crate::workbuddy_config::is_official_provider(_provider)
         {
             return Err(AppError::localized(
                 "workbuddy.switch.official",
-                "WorkBuddy 官方登录卡不能添加到模型配置，请用卡片上的「切换」切换账号",
-                "WorkBuddy official sign-in cards are not added to the model config; use Switch on the card to change accounts",
+                "WorkBuddy 官方登录卡不写进模型配置；在供应商列表点这张卡的「添加」会切换到它绑定的账号",
+                "WorkBuddy official sign-in cards are not written to the model config; click Add on the card in the provider list to switch to its account",
             ));
         }
 

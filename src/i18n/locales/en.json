@@ -1129,7 +1129,7 @@
       "account": "WorkBuddy account",
       "chooseAccount": "Choose an account",
       "noAccounts": "No saved accounts yet",
-      "accountHelp": "The card only links this account and is never written to WorkBuddy's model config. Clicking Switch in the provider list signs WorkBuddy in with this account.",
+      "accountHelp": "The card only links this account and is never written to WorkBuddy's model config. Clicking Add on this card in the provider list signs WorkBuddy in with this account; only one official card is added at a time.",
       "accountDeleted": "Account deleted. Choose another account",
       "accountUnset": "No account selected",
       "accountDeletedChip": "Account deleted",
@@ -1140,16 +1140,12 @@
       "addAnotherBody": "Quit WorkBuddy completely, click Sign in to another account (WorkBuddy opens at its sign-in page on this computer only; the current account is not signed out on the server), then sign in in WorkBuddy. The account appears in the list automatically.",
       "addAnotherRunning": "WorkBuddy is running. Quit it completely (including the menu bar / tray), then click Sign in to another account.",
       "preparedNewLogin": "Current account saved. WorkBuddy will open at its sign-in page; after you sign in to another account, it appears in the account list automatically.",
-      "inUse": "In use",
-      "switch": "Switch",
       "switching": "Switching…",
-      "quitFirst": "Quit WorkBuddy before switching",
-      "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then click Switch again, or it will write its current sign-in back.",
+      "onlyOne": "WorkBuddy can only be signed in to one account at a time. Add another official card to switch.",
+      "quitFirst": "Quit WorkBuddy before adding",
+      "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then click Add again, or it will write its current sign-in back.",
       "switched": "Switched to \"{{name}}\". WorkBuddy will use this account the next time it opens.",
-      "switchFailed": "Couldn't switch the WorkBuddy account",
-      "section": "Official sign-in · {{count}}",
-      "sectionHelpTitle": "WorkBuddy official sign-in",
-      "sectionHelp": "Each official sign-in card links one WorkBuddy account from the Auth Center, and only one is in use at a time. Switch signs WorkBuddy in with the card's account (quit WorkBuddy first). Official sign-in cards are never written to WorkBuddy's model config and don't affect the custom models below."
+      "switchFailed": "Couldn't switch the WorkBuddy account"
     }
   },
   "pi": {
@@ -4906,7 +4902,7 @@
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
-      "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, add a WorkBuddy Official Sign-in card in the provider list and click Switch. Snapshots only work on this computer and are not synced."
+      "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced."
     },
     "addAccount": "Add account",
     "groupMenu": "More actions for {{service}}",

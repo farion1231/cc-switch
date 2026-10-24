@@ -711,19 +711,21 @@ export interface AdditiveInput {
     remove: (provider: Provider) => void;
     disableOmo: (provider: Provider) => void;
     setDefault: (provider: Provider, modelId?: string) => void;
-    /** WorkBuddy 官方登录卡：把 WorkBuddy 的登录切到卡片绑定的账号 */
+    /** WorkBuddy 官方登录卡的「添加」：把 WorkBuddy 的登录切到卡片绑定的账号 */
     switchAccount?: (provider: Provider) => void;
   };
 }
 
 /**
- * WorkBuddy 官方登录卡：单选。绑定的账号就是 WorkBuddy 现在登着的号时显示「当前在用」，
- * 否则给「切换」；账号被删了（或没绑）时提示重新选择。不进「已添加 / 可添加」（不写 models.json）。
+ * WorkBuddy 官方登录卡：和模型卡一样分进「已添加 / 可添加」，但同一时间只有一张在「已添加」——
+ * 绑定的账号就是 WorkBuddy 现在登着的号。「添加」= 把 WorkBuddy 的登录切到这张卡的账号（要先退出
+ * WorkBuddy），原来那张自动回到「可添加」。WorkBuddy 只能登一个号，在用的那张不能单独「移除」
+ * （不登出、不改凭据），按钮禁用并说明添加另一张即可切换。官方卡从不写进 models.json。
  */
 function workbuddyOfficialCard(
   input: AdditiveInput,
   p: Provider,
-): CardPresentation {
+): { added: boolean; presentation: CardPresentation } {
   const { t } = input;
   const state = input.workbuddyOfficial;
   const bound = boundWorkBuddyAccountId(p);
@@ -748,28 +750,41 @@ function workbuddyOfficialCard(
   }
   if (current) {
     return {
-      tone: "direct",
-      status: { label: t("workbuddy.official.inUse"), dot: "direct" },
-      chips,
-      buttons: [],
+      added: true,
+      presentation: {
+        chips,
+        buttons: [
+          {
+            key: "remove",
+            label: t("providerCard.action.remove"),
+            onClick: () => undefined,
+            disabledReason: t("workbuddy.official.onlyOne"),
+          },
+        ],
+      },
     };
   }
   return {
-    chips,
-    buttons: [
-      {
-        key: "switchAccount",
-        label: t("workbuddy.official.switch"),
-        onClick: () => input.actions.switchAccount?.(p),
-        disabledReason: missing
-          ? t("workbuddy.official.accountDeleted")
-          : state?.running
-            ? t("workbuddy.official.quitFirst")
-            : state?.switching
-              ? t("workbuddy.official.switching")
-              : undefined,
-      },
-    ],
+    added: false,
+    presentation: {
+      chips,
+      buttons: [
+        {
+          key: "add",
+          label: t("providerCard.action.add"),
+          onClick: () => input.actions.switchAccount?.(p),
+          disabledReason: missing
+            ? bound
+              ? t("workbuddy.official.accountDeleted")
+              : t("workbuddy.official.accountUnset")
+            : state?.running
+              ? t("workbuddy.official.quitFirst")
+              : state?.switching
+                ? t("workbuddy.official.switching")
+                : undefined,
+        },
+      ],
+    },
   };
 }
 
@@ -777,7 +792,6 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
-  const workbuddyOfficial: ProviderSection["items"] = [];
   const piBlocked =
     app === "pi" && input.piStateUnavailable
       ? t("pi.current.stateUnavailableHint")
@@ -786,9 +800,10 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   for (const p of providers) {
     const chips: CardChip[] = [];
     if (app === "workbuddy" && isWorkBuddyOfficial(p)) {
-      workbuddyOfficial.push({
+      const card = workbuddyOfficialCard(input, p);
+      (card.added ? added : available).push({
         provider: p,
-        presentation: workbuddyOfficialCard(input, p),
+        presentation: card.presentation,
       });
       continue;
     }
@@ -1020,25 +1035,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     });
   }
 
-  const officialSections: ProviderSection[] =
-    workbuddyOfficial.length > 0
-      ? [
-          {
-            key: "official",
-            title: t("workbuddy.official.section", {
-              count: workbuddyOfficial.length,
-            }),
-            help: {
-              title: t("workbuddy.official.sectionHelpTitle"),
-              body: t("workbuddy.official.sectionHelp"),
-            },
-            items: workbuddyOfficial,
-          },
-        ]
-      : [];
-
   return [
-    ...officialSections,
     {
       key: "added",
       title: t("providerCard.section.added", { count: added.length }),

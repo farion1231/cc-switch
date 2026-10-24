@@ -1093,7 +1093,7 @@
       "account": "WorkBuddy hesabı",
       "chooseAccount": "Hesap seçin",
       "noAccounts": "Henüz kayıtlı hesap yok",
-      "accountHelp": "Kart yalnızca bu hesabı bağlar ve WorkBuddy model yapılandırmasına asla yazılmaz. Sağlayıcı listesinde Geçiş yap'a tıklamak WorkBuddy'de bu hesapla oturum açar.",
+      "accountHelp": "Kart yalnızca bu hesabı bağlar ve WorkBuddy model yapılandırmasına asla yazılmaz. Sağlayıcı listesinde bu kartta Ekle'ye tıklamak WorkBuddy'de bu hesapla oturum açar; aynı anda yalnızca bir resmi kart eklenmiş olur.",
       "accountDeleted": "Hesap silindi. Başka bir hesap seçin",
       "accountUnset": "Hesap seçilmedi",
       "accountDeletedChip": "Hesap silindi",
@@ -1104,16 +1104,12 @@
       "addAnotherBody": "WorkBuddy'den tamamen çıkın, Başka bir hesapla oturum aç'a tıklayın (WorkBuddy yalnızca bu bilgisayarda oturum açma sayfasında açılır; mevcut hesabın sunucudaki oturumu kapatılmaz), ardından WorkBuddy'de oturum açın. Hesap listede otomatik görünür.",
       "addAnotherRunning": "WorkBuddy çalışıyor. Tamamen çıkın (menü çubuğu / tepsi dahil), sonra Başka bir hesapla oturum aç'a tıklayın.",
       "preparedNewLogin": "Mevcut hesap kaydedildi. WorkBuddy oturum açma sayfasında açılacak; başka bir hesapla oturum açtığınızda hesap listesinde otomatik görünür.",
-      "inUse": "Kullanımda",
-      "switch": "Geçiş yap",
       "switching": "Geçiş yapılıyor…",
-      "quitFirst": "Geçiş yapmadan önce WorkBuddy'den çıkın",
-      "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra tekrar Geçiş yap'a tıklayın; aksi halde mevcut oturumu geri yazar.",
+      "onlyOne": "WorkBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin.",
+      "quitFirst": "Eklemeden önce WorkBuddy'den çıkın",
+      "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra tekrar Ekle'ye tıklayın; aksi halde mevcut oturumu geri yazar.",
       "switched": "\"{{name}}\" hesabına geçildi. WorkBuddy bir sonraki açılışta bu hesabı kullanacak.",
-      "switchFailed": "WorkBuddy hesabı değiştirilemedi",
-      "section": "Resmi oturum · {{count}}",
-      "sectionHelpTitle": "WorkBuddy resmi oturumu",
-      "sectionHelp": "Her resmi oturum kartı, Yetkilendirme Merkezi'ndeki bir WorkBuddy hesabını bağlar ve aynı anda yalnızca biri kullanımda olur. Geçiş yap, WorkBuddy'de kartın hesabıyla oturum açar (önce WorkBuddy'den çıkın). Resmi oturum kartları WorkBuddy model yapılandırmasına yazılmaz ve aşağıdaki özel modelleri etkilemez."
+      "switchFailed": "WorkBuddy hesabı değiştirilemedi"
     }
   },
   "pi": {
@@ -4789,7 +4785,7 @@
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "workbuddyHelp": "WorkBuddy masaüstü uygulamasının resmi oturumu. CC Switch sizin yerinize WorkBuddy'de oturum açamaz; yalnızca WorkBuddy'nin oturum açtığı hesabı (oturum dosyalarının anlık görüntüsü) kaydedebilir. Hesap değiştirmek için sağlayıcı listesinde bir WorkBuddy Resmi Oturum kartı ekleyip Geçiş yap'a tıklayın. Anlık görüntüler yalnızca bu bilgisayarda çalışır ve senkronize edilmez."
+      "workbuddyHelp": "WorkBuddy masaüstü uygulamasının resmi oturumu. CC Switch sizin yerinize WorkBuddy'de oturum açamaz; yalnızca WorkBuddy'nin oturum açtığı hesabı (oturum dosyalarının anlık görüntüsü) kaydedebilir. Hesap değiştirmek için sağlayıcı listesinde bu hesaba bağlı WorkBuddy Resmi Oturum kartını ekleyin (aynı anda yalnızca bir resmi kart eklenmiş olur). Anlık görüntüler yalnızca bu bilgisayarda çalışır ve senkronize edilmez."
     },
     "addAccount": "Hesap ekle",
     "groupMenu": "{{service}} için daha fazla eylem",

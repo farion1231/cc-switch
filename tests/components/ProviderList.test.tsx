@@ -558,12 +558,14 @@ describe("ProviderList Component", () => {
       return { switched, onSwitch };
     }
 
-    it("marks the signed-in account and switches another card through the account switch", async () => {
+    it("adds another official card through the account switch, never through models.json", async () => {
       const { switched, onSwitch } = setup(false);
-      expect(await screen.findByTestId("status-card-a")).toHaveTextContent(
-        "workbuddy.official.inUse",
+      const remove = await screen.findByTestId("remove-card-a");
+      await waitFor(() => expect(remove).toBeDisabled());
+      expect(lastProps("card-a")?.presentation.buttons[0].disabledReason).toBe(
+        "workbuddy.official.onlyOne",
       );
-      const button = screen.getByTestId("switchAccount-card-b");
+      const button = screen.getByTestId("add-card-b");
       await waitFor(() => expect(button).toBeEnabled());
       fireEvent.click(button);
       await waitFor(() =>
@@ -573,12 +575,12 @@ describe("ProviderList Component", () => {
       );
       // 官方卡不走「添加到配置」；自定义模型卡照旧可以移除
       expect(onSwitch).not.toHaveBeenCalled();
-      expect(screen.getByTestId("remove-custom")).toBeInTheDocument();
+      expect(screen.getByTestId("remove-custom")).toBeEnabled();
     });
 
-    it("disables switching while WorkBuddy is running", async () => {
+    it("disables adding while WorkBuddy is running", async () => {
       const { switched } = setup(true);
-      const button = await screen.findByTestId("switchAccount-card-b");
+      const button = await screen.findByTestId("add-card-b");
       await waitFor(() => expect(button).toBeDisabled());
       expect(lastProps("card-b")?.presentation.buttons[0].disabledReason).toBe(
         "workbuddy.official.quitFirst",

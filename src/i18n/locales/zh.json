@@ -1129,7 +1129,7 @@
       "account": "WorkBuddy 账号",
       "chooseAccount": "选择账号",
       "noAccounts": "还没有收录的账号",
-      "accountHelp": "卡片只绑定这个账号，不写进 WorkBuddy 的模型配置。在供应商列表点「切换」时，WorkBuddy 的登录会换成这个号。",
+      "accountHelp": "卡片只绑定这个账号，不写进 WorkBuddy 的模型配置。在供应商列表点这张卡的「添加」，WorkBuddy 的登录会换成这个号；同一时间只有一张官方卡在「已添加」。",
       "accountDeleted": "账号已删除，请重新选择",
       "accountUnset": "还没有选择账号",
       "accountDeletedChip": "账号已删除",
@@ -1140,16 +1140,12 @@
       "addAnotherBody": "先完全退出 WorkBuddy，点「登录另一个账号」（只在本机让 WorkBuddy 停在登录页，不会在服务端登出当前账号），在 WorkBuddy 里登录后它会自动出现在列表里。",
       "addAnotherRunning": "WorkBuddy 正在运行：先完全退出它（含菜单栏/托盘），再点「登录另一个账号」。",
       "preparedNewLogin": "已收录当前账号，WorkBuddy 打开后会停在登录页。登录另一个账号后，它会自动出现在账号列表里。",
-      "inUse": "当前在用",
-      "switch": "切换",
       "switching": "正在切换…",
-      "quitFirst": "请先退出 WorkBuddy 再切换",
-      "quitFirstBody": "完全退出 WorkBuddy（含菜单栏/托盘）后再点「切换」，否则它会把当前登录写回去。",
+      "onlyOne": "WorkBuddy 同时只能登录一个账号，添加另一张官方卡即可切换",
+      "quitFirst": "请先退出 WorkBuddy 再添加",
+      "quitFirstBody": "完全退出 WorkBuddy（含菜单栏/托盘）后再点「添加」，否则它会把当前登录写回去。",
       "switched": "已切换到「{{name}}」，下次打开 WorkBuddy 会使用这个账号。",
-      "switchFailed": "切换 WorkBuddy 账号失败",
-      "section": "官方登录 · {{count}}",
-      "sectionHelpTitle": "WorkBuddy 官方登录",
-      "sectionHelp": "每张官方登录卡绑定授权中心里的一个 WorkBuddy 账号，同一时间只有一个在用。「切换」把 WorkBuddy 的登录换成卡片上的账号（需要先退出 WorkBuddy）。官方登录卡不会写进 WorkBuddy 的模型配置，和下面的自定义模型互不影响。"
+      "switchFailed": "切换 WorkBuddy 账号失败"
     }
   },
   "pi": {
@@ -4906,7 +4902,7 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
-      "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在供应商列表里添加「WorkBuddy 官方登录」卡并点「切换」。快照只在这台电脑上有效，不会随云同步。"
+      "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。"
     },
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",

@@ -1130,7 +1130,7 @@
       "account": "WorkBuddy 帳號",
       "chooseAccount": "選擇帳號",
       "noAccounts": "還沒有收錄的帳號",
-      "accountHelp": "卡片只綁定這個帳號，不寫入 WorkBuddy 的模型設定。在供應商列表點「切換」時，WorkBuddy 的登入會換成這個帳號。",
+      "accountHelp": "卡片只綁定這個帳號，不寫入 WorkBuddy 的模型設定。在供應商列表點這張卡的「加入」，WorkBuddy 的登入會換成這個帳號；同一時間只有一張官方卡在「已加入」。",
       "accountDeleted": "帳號已刪除，請重新選擇",
       "accountUnset": "還沒有選擇帳號",
       "accountDeletedChip": "帳號已刪除",
@@ -1141,16 +1141,12 @@
       "addAnotherBody": "先完全結束 WorkBuddy，點「登入另一個帳號」（只在本機讓 WorkBuddy 停在登入頁，不會在伺服器端登出目前帳號），在 WorkBuddy 裡登入後它會自動出現在列表裡。",
       "addAnotherRunning": "WorkBuddy 正在執行：先完全結束它（含選單列／系統匣），再點「登入另一個帳號」。",
       "preparedNewLogin": "已收錄目前帳號，WorkBuddy 開啟後會停在登入頁。登入另一個帳號後，它會自動出現在帳號列表裡。",
-      "inUse": "目前使用中",
-      "switch": "切換",
       "switching": "正在切換…",
-      "quitFirst": "請先結束 WorkBuddy 再切換",
-      "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再點「切換」，否則它會把目前的登入寫回去。",
+      "onlyOne": "WorkBuddy 同時只能登入一個帳號，加入另一張官方卡即可切換",
+      "quitFirst": "請先結束 WorkBuddy 再加入",
+      "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再點「加入」，否則它會把目前的登入寫回去。",
       "switched": "已切換到「{{name}}」，下次開啟 WorkBuddy 會使用這個帳號。",
-      "switchFailed": "切換 WorkBuddy 帳號失敗",
-      "section": "官方登入 · {{count}}",
-      "sectionHelpTitle": "WorkBuddy 官方登入",
-      "sectionHelp": "每張官方登入卡綁定授權中心裡的一個 WorkBuddy 帳號，同一時間只有一個在使用。「切換」把 WorkBuddy 的登入換成卡片上的帳號（需要先結束 WorkBuddy）。官方登入卡不會寫入 WorkBuddy 的模型設定，和下面的自訂模型互不影響。"
+      "switchFailed": "切換 WorkBuddy 帳號失敗"
     }
   },
   "pi": {
@@ -4907,7 +4903,7 @@
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
-      "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在供應商列表裡新增「WorkBuddy 官方登入」卡並點「切換」。快照只在這台電腦上有效，不會隨雲端同步。"
+      "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。"
     },
     "addAccount": "新增帳號",
     "groupMenu": "{{service}} 的更多操作",
