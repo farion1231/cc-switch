@@ -21,7 +21,15 @@
  * - Anthropic 官方：仅 Anthropic Messages
  *
  * 未收录的厂商/自定义网关不设限（全部协议可选）——网关类通常可跨格式转换。
- * openai_responses 仅 OpenAI 官方生态确认支持，各国产厂商手册未声明，一律不列。
+ *
+ * openai_responses 官方确认支持（补研 2026-10）：
+ * - Kimi/Moonshot：官方 Code 文档声明 "Chat Completions and Responses protocols"
+ *   https://www.kimi.com/code/docs/en（api.kimi.ai / api.moonshot.ai 的 /v1/responses）
+ * - 智谱 GLM：官方 Response API 兼容文档
+ *   https://docs.bigmodel.cn/cn/guide/develop/responses/introduction
+ * - 小米 MiMo：官方 Responses 接口文档
+ *   https://mimo.mi.com/docs/zh-CN/api/chat/responses
+ * SiliconFlow/DeepSeek/StepFun/MiniMax 官方文档未见 Responses 端点，不列（宁缺毋滥）。
  */
 
 export type VendorApiFormat =
@@ -32,12 +40,12 @@ export type VendorApiFormat =
 
 /** 键：预设 family（优先）或预设名（无 family 的兜底） */
 const VENDOR_PROTOCOL_SUPPORT: Record<string, VendorApiFormat[]> = {
-  kimi: ["anthropic", "openai_chat"],
-  zhipu: ["anthropic", "openai_chat"],
+  kimi: ["anthropic", "openai_chat", "openai_responses"],
+  zhipu: ["anthropic", "openai_chat", "openai_responses"],
   siliconflow: ["anthropic", "openai_chat"],
   stepfun: ["anthropic", "openai_chat"],
   minimax: ["anthropic", "openai_chat"],
-  "xiaomi-mimo": ["anthropic", "openai_chat"],
+  "xiaomi-mimo": ["anthropic", "openai_chat", "openai_responses"],
   // 无 family 的按名称兜底
   DeepSeek: ["anthropic", "openai_chat"],
   CherryIN: ["anthropic", "openai_chat", "gemini_native"],
