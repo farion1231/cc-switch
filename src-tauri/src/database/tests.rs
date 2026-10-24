@@ -1624,3 +1624,139 @@ fn delete_endpoint_blocked_while_referenced_and_allowed_after_release() {
         .expect("deletes cleanly");
     assert!(db.get_endpoint("ep-1").expect("get").is_none());
 }
+
+/// 用指定分组的存量条目填充 universal_providers（幂等）。
+/// CC_SWITCH_SEED_UNIVERSAL_DB=<库> CC_SWITCH_SEED_APP=claude
+/// cargo test --lib seed_universal -- --ignored --nocapture
+///
+/// 目标端点优先取条目 endpoint_ref（v25 归并结果），其次按连接全等匹配；
+/// 都不中跳过。apps 全关（只做连接管理，不生成条目防重复）。双轨同 id。
+#[test]
+#[ignore = "需显式提供真实库路径"]
+fn seed_universal_from_app_group() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::env::var("CC_SWITCH_SEED_UNIVERSAL_DB")?;
+    let seed_app = std::env::var("CC_SWITCH_SEED_APP").unwrap_or_else(|_| "claude".into());
+    let conn = Connection::open(&path)?;
+
+    let blob: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'universal_providers'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "{}".to_string());
+    let mut universal: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&blob)?;
+
+    let mut endpoints: Vec<(String, String, String, String, String)> = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, base_url, api_key, COALESCE(api_format,'') FROM endpoints",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        for r in rows {
+            endpoints.push(r?);
+        }
+    }
+    let mut entries: Vec<(String, String, serde_json::Value, Option<String>)> = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, settings_config, endpoint_ref FROM providers WHERE app_type = ?1",
+        )?;
+        let rows = stmt.query_map([seed_app.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        for r in rows {
+            let (id, name, cfg, r#ref) = r?;
+            let cfg: serde_json::Value =
+                serde_json::from_str(&cfg).unwrap_or(serde_json::Value::Null);
+            entries.push((id, name, cfg, r#ref));
+        }
+    }
+
+    let norm = |s: &str| -> String { s.trim().trim_end_matches('/').to_string() };
+    let conn_of = |cfg: &serde_json::Value| -> Option<(String, String)> {
+        let env = cfg.get("env")?;
+        let base = env.get("ANTHROPIC_BASE_URL")?.as_str()?.trim();
+        if base.is_empty() {
+            return None;
+        }
+        let key = env
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .and_then(|v| v.as_str())
+            .or_else(|| env.get("ANTHROPIC_API_KEY").and_then(|v| v.as_str()))?
+            .trim();
+        if key.is_empty() {
+            return None;
+        }
+        Some((norm(base), key.to_string()))
+    };
+
+    let mut created = 0usize;
+    let mut skipped = 0usize;
+    for (provider_id, name, cfg, endpoint_ref) in entries {
+        let target = endpoint_ref.clone().filter(|r| !r.is_empty()).or_else(|| {
+            let c = conn_of(&cfg)?;
+            endpoints
+                .iter()
+                .find(|(_, _, b, k, _)| norm(b) == c.0 && *k == c.1)
+                .map(|(id, _, _, _, _)| id.clone())
+        });
+        let target_id = match target {
+            Some(id) => id,
+            None => {
+                skipped += 1;
+                continue;
+            }
+        };
+        if universal.contains_key(&target_id) {
+            skipped += 1;
+            continue;
+        }
+        let (_, _, base, key, api_format) =
+            match endpoints.iter().find(|(id, _, _, _, _)| *id == target_id) {
+                Some(ep) => ep.clone(),
+                None => {
+                    skipped += 1;
+                    continue;
+                }
+            };
+        let universal_id = target_id.clone();
+        universal.insert(
+            universal_id,
+            serde_json::json!({
+                "id": target_id,
+                "name": name,
+                "providerType": "custom",
+                "apps": {},
+                "baseUrl": base,
+                "apiKey": key,
+                "apiFormat": if api_format.is_empty() { serde_json::Value::Null } else { serde_json::json!(api_format) },
+                "models": {}
+            }),
+        );
+        created += 1;
+        println!("seeded: {name} ({provider_id}) -> {target_id}");
+    }
+
+    let merged = serde_json::to_string(&serde_json::Value::Object(universal))?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('universal_providers', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![merged],
+    )?;
+    println!("done: created={created} skipped={skipped} app={seed_app}");
+    Ok(())
+}
