@@ -520,6 +520,10 @@ pub struct AppSettings {
     /// 授权中心和托盘一起变；余额、Credits、重置次数不受影响（#8024）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_display: Option<String>,
+    /// 菜单栏托盘图标左侧显示的用量数字（仅 macOS）：`"todayTokens"` / `"todayCost"` /
+    /// `"totalTokens"` / `"totalCost"`；没写或 `"off"` 只显示图标。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tray_usage_title: Option<String>,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -673,6 +677,7 @@ impl Default for AppSettings {
             common_config_confirmed: None,
             language: None,
             quota_display: None,
+            tray_usage_title: None,
             visible_apps: None,
             app_order: None,
             claude_config_dir: None,
@@ -711,6 +716,11 @@ impl AppSettings {
     /// 额度百分比按「已用」写（默认按剩余）
     pub fn quota_shows_used(&self) -> bool {
         self.quota_display.as_deref() == Some("used")
+    }
+
+    /// 菜单栏托盘图标左侧显示的用量数字（仅 macOS）；没写视为只显示图标
+    pub fn tray_usage_title(&self) -> Option<&str> {
+        self.tray_usage_title.as_deref()
     }
 
     fn settings_path() -> Option<PathBuf> {
@@ -799,6 +809,17 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "left" | "used"))
             .map(|s| s.to_string());
+
+        self.tray_usage_title = self
+            .tray_usage_title
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| {
+                matches!(
+                    s.as_str(),
+                    "todayTokens" | "todayCost" | "totalTokens" | "totalCost"
+                )
+            });
 
         if let Some(sync) = &mut self.webdav_sync {
             sync.normalize();

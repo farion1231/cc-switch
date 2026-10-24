@@ -3072,6 +3072,136 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
 static LAST_TRAY_USAGE_REFRESH: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 const MIN_TRAY_USAGE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
+// ─── 菜单栏用量数字（仅 macOS）──────────────────────────────────────────────
+
+/// 现在托盘 title 上显示的数字；变了才 set。
+static APPLIED_TRAY_TITLE: Mutex<Option<String>> = Mutex::new(None);
+
+/// token 数的紧凑写法，对齐前端 formatTokensCompact：891K / 1.8M / 180.2M / 1800B
+fn format_tray_tokens(value: u64) -> String {
+    if value < 10_000 {
+        return value.to_string();
+    }
+    for (size, suffix) in [(1e9_f64, "B"), (1e6_f64, "M"), (1e3_f64, "K")] {
+        let scaled = value as f64 / size;
+        if scaled >= 1.0 {
+            // 3 位有效数字，去掉尾零（1.80M → 1.8M）
+            let text = format!("{scaled:.2}");
+            let text = text.trim_end_matches('0').trim_end_matches('.');
+            return format!("{text}{suffix}");
+        }
+    }
+    value.to_string()
+}
+
+/// 成本换算并加币种符号，两位小数；汇率是 1 USD 折多少目标币种（同用量页设置）
+fn format_tray_cost_value(usd: f64, currency: &str, rate: f64) -> String {
+    let value = usd * rate;
+    match currency {
+        "CNY" | "JPY" => format!("¥{value:.2}"),
+        "EUR" => format!("€{value:.2}"),
+        "GBP" => format!("£{value:.2}"),
+        "USD" => format!("${value:.2}"),
+        other => format!("{other} {value:.2}"),
+    }
+}
+
+/// 按设置的显示币种格式化成本（库里存的是 USD 字符串）
+fn format_tray_cost(usd: &str) -> String {
+    let usd: f64 = usd.trim().parse().unwrap_or(0.0);
+    let display = crate::settings::get_settings()
+        .usage_display
+        .clone()
+        .unwrap_or_default();
+    let currency = display
+        .currency
+        .clone()
+        .unwrap_or_else(|| "USD".to_string());
+    let rate = display.exchange_rates.get(&currency).copied().unwrap_or(1.0);
+    format_tray_cost_value(usd, &currency, rate)
+}
+
+/// 本地时区今日 0 点（Unix 秒）
+fn local_midnight() -> Option<i64> {
+    chrono::Local::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)?
+        .and_local_timezone(chrono::Local)
+        .single()
+        .map(|t| t.timestamp())
+}
+
+/// 按设置的模式算菜单栏数字：今日/总量的 token 或成本。
+/// 查询失败返回 `None`（调用方保留上次的数字）。
+fn tray_usage_title_text(app_state: &AppState) -> Option<String> {
+    let settings = crate::settings::get_settings();
+    let mode = settings.tray_usage_title()?;
+    let start = if mode.starts_with("today") {
+        Some(local_midnight()?)
+    } else {
+        None
+    };
+    let summary = app_state
+        .db
+        .get_usage_summary(start, None, None, None, None)
+        .ok()?;
+    match mode {
+        "todayTokens" | "totalTokens" => {
+            Some(format_tray_tokens(summary.real_total_tokens))
+        }
+        "todayCost" | "totalCost" => Some(format_tray_cost(&summary.total_cost)),
+        _ => None,
+    }
+}
+
+/// 更新菜单栏托盘图标左侧的用量数字（NSStatusItem title，仅 macOS）。
+/// 设置为只显示图标时清掉；查询失败时保留上次的数字。其余平台无事可做。
+pub fn update_tray_usage_title(app: &tauri::AppHandle) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let Some(tray) = app.tray_by_id(TRAY_ID) else {
+            return;
+        };
+        if crate::settings::get_settings().tray_usage_title().is_none() {
+            if lock(&APPLIED_TRAY_TITLE).take().is_some() {
+                if let Err(e) = tray.set_title(None::<&str>) {
+                    log::warn!("[Tray] 清除菜单栏用量数字失败: {e}");
+                }
+            }
+            return;
+        }
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        let Some(text) = tray_usage_title_text(state.inner()) else {
+            return;
+        };
+        {
+            let mut applied = lock(&APPLIED_TRAY_TITLE);
+            if applied.as_deref() == Some(text.as_str()) {
+                return;
+            }
+            *applied = Some(text.clone());
+        }
+        if let Err(e) = tray.set_title(Some(text.as_str())) {
+            log::warn!("[Tray] 更新菜单栏用量数字失败: {e}");
+        }
+    }
+}
+
+/// 每分钟刷一次菜单栏数字：跨过本地 0 点后「今日」要翻新，长时间没有额度
+/// 事件时数字也不会一直停在旧值。开关关着时每次只读一次设置就返回。
+pub fn spawn_tray_usage_title_refresher(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        update_tray_usage_title(&app);
+    });
+}
+
 /// 合并多次快速触发的"usage 标题软更新"：批量刷新期间多个 usage 命令
 /// 同时成功时，只会产生一次就地 `set_text` 批量调用。走软更新而不是
 /// `refresh_tray_menu` 整建，避免用户打开中的菜单被 macOS 系统关闭。
@@ -3088,6 +3218,7 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
         std::thread::sleep(std::time::Duration::from_millis(50));
         TRAY_REBUILD_SCHEDULED.store(false, Ordering::Release);
         update_tray_usage_labels(&app);
+        update_tray_usage_title(&app);
     });
 }
 
@@ -4789,5 +4920,27 @@ mod tests {
         assert!(clear_app_problems(&AppType::Codex));
         assert!(!clear_app_problems(&AppType::Codex));
         assert!(collect_problems(None, &rerouted).is_empty());
+    }
+
+    #[test]
+    fn tray_tokens_format_matches_the_compact_frontend_style() {
+        assert_eq!(format_tray_tokens(0), "0");
+        assert_eq!(format_tray_tokens(9_876), "9876");
+        assert_eq!(format_tray_tokens(10_000), "10K");
+        assert_eq!(format_tray_tokens(890_500), "890.5K");
+        assert_eq!(format_tray_tokens(1_800_000), "1.8M");
+        assert_eq!(format_tray_tokens(180_200_000), "180.2M");
+        assert_eq!(format_tray_tokens(1_230_000_000), "1.23B");
+        // 溢出上一级单位也照写（前端 toPrecision(3) 同样不会自动进位）
+        assert_eq!(format_tray_tokens(1_800_000_000_000), "1800B");
+    }
+
+    #[test]
+    fn tray_cost_format_applies_the_display_currency() {
+        assert_eq!(format_tray_cost_value(1.234, "USD", 1.0), "$1.23");
+        assert_eq!(format_tray_cost_value(1.234, "CNY", 7.2), "¥8.88");
+        assert_eq!(format_tray_cost_value(0.5, "JPY", 155.0), "¥77.50");
+        assert_eq!(format_tray_cost_value(2.0, "KRW", 1350.0), "KRW 2700.00");
+        assert_eq!(format_tray_cost_value(0.0, "USD", 1.0), "$0.00");
     }
 }
