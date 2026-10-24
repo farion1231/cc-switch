@@ -24,6 +24,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SearchField } from "@/components/ui/search-field";
 import {
   Select,
   SelectContent,
@@ -155,6 +156,7 @@ export function UniversalProviderFormModal({
   const [fetchedModelIds, setFetchedModelIds] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [presetSearch, setPresetSearch] = useState("");
 
   const handleFetchModels = useCallback(async () => {
     if (!baseUrl.trim() || !apiKey.trim()) {
@@ -452,29 +454,41 @@ requires_openai_auth = true`;
                 defaultValue: "选择预设类型",
               })}
             </Label>
+            <SearchField
+              value={presetSearch}
+              onValueChange={setPresetSearch}
+              clearLabel={t("common.clear", { defaultValue: "清除" })}
+              placeholder={t("providerPreset.searchPlaceholder", {
+                defaultValue: "搜索厂商…",
+              })}
+              containerClassName="w-full sm:w-72"
+            />
             <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto">
-              {[
-                ...universalProviderPresets,
-                ...claudeLibraryUniversalPresets(),
-              ].map((preset) => (
-                <button
-                  key={preset.providerType}
-                  type="button"
-                  onClick={() => handlePresetSelect(preset)}
-                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                    selectedPreset?.providerType === preset.providerType
-                      ? "bg-surface text-fg-1 shadow-v7-sm ring-1 ring-border-strong"
-                      : "bg-subtle text-fg-2 hover:bg-subtle"
-                  }`}
-                >
-                  <ProviderIcon
-                    icon={preset.icon}
-                    name={preset.name}
-                    size={16}
-                  />
-                  {preset.name}
-                </button>
-              ))}
+              {[...universalProviderPresets, ...claudeLibraryUniversalPresets()]
+                .filter((preset) =>
+                  preset.name
+                    .toLowerCase()
+                    .includes(presetSearch.trim().toLowerCase()),
+                )
+                .map((preset) => (
+                  <button
+                    key={preset.providerType}
+                    type="button"
+                    onClick={() => handlePresetSelect(preset)}
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                      selectedPreset?.providerType === preset.providerType
+                        ? "bg-surface text-fg-1 shadow-v7-sm ring-1 ring-border-strong"
+                        : "bg-subtle text-fg-2 hover:bg-subtle"
+                    }`}
+                  >
+                    <ProviderIcon
+                      icon={preset.icon}
+                      name={preset.name}
+                      size={16}
+                    />
+                    {preset.name}
+                  </button>
+                ))}
             </div>
             {selectedPreset?.description && (
               <p className="text-xs text-fg-2">{selectedPreset.description}</p>
