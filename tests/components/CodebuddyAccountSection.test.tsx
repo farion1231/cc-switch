@@ -8,10 +8,8 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  CodebuddyAccountSection,
-  codebuddyRegion,
-} from "@/components/providers/forms/CodebuddyAccountSection";
+import { CodebuddyAccountSection } from "@/components/providers/forms/CodebuddyAccountSection";
+import { codebuddyRegion } from "@/components/providers/forms/CodebuddyLogin";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
@@ -61,7 +59,9 @@ const baseAuth = () => ({
   addAccount: vi.fn(),
   removeAccount: vi.fn(),
   setDefaultAccount: vi.fn(),
+  reauthAccount: vi.fn(),
   cancelAuth: vi.fn(),
+  cancelAuthAndWait: vi.fn(() => Promise.resolve()),
   logout: vi.fn(),
   refetchStatus: vi.fn(),
 });
@@ -122,7 +122,11 @@ describe("CodebuddyAccountSection", () => {
     mocks.useManagedAuth.mockReturnValue(auth);
     render(<CodebuddyAccountSection />);
 
-    expect(mocks.useManagedAuth).toHaveBeenCalledWith("codebuddy_oauth");
+    expect(mocks.useManagedAuth).toHaveBeenCalledWith(
+      "codebuddy_oauth",
+      undefined,
+      expect.objectContaining({ onLoginComplete: expect.any(Function) }),
+    );
     const current = screen.getByText("alice").parentElement!;
     expect(within(current).getByText("CodeBuddy 在用")).toBeInTheDocument();
     expect(screen.getAllByText(/国内版/).length).toBeGreaterThan(0);
@@ -194,10 +198,118 @@ describe("CodebuddyAccountSection", () => {
     mocks.openTerminal.mockResolvedValue(undefined);
     render(<CodebuddyAccountSection />);
 
-    expect(screen.getByText(/输入 \/login 完成登录/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/没有出现登录界面就输入 \/login/),
+    ).toBeInTheDocument();
+    // 这次登录没有让 CodeBuddy 退出原来的登录：按钮就是普通的取消
+    expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
     expect(screen.queryByText(/已在浏览器打开/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "重新打开终端" }));
     expect(mocks.openTerminal).toHaveBeenCalledOnce();
+  });
+
+  it("signs in directly when CodeBuddy is not signed in", async () => {
+    const auth = baseAuth();
+    mocks.useManagedAuth.mockReturnValue(auth);
+    mocks.live.mockResolvedValue(liveState("none"));
+    render(<CodebuddyAccountSection />);
+    await waitFor(() => expect(mocks.live).toHaveBeenCalled());
+    await userEvent.click(
+      (await screen.findAllByRole("button", { name: /登录新账号/ }))[0],
+    );
+    expect(auth.addAccount).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("confirms before signing CodeBuddy out to add an account, and can restore it", async () => {
+    const auth = baseAuth();
+    auth.accounts = [account("100", "www.codebuddy.cn", "alice")];
+    auth.defaultAccountId = "100@www.codebuddy.cn";
+    // 开始登录后进入等待状态
+    auth.addAccount.mockImplementation(() => {
+      Object.assign(auth, {
+        isPolling: true,
+        isAddingAccount: true,
+        pollingState: "polling",
+        deviceCode: {
+          provider: "codebuddy_oauth",
+          device_code: "flow",
+          user_code: "",
+          verification_uri: "",
+          expires_in: 900,
+          interval: 2,
+        },
+      });
+    });
+    auth.cancelAuthAndWait.mockImplementation(() => {
+      Object.assign(auth, {
+        isPolling: false,
+        isAddingAccount: false,
+        pollingState: "idle",
+        deviceCode: null,
+      });
+      return Promise.resolve();
+    });
+    mocks.useManagedAuth.mockImplementation(() => auth);
+    mocks.live.mockResolvedValue(
+      liveState("collected", {
+        account_id: "100@www.codebuddy.cn",
+        label: "alice",
+        domain: "www.codebuddy.cn",
+      }),
+    );
+    render(<CodebuddyAccountSection />);
+    await screen.findByText("alice");
+    // 等凭据状态读回来（已登录），授权中心标题行的「添加账号」才会先确认
+    await waitFor(() => expect(mocks.live).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await userEvent.click(screen.getByRole("button", { name: /添加账号/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/CodeBuddy 现在登着 alice · 国内版/),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/正在运行的 CodeBuddy 会话会暂时变为未登录/),
+    ).toBeInTheDocument();
+    // 还没确认就不动 CodeBuddy
+    expect(auth.addAccount).not.toHaveBeenCalled();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "继续登录" }),
+    );
+    expect(auth.addAccount).toHaveBeenCalledOnce();
+
+    expect(
+      await screen.findByText(/已让 CodeBuddy 暂时退出原来的登录/),
+    ).toBeInTheDocument();
+    const restore = screen.getByRole("button", { name: "恢复原来的登录" });
+    const liveCalls = mocks.live.mock.calls.length;
+    await userEvent.click(restore);
+    expect(auth.cancelAuthAndWait).toHaveBeenCalledOnce();
+    // 恢复后重新读一次凭据状态
+    await waitFor(() =>
+      expect(mocks.live.mock.calls.length).toBeGreaterThan(liveCalls),
+    );
+  });
+
+  it("re-signing in an account also confirms first", async () => {
+    const auth = baseAuth();
+    auth.accounts = [account("100", "www.codebuddy.cn", "alice")];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    mocks.live.mockResolvedValue(liveState("uncollected", { label: "bob" }));
+    render(<CodebuddyAccountSection />);
+    await waitFor(() => expect(mocks.live).toHaveBeenCalled());
+    await screen.findByText(/CodeBuddy 现在登着 bob/);
+    await userEvent.click(
+      screen.getByRole("button", { name: "alice 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /重新登录/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "继续登录" }),
+    );
+    expect(auth.reauthAccount).toHaveBeenCalledWith("100@www.codebuddy.cn");
   });
 
   it("shows each account's plan and credits, and refreshes past the cache", async () => {

@@ -4862,7 +4862,7 @@
       "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "agyHelp": "Antigravity CLI（agy）の公式ログインです。agy は同時に 1 つのアカウントにしかログインできません。「切り替え」で agy のログインを選んだアカウントに置き換え、以降に起動する agy はそのアカウントを使います。agy に元々ログインしていたアカウントは自動でここに追加されるため、切り替えても失われません。",
-      "codebuddyHelp": "CodeBuddy Code の公式ログインです（国内版・国際版の両方）。アカウントを切り替えるには、プロバイダー一覧で「CodeBuddy 公式ログイン」カードを追加して切り替えます。アカウントを追加するとターミナルで codebuddy を起動します。そこで /login を実行してログインすると、ここに自動で追加されます。トークンの更新は CodeBuddy 自身が行います。"
+      "codebuddyHelp": "CodeBuddy Code の公式ログイン（中国版・国際版の両方）。アカウントを切り替えるには、プロバイダー一覧でアカウントごとに「CodeBuddy 公式ログイン」カードを作成し「追加」を押します。「新しいアカウントでログイン」はターミナルで codebuddy を起動し、ログイン後ここに自動で追加します。ログイン中の場合はいったんログアウトさせ、やめれば元に戻せます。トークンは CodeBuddy 自身が更新します。"
     },
     "addAccount": "アカウントを追加",
     "groupMenu": "{{service}} のその他の操作",
@@ -4930,10 +4930,10 @@
       "unrecognized": "CodeBuddy のログインファイルの形式を認識できません",
       "unrecognizedNote": "WorkBuddy によって暗号化管理されている可能性があります。CC Switch はこのファイルを変更せず、アカウントを切り替えることもできません。",
       "statusLoadFailed": "CodeBuddy のアカウントを読み込めませんでした。もう一度お試しください。",
-      "empty": "CodeBuddy のアカウントはまだありません。ターミナルでログインするか、CodeBuddy で現在ログイン中のアカウントを追加してください。",
-      "login": "ターミナルでログイン",
+      "empty": "CodeBuddy のアカウントはまだありません。新しいアカウントでログインするか、CodeBuddy で現在ログイン中のアカウントを追加してください。",
+      "login": "新しいアカウントでログイン",
       "current": "CodeBuddy で使用中",
-      "pendingNote": "ターミナルで codebuddy を起動しました。そこで /login を入力してログインすると、ここに自動で追加されます。",
+      "pendingNote": "ターミナルで codebuddy を起動しました。案内に従ってログインしてください（ログイン画面が出ない場合は /login を入力）。完了するとここに自動で追加されます。",
       "reopenTerminal": "ターミナルを再度開く",
       "removeNote": "CC Switch 内のコピーだけを削除します。CodeBuddy からはログアウトしません。",
       "quota": {
@@ -5000,7 +5000,7 @@
   "codebuddy": {
     "empty": {
       "title": "カスタムモデルがまだありません",
-      "description": "CodeBuddy の公式モデルは CodeBuddy Code 自身が管理します。公式アカウントを切り替えるには「CodeBuddy 公式ログイン」カードを追加し、ここで切り替えます。~/.codebuddy/models.json に既にあるカスタムモデルはここに自動で表示されます。右上の + から、プリセットまたはカスタムモデルを追加できます。"
+      "description": "CodeBuddy の公式モデルは CodeBuddy Code 自身が管理します。公式アカウントを切り替えるには、アカウントごとに「CodeBuddy 公式ログイン」カードを作成し、ここで「追加」を押します。~/.codebuddy/models.json に既にあるカスタムモデルはここに自動で表示されます。右上の + から、プリセットまたはカスタムモデルを追加できます。"
     },
     "modelsHint": "モデル ID は models.json に書き込まれる id で、/model で選ぶ名前です。通常はエンドポイントのモデル名で、追加後は変更できません。表示名は上の「名前」と同じ値です。",
     "modelIdDuplicate": "このモデル ID は既に使用されています",
@@ -5015,20 +5015,27 @@
     "official": {
       "presetName": "CodeBuddy 公式ログイン",
       "account": "ログインアカウント",
-      "accountHint": "このカードで使う CodeBuddy アカウントを選びます。プロバイダー一覧でカードの「切り替え」を押すと CodeBuddy のログインがこのアカウントに切り替わり、実行中の CodeBuddy も自動で切り替わります。",
+      "accountHint": "このカードで使う CodeBuddy アカウントを選びます。CodeBuddy は同時に 1 つのアカウントにしかログインできません。プロバイダー一覧でこのカードの「追加」を押すと CodeBuddy のログインがこのアカウントに切り替わり、実行中の CodeBuddy も自動で切り替わります。",
       "accountDeleted": "アカウントが削除されました。選び直してください",
       "accountDeletedChip": "アカウント削除済み",
       "unbound": "アカウントが未選択です。カードを編集して選んでください",
       "statusLoading": "アカウントを読み込み中…",
-      "expired": "このアカウントのログインは期限切れです。認証センターで再ログインしてから切り替えてください",
-      "switching": "切り替え中…",
-      "inUse": "使用中",
-      "switched": "{{name}} に切り替えました。実行中の CodeBuddy も自動でこのアカウントに切り替わり、新しく開くものもこのアカウントを使います。",
-      "switchFailed": "切り替えに失敗しました：{{error}}",
+      "expired": "このアカウントのログインは期限切れです。認証センターで再ログインしてから追加してください",
       "importCurrent": "現在のログインを追加（{{login}}）",
-      "section": "公式ログイン · {{count}}",
-      "sectionHelpTitle": "CodeBuddy 公式ログイン",
-      "sectionHelp": "公式ログインカードはそれぞれ 1 つの CodeBuddy アカウントに紐づき、models.json には書き込まれません。CodeBuddy は同時に 1 つのアカウントにしかログインできないため、「切り替え」でカードのアカウントにログインを切り替えます。実行中の CodeBuddy も自動で切り替わります。"
+      "adding": "追加しています…",
+      "added": "{{name}} を追加しました。CodeBuddy はこのアカウントでログイン中です。実行中の CodeBuddy も自動で切り替わり、新しいセッションもこのアカウントを使います。",
+      "addFailed": "追加に失敗しました：{{error}}",
+      "removeHint": "CodeBuddy は同時に 1 つのアカウントにしかログインできません。別の公式カードを追加すると切り替わります"
+    },
+    "login": {
+      "confirmTitle": "別の CodeBuddy アカウントでログイン",
+      "confirmMessage": "CodeBuddy は現在 {{login}} でログインしていて、同時に使えるのは 1 アカウントだけです。続行すると、まずこのアカウントを認証センターに追加し、CodeBuddy を一時的にログアウトさせて（ログイン情報は削除せず、サーバーにも通知しません）、ターミナルを開いて新しいアカウントでログインします。\n\nこの後、ログインが完了するまで実行中の CodeBuddy セッションは未ログイン状態になります。途中でやめる場合は、ワンクリックで元のログインに戻せます。",
+      "confirm": "続行",
+      "signedInHint": "CodeBuddy がログイン中の場合、新しいアカウントでログインするとまず現在のログインが一時的に解除されます。ログインが完了するまで、実行中の CodeBuddy セッションは未ログイン状態になります。",
+      "pendingReplacing": "CodeBuddy の現在のログインを一時的に解除し、ターミナルで codebuddy を起動しました。案内に従って新しいアカウントでログインすると、ここに自動で追加されます。",
+      "restore": "元のログインに戻す",
+      "restored": "元の CodeBuddy ログインに戻しました。",
+      "restoreFailed": "元のログインに戻せませんでした（CodeBuddy がログインファイルを書き込み中の可能性があります）。認証センターまたはターミナルで再ログインしてください。"
     }
   }
 }

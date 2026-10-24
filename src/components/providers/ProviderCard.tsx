@@ -25,7 +25,7 @@ import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import CodebuddyAccountQuotaFooter from "@/components/CodebuddyAccountQuotaFooter";
-import { codebuddyRegion } from "@/components/providers/forms/CodebuddyAccountSection";
+import { codebuddyRegion } from "@/components/providers/forms/CodebuddyLogin";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,

@@ -4745,7 +4745,7 @@
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "codebuddyHelp": "CodeBuddy Code'un resmi oturumu (Çin ve uluslararası sitelerin ikisi de burada). Hesap değiştirmek için sağlayıcı listesinde bir \"CodeBuddy Resmi Oturum\" kartı ekleyip oradan değiştirin. Hesap eklemek, codebuddy çalıştıran bir terminal açar: orada /login çalıştırın, işiniz bitince hesap buraya eklenir. Belirteçleri CodeBuddy kendisi yeniler."
+      "codebuddyHelp": "CodeBuddy Code'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için sağlayıcı listesinde hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup Ekle'ye tıklayın. \"Yeni hesapla oturum aç\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler."
     },
     "addAccount": "Hesap ekle",
     "groupMenu": "{{service}} için daha fazla eylem",
@@ -4799,10 +4799,10 @@
       "unrecognized": "CodeBuddy'nin oturum dosyasının biçimi tanınmadı",
       "unrecognizedNote": "WorkBuddy tarafından şifrelenmiş olabilir. CC Switch dosyaya dokunmaz ve hesap değiştiremez.",
       "statusLoadFailed": "CodeBuddy hesapları okunamadı. Tekrar deneyin.",
-      "empty": "Henüz CodeBuddy hesabı yok. Terminalden oturum açın veya CodeBuddy'nin şu anki hesabını ekleyin.",
-      "login": "Terminalden oturum aç",
+      "empty": "Henüz CodeBuddy hesabı yok. Yeni bir hesapla oturum açın veya CodeBuddy'nin şu anki hesabını ekleyin.",
+      "login": "Yeni hesapla oturum aç",
       "current": "CodeBuddy kullanıyor",
-      "pendingNote": "codebuddy bir terminalde açıldı. Orada /login yazın; işiniz bitince hesap buraya eklenir.",
+      "pendingNote": "codebuddy bir terminalde açıldı. Oturum açmak için yönergeleri izleyin (oturum açma ekranı çıkmazsa /login yazın); bitince hesap buraya eklenir.",
       "reopenTerminal": "Terminali yeniden aç",
       "removeNote": "Yalnızca CC Switch'teki kopyayı siler. CodeBuddy oturumu açık kalır.",
       "quota": {
@@ -4851,7 +4851,7 @@
   "codebuddy": {
     "empty": {
       "title": "Henüz özel model yok",
-      "description": "CodeBuddy'nin resmi modelleri CodeBuddy Code tarafından yönetilir. Resmi hesaplar arasında geçiş için bir \"CodeBuddy Resmi Oturum\" kartı ekleyip burada değiştirin. ~/.codebuddy/models.json içinde zaten bulunan özel modeller burada otomatik olarak görünür. Ön ayar veya özel model eklemek için sağ üst köşedeki + düğmesini kullanın."
+      "description": "CodeBuddy'nin resmi modelleri CodeBuddy Code tarafından yönetilir. Resmi hesaplar arasında geçiş için hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup burada Ekle'ye tıklayın. ~/.codebuddy/models.json içinde zaten bulunan özel modeller burada otomatik olarak görünür. Ön ayar veya özel model eklemek için sağ üst köşedeki + düğmesini kullanın."
     },
     "modelsHint": "Model kimliği models.json'a yazılan id ve /model içinde seçtiğiniz addır; genellikle uç noktanın model adıdır ve eklendikten sonra değiştirilemez. Görünen ad, yukarıdaki İsim ile aynı değerdir.",
     "modelIdDuplicate": "Bu model kimliği zaten kullanılıyor",
@@ -4866,20 +4866,27 @@
     "official": {
       "presetName": "CodeBuddy Resmi Oturum",
       "account": "Hesap",
-      "accountHint": "Bu kartın kullanacağı CodeBuddy hesabını seçin. Sağlayıcı listesinde karttaki Değiştir'e tıklayınca CodeBuddy bu hesapla oturum açar; çalışan CodeBuddy de otomatik olarak geçiş yapar.",
+      "accountHint": "Bu kartın kullanacağı CodeBuddy hesabını seçin. CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir: sağlayıcı listesinde bu karttaki Ekle'ye tıklayınca CodeBuddy bu hesapla oturum açar; çalışan CodeBuddy de otomatik olarak geçiş yapar.",
       "accountDeleted": "Hesap silindi. Başka bir hesap seçin.",
       "accountDeletedChip": "Hesap silindi",
       "unbound": "Henüz hesap seçilmedi. Kartı düzenleyip bir hesap seçin.",
       "statusLoading": "Hesaplar yükleniyor…",
-      "expired": "Bu hesabın oturumunun süresi doldu. Değiştirmeden önce Yetkilendirme Merkezi'nde yeniden oturum açın.",
-      "switching": "Değiştiriliyor…",
-      "inUse": "Kullanımda",
-      "switched": "{{name}} hesabına geçildi. Çalışan CodeBuddy otomatik olarak bu hesaba geçer, yeni oturumlar da bunu kullanır.",
-      "switchFailed": "Değiştirilemedi: {{error}}",
+      "expired": "Bu hesabın oturumunun süresi doldu. Eklemeden önce Yetkilendirme Merkezi'nde yeniden oturum açın.",
       "importCurrent": "Geçerli oturumu ekle ({{login}})",
-      "section": "Resmi oturum · {{count}}",
-      "sectionHelpTitle": "CodeBuddy resmi oturum",
-      "sectionHelp": "Her resmi oturum kartı bir CodeBuddy hesabına bağlıdır ve models.json dosyasına asla yazılmaz. CodeBuddy aynı anda yalnızca tek bir hesapla oturum açabilir; Değiştir, oturumu karttaki hesaba geçirir ve çalışan CodeBuddy de otomatik olarak geçiş yapar."
+      "adding": "Ekleniyor…",
+      "added": "{{name}} eklendi. CodeBuddy artık bu hesapla oturum açtı; çalışan CodeBuddy otomatik geçiş yapar, yeni oturumlar da bunu kullanır.",
+      "addFailed": "Eklenemedi: {{error}}",
+      "removeHint": "CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin."
+    },
+    "login": {
+      "confirmTitle": "Başka bir CodeBuddy hesabıyla oturum aç",
+      "confirmMessage": "CodeBuddy şu anda {{login}} ile oturum açmış durumda ve aynı anda yalnızca bir hesap kullanabilir. Devam ederseniz önce bu hesap Yetkilendirme Merkezi'ne eklenir, ardından CodeBuddy'nin oturumu geçici olarak kapatılır (oturum bilgileri silinmez, sunucuya bildirilmez) ve yeni hesapla oturum açmak için bir terminal açılır.\n\nBundan sonra oturum açmayı bitirene kadar çalışan CodeBuddy oturumları oturum kapalı görünür. Vazgeçerseniz özgün oturumu tek tıkla geri yükleyebilirsiniz.",
+      "confirm": "Devam et",
+      "signedInHint": "CodeBuddy oturum açıkken yeni bir hesapla oturum açmak önce mevcut oturumu geçici olarak kapatır: oturum açmayı bitirene kadar çalışan CodeBuddy oturumları oturum kapalı görünür.",
+      "pendingReplacing": "CodeBuddy'nin mevcut oturumu geçici olarak kapatıldı ve codebuddy bir terminalde açıldı. Yeni hesapla oturum açmak için yönergeleri izleyin; bitince hesap buraya eklenir.",
+      "restore": "Özgün oturumu geri yükle",
+      "restored": "Özgün CodeBuddy oturumu geri yüklendi.",
+      "restoreFailed": "Özgün oturum geri yüklenemedi (CodeBuddy oturum dosyasını yazıyor olabilir). Yetkilendirme Merkezi'nden veya bir terminalden yeniden oturum açın."
     }
   }
 }

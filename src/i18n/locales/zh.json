@@ -4862,7 +4862,7 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
-      "codebuddyHelp": "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里添加「CodeBuddy 官方登录」卡并切换。添加账号会打开终端运行 codebuddy，在里面执行 /login 登录后这里自动收录；令牌由 CodeBuddy 自己续期。"
+      "codebuddyHelp": "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里给账号建一张「CodeBuddy 官方登录」卡并点「添加」。「登录新账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。"
     },
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",
@@ -4930,10 +4930,10 @@
       "unrecognized": "CodeBuddy 的登录文件格式认不出",
       "unrecognizedNote": "可能由 WorkBuddy 加密托管。CC Switch 不会改动它，也不能切换账号。",
       "statusLoadFailed": "无法读取 CodeBuddy 账号，请重试。",
-      "empty": "还没有 CodeBuddy 账号。在终端里登录，或收录 CodeBuddy 当前登录的号。",
-      "login": "在终端登录",
+      "empty": "还没有 CodeBuddy 账号。登录新账号，或收录 CodeBuddy 当前登录的号。",
+      "login": "登录新账号",
       "current": "CodeBuddy 在用",
-      "pendingNote": "已在终端打开 codebuddy，在里面输入 /login 完成登录后这里会自动收录。",
+      "pendingNote": "已在终端打开 codebuddy，按提示登录（没有出现登录界面就输入 /login），完成后这里会自动收录。",
       "reopenTerminal": "重新打开终端",
       "removeNote": "只删除 CC Switch 里的副本，不会让 CodeBuddy 退出登录。",
       "quota": {
@@ -5000,7 +5000,7 @@
   "codebuddy": {
     "empty": {
       "title": "还没有添加自定义模型",
-      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理；要切换官方账号，添加「CodeBuddy 官方登录」卡后在这里切换。~/.codebuddy/models.json 里已有的自定义模型会自动显示在这里。点击右上角 +，从预设或自定义配置添加模型。"
+      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理；要切换官方账号，给账号建一张「CodeBuddy 官方登录」卡，在这里点「添加」。~/.codebuddy/models.json 里已有的自定义模型会自动显示在这里。点击右上角 +，从预设或自定义配置添加模型。"
     },
     "modelsHint": "模型 ID 写入 models.json 的 id，也是 /model 里选择的名称，通常就是接口的模型名，添加后不可修改。显示名称与上方的「名称」是同一个值。",
     "modelIdDuplicate": "此模型 ID 已被使用，请更换",
@@ -5015,20 +5015,27 @@
     "official": {
       "presetName": "CodeBuddy 官方登录",
       "account": "登录账号",
-      "accountHint": "选择这张卡要用的 CodeBuddy 账号。在供应商列表里点卡片上的「切换」，CodeBuddy 的登录就会换成它，正在运行的 CodeBuddy 也会自动换过去。",
+      "accountHint": "选择这张卡要用的 CodeBuddy 账号。CodeBuddy 同时只能登录一个账号：在供应商列表里点这张卡的「添加」，CodeBuddy 的登录就会换成它，正在运行的 CodeBuddy 也会自动换过去。",
       "accountDeleted": "账号已删除，请重新选择",
       "accountDeletedChip": "账号已删除",
       "unbound": "还没有选择账号，请编辑卡片选择一个",
       "statusLoading": "正在读取账号…",
-      "expired": "这个账号的登录已过期，请在授权中心重新登录后再切换",
-      "switching": "正在切换…",
-      "inUse": "当前在用",
-      "switched": "已切换到 {{name}}。正在运行的 CodeBuddy 会自动换到这个账号，新开的也会用它。",
-      "switchFailed": "切换失败：{{error}}",
+      "expired": "这个账号的登录已过期，请在授权中心重新登录后再添加",
       "importCurrent": "收录当前登录（{{login}}）",
-      "section": "官方登录 · {{count}}",
-      "sectionHelpTitle": "CodeBuddy 官方登录",
-      "sectionHelp": "每张官方登录卡绑定一个 CodeBuddy 账号，不会写进 models.json。CodeBuddy 同时只能登录一个号，点「切换」把它的登录换成卡片上的账号，正在运行的 CodeBuddy 也会自动换过去。"
+      "adding": "正在添加…",
+      "added": "已添加 {{name}}，CodeBuddy 已登录这个账号。正在运行的 CodeBuddy 会自动换过去，新开的也会用它。",
+      "addFailed": "添加失败：{{error}}",
+      "removeHint": "CodeBuddy 同时只能登录一个账号，添加另一张官方卡即可切换"
+    },
+    "login": {
+      "confirmTitle": "登录新的 CodeBuddy 账号",
+      "confirmMessage": "CodeBuddy 现在登着 {{login}}，同一时间只能登录一个账号。继续后会先把它收录到授权中心，再让 CodeBuddy 暂时退出登录（不删除登录信息、不通知服务器），然后打开终端登录新账号。\n\n写入后，正在运行的 CodeBuddy 会话会暂时变为未登录，直到你登录完成。中途放弃可以一键恢复原来的登录。",
+      "confirm": "继续登录",
+      "signedInHint": "CodeBuddy 已登录时，登录新账号会先让它暂时退出原来的登录：写入后，正在运行的 CodeBuddy 会话会暂时变为未登录，直到你登录完成。",
+      "pendingReplacing": "已让 CodeBuddy 暂时退出原来的登录，并在终端打开了 codebuddy。按提示登录新账号，完成后这里会自动收录。",
+      "restore": "恢复原来的登录",
+      "restored": "已恢复原来的 CodeBuddy 登录。",
+      "restoreFailed": "没能恢复原来的登录（CodeBuddy 可能正在写登录文件）。可以在授权中心重新登录，或在终端里登录。"
     }
   }
 }

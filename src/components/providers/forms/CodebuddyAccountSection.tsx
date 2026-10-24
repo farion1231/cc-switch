@@ -1,11 +1,16 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
-import { useManagedAuth } from "./hooks/useManagedAuth";
+import {
+  CODEBUDDY_LIVE_KEY,
+  CodebuddyLoginConfirmDialog,
+  useCodebuddyLogin,
+  useCodebuddyRegionLabel,
+} from "./CodebuddyLogin";
 import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
@@ -16,24 +21,6 @@ import {
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { CodebuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
-
-export const CODEBUDDY_LIVE_KEY = ["codebuddy-account-live"] as const;
-
-/** `auth.domain` 属于国内版还是国际版；认不出时为 `null`（界面直接显示域名）。 */
-export function codebuddyRegion(
-  domain: string | null | undefined,
-): "mainland" | "global" | null {
-  const value = (domain ?? "").trim().toLowerCase();
-  if (!value) return null;
-  if (value.includes("codebuddy.ai")) return "global";
-  if (
-    value.includes("codebuddy.cn") ||
-    value.includes("tencent.com") ||
-    value.endsWith(".cn")
-  )
-    return "mainland";
-  return null;
-}
 
 /** 账号 id 是 `<uid>@<domain>`。 */
 const uidOf = (id: string) => {
@@ -47,14 +34,17 @@ interface CodebuddyAccountSectionProps {
 
 /**
  * 授权中心的 CodeBuddy Code 账号组。CodeBuddy 只有一份全局登录（凭据文件），「在用」就是它现在
- * 登着的那个号。这里只管账号（收录、终端登录、删除、额度）；切换在供应商列表里：添加
- * 「CodeBuddy 官方登录」卡绑定账号，点卡片上的「切换」。删账号只删 CC Switch 的副本。
+ * 登着的那个号。这里只管账号（收录、终端登录、删除、额度）；切换在供应商列表里：给账号建一张
+ * 「CodeBuddy 官方登录」卡，点卡片上的「添加」。删账号只删 CC Switch 的副本。
+ * 「添加账号」在已登录时会先确认，再让 CodeBuddy 暂时退出登录（见 `useCodebuddyLogin`）。
  */
 export const CodebuddyAccountSection: React.FC<
   CodebuddyAccountSectionProps
 > = ({ helpSide }) => {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
+  const login = useCodebuddyLogin();
+  const { live } = login;
   const {
     accounts,
     defaultAccountId,
@@ -66,20 +56,12 @@ export const CodebuddyAccountSection: React.FC<
     isPolling,
     isAddingAccount,
     isRemovingAccount,
-    addAccount,
     removeAccount,
-    cancelAuth,
     logout,
     refetchStatus,
-  } = useManagedAuth("codebuddy_oauth");
+  } = login.auth;
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
-
-  const { data: live } = useQuery({
-    queryKey: CODEBUDDY_LIVE_KEY,
-    queryFn: authApi.codebuddyAccountLive,
-    refetchInterval: 15_000,
-  });
   // 账号表变了（终端登录收录、删除）或 CodeBuddy 换了号时凭据文件的状态也跟着变
   const accountKey = accounts.map((account) => account.id).join(",");
   React.useEffect(() => {
@@ -103,20 +85,7 @@ export const CodebuddyAccountSection: React.FC<
     },
   });
 
-  const reopenTerminal = () => {
-    authApi.codebuddyAccountOpenLoginTerminal().catch((e: unknown) => {
-      toast.error(e instanceof Error ? e.message : String(e));
-    });
-  };
-
-  const regionLabel = (domain: string | null | undefined) => {
-    const region = codebuddyRegion(domain);
-    if (region === "mainland")
-      return t("authCenter.codebuddy.mainland", { defaultValue: "国内版" });
-    if (region === "global")
-      return t("authCenter.codebuddy.global", { defaultValue: "国际版" });
-    return domain || null;
-  };
+  const regionLabel = useCodebuddyRegionLabel();
 
   const confirmRemove = () => {
     const target = removeTarget;
@@ -203,7 +172,7 @@ export const CodebuddyAccountSection: React.FC<
       iconName="codebuddy"
       help={t("authCenter.group.codebuddyHelp", {
         defaultValue:
-          "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里添加「CodeBuddy 官方登录」卡并切换。添加账号会打开终端运行 codebuddy，在里面执行 /login 登录后这里自动收录；令牌由 CodeBuddy 自己续期。",
+          "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里给账号建一张「CodeBuddy 官方登录」卡并点「添加」。「登录新账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
       })}
       helpSide={helpSide}
       accounts={rows}
@@ -218,15 +187,15 @@ export const CodebuddyAccountSection: React.FC<
           "还没有 CodeBuddy 账号。在终端里登录，或收录 CodeBuddy 当前登录的号。",
       })}
       loginLabel={t("authCenter.codebuddy.login", {
-        defaultValue: "在终端登录",
+        defaultValue: "登录新账号",
       })}
-      onAdd={addAccount}
+      onAdd={() => login.requestLogin()}
       defaultLabel={t("authCenter.codebuddy.current", {
         defaultValue: "CodeBuddy 在用",
       })}
       canReauth
-      // 在终端里用同一个号重新 /login，收录时替换旧副本
-      onReauth={() => addAccount()}
+      // 在终端里用同一个号重新登录，收录时替换旧副本
+      onReauth={(accountId) => login.requestLogin(accountId)}
       settingDefault={false}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
@@ -244,18 +213,17 @@ export const CodebuddyAccountSection: React.FC<
         pollingState,
         deviceCode,
         error,
-        onCancel: cancelAuth,
-        onRetry: addAccount,
-        pendingNote: t("authCenter.codebuddy.pendingNote", {
-          defaultValue:
-            "已在终端打开 codebuddy，在里面输入 /login 完成登录后这里会自动收录。",
-        }),
+        onCancel: () => void login.cancel(),
+        cancelLabel: login.cancelLabel,
+        onRetry: () => login.requestLogin(),
+        pendingNote: login.pendingNote,
         reopenLabel: t("authCenter.codebuddy.reopenTerminal", {
           defaultValue: "重新打开终端",
         }),
-        onReopen: reopenTerminal,
+        onReopen: login.reopenTerminal,
       }}
     >
+      <CodebuddyLoginConfirmDialog {...login.confirmDialogProps} />
       <ManagedAccountRemoveDialog
         target={removeTarget}
         serviceName="CodeBuddy"

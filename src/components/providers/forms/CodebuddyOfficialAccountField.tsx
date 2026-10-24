@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
 import { authApi } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -10,8 +10,12 @@ import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
 import { CodebuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { useManagedAuth } from "./hooks/useManagedAuth";
-import { CODEBUDDY_LIVE_KEY, codebuddyRegion } from "./CodebuddyAccountSection";
+import {
+  CODEBUDDY_LIVE_KEY,
+  CodebuddyLoginConfirmDialog,
+  useCodebuddyLogin,
+  useCodebuddyRegionLabel,
+} from "./CodebuddyLogin";
 
 interface CodebuddyOfficialAccountFieldProps {
   /** 卡片绑定的账号 ID（`<uid>@<domain>`） */
@@ -24,8 +28,8 @@ interface CodebuddyOfficialAccountFieldProps {
 
 /**
  * 「CodeBuddy 官方登录」卡的账号区：列出授权中心收录的 CodeBuddy 账号供绑定，
- * 没有账号或要加新号时在终端登录（登录完自动收录并选中）或收录当前登录。
- * 切换在供应商列表的卡片上做，这里只选绑定哪个号。
+ * 要加新号时「登录新账号」（已登录时先确认、让 CodeBuddy 暂时退出原登录；登录完自动收录并
+ * 选中）或收录当前登录。切换在供应商列表里点卡片的「添加」，这里只选绑定哪个号。
  */
 export function CodebuddyOfficialAccountField({
   accountId,
@@ -34,6 +38,15 @@ export function CodebuddyOfficialAccountField({
 }: CodebuddyOfficialAccountFieldProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const onChangeRef = React.useRef(onAccountChange);
+  onChangeRef.current = onAccountChange;
+
+  // 登录完成后，这次登上的号自动选上（新号、重新登录的老号都算）
+  const login = useCodebuddyLogin({
+    onLoginComplete: (account) =>
+      onChangeRef.current(account.id, account.login),
+  });
+  const { live } = login;
   const {
     accounts,
     defaultAccountId,
@@ -42,41 +55,8 @@ export function CodebuddyOfficialAccountField({
     isPolling,
     isAddingAccount,
     error,
-    addAccount,
-    cancelAuth,
     refetchStatus,
-  } = useManagedAuth("codebuddy_oauth");
-
-  const { data: live } = useQuery({
-    queryKey: CODEBUDDY_LIVE_KEY,
-    queryFn: authApi.codebuddyAccountLive,
-    refetchInterval: 15_000,
-  });
-
-  const onChangeRef = React.useRef(onAccountChange);
-  onChangeRef.current = onAccountChange;
-
-  // 在终端登录完成后，新收录的号自动选上
-  const knownIds = React.useRef<Set<string> | null>(null);
-  const waitingForLogin = React.useRef(false);
-  React.useEffect(() => {
-    if (!isStatusSuccess) return;
-    const ids = new Set(accounts.map((account) => account.id));
-    if (waitingForLogin.current && knownIds.current) {
-      const added = accounts.find(
-        (account) => !knownIds.current?.has(account.id),
-      );
-      if (added) {
-        waitingForLogin.current = false;
-        onChangeRef.current(added.id, added.login);
-      }
-    }
-    knownIds.current = ids;
-  }, [accounts, isStatusSuccess]);
-  React.useEffect(() => {
-    if (!isAddingAccount) return;
-    waitingForLogin.current = true;
-  }, [isAddingAccount]);
+  } = login.auth;
 
   // 新建时默认绑 CodeBuddy 现在登着的号
   const preselected = React.useRef(false);
@@ -112,14 +92,7 @@ export function CodebuddyOfficialAccountField({
     },
   });
 
-  const regionLabel = (domain: string | null | undefined) => {
-    const region = codebuddyRegion(domain);
-    if (region === "mainland")
-      return t("authCenter.codebuddy.mainland", { defaultValue: "国内版" });
-    if (region === "global")
-      return t("authCenter.codebuddy.global", { defaultValue: "国际版" });
-    return domain || null;
-  };
+  const regionLabel = useCodebuddyRegionLabel();
 
   const boundMissing =
     isStatusSuccess &&
@@ -136,7 +109,7 @@ export function CodebuddyOfficialAccountField({
         <p className="text-xs text-fg-2">
           {t("codebuddy.official.accountHint", {
             defaultValue:
-              "选择这张卡要用的 CodeBuddy 账号。在供应商列表里点卡片上的「切换」，CodeBuddy 的登录就会换成它，正在运行的 CodeBuddy 也会自动换过去。",
+              "选择这张卡要用的 CodeBuddy 账号。CodeBuddy 同时只能登录一个账号：在供应商列表里点这张卡的「添加」，CodeBuddy 的登录就会换成它，正在运行的 CodeBuddy 也会自动换过去。",
           })}
         </p>
       </div>
@@ -268,23 +241,14 @@ export function CodebuddyOfficialAccountField({
 
       {isPolling ? (
         <Notice
-          title={t("authCenter.codebuddy.pendingNote", {
-            defaultValue:
-              "已在终端打开 codebuddy，在里面输入 /login 完成登录后这里会自动收录。",
-          })}
+          title={login.pendingNote}
           actions={
             <>
               <Button
                 type="button"
                 variant="neutral"
                 size="compact"
-                onClick={() => {
-                  authApi
-                    .codebuddyAccountOpenLoginTerminal()
-                    .catch((e: unknown) =>
-                      toast.error(extractErrorMessage(e) || String(e)),
-                    );
-                }}
+                onClick={login.reopenTerminal}
               >
                 {t("authCenter.codebuddy.reopenTerminal", {
                   defaultValue: "重新打开终端",
@@ -292,47 +256,56 @@ export function CodebuddyOfficialAccountField({
               </Button>
               <Button
                 type="button"
-                variant="quiet"
+                variant={login.replacing ? "neutral" : "quiet"}
                 size="compact"
-                onClick={() => {
-                  waitingForLogin.current = false;
-                  cancelAuth();
-                }}
+                onClick={() => void login.cancel()}
               >
-                {t("common.cancel", { defaultValue: "取消" })}
+                {login.cancelLabel}
               </Button>
             </>
           }
         />
       ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="neutral"
-            size="compact"
-            disabled={isAddingAccount}
-            onClick={addAccount}
-          >
-            {isAddingAccount && (
-              <Loader2 className="me-1 h-3.5 w-3.5 animate-spin" />
-            )}
-            {t("authCenter.codebuddy.login", { defaultValue: "在终端登录" })}
-          </Button>
-          {canImport && (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               variant="neutral"
               size="compact"
-              disabled={importCurrent.isPending}
-              onClick={() => importCurrent.mutate()}
+              disabled={isAddingAccount}
+              onClick={() => login.requestLogin()}
             >
-              {t("codebuddy.official.importCurrent", {
-                defaultValue: "收录当前登录（{{login}}）",
-                login: [live?.label, regionLabel(live?.domain)]
-                  .filter(Boolean)
-                  .join(" · "),
+              {isAddingAccount && (
+                <Loader2 className="me-1 h-3.5 w-3.5 animate-spin" />
+              )}
+              {t("authCenter.codebuddy.login", {
+                defaultValue: "登录新账号",
               })}
             </Button>
+            {canImport && (
+              <Button
+                type="button"
+                variant="neutral"
+                size="compact"
+                disabled={importCurrent.isPending}
+                onClick={() => importCurrent.mutate()}
+              >
+                {t("codebuddy.official.importCurrent", {
+                  defaultValue: "收录当前登录（{{login}}）",
+                  login: [live?.label, regionLabel(live?.domain)]
+                    .filter(Boolean)
+                    .join(" · "),
+                })}
+              </Button>
+            )}
+          </div>
+          {login.signedIn && (
+            <p className="text-caption text-fg-2">
+              {t("codebuddy.login.signedInHint", {
+                defaultValue:
+                  "CodeBuddy 已登录时，登录新账号会先让它暂时退出原来的登录：写入后，正在运行的 CodeBuddy 会话会暂时变为未登录，直到你登录完成。",
+              })}
+            </p>
           )}
         </div>
       )}
@@ -341,6 +314,7 @@ export function CodebuddyOfficialAccountField({
           {error}
         </p>
       )}
+      <CodebuddyLoginConfirmDialog {...login.confirmDialogProps} />
     </div>
   );
 }

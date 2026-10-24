@@ -58,6 +58,8 @@ export interface GroupLoginFlow {
   > | null;
   error: string | null;
   onCancel: () => void;
+  /** 等待块里取消按钮的文案（CodeBuddy 退出过原登录时是「恢复原来的登录」） */
+  cancelLabel?: string;
   onRetry: () => void;
   /** 没有验证码时等待块里的说明（默认是「已在浏览器打开登录页」；CodeBuddy 是在终端里登录） */
   pendingNote?: string;
@@ -386,7 +388,8 @@ export function ManagedAccountsGroup({
                 size="compact"
                 onClick={login.onCancel}
               >
-                {t("common.cancel", { defaultValue: "取消" })}
+                {login.cancelLabel ??
+                  t("common.cancel", { defaultValue: "取消" })}
               </Button>
             </div>
             {login.deviceCode && !login.deviceCode.user_code && (
