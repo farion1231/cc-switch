@@ -112,7 +112,7 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
 ///
 /// Conversion rules:
 /// - `local` → `stdio`, command array → command+args, environment → env
-/// - `remote` → `sse`, url preserved
+/// - `remote` → `http`, url preserved
 pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
     let obj = spec
         .as_object()
@@ -151,8 +151,8 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
             }
         }
         "remote" => {
-            // Convert to "sse" type (default remote protocol)
-            result.insert("type".into(), json!("sse"));
+            // OpenCode connects to remote servers over Streamable HTTP
+            result.insert("type".into(), json!("http"));
 
             // Preserve url
             if let Some(url) = obj.get("url") {
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_remote_to_sse() {
+    fn test_convert_remote_to_http() {
         let spec = json!({
             "type": "remote",
             "url": "https://example.com/mcp",
@@ -365,7 +365,7 @@ mod tests {
         });
 
         let result = convert_from_opencode_format(&spec).unwrap();
-        assert_eq!(result["type"], "sse");
+        assert_eq!(result["type"], "http");
         assert_eq!(result["url"], "https://example.com/mcp");
         assert_eq!(result["headers"]["Authorization"], "Bearer xxx");
     }

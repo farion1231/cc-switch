@@ -7,10 +7,12 @@
 //! | CC Switch unified (JSON)                        | Hermes config.yaml (YAML)       |
 //! |-------------------------------------------------|---------------------------------|
 //! | `{"type":"stdio","command":"npx","args":[...],"env":{}}` | `command: npx`, `args: [...]`, `env: {}` |
-//! | `{"type":"sse"/"http","url":"...","headers":{}}` | `url: "..."`, `headers: {}`    |
+//! | `{"type":"http","url":"...","headers":{}}` | `url: "..."`, `headers: {}`    |
+//! | `{"type":"sse","url":"...","headers":{}}` | `url: "..."`, `headers: {}`, `transport: sse` |
 //!
 //! Key differences from Claude format:
 //! - Hermes has NO explicit `type` field -- it infers stdio (has `command`) vs HTTP (has `url`)
+//! - Hermes connects to a `url` over Streamable HTTP; only `transport: sse` selects SSE
 //! - Hermes has extra fields: `enabled`, `timeout`, `connect_timeout`, `tools`, `sampling`
 //! - These Hermes-specific fields are preserved on merge-on-write and stripped on import
 
@@ -56,7 +58,7 @@ fn should_sync_hermes_mcp() -> bool {
 ///
 /// Conversion rules:
 /// - `stdio`: output `command`, `args`, `env` (strip `type` field)
-/// - `sse`/`http`: output `url`, `headers` (strip `type` field)
+/// - `sse`/`http`: output `url`, `headers` (strip `type` field); `sse` adds `transport: sse`
 /// - Always add `enabled: true`
 fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
     let obj = spec
@@ -93,6 +95,9 @@ fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
                     result.insert("headers".into(), headers.clone());
                 }
             }
+            if typ == "sse" {
+                result.insert("transport".into(), json!("sse"));
+            }
         }
         _ => {
             return Err(AppError::McpValidation(format!("Unknown MCP type: {typ}")));
@@ -112,7 +117,7 @@ fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
 ///
 /// Conversion rules:
 /// - If `command` exists: set `type: "stdio"`, extract `command`, `args`, `env`
-/// - If `url` exists: set `type: "sse"`, extract `url`, `headers`
+/// - If `url` exists: set `type: "http"` (`"sse"` with `transport: sse`), extract `url`, `headers`
 /// - Strip Hermes-specific fields: `enabled`, `timeout`, `connect_timeout`, `tools`, `sampling`
 fn convert_from_hermes_format(id: &str, spec: &Value) -> Result<Value, AppError> {
     let obj = spec
@@ -139,8 +144,13 @@ fn convert_from_hermes_format(id: &str, spec: &Value) -> Result<Value, AppError>
             }
         }
     } else if obj.contains_key("url") {
-        // HTTP/SSE type
-        result.insert("type".into(), json!("sse"));
+        // Hermes speaks Streamable HTTP to a url unless the entry pins `transport: sse`
+        let typ = if obj.get("transport").and_then(|v| v.as_str()) == Some("sse") {
+            "sse"
+        } else {
+            "http"
+        };
+        result.insert("type".into(), json!(typ));
 
         if let Some(url) = obj.get("url") {
             result.insert("url".into(), url.clone());
@@ -385,6 +395,7 @@ mod tests {
         assert!(result.get("type").is_none());
         assert_eq!(result["url"], "https://example.com/mcp");
         assert_eq!(result["headers"]["Authorization"], "Bearer xxx");
+        assert_eq!(result["transport"], "sse");
         assert_eq!(result["enabled"], true);
     }
 
@@ -397,6 +408,7 @@ mod tests {
 
         let result = convert_to_hermes_format(&spec).unwrap();
         assert!(result.get("type").is_none());
+        assert!(result.get("transport").is_none());
         assert_eq!(result["url"], "https://example.com/mcp");
         assert_eq!(result["enabled"], true);
     }
@@ -490,12 +502,29 @@ mod tests {
         });
 
         let result = convert_from_hermes_format("remote-server", &spec).unwrap();
-        assert_eq!(result["type"], "sse");
+        assert_eq!(result["type"], "http");
         assert_eq!(result["url"], "https://example.com/mcp");
         assert_eq!(result["headers"]["Authorization"], "Bearer xxx");
         // Hermes-specific fields should be stripped
         assert!(result.get("enabled").is_none());
         assert!(result.get("timeout").is_none());
+    }
+
+    #[test]
+    fn test_convert_hermes_sse_transport_round_trip() {
+        let spec = json!({
+            "url": "https://example.com/sse",
+            "transport": "sse",
+            "enabled": true
+        });
+
+        let unified = convert_from_hermes_format("legacy-server", &spec).unwrap();
+        assert_eq!(unified["type"], "sse");
+        assert!(unified.get("transport").is_none());
+
+        let written = convert_to_hermes_format(&unified).unwrap();
+        assert_eq!(written["url"], "https://example.com/sse");
+        assert_eq!(written["transport"], "sse");
     }
 
     #[test]
@@ -575,7 +604,7 @@ mod tests {
         });
 
         let result = convert_from_hermes_format("remote", &spec).unwrap();
-        assert_eq!(result["type"], "sse");
+        assert_eq!(result["type"], "http");
         assert_eq!(result["url"], "https://mcp.example.com");
         assert!(
             result.get("auth").is_none(),
