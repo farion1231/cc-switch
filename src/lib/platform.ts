@@ -30,14 +30,18 @@ export const isLinux = (): boolean => {
   }
 };
 
-// Linux 上禁用所有 drag region，规避 Wayland 下 gtk_window_begin_move_drag
-// 相关的窗口事件异常（Tauri #13440）。Windows 保留 Tauri 的事件拖拽和
-// 双击最大化，但不启用原生拖拽 CSS，避免 WebView2 更新拖拽区域时持续
-// 消耗主线程 CPU 或挂起。macOS 保留原有拖动行为。
+// 三端都启用 Tauri 的事件拖拽。
 //
-// 这些常量设计为通过 JSX 属性 spread 消费（`{...DRAG_REGION_ATTR}`），
-// 禁用时完全不渲染属性，避免被拖拽脚本或 CSS 选择器识别为拖拽区域。
-export const DRAG_REGION_ENABLED = !isLinux();
+// Linux 之前因 Tauri #13440 整组禁用 drag region，但那个 issue 实际是 Tao
+// 的 Wayland CSD EventBox 吞掉了原生标题栏按钮的点击，与拖动无关；禁用的
+// 结果是「关闭系统装饰 + 使用应用内按钮」时窗口完全无法移动。点击问题已在
+// linux_fix 里单独修补，这里恢复拖动。
+//
+// Windows 仍只使用 Tauri 的事件拖拽，不启用原生拖拽 CSS，避免 WebView2
+// 更新拖拽区域时持续消耗主线程 CPU 或挂起。macOS 保留原生拖拽 CSS。
+//
+// 这些常量设计为通过 JSX 属性 spread 消费（`{...DRAG_REGION_ATTR}`）。
+export const DRAG_REGION_ENABLED = true;
 
 export const DRAG_REGION_ATTR: Record<string, unknown> = DRAG_REGION_ENABLED
   ? { "data-tauri-drag-region": true }

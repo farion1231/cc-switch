@@ -408,6 +408,9 @@ pub struct AppSettings {
     pub minimize_to_tray_on_close: bool,
     #[serde(default)]
     pub use_app_window_controls: bool,
+    /// Linux：应用级窗口按钮使用当前机器的 GTK 主题，默认开启。
+    #[serde(default = "default_use_gtk_window_controls")]
+    pub use_gtk_window_controls: bool,
     /// 是否启用 Claude 插件联动
     #[serde(default)]
     pub enable_claude_plugin_integration: bool,
@@ -628,12 +631,17 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+fn default_use_gtk_window_controls() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
             use_app_window_controls: false,
+            use_gtk_window_controls: true,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
             launch_on_startup: false,

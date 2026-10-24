@@ -26,6 +26,7 @@ import {
   proxyKeys,
   useProvidersQuery,
   useSettingsQuery,
+  useWindowControlsLayout,
 } from "@/lib/query";
 import {
   piApi,
@@ -74,7 +75,6 @@ import {
   AppPageHeader,
   WindowControlsContext,
 } from "@/components/shell/AppPageHeader";
-import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
@@ -206,6 +206,25 @@ function App() {
   // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
     isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));
+  const useGtkWindowControls =
+    isLinux() && (settingsData?.useGtkWindowControls ?? true);
+  const { data: windowControlsLayout } = useWindowControlsLayout(
+    useAppWindowControls,
+    useGtkWindowControls,
+  );
+  const windowControlsSlot = useMemo(
+    () =>
+      useAppWindowControls
+        ? {
+            side: windowControlsLayout?.side ?? ("right" as const),
+            order: windowControlsLayout?.order,
+            images: useGtkWindowControls
+              ? windowControlsLayout?.images
+              : undefined,
+          }
+        : null,
+    [useAppWindowControls, useGtkWindowControls, windowControlsLayout],
+  );
   const visibleApps = useMemo<VisibleApps>(
     () => ({
       ...DEFAULT_VISIBLE_APPS,
@@ -1574,9 +1593,7 @@ function App() {
   };
 
   return (
-    <WindowControlsContext.Provider
-      value={useAppWindowControls ? <WindowControls /> : null}
-    >
+    <WindowControlsContext.Provider value={windowControlsSlot}>
       <div className="flex h-screen overflow-hidden bg-app text-fg-1 selection:bg-action/25">
         <Sidebar
           activeApp={activeApp}

@@ -91,6 +91,8 @@ tauri-plugin-single-instance = "2"
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 gtk = "0.18"
+# gtk 的 cairo 默认没开 png feature；导出离屏按钮图片需要 write_to_png。
+cairo-rs = { version = "0.18", features = ["png"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 libc = "0.2"

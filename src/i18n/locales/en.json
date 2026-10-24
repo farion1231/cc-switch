@@ -281,6 +281,7 @@
     "routeMapHint": "Fill in the actual request model for each of the Sonnet, Opus, and Haiku tiers. Use the menu display name for branded models such as DeepSeek or Kimi. Any tier left blank inherits the Sonnet tier's model (or the first tier you filled in), so the Haiku that sub-agents call is always available.",
     "routeModelLabel": "Model role",
     "routeRoleSonnet": "Sonnet",
+    "routeRoleCompat": "{{role}} · Compat",
     "routeRoleOpus": "Opus",
     "routeRoleFable": "Fable",
     "routeRoleHaiku": "Haiku",
@@ -848,6 +849,8 @@
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
     "useAppWindowControls": "Enable app-level window controls",
     "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
+    "useGtkWindowControls": "Use local GTK button style",
+    "useGtkWindowControlsDescription": "Embed window buttons from this machine’s GTK theme in the app. Turn off to use built-in icons. Restart the app after changing the GTK theme.",
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
@@ -2165,6 +2168,8 @@
     "regionLabel": "Region"
   },
   "usage": {
+    "hour": "Hour",
+    "minute": "Minute",
     "title": "Usage Statistics",
     "subtitle": "View AI model usage and cost statistics",
     "today": "24 Hours",
