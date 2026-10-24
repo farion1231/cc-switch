@@ -1146,6 +1146,21 @@
       "quitFirstBody": "完全退出 WorkBuddy（含菜单栏/托盘）后再点「添加」，否则它会把当前登录写回去。",
       "switched": "已切换到「{{name}}」，下次打开 WorkBuddy 会使用这个账号。",
       "switchFailed": "切换 WorkBuddy 账号失败"
+    },
+    "quota": {
+      "title": "额度",
+      "credits": "积分",
+      "leftOf": "剩余 {{remaining}} / {{total}}",
+      "usedOf": "已用 {{used}} / {{total}}",
+      "usedUp": "已用完（共 {{total}}）",
+      "detail": "积分剩余 {{remaining}} / 共 {{total}}，已用 {{used}}",
+      "staleNotRunning": "WorkBuddy 没在运行，显示的是上次查到的结果",
+      "staleNotCurrent": "不是 WorkBuddy 当前登录的账号，显示的是上次查到的结果",
+      "staleNotSignedIn": "WorkBuddy 没有登录，显示的是上次查到的结果",
+      "staleFailed": "这次没查到，显示的是上次查到的结果",
+      "openToQuery": "打开 WorkBuddy 后可查",
+      "onlyWhileRunning": "额度只能在 WorkBuddy 运行时经它查询",
+      "unavailable": "暂时取不到额度"
     }
   },
   "pi": {

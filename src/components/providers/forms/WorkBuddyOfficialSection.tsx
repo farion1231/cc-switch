@@ -23,6 +23,7 @@ import {
 } from "@/components/providers/workbuddyOfficial";
 import { openWorkBuddyApp } from "@/components/providers/useWorkBuddyOfficial";
 import { workbuddyPlanLabel } from "@/components/settings/auth/workbuddyPlan";
+import { WorkBuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
 
 interface WorkBuddyOfficialSectionProps {
   /** 绑定的账号 id；null 表示还没选 */
@@ -56,6 +57,7 @@ export function WorkBuddyOfficialSection({
   const currentId = status?.default_account_id ?? null;
   const missing =
     value !== null && isSuccess && !accounts.some((a) => a.id === value);
+  const selected = accounts.find((account) => account.id === value) ?? null;
 
   // 新卡还没选账号时默认选 WorkBuddy 现在登着的号（没有就选第一个能用的）
   useEffect(() => {
@@ -147,6 +149,17 @@ export function WorkBuddyOfficialSection({
             ? t("workbuddy.official.accountDeleted")
             : t("workbuddy.official.accountHelp")}
         </p>
+        {selected && (
+          <div className="flex items-center gap-3 rounded-control border border-border px-3 py-2">
+            <span className="min-w-0 flex-1 truncate text-caption text-fg-2">
+              {t("workbuddy.quota.title")}
+            </span>
+            <WorkBuddyAccountQuota
+              accountId={selected.id}
+              login={selected.login}
+            />
+          </div>
+        )}
       </div>
 
       <Notice

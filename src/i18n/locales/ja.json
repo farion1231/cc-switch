@@ -1146,6 +1146,21 @@
       "quitFirstBody": "WorkBuddy を完全に終了（メニューバー／トレイを含む）してから「追加」を押してください。終了しないと現在のログインが書き戻されます。",
       "switched": "「{{name}}」に切り替えました。次に WorkBuddy を開くとこのアカウントが使われます。",
       "switchFailed": "WorkBuddy アカウントを切り替えられませんでした"
+    },
+    "quota": {
+      "title": "クォータ",
+      "credits": "クレジット",
+      "leftOf": "残り {{remaining}} / {{total}}",
+      "usedOf": "使用 {{used}} / {{total}}",
+      "usedUp": "使い切りました（全 {{total}}）",
+      "detail": "クレジット残り {{remaining}} / 全 {{total}}、使用済み {{used}}",
+      "staleNotRunning": "WorkBuddy が起動していないため、前回の結果を表示しています",
+      "staleNotCurrent": "WorkBuddy が現在ログインしているアカウントではないため、前回の結果を表示しています",
+      "staleNotSignedIn": "WorkBuddy がログインしていないため、前回の結果を表示しています",
+      "staleFailed": "今回は取得できなかったため、前回の結果を表示しています",
+      "openToQuery": "WorkBuddy を開くと確認できます",
+      "onlyWhileRunning": "クォータは WorkBuddy の起動中にのみ WorkBuddy 経由で確認できます",
+      "unavailable": "現在クォータを取得できません"
     }
   },
   "pi": {

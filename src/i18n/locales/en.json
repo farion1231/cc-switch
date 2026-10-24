@@ -1146,6 +1146,21 @@
       "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then click Add again, or it will write its current sign-in back.",
       "switched": "Switched to \"{{name}}\". WorkBuddy will use this account the next time it opens.",
       "switchFailed": "Couldn't switch the WorkBuddy account"
+    },
+    "quota": {
+      "title": "Quota",
+      "credits": "Credits",
+      "leftOf": "{{remaining}} / {{total}} left",
+      "usedOf": "{{used}} / {{total}} used",
+      "usedUp": "Used up (of {{total}})",
+      "detail": "{{remaining}} of {{total}} credits left, {{used}} used",
+      "staleNotRunning": "WorkBuddy isn't running; showing the last result",
+      "staleNotCurrent": "Not the account WorkBuddy is signed in with; showing the last result",
+      "staleNotSignedIn": "WorkBuddy isn't signed in; showing the last result",
+      "staleFailed": "This check failed; showing the last result",
+      "openToQuery": "Open WorkBuddy to check",
+      "onlyWhileRunning": "Quota can only be checked through WorkBuddy while it is running",
+      "unavailable": "Quota is unavailable right now"
     }
   },
   "pi": {

@@ -37,6 +37,11 @@ import {
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import type { WorkBuddyQuota } from "@/lib/api/auth";
+import {
+  useWorkBuddyAccountQuota,
+  workbuddyCreditsLine,
+} from "@/components/providers/workbuddyQuota";
 
 export interface AccountQuotaRow {
   label: string;
@@ -389,6 +394,96 @@ export function AgyAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/**
+ * WorkBuddyQuota → 额度列状态：一行「套餐名  额度条  剩余积分」，悬停写全剩余 / 总量 / 已用；
+ * 显示的是上次结果时悬停说明原因。还没有结果时：当前号且 WorkBuddy 没运行给一句提示，
+ * 查询失败写「额度没查到」，其余不显示。
+ */
+export function workbuddyQuotaState(
+  t: TFunction,
+  quota: WorkBuddyQuota | undefined,
+  loading: boolean,
+  locale: string,
+  display: QuotaDisplay = "left",
+): AccountQuotaState {
+  if (!quota) return loading ? { kind: "loading" } : null;
+  const credits = workbuddyCreditsLine(t, quota, locale, display);
+  if (credits) {
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label: credits.planName ?? t("workbuddy.quota.credits"),
+          line: credits.line,
+        },
+      ],
+    };
+  }
+  if (quota.unavailable === "not_running" && quota.current) {
+    const caption = t("workbuddy.quota.openToQuery");
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label: t("workbuddy.quota.credits"),
+          line: {
+            key: "workbuddy_not_running",
+            left: Infinity,
+            tone: "muted",
+            text: caption,
+            caption,
+            value: "",
+            detail: t("workbuddy.quota.onlyWhileRunning"),
+          },
+        },
+      ],
+    };
+  }
+  if (quota.unavailable === "failed") {
+    return {
+      kind: "failed",
+      reason: quota.error || t("workbuddy.quota.unavailable"),
+    };
+  }
+  return null;
+}
+
+/** WorkBuddy 账号的套餐与积分（workbuddy_account_quota(accountId)）：只有当前号能经运行中的 WorkBuddy 刷新 */
+export function WorkBuddyAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    isError,
+    error,
+    refresh,
+  } = useWorkBuddyAccountQuota(accountId);
+  const state: AccountQuotaState =
+    !quota && isError
+      ? {
+          kind: "failed",
+          reason:
+            extractErrorMessage(error) || t("workbuddy.quota.unavailable"),
+        }
+      : workbuddyQuotaState(t, quota, loading, i18n.language, display);
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={state}
+      queriedAt={quota?.snapshot?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refresh()}
     />
   );
 }

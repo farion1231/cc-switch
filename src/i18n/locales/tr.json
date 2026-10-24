@@ -1110,6 +1110,21 @@
       "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra tekrar Ekle'ye tıklayın; aksi halde mevcut oturumu geri yazar.",
       "switched": "\"{{name}}\" hesabına geçildi. WorkBuddy bir sonraki açılışta bu hesabı kullanacak.",
       "switchFailed": "WorkBuddy hesabı değiştirilemedi"
+    },
+    "quota": {
+      "title": "Kota",
+      "credits": "Kredi",
+      "leftOf": "{{remaining}} / {{total}} kaldı",
+      "usedOf": "{{used}} / {{total}} kullanıldı",
+      "usedUp": "Tükendi ({{total}} üzerinden)",
+      "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
+      "staleNotRunning": "WorkBuddy çalışmıyor; son sonuç gösteriliyor",
+      "staleNotCurrent": "WorkBuddy'nin oturum açtığı hesap değil; son sonuç gösteriliyor",
+      "staleNotSignedIn": "WorkBuddy'de oturum açılmamış; son sonuç gösteriliyor",
+      "staleFailed": "Bu sorgu başarısız oldu; son sonuç gösteriliyor",
+      "openToQuery": "Görmek için WorkBuddy'yi açın",
+      "onlyWhileRunning": "Kota yalnızca WorkBuddy çalışırken onun üzerinden sorgulanabilir",
+      "unavailable": "Kota şu anda alınamıyor"
     }
   },
   "pi": {

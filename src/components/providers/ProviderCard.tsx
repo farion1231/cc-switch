@@ -41,6 +41,7 @@ import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
 import { WorkBuddyOfficialAccountLine } from "@/components/providers/WorkBuddyOfficialAccountLine";
+import { WorkBuddyQuotaFooter } from "@/components/providers/WorkBuddyQuotaFooter";
 import { ProviderCardActions } from "./ProviderCardActions";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
@@ -505,6 +506,9 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+                // 官方登录卡的额度按卡上绑定的账号查（只有 WorkBuddy 运行时当前账号能刷新）
+                <WorkBuddyQuotaFooter provider={provider} />
               ) : appId === "kimi" && isOfficial ? (
                 // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
                 <KimiAccountQuotaFooter

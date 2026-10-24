@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
@@ -12,6 +12,7 @@ import {
   boundWorkBuddyAccountId,
   type WorkBuddyOfficialState,
 } from "./workbuddyOfficial";
+import { WORKBUDDY_QUOTA_KEY } from "./workbuddyQuota";
 
 export const openWorkBuddyApp = () =>
   authApi.workbuddyAccountOpenApp().catch((error) => {
@@ -45,6 +46,8 @@ export function useWorkBuddyOfficial(enabled: boolean) {
       Promise.all([
         queryClient.invalidateQueries({ queryKey: WORKBUDDY_STATUS_KEY }),
         queryClient.invalidateQueries({ queryKey: WORKBUDDY_LIVE_KEY }),
+        // 切号后「当前账号」变了：额度要按新的当前账号重新判断
+        queryClient.invalidateQueries({ queryKey: WORKBUDDY_QUOTA_KEY }),
       ]),
     [queryClient],
   );
@@ -98,6 +101,14 @@ export function useWorkBuddyOfficial(enabled: boolean) {
   );
 
   const running = live?.running ?? false;
+  // WorkBuddy 刚打开时当前账号的额度就查得到了：别等 5 分钟的轮询
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (running && !wasRunning.current) {
+      void queryClient.invalidateQueries({ queryKey: WORKBUDDY_QUOTA_KEY });
+    }
+    wasRunning.current = running;
+  }, [running, queryClient]);
   const state = useMemo<WorkBuddyOfficialState>(
     () => ({
       accountIds: status

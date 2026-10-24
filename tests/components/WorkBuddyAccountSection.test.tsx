@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   prepareNewLogin: vi.fn(),
   openApp: vi.fn(),
   setDefault: vi.fn(),
+  quota: vi.fn(),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -28,6 +29,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       workbuddyAccountPrepareNewLogin: mocks.prepareNewLogin,
       workbuddyAccountOpenApp: mocks.openApp,
       authSetDefaultAccount: mocks.setDefault,
+      workbuddyAccountQuota: mocks.quota,
     },
   };
 });
@@ -84,6 +86,57 @@ describe("WorkBuddyAccountSection", () => {
     for (const mock of Object.values(mocks)) mock.mockReset();
     mocks.liveState.mockResolvedValue(live());
     mocks.openApp.mockResolvedValue(undefined);
+    mocks.quota.mockResolvedValue({
+      snapshot: null,
+      current: false,
+      unavailable: "not_current",
+      error: null,
+    });
+  });
+
+  it("shows each account's plan and credits, and says when it is the last result", async () => {
+    const auth = baseAuth();
+    auth.accounts = [account("u-1"), account("u-2")];
+    auth.defaultAccountId = "u-1";
+    mocks.useManagedAuth.mockReturnValue(auth);
+    mocks.quota.mockImplementation(async (id: string) =>
+      id === "u-1"
+        ? {
+            snapshot: {
+              planName: "体验版",
+              isPaid: false,
+              total: 1500,
+              remaining: 750,
+              used: 750,
+              queriedAt: Date.now() - 60_000,
+            },
+            current: true,
+            unavailable: "not_running",
+            error: null,
+          }
+        : {
+            snapshot: null,
+            current: false,
+            unavailable: "not_current",
+            error: null,
+          },
+    );
+    renderWithClient(<WorkBuddyAccountSection />);
+
+    const meter = await screen.findByRole("meter", { name: "体验版: 750" });
+    expect(meter.closest("[title]")?.getAttribute("title")).toContain(
+      "workbuddy.quota.staleNotRunning",
+    );
+    // 没查到过的非当前账号不显示额度
+    expect(screen.getAllByRole("meter")).toHaveLength(1);
+    expect(mocks.quota).toHaveBeenCalledWith("u-1", false);
+    expect(mocks.quota).toHaveBeenCalledWith("u-2", false);
+
+    // ↻ 跳过缓存
+    await userEvent.click(
+      screen.getByRole("button", { name: "刷新 u-1 的额度" }),
+    );
+    await waitFor(() => expect(mocks.quota).toHaveBeenCalledWith("u-1", true));
   });
 
   it("marks the account WorkBuddy uses and leaves switching to the provider list", async () => {

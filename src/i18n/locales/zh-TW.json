@@ -1147,6 +1147,21 @@
       "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再點「加入」，否則它會把目前的登入寫回去。",
       "switched": "已切換到「{{name}}」，下次開啟 WorkBuddy 會使用這個帳號。",
       "switchFailed": "切換 WorkBuddy 帳號失敗"
+    },
+    "quota": {
+      "title": "額度",
+      "credits": "積分",
+      "leftOf": "剩餘 {{remaining}} / {{total}}",
+      "usedOf": "已用 {{used}} / {{total}}",
+      "usedUp": "已用完（共 {{total}}）",
+      "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
+      "staleNotRunning": "WorkBuddy 沒在執行，顯示的是上次查到的結果",
+      "staleNotCurrent": "不是 WorkBuddy 目前登入的帳號，顯示的是上次查到的結果",
+      "staleNotSignedIn": "WorkBuddy 沒有登入，顯示的是上次查到的結果",
+      "staleFailed": "這次沒查到，顯示的是上次查到的結果",
+      "openToQuery": "開啟 WorkBuddy 後可查",
+      "onlyWhileRunning": "額度只能在 WorkBuddy 執行時經由它查詢",
+      "unavailable": "暫時取不到額度"
     }
   },
   "pi": {

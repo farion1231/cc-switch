@@ -9,13 +9,17 @@ import {
   WORKBUDDY_STATUS_KEY,
   boundWorkBuddyAccountId,
 } from "./workbuddyOfficial";
+import { useWorkBuddyAccountQuota } from "./workbuddyQuota";
 
 interface WorkBuddyOfficialAccountLineProps {
   provider: Provider;
   onEdit: (provider: Provider) => void;
 }
 
-/** WorkBuddy 官方登录卡的第二行：绑定账号的昵称和套餐；账号删了就提示重新选择。 */
+/**
+ * WorkBuddy 官方登录卡的第二行：绑定账号的昵称和套餐（查到过额度时用后端给的套餐名，否则用
+ * 明文画像里的版型）；账号删了就提示重新选择。
+ */
 export function WorkBuddyOfficialAccountLine({
   provider,
   onEdit,
@@ -31,14 +35,17 @@ export function WorkBuddyOfficialAccountLine({
     ? data?.accounts.find((item) => item.id === bound)
     : undefined;
   const note = provider.notes?.trim();
+  // 和右侧额度列共用一份查询，不会多查
+  const { data: quota } = useWorkBuddyAccountQuota(account ? bound : null);
+  const planName = quota?.snapshot?.planName?.trim();
 
   if (account) {
-    const parts = [
-      account.login,
-      ...(account.account_kind
-        ? [workbuddyPlanLabel(t, account.account_kind)]
-        : []),
-    ].join(" · ");
+    const plan =
+      planName ||
+      (account.account_kind
+        ? workbuddyPlanLabel(t, account.account_kind)
+        : undefined);
+    const parts = [account.login, ...(plan ? [plan] : [])].join(" · ");
     return (
       <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
         <span className="min-w-0 truncate" title={note ?? parts}>

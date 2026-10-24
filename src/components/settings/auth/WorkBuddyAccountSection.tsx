@@ -19,6 +19,7 @@ import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { workbuddyPlanLabel } from "@/components/settings/auth/workbuddyPlan";
 import { useManagedAccountUsers } from "@/components/providers/forms/hooks/useManagedAccountUsers";
 import { WORKBUDDY_LIVE_KEY } from "@/components/providers/workbuddyOfficial";
+import { WorkBuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
 
 const PROVIDER = "workbuddy_account";
 const LIVE_KEY = WORKBUDDY_LIVE_KEY;
@@ -153,6 +154,9 @@ export function WorkBuddyAccountSection({
       isDefault: defaultAccountId === account.id,
       needsReauth: account.requires_reauth,
       users: accountUsers([account.id]),
+      quota: (
+        <WorkBuddyAccountQuota accountId={account.id} login={account.login} />
+      ),
     };
   });
 
