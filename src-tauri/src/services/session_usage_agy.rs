@@ -365,6 +365,56 @@ mod tests {
     }
 
     #[test]
+    fn native_tiered_ids_share_the_model_selection_bucket_and_price() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/acp/.system_generated/logs/transcript_full.jsonl");
+        let native = native_models::write_test_database(
+            &dir.path().join("conversations/acp.db"),
+            &[(1, 0, "gemini-4-argon"), (2, 1, "gemini-4-argon")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-4-argon",
+            &native_models::test_model_id("gemini-4-argon-medium"),
+        );
+        // Older builds may store the display name in field 21.
+        native_models::set_test_generation(
+            &native,
+            1,
+            "gemini-4-argon",
+            &native_models::test_model_id("Gemini 4 Argon (Medium)"),
+        );
+        let db = Database::memory().unwrap();
+        let rows = vec![
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1000}),
+            json!({"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1000}),
+        ];
+        assert_eq!(
+            import_records(&db, "acp", &rows, Some(&source)).unwrap(),
+            (2, 0)
+        );
+        let conn = db.conn.lock().unwrap();
+        for (id, request_model) in [
+            ("agy:acp:1", "gemini-4-argon-medium"),
+            ("agy:acp:2", "Gemini 4 Argon (Medium)"),
+        ] {
+            let got: (String, String, String) = conn
+                .query_row(
+                    "SELECT model,request_model,total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!((&*got.0, &*got.1), ("gemini-4-argon-medium", request_model));
+            assert!(got.2.parse::<f64>().unwrap() > 0.0);
+        }
+    }
+
+    #[test]
     fn agy_native_fixture_preserves_fresh_input_and_combined_thinking_output() {
         let db = Database::memory().unwrap();
         let rows = include_str!("../../../tests/fixtures/sessions/agy.jsonl")

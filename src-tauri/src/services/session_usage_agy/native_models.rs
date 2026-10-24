@@ -29,6 +29,21 @@ struct ResponseMetadata {
     model: String,
 }
 
+// Field 21 carries the tiered ID (`gemini-4-argon-high`) that matches `Model Selection`;
+// older builds leave it out or store a display name. It is decoded on its own so an
+// unexpected value there can never hide field 19.
+#[derive(Clone, PartialEq, Message)]
+struct GenerationModelId {
+    #[prost(message, optional, tag = "1")]
+    response: Option<ResponseModelId>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ResponseModelId {
+    #[prost(string, tag = "21")]
+    model_id: String,
+}
+
 pub(super) fn models_for_transcript(
     transcript: &Path,
     steps: &[u64],
@@ -90,15 +105,24 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
         let data: Option<Vec<u8>> = generation_query
             .query_row([generation], |row| row.get(0))
             .optional()?;
-        let Some(response) = data
-            .and_then(|bytes| GenerationMetadata::decode(bytes.as_slice()).ok())
-            .and_then(|metadata| metadata.response)
-        else {
+        let Some(bytes) = data else {
             continue;
         };
-        let model = response.model.trim();
-        if !model.is_empty() && !model.eq_ignore_ascii_case("unknown") {
-            models.insert(step, model.to_string());
+        let tiered = GenerationModelId::decode(bytes.as_slice())
+            .ok()
+            .and_then(|metadata| metadata.response)
+            .map(|response| response.model_id);
+        let base = GenerationMetadata::decode(bytes.as_slice())
+            .ok()
+            .and_then(|metadata| metadata.response)
+            .map(|response| response.model);
+        if let Some(model) = [tiered, base]
+            .into_iter()
+            .flatten()
+            .map(|model| model.trim().to_string())
+            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"))
+        {
+            models.insert(step, model);
         }
     }
     Ok(models)
@@ -133,6 +157,28 @@ pub(super) fn write_test_database(path: &Path, entries: &[(i64, u64, &str)]) -> 
         .unwrap();
     }
     conn
+}
+
+/// Rewrites a generation with field 19 and an optional raw field 21 (any wire type).
+#[cfg(test)]
+pub(super) fn set_test_generation(conn: &Connection, generation: i64, base: &str, field21: &[u8]) {
+    let mut response = ResponseMetadata { model: base.into() }.encode_to_vec();
+    response.extend_from_slice(field21);
+    let mut data = Vec::new();
+    prost::encoding::bytes::encode(1, &response, &mut data);
+    conn.execute(
+        "UPDATE gen_metadata SET data=?1 WHERE idx=?2",
+        rusqlite::params![data, generation],
+    )
+    .unwrap();
+}
+
+/// Field 21 encoded as a string.
+#[cfg(test)]
+pub(super) fn test_model_id(id: &str) -> Vec<u8> {
+    let mut field = Vec::new();
+    prost::encoding::string::encode(21, &id.to_string(), &mut field);
+    field
 }
 
 #[cfg(test)]
@@ -185,6 +231,39 @@ mod tests {
         conn.execute("UPDATE gen_metadata SET data=X'80'", [])
             .unwrap();
         assert!(read_models(&path, &[1]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn prefers_tiered_model_id_and_falls_back_to_the_base_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-3.8-flash-n"),
+                (2, 1, "gemini-3.8-flash-n"),
+                (3, 2, "gemini-4-argon"),
+                (4, 3, "gemini-4-argon"),
+                (5, 4, "gemini-4-argon"),
+            ],
+        );
+        set_test_generation(
+            &conn,
+            0,
+            "gemini-3.8-flash-n",
+            &test_model_id("gemini-3.8-flash-high"),
+        );
+        set_test_generation(&conn, 2, "gemini-4-argon", &test_model_id("  "));
+        set_test_generation(&conn, 3, "gemini-4-argon", &test_model_id("unknown"));
+        // Field 21 as a varint (wrong wire type) must not hide field 19.
+        set_test_generation(&conn, 4, "gemini-4-argon", b"\xa8\x01\x07");
+        let models = read_models(&path, &[1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(models[&1], "gemini-3.8-flash-high");
+        // Older builds have no field 21.
+        assert_eq!(models[&2], "gemini-3.8-flash-n");
+        assert_eq!(models[&3], "gemini-4-argon");
+        assert_eq!(models[&4], "gemini-4-argon");
+        assert_eq!(models[&5], "gemini-4-argon");
     }
 
     #[test]
