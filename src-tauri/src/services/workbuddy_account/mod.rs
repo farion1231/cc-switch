@@ -25,6 +25,7 @@
 //!   `~/.workbuddy-ai`）或 CodeBuddy（`Tencent-Cloud.coding-copilot.info`）混淆。
 //! - 额度只能经运行中的 WorkBuddy 的本地 IPC 只读查当前登着的号，结果缓存进账号表（见 [`quota`]）。
 
+pub mod app;
 mod quota;
 
 #[cfg(test)]

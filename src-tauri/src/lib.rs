@@ -1880,6 +1880,8 @@ pub fn run() {
             commands::workbuddy_account_prepare_new_login,
             commands::workbuddy_account_open_app,
             commands::workbuddy_account_quota,
+            commands::workbuddy_app_status,
+            commands::workbuddy_app_quit,
             commands::kimi_oauth_status,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,

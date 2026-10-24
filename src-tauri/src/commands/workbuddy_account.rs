@@ -1,13 +1,13 @@
 //! WorkBuddy 官方账号的状态与专用命令。列表、切换、删除走授权中心的通用 `auth_*` 命令
 //! （provider id `workbuddy_account`），这里只放 WorkBuddy 特有的：收录当前登录、准备登录
-//! 另一个账号、查运行状态、打开 WorkBuddy。
+//! 另一个账号、查运行状态、打开 WorkBuddy，以及「应用」页 WorkBuddy 行的安装 / 版本检测和请求退出。
 
 use std::sync::Arc;
 
 use crate::commands::auth::{map_workbuddy_account, ManagedAuthAccount};
 use crate::error::AppError;
 use crate::services::workbuddy_account::{
-    WorkBuddyAccountManager, WorkBuddyLiveState, WorkBuddyQuota,
+    app, WorkBuddyAccountManager, WorkBuddyLiveState, WorkBuddyQuota,
 };
 
 pub struct WorkBuddyAccountState(pub Arc<WorkBuddyAccountManager>);
@@ -136,4 +136,22 @@ pub async fn workbuddy_account_quota(
     )
     .await
     .map_err(|error| error.to_string())
+}
+
+/// 「应用」页的 WorkBuddy 行：装没装、版本、在不在运行（只读本机，不联网）。
+#[tauri::command]
+pub async fn workbuddy_app_status() -> Result<app::WorkBuddyAppStatus, String> {
+    tokio::task::spawn_blocking(app::app_status)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// 请 WorkBuddy 正常退出（macOS 经 Apple Events 发 quit，不强制结束）并等它退完；
+/// 返回之后是否仍在运行。其他平台不支持。
+#[tauri::command]
+pub async fn workbuddy_app_quit() -> Result<app::WorkBuddyQuitOutcome, String> {
+    tokio::task::spawn_blocking(app::quit_app)
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }
