@@ -421,6 +421,8 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
         "agy" => {
             normalized.ends_with("/.local/bin/agy") || normalized.ends_with("/agy/bin/agy.exe")
         }
+        // Official install.sh (`~/.local/bin`) / install.ps1 (`%LOCALAPPDATA%\omp`) targets.
+        "omp" => normalized.ends_with("/.local/bin/omp") || normalized.ends_with("/omp/omp.exe"),
         _ => false,
     }
 }
@@ -975,6 +977,20 @@ mod tests {
         assert!(package_uninstall_command("codex", &inst).unwrap().is_none());
         assert!(!known_native_install("codex", &inst));
         assert!(executable.exists());
+    }
+
+    #[test]
+    fn omp_installer_binary_is_a_known_native_install() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let binary = bin.join("omp");
+        std::fs::write(&binary, [0xcf, 0xfa, 0xed, 0xfe]).unwrap();
+        assert!(known_native_install("omp", &installation(&binary)));
+        // A same-named script elsewhere is never claimed.
+        let other = temp.path().join("omp");
+        std::fs::write(&other, "#!/usr/bin/env bun\n").unwrap();
+        assert!(!known_native_install("omp", &installation(&other)));
     }
 
     #[test]

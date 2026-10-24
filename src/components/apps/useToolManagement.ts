@@ -51,6 +51,7 @@ export const TOOL_NAMES = [
   "kimi",
   "qwen",
   "agy",
+  "omp",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -169,7 +170,9 @@ ${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
 # Qwen Code
 ${posixScriptInstallCommand("https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh")}
 # Antigravity CLI
-${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}`;
+${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -194,7 +197,9 @@ ${KIMI_WINDOWS_INSTALL_COMMAND}
 # Qwen Code
 ${QWEN_WINDOWS_INSTALL_COMMAND}
 # Antigravity CLI
-${AGY_WINDOWS_INSTALL_COMMAND}`;
+${AGY_WINDOWS_INSTALL_COMMAND}
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -213,6 +218,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   kimi: "Kimi Code",
   qwen: "Qwen Code",
   agy: "Antigravity CLI",
+  omp: "Oh My Pi",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -234,6 +240,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   kimi: "kimi",
   qwen: "qwen",
   agy: "agy",
+  omp: "omp",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

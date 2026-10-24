@@ -55,6 +55,10 @@ import {
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
 import {
+  ompProviderPresets,
+  type OmpProviderPreset,
+} from "@/config/ompProviderPresets";
+import {
   piProviderPresets,
   type PiApiFormat,
   type PiProviderPreset,
@@ -103,6 +107,21 @@ const ROOT_CONTROLLED_KEYS = new Set([
   "compat",
   "models",
 ]);
+const OMP_ROOT_CONTROLLED_KEYS = new Set(
+  [...ROOT_CONTROLLED_KEYS].filter((key) => key !== "name"),
+);
+// omp 的 `discovery.type`（docs/models.md）：运行时从端点拉模型列表，可以不写 models。
+// proxy 每个模型自己判断接口格式，其余类型要求供应商级 api（后端校验）。
+const OMP_DISCOVERY_TYPES = [
+  "openai-models-list",
+  "proxy",
+  "ollama",
+  "llama.cpp",
+  "lm-studio",
+  "litellm",
+  "apple-foundation-models",
+];
+const OMP_DISCOVERY_OFF = "__off__";
 const MODEL_CONTROLLED_KEYS = new Set([
   "id",
   "name",
@@ -331,6 +350,7 @@ function fillPiModelDraft(
   model: PiModelDraft,
   metadata: KnownModelMetadata,
   provider: PiProviderProtocol,
+  allowPiThinking = true,
 ): PiModelDraft {
   const next = { ...model };
   if (!model.contextWindow.trim() && metadata.contextWindow) {
@@ -352,7 +372,7 @@ function fillPiModelDraft(
     next.input = withImageInput(model.input, true);
     next.hasInput = true;
   }
-  if (!model.hasThinkingLevelMap && next.reasoning) {
+  if (allowPiThinking && !model.hasThinkingLevelMap && next.reasoning) {
     const effective = piModelProtocol(model, provider);
     const preset = piPresetThinkingFor(metadata.piThinking, effective);
     const map =
@@ -407,7 +427,7 @@ function thinkingLevelMode(
   return map[level] === null ? "unsupported" : "value";
 }
 
-function modelPreview(model: PiModelDraft): Record<string, unknown> {
+function piModelPreview(model: PiModelDraft): Record<string, unknown> {
   const displayName = model.name.trim();
   const previewNumber = (value: string): number | string | undefined => {
     if (!value.trim()) return undefined;
@@ -473,6 +493,7 @@ function buildPiSettingsConfig({
 }
 
 export function PiProviderForm({
+  appId,
   providerId,
   submitLabel,
   onSubmit,
@@ -483,6 +504,16 @@ export function PiProviderForm({
   showButtons = true,
 }: ProviderFormProps) {
   const { t } = useTranslation();
+  const isOmp = appId === "omp";
+  const rootControlledKeys = isOmp
+    ? OMP_ROOT_CONTROLLED_KEYS
+    : ROOT_CONTROLLED_KEYS;
+  const presets = isOmp ? ompProviderPresets : piProviderPresets;
+  const modelPreview = (model: PiModelDraft) => {
+    const value = piModelPreview(model);
+    if (isOmp) delete value.thinkingLevelMap;
+    return value;
+  };
   const isDarkMode = useDarkMode();
   const initialConfig = useMemo(
     () => asObject(initialData?.settingsConfig),
@@ -494,9 +525,10 @@ export function PiProviderForm({
   const initialConfigHasNativeName = hasOwn(initialConfig, "name");
   const [nativeNameFollowsDisplay, setNativeNameFollowsDisplay] = useState(
     () =>
-      !isEdit ||
-      (initialConfigHasNativeName &&
-        initialNativeName === initialDisplayName.trim()),
+      !isOmp &&
+      (!isEdit ||
+        (initialConfigHasNativeName &&
+          initialNativeName === initialDisplayName.trim())),
   );
   const [nativeNameOverride, setNativeNameOverride] = useState<
     string | undefined
@@ -514,9 +546,7 @@ export function PiProviderForm({
   const initialPreset = useMemo(() => {
     if (!providerId) return null;
     const preset =
-      piProviderPresets.find(
-        (candidate) => candidate.providerKey === providerId,
-      ) ?? null;
+      presets.find((candidate) => candidate.providerKey === providerId) ?? null;
     if (!preset || !isEdit) return preset;
 
     return optionalText(initialConfig.baseUrl) ===
@@ -525,9 +555,9 @@ export function PiProviderForm({
       ? preset
       : null;
   }, [initialConfig.api, initialConfig.baseUrl, isEdit, providerId]);
-  const [selectedPreset, setSelectedPreset] = useState<PiProviderPreset | null>(
-    initialPreset,
-  );
+  const [selectedPreset, setSelectedPreset] = useState<
+    PiProviderPreset | OmpProviderPreset | null
+  >(initialPreset);
   const [category, setCategory] = useState<ProviderCategory>(
     initialData?.category ?? "custom",
   );
@@ -562,7 +592,7 @@ export function PiProviderForm({
   const includeCompatRef = useRef(hasOwn(initialConfig, "compat"));
   const [providerPassthrough, setProviderPassthrough] = useState<
     Record<string, unknown>
-  >(() => objectWithout(initialConfig, ROOT_CONTROLLED_KEYS));
+  >(() => objectWithout(initialConfig, rootControlledKeys));
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const modelFetchGenerationRef = useRef(0);
@@ -597,7 +627,7 @@ export function PiProviderForm({
             }
           : buildPiSettingsConfig({
               passthrough: {},
-              nativeName: initialDisplayName.trim(),
+              nativeName: isOmp ? undefined : initialDisplayName.trim(),
               baseUrl: "",
               api: "openai-completions",
               includeApi: true,
@@ -707,7 +737,7 @@ export function PiProviderForm({
 
       setNativeNameOverride(nextNativeName);
       setNativeNameFollowsDisplay(
-        hasNativeName && nextNativeName === currentDisplayName,
+        !isOmp && hasNativeName && nextNativeName === currentDisplayName,
       );
       setBaseUrl(optionalText(config.baseUrl));
       const nextApi = optionalText(config.api) || "openai-completions";
@@ -717,7 +747,7 @@ export function PiProviderForm({
       setProviderHeaders(stringRecord(asObject(config.headers)));
       setProviderCompat(asObject(config.compat));
       includeCompatRef.current = hasOwn(config, "compat");
-      setProviderPassthrough(objectWithout(config, ROOT_CONTROLLED_KEYS));
+      setProviderPassthrough(objectWithout(config, rootControlledKeys));
       includeModelsRef.current = hasOwn(config, "models");
 
       const requestConfigChanged =
@@ -795,7 +825,13 @@ export function PiProviderForm({
         lastValidSettingsConfigRef.current = config;
       }
     },
-    [form, invalidateFetchedModels, replaceModelsState],
+    [
+      form,
+      invalidateFetchedModels,
+      isOmp,
+      replaceModelsState,
+      rootControlledKeys,
+    ],
   );
 
   const handleSettingsConfigChange = useCallback(
@@ -858,11 +894,11 @@ export function PiProviderForm({
 
   const presetEntries = useMemo(
     () =>
-      piProviderPresets.map((preset, index) => ({
+      presets.map((preset, index) => ({
         id: `pi-${index}`,
         preset,
       })),
-    [],
+    [presets],
   );
 
   const selectPreset = (id: string) => {
@@ -873,8 +909,8 @@ export function PiProviderForm({
       setSelectedPreset(null);
       setCategory("custom");
       setProviderKey("");
-      setNativeNameFollowsDisplay(true);
-      setNativeNameOverride(identityDefaults.name.trim());
+      setNativeNameFollowsDisplay(!isOmp);
+      setNativeNameOverride(isOmp ? undefined : identityDefaults.name.trim());
       displayNameBaselineRef.current = identityDefaults.name.trim();
       lastValidSettingsConfigRef.current =
         parseJsonObject(identityDefaults.settingsConfig) ?? {};
@@ -903,12 +939,14 @@ export function PiProviderForm({
     setSelectedPreset(preset);
     setCategory(preset.category ?? "custom");
     setProviderKey(preset.providerKey);
-    setNativeNameFollowsDisplay(true);
-    setNativeNameOverride(preset.settingsConfig.name);
-    displayNameBaselineRef.current = preset.settingsConfig.name.trim();
+    const presetName =
+      optionalText(asObject(preset.settingsConfig).name) || preset.name;
+    setNativeNameFollowsDisplay(!isOmp);
+    setNativeNameOverride(isOmp ? undefined : presetName);
+    displayNameBaselineRef.current = presetName.trim();
     lastValidSettingsConfigRef.current = presetConfig;
     form.reset({
-      name: preset.settingsConfig.name,
+      name: presetName,
       websiteUrl: preset.websiteUrl,
       notes: "",
       settingsConfig: JSON.stringify(presetConfig, null, 2),
@@ -923,7 +961,7 @@ export function PiProviderForm({
     setProviderHeaders(stringRecord(asObject(presetConfig.headers)));
     setProviderCompat(asObject(presetConfig.compat));
     includeCompatRef.current = hasOwn(presetConfig, "compat");
-    setProviderPassthrough(objectWithout(presetConfig, ROOT_CONTROLLED_KEYS));
+    setProviderPassthrough(objectWithout(presetConfig, rootControlledKeys));
     replaceModelsState(nextModels);
     setExpandedModelKeys(new Set());
     setExpandedThinkingMapKeys(new Set());
@@ -982,7 +1020,12 @@ export function PiProviderForm({
       (metadata) => {
         const current = modelsRef.current.find((model) => model.key === key);
         if (current?.id !== id) return false;
-        const filled = fillPiModelDraft(current, metadata, protocolRef.current);
+        const filled = fillPiModelDraft(
+          current,
+          metadata,
+          protocolRef.current,
+          !isOmp,
+        );
         if (!metadataFilledAnything(current, filled)) return false;
         return commitModelsRef.current(
           modelsRef.current.map((model) =>
@@ -1134,6 +1177,25 @@ export function PiProviderForm({
     [invalidateFetchedModels, updateSettingsConfig],
   );
 
+  // discovery 不受表单控制（在 passthrough 里），这里只改它的 type，其余子键原样保留。
+  const ompDiscoveryType = optionalText(
+    asObject(providerPassthrough.discovery).type,
+  );
+  const handleOmpDiscoveryChange = useCallback(
+    (value: string) => {
+      const next = { ...providerPassthrough };
+      const { type: _previous, ...extra } = asObject(next.discovery);
+      if (value === OMP_DISCOVERY_OFF) delete next.discovery;
+      else next.discovery = { type: value, ...extra };
+      const applied = updateSettingsConfig((config) => {
+        if (next.discovery) config.discovery = next.discovery;
+        else delete config.discovery;
+      });
+      if (applied) setProviderPassthrough(next);
+    },
+    [providerPassthrough, updateSettingsConfig],
+  );
+
   const handleApiKeyChange = useCallback(
     (value: string) => {
       const applied = updateSettingsConfig((config) => {
@@ -1233,7 +1295,7 @@ export function PiProviderForm({
           "#pi-api-key",
         );
       }
-      if (!isEdit && models.length === 0) {
+      if (!isEdit && models.length === 0 && !(isOmp && ompDiscoveryType)) {
         throw new PiFormValidationError(
           t("pi.form.modelRequired"),
           "#pi-add-model",
@@ -1294,6 +1356,7 @@ export function PiProviderForm({
             )
           : undefined;
         if (
+          !isOmp &&
           model.hasThinkingLevelMap &&
           !isPiThinkingLevelMap(model.thinkingLevelMap)
         ) {
@@ -1346,7 +1409,7 @@ export function PiProviderForm({
             : {}),
           ...(contextWindow !== undefined ? { contextWindow } : {}),
           ...(maxTokens !== undefined ? { maxTokens } : {}),
-          ...(model.hasThinkingLevelMap
+          ...(!isOmp && model.hasThinkingLevelMap
             ? { thinkingLevelMap: model.thinkingLevelMap }
             : {}),
         };
@@ -1367,7 +1430,7 @@ export function PiProviderForm({
 
       const settingsConfig = buildPiSettingsConfig({
         passthrough: providerPassthrough,
-        nativeName: resolveNativeName(trimmedName),
+        nativeName: isOmp ? undefined : resolveNativeName(trimmedName),
         baseUrl,
         api,
         includeApi,
@@ -1549,6 +1612,41 @@ export function PiProviderForm({
                 </SelectContent>
               </Select>
             </Field>
+
+            {isOmp && (
+              <Field
+                label={t("omp.form.discoveryType")}
+                htmlFor="omp-discovery-type"
+              >
+                <Select
+                  value={ompDiscoveryType || OMP_DISCOVERY_OFF}
+                  onValueChange={handleOmpDiscoveryChange}
+                >
+                  <SelectTrigger id="omp-discovery-type" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={OMP_DISCOVERY_OFF}>
+                      {t("omp.form.discoveryOff")}
+                    </SelectItem>
+                    {OMP_DISCOVERY_TYPES.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {type}
+                      </SelectItem>
+                    ))}
+                    {ompDiscoveryType &&
+                      !OMP_DISCOVERY_TYPES.includes(ompDiscoveryType) && (
+                        <SelectItem value={ompDiscoveryType}>
+                          {ompDiscoveryType}
+                        </SelectItem>
+                      )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {t("omp.form.discoveryHint")}
+                </p>
+              </Field>
+            )}
 
             <ApiKeySection
               id="pi-api-key"
@@ -1823,7 +1921,7 @@ export function PiProviderForm({
                                 placeholder="16384"
                               />
                             </Field>
-                            {model.reasoning === true && (
+                            {!isOmp && model.reasoning === true && (
                               <div
                                 id={`pi-model-thinking-levels-${model.key}`}
                                 tabIndex={-1}

@@ -38,6 +38,7 @@ pub(crate) fn provider_exists_in_live_config(
         }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -310,6 +311,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Kimi
         | AppType::Qwen
         | AppType::Agy
+        | AppType::Omp
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -389,7 +391,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Kimi
         | AppType::Qwen
         | AppType::ClaudeDesktop
-        | AppType::Agy => Ok(settings.clone()),
+        | AppType::Agy
+        | AppType::Omp => Ok(settings.clone()),
     }
 }
 
@@ -723,6 +726,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Antigravity configuration requires the provider switch flow".into(),
             ));
         }
+        AppType::Omp => {
+            return Err(AppError::InvalidInput(
+                "Oh My Pi providers use the Oh My Pi provider service".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -855,7 +863,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in AppType::all() {
         if matches!(
             app_type,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Qwen
+            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Qwen | AppType::Omp
         ) {
             continue;
         }
@@ -1018,6 +1026,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             "Pi providers are read from Pi's native models file".to_string(),
         )),
         AppType::Agy => crate::agy_config::read_live_settings(),
+        AppType::Omp => Err(AppError::InvalidInput(
+            "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
+        )),
     }
 }
 
@@ -1138,7 +1149,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
-        | AppType::Qwen => {
+        | AppType::Qwen
+        | AppType::Omp => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
