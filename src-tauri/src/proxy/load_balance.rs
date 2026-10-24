@@ -300,6 +300,26 @@ impl SessionLoadBalancer {
     }
 
     /// 池内账号的冷却快照（provider + 剩余秒数）。代理页实时指示用
+    /// 粘性分布快照：该应用各账号当前粘住的会话数（TTL 内有效条目）。
+    /// UI 据此在会话粘性模式下标多家「服务中」。
+    pub fn sticky_snapshot(&self, app_type: &str) -> Vec<(String, usize)> {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(sessions) = inner.sticky.get(app_type) else {
+            return Vec::new();
+        };
+        let now = Instant::now();
+        let mut counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for entry in sessions.values() {
+            if now.duration_since(entry.last_access) < self.ttl {
+                *counts.entry(entry.provider_id.clone()).or_insert(0) += 1;
+            }
+        }
+        let mut list: Vec<(String, usize)> = counts.into_iter().collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        list
+    }
+
     pub fn cooldown_snapshot(
         &self,
         app_type: &str,

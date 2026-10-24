@@ -13,7 +13,7 @@ import {
  * 供应商卡片怎么画（v7）：当前那张的模式色、状态文字或按钮、徽标。由列表按应用和正在查看的
  * 模式算好交给卡片，卡片本身不再判断模式。
  */
-export type CardTone = "direct" | "route" | "stack";
+export type CardTone = "direct" | "route" | "stack" | "active";
 
 export type ChipTone =
   | "outline"
@@ -133,6 +133,8 @@ export interface SwitchModeInput {
   directId: string | null;
   routeId: string | null;
   failoverOn: boolean;
+  /** 会话粘性分布（session 模式）：providerId → 粘住的会话数 */
+  stickySessions?: Record<string, number>;
   /** 队列里的 id，按优先级 */
   queue: string[];
   /** 聚合名单（含默认那家）：id → 发布的模型数 */
@@ -196,6 +198,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
     routeId,
     failoverOn,
     queue,
+    stickySessions,
     stackMembers,
     actions,
   } = input;
@@ -362,6 +365,8 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
         const p = byId.get(id);
         if (!p) return [];
         const current = id === routing;
+        // 会话粘性：非锚点卡也可能正服务着自己的会话——标「服务中 · N」
+        const stickyCount = stickySessions?.[id] ?? 0;
         return [
           {
             provider: p,
@@ -372,7 +377,15 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
                     label: t("providerCard.status.routing"),
                     dot: "route" as const,
                   }
-                : undefined,
+                : stickyCount > 0
+                  ? {
+                      label: t("providerCard.status.serving", {
+                        defaultValue: "服务中 · {{count}}",
+                        count: stickyCount,
+                      }),
+                      dot: "active" as const,
+                    }
+                  : undefined,
               chips: [
                 {
                   key: "priority",

@@ -23,6 +23,12 @@ export interface LoadBalanceStatus {
     providerName: string;
     remainingSecs: number;
   }>;
+  /** 会话粘性分布：各账号粘住的会话数 */
+  sticky?: Array<{
+    providerId: string;
+    providerName: string;
+    sessions: number;
+  }>;
 }
 
 export const proxyApi = {

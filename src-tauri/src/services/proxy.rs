@@ -42,6 +42,17 @@ pub struct LoadBalanceStatus {
     pub pool_size: usize,
     pub in_flight: isize,
     pub cooling: Vec<LoadBalanceCooldownInfo>,
+    /// 会话粘性分布：各账号粘住的会话数（session 模式下 UI 标多家「服务中」）
+    pub sticky: Vec<StickySessionInfo>,
+}
+
+/// 一个账号正在服务的粘性会话数
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickySessionInfo {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub sessions: usize,
 }
 
 /// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
@@ -535,6 +546,7 @@ impl ProxyService {
 
         let mut in_flight = 0isize;
         let mut cooling: Vec<LoadBalanceCooldownInfo> = Vec::new();
+        let mut sticky: Vec<StickySessionInfo> = Vec::new();
         if let Some(server) = self.server.read().await.as_ref() {
             let lb = server.proxy_state().provider_router.load_balancer();
             in_flight = lb.in_flight_total(&pool);
@@ -542,6 +554,18 @@ impl ProxyService {
                 .db
                 .get_all_providers(app_type)
                 .map_err(|e| e.to_string())?;
+            sticky = lb
+                .sticky_snapshot(app_type)
+                .into_iter()
+                .map(|(provider_id, sessions)| StickySessionInfo {
+                    provider_name: all
+                        .get(&provider_id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| provider_id.clone()),
+                    provider_id,
+                    sessions,
+                })
+                .collect();
             cooling = lb
                 .cooldown_snapshot(app_type, &pool)
                 .into_iter()
@@ -561,6 +585,7 @@ impl ProxyService {
             pool_size: pool.len(),
             in_flight,
             cooling,
+            sticky,
         })
     }
 

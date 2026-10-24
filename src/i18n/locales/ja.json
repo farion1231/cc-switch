@@ -1083,7 +1083,8 @@
     },
     "data": {
       "location": "保存場所"
-    }
+    },
+    "serving": "サービス中 · {{count}}"
   },
   "apps": {
     "claude": "Claude",
@@ -4420,7 +4421,8 @@
       "currentDefault": "現在の既定",
       "defaultAfterSwitch": "切り替え後の既定",
       "current": "現在",
-      "default": "既定"
+      "default": "既定",
+      "serving": "サービス中 · {{count}}"
     },
     "action": {
       "switch": "切り替え",

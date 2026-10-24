@@ -1083,7 +1083,8 @@
     },
     "data": {
       "location": "Location"
-    }
+    },
+    "serving": "Serving · {{count}}"
   },
   "apps": {
     "claude": "Claude",
@@ -4420,7 +4421,8 @@
       "currentDefault": "Current default",
       "defaultAfterSwitch": "Default after switching",
       "current": "Current",
-      "default": "Default"
+      "default": "Default",
+      "serving": "Serving · {{count}}"
     },
     "action": {
       "switch": "Switch",

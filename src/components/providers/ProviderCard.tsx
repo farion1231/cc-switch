@@ -72,6 +72,7 @@ const TONE_CLASS: Record<CardTone, string> = {
   direct: "border-direct-border bg-direct-soft",
   route: "border-route-border bg-route-soft",
   stack: "border-stack-border bg-stack-soft",
+  active: "border-route-border bg-subtle",
 };
 
 const CHIP_CLASS: Record<CardChip["tone"], string> = {

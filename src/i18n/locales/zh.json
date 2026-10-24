@@ -1083,7 +1083,8 @@
     },
     "data": {
       "location": "存储位置"
-    }
+    },
+    "serving": "服务中 · {{count}}"
   },
   "apps": {
     "claude": "Claude",
@@ -4420,7 +4421,8 @@
       "currentDefault": "当前默认",
       "defaultAfterSwitch": "切换后默认",
       "current": "当前",
-      "default": "默认"
+      "default": "默认",
+      "serving": "服务中 · {{count}}"
     },
     "action": {
       "switch": "切换",

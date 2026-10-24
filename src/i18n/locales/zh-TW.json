@@ -1084,7 +1084,8 @@
     },
     "data": {
       "location": "儲存位置"
-    }
+    },
+    "serving": "服務中 · {{count}}"
   },
   "apps": {
     "claude": "Claude",
@@ -4421,7 +4422,8 @@
       "currentDefault": "目前預設",
       "defaultAfterSwitch": "切換後預設",
       "current": "目前",
-      "default": "預設"
+      "default": "預設",
+      "serving": "服務中 · {{count}}"
     },
     "action": {
       "switch": "切換",

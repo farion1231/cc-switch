@@ -4,7 +4,7 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { Provider } from "@/types";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
@@ -143,6 +143,20 @@ export function SwitchModePanel({
   const hasFailover = isProxyAppId(app);
   const { data: failoverOn = false } = useAutoFailoverEnabled(app, hasFailover);
   const { data: queue } = useFailoverQueue(app, hasFailover);
+  // 会话粘性分布（session 模式下多家同时服务各自的会话）：
+  // 10s 轮询，仅路由开启时请求
+  const { data: lbStatus } = useQuery({
+    queryKey: ["lbSticky", app],
+    queryFn: () => proxyApi.getLoadBalanceStatus(app),
+    enabled: hasFailover && failoverOn,
+    refetchInterval: 10_000,
+    select: (s) =>
+      s.loadBalanceMode === "session"
+        ? Object.fromEntries(
+            s.sticky?.map((x) => [x.providerId, x.sessions]) ?? [],
+          )
+        : undefined,
+  });
   const setFailover = useSetAutoFailoverEnabled();
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
@@ -243,6 +257,7 @@ export function SwitchModePanel({
     routeId,
     failoverOn,
     queue: queueIds,
+    stickySessions: lbStatus,
     stackMembers,
     serviceRunning,
     routingReason: (provider: Provider) =>
