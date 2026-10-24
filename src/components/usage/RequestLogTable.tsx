@@ -14,7 +14,7 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
 import {
-  CACHE_INCLUSIVE_APP_TYPES,
+  CACHE_WRITE_UNREPORTED_APP_TYPES,
   getFreshInputTokens,
   isUnpricedUsage,
   type LogFilters,
@@ -408,8 +408,9 @@ export function RequestLogTable({
         ? `${log.requestModel} → ${log.model}`
         : log.model;
     const hasCache = log.cacheReadTokens > 0;
-    // OpenAI 协议不单报缓存写入，这几个应用的 0 是「不知道」，不是「没写」
-    const cacheWriteUnknown = CACHE_INCLUSIVE_APP_TYPES.has(log.appType);
+    // OpenAI 协议不单报缓存写入，这几个应用的 0 是「不知道」，不是「没写」；
+    // zcode 虽也是 cache-inclusive，但它的库单独上报缓存写入，0 就是 0
+    const cacheWriteUnknown = CACHE_WRITE_UNREPORTED_APP_TYPES.has(log.appType);
     const hitRate = getRequestCacheHitRate(log);
     const success = isSuccessStatus(log.statusCode);
 

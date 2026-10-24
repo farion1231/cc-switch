@@ -323,6 +323,9 @@ describe("SessionManagerPage", () => {
         kimi: false,
         agy: false,
         omp: false,
+        zcode: false,
+        dsh: false,
+        workbuddy: false,
       },
     });
     renderPage("codex");

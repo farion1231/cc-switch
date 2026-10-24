@@ -258,10 +258,12 @@ describe("UsageDashboard (smoke)", () => {
     expect(costCell).toHaveAttribute("aria-pressed", "true");
 
     // 供应商：汇总速度 92000 / 1000 s = 92 tok/s
-    await user.click(
-      screen.getByRole("tab", { name: /^usage\.tabs\.providers/ }),
-    );
-    const providerRow = (await screen.findByText("DeepSeek")).closest("tr")!;
+    // dsh 应用筛选按钮的 DeepSeek 图标 SVG 也带 <title>DeepSeek</title>，
+    // 用 selector 限定到供应商行的文本节点
+    await user.click(screen.getByRole("tab", { name: /^usage\.tabs\.providers/ }));
+    const providerRow = (
+      await screen.findByText("DeepSeek", { selector: "span" })
+    ).closest("tr")!;
     expect(within(providerRow).getByText("92")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /^usage\.tabs\.models/ }));

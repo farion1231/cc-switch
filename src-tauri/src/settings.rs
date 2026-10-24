@@ -59,6 +59,15 @@ pub struct VisibleApps {
     pub kimi: bool,
     #[serde(default = "default_true")]
     pub agy: bool,
+    // ZCode 不是受管应用，没有供应商切换；这个开关只控制用量页的应用筛选按钮
+    #[serde(default = "default_true")]
+    pub zcode: bool,
+    // DeepSeek Harness 同理：仅用量统计，非受管应用
+    #[serde(default = "default_true")]
+    pub dsh: bool,
+    // WorkBuddy 同理：仅用量统计，非受管应用
+    #[serde(default = "default_true")]
+    pub workbuddy: bool,
 }
 
 impl Default for VisibleApps {
@@ -77,6 +86,9 @@ impl Default for VisibleApps {
             kimi: true,
             agy: true,
             omp: true,
+            zcode: true,
+            dsh: true,
+            workbuddy: true,
         }
     }
 }

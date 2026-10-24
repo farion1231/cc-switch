@@ -219,7 +219,9 @@ export interface UsageRangeSelection {
  * every dashboard query (see `folded_app_type_sql`).
  * `opencode` and `pi` have no proxy handler; their usage reaches this
  * dashboard through session importers. `openclaw` / `hermes` appear only as
- * managed apps elsewhere.
+ * managed apps elsewhere. `zcode`, `dsh` (DeepSeek Harness) and `workbuddy`
+ * are usage-only: they are never managed apps or proxied here, their requests
+ * are imported from their local databases / session logs.
  */
 export type AppType =
   | "claude"
@@ -230,7 +232,10 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
-  | "agy";
+  | "agy"
+  | "zcode"
+  | "dsh"
+  | "workbuddy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -244,17 +249,19 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "mcode",
   "kimi",
   "agy",
+  "zcode",
+  "dsh",
+  "workbuddy",
 ];
 
 /**
- * App types whose proxy uses an OpenAI-style protocol. Two consequences:
+ * App types whose stored `inputTokens` includes the cached portion (must
+ * subtract `cacheReadTokens` to get fresh-input semantics — see
+ * [getFreshInputTokens]).
  *
- * 1. `inputTokens` already includes the cached portion (must subtract
- *    `cacheReadTokens` to get fresh-input semantics — see
- *    [getFreshInputTokens]).
- * 2. The protocol does not report cache _creation_ separately, only cache
- *    _reads_. So `cacheCreationTokens` is always 0 for these app types and
- *    the UI should label it as N/A rather than 0.
+ * Consequence #2 of the OpenAI-style protocol — no separate cache _creation_
+ * report — applies only to [CACHE_WRITE_UNREPORTED_APP_TYPES], a subset of
+ * this set; `zcode` normalizes cache creation into real data.
  *
  * Mirror of the Rust `CACHE_INCLUSIVE_APP_TYPES` whitelist.
  */
@@ -262,7 +269,27 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
   "grokbuild",
+  "zcode",
+  "workbuddy",
 ]);
+
+/**
+ * Cache-inclusive apps that (unlike the rest) DO report cache creation
+ * separately. ZCode and WorkBuddy normalize every provider into their own
+ * usage schemas, so `cacheCreationTokens` is real data there, not an
+ * unknown-0.
+ */
+const CACHE_WRITE_REPORTED_APP_TYPES: ReadonlySet<string> = new Set([
+  "zcode",
+  "workbuddy",
+]);
+
+/** Cache-inclusive apps whose protocol cannot report cache creation. */
+export const CACHE_WRITE_UNREPORTED_APP_TYPES: ReadonlySet<string> = new Set(
+  [...CACHE_INCLUSIVE_APP_TYPES].filter(
+    (appType) => !CACHE_WRITE_REPORTED_APP_TYPES.has(appType),
+  ),
+);
 
 // Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates
 // only by app type. Treat cache-write coverage as partial without changing
@@ -280,7 +307,7 @@ export function getCacheWriteAvailability(
 ): CacheWriteAvailability {
   if (appTypes.length === 0) return "ok";
   const unavailable = appTypes.filter((appType) =>
-    CACHE_INCLUSIVE_APP_TYPES.has(appType),
+    CACHE_WRITE_UNREPORTED_APP_TYPES.has(appType),
   ).length;
   if (unavailable === appTypes.length) return "na";
   const partial = appTypes.some((appType) =>
