@@ -285,7 +285,9 @@ export function mergeCustomModelsIntoStore(
       nextEntry.model = custom.model;
       const currentVariant =
         typeof nextEntry.variant === "string" ? nextEntry.variant : "";
-      if (currentVariant) {
+      // Available choices may exclude a saved variant. Only validate it when
+      // the model changes, not when this or another custom entry is renamed.
+      if (currentVariant && sourceEntry?.model !== custom.model) {
         const validVariants = modelVariantsMap[custom.model] || [];
         if (!validVariants.includes(currentVariant)) {
           delete nextEntry.variant;
