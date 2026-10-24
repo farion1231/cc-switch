@@ -8,7 +8,7 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+use crate::app_config::{AppType, McpApps, McpConfig, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
 use super::validation::{extract_server_spec, spec_transport_type, validate_server_spec};
@@ -233,17 +233,18 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
             }
 
             if let Some(existing) = servers.get_mut(id) {
-                // 已存在：仅启用 Codex 应用
-                if !existing.apps.codex {
-                    existing.apps.codex = true;
+                let previous = existing.app_overrides.clone();
+                existing.import_app_server(&AppType::Codex, spec_v);
+                if !existing.apps.codex || existing.app_overrides != previous {
                     changed += 1;
-                    log::info!("MCP 服务器 '{id}' 已启用 Codex 应用");
                 }
+                existing.apps.codex = true;
             } else {
                 // 新建服务器：默认仅启用 Codex
                 servers.insert(
                     id.clone(),
                     McpServer {
+                        app_overrides: Default::default(),
                         id: id.clone(),
                         name: id.clone(),
                         server: spec_v,

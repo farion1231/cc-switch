@@ -72,7 +72,8 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
-            enabled_omp BOOLEAN NOT NULL DEFAULT 0
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
+            app_overrides TEXT NOT NULL DEFAULT '{}'
         )",
             [],
         )
@@ -619,6 +620,17 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "app_overrides",
+                                "TEXT NOT NULL DEFAULT '{}'",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3998,6 +4010,35 @@ mod tests {
         let saved = db.get_installed_skill("s")?.unwrap();
         assert!(saved.apps.kimi && saved.apps.claude);
         assert!(db.get_all_installed_skills()?["s"].apps.kimi);
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_app_overrides_migrate_existing_rows_without_changing_configs() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, server_config TEXT NOT NULL, enabled_claude BOOLEAN, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('serena', '{\"command\":\"original\"}', 1, 0);")?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let row: (String, String, i64, i64) = conn.query_row(
+            "SELECT server_config, app_overrides, enabled_claude, enabled_codex FROM mcp_servers",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(
+            row,
+            ("{\"command\":\"original\"}".into(), "{}".into(), 1, 0)
+        );
+        conn.execute(
+            "UPDATE mcp_servers SET app_overrides = ?1",
+            ["{\"codex\":{\"command\":\"custom\"}}"],
+        )?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert_eq!(
+            conn.query_row("SELECT app_overrides FROM mcp_servers", [], |row| row
+                .get::<_, String>(0))?,
+            "{\"codex\":{\"command\":\"custom\"}}"
+        );
         Ok(())
     }
 

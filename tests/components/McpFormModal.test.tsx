@@ -1,9 +1,16 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@/types";
 import McpFormModal from "@/components/mcp/McpFormModal";
 import { MCP_APP_IDS } from "@/config/appConfig";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 
 const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
@@ -57,10 +64,243 @@ const el = (id: string) => document.getElementById(id) as HTMLInputElement;
 
 const addButton = () => screen.getByRole("button", { name: "common.add" });
 
+const scopedServer = (): McpServer => ({
+  id: "serena",
+  name: "Serena",
+  server: { command: "uvx", args: ["--context", "shared"] },
+  appOverrides: {
+    claude: { command: "uvx", args: ["--context", "claude-code"] },
+  },
+  apps: { ...ALL_ON, openclaw: false } as McpServer["apps"],
+});
+
+const scopeButton = (name: string) =>
+  within(
+    screen.getByRole("group", { name: "mcpPage.drawer.configScope" }),
+  ).getByRole("button", { name });
+
 describe("McpFormModal (drawer)", () => {
   beforeEach(() => {
     mocks.upsert.mockReset();
     mocks.upsert.mockResolvedValue(undefined);
+  });
+
+  it.each(MCP_APP_IDS.filter((app) => app !== "claude" && app !== "codex"))(
+    "supports an independent %s connection without replacing the default",
+    async (app) => {
+      renderForm({
+        editingId: "serena",
+        initialData: scopedServer(),
+        visibleAppIds: [app],
+      });
+      await userEvent.click(scopeButton(APP_DISPLAY_NAME[app]));
+      await userEvent.click(
+        screen.getByRole("checkbox", { name: "mcpPage.drawer.useAppConfig" }),
+      );
+      fireEvent.change(el("mcp-cmd"), { target: { value: `${app}-custom` } });
+      await userEvent.click(
+        screen.getByRole("button", { name: "common.save" }),
+      );
+      await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
+      const saved = mocks.upsert.mock.calls[0][0];
+      expect(saved.server.command).toBe("uvx");
+      expect(saved.appOverrides[app].command).toBe(`${app}-custom`);
+      expect(saved.appOverrides.claude.args).toEqual([
+        "--context",
+        "claude-code",
+      ]);
+    },
+  );
+
+  it("edits an independent Codex config without changing Claude or the shared default", async () => {
+    renderForm({ editingId: "serena", initialData: scopedServer() });
+    await userEvent.click(scopeButton("Codex"));
+    const independent = screen.getByRole("checkbox", {
+      name: "mcpPage.drawer.useAppConfig",
+    });
+    expect(independent).not.toBeChecked();
+    await userEvent.click(independent);
+    const args = screen.getAllByLabelText("mcpPage.drawer.argAria");
+    expect(args[1]).toHaveValue("shared");
+    fireEvent.change(args[1], { target: { value: "codex" } });
+    await userEvent.click(scopeButton("mcpPage.drawer.sharedConfig"));
+    expect(screen.getAllByLabelText("mcpPage.drawer.argAria")[1]).toHaveValue(
+      "shared",
+    );
+    fireEvent.change(screen.getAllByLabelText("mcpPage.drawer.argAria")[1], {
+      target: { value: "shared-v2" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
+    expect(mocks.upsert.mock.calls[0][0]).toMatchObject({
+      server: { args: ["--context", "shared-v2"] },
+      appOverrides: {
+        claude: { args: ["--context", "claude-code"] },
+        codex: { args: ["--context", "codex"] },
+      },
+    });
+  });
+
+  it.each([false, true])(
+    "preserves untouched independent config values after browsing=%s",
+    async (browse) => {
+      const server = scopedServer();
+      server.appOverrides = {
+        codex: {
+          command: "runner",
+          cwd: "/tmp/project ",
+          args: ["first", "", "third"],
+          startup_timeout_sec: 30,
+        },
+      };
+      renderForm({ editingId: server.id, initialData: server });
+      if (browse) {
+        await userEvent.click(scopeButton("Codex"));
+        await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+        await userEvent.click(scopeButton("mcpPage.drawer.sharedConfig"));
+        await userEvent.click(
+          screen.getByRole("button", { name: "mcpPage.drawer.tabForm" }),
+        );
+      }
+      fireEvent.change(el("mcp-cmd"), { target: { value: "shared-updated" } });
+      await userEvent.click(
+        screen.getByRole("button", { name: "common.save" }),
+      );
+      await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
+      expect(mocks.upsert.mock.calls[0][0].appOverrides).toEqual(
+        server.appOverrides,
+      );
+    },
+  );
+
+  it("keeps empty positional arguments when editing an independent config", async () => {
+    const server = scopedServer();
+    server.appOverrides = {
+      codex: {
+        command: "runner",
+        cwd: "/tmp/project ",
+        args: ["first", "", "third"],
+      },
+    };
+    renderForm({ editingId: server.id, initialData: server });
+    await userEvent.click(scopeButton("Codex"));
+    fireEvent.change(el("mcp-cmd"), { target: { value: "runner-updated" } });
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    expect(JSON.parse(el("mcp-json").value).args).toEqual([
+      "first",
+      "",
+      "third",
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
+    expect(mocks.upsert.mock.calls[0][0].appOverrides.codex).toMatchObject({
+      command: "runner-updated",
+      cwd: "/tmp/project ",
+      args: ["first", "", "third"],
+    });
+  });
+
+  it("removes only the selected app override when returning to the shared config", async () => {
+    const server = scopedServer();
+    server.appOverrides = {
+      ...server.appOverrides,
+      codex: { command: "codex-only" },
+    };
+    renderForm({
+      editingId: server.id,
+      initialData: server,
+      visibleAppIds: ["codex"],
+    });
+    await userEvent.click(scopeButton("Codex"));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "mcpPage.drawer.useAppConfig" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
+    const overrides = mocks.upsert.mock.calls[0][0].appOverrides;
+    expect(Object.keys(overrides)).toEqual(["claude"]);
+    expect(overrides.claude).toMatchObject(server.appOverrides!.claude!);
+    expect(mocks.upsert.mock.calls[0][0].server.command).toBe("uvx");
+  });
+
+  it("blocks leaving an invalid app JSON draft and never saves a different scope over it", async () => {
+    renderForm({ editingId: "serena", initialData: scopedServer() });
+    await userEvent.click(scopeButton("Claude Code"));
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    fireEvent.change(el("mcp-json"), { target: { value: "{" } });
+    await userEvent.click(scopeButton("mcpPage.drawer.sharedConfig"));
+    expect(scopeButton("Claude Code")).toHaveAttribute("aria-pressed", "true");
+    expect(el("mcp-json")).toHaveValue("{");
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("returns to an invalid independent form before saving another scope", async () => {
+    renderForm({ editingId: "serena", initialData: scopedServer() });
+    await userEvent.click(scopeButton("Claude Code"));
+    fireEvent.change(el("mcp-cmd"), { target: { value: "" } });
+    await userEvent.click(scopeButton("mcpPage.drawer.sharedConfig"));
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(scopeButton("Claude Code")).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByText("mcpPage.drawer.errors.commandRequired"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps masked JSON secrets bound to their own application across scope switches", async () => {
+    const server = scopedServer();
+    server.appOverrides = {
+      claude: {
+        type: "http",
+        url: "https://claude.example/mcp",
+        headers: { Authorization: "synthetic-claude" },
+      },
+      codex: {
+        type: "http",
+        url: "https://codex.example/mcp",
+        headers: { Authorization: "synthetic-codex" },
+      },
+    };
+    renderForm({ editingId: server.id, initialData: server });
+    await userEvent.click(scopeButton("Codex"));
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    expect(el("mcp-json").value).not.toContain("synthetic-codex");
+    const draft = JSON.parse(el("mcp-json").value);
+    draft.url = "https://codex.example/updated";
+    fireEvent.change(el("mcp-json"), {
+      target: { value: JSON.stringify(draft) },
+    });
+    await userEvent.click(scopeButton("Claude Code"));
+    expect(el("mcp-json").value).not.toContain("synthetic-claude");
+    expect(el("mcp-json").value).toContain("https://claude.example/mcp");
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
+    expect(mocks.upsert.mock.calls[0][0].appOverrides).toMatchObject({
+      claude: { headers: { Authorization: "synthetic-claude" } },
+      codex: {
+        url: "https://codex.example/updated",
+        headers: { Authorization: "synthetic-codex" },
+      },
+    });
+  });
+
+  it("translates native override validation failures and keeps the editor open", async () => {
+    mocks.upsert.mockRejectedValueOnce(
+      new Error("MCP 校验失败: mcp.error.invalidOverrideCodex"),
+    );
+    const { onSave } = renderForm({
+      editingId: "serena",
+      initialData: scopedServer(),
+    });
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() =>
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        "mcp.error.invalidOverrideCodex",
+        expect.anything(),
+      ),
+    );
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("fills the form from a template", async () => {
@@ -95,6 +335,7 @@ describe("McpFormModal (drawer)", () => {
       server: { type: "stdio", command: "uvx", args: ["mcp-server-fetch"] },
     });
     expect(entry.apps).toMatchObject({ ...ALL_ON, openclaw: false });
+    expect(entry.appOverrides).toBeUndefined();
     expect(onSave).toHaveBeenCalled();
   });
 

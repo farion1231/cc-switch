@@ -108,6 +108,7 @@ pub fn mcp_server(id: &str, server: Value, apps: &[AppType]) -> McpServer {
         enabled.set_enabled_for(app, true);
     }
     McpServer {
+        app_overrides: Default::default(),
         id: id.to_string(),
         name: id.to_string(),
         server,
