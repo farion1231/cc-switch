@@ -23,6 +23,7 @@ interface PromptListItemProps {
   detail: string;
   first: boolean;
   disabled?: boolean;
+  readOnly?: boolean;
   onToggle: (id: string, enabled: boolean) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
@@ -40,6 +41,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
   detail,
   first,
   disabled = false,
+  readOnly = false,
   onToggle,
   onEdit,
   onDelete,
@@ -53,7 +55,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
     <li
       data-testid={`prompt-row-${id}`}
       onClick={(event) => {
-        if (disabled) return;
+        if (disabled || readOnly) return;
         const target = event.target as HTMLElement;
         if (target.closest("button, a, input, label, [role='menu']")) return;
         onEdit(id);
@@ -90,7 +92,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
         type="button"
         variant="neutral"
         size="compact"
-        disabled={disabled}
+        disabled={disabled || readOnly}
         aria-label={t(active ? "prompts.disableAria" : "prompts.enableAria", {
           name: prompt.name,
         })}
@@ -106,7 +108,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
             type="button"
             variant="quiet"
             size="icon-compact"
-            disabled={disabled}
+            disabled={disabled || readOnly}
             aria-label={t("prompts.editAria", { name: prompt.name })}
             onClick={() => onEdit(id)}
           >

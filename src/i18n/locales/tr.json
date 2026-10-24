@@ -2844,6 +2844,14 @@
     }
   },
   "prompts": {
+    "fileProtection": {
+      "label": "Bu cihazda {{file}} dosyasını koru",
+      "help": "Dosyayı kendiniz yönetiyorsanız açın. Bu uygulamanın istem işlemleri, eşitleme ve geri yüklemeleri dosyayı değiştiremez. Kapattıktan sonra yönetimi sürdürmek için bir şablonu etkinleştirin veya geri yükleyin.",
+      "protected": "Koruma açık: istem kitaplığı salt okunurdur ve şablonlar dosyaya uygulanmaz. Kapatmak dosyayı hemen değiştirmez veya yerel metni şablonlara aktarmaz.",
+      "readOnly": "Bu uygulama için istem yönetimi şu anda salt okunur.",
+      "loadFailed": "Koruma durumu okunamadı. İstem değişiklikleri geçici olarak devre dışı.",
+      "saveFailed": "Kural dosyası koruması kaydedilemedi: {{error}}"
+    },
     "add": "İstem Ekle",
     "addTitle": "İstem ekle · {{appName}}",
     "editTitle": "İstemi düzenle",

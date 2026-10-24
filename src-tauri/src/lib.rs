@@ -52,6 +52,8 @@ mod usage_events;
 mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
+#[cfg(feature = "test-hooks")]
+pub use app_store::with_app_config_dir_override_for_test;
 pub use codex_config::{
     extract_codex_experimental_bearer_token, get_codex_auth_path, get_codex_config_path,
     read_codex_live_settings, write_codex_live_atomic,
@@ -1616,6 +1618,8 @@ pub fn run() {
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
             commands::get_prompt_file_location,
+            commands::get_prompt_file_protection,
+            commands::set_prompt_file_protection,
             commands::get_pi_prompt_file,
             commands::replace_pi_prompt_file,
             commands::delete_pi_prompt_file,

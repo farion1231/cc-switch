@@ -76,6 +76,13 @@ export const handlers = [
   ),
 
   http.post(`${TAURI_ENDPOINT}/update_tray_menu`, () => success(true)),
+  // Protection is opt-in. Focused protection tests provide stateful handlers.
+  http.post(`${TAURI_ENDPOINT}/get_prompt_file_protection`, () =>
+    success(false),
+  ),
+  http.post(`${TAURI_ENDPOINT}/set_prompt_file_protection`, () =>
+    success(null),
+  ),
   http.post(`${TAURI_ENDPOINT}/peek_pending_deeplink`, () =>
     success(peekPendingDeepLink()),
   ),

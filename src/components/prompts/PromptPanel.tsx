@@ -15,6 +15,10 @@ import {
 } from "./PromptLibrary";
 import { PromptCopyDialog } from "./PromptCopyDialog";
 import { PromptPageFrame } from "./PromptPageFrame";
+import {
+  PromptFileProtection,
+  usePromptFileProtection,
+} from "./PromptFileProtection";
 import { toggleEffectText, usePromptPageCommon } from "./usePromptPageCommon";
 import {
   copyText,
@@ -70,6 +74,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   } = usePromptActions(appId, { notify: false });
   const reloadRef = React.useRef(reload);
   reloadRef.current = reload;
+  const fileProtection = usePromptFileProtection(appId, reload);
+  const fileReadOnly = fileProtection.readOnly;
   const { displayPath, location, fileName, invalidate, moreItems } =
     usePromptPageCommon(appId);
 
@@ -121,12 +127,14 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     }
   }, []);
 
-  const beginWrite = () => {
+  const acquireWriteLock = () => {
     if (loading || reloadLockRef.current || writeLockRef.current) return false;
     writeLockRef.current = true;
     setWritePending(true);
     return true;
   };
+
+  const beginWrite = () => !fileReadOnly && acquireWriteLock();
 
   const endWrite = () => {
     writeLockRef.current = false;
@@ -182,6 +190,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   useTauriEvent("profile-applied", runExternalReload);
 
   const handleAdd = () => {
+    if (fileReadOnly) return;
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
     }
@@ -191,6 +200,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   };
 
   const handleEdit = (id: string) => {
+    if (fileReadOnly) return;
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
     }
@@ -401,7 +411,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   const handleCopyToApps = async (targets: AppId[]) => {
     const source = copyingId ? prompts[copyingId] : undefined;
     if (!source) return;
-    if (!beginWrite()) return;
+    // Copying only writes inactive templates to targets, each with its own policy.
+    if (!acquireWriteLock()) return;
     const timestamp = Math.floor(Date.now() / 1000);
     const created: Array<{ app: AppId; id: string }> = [];
     const failed: AppId[] = [];
@@ -495,13 +506,15 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       primary={{
         label: t("prompts.add"),
         onClick: handleAdd,
-        disabled: controlsDisabled,
+        disabled: controlsDisabled || fileReadOnly,
       }}
       moreItems={moreItems(
         {
           key: "import",
           label: renderSegs(t("prompts.importCurrent", { file: fileName })),
-          reason: importReason,
+          reason: fileReadOnly
+            ? t("prompts.fileProtection.readOnly")
+            : importReason,
           onSelect: () => void handleImport(),
         },
         { label: t("prompts.copyFilePath"), path: location.data?.path },
@@ -511,6 +524,15 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
         path: displayPath,
         meta: ` · ${fileMeta}`,
       }}
+      notices={
+        fileProtection.supported ? (
+          <PromptFileProtection
+            state={fileProtection}
+            disabled={interactionBlocked}
+            fileName={fileName}
+          />
+        ) : undefined
+      }
       search={
         listEmpty
           ? null
@@ -533,7 +555,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
             app={appId}
             displayPath={displayPath}
             fileText={fileText}
-            disabled={controlsDisabled}
+            disabled={controlsDisabled || fileReadOnly}
             onImport={() => void handleImport()}
             onAdd={handleAdd}
           />
@@ -544,6 +566,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
           searchQuery={searchQuery}
           listLabel={t("prompts.listLabel", { app: APP_DISPLAY_NAME[appId] })}
           disabled={controlsDisabled}
+          readOnly={fileReadOnly}
           onClearSearch={() => setSearchQuery("")}
           onToggle={(id, enabled) => void handleToggle(id, enabled)}
           onEdit={handleEdit}

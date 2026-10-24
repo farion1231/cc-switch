@@ -2851,6 +2851,14 @@
     }
   },
   "prompts": {
+    "fileProtection": {
+      "label": "Protect {{file}} on this device",
+      "help": "Turn on if you maintain this file yourself. Blocks this app's prompt actions, cloud sync and restores from rewriting it. After release, enable a template or restore to resume management.",
+      "protected": "Protection is on: the prompt library is read-only and templates are not applied to this file. Turning it off does not immediately write the file or backfill local text into templates.",
+      "readOnly": "Prompt management for this app is currently read-only.",
+      "loadFailed": "Could not read protection status. Prompt changes are temporarily disabled.",
+      "saveFailed": "Could not save rule file protection: {{error}}"
+    },
     "add": "Add Prompt",
     "addTitle": "Add prompt · {{appName}}",
     "editTitle": "Edit prompt",
