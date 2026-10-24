@@ -559,7 +559,8 @@ export function PiProviderForm({
     initialData?.category ?? "custom",
   );
   const [providerKey, setProviderKey] = useState(providerId ?? "");
-  const { data: existingProviders } = useProvidersQuery("pi");
+  // Pi 和 omp 的供应商各管各的，查重只看当前应用。
+  const { data: existingProviders } = useProvidersQuery(isOmp ? "omp" : "pi");
   // 预设自带标识；同一家加第二次时会撞上已有的卡，在字段下直接提示。
   const isDuplicateProviderKey =
     !isEdit &&

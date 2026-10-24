@@ -104,6 +104,43 @@ describe("PiProviderForm", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("checks provider keys against the current app only", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post("http://tauri.local/get_providers", async ({ request }) => {
+        const { app } = (await request.json()) as { app: string };
+        const key = app === "pi" ? "pi-only" : "omp-only";
+        return HttpResponse.json({
+          [key]: { id: key, name: key, settingsConfig: {} },
+        });
+      }),
+    );
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save omp provider"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    const keyInput = screen.getByLabelText("pi.form.providerKey");
+
+    // Pi 已有的标识在 omp 里可以用
+    await user.clear(keyInput);
+    await user.type(keyInput, "pi-only");
+    await waitFor(() =>
+      expect(
+        screen.queryByText("pi.form.providerKeyDuplicate"),
+      ).not.toBeInTheDocument(),
+    );
+
+    await user.clear(keyInput);
+    await user.type(keyInput, "omp-only");
+    expect(
+      await screen.findByText("pi.form.providerKeyDuplicate"),
+    ).toBeInTheDocument();
+  });
+
   it("starts in the same editable custom state as OpenCode", async () => {
     const onSubmitReadyChange = vi.fn();
     const { container } = render(
