@@ -16,6 +16,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Popover,
   PopoverAnchor,
   PopoverContent,
@@ -109,15 +114,17 @@ const OMP_ROOT_CONTROLLED_KEYS = new Set(
 );
 // omp 的 `discovery.type`（docs/models.md）：运行时从端点拉模型列表，可以不写 models。
 // proxy 每个模型自己判断接口格式，其余类型要求供应商级 api（后端校验）。
-const OMP_DISCOVERY_TYPES = [
-  "openai-models-list",
-  "proxy",
-  "ollama",
-  "llama.cpp",
-  "lm-studio",
-  "litellm",
-  "apple-foundation-models",
-];
+// 值里有点号，不能直接当 i18n key，所以另配一个 key。
+const OMP_DISCOVERY_TYPES: ReadonlyArray<{ value: string; labelKey: string }> =
+  [
+    { value: "openai-models-list", labelKey: "openaiModelsList" },
+    { value: "proxy", labelKey: "proxy" },
+    { value: "ollama", labelKey: "ollama" },
+    { value: "llama.cpp", labelKey: "llamaCpp" },
+    { value: "lm-studio", labelKey: "lmStudio" },
+    { value: "litellm", labelKey: "litellm" },
+    { value: "apple-foundation-models", labelKey: "appleFoundationModels" },
+  ];
 const OMP_DISCOVERY_OFF = "__off__";
 const MODEL_CONTROLLED_KEYS = new Set([
   "id",
@@ -593,6 +600,8 @@ export function PiProviderForm({
   >(() => objectWithout(initialConfig, rootControlledKeys));
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  // 请求头、自动发现和兼容性很少需要动，默认收起；预设填了值也不自动展开。
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const modelFetchGenerationRef = useRef(0);
   const [formError, setFormError] = useState<string | null>(null);
   const initialModels = useMemo<PiModelDraft[]>(() => {
@@ -1221,6 +1230,8 @@ export function PiProviderForm({
   );
   const handleOmpDiscoveryChange = useCallback(
     (value: string) => {
+      // 下拉在 <form> 里随折叠区挂载，Radix 可能回报一次空串，不能当成「关闭」
+      if (!value) return;
       const next = { ...providerPassthrough };
       const { type: _previous, injectV1, ...extra } = asObject(next.discovery);
       if (value === "openai-models-list" && injectV1 !== undefined) {
@@ -1654,41 +1665,6 @@ export function PiProviderForm({
               </Select>
             </Field>
 
-            {isOmp && (
-              <Field
-                label={t("omp.form.discoveryType")}
-                htmlFor="omp-discovery-type"
-              >
-                <Select
-                  value={ompDiscoveryType || OMP_DISCOVERY_OFF}
-                  onValueChange={handleOmpDiscoveryChange}
-                >
-                  <SelectTrigger id="omp-discovery-type" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={OMP_DISCOVERY_OFF}>
-                      {t("omp.form.discoveryOff")}
-                    </SelectItem>
-                    {OMP_DISCOVERY_TYPES.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {type}
-                      </SelectItem>
-                    ))}
-                    {ompDiscoveryType &&
-                      !OMP_DISCOVERY_TYPES.includes(ompDiscoveryType) && (
-                        <SelectItem value={ompDiscoveryType}>
-                          {ompDiscoveryType}
-                        </SelectItem>
-                      )}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  {t("omp.form.discoveryHint")}
-                </p>
-              </Field>
-            )}
-
             <ApiKeySection
               id="pi-api-key"
               label={t("pi.form.credential")}
@@ -1710,26 +1686,6 @@ export function PiProviderForm({
                 placeholder="https://api.example.com/v1"
               />
             </div>
-
-            <RequestHeadersEditor
-              headers={providerHeaders}
-              onHeadersChange={handleProviderHeadersChange}
-            />
-
-            <StructuredOptionsEditor
-              id="pi-provider-compat"
-              title={t("pi.form.compatibility")}
-              hint={t("pi.form.compatibilityHint")}
-              addLabel={t("pi.form.addCompatibilityOption")}
-              emptyLabel={t("pi.form.noCompatibilityOptions")}
-              keyLabel={t("pi.form.optionKey")}
-              valueLabel={t("pi.form.optionValue")}
-              keyPlaceholder="supportsDeveloperRole"
-              valuePlaceholder="false"
-              removeLabel={t("pi.form.removeCompatibilityOption")}
-              options={providerCompat}
-              onOptionsChange={handleProviderCompatChange}
-            />
 
             <div
               id="pi-models-section"
@@ -2209,6 +2165,86 @@ export function PiProviderForm({
                 </div>
               )}
             </div>
+
+            <Collapsible
+              open={advancedExpanded}
+              onOpenChange={setAdvancedExpanded}
+              className="rounded-lg border border-border p-4"
+            >
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant={null}
+                  size="sm"
+                  className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
+                >
+                  {advancedExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                  {t("providerForm.advancedOptionsToggle")}
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-6 pt-3">
+                <RequestHeadersEditor
+                  headers={providerHeaders}
+                  onHeadersChange={handleProviderHeadersChange}
+                />
+
+                {isOmp && (
+                  <Field
+                    label={t("omp.form.discoveryType")}
+                    htmlFor="omp-discovery-type"
+                  >
+                    <Select
+                      value={ompDiscoveryType || OMP_DISCOVERY_OFF}
+                      onValueChange={handleOmpDiscoveryChange}
+                    >
+                      <SelectTrigger id="omp-discovery-type" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={OMP_DISCOVERY_OFF}>
+                          {t("omp.form.discoveryOff")}
+                        </SelectItem>
+                        {OMP_DISCOVERY_TYPES.map(({ value, labelKey }) => (
+                          <SelectItem key={value} value={value}>
+                            {t(`omp.form.discoveryTypes.${labelKey}`)}
+                          </SelectItem>
+                        ))}
+                        {ompDiscoveryType &&
+                          !OMP_DISCOVERY_TYPES.some(
+                            ({ value }) => value === ompDiscoveryType,
+                          ) && (
+                            <SelectItem value={ompDiscoveryType}>
+                              {ompDiscoveryType}
+                            </SelectItem>
+                          )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {t("omp.form.discoveryHint")}
+                    </p>
+                  </Field>
+                )}
+
+                <StructuredOptionsEditor
+                  id="pi-provider-compat"
+                  title={t("pi.form.compatibility")}
+                  hint={t("pi.form.compatibilityHint")}
+                  addLabel={t("pi.form.addCompatibilityOption")}
+                  emptyLabel={t("pi.form.noCompatibilityOptions")}
+                  keyLabel={t("pi.form.optionKey")}
+                  valueLabel={t("pi.form.optionValue")}
+                  keyPlaceholder="supportsDeveloperRole"
+                  valuePlaceholder="false"
+                  removeLabel={t("pi.form.removeCompatibilityOption")}
+                  options={providerCompat}
+                  onOptionsChange={handleProviderCompatChange}
+                />
+              </CollapsibleContent>
+            </Collapsible>
           </fieldset>
         )}
 

@@ -1164,9 +1164,9 @@
       "contextWindow": "Context window",
       "maxTokens": "Max output tokens",
       "compatibility": "Compatibility",
-      "compatibilityHint": "Adjust request behavior for compatible or local endpoints.",
+      "compatibilityHint": "Only needed when an endpoint claims to be OpenAI-compatible but rejects some requests. Each option describes one quirk of the endpoint: for example, supportsDeveloperRole = false means it doesn't accept the developer role, and maxTokensField = max_tokens means it only accepts the older field name. Presets fill in what they need; leave it empty to use the defaults.",
       "addCompatibilityOption": "Add",
-      "noCompatibilityOptions": "No compatibility options configured",
+      "noCompatibilityOptions": "Not set — defaults apply",
       "optionKey": "Option",
       "optionValue": "Value",
       "removeCompatibilityOption": "Remove compatibility option",
@@ -5004,7 +5004,16 @@
     "form": {
       "discoveryType": "Model discovery",
       "discoveryOff": "Off",
-      "discoveryHint": "Oh My Pi periodically fetches the model list from the endpoint and applies metadata such as the context window. Manually added models still apply, and with discovery on the model list may be left empty."
+      "discoveryHint": "When on, Oh My Pi asks the endpoint which models it offers, so you don't have to list them by hand and new models show up on their own. Most online services use “OpenAI model list”; for models running on your machine, pick the matching app. Anthropic-format endpoints usually have no model list, so leave this off. Manually added models still apply.",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI model list (most online services)",
+        "proxy": "Proxy (each model sets its own format)",
+        "ollama": "Ollama (local)",
+        "llamaCpp": "llama.cpp (local)",
+        "lmStudio": "LM Studio (local)",
+        "litellm": "LiteLLM gateway",
+        "appleFoundationModels": "Apple on-device models (macOS)"
+      }
     },
     "errors": {
       "fileTooLarge": "Oh My Pi configuration exceeds the 1 MiB limit.",

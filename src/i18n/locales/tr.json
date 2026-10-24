@@ -1164,9 +1164,9 @@
       "contextWindow": "Bağlam penceresi",
       "maxTokens": "Maksimum çıkış tokenları",
       "compatibility": "Uyumluluk",
-      "compatibilityHint": "Uyumlu veya yerel uç noktalar için istek davranışını ayarlayın.",
+      "compatibilityHint": "Yalnızca OpenAI uyumlu olduğunu söyleyen bir uç nokta bazı istekleri reddettiğinde gerekir. Her seçenek uç noktanın bir farkını belirtir: örneğin supportsDeveloperRole = false, developer rolünü kabul etmediği; maxTokensField = max_tokens, yalnızca eski alan adını kabul ettiği anlamına gelir. Hazır ayarlar gerekenleri kendisi doldurur; boş bırakılırsa varsayılanlar kullanılır.",
       "addCompatibilityOption": "Ekle",
-      "noCompatibilityOptions": "Hiçbir uyumluluk seçeneği yapılandırılmadı",
+      "noCompatibilityOptions": "Ayarlanmadı — varsayılanlar kullanılır",
       "optionKey": "Seçenek",
       "optionValue": "Değer",
       "removeCompatibilityOption": "Uyumluluk seçeneğini kaldır",
@@ -4992,7 +4992,7 @@
     "form": {
       "discoveryType": "Model keşfi",
       "discoveryOff": "Kapalı",
-      "discoveryHint": "Oh My Pi model listesini uç noktadan düzenli olarak alır ve bağlam penceresi gibi meta verileri uygular. Elle eklenen modeller geçerliliğini korur; keşif açıkken model listesi boş bırakılabilir."
+      "discoveryHint": "Açıkken Oh My Pi uç noktaya hangi modelleri sunduğunu sorar; modelleri tek tek yazmanız gerekmez ve yeni modeller kendiliğinden görünür. Çevrimiçi servislerin çoğunda “OpenAI model list”, kendi bilgisayarınızda çalışan modellerde ilgili uygulamayı seçin. Anthropic biçimli uç noktalarda genellikle model listesi yoktur, kapalı bırakın. Elle eklenen modeller geçerliliğini korur."
     },
     "errors": {
       "fileTooLarge": "Oh My Pi yapılandırması 1 MiB sınırını aşıyor.",

@@ -58,6 +58,13 @@ vi.mock("@/components/JsonEditor", () => ({
   ),
 }));
 
+// 请求头、模型自动发现和接口兼容性收在默认折叠的「高级选项」里
+function openAdvancedOptions() {
+  fireEvent.click(
+    screen.getByRole("button", { name: "providerForm.advancedOptionsToggle" }),
+  );
+}
+
 describe("PiProviderForm", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -183,8 +190,9 @@ describe("PiProviderForm", () => {
     const apiFormat = document.querySelector("#pi-provider-api-select");
     const apiKey = screen.getByLabelText("pi.form.credential");
     const baseUrl = screen.getByLabelText("Base URL");
-    const headers = screen.getByText("Headers");
-    const compatibility = screen.getByText("pi.form.compatibility");
+    const advanced = screen.getByRole("button", {
+      name: "providerForm.advancedOptionsToggle",
+    });
     const models = screen.getByText("模型配置");
 
     expect(apiFormat).toHaveAttribute("role", "combobox");
@@ -194,13 +202,25 @@ describe("PiProviderForm", () => {
     expect(apiKey.compareDocumentPosition(baseUrl)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(baseUrl.compareDocumentPosition(headers)).toBe(
+    expect(baseUrl.compareDocumentPosition(models)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+    // 高级选项和 Claude Code、Codex 一样排在模型配置后面
+    expect(models.compareDocumentPosition(advanced)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    // 请求头和兼容性收在高级选项里，默认不展开
+    expect(advanced).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Headers")).not.toBeInTheDocument();
+    expect(screen.queryByText("pi.form.compatibility")).not.toBeInTheDocument();
+
+    openAdvancedOptions();
+    const headers = screen.getByText("Headers");
+    const compatibility = screen.getByText("pi.form.compatibility");
     expect(headers.compareDocumentPosition(compatibility)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(compatibility.compareDocumentPosition(models)).toBe(
+    expect(models.compareDocumentPosition(headers)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
 
@@ -231,6 +251,7 @@ describe("PiProviderForm", () => {
       screen.getByRole("button", { name: "providerPreset.custom" }),
     );
 
+    openAdvancedOptions();
     expect(screen.getByText("Headers")).toBeInTheDocument();
     expect(
       screen.getByText("No custom headers configured"),
@@ -286,6 +307,7 @@ describe("PiProviderForm", () => {
       />,
     );
 
+    openAdvancedOptions();
     const compatibilitySection = document.querySelector("#pi-provider-compat");
     expect(compatibilitySection).not.toBeNull();
 
@@ -531,6 +553,7 @@ describe("PiProviderForm", () => {
       },
     });
 
+    openAdvancedOptions();
     await waitFor(() => {
       expect(screen.getByLabelText("pi.form.credential")).toHaveValue(
         "json-key",
@@ -764,6 +787,7 @@ describe("PiProviderForm", () => {
       target: { value: "16384" },
     });
 
+    openAdvancedOptions();
     await user.click(screen.getByRole("button", { name: "Add header" }));
     const headerName = screen.getByLabelText("Header");
     fireEvent.change(headerName, {
@@ -807,6 +831,7 @@ describe("PiProviderForm", () => {
       />,
     );
 
+    openAdvancedOptions();
     expect(
       document.querySelector("#pi-header-identity"),
     ).not.toBeInTheDocument();
@@ -889,8 +914,13 @@ describe("PiProviderForm", () => {
     ) as HTMLTextAreaElement;
 
     // omp 只允许 openai-models-list 带 injectV1，其余子键照旧保留
+    openAdvancedOptions();
     await user.click(document.querySelector("#omp-discovery-type")!);
-    await user.click(await screen.findByRole("option", { name: "ollama" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "omp.form.discoveryTypes.ollama",
+      }),
+    );
     expect(JSON.parse(configEditor.value).discovery).toEqual({
       type: "ollama",
       timeoutMs: 500,
@@ -921,9 +951,13 @@ describe("PiProviderForm", () => {
       expect(model).not.toHaveProperty("thinkingLevelMap");
     }
 
+    expect(document.querySelector("#omp-discovery-type")).toBeNull();
+    openAdvancedOptions();
     await user.click(document.querySelector("#omp-discovery-type")!);
     await user.click(
-      await screen.findByRole("option", { name: "openai-models-list" }),
+      await screen.findByRole("option", {
+        name: "omp.form.discoveryTypes.openaiModelsList",
+      }),
     );
     expect(JSON.parse(configEditor.value).discovery).toEqual({
       type: "openai-models-list",
@@ -1139,6 +1173,7 @@ describe("PiProviderForm", () => {
     fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
       target: { value: "777" },
     });
+    openAdvancedOptions();
     await user.click(screen.getByRole("button", { name: "Add header" }));
     const headerName = screen.getByLabelText("Header");
     fireEvent.change(headerName, { target: { value: "user-agent" } });

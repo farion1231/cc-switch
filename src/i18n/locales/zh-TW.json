@@ -1165,9 +1165,9 @@
       "contextWindow": "上下文長度",
       "maxTokens": "最大輸出 Token 數",
       "compatibility": "介面相容性",
-      "compatibilityHint": "調整相容端點或本機服務的請求行為。",
+      "compatibilityHint": "只有在介面自稱相容 OpenAI、卻拒收某些請求時才需要填。每一項說明這家介面的一個特殊之處，例如 supportsDeveloperRole 填 false 表示它不接受 developer 角色，maxTokensField 填 max_tokens 表示它只認舊的欄位名稱。選用預設供應商時，需要的項目會自動填好；留空則採用預設行為。",
       "addCompatibilityOption": "新增",
-      "noCompatibilityOptions": "暫無相容性選項",
+      "noCompatibilityOptions": "未設定，採用預設行為",
       "optionKey": "選項",
       "optionValue": "值",
       "removeCompatibilityOption": "移除相容性選項",
@@ -5005,7 +5005,16 @@
     "form": {
       "discoveryType": "模型自動探索",
       "discoveryOff": "不自動探索",
-      "discoveryHint": "由 Oh My Pi 定期從端點擷取模型列表，端點回傳的上下文長度等中繼資料會自動套用；手動新增的模型仍然生效。開啟後可以不設定模型。"
+      "discoveryHint": "開啟後，Oh My Pi 會自己向介面查詢有哪些模型，不必逐一手動填寫，新上架的模型也會自動出現。線上服務大多選「OpenAI 模型列表」，本機執行的模型選對應的軟體；Anthropic 格式的介面通常查不到列表，維持「不自動探索」即可。手動新增的模型仍然生效。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI 模型列表（大多數線上服務）",
+        "proxy": "代理（每個模型自帶格式）",
+        "ollama": "Ollama（本機）",
+        "llamaCpp": "llama.cpp（本機）",
+        "lmStudio": "LM Studio（本機）",
+        "litellm": "LiteLLM 閘道",
+        "appleFoundationModels": "Apple 裝置端模型（macOS）"
+      }
     },
     "errors": {
       "fileTooLarge": "Oh My Pi 設定超過 1 MiB 大小限制。",

@@ -1164,9 +1164,9 @@
       "contextWindow": "コンテキストウィンドウ",
       "maxTokens": "最大出力トークン数",
       "compatibility": "互換性",
-      "compatibilityHint": "互換エンドポイントやローカル環境向けにリクエスト動作を調整します。",
+      "compatibilityHint": "OpenAI 互換をうたうエンドポイントが一部のリクエストを拒否する場合にだけ設定します。各項目はそのエンドポイントの癖を一つ表します。たとえば supportsDeveloperRole を false にすると developer ロールを受け付けないこと、maxTokensField を max_tokens にすると古いフィールド名しか受け付けないことを示します。プリセットを選ぶと必要な項目は自動で入ります。空のままならデフォルトで動作します。",
       "addCompatibilityOption": "追加",
-      "noCompatibilityOptions": "互換性オプションはありません",
+      "noCompatibilityOptions": "未設定（デフォルトで動作）",
       "optionKey": "オプション",
       "optionValue": "値",
       "removeCompatibilityOption": "互換性オプションを削除",
@@ -5004,7 +5004,16 @@
     "form": {
       "discoveryType": "モデルの自動検出",
       "discoveryOff": "使用しない",
-      "discoveryHint": "Oh My Pi がエンドポイントからモデルリストを定期的に取得し、コンテキスト長などのメタデータを自動的に適用します。手動で追加したモデルも有効です。有効にするとモデルを設定しなくても構いません。"
+      "discoveryHint": "オンにすると、Oh My Pi がエンドポイントに利用できるモデルを問い合わせるので、モデルを一つずつ入力する必要がなく、新しいモデルも自動で表示されます。オンラインサービスの多くは「OpenAI モデル一覧」を、ローカルで動かすモデルは対応するアプリを選んでください。Anthropic 形式のエンドポイントは通常モデル一覧がないので、「使用しない」のままにします。手動で追加したモデルも有効です。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI モデル一覧（多くのオンラインサービス）",
+        "proxy": "プロキシ（モデルごとに形式を指定）",
+        "ollama": "Ollama（ローカル）",
+        "llamaCpp": "llama.cpp（ローカル）",
+        "lmStudio": "LM Studio（ローカル）",
+        "litellm": "LiteLLM ゲートウェイ",
+        "appleFoundationModels": "Apple オンデバイスモデル（macOS）"
+      }
     },
     "errors": {
       "fileTooLarge": "Oh My Pi の設定が 1 MiB の上限を超えています。",
