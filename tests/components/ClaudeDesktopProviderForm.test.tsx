@@ -240,28 +240,86 @@ describe("ClaudeDesktopProviderForm", () => {
     },
   );
 
-  it.each(["anthropic", "openai_chat", "openai_responses"] as const)(
-    "手动配置 Copilot 地址时禁用旧格式 %s 的手选",
-    (apiFormat) => {
-      renderForm({
-        name: "Custom Copilot",
+  it.each([
+    "anthropic",
+    "openai_chat",
+    "openai_responses",
+    "gemini_native",
+  ] as const)("手动配置 Copilot 地址时禁用旧格式 %s 的手选", (apiFormat) => {
+    renderForm({
+      name: "Custom Copilot",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
+          ANTHROPIC_AUTH_TOKEN: "test-token",
+        },
+      },
+      meta: { claudeDesktopMode: "proxy", apiFormat },
+    });
+
+    expect(
+      screen.getByText("copilot.automaticFormat").closest("button"),
+    ).toBeDisabled();
+    expect(screen.getByText("copilot.automaticFormatHint")).toBeVisible();
+    expect(screen.getByLabelText("API Key")).toBeVisible();
+    expect(
+      screen.queryByTestId("copilot-auth-section"),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "https://api.githubcopilot.com",
+      "https://api.githubcopilot.com",
+      "anthropic",
+    ],
+    ["https://api.example.com", "https://api.githubcopilot.com", "anthropic"],
+    [
+      "https://api.githubcopilot.com",
+      "https://api.example.com",
+      "gemini_native",
+    ],
+    ["https://api.example.com", "https://api.example.com", "gemini_native"],
+  ])(
+    "遗留 Gemini 格式从 %s 编辑为 %s 后保存为 %s",
+    async (initialUrl, finalUrl, expectedFormat) => {
+      const { onSubmit } = renderForm({
+        name: "Legacy Gemini Provider",
         settingsConfig: {
+          api_format: "gemini_native",
           env: {
-            ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
+            ANTHROPIC_BASE_URL: initialUrl,
             ANTHROPIC_AUTH_TOKEN: "test-token",
           },
         },
-        meta: { claudeDesktopMode: "proxy", apiFormat },
+        meta: {
+          claudeDesktopMode: "proxy",
+          apiFormat: "gemini_native",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-model" },
+          },
+        },
       });
 
-      expect(
-        screen.getByText("copilot.automaticFormat").closest("button"),
-      ).toBeDisabled();
-      expect(screen.getByText("copilot.automaticFormatHint")).toBeVisible();
-      expect(screen.getByLabelText("API Key")).toBeVisible();
-      expect(
-        screen.queryByTestId("copilot-auth-section"),
-      ).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
+        target: { value: finalUrl },
+      });
+      if (finalUrl.includes("githubcopilot.com")) {
+        expect(
+          screen.getByText("copilot.automaticFormat").closest("button"),
+        ).toBeDisabled();
+      }
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      const values = onSubmit.mock.calls[0][0];
+      expect(values.meta.apiFormat).toBe(expectedFormat);
+      expect(values.meta.providerType).toBeUndefined();
+      expect(values.meta.authBinding).toBeUndefined();
+      expect(JSON.parse(values.settingsConfig).env).toMatchObject({
+        ANTHROPIC_BASE_URL: finalUrl,
+        ANTHROPIC_AUTH_TOKEN: "test-token",
+      });
     },
   );
 

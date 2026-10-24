@@ -881,6 +881,12 @@ export function ClaudeDesktopProviderForm({
       return acc;
     }, {});
 
+    // Gemini format takes precedence in backend auth detection. Clear it only
+    // when saving Copilot, keeping the local selection if the URL changes back.
+    const savedApiFormat =
+      usesAutomaticCopilotFormat && apiFormat === "gemini_native"
+        ? "anthropic"
+        : apiFormat;
     const meta: ProviderMeta = {
       ...(initialData?.meta ?? {}),
       claudeDesktopMode: effectiveMode,
@@ -888,7 +894,7 @@ export function ClaudeDesktopProviderForm({
         activeProviderType === "xai_oauth"
           ? "openai_responses"
           : effectiveMode === "proxy"
-            ? apiFormat
+            ? savedApiFormat
             : "anthropic",
     };
 
