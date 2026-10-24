@@ -219,8 +219,9 @@ export interface UsageRangeSelection {
  * every dashboard query (see `folded_app_type_sql`).
  * `opencode` and `pi` have no proxy handler; their usage reaches this
  * dashboard through session importers. `openclaw` / `hermes` appear only as
- * managed apps elsewhere. `zcode` is usage-only: it is never a managed app
- * or proxied here, its requests are imported from ZCode's local database.
+ * managed apps elsewhere. `zcode` and `dsh` (DeepSeek Harness) are usage-only:
+ * they are never managed apps or proxied here, their requests are imported
+ * from their local databases / session logs.
  */
 export type AppType =
   | "claude"
@@ -232,7 +233,8 @@ export type AppType =
   | "mcode"
   | "kimi"
   | "agy"
-  | "zcode";
+  | "zcode"
+  | "dsh";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -247,6 +249,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "kimi",
   "agy",
   "zcode",
+  "dsh",
 ];
 
 /**

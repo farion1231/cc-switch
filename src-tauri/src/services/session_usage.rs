@@ -182,6 +182,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "ZCode",
         crate::services::session_usage_zcode::sync_zcode_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "DeepSeek Harness",
+        crate::services::session_usage_dsh::sync_dsh_usage(db),
+    );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
     result

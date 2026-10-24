@@ -319,6 +319,7 @@ export interface VisibleApps {
   agy: boolean;
   omp: boolean;
   zcode: boolean;
+  dsh: boolean;
 }
 
 // WebDAV 同步状态
