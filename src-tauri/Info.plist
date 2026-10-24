@@ -2,14 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- 注册 ccswitch:// 自定义 URL 协议，用于深链接导入 -->
+  <!-- 注册 ccswitch-light:// 与 ccswitch:// 两个自定义 URL 协议：前者是 Light 自己的，
+       后者让原版生态（ccswitch.io 生成的链接）也能唤起本应用 -->
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
       <key>CFBundleURLName</key>
-      <string>CC Switch Deep Link</string>
+      <string>CC Switch Light Deep Link</string>
       <key>CFBundleURLSchemes</key>
       <array>
+        <string>ccswitch-light</string>
         <string>ccswitch</string>
       </array>
     </dict>
@@ -17,6 +19,6 @@
 
   <!-- macOS local-network privacy prompt for LAN API endpoints -->
   <key>NSLocalNetworkUsageDescription</key>
-  <string>CC Switch needs access to your local network to connect to local API endpoints.</string>
+  <string>CC Switch Light needs access to your local network to connect to local API endpoints.</string>
 </dict>
 </plist>

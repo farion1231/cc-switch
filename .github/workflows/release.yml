@@ -244,7 +244,7 @@ jobs:
             }
             Write-Host "MSI REBOOT property: $reboot"
 
-            $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
+            $dest = "CC-Switch-Light-$VERSION-Windows$assetSuffix.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
             $sigPath = "$($msi.FullName).sig"
@@ -269,7 +269,7 @@ jobs:
           }
           $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if ($null -ne $exePath) {
-            $portableDir = 'release-assets/CC-Switch-Portable'
+            $portableDir = 'release-assets/CC-Switch-Light-Portable'
             New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
             Copy-Item $exePath $portableDir
             $portableIniPath = Join-Path $portableDir 'portable.ini'
@@ -286,10 +286,10 @@ jobs:
               )
             }
             $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
-            $portableZip = "release-assets/CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
+            $portableZip = "release-assets/CC-Switch-Light-$VERSION-Windows$assetSuffix-Portable.zip"
             Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
             Remove-Item -Recurse -Force $portableDir
-            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
+            Write-Host "Windows portable zip created: CC-Switch-Light-$VERSION-Windows$assetSuffix-Portable.zip"
           } elseif ($isArm64) {
             throw 'Portable ARM64 exe not found'
           } else {
@@ -315,7 +315,7 @@ jobs:
             echo "❌ Updater signature not found: $APPIMAGE.sig" >&2
             exit 1
           fi
-          NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
+          NEW_APPIMAGE="CC-Switch-Light-${VERSION}-Linux-${ARCH}.AppImage"
           cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
           cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig"
           echo "AppImage copied: $NEW_APPIMAGE"
@@ -329,7 +329,7 @@ jobs:
             echo "❌ Updater signature not found: $DEB.sig" >&2
             exit 1
           fi
-          NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+          NEW_DEB="CC-Switch-Light-${VERSION}-Linux-${ARCH}.deb"
           cp "$DEB" "release-assets/$NEW_DEB"
           cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
           echo "Deb package copied: $NEW_DEB"
@@ -343,7 +343,7 @@ jobs:
             echo "❌ Updater signature not found: $RPM.sig" >&2
             exit 1
           fi
-          NEW_RPM="CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+          NEW_RPM="CC-Switch-Light-${VERSION}-Linux-${ARCH}.rpm"
           cp "$RPM" "release-assets/$NEW_RPM"
           cp "$RPM.sig" "release-assets/$NEW_RPM.sig"
           echo "RPM package copied: $NEW_RPM"
@@ -642,7 +642,7 @@ jobs:
           echo "✅ .app stapled"
 
           # 1) Collect .tar.gz (updater artifact)
-          NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
+          NEW_TAR_GZ="CC-Switch-Light-${VERSION}-macOS.tar.gz"
           cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
           if [ ! -f "$TAR_GZ.sig" ]; then
             echo "❌ Updater signature not found: $TAR_GZ.sig" >&2
@@ -652,7 +652,7 @@ jobs:
           echo "macOS updater artifact copied: $NEW_TAR_GZ"
 
           # 2) Collect .app as zip
-          NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
+          NEW_ZIP="CC-Switch-Light-${VERSION}-macOS.zip"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/$NEW_ZIP"
           echo "macOS zip ready: $NEW_ZIP"
 
@@ -663,7 +663,7 @@ jobs:
           fi
 
           HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
-          NEW_DMG="CC-Switch-${VERSION}-macOS.dmg"
+          NEW_DMG="CC-Switch-Light-${VERSION}-macOS.dmg"
           DMG_STAGE_DIR="$RUNNER_TEMP/dmg-stage"
           rm -rf "$DMG_STAGE_DIR"
           mkdir -p "$DMG_STAGE_DIR"
@@ -965,11 +965,11 @@ jobs:
 
             ### 下载
 
-            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
-            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
-            - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
-            - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
+            - **macOS**: `CC-Switch-Light-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-Light-${{ github.ref_name }}-macOS.zip`（解压即用）
+            - **Windows (x86_64)**: `CC-Switch-Light-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-Light-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Windows (ARM64)**: `CC-Switch-Light-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-Light-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
+            - **Linux (x86_64)**: `CC-Switch-Light-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+            - **Linux (ARM64)**: `CC-Switch-Light-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
 
             > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
 

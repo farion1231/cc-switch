@@ -424,6 +424,13 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// 记住的轻量模式偏好：勾选过托盘"轻量模式"后，关闭主窗口或重启应用
+    /// 都会自动回到轻量模式（销毁主窗口、仅托盘运行），直到用户在托盘取消
+    /// 勾选。纯后端状态（仅托盘可改），前端保存设置时不透传，见
+    /// `commands::settings::merge_settings_for_save`。Light 版默认开启：
+    /// 老配置里没有这个字段时也按开启处理，用户可在托盘取消。
+    #[serde(default = "default_lightweight_mode")]
+    pub lightweight_mode: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -634,6 +641,10 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+fn default_lightweight_mode() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -644,6 +655,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            lightweight_mode: true,
             enable_local_proxy: false,
             enable_stack_mode: false,
             proxy_confirmed: None,
@@ -1055,7 +1067,39 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     Ok(())
 }
 
-fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
+/// 更新"记住轻量模式"偏好（托盘勾选/取消勾选时调用）。
+/// 仅持久化偏好，不改变当前运行时状态——运行时切换见 `lightweight` 模块。
+pub fn set_lightweight_mode_preference(enabled: bool) -> Result<(), AppError> {
+    mutate_settings(|settings| settings.lightweight_mode = enabled)
+}
+
+/// 前端保存设置的原子入口：在同一个写锁内完成「读取现有设置 → 合并前端
+/// 载荷 → 持久化」，返回（合并结果，保存前的现有值）供命令层做变更检测
+/// 与回滚。
+///
+/// 必须整体持锁：托盘勾选"记住轻量模式"等后端侧写入可能与前端保存并发；
+/// 若先锁外 `get_settings`、后 `update_settings`，两次操作之间插入的后端
+/// 写入会被锁外读到的旧快照覆盖，backend-owned 字段被静默回滚。
+pub fn save_settings_atomic<M>(
+    incoming: AppSettings,
+    merge: M,
+) -> Result<(AppSettings, AppSettings), AppError>
+where
+    M: FnOnce(AppSettings, &AppSettings) -> AppSettings,
+{
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let existing = guard.clone();
+    let mut merged = merge(incoming, &existing);
+    merged.normalize_paths();
+    save_settings_file(&merged)?;
+    *guard = merged.clone();
+    Ok((merged, existing))
+}
+
+pub(crate) fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
     F: FnOnce(&mut AppSettings),
 {
@@ -1659,6 +1703,15 @@ mod tests {
         assert!(!missing.native_tray_menu);
         let menu: AppSettings = serde_json::from_str(r#"{"nativeTrayMenu":true}"#).unwrap();
         assert!(menu.native_tray_menu);
+    }
+
+    #[test]
+    fn lightweight_mode_defaults_on_and_keeps_a_saved_off_choice() {
+        assert!(AppSettings::default().lightweight_mode);
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(missing.lightweight_mode);
+        let off: AppSettings = serde_json::from_str(r#"{"lightweightMode":false}"#).unwrap();
+        assert!(!off.lightweight_mode);
     }
 
     #[test]
