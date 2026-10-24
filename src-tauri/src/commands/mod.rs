@@ -3,6 +3,7 @@
 mod agy_account;
 mod auth;
 mod balance;
+mod cline;
 mod codex_oauth;
 mod coding_plan;
 mod config;
@@ -44,6 +45,7 @@ mod workspace;
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
+pub use cline::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;

@@ -49,6 +49,7 @@ export const TOOL_NAMES = [
   "pi",
   "mcode",
   "kimi",
+  "cline",
   "agy",
   "omp",
 ] as const;
@@ -142,6 +143,11 @@ const CLAUDE_NPM_INSTALL_COMMAND =
 const MCODE_NPM_INSTALL_COMMAND =
   'npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional "--allow-scripts=@minimax-ai/code,better-sqlite3"';
 
+// 与后端 npm_install_command_for("cline") 保持一致：postinstall 会在升级时挪开正在运行的
+// cline-hub 的发现记录。
+const CLINE_NPM_INSTALL_COMMAND =
+  "npm i -g cline@latest --ignore-scripts=false --allow-scripts=cline";
+
 const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${posixScriptInstallCommand("https://claude.ai/install.sh")} || ${CLAUDE_NPM_INSTALL_COMMAND}
 # Codex
@@ -162,6 +168,8 @@ npm i -g @earendil-works/pi-coding-agent@latest
 ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
 # Kimi Code
 ${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
+# Cline CLI
+${CLINE_NPM_INSTALL_COMMAND}
 # Antigravity CLI
 ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Oh My Pi
@@ -187,6 +195,8 @@ npm i -g @earendil-works/pi-coding-agent@latest
 ${MCODE_WINDOWS_INSTALL_COMMAND}
 # Kimi Code
 ${KIMI_WINDOWS_INSTALL_COMMAND}
+# Cline CLI
+${CLINE_NPM_INSTALL_COMMAND}
 # Antigravity CLI
 ${AGY_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
@@ -207,6 +217,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   pi: "Pi",
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
+  cline: "Cline CLI",
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
 };
@@ -228,6 +239,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   pi: "pi",
   mcode: "mcode",
   kimi: "kimi",
+  cline: "cline",
   agy: "agy",
   omp: "omp",
 };

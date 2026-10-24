@@ -172,6 +172,7 @@ export function ProviderList({
     (provider: Provider): boolean => {
       switch (appId) {
         case "kimi":
+        case "cline":
         case "mcode":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
@@ -379,7 +380,7 @@ export function ProviderList({
       isHermesManaged: (provider) =>
         isHermesReadOnlyProvider(provider.settingsConfig),
       piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
-      kimiCurrentId: currentProviderId,
+      nativeCurrentId: currentProviderId,
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -456,7 +457,10 @@ export function ProviderList({
           appId={appId}
           onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
           onImport={
-            isPiFamilyApp(appId) || appId === "mcode" || appId === "kimi"
+            isPiFamilyApp(appId) ||
+            appId === "mcode" ||
+            appId === "kimi" ||
+            appId === "cline"
               ? undefined
               : () => importMutation.mutate()
           }

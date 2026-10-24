@@ -679,7 +679,7 @@ export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
   ];
 }
 
-// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi）─────
+// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi / Cline）
 
 export interface AdditiveInput {
   app: AppId;
@@ -698,8 +698,8 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
-  /** Kimi：原生 default_model 别名所属的供应商。 */
-  kimiCurrentId?: string | null;
+  /** Kimi / Cline：原生配置当前选中的供应商（Kimi 的 default_model、Cline 的 lastUsedProvider）。 */
+  nativeCurrentId?: string | null;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
@@ -719,13 +719,16 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
-    if (app === "kimi") {
+    if (app === "kimi" || app === "cline") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
       // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
-      // 官方卡不能直接删，删号在授权中心（连登录一起删）
+      // 官方卡不能直接删，删号在授权中心（连登录一起删）。Cline 的账号卡由 Cline 管登录，
+      // 表单只读凭据，不受这条限制。
       const deleteProtectedReason =
-        official && live ? t("kimi.oauth.managedHint") : undefined;
+        app === "kimi" && official && live
+          ? t("kimi.oauth.managedHint")
+          : undefined;
       if (official) {
         chips.push({
           key: "official",
@@ -733,9 +736,10 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           tone: "outline",
         });
       }
-      const current = live && p.id === input.kimiCurrentId;
-      // 「添加」只写进 config.toml（模型出现在 Kimi 的 /model 列表），「移除」从 config.toml
-      // 拿掉、卡片留着；改 default_model 的「设为默认」和 OpenCode 一样收在「更多」菜单里
+      const current = live && p.id === input.nativeCurrentId;
+      // 「添加」只写进客户端配置（Kimi 的 config.toml、Cline 的 models.json），「移除」从配置
+      // 拿掉、卡片留着；改默认（default_model / lastUsedProvider）的「设为默认」和 OpenCode 一样
+      // 收在「更多」菜单里
       const buttons: CardButton[] = [];
       const menuItems: CardMenuItem[] = [];
       if (!live) {
@@ -745,7 +749,16 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           onClick: () => actions.add(p),
         });
       } else {
-        if (!current) {
+        if (!current && app === "cline") {
+          // Cline runs with exactly one provider (lastUsedProvider), so picking
+          // it is a primary action, like Hermes' "Enable" rather than Kimi's
+          // default model.
+          buttons.push({
+            key: "setDefault",
+            label: t("providerCard.action.setDefault"),
+            onClick: () => actions.setDefault(p),
+          });
+        } else if (!current) {
           menuItems.push({
             key: "setDefault",
             label: t("providerCard.action.setDefault"),

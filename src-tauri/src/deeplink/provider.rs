@@ -100,7 +100,21 @@ pub fn import_provider_from_deeplink(
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    provider.id = if matches!(app_type, AppType::OpenCode) {
+    provider.id = if matches!(app_type, AppType::Cline) {
+        // Custom Cline providers live next to built-in ids; the prefix keeps them apart.
+        let slug = name
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+            .to_ascii_lowercase();
+        let slug = if slug.is_empty() { "provider" } else { &slug };
+        format!(
+            "{}{slug}-{}",
+            crate::cline_config::CUSTOM_ID_PREFIX,
+            chrono::Utc::now().timestamp_millis()
+        )
+    } else if matches!(app_type, AppType::OpenCode) {
         // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
         let slug = name
             .split(|c: char| !c.is_ascii_alphanumeric())
@@ -220,6 +234,10 @@ impl ApiFormat {
             (AppType::Hermes, Anthropic) => Some("anthropic_messages"),
             (AppType::Hermes, OpenAiChat) => Some("chat_completions"),
             (AppType::Hermes, OpenAiResponses) => Some("codex_responses"),
+            (AppType::Cline, Anthropic) => Some("anthropic"),
+            (AppType::Cline, OpenAiChat) => Some("openai-chat"),
+            (AppType::Cline, OpenAiResponses) => Some("openai-responses"),
+            (AppType::Cline, GeminiNative) => Some("gemini"),
             _ => None,
         }
     }
@@ -340,6 +358,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
+        AppType::Cline => build_cline_settings(request, api_format)?,
         AppType::Kimi => {
             return Err(AppError::InvalidInput(
                 "Add Kimi Code providers from the Kimi Code page".into(),
@@ -934,6 +953,42 @@ fn build_pi_settings(
         json!([{ "id": model, "name": model }]),
     );
     Ok(json!(config))
+}
+
+/// Build a Cline custom provider (`models.json` entry plus its `providers.json` key).
+fn build_cline_settings(
+    request: &DeepLinkImportRequest,
+    api_format: Option<ApiFormat>,
+) -> Result<serde_json::Value, AppError> {
+    let model = request
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| {
+            AppError::InvalidInput(
+                "Cline providers need a model; add 'model' to the link".to_string(),
+            )
+        })?;
+    let protocol = native_protocol(&AppType::Cline, api_format);
+    let mut provider = json!({
+        "name": request.name.as_deref().unwrap_or(model),
+        "baseUrl": get_primary_endpoint(request),
+        "defaultModelId": model,
+        "protocol": protocol,
+    });
+    if let Some(client) = crate::cline_config::protocol_client(protocol) {
+        provider["client"] = json!(client);
+    }
+    let mut settings = json!({ "model": model });
+    if let Some(api_key) = request.api_key.as_deref().filter(|key| !key.is_empty()) {
+        settings["apiKey"] = json!(api_key);
+    }
+    Ok(json!({
+        "settings": settings,
+        "provider": provider,
+        "models": { model: { "id": model, "name": model } },
+    }))
 }
 
 // =============================================================================

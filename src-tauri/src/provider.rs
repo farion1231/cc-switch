@@ -217,6 +217,7 @@ impl Provider {
                 str_at(settings.pointer("/provider/base_url")),
                 str_at(settings.pointer("/provider/api_key")),
             ),
+            AppType::Cline => crate::cline_config::endpoint_and_key(settings),
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
