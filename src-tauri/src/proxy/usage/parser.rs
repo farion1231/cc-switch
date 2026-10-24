@@ -335,12 +335,15 @@ impl TokenUsage {
     pub fn from_codex_stream_events_auto(events: &[Value]) -> Option<Self> {
         log::debug!("[Codex] 智能解析流式事件，共 {} 个事件", events.len());
 
-        // 先尝试 Codex Responses API 格式 (response.completed 事件)
+        // 先尝试 Codex Responses API 终态事件 (response.completed / response.incomplete / response.failed)
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
-                if event_type == "response.completed" {
+                if matches!(
+                    event_type,
+                    "response.completed" | "response.incomplete" | "response.failed"
+                ) {
                     if let Some(response) = event.get("response") {
-                        log::debug!("[Codex] 找到 response.completed 事件");
+                        log::debug!("[Codex] 找到 {event_type} 事件");
                         return Self::from_codex_response_auto(response);
                     }
                 }
@@ -1223,6 +1226,49 @@ mod tests {
         assert_eq!(usage.output_tokens, 500);
         assert_eq!(usage.cache_read_tokens, 200);
         assert_eq!(usage.model, Some("o3".to_string()));
+    }
+
+    #[test]
+    fn test_codex_stream_events_auto_incomplete_and_failed_record_usage() {
+        for terminal_type in ["response.incomplete", "response.failed"] {
+            let events = vec![
+                json!({
+                    "type": "response.created",
+                    "response": {
+                        "id": "resp_think",
+                        "model": "gemini-4-argon",
+                        "usage": {
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "input_tokens_details": { "cached_tokens": 0 }
+                        }
+                    }
+                }),
+                json!({
+                    "type": terminal_type,
+                    "response": {
+                        "id": "resp_think",
+                        "model": "gemini-4-argon",
+                        "status": if terminal_type == "response.incomplete" { "incomplete" } else { "failed" },
+                        "usage": {
+                            "input_tokens": 252770,
+                            "output_tokens": 65536,
+                            "input_tokens_details": {
+                                "cached_tokens": 250708
+                            }
+                        }
+                    }
+                }),
+            ];
+
+            let usage = TokenUsage::from_codex_stream_events_auto(&events)
+                .unwrap_or_else(|| panic!("{terminal_type} usage should be parsed"));
+            assert_eq!(usage.input_tokens, 252770);
+            assert_eq!(usage.output_tokens, 65536);
+            assert_eq!(usage.cache_read_tokens, 250708);
+            assert_eq!(usage.model, Some("gemini-4-argon".to_string()));
+            assert!(usage.has_billable_tokens());
+        }
     }
 
     #[test]
