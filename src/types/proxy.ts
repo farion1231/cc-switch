@@ -134,7 +134,7 @@ export interface CodexStaleClients {
 
 /** Codex 聚合设置里「子代理模型」下拉的一项：发布的模型和它在合并目录里的推理强度档位。 */
 export interface ProxyStackSubagentModel {
-  /** 发布给客户端的模型 id（`ccs-<key>/<model>`），也是写进 `[agents]` 的值。 */
+  /** 发布给客户端的模型 id（第三方为 `ccs-<key>/<model>`，官方为原生 ID），也是写进 `[agents]` 的值。 */
   id: string;
   providerId: string;
   /** `<模型显示名>（<供应商名>）`，和 Codex 模型选择器里一样。 */
