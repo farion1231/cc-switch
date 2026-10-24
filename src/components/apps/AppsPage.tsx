@@ -392,7 +392,7 @@ export function AppsPage() {
             data-app-density={density}
             className={cn(
               density === "cards"
-                ? "grid grid-cols-1 items-start gap-4 xl:grid-cols-2"
+                ? "grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] items-start gap-4"
                 : "divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface",
             )}
           >
