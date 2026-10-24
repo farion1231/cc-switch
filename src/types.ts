@@ -320,6 +320,7 @@ export interface VisibleApps {
   omp: boolean;
   zcode: boolean;
   dsh: boolean;
+  workbuddy: boolean;
 }
 
 // WebDAV 同步状态

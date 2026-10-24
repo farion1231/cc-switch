@@ -65,6 +65,9 @@ pub struct VisibleApps {
     // DeepSeek Harness 同理：仅用量统计，非受管应用
     #[serde(default = "default_true")]
     pub dsh: bool,
+    // WorkBuddy 同理：仅用量统计，非受管应用
+    #[serde(default = "default_true")]
+    pub workbuddy: bool,
 }
 
 impl Default for VisibleApps {
@@ -85,6 +88,7 @@ impl Default for VisibleApps {
             omp: true,
             zcode: true,
             dsh: true,
+            workbuddy: true,
         }
     }
 }

@@ -49,6 +49,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   omp: true,
   zcode: true,
   dsh: true,
+  workbuddy: true,
 };
 
 /** App IDs shown in Skills panels. */

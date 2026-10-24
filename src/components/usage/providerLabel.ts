@@ -18,6 +18,7 @@ const SESSION_PROVIDER_APPS: Record<string, GlyphApp> = {
   "Antigravity (Session)": "agy",
   "ZCode (Session)": "zcode",
   "DeepSeek Harness (Session)": "dsh",
+  "WorkBuddy (Session)": "workbuddy",
 };
 
 export interface UsageProviderLabel {

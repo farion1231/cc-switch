@@ -219,9 +219,9 @@ export interface UsageRangeSelection {
  * every dashboard query (see `folded_app_type_sql`).
  * `opencode` and `pi` have no proxy handler; their usage reaches this
  * dashboard through session importers. `openclaw` / `hermes` appear only as
- * managed apps elsewhere. `zcode` and `dsh` (DeepSeek Harness) are usage-only:
- * they are never managed apps or proxied here, their requests are imported
- * from their local databases / session logs.
+ * managed apps elsewhere. `zcode`, `dsh` (DeepSeek Harness) and `workbuddy`
+ * are usage-only: they are never managed apps or proxied here, their requests
+ * are imported from their local databases / session logs.
  */
 export type AppType =
   | "claude"
@@ -234,7 +234,8 @@ export type AppType =
   | "kimi"
   | "agy"
   | "zcode"
-  | "dsh";
+  | "dsh"
+  | "workbuddy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -250,6 +251,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "agy",
   "zcode",
   "dsh",
+  "workbuddy",
 ];
 
 /**
@@ -268,14 +270,19 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "gemini",
   "grokbuild",
   "zcode",
+  "workbuddy",
 ]);
 
 /**
  * Cache-inclusive apps that (unlike the rest) DO report cache creation
- * separately. ZCode normalizes every provider into its own usage schema,
- * so `cacheCreationTokens` is real data there, not an unknown-0.
+ * separately. ZCode and WorkBuddy normalize every provider into their own
+ * usage schemas, so `cacheCreationTokens` is real data there, not an
+ * unknown-0.
  */
-const CACHE_WRITE_REPORTED_APP_TYPES: ReadonlySet<string> = new Set(["zcode"]);
+const CACHE_WRITE_REPORTED_APP_TYPES: ReadonlySet<string> = new Set([
+  "zcode",
+  "workbuddy",
+]);
 
 /** Cache-inclusive apps whose protocol cannot report cache creation. */
 export const CACHE_WRITE_UNREPORTED_APP_TYPES: ReadonlySet<string> = new Set(
