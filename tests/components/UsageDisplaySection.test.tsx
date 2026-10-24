@@ -38,6 +38,7 @@ describe("UsageDisplaySection", () => {
       "JPY",
       "TWD",
       "TRY",
+      "KRW",
     ]);
     await user.keyboard("{Escape}");
 
@@ -45,6 +46,36 @@ describe("UsageDisplaySection", () => {
     expect(onChange).toHaveBeenCalledWith({ currency: "JPY" });
     // 预置汇率：用户没填过时从这里起步
     expect(screen.getByRole("textbox")).toHaveValue("158");
+  });
+
+  it("selects won and saves its rate without losing other currency rates", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <UsageDisplaySection
+        value={{ currency: "USD", exchangeRates: { CNY: 7 } }}
+        onChange={onChange}
+      />,
+    );
+    await pickCurrency(user, "KRW");
+    expect(onChange).toHaveBeenCalledWith({
+      currency: "KRW",
+      exchangeRates: { CNY: 7 },
+    });
+    rerender(
+      <UsageDisplaySection
+        value={{ currency: "KRW", exchangeRates: { CNY: 7 } }}
+        onChange={onChange}
+      />,
+    );
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveValue("1325");
+    await user.clear(input);
+    await user.type(input, "1400{Enter}");
+    expect(onChange).toHaveBeenLastCalledWith({
+      currency: "KRW",
+      exchangeRates: { CNY: 7, KRW: 1400 },
+    });
   });
 
   it("rejects a bad rate and keeps the rates of other currencies", async () => {

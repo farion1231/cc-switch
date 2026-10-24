@@ -2179,7 +2179,11 @@ fn is_chinese_locale() -> bool {
     std::env::var("LANG")
         .or_else(|_| std::env::var("LC_ALL"))
         .or_else(|_| std::env::var("LC_MESSAGES"))
-        .map(|lang| lang.starts_with("zh"))
+        .map(|lang| {
+            lang.split(['-', '_', '.', '@'])
+                .next()
+                .is_some_and(|language| language.eq_ignore_ascii_case("zh"))
+        })
         .unwrap_or(false)
 }
 
