@@ -511,6 +511,29 @@ fn replay_caches() -> &'static Mutex<CodexReplayCaches> {
     CODEX_REPLAY_CACHES.get_or_init(|| Mutex::new(CodexReplayCaches::default()))
 }
 
+#[cfg(test)]
+thread_local! {
+    static MOCK_NOW_NANOS: std::cell::RefCell<Option<i64>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_mock_now_nanos(nanos: Option<i64>) {
+    MOCK_NOW_NANOS.with(|cell| *cell.borrow_mut() = nanos);
+}
+
+fn current_time_nanos() -> i64 {
+    #[cfg(test)]
+    {
+        if let Some(mock) = MOCK_NOW_NANOS.with(|cell| *cell.borrow()) {
+            return mock;
+        }
+    }
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
 pub(crate) fn clear_codex_replay_caches() {
     // 清空即丢弃持锁 panic 时可能写了一半的内容，所以顺带解除中毒。
     let mut caches = replay_caches()
@@ -518,6 +541,8 @@ pub(crate) fn clear_codex_replay_caches() {
         .unwrap_or_else(PoisonError::into_inner);
     *caches = CodexReplayCaches::default();
     replay_caches().clear_poison();
+    #[cfg(test)]
+    set_mock_now_nanos(None);
 }
 
 fn is_rollout_filename(file_name: &str) -> bool {
@@ -1807,11 +1832,16 @@ struct ParentSegment {
     max_timestamp: Option<DateTime<Utc>>,
 }
 
-fn resolve_parent_signatures(
+struct ParentMergedTimeline {
+    timeline: ParentTokenTimeline,
+    latest_path: PathBuf,
+}
+
+fn resolve_parent_timeline(
     parent_id: &str,
     cutoff: DateTime<Utc>,
     rollout_index: &RolloutIndex,
-) -> Result<Vec<TokenUsageSignature>, ParentSignatureError> {
+) -> Result<ParentMergedTimeline, ParentSignatureError> {
     let Some(candidates) = rollout_index.get(parent_id) else {
         return Err(ParentSignatureError::transient(format!(
             "找不到父 rollout: {parent_id}"
@@ -1872,9 +1902,37 @@ fn resolve_parent_signatures(
             "找不到父 rollout: {parent_id}"
         )));
     };
+    Ok(ParentMergedTimeline {
+        timeline: merged,
+        latest_path: latest_path.to_path_buf(),
+    })
+}
+
+fn resolve_parent_signatures(
+    parent_id: &str,
+    cutoff: DateTime<Utc>,
+    rollout_index: &RolloutIndex,
+) -> Result<Vec<TokenUsageSignature>, ParentSignatureError> {
+    let merged = resolve_parent_timeline(parent_id, cutoff, rollout_index)?;
     merged
-        .signatures_before(latest_path, cutoff)
+        .timeline
+        .signatures_before(&merged.latest_path, cutoff)
         .map_err(ParentSignatureError::content)
+}
+
+fn resolve_parent_fallback_prefix(
+    parent_id: &str,
+    cutoff: DateTime<Utc>,
+    rollout_index: &RolloutIndex,
+    child_events: &[ParsedTokenEvent],
+) -> usize {
+    match resolve_parent_timeline(parent_id, cutoff, rollout_index) {
+        Ok(merged) => {
+            let signatures = merged.timeline.signatures_at(cutoff);
+            matching_replay_prefix(child_events, &signatures)
+        }
+        Err(_) => 0,
+    }
 }
 
 /// Metadata-only dependency snapshot; opening a file checks accessibility and
@@ -1979,6 +2037,20 @@ fn update_codex_sync_state(
     Ok(())
 }
 
+/// 超过该时间未更新且父时间线无法对齐的孤儿会话，降级为独立计入以避免永久滞留 deferred 队列。
+const CODEX_ORPHAN_FALLBACK_NANOS: i64 = 7 * 24 * 3600 * 1_000_000_000;
+
+fn is_orphan_fallback_eligible(file_path: &Path, file_modified: i64) -> bool {
+    if file_path
+        .components()
+        .any(|c| c.as_os_str() == "archived_sessions")
+    {
+        return true;
+    }
+    let now_nanos = current_time_nanos();
+    now_nanos.saturating_sub(file_modified) >= CODEX_ORPHAN_FALLBACK_NANOS
+}
+
 /// 同步单个 Codex JSONL 文件。
 fn sync_single_codex_file(
     db: &Database,
@@ -2017,7 +2089,10 @@ fn sync_single_codex_file(
     if let Some(pending) = pending {
         if pending.modified == file_modified && pending.size == file_size {
             let unchanged = match &pending.reason {
-                PendingReason::MissingParent(parent) => !rollout_index.contains_key(parent),
+                PendingReason::MissingParent(parent) => {
+                    !rollout_index.contains_key(parent)
+                        && !is_orphan_fallback_eligible(file_path, file_modified)
+                }
                 PendingReason::Stable(_) => true,
                 PendingReason::Retryable {
                     parent_id,
@@ -2025,7 +2100,8 @@ fn sync_single_codex_file(
                     parent_files: Some(parent_files),
                     ..
                 } => {
-                    child_file.as_ref() == Some(previous_child)
+                    !is_orphan_fallback_eligible(file_path, file_modified)
+                        && child_file.as_ref() == Some(previous_child)
                         && parent_dependency_stamp(parent_id, rollout_index).as_ref()
                             == Some(parent_files)
                 }
@@ -2036,6 +2112,10 @@ fn sync_single_codex_file(
                     deferred: true,
                     ..CodexFileSyncResult::default()
                 });
+            } else if is_orphan_fallback_eligible(file_path, file_modified) {
+                if let Ok(mut caches) = replay_caches().lock() {
+                    caches.pending.remove(file_path);
+                }
             }
         }
     }
@@ -2115,10 +2195,23 @@ fn sync_single_codex_file(
                 Some(Some(prefix)) => prefix,
                 Some(None) => {
                     let parent_files = parent_dependency_stamp(parent_id, rollout_index);
-                    let parent_signatures =
-                        match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
-                            Ok(signatures) => signatures,
-                            Err(error) => {
+                    let prefix = match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
+                        Ok(signatures) => matching_replay_prefix(&parsed.token_events, &signatures),
+                        Err(error) => {
+                            if is_orphan_fallback_eligible(file_path, file_modified) {
+                                let fallback_prefix = resolve_parent_fallback_prefix(
+                                    parent_id,
+                                    cutoff,
+                                    rollout_index,
+                                    &parsed.token_events,
+                                );
+                                log::warn!(
+                                    "[CODEX-SYNC] 孤儿会话 {} 超过 7 天未更新或已归档且父时间线无法完全对齐（{}），降级计算重放前缀 prefix={fallback_prefix}",
+                                    file_path.display(),
+                                    error.reason
+                                );
+                                fallback_prefix
+                            } else {
                                 let pending_reason = if rollout_index.contains_key(parent_id) {
                                     PendingReason::Retryable {
                                         reason: error.reason,
@@ -2140,8 +2233,8 @@ fn sync_single_codex_file(
                                     pending_reason,
                                 ));
                             }
-                        };
-                    let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
+                        }
+                    };
                     if let Ok(mut caches) = replay_caches().lock() {
                         caches.replay_prefixes.insert(
                             file_path.to_path_buf(),
@@ -2154,12 +2247,26 @@ fn sync_single_codex_file(
                     }
                     prefix
                 }
-                None => {
-                    let parent_signatures =
-                        resolve_parent_signatures(parent_id, cutoff, rollout_index)
-                            .map_err(|error| AppError::Config(error.reason))?;
-                    matching_replay_prefix(&parsed.token_events, &parent_signatures)
-                }
+                None => match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
+                    Ok(parent_signatures) => {
+                        matching_replay_prefix(&parsed.token_events, &parent_signatures)
+                    }
+                    Err(error) if is_orphan_fallback_eligible(file_path, file_modified) => {
+                        let fallback_prefix = resolve_parent_fallback_prefix(
+                            parent_id,
+                            cutoff,
+                            rollout_index,
+                            &parsed.token_events,
+                        );
+                        log::warn!(
+                            "[CODEX-SYNC] 孤儿会话 {} 超过 7 天未更新或已归档且父时间线无法完全对齐（{}），降级计算重放前缀 prefix={fallback_prefix}",
+                            file_path.display(),
+                            error.reason
+                        );
+                        fallback_prefix
+                    }
+                    Err(error) => return Err(AppError::Config(error.reason)),
+                },
             }
         }
     };
@@ -5009,6 +5116,280 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(usage, (180, 100, 25), "计数器重置时应以新页数值作为增量");
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_orphan_rollout_in_archived_sessions_falls_back_to_standalone_import(
+    ) -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let archived = temp.path().join("archived_sessions");
+        fs::create_dir_all(&archived).unwrap();
+        let orphan_child = archived.join(format!("rollout-2026-06-01T00-00-00-{CHILD_A_ID}.jsonl"));
+
+        write_jsonl(
+            &orphan_child,
+            &[
+                session_meta_at(CHILD_A_ID, None, Some(PARENT_ID), "2026-06-01T00:00:00Z"),
+                token_count_at(1_000, 500, 100, "2026-06-01T00:00:01Z"),
+            ],
+        );
+
+        let result = sync_test_file(&db, &orphan_child, &[&orphan_child])?;
+        assert_eq!((result.imported, result.deferred), (1, false));
+
+        {
+            let conn = lock_conn!(db.conn);
+            let usage: (i64, i64, i64) = conn.query_row(
+                "SELECT input_tokens, cache_read_tokens, output_tokens
+                 FROM proxy_request_logs WHERE request_id = ?1",
+                [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:1")],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(usage, (1_000, 500, 100));
+        }
+
+        let second = sync_test_file(&db, &orphan_child, &[&orphan_child])?;
+        assert_eq!((second.imported, second.deferred), (0, false));
+
+        Ok(())
+    }
+
+    /// 当父会话 rollout 存在但早于 child fork 时刻停止写入时，普通同步会报
+    /// 最新事件早于 fork 时刻并 deferred。若该 child 已超过 7 天（或在 archived_sessions/），
+    /// 降级逻辑必须从父会话已有事件中提取 signatures_at(cutoff) 剔除重放，
+    /// 避免将父会话历史用量在子会话中重复二次计费。
+    #[test]
+    #[serial_test::serial]
+    fn test_orphan_fallback_with_partial_parent_timeline_strips_replay_and_avoids_double_billing(
+    ) -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let archived = temp.path().join("archived_sessions");
+        fs::create_dir_all(&archived).unwrap();
+
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = archived.join(format!("rollout-2026-07-10T17-00-00-{CHILD_A_ID}.jsonl"));
+
+        // 父会话最后事件在 03:00:02Z，合计 input = 2000
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 500, 100, "2026-07-10T03:00:01Z"),
+                token_count_at(2_000, 1_000, 200, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        // 14 小时后分叉出 child，位于 archived_sessions，复制了父会话的两个 token_count，
+        // 随后自身产生 300 新增 input (2000 -> 2300)
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    Some(PARENT_ID),
+                    "2026-07-10T17:00:00Z",
+                ),
+                turn_context(),
+                token_count_at(1_000, 500, 100, "2026-07-10T17:00:01Z"),
+                token_count_at(2_000, 1_000, 200, "2026-07-10T17:00:02Z"),
+                token_count_at(2_300, 1_150, 250, "2026-07-10T17:00:03Z"),
+            ],
+        );
+
+        // 1. 父会话正常导入：imported=2, total input=2000
+        let parent_result = sync_test_file(&db, &parent, &[&parent, &child])?;
+        assert_eq!((parent_result.imported, parent_result.deferred), (2, false));
+
+        // 2. 子会话降级导入：识别出父时间线虽然早于 fork 时刻结束，但其已知重放前缀
+        // 包含前 2 条记录，因此 skipped=2，仅 imported=1 (新增的 300 input)
+        let child_result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!(
+            (
+                child_result.imported,
+                child_result.skipped,
+                child_result.deferred
+            ),
+            (1, 2, false)
+        );
+
+        // 3. 断言全库 proxy_request_logs 的总 input_tokens 正确为 2300，绝不重复计入 4300
+        let conn = lock_conn!(db.conn);
+        let total_input: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(input_tokens), 0) FROM proxy_request_logs",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            total_input, 2_300,
+            "全库 input_tokens 必须为 2300，不能产生 4300 重复计费"
+        );
+
+        let child_usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:3")],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(child_usage, (300, 150, 50));
+        drop(conn);
+
+        // 4. 二次同步 child 保证游标生效，不重复导入
+        let second = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!((second.imported, second.deferred), (0, false));
+
+        Ok(())
+    }
+
+    /// 未归档的孤儿会话在未满 7 天时因找不到父会话被放入 MissingParent 缓存并返回 deferred。
+    /// 当应用持续运行、跨过 7 天到期阈值时，前置缓存检查必须能够识别到期并使缓存失效，
+    /// 继续往下流转至降级导入逻辑，而不是永久被缓存拦截。
+    #[test]
+    #[serial_test::serial]
+    fn test_missing_parent_pending_cache_expires_after_timeout_and_triggers_fallback(
+    ) -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+
+        let child = sessions.join(format!("rollout-2026-06-01T00-00-00-{CHILD_A_ID}.jsonl"));
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, None, Some(PARENT_ID), "2026-06-01T00:00:00Z"),
+                token_count_at(1_000, 500, 100, "2026-06-01T00:00:01Z"),
+            ],
+        );
+
+        let metadata = fs::metadata(&child).unwrap();
+        let file_modified = metadata_modified_nanos(&metadata);
+
+        // 模拟第 1 天（未到期：file_modified + 1 day < 7 days）
+        set_mock_now_nanos(Some(file_modified + 1 * 24 * 3600 * 1_000_000_000));
+        let res1 = sync_test_file(&db, &child, &[&child])?;
+        assert!(res1.deferred, "未满 7 天时应当 deferred");
+        assert_eq!(codex_parse_count(&child), 1);
+
+        // 模拟第 2 天（未到期，文件未变）：命中 pending 缓存快速返回 deferred，不重复解析文件
+        set_mock_now_nanos(Some(file_modified + 2 * 24 * 3600 * 1_000_000_000));
+        let res2 = sync_test_file(&db, &child, &[&child])?;
+        assert!(res2.deferred, "仍未满 7 天时应当快速返回 deferred");
+        assert_eq!(
+            codex_parse_count(&child),
+            1,
+            "未到期时快速返回，不应重复解析"
+        );
+
+        // 模拟第 8 天（已超过 7 天阈值）：同一个进程内、文件未修改，pending 缓存必须失效并降级导入
+        set_mock_now_nanos(Some(file_modified + 8 * 24 * 3600 * 1_000_000_000));
+        let res3 = sync_test_file(&db, &child, &[&child])?;
+        assert_eq!(
+            (res3.imported, res3.deferred),
+            (1, false),
+            "超过 7 天后 pending 缓存失效，成功触发降级导入"
+        );
+        assert_eq!(codex_parse_count(&child), 2);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let usage: (i64, i64, i64) = conn.query_row(
+                "SELECT input_tokens, cache_read_tokens, output_tokens
+                 FROM proxy_request_logs WHERE request_id = ?1",
+                [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:1")],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(usage, (1_000, 500, 100));
+        }
+
+        // 模拟第 9 天：已打上终态游标，不重复导入
+        set_mock_now_nanos(Some(file_modified + 9 * 24 * 3600 * 1_000_000_000));
+        let res4 = sync_test_file(&db, &child, &[&child])?;
+        assert_eq!((res4.imported, res4.deferred), (0, false));
+        assert_eq!(codex_parse_count(&child), 2);
+
+        clear_codex_replay_caches();
+        Ok(())
+    }
+
+    /// 父会话存在但早于 fork 结束，子会话最初未满 7 天被缓存为 Retryable。
+    /// 跨过 7 天阈值后，Retryable 缓存同样失效，触发降级并扣除父重放前缀。
+    #[test]
+    #[serial_test::serial]
+    fn test_retryable_pending_cache_expires_after_timeout_and_triggers_fallback(
+    ) -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+
+        let parent = sessions.join(format!("rollout-2026-07-10T03-00-00-{PARENT_ID}.jsonl"));
+        let child = sessions.join(format!("rollout-2026-07-10T17-00-00-{CHILD_A_ID}.jsonl"));
+
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 500, 100, "2026-07-10T03:00:01Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    Some(PARENT_ID),
+                    "2026-07-10T17:00:00Z",
+                ),
+                turn_context(),
+                token_count_at(1_000, 500, 100, "2026-07-10T17:00:01Z"),
+                token_count_at(1_500, 750, 150, "2026-07-10T17:00:02Z"),
+            ],
+        );
+
+        let metadata = fs::metadata(&child).unwrap();
+        let file_modified = metadata_modified_nanos(&metadata);
+
+        // 先导入父会话
+        sync_test_file(&db, &parent, &[&parent, &child])?;
+
+        // 第 1 天：由于父未写到 fork 时刻，child 返回 deferred（Retryable）
+        set_mock_now_nanos(Some(file_modified + 1 * 24 * 3600 * 1_000_000_000));
+        let res1 = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(res1.deferred);
+
+        // 第 2 天：Retryable 缓存快速返回
+        set_mock_now_nanos(Some(file_modified + 2 * 24 * 3600 * 1_000_000_000));
+        let res2 = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(res2.deferred);
+        assert_eq!(codex_parse_count(&child), 1);
+
+        // 第 8 天：超过 7 天，Retryable 缓存失效，触发降级，扣除父重放 1000，导入新增 500
+        set_mock_now_nanos(Some(file_modified + 8 * 24 * 3600 * 1_000_000_000));
+        let res3 = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!((res3.imported, res3.skipped, res3.deferred), (1, 1, false));
+
+        let conn = lock_conn!(db.conn);
+        let total_input: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(input_tokens), 0) FROM proxy_request_logs",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            total_input, 1_500,
+            "父 1000 + 子新增 500 = 1500，无重复计费"
+        );
+
+        clear_codex_replay_caches();
         Ok(())
     }
 
