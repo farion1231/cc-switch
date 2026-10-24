@@ -2400,6 +2400,16 @@
       "title": "表示",
       "currency": "通貨",
       "rate": "為替レート",
+      "rateSource": "レートの取得方法",
+      "rateSources": {
+        "auto": "自動取得",
+        "manual": "手動入力"
+      },
+      "rateAutoHint": "1 日 1 回自動で取得し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
+      "rateAutoUpdated": "最終更新：{{time}}",
+      "rateAutoNever": "レートをまだ取得していません",
+      "rateAutoFailed": "自動取得に失敗しました。前回のレートを使用します",
+      "rateRefresh": "今すぐ更新",
       "rateHint": "手動で入力し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
       "rateInvalid": "0 より大きい数値を入力してください",
       "approxNote": "換算した金額はホバーで米ドルの値を確認できます。",

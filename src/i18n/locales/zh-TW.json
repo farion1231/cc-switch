@@ -2401,6 +2401,16 @@
       "title": "顯示",
       "currency": "幣別",
       "rate": "匯率",
+      "rateSource": "匯率來源",
+      "rateSources": {
+        "auto": "自動取得",
+        "manual": "手動填寫"
+      },
+      "rateAutoHint": "每天自動取得一次，只用於換算顯示；費用仍以美元記錄。",
+      "rateAutoUpdated": "上次更新：{{time}}",
+      "rateAutoNever": "尚未取得匯率",
+      "rateAutoFailed": "自動取得失敗，暫用上次的匯率",
+      "rateRefresh": "立即更新",
       "rateHint": "手動填寫，只用於換算顯示；費用仍以美元記錄。",
       "rateInvalid": "請輸入大於 0 的數字",
       "approxNote": "換算後的金額，滑鼠移上去可看美元原值。",
