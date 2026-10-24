@@ -792,6 +792,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "once_cell",
+ "percent-encoding",
  "png 0.18.1",
  "regex",
  "reqwest 0.12.28",

@@ -48,6 +48,9 @@ import {
   type RequestLogColumnId,
 } from "./requestLogColumns";
 
+const DEVICE_COLUMN = "device" as const;
+type RenderedColumn = RequestLogColumnId | typeof DEVICE_COLUMN;
+
 interface RequestLogTableProps {
   range: UsageRangeSelection;
   /** 旧接口保留；时间范围由页面顶部的筛选统一控制 */
@@ -57,9 +60,13 @@ interface RequestLogTableProps {
   model?: string;
   /** 状态码筛选（页签行右侧的下拉） */
   statusCode?: number;
+  /** 设备范围：缺省 = 本机，"all" = 全部设备，其它 = 远端设备 ID */
+  device?: string;
+  /** 远端设备 ID → 显示名，非本机范围时用来填「设备」列 */
+  deviceNames?: Record<string, string>;
   refreshIntervalMs: number;
-  /** 点一行打开请求详情 */
-  onOpenDetail?: (requestId: string) => void;
+  /** 点一行打开请求详情；远端记录带上设备 ID */
+  onOpenDetail?: (requestId: string, deviceId?: string) => void;
   /** 要显示的列（按表格顺序）；不传按默认列 */
   columns?: RequestLogColumnId[];
   /** 每页几条（页面记住用户的选择）；不传按 20 */
@@ -182,6 +189,8 @@ export function RequestLogTable({
   providerName,
   model,
   statusCode,
+  device,
+  deviceNames,
   refreshIntervalMs,
   onOpenDetail,
   columns = DEFAULT_COLUMNS,
@@ -201,7 +210,9 @@ export function RequestLogTable({
     providerName,
     model,
     statusCode,
+    device,
   };
+  const showDevice = !!device && device !== "local";
 
   const {
     data: result,
@@ -244,6 +255,7 @@ export function RequestLogTable({
     providerName,
     model,
     statusCode,
+    device,
     range.preset,
     range.customStartDate,
     range.customEndDate,
@@ -251,7 +263,10 @@ export function RequestLogTable({
   useLayoutEffect(() => {
     // 换筛选时先显示的是上一份数据，不算「新来的」
     if (!result || isPlaceholderData) return;
-    const ids = result.data.map((log) => log.requestId);
+    // 与行的 key 一致：同一请求 ID 在不同设备上是不同的行
+    const ids = result.data.map(
+      (log) => `${log.deviceId ?? "local"}:${log.requestId}`,
+    );
     const shown = shownRef.current;
     shownRef.current = { view, ids };
     const tbody = tbodyRef.current;
@@ -321,6 +336,7 @@ export function RequestLogTable({
     providerName,
     model,
     statusCode,
+    device,
     range.customEndDate,
     range.customStartDate,
     range.preset,
@@ -334,6 +350,17 @@ export function RequestLogTable({
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
   }
+
+  // 本机记录只带 requestId（与原有回调一致）；远端记录额外带上设备 ID
+  const openDetail = (log: RequestLog) => {
+    if (log.deviceId) onOpenDetail?.(log.requestId, log.deviceId);
+    else onOpenDetail?.(log.requestId);
+  };
+
+  const deviceLabel = (deviceId?: string) =>
+    deviceId
+      ? (deviceNames?.[deviceId] ?? deviceId.slice(0, 8))
+      : t("usageSync.thisDevice");
 
   // 带说明的列在表头挂「?」，其余只写列名
   const headerHelp: Partial<
@@ -364,6 +391,14 @@ export function RequestLogTable({
   };
   // 打开了「状态码」列就不在时间旁边再挂一个错误码
   const showStatusInTime = !columns.includes("statusCode");
+  // 「设备」列紧跟在应用列后（应用列关掉时跟在时间列后）
+  const renderedColumns: RenderedColumn[] = showDevice
+    ? columns.flatMap((id): RenderedColumn[] =>
+        id === (columns.includes("app") ? "app" : "time")
+          ? [id, DEVICE_COLUMN]
+          : [id],
+      )
+    : columns;
 
   const renderRow = (log: RequestLog) => {
     const unpriced = isUnpricedUsage(log);
@@ -430,7 +465,7 @@ export function RequestLogTable({
             })}
             onClick={(event) => {
               event.stopPropagation();
-              onOpenDetail?.(log.requestId);
+              openDetail(log);
             }}
           >
             {time}
@@ -608,13 +643,33 @@ export function RequestLogTable({
       ),
     };
 
+    // 全部设备视图多一列「设备」：不进可选列菜单，随设备范围出现
+    const deviceCell = (
+      <td className={usageTable.td}>
+        <span title={deviceLabel(log.deviceId)}>
+          {deviceLabel(log.deviceId)}
+        </span>
+      </td>
+    );
+
     return (
       <tr
-        key={log.requestId}
+        key={`${log.deviceId ?? "local"}:${log.requestId}`}
         className={onOpenDetail ? usageTable.rowInteractive : usageTable.row}
-        onClick={() => onOpenDetail?.(log.requestId)}
+        onClick={() => openDetail(log)}
       >
-        {columns.map((id) => {
+        {renderedColumns.map((id) => {
+          // 「设备」列不在可选列里：自成一组、不固定在左侧
+          if (id === DEVICE_COLUMN) {
+            return cloneElement(deviceCell, {
+              key: id,
+              className: cn(
+                deviceCell.props.className,
+                usageTable.denseCell,
+                usageTable.denseGroupGap,
+              ),
+            });
+          }
           const pin = pinFor(id, "body");
           return cloneElement(cells[id], {
             key: id,
@@ -665,7 +720,21 @@ export function RequestLogTable({
         >
           <thead>
             <tr className={usageTable.headRow}>
-              {columns.map((id, index) => {
+              {renderedColumns.map((id, index) => {
+                if (id === DEVICE_COLUMN) {
+                  return (
+                    <th
+                      key={id}
+                      className={cn(
+                        usageTable.th,
+                        usageTable.denseCell,
+                        usageTable.denseGroupGap,
+                      )}
+                    >
+                      {t("usageSync.device")}
+                    </th>
+                  );
+                }
                 const pin = pinFor(id, "head");
                 return (
                   <th
@@ -688,7 +757,10 @@ export function RequestLogTable({
           <tbody ref={tbodyRef}>
             {logs.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className={usageTable.empty}>
+                <td
+                  colSpan={renderedColumns.length}
+                  className={usageTable.empty}
+                >
                   {t("usage.noData")}
                 </td>
               </tr>

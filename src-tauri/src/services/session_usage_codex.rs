@@ -595,6 +595,24 @@ pub(crate) fn reset_codex_usage_on_conn(
         )
         .map_err(|error| AppError::Database(format!("清理 Codex 用量汇总失败: {error}")))?;
     }
+    // 跨设备用量去重账本记着这些汇总里每条请求的贡献，汇总删了账本也要一起删，
+    // 否则会从已不存在的汇总里减掉用量
+    if sqlite_table_exists(conn, "usage_rollup_ledger")? {
+        conn.execute(
+            "DELETE FROM usage_rollup_ledger
+             WHERE provider_id = '_codex_session' OR data_source = 'codex_session'",
+            [],
+        )
+        .map_err(|error| AppError::Database(format!("清理 Codex 用量账本失败: {error}")))?;
+    }
+    // 复制安装拆分出来的继承历史里 Codex 那部分也随汇总一起作废
+    if sqlite_table_exists(conn, "usage_sync_inherited")? {
+        conn.execute(
+            "DELETE FROM usage_sync_inherited WHERE provider_id = '_codex_session'",
+            [],
+        )
+        .map_err(|error| AppError::Database(format!("清理 Codex 继承用量失败: {error}")))?;
+    }
     if sqlite_table_exists(conn, "session_log_sync")?
         && sqlite_column_exists(conn, "session_log_sync", "file_path")?
     {
@@ -640,6 +658,11 @@ impl Database {
                     .map_err(|error| {
                         AppError::Database(format!("提交 Codex 重建事务失败: {error}"))
                     })?;
+                if let Err(error) =
+                    crate::services::usage_sync::store::refresh_ledger_suppression(&conn)
+                {
+                    log::warn!("Refreshing cross-device usage state failed: {error}");
+                }
                 drop(conn);
                 clear_codex_replay_caches();
                 Ok(())
