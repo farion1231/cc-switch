@@ -81,6 +81,11 @@ fn update_list(document: &mut Value, field: &str, id: &str, include: bool) -> Re
 fn sync_locked(id: &str, change: OmpChange<'_>) -> Result<(), AppError> {
     crate::omp_config::update_omp_mcp_document(|document| {
         let before = document.clone();
+        let native_is_enabled = document
+            .get("mcpServers")
+            .and_then(Value::as_object)
+            .and_then(|servers| servers.get(id))
+            .map(|native| native_enabled(document, id, native));
         let servers = document
             .as_object_mut()
             .unwrap()
@@ -94,11 +99,12 @@ fn sync_locked(id: &str, change: OmpChange<'_>) -> Result<(), AppError> {
             OmpChange::Enable(spec, previous) | OmpChange::Disable(spec, previous) => {
                 let unified = unified_spec(spec);
                 super::validation::validate_server_spec(&unified)?;
-                if servers
-                    .get(id)
-                    .is_some_and(|native| transport_spec(native) != transport_spec(previous))
-                {
-                    return Err(AppError::InvalidInput(format!("Oh My Pi MCP '{id}' conflicts with an independently configured server; native configuration preserved")));
+                if let Some(native) = servers.get(id) {
+                    let native_transport = transport_spec(native);
+                    let previous_transport = transport_spec(previous);
+                    if native_transport != previous_transport && native_is_enabled.unwrap_or(true) {
+                        return Err(AppError::InvalidInput(format!("Oh My Pi MCP '{id}' conflicts with an independently configured server; native configuration preserved")));
+                    }
                 }
                 // Native options edited by OMP win; stored options restore a removed entry.
                 let mut merged = servers.get(id).cloned().unwrap_or_else(|| unified.clone());

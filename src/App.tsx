@@ -984,6 +984,9 @@ function App() {
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
   const refreshAdditiveLiveState = async (app: AppId) => {
     if (isPiFamilyApp(app)) {
+      await queryClient.invalidateQueries({
+        queryKey: piFamilyKeys.currentState(app),
+      });
     } else if (app === "opencode") {
       await Promise.all([
         queryClient.invalidateQueries({

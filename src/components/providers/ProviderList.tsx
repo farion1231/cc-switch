@@ -433,7 +433,7 @@ export function ProviderList({
       <Notice
         tone="warning"
         title={t(`${appId}.current.readFailed`, {
-          defaultValue: `无法读取 ${appId === "rpi" ? "RPI" : appId === "omp" ? "Oh My Pi" : "Pi"} 当前配置`,
+          defaultValue: `无法读取 ${appId === "rpi" ? "rpi" : appId === "omp" ? "Oh My Pi" : "Pi"} 当前配置`,
         })}
       >
         {t(`${appId}.current.stateUnavailableHint`)}
