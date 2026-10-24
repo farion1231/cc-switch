@@ -1834,7 +1834,6 @@
   "codexOauth": {
     "authStatus": "认证状态",
     "notAuthenticated": "未认证",
-    "loginWithChatGPT": "使用 ChatGPT 登录",
     "loginRequired": "请先登录 ChatGPT 账号",
     "statusLoading": "正在加载账号状态...",
     "statusUnavailable": "状态不可用",
@@ -4901,7 +4900,6 @@
     "loginFailed": "登录没有完成",
     "pending": {
       "add": "添加 {{service}} 账号 · 等待授权中…",
-      "login": "登录 {{service}} · 等待授权中…",
       "reauth": "重新登录 {{login}} · 等待授权中…",
       "enterCode": "在浏览器中输入验证码：",
       "copy": "复制验证码",
@@ -4926,7 +4924,6 @@
       "addedOn": "{{date}}添加",
       "statusLoadFailed": "无法读取 Antigravity 账号，请重试。",
       "empty": "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
-      "login": "用 Google 登录",
       "current": "agy 在用",
       "switchTo": "切换 agy 到这个账号",
       "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",

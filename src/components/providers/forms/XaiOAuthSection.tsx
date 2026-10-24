@@ -188,7 +188,6 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
           defaultValue: "还没有登录 {{service}} 账号。",
           service: "xAI",
         })}
-        loginLabel={t("xaiOauth.login", "使用 xAI 登录")}
         onAdd={addAccount}
         canReauth
         // 后端不支持指定账号重新登录：发起一次普通登录，用同一个 xAI 账号登录会替换掉旧凭据

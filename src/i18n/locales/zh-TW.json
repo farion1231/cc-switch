@@ -1835,7 +1835,6 @@
   "codexOauth": {
     "authStatus": "驗證狀態",
     "notAuthenticated": "未驗證",
-    "loginWithChatGPT": "使用 ChatGPT 登入",
     "loginRequired": "請先登入 ChatGPT 帳號",
     "statusLoading": "正在載入帳號狀態...",
     "statusUnavailable": "狀態無法使用",
@@ -4902,7 +4901,6 @@
     "loginFailed": "登入沒有完成",
     "pending": {
       "add": "新增 {{service}} 帳號 · 等待授權中…",
-      "login": "登入 {{service}} · 等待授權中…",
       "reauth": "重新登入 {{login}} · 等待授權中…",
       "enterCode": "在瀏覽器中輸入驗證碼：",
       "copy": "複製驗證碼",
@@ -4927,7 +4925,6 @@
       "addedOn": "{{date}}新增",
       "statusLoadFailed": "無法讀取 Antigravity 帳號，請重試。",
       "empty": "還沒有 Antigravity 帳號。agy 裡已登入的帳號會自動出現在這裡。",
-      "login": "使用 Google 登入",
       "current": "agy 使用中",
       "switchTo": "將 agy 切換到這個帳號",
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",

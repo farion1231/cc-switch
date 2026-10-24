@@ -433,7 +433,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         defaultValue: "还没有登录 {{service}} 账号。",
         service: "GitHub Copilot",
       })}
-      loginLabel={t("copilot.loginWithGitHub", "使用 GitHub 登录")}
       onAdd={openChooser}
       chooser={chooser || undefined}
       canReauth={false}

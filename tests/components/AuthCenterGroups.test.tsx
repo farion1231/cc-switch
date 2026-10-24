@@ -176,17 +176,14 @@ describe("Auth Center account groups", () => {
     expect(auth.refetchStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the empty state with a sign-in button", async () => {
+  it("keeps the add button in the header when there are no accounts", async () => {
     const user = userEvent.setup();
     const auth = baseAuth();
     mocks.useCodexOauth.mockReturnValue(auth);
     render(<CodexOAuthSection showAccountQuota />);
 
     expect(screen.getByText("还没有登录 ChatGPT 账号。")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "添加账号" }),
-    ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /使用 ChatGPT 登录/ }));
+    await user.click(screen.getByRole("button", { name: "添加账号" }));
     expect(auth.addAccount).toHaveBeenCalledTimes(1);
   });
 

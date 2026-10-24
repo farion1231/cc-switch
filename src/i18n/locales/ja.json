@@ -1834,7 +1834,6 @@
   "codexOauth": {
     "authStatus": "認証状態",
     "notAuthenticated": "未認証",
-    "loginWithChatGPT": "ChatGPT でログイン",
     "loginRequired": "先に ChatGPT にログインしてください",
     "statusLoading": "アカウント状態を読み込み中...",
     "statusUnavailable": "状態を取得できません",
@@ -4901,7 +4900,6 @@
     "loginFailed": "ログインが完了しませんでした",
     "pending": {
       "add": "{{service}} アカウントを追加 · 認可を待っています…",
-      "login": "{{service}} にログイン · 認可を待っています…",
       "reauth": "{{login}} に再ログイン · 認可を待っています…",
       "enterCode": "ブラウザでこのコードを入力：",
       "copy": "コードをコピー",
@@ -4926,7 +4924,6 @@
       "addedOn": "{{date}}に追加",
       "statusLoadFailed": "Antigravity アカウントを読み込めませんでした。再試行してください。",
       "empty": "Antigravity アカウントはまだありません。agy でログイン中のアカウントは自動でここに表示されます。",
-      "login": "Google でログイン",
       "current": "agy で使用中",
       "switchTo": "agy をこのアカウントに切り替え",
       "removeNote": "agy からはログアウトしません。agy が現在このアカウントを使っている場合、削除後もそのまま使えます。",

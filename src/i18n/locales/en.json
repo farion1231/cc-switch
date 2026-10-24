@@ -1834,7 +1834,6 @@
   "codexOauth": {
     "authStatus": "Auth status",
     "notAuthenticated": "Not authenticated",
-    "loginWithChatGPT": "Sign in with ChatGPT",
     "loginRequired": "Please sign in to ChatGPT first",
     "statusLoading": "Loading account status...",
     "statusUnavailable": "Status unavailable",
@@ -4901,7 +4900,6 @@
     "loginFailed": "Sign-in didn't finish",
     "pending": {
       "add": "Adding a {{service}} account · Waiting for authorization…",
-      "login": "Signing in to {{service}} · Waiting for authorization…",
       "reauth": "Signing in again as {{login}} · Waiting for authorization…",
       "enterCode": "Enter this code in the browser:",
       "copy": "Copy code",
@@ -4926,7 +4924,6 @@
       "addedOn": "Added {{date}}",
       "statusLoadFailed": "Couldn't read Antigravity accounts. Try again.",
       "empty": "No Antigravity accounts yet. The account agy is signed in with appears here automatically.",
-      "login": "Sign in with Google",
       "current": "In use by agy",
       "switchTo": "Switch agy to this account",
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",

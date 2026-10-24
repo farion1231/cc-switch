@@ -466,31 +466,28 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         defaultValue: "还没有登录 {{service}} 账号。",
         service: "ChatGPT",
       })}
-      loginLabel={t("codexOauth.loginWithChatGPT", "使用 ChatGPT 登录")}
       onAdd={addAccount}
-      loginOptions={
-        <div className="flex items-center gap-3 border-t border-border px-4 py-2">
-          <Label htmlFor="codex-login-method">
-            {t("codexOauth.loginMethod")}
-          </Label>
-          <Select
-            value={loginMethod}
-            onValueChange={(value) => setLoginMethod(value as CodexLoginMethod)}
-            disabled={isAddingAccount}
+      loginControl={
+        <Select
+          value={loginMethod}
+          onValueChange={(value) => setLoginMethod(value as CodexLoginMethod)}
+          disabled={isAddingAccount}
+        >
+          <SelectTrigger
+            aria-label={t("codexOauth.loginMethod")}
+            className="h-7 w-[136px]"
           >
-            <SelectTrigger id="codex-login-method" className="w-[200px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="browser">
-                {t("codexOauth.browserLogin")}
-              </SelectItem>
-              <SelectItem value="device_code">
-                {t("codexOauth.deviceCodeLogin")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent align="end">
+            <SelectItem value="browser">
+              {t("codexOauth.browserLogin")}
+            </SelectItem>
+            <SelectItem value="device_code">
+              {t("codexOauth.deviceCodeLogin")}
+            </SelectItem>
+          </SelectContent>
+        </Select>
       }
       canReauth
       onReauth={reauthAccount}

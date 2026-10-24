@@ -77,12 +77,12 @@ interface ManagedAccountsGroupProps {
   /** 标题行下面的提示（Copilot 旧数据迁移失败） */
   notice?: React.ReactNode;
   emptyText: string;
-  loginLabel: string;
-  /** 「添加账号」和空状态的登录按钮（Copilot 先打开部署类型选择） */
+  /** 标题行的「添加账号」，有没有账号都在（Copilot 先打开部署类型选择） */
   onAdd: () => void;
   /** Copilot 选部署类型的那块；有它时不显示空状态那行 */
   chooser?: React.ReactNode;
-  loginOptions?: React.ReactNode;
+  /** 放在「添加账号」左边的控件（ChatGPT 的登录方式） */
+  loginControl?: React.ReactNode;
   /** 「默认」徽标和 ⋯ 里「设为默认」的文案（Antigravity 是「agy 在用」「切换 agy 到这个账号」） */
   defaultLabel?: string;
   setDefaultLabel?: string;
@@ -120,10 +120,9 @@ export function ManagedAccountsGroup({
   onRetryStatus,
   notice,
   emptyText,
-  loginLabel,
   onAdd,
   chooser,
-  loginOptions,
+  loginControl,
   defaultLabel,
   setDefaultLabel,
   canReauth,
@@ -183,15 +182,10 @@ export function ManagedAccountsGroup({
         defaultValue: "重新登录 {{login}} · 等待授权中…",
         login: targetAccount.login,
       })
-    : accounts.length > 0
-      ? t("authCenter.pending.add", {
-          defaultValue: "添加 {{service}} 账号 · 等待授权中…",
-          service: name,
-        })
-      : t("authCenter.pending.login", {
-          defaultValue: "登录 {{service}} · 等待授权中…",
-          service: name,
-        });
+    : t("authCenter.pending.add", {
+        defaultValue: "添加 {{service}} 账号 · 等待授权中…",
+        service: name,
+      });
 
   const copyCode = async () => {
     if (!login.deviceCode?.user_code) return;
@@ -239,7 +233,8 @@ export function ManagedAccountsGroup({
             {help}
           </HelpTip>
         </div>
-        {ready && accounts.length > 0 && (
+        {ready && loginControl}
+        {ready && (
           <Button
             type="button"
             id={`auth-add-${slug}`}
@@ -337,31 +332,12 @@ export function ManagedAccountsGroup({
         ))}
 
       {showEmpty && (
-        <div className="flex items-center gap-4 border-t border-border py-3.5 pe-3 ps-4">
-          <span className="min-w-0 flex-1 text-caption text-fg-2">
-            {emptyText}
-          </span>
-          <Button
-            type="button"
-            id={`auth-login-${slug}`}
-            variant="neutral"
-            size="compact"
-            className="gap-1.5 pe-3 ps-2.5"
-            onClick={add}
-          >
-            <span
-              aria-hidden="true"
-              className="flex h-3.5 w-3.5 items-center justify-center"
-            >
-              <ProviderIcon icon={iconName} name={name} size={14} />
-            </span>
-            {loginLabel}
-          </Button>
+        <div className="border-t border-border py-3.5 pe-3 ps-4 text-caption text-fg-2">
+          {emptyText}
         </div>
       )}
 
       {chooser}
-      {loginOptions}
 
       <div role="status">
         {busy && (

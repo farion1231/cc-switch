@@ -116,9 +116,6 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
         defaultValue:
           "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
       })}
-      loginLabel={t("authCenter.agy.login", {
-        defaultValue: "用 Google 登录",
-      })}
       onAdd={addAccount}
       defaultLabel={t("authCenter.agy.current", {
         defaultValue: "agy 在用",
