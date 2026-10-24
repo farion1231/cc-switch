@@ -1,4 +1,6 @@
+import { requiresCodexReview } from "@/utils/codexImport";
 import { useCallback } from "react";
+import { useCodexSwitchReview } from "@/components/providers/CodexSwitchReview";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
@@ -48,6 +50,7 @@ export function useProviderActions(
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
   const deleteProviderMutation = useDeleteProviderMutation(activeApp);
   const switchProviderMutation = useSwitchProviderMutation(activeApp);
+  const codexReview = useCodexSwitchReview(activeApp);
 
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
@@ -215,7 +218,20 @@ export function useProviderActions(
       }
 
       try {
-        const result = await switchProviderMutation.mutateAsync(provider.id);
+        const needsReview =
+          activeApp === "codex" && requiresCodexReview(provider);
+        const selection = needsReview
+          ? await codexReview.review(provider.id).catch((error) => {
+              toast.error(t("codexCustomization.review.previewFailed"), {
+                description: extractErrorMessage(error),
+              });
+              return null;
+            })
+          : null;
+        if (needsReview && !selection) return;
+        const result = await switchProviderMutation.mutateAsync(
+          selection ? { id: provider.id, selection } : provider.id,
+        );
         await syncClaudePlugin(provider);
 
         // Surface switch warnings by code — a generic "backfill failed"
@@ -255,6 +271,11 @@ export function useProviderActions(
           if (activeApp === "codex") {
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
+            if (selection && !selection.selected.includes("connection")) {
+              messageKey = "codexCustomization.review.applied";
+              defaultMessage =
+                "已应用所选配置，连接保持不变；重启 Codex 后生效";
+            }
           } else if (activeApp === "gemini") {
             messageKey = "notifications.geminiRestartRequired";
             defaultMessage = "切换成功，请重启 Gemini CLI 以生效";
@@ -284,7 +305,14 @@ export function useProviderActions(
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      isProxyTakeover,
+      t,
+      codexReview.review,
+    ],
   );
 
   // 删除供应商
@@ -459,6 +487,7 @@ export function useProviderActions(
   );
 
   return {
+    codexSwitchReview: codexReview.dialog,
     addProvider,
     updateProvider,
     switchProvider,

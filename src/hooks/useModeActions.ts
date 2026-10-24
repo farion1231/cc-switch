@@ -8,6 +8,8 @@ import { proxyApi } from "@/lib/api/proxy";
 import { proxyKeys } from "@/lib/query/proxy";
 import type { AppMode } from "@/types/proxy";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { useCodexSwitchReview } from "@/components/providers/CodexSwitchReview";
+import { codexSelectionApi } from "@/lib/api/codexSelection";
 
 /** 这几个客户端只在启动时读配置：改写了客户端文件要提示重启（Claude Code 会自己重读）。 */
 const RESTART_TO_APPLY = new Set<AppId>([
@@ -22,6 +24,7 @@ export function useModeActions(app: AppId) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
+  const codexReview = useCodexSwitchReview(app);
   const appName = APP_DISPLAY_NAME[app];
   const restartHint = RESTART_TO_APPLY.has(app)
     ? t("mode.toast.restartHint", { app: appName })
@@ -85,16 +88,24 @@ export function useModeActions(app: AppId) {
       directProviderId,
       useProviderId,
       providerName,
+      reviewCodex,
     }: {
       directProviderId: string | null;
       useProviderId?: string;
       providerName: string;
+      reviewCodex?: boolean;
     }) => {
       setPending(true);
       try {
-        await proxyApi.setProxyTakeoverForApp(app, false);
-        if (useProviderId && useProviderId !== directProviderId) {
-          await providersApi.switch(useProviderId, app);
+        if (app === "codex" && reviewCodex && useProviderId) {
+          const selection = await codexReview.review(useProviderId, true);
+          if (!selection) return;
+          await codexSelectionApi.apply(useProviderId, selection);
+        } else {
+          await proxyApi.setProxyTakeoverForApp(app, false);
+          if (useProviderId && useProviderId !== directProviderId) {
+            await providersApi.switch(useProviderId, app);
+          }
         }
         await refresh();
         toast.success(
@@ -113,8 +124,14 @@ export function useModeActions(app: AppId) {
         setPending(false);
       }
     },
-    [app, appName, refresh, restartHint, t],
+    [app, appName, refresh, restartHint, t, codexReview.review],
   );
 
-  return { enter, exitToDirect, pending, restartHint };
+  return {
+    enter,
+    exitToDirect,
+    pending,
+    restartHint,
+    codexSwitchReview: codexReview.dialog,
+  };
 }

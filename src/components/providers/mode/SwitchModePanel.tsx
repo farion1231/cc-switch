@@ -1,3 +1,4 @@
+import { requiresCodexReview } from "@/utils/codexImport";
 import { createPortal } from "react-dom";
 import { badgeVariants } from "@/components/ui/badge";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -655,6 +656,10 @@ export function SwitchModePanel({
             directProviderId: directId,
             useProviderId,
             providerName: nameOf(useProviderId ?? directId),
+            reviewCodex:
+              !!useProviderId &&
+              app === "codex" &&
+              requiresCodexReview(providers[useProviderId]),
           })
         }
         onSwitchDirect={(providerId) => {
@@ -662,6 +667,8 @@ export function SwitchModePanel({
           if (provider) void onSwitch(provider, { acknowledgedRouting: true });
         }}
       />
+
+      {modeActions.codexSwitchReview}
 
       {isProxyAppId(app) && (
         <RouteSettingsSheet

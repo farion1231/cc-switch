@@ -4917,6 +4917,56 @@
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
     }
   },
+  "codexCustomization": {
+    "import": {
+      "title": "Codex 固定导入模板",
+      "label": "Codex 导入自定义",
+      "description": "每次新增一份，保留旧配置。补齐模型及支持的档位后保存；稍后手动启用时选择覆盖项。",
+      "endpoint": "API 地址",
+      "apiKey": "API Key",
+      "modelRow": "模型 {{index}}",
+      "modelId": "模型 ID",
+      "remove": "移除",
+      "levelsHint": "建议仅勾选此服务商明确支持的档位。未声明的档位需要你确认。",
+      "addModel": "添加模型",
+      "defaultModel": "默认模型",
+      "chooseModel": "请选择（采用导入值，缺失时补填）",
+      "usageHint": "余额脚本：导入内容优先，缺失时使用固定模板。脚本正文在下方预览，保存后仍可编辑。"
+    },
+    "error": {
+      "endpoint": "请填写 API 地址",
+      "apiKey": "请填写 API Key",
+      "models": "请添加模型列表",
+      "modelName": "请填写每个模型的名称",
+      "duplicate": "模型名称不能重复",
+      "defaultModel": "请选择列表中的默认模型",
+      "levels": "请逐个确认模型支持的思考等级"
+    },
+    "review": {
+      "title": "启用前选择覆盖项",
+      "proxy": "当前处于代理模式，下面确认代理路由。模型聚合与客户端配置继续由路由模式管理。",
+      "native": "官方账号使用原有账号切换流程。定制导入规则用于第三方服务商。",
+      "exit": "确认后同时回到直连并应用所选字段。连接信息必须勾选；取消时配置和模式均保持原样。",
+      "routing": "当前为代理 / 聚合模式。连接项控制代理路由，模型目录包含聚合模型；其他字段默认保留。",
+      "direct": "建议覆盖连接、模型目录和导入的默认模型；其他字段默认保留。未勾选连接信息时，仅应用所选配置，当前服务商保持不变。",
+      "before": "现有值",
+      "after": "导入 / 目标值",
+      "unset": "未设置",
+      "chooseModel": "请选择默认模型",
+      "effort": "默认思考等级",
+      "effortWithCurrent": "默认思考等级（原值：{{current}}）",
+      "chooseEffort": "原值不适用或未设置，请选择",
+      "invalid": "请确认有效的模型目录、默认模型及思考等级。未声明的档位请先在供应商编辑器中补全。",
+      "cancel": "取消",
+      "apply": "确认应用所选项",
+      "connection": "连接信息（地址、凭据、路由）",
+      "catalog": "模型目录",
+      "route": "代理路由",
+      "account": "使用官方账号配置",
+      "previewFailed": "无法预览 Codex 配置",
+      "applied": "已应用所选配置，连接保持不变；重启 Codex 后生效"
+    }
+  },
   "kimi": {
     "oauth": {
       "useAccount": "使用此账号",

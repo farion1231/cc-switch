@@ -88,7 +88,9 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
     let _home = ensure_test_home();
 
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepLink%20Codex&homepage=https%3A%2F%2Fopenai.example&endpoint=https%3A%2F%2Fapi.openai.example%2Fv1&apiKey=sk-test-codex-key&model=gpt-4o&icon=openai";
-    let request = parse_deeplink_url(url).expect("parse deeplink url");
+    let mut request = parse_deeplink_url(url).expect("parse deeplink url");
+    request.model_catalog =
+        Some(serde_json::json!({"models": [{"model": "gpt-4o", "reasoningLevels": ["none"]}]}));
 
     let db = Arc::new(Database::memory().expect("create memory db"));
     let state = AppState::new(db.clone());
@@ -122,6 +124,69 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
         config_text.contains("model = \"gpt-4o\""),
         "config.toml content should contain model setting"
     );
+}
+
+#[test]
+fn customized_codex_import_is_unique_save_only_and_uses_fixed_script() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let db = Arc::new(Database::memory().unwrap());
+    let state = AppState::new(db.clone());
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=Relay&endpoint=https%3A%2F%2Frelay.example%2Fv1&apiKey=test-key&model=custom-model&enabled=true";
+    let mut request = parse_deeplink_url(url).unwrap();
+    request.model_catalog = Some(serde_json::json!({"models": []}));
+    assert!(import_provider_from_deeplink(&state, request.clone()).is_err());
+    assert!(db.get_all_providers("codex").unwrap().is_empty());
+    request.model_catalog = Some(serde_json::json!({"models": [{
+        "model": "custom-model", "reasoningLevels": ["low", "high", "ultra"]
+    }]}));
+    let a = import_provider_from_deeplink(&state, request.clone()).unwrap();
+    let b = import_provider_from_deeplink(&state, request.clone()).unwrap();
+    assert_ne!(a, b);
+    let providers = db.get_all_providers("codex").unwrap();
+    assert_eq!(providers.len(), 2);
+    assert!(!home.join(".codex/config.toml").exists());
+    assert!(!home.join(".codex/auth.json").exists());
+    let script = providers[&a]
+        .meta
+        .as_ref()
+        .unwrap()
+        .usage_script
+        .as_ref()
+        .unwrap();
+    assert!(script.code.contains("response?.quota?.remaining"));
+    assert!(script.api_key.is_none());
+    assert!(script.base_url.is_none());
+    assert_eq!(
+        providers[&a].settings_config["modelCatalog"]["models"][0]["reasoningLevels"],
+        serde_json::json!(["low", "high", "ultra"])
+    );
+}
+
+#[test]
+fn legacy_codex_links_keep_activation_and_do_not_inject_usage_scripts() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let db = Arc::new(Database::memory().unwrap());
+    let state = AppState::new(db.clone());
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=Legacy&endpoint=https%3A%2F%2Frelay.example%2Fv1&apiKey=test-key&model=legacy-model&enabled=true";
+    let request = parse_deeplink_url(url).unwrap();
+    let id = import_provider_from_deeplink(&state, request).unwrap();
+    assert_eq!(
+        db.get_current_provider("codex").unwrap().as_deref(),
+        Some(id.as_str())
+    );
+    let config = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap();
+    assert!(config.contains("legacy-model"));
+    let provider = db.get_provider_by_id(&id, "codex").unwrap().unwrap();
+    assert!(provider.settings_config.get("modelCatalog").is_none());
+    assert!(provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .is_none());
 }
 
 #[test]

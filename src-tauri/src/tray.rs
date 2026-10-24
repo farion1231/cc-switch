@@ -2929,6 +2929,17 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
                 );
                 return;
             }
+            Ok(ClickOutcome::NeedsReview) => {
+                navigate(
+                    &app_handle,
+                    TrayNavigation {
+                        app: Some(app_type.as_str().to_string()),
+                        intent: Some("reviewSwitch".to_string()),
+                        provider_id: Some(provider_id.clone()),
+                        ..Default::default()
+                    },
+                );
+            }
             Ok(ClickOutcome::Unchanged) => {}
             Err(e) => {
                 log::error!("托盘切换{}失败: {e}", app_display_name(&app_type));
@@ -2943,11 +2954,15 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
 
 enum ClickOutcome {
     /// 切过去了；`mode` 是点击时的模式，决定要不要出反馈行。
-    Switched { mode: TrayMode, name: String },
+    Switched {
+        mode: TrayMode,
+        name: String,
+    },
     /// 已经在用 / 故障转移开着（只读）：什么都不做。
     Unchanged,
     /// 直连下点了需要路由的那家：不直接切。
     NeedsRoute,
+    NeedsReview,
 }
 
 /// 点一家供应商：切换照旧走 `ProviderService::switch`（里面先拿切换锁再看模式）。不再先关掉
@@ -2983,6 +2998,11 @@ fn handle_provider_click(
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
     if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
         return Ok(ClickOutcome::NeedsRoute);
+    }
+    if *app_type == AppType::Codex
+        && crate::services::provider::codex_selection::requires_review(&provider)
+    {
+        return Ok(ClickOutcome::NeedsReview);
     }
     crate::services::ProviderService::switch(state, app_type.clone(), provider_id)?;
     Ok(ClickOutcome::Switched {

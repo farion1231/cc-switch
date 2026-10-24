@@ -10,6 +10,7 @@ pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
 pub(crate) mod codex_official_models;
+pub(crate) mod codex_selection;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
@@ -326,6 +327,262 @@ mod tests {
                  wire_api = \"chat\"\n"
             )
         })
+    }
+
+    #[test]
+    #[serial]
+    fn customized_review_scope_preserves_ordinary_codex_switches() {
+        with_test_home(|state, _| {
+            let mut provider = Provider::with_id(
+                "ordinary-codex".into(),
+                "Ordinary".into(),
+                json!({"auth": {"OPENAI_API_KEY": "test-key"}, "config": "model = 'test-model'\nmodel_provider = 'custom'\n[model_providers.custom]\nname = 'Relay'\nbase_url = 'https://relay.example/v1'\nwire_api = 'responses'\n"}),
+                None,
+            );
+            state.db.save_provider("codex", &provider).unwrap();
+            assert!(!codex_selection::requires_review(&provider));
+            ProviderService::switch(state, AppType::Codex, &provider.id).unwrap();
+            assert_eq!(
+                state.db.get_current_provider("codex").unwrap().as_deref(),
+                Some(provider.id.as_str())
+            );
+            provider.id = "catalog-without-custom-marker".into();
+            provider.settings_config["modelCatalog"] =
+                json!({"models": [{"model": "test-model", "reasoningLevels": ["high"]}]});
+            state.db.save_provider("codex", &provider).unwrap();
+            ProviderService::switch(state, AppType::Codex, &provider.id).unwrap();
+            provider.id = "custom-import".into();
+            provider.settings_config["modelCatalog"]["respectDeclaredReasoning"] = json!(true);
+            state.db.save_provider("codex", &provider).unwrap();
+            assert!(codex_selection::requires_review(&provider));
+            assert!(ProviderService::switch(state, AppType::Codex, &provider.id).is_err());
+            provider.category = Some("official".into());
+            assert!(!codex_selection::requires_review(&provider));
+        });
+    }
+
+    #[test]
+    fn customized_codex_review_is_read_only_rejects_stale_and_applies_selected_fields() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().unwrap();
+            let config_dir = home.join(".codex");
+            std::fs::create_dir_all(&config_dir).unwrap();
+            let path = config_dir.join("config.toml");
+            let original = "# local comment\nmodel = 'old'\nmodel_reasoning_effort = 'high'\n[mcp_servers.local]\ncommand = 'keep'\n";
+            std::fs::write(&path, original).unwrap();
+            let provider = Provider::with_id(
+                "review-target".into(),
+                "Reviewed".into(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "test-key"},
+                    "config": "model = 'custom-model'\nmodel_provider = 'custom'\n[model_providers.custom]\nname = 'Relay'\nbase_url = 'https://relay.example/v1'\nwire_api = 'responses'\n",
+                    "modelCatalog": {"respectDeclaredReasoning": true, "models": [
+                        {"model": "custom-model", "reasoningLevels": ["low", "high"]}
+                    ]},
+                    "importedGlobalConfig": "[mcp_servers.local]\ncommand = 'replace'\n"
+                }),
+                None,
+            );
+            state.db.save_provider("codex", &provider).unwrap();
+            let preview = codex_selection::preview(state, &provider.id).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+            assert!(!config_dir.join("auth.json").exists());
+            assert_eq!(preview.current_effort.as_deref(), Some("high"));
+            assert!(
+                !preview
+                    .fields
+                    .iter()
+                    .find(|f| f.label == "mcp_servers.local")
+                    .unwrap()
+                    .selected
+            );
+            let request = codex_selection::SelectionRequest {
+                revision: preview.revision,
+                selected: preview
+                    .fields
+                    .iter()
+                    .filter(|f| f.selected)
+                    .map(|f| f.id.clone())
+                    .collect(),
+                model: Some("custom-model".into()),
+                effort: Some("high".into()),
+                exit_to_direct: false,
+            };
+            let changed = original.replace("local comment", "external edit");
+            std::fs::write(&path, &changed).unwrap();
+            assert!(codex_selection::commit(state, &provider.id, request.clone()).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), changed);
+            let preview = codex_selection::preview(state, &provider.id).unwrap();
+            let request = codex_selection::SelectionRequest {
+                revision: preview.revision,
+                ..request
+            };
+            assert!(codex_selection::commit(
+                state,
+                &provider.id,
+                codex_selection::SelectionRequest {
+                    effort: Some("ultra".into()),
+                    ..request.clone()
+                }
+            )
+            .is_err());
+            codex_selection::commit(state, &provider.id, request).unwrap();
+            let written = std::fs::read_to_string(&path).unwrap();
+            let doc: toml_edit::DocumentMut = written.parse().unwrap();
+            assert_eq!(doc["model"].as_str(), Some("custom-model"));
+            assert_eq!(doc["model_reasoning_effort"].as_str(), Some("high"));
+            assert_eq!(
+                doc["mcp_servers"]["local"]["command"].as_str(),
+                Some("keep")
+            );
+            assert!(written.contains("# external edit"));
+            assert!(config_dir.join("cc-switch-model-catalog.json").exists());
+            // Shortcut/profile callers must not bypass the review for imported rows.
+            assert!(ProviderService::switch(state, AppType::Codex, &provider.id).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), written);
+
+            // Applying only a global field keeps the active provider, auth and catalog.
+            let preview = codex_selection::preview(state, &provider.id).unwrap();
+            let catalog_path = config_dir.join("cc-switch-model-catalog.json");
+            let catalog_before = std::fs::read(&catalog_path).unwrap();
+            codex_selection::commit(
+                state,
+                &provider.id,
+                codex_selection::SelectionRequest {
+                    revision: preview.revision,
+                    selected: vec!["[\"mcp_servers\",\"local\"]".into()],
+                    model: None,
+                    effort: Some("high".into()),
+                    exit_to_direct: false,
+                },
+            )
+            .unwrap();
+            assert_eq!(std::fs::read(&catalog_path).unwrap(), catalog_before);
+            let changed_global = std::fs::read_to_string(&path).unwrap();
+            assert!(changed_global.contains("replace"));
+
+            // Route and exit-to-direct use the same reviewed transaction.
+            let mut other = provider.clone();
+            other.id = "review-other".into();
+            state.db.save_provider("codex", &other).unwrap();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let _runtime_context = runtime.enter();
+            runtime.block_on(async {
+                let mut config = state.db.get_proxy_config().await.unwrap();
+                config.listen_port = 0;
+                state.db.update_proxy_config(config).await.unwrap();
+                crate::mode::controller::enter(state, &AppType::Codex, false)
+                    .await
+                    .unwrap();
+            });
+            let preview = codex_selection::preview(state, &other.id).unwrap();
+            assert!(preview.routing);
+            assert!(
+                !preview.proxy,
+                "attached third-party routes get field-level review"
+            );
+            let request = codex_selection::SelectionRequest {
+                revision: preview.revision,
+                selected: preview
+                    .fields
+                    .iter()
+                    .filter(|f| f.selected)
+                    .map(|f| f.id.clone())
+                    .collect(),
+                model: Some("custom-model".into()),
+                effort: Some("high".into()),
+                exit_to_direct: false,
+            };
+            let result = codex_selection::commit(state, &other.id, request).unwrap();
+            assert!(result.route.is_some());
+            assert_eq!(
+                crate::mode::current::mode_state(&AppType::Codex)
+                    .proxy_route
+                    .as_deref(),
+                Some(other.id.as_str())
+            );
+            let before_exit = std::fs::read(&path).unwrap();
+            let preview = codex_selection::preview_for(state, &provider.id, true).unwrap();
+            assert!(preview.exit_to_direct);
+            assert_eq!(std::fs::read(&path).unwrap(), before_exit);
+            assert!(crate::mode::current::is_proxy(&AppType::Codex));
+            codex_selection::commit(
+                state,
+                &provider.id,
+                codex_selection::SelectionRequest {
+                    revision: preview.revision,
+                    selected: preview
+                        .fields
+                        .iter()
+                        .filter(|f| f.selected)
+                        .map(|f| f.id.clone())
+                        .collect(),
+                    model: Some("custom-model".into()),
+                    effort: Some("high".into()),
+                    exit_to_direct: true,
+                },
+            )
+            .unwrap();
+            assert!(!crate::mode::current::is_proxy(&AppType::Codex));
+            let final_config = std::fs::read_to_string(&path).unwrap();
+            assert!(final_config.contains("https://relay.example/v1"));
+            assert!(final_config.contains("replace"));
+            // Global-only selection also works without any known model or catalog.
+            let mut doc: toml_edit::DocumentMut = final_config.parse().unwrap();
+            for key in ["model", "model_reasoning_effort", "model_catalog_json"] {
+                doc.remove(key);
+            }
+            std::fs::write(&path, doc.to_string()).unwrap();
+            other.settings_config["importedGlobalConfig"] =
+                json!("[mcp_servers.local]\ncommand = 'global-only'\n");
+            state.db.save_provider("codex", &other).unwrap();
+            let preview = codex_selection::preview(state, &other.id).unwrap();
+            codex_selection::commit(
+                state,
+                &other.id,
+                codex_selection::SelectionRequest {
+                    revision: preview.revision,
+                    selected: vec!["[\"mcp_servers\",\"local\"]".into()],
+                    model: None,
+                    effort: None,
+                    exit_to_direct: false,
+                },
+            )
+            .unwrap();
+            let doc: toml_edit::DocumentMut =
+                std::fs::read_to_string(&path).unwrap().parse().unwrap();
+            assert!(!doc.contains_key("model"));
+            assert!(!doc.contains_key("model_reasoning_effort"));
+            assert!(!doc.contains_key("model_catalog_json"));
+            assert_eq!(
+                doc["mcp_servers"]["local"]["command"].as_str(),
+                Some("global-only")
+            );
+            runtime.block_on(state.proxy_service.start()).unwrap();
+            let preview = codex_selection::preview(state, &provider.id).unwrap();
+            codex_selection::commit(
+                state,
+                &provider.id,
+                codex_selection::SelectionRequest {
+                    revision: preview.revision,
+                    selected: preview
+                        .fields
+                        .iter()
+                        .filter(|f| f.selected)
+                        .map(|f| f.id.clone())
+                        .collect(),
+                    model: Some("custom-model".into()),
+                    effort: Some("high".into()),
+                    exit_to_direct: false,
+                },
+            )
+            .unwrap();
+            assert!(
+                runtime.block_on(state.proxy_service.is_running()),
+                "direct switches must preserve a manually started server"
+            );
+            runtime.block_on(state.proxy_service.stop()).unwrap();
+        });
     }
 
     #[test]
@@ -6734,6 +6991,12 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        if app_type == AppType::Codex && codex_selection::requires_review(_provider) {
+            return Err(AppError::Message(
+                "此 Codex 配置需要先确认覆盖项，请从供应商页面启用（托盘会打开确认窗口）".into(),
+            ));
+        }
 
         if app_type == AppType::Kimi {
             crate::services::kimi_oauth::ensure_profile_signed_in(&_provider.settings_config)?;

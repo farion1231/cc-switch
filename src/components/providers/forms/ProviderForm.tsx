@@ -1725,10 +1725,21 @@ function ProviderFormFull({
           modelCatalog?: {
             models: CodexCatalogModel[];
             autoReviewModel?: string;
+            respectDeclaredReasoning?: boolean;
           };
+          importedGlobalConfig?: unknown;
         };
         if (normalizedCatalogModels.length > 0) {
           configObj.modelCatalog = { models: normalizedCatalogModels };
+          if (
+            (
+              initialData?.settingsConfig?.modelCatalog as
+                | { respectDeclaredReasoning?: boolean }
+                | undefined
+            )?.respectDeclaredReasoning
+          ) {
+            configObj.modelCatalog.respectDeclaredReasoning = true;
+          }
           // 自动审批模型只能是列表里的（列表里删掉了就不再存，后端也只认列表里的）
           const autoReviewModel = codexAutoReviewModel.trim();
           if (
@@ -1739,6 +1750,10 @@ function ProviderFormFull({
           ) {
             configObj.modelCatalog.autoReviewModel = autoReviewModel;
           }
+        }
+        if (initialData?.settingsConfig?.importedGlobalConfig) {
+          configObj.importedGlobalConfig =
+            initialData.settingsConfig.importedGlobalConfig;
         }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {

@@ -330,6 +330,7 @@ fn test_build_gemini_provider_with_model() {
         api_key: Some("test-api-key".to_string()),
         icon: None,
         model: Some("gemini-2.0-flash".to_string()),
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -385,6 +386,7 @@ fn test_build_gemini_provider_without_model() {
         api_key: Some("test-api-key".to_string()),
         icon: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -433,6 +435,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -482,6 +485,7 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -600,6 +604,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -650,6 +655,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -705,6 +711,7 @@ fn test_parse_and_merge_config_claude() {
         api_key: None,
         icon: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -830,6 +837,7 @@ fn test_parse_and_merge_config_url_override() {
         api_key: Some("sk-new".to_string()), // URL param should override
         icon: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -895,6 +903,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         icon: None,
         // URL param: must win over the same key in config (haiku-from-config)
         model: Some("main-model".to_string()),
+        model_catalog: None,
         notes: None,
         haiku_model: Some("haiku-from-url".to_string()),
         sonnet_model: None,
@@ -952,6 +961,7 @@ fn test_build_claude_provider_without_config_unchanged() {
         api_key: Some("sk".to_string()),
         icon: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -1181,6 +1191,7 @@ fn import_codex_with_config(
         endpoint: endpoint.map(str::to_string),
         api_key: Some("sk-link".to_string()),
         model: model.map(str::to_string),
+        model_catalog: None,
         config: Some(BASE64_STANDARD.encode(config.to_string())),
         config_format: Some("json".to_string()),
         ..Default::default()
@@ -1844,6 +1855,7 @@ fn test_dynamic_syntax_guard_also_covers_values_from_config_and_direct_requests(
         endpoint: Some("https://api.example.com/v1".to_string()),
         api_key: Some("!printf review-fixture".to_string()),
         model: Some("m".to_string()),
+        model_catalog: None,
         ..Default::default()
     };
     assert!(build_provider_from_request(&AppType::Pi, &request).is_err());
@@ -1977,8 +1989,7 @@ fn imported_usage_script(
 }
 
 #[test]
-fn test_deeplink_coding_plan_endpoint_enables_token_plan_by_default() {
-    // 和在应用里新建一样：套餐地址默认按套餐额度查询，所有应用一视同仁
+fn test_deeplink_legacy_links_keep_coding_plan_detection() {
     for (app, app_type) in [
         ("claude", AppType::Claude),
         ("codex", AppType::Codex),
@@ -2029,12 +2040,24 @@ fn test_deeplink_volcengine_plan_is_preselected_but_off() {
 }
 
 #[test]
-fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
+fn test_deeplink_non_plan_uses_custom_template_only_with_explicit_catalog() {
     let request = coding_plan_request("claude", "https://api.example.com/v1");
     assert!(imported_usage_script(AppType::Claude, &request).is_none());
 
-    let request = coding_plan_request("codex", "https://zenmux.ai/api/v1");
+    let mut request = coding_plan_request("codex", "https://zenmux.ai/api/v1");
     assert!(imported_usage_script(AppType::Codex, &request).is_none());
+    request.model_catalog =
+        Some(serde_json::json!({"models": [{"model": "custom", "reasoningLevels": ["high"]}]}));
+    let script = imported_usage_script(AppType::Codex, &request).unwrap();
+    assert_eq!(
+        script.code,
+        include_str!("../../../resources/custom-codex-usage.js")
+    );
+    assert!(script.enabled);
+    request.endpoint = Some("https://api.kimi.com/coding/v1".into());
+    let script = imported_usage_script(AppType::Codex, &request).unwrap();
+    assert!(script.template_type.is_none());
+    assert!(script.code.contains("response?.remaining"));
     let request = coding_plan_request("claude", "https://zenmux.ai/api/anthropic");
     assert!(imported_usage_script(AppType::Claude, &request).is_some());
 }

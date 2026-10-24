@@ -30,6 +30,13 @@ describe("parseTrayNavigation", () => {
   it("keeps known apps, sections and intents", () => {
     expect(
       parseTrayNavigation({
+        app: "codex",
+        intent: "reviewSwitch",
+        providerId: "imported",
+      }),
+    ).toEqual({ app: "codex", intent: "reviewSwitch", providerId: "imported" });
+    expect(
+      parseTrayNavigation({
         app: "claude",
         intent: "needsRoute",
         providerId: "copilot",

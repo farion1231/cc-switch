@@ -4,6 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import type { Provider, UsageScript } from "@/types";
+const { codexReviewMock } = vi.hoisted(() => ({ codexReviewMock: vi.fn() }));
+vi.mock("@/components/providers/CodexSwitchReview", () => ({
+  useCodexSwitchReview: () => ({ review: codexReviewMock, dialog: null }),
+}));
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -23,6 +27,7 @@ const addProviderMutateAsync = vi.fn();
 const updateProviderMutateAsync = vi.fn();
 const deleteProviderMutateAsync = vi.fn();
 const switchProviderMutateAsync = vi.fn();
+const switchRequestMock = vi.fn();
 
 const addProviderMutation = {
   mutateAsync: addProviderMutateAsync,
@@ -37,7 +42,12 @@ const deleteProviderMutation = {
   isPending: false,
 };
 const switchProviderMutation = {
-  mutateAsync: switchProviderMutateAsync,
+  mutateAsync: (input: string | { id: string; selection: unknown }) => {
+    switchRequestMock(input);
+    return switchProviderMutateAsync(
+      typeof input === "string" ? input : input.id,
+    );
+  },
   isPending: false,
 };
 
@@ -112,6 +122,13 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
 }
 
 beforeEach(() => {
+  codexReviewMock.mockReset().mockResolvedValue({
+    revision: "reviewed",
+    selected: ["connection"],
+    model: "test",
+    effort: "high",
+  });
+  switchRequestMock.mockClear();
   addProviderMutateAsync.mockReset();
   updateProviderMutateAsync.mockReset();
   deleteProviderMutateAsync.mockReset();
@@ -141,6 +158,62 @@ beforeEach(() => {
 });
 
 describe("useProviderActions", () => {
+  it.each(["custom", "official"] as const)(
+    "keeps one-click switching for ordinary Codex %s cards without a catalog",
+    async (category) => {
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(() => useProviderActions("codex"), {
+        wrapper,
+      });
+      const provider = createProvider({ category });
+      await act(() => result.current.switchProvider(provider));
+      expect(codexReviewMock).not.toHaveBeenCalled();
+      expect(switchRequestMock).toHaveBeenCalledWith(provider.id);
+    },
+  );
+  it("does not switch Codex when the field review is cancelled", async () => {
+    codexReviewMock.mockResolvedValueOnce(null);
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({
+          category: "custom",
+          settingsConfig: {
+            modelCatalog: { respectDeclaredReasoning: true, models: [] },
+          },
+        }),
+      );
+    });
+    expect(switchRequestMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+  });
+  it("passes the reviewed snapshot and selection to the Codex mutation", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      settingsConfig: {
+        modelCatalog: { respectDeclaredReasoning: true, models: [] },
+      },
+    });
+    const { result } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+    expect(switchRequestMock).toHaveBeenCalledWith({
+      id: provider.id,
+      selection: {
+        revision: "reviewed",
+        selected: ["connection"],
+        model: "test",
+        effort: "high",
+      },
+    });
+  });
   it("should trigger mutation when calling addProvider", async () => {
     addProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();

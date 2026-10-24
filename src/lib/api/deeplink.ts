@@ -28,6 +28,7 @@ export interface DeepLinkImportRequest {
   /** 图标下载地址；确认框里经 `fetchDeeplinkIcon` 下载、重新编码后放进 `icon` */
   iconUrl?: string;
   model?: string;
+  modelCatalog?: { models: import("@/types").CodexCatalogModel[] };
   notes?: string;
   haikuModel?: string;
   sonnetModel?: string;

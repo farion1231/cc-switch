@@ -2179,7 +2179,15 @@ fn codex_model_catalog_from_settings(
     if specs.is_empty() {
         return Ok(None);
     }
-    let mut catalog = codex_catalog_from_specs_for_row(&specs, config_text, profile)?;
+    let mut catalog = codex_catalog_from_specs_for_row(
+        &specs,
+        config_text,
+        profile,
+        settings
+            .pointer("/modelCatalog/respectDeclaredReasoning")
+            .and_then(Value::as_bool)
+            == Some(true),
+    )?;
     if let Some(model) = codex_card_auto_review_model(settings) {
         apply_codex_auto_review_model(&mut catalog, model);
     }
@@ -2356,6 +2364,7 @@ fn codex_catalog_from_specs_for_row(
     specs: &[CodexCatalogModelSpec],
     config_text: &str,
     profile: CodexCatalogToolProfile,
+    respect_declared_reasoning: bool,
 ) -> Result<Value, AppError> {
     let windows = RowWindows::of(config_text);
     // Vendors that publish an OFFICIAL Codex models.json for their native
@@ -2427,6 +2436,17 @@ fn codex_catalog_from_specs_for_row(
                     default_context_window,
                 ),
             };
+            // Customized imports explicitly confirmed their accepted levels. Keep
+            // GPT's native prompts/tools while honoring those declarations.
+            if respect_declared_reasoning {
+                let default_level = entry
+                    .get("default_reasoning_level")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if let Some(obj) = entry.as_object_mut() {
+                    apply_codex_reasoning_level_override(obj, default_level.as_deref(), spec);
+                }
+            }
             // A changed window needs a matching compaction threshold in single-provider
             // catalogs too. Otherwise an official/template threshold can stay at 244800
             // even after the user requests 1M. Keep untouched official defaults intact.
@@ -2673,7 +2693,15 @@ pub(crate) fn codex_stack_third_party_rows(
     if specs.is_empty() {
         return Ok(Vec::new());
     }
-    let catalog = codex_catalog_from_specs_for_row(&specs, row.config_text, row.profile)?;
+    let catalog = codex_catalog_from_specs_for_row(
+        &specs,
+        row.config_text,
+        row.profile,
+        row.settings
+            .pointer("/modelCatalog/respectDeclaredReasoning")
+            .and_then(Value::as_bool)
+            == Some(true),
+    )?;
     let mut entries = match catalog {
         Value::Object(mut obj) => match obj.remove("models") {
             Some(Value::Array(entries)) => entries,
@@ -5229,6 +5257,36 @@ wire_api = "responses"
         assert!(glm.get("model_messages").is_none());
         assert!(glm.get("apply_patch_tool_type").is_none());
         assert_eq!(glm["shell_type"], "shell_command");
+    }
+
+    #[test]
+    fn customized_import_retains_declared_gpt_levels_and_native_tools() {
+        let catalog =
+            with_official_models(official_gpt_rows(), || {
+                codex_model_catalog_from_settings(&json!({
+                "modelCatalog": {
+                    "respectDeclaredReasoning": true,
+                    "models": [{"model": "gpt-6-sol", "reasoningLevels":
+                        ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]}]
+                }
+            }), "", CodexCatalogToolProfile::NativeResponses).unwrap().unwrap()
+            });
+        let model = &catalog["models"][0];
+        let efforts: Vec<_> = model["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["effort"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            efforts,
+            ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(model["apply_patch_tool_type"], "freeform");
+        assert_eq!(
+            model["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
     }
 
     #[test]

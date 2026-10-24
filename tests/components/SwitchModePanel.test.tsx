@@ -121,6 +121,137 @@ beforeEach(() => {
 });
 
 describe("SwitchModePanel — Stack mode", () => {
+  it.each([
+    ["route", "apply"],
+    ["route", "cancel"],
+    ["route", "error"],
+    ["stack", "apply"],
+    ["stack", "cancel"],
+  ] as const)(
+    "keeps the field review above the waiting mode dialog from %s on %s",
+    async (mode, action) => {
+      const user = userEvent.setup();
+      mockMode(mode, "route", "old");
+      const apply = vi.fn(() =>
+        action === "error"
+          ? HttpResponse.json("review became stale", { status: 409 })
+          : HttpResponse.json({}),
+      );
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/preview_codex_switch`, () =>
+          HttpResponse.json({
+            revision: "snapshot",
+            proxy: false,
+            exitToDirect: true,
+            fields: [
+              {
+                id: "connection",
+                label: "Connection",
+                before: "old",
+                after: "new",
+                selected: true,
+              },
+            ],
+            models: [],
+            currentModels: [{ model: "m", reasoningLevels: ["high"] }],
+            defaultModel: "m",
+            currentModel: "m",
+            currentEffort: "high",
+          }),
+        ),
+        http.post(`${TAURI_ENDPOINT}/apply_codex_switch`, apply),
+      );
+      renderPanel("codex", {
+        old: provider("old"),
+        route: provider("route"),
+        imported: {
+          ...provider("imported"),
+          settingsConfig: {
+            modelCatalog: { respectDeclaredReasoning: true, models: [] },
+          },
+        },
+      });
+      await screen.findByLabelText(new RegExp(`^mode.status.${mode}Lead `));
+      await user.click(
+        screen.getByRole("button", { name: /mode\.names\.direct/ }),
+      );
+      await user.click(await screen.findByTestId("exitAndUse-imported"));
+      const modeDialog = (
+        await screen.findByText("mode.dialog.exitTitle")
+      ).closest('[role="dialog"]')!;
+      await user.click(
+        screen.getByRole("button", { name: "mode.dialog.confirmDirect" }),
+      );
+      const reviewDialog = (
+        await screen.findByText("codexCustomization.review.title")
+      ).closest('[role="dialog"]')!;
+      const layer = (element: Element) =>
+        Number(element.className.match(/\bz-(?:\[)?(\d+)/)?.[1] ?? 0);
+      expect(layer(reviewDialog)).toBeGreaterThan(layer(modeDialog));
+      await user.click(
+        screen.getByRole("button", {
+          name: `codexCustomization.review.${action === "cancel" ? "cancel" : "apply"}`,
+        }),
+      );
+      if (action === "error") {
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          "review became stale",
+        );
+        expect(
+          screen.getByRole("button", { name: "mode.dialog.confirmDirect" }),
+        ).toBeEnabled();
+        return;
+      }
+      await waitFor(() =>
+        expect(
+          screen.queryByText("mode.dialog.exitTitle"),
+        ).not.toBeInTheDocument(),
+      );
+      expect(apply).toHaveBeenCalledTimes(action === "cancel" ? 0 : 1);
+    },
+  );
+
+  it("exits routing to a different ordinary Codex card without waiting for a catalog review", async () => {
+    const user = userEvent.setup();
+    mockMode("route", "route", "old");
+    const switched = vi.fn(() => HttpResponse.json({}));
+    const preview = vi.fn(() => HttpResponse.json({}));
+    const takeover: unknown[] = [];
+    server.use(
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_takeover_for_app`,
+        async ({ request }) => {
+          takeover.push(await request.json());
+          return HttpResponse.json(null);
+        },
+      ),
+      http.post(`${TAURI_ENDPOINT}/switch_provider`, switched),
+      http.post(`${TAURI_ENDPOINT}/preview_codex_switch`, preview),
+    );
+    renderPanel("codex", {
+      old: provider("old"),
+      route: provider("route"),
+      other: provider("other"),
+    });
+    await screen.findByLabelText("mode.status.routeLead route");
+    await user.click(
+      screen.getByRole("button", { name: /mode\.names\.direct/ }),
+    );
+    await user.click(await screen.findByTestId("exitAndUse-other"));
+    await user.click(
+      screen.getByRole("button", { name: "mode.dialog.confirmDirect" }),
+    );
+    await waitFor(() => expect(switched).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("mode.dialog.exitTitle"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(takeover).toEqual([
+      { appType: "codex", enabled: false, stack: false, route: null },
+    ]);
+    expect(preview).not.toHaveBeenCalled();
+  });
   it("opens the Codex aggregation settings from the Stack tab only", async () => {
     const user = userEvent.setup();
     mockMode("stack", "route");
