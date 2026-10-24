@@ -3702,7 +3702,7 @@ fn codex_editor_official_auth_shows_disk_login_and_keeps_row_auth() {
 }
 
 #[test]
-fn omp_edit_save_preserves_comments_without_false_conflict() {
+fn omp_edit_save_keeps_every_byte_outside_the_edited_entry() {
     use cc_switch_lib::update_settings;
     use std::fs;
 
@@ -3712,9 +3712,10 @@ fn omp_edit_save_preserves_comments_without_false_conflict() {
     let agent_dir = home.join(".omp/agent");
     fs::create_dir_all(&agent_dir).unwrap();
     let models_path = agent_dir.join("models.yml");
+    let sibling = "  # hand-written sibling\n  other:\n    baseUrl: https://other.test/v1 # keep\n";
     fs::write(
         &models_path,
-        "# managed by me\nproviders:\n  duolalab:\n    # proxy endpoint\n    baseUrl: https://api.duolalab.test/v1\n    api: openai-completions\n    apiKey: sk-live\n    # extra unmanaged field\n    auth: none\n    models:\n    - id: glm-4.7\n      name: GLM 4.7\n",
+        format!("# managed by me\nproviders:\n  duolalab:\n    baseUrl: https://api.duolalab.test/v1\n    api: openai-completions\n    apiKey: sk-live\n    models:\n    - id: glm-4.7\n{sibling}"),
     )
     .unwrap();
     update_settings(cc_switch_lib::AppSettings {
@@ -3724,53 +3725,20 @@ fn omp_edit_save_preserves_comments_without_false_conflict() {
     .unwrap();
     let state = create_test_state().expect("create test state");
 
-    // list() syncs the DB row from models.yml and captures the raw entry.
-    let providers = ProviderService::list(&state, AppType::Omp).expect("list");
-    let original = providers.get("duolalab").expect("provider").clone();
-    assert!(original
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.omp_passthrough_yaml.as_deref())
-        .expect("raw entry captured")
-        .contains("# proxy endpoint"));
-
-    // Edit: the form rebuilds settingsConfig (same semantics) and keeps the
-    // edited passthrough text; user only tweaked a comment.
-    let raw = original
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.omp_passthrough_yaml.clone())
-        .unwrap();
-    let edited_raw = raw.replace("# proxy endpoint", "# edited comment");
-    let mut edited = original.clone();
-    edited.settings_config["name"] = json!("Duolalab");
-    edited
-        .meta
-        .get_or_insert_with(ProviderMeta::default)
-        .omp_passthrough_yaml = Some(edited_raw);
-
-    ProviderService::update(&state, AppType::Omp, Some("duolalab"), edited)
-        .expect("update without false conflict");
-
-    let after = fs::read_to_string(&models_path).unwrap();
-    assert!(after.contains("# edited comment"), "{after}");
-    assert!(after.contains("# extra unmanaged field"), "{after}");
-    assert!(after.contains("# managed by me"), "{after}");
-    assert!(after.contains("name: Duolalab"), "{after}");
-
-    // External edit after the DB sync still conflicts.
-    let synced = ProviderService::list(&state, AppType::Omp)
-        .expect("list again")
+    let mut edited = ProviderService::list(&state, AppType::Omp)
+        .expect("list")
         .get("duolalab")
         .cloned()
-        .expect("provider");
-    fs::write(&models_path, after.replace("sk-live", "sk-external")).unwrap();
-    let mut stale = synced.clone();
-    stale.settings_config["name"] = json!("Stale");
-    let err = ProviderService::update(&state, AppType::Omp, Some("duolalab"), stale)
-        .expect_err("external edit must conflict");
+        .expect("provider imported from models.yml");
+    edited.settings_config["name"] = json!("Duolalab");
+    ProviderService::update(&state, AppType::Omp, Some("duolalab"), edited)
+        .expect("edit save must not conflict");
+
+    let after = fs::read_to_string(&models_path).unwrap();
     assert!(
-        err.to_string().contains("changed outside CC Switch"),
-        "{err}"
+        after.starts_with("# managed by me\nproviders:\n  duolalab:\n"),
+        "{after}"
     );
+    assert!(after.contains("name: Duolalab"), "{after}");
+    assert!(after.ends_with(sibling), "{after}");
 }

@@ -12,7 +12,6 @@ pub mod mcp;
 pub mod model_fetch;
 pub mod model_pricing;
 pub mod omo;
-pub(crate) mod omp_state;
 pub mod pi_prompt_files;
 pub(crate) mod pi_state;
 pub mod profile;

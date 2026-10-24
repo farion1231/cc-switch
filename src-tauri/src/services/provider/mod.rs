@@ -6476,18 +6476,11 @@ impl ProviderService {
 
     pub(crate) fn update_pi_usage_script(
         state: &AppState,
+        app_type: AppType,
         id: &str,
         script: crate::provider::UsageScript,
     ) -> Result<bool, AppError> {
-        pi::update_usage_script(state, id, script)
-    }
-
-    pub(crate) fn update_omp_usage_script(
-        state: &AppState,
-        id: &str,
-        script: crate::provider::UsageScript,
-    ) -> Result<bool, AppError> {
-        omp::update_usage_script(state, id, script)
+        pi::update_usage_script(state, app_type, id, script)
     }
 
     /// Delete a provider
@@ -8011,7 +8004,7 @@ impl ProviderService {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
             AppType::Omp => {
-                crate::omp_config::validate_provider_node(&provider.id, &provider.settings_config)?;
+                crate::omp_config::validate_provider(&provider.id, &provider.settings_config)?;
             }
         }
 

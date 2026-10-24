@@ -1,325 +1,295 @@
 use super::{ProviderService, SwitchResult};
-use crate::app_config::AppType;
-use crate::error::AppError;
-use crate::provider::{Provider, ProviderMeta, UsageScript};
-use crate::store::AppState;
+use crate::{
+    app_config::AppType,
+    error::AppError,
+    omp_config::{self, Change},
+    provider::{Provider, ProviderMeta},
+    store::AppState,
+};
 use indexmap::IndexMap;
-use serde_json::Value;
 
-const OMP_APP: &str = "omp";
+fn prepare(provider: &mut Provider) -> Result<(), AppError> {
+    omp_config::validate_provider(&provider.id, &provider.settings_config)?;
+    provider.in_failover_queue = false;
+    provider.meta = provider.meta.take().map(|meta| ProviderMeta {
+        usage_script: meta.usage_script,
+        is_partner: meta.is_partner,
+        partner_promotion_key: meta.partner_promotion_key,
+        ..Default::default()
+    });
+    Ok(())
+}
 
 pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(OMP_APP));
-    match crate::omp_config::read_omp_native_providers() {
-        Ok(native) => {
-            if let Err(error) = sync_native_locked(state, &native) {
-                log::warn!("Failed to sync Oh My Pi providers from native config: {error}");
-            }
-        }
-        Err(error) => {
-            log::warn!("Failed to read Oh My Pi providers; showing saved catalog: {error}");
-        }
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    if let Err(error) = sync_native(state) {
+        log::warn!("Failed to read Oh My Pi providers; showing saved catalog: {error}");
     }
-    let mut providers = state.db.get_all_providers(OMP_APP)?;
-    // Show the raw models.yml entry (comments included) in the YAML editor.
-    // models.yml is the source of truth: re-read on every list so external
-    // edits to an entry (comments, formatting, unmanaged fields) reach the
-    // editor; the stored snapshot is only a fallback when the file or the
-    // entry cannot be read.
-    let ids: Vec<String> = providers.keys().cloned().collect();
-    match crate::omp_config::read_omp_provider_entries_raw(&ids) {
-        Ok(entries) => {
-            for (id, provider) in providers.iter_mut() {
-                if let Some(text) = entries.get(id) {
-                    let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
-                    meta.omp_passthrough_yaml = Some(text.clone());
-                }
-                // Entry absent from models.yml (not yet written to live):
-                // keep the stored snapshot so pending editor text survives.
-            }
-        }
-        Err(error) => {
-            log::warn!("Failed to read Oh My Pi raw entries: {error}");
-        }
-    }
-    Ok(providers)
+    state.db.get_all_providers("omp")
 }
-
+fn sync_native(state: &AppState) -> Result<usize, AppError> {
+    let native = omp_config::get_providers()?;
+    let saved = state.db.get_all_providers("omp")?;
+    let mut changed = 0;
+    for (id, config) in native {
+        let mut provider = saved.get(&id).cloned().unwrap_or_else(|| {
+            let name = config
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&id);
+            let mut provider = Provider::with_id(id.clone(), name.into(), config.clone(), None);
+            provider.category = Some("custom".into());
+            provider.icon = Some("omp".into());
+            provider
+        });
+        if saved.contains_key(&id) && provider.settings_config == config {
+            continue;
+        }
+        provider.settings_config = config;
+        state.db.save_provider("omp", &provider)?;
+        changed += 1;
+    }
+    Ok(changed)
+}
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(OMP_APP));
-    let native = crate::omp_config::read_omp_native_providers()?;
-    sync_native_locked(state, &native)
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    sync_native(state)
 }
-
 pub(super) fn add(
     state: &AppState,
     mut provider: Provider,
     add_to_live: bool,
 ) -> Result<bool, AppError> {
-    let app_type = AppType::Omp;
-    let _guard =
-        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    strip_unsupported_omp_metadata(&mut provider);
-    ProviderService::validate_provider_settings(&app_type, &provider)?;
-    ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
-
-    if state
-        .db
-        .get_provider_by_id(&provider.id, app_type.as_str())?
-        .is_some()
-    {
-        return Err(AppError::InvalidInput(format!(
-            "Oh My Pi provider '{}' already exists",
-            provider.id
-        )));
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    prepare(&mut provider)?;
+    if state.db.get_provider_by_id(&provider.id, "omp")?.is_some() {
+        return Err(AppError::Config("omp.errors.duplicateProvider".into()));
     }
-
-    if !add_to_live && crate::omp_config::omp_provider_exists(&provider.id)? {
-        return Err(AppError::InvalidInput(format!(
-            "Oh My Pi provider key '{}' already exists in models.yml",
-            provider.id
-        )));
-    }
-
-    let passthrough_yaml = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.omp_passthrough_yaml.clone());
-    let native_inserted = if add_to_live {
-        crate::omp_config::write_omp_provider_entry(
-            &provider.id,
-            &provider.settings_config,
-            passthrough_yaml.as_deref(),
-        )?
-    } else {
-        false
+    let commit = |_| {
+        state.db.save_provider("omp", &provider)?;
+        Ok(true)
     };
-
-    if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
-        if native_inserted {
-            if let Err(rollback) = crate::omp_config::remove_omp_provider_if_matches(
-                &provider.id,
-                &provider.settings_config,
-            ) {
-                return Err(AppError::Config(format!(
-                    "failed to save Oh My Pi provider: {error}; native rollback failed: {rollback}"
-                )));
-            }
+    if add_to_live {
+        omp_config::change_and_commit(
+            &provider.id,
+            Some(&provider.settings_config),
+            Change::Insert,
+            commit,
+        )
+    } else {
+        if omp_config::get_providers()?.contains_key(&provider.id) {
+            return Err(AppError::Config("omp.errors.duplicateProvider".into()));
         }
-        return Err(error);
+        commit(None)
     }
-    Ok(true)
 }
-
-pub(super) fn update_usage_script(
-    state: &AppState,
-    id: &str,
-    script: UsageScript,
-) -> Result<bool, AppError> {
-    let app_type = AppType::Omp;
-    let _guard =
-        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    super::validate_usage_script(&script)?;
-
-    let mut provider = state
-        .db
-        .get_provider_by_id(id, app_type.as_str())?
-        .ok_or_else(|| AppError::InvalidInput(format!("Oh My Pi provider '{id}' not found")))?;
-    provider
-        .meta
-        .get_or_insert_with(ProviderMeta::default)
-        .usage_script = Some(script);
-    strip_unsupported_omp_metadata(&mut provider);
-    ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
-    state.db.save_provider(app_type.as_str(), &provider)?;
-    Ok(true)
-}
-
 pub(super) fn update(
     state: &AppState,
     original_id: Option<&str>,
     mut provider: Provider,
 ) -> Result<bool, AppError> {
-    let app_type = AppType::Omp;
-    let _guard =
-        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    let original_id = original_id.unwrap_or(&provider.id).to_string();
-    if original_id != provider.id {
-        return Err(AppError::InvalidInput(
-            "Oh My Pi provider keys cannot be renamed".to_string(),
-        ));
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    if original_id.is_some_and(|id| id != provider.id) {
+        return Err(AppError::Config("omp.errors.renameProvider".into()));
     }
-
-    let existing = state
+    state
         .db
-        .get_provider_by_id(&original_id, app_type.as_str())?
-        .ok_or_else(|| {
-            AppError::InvalidInput(format!("Oh My Pi provider '{original_id}' not found"))
-        })?;
-    strip_unsupported_omp_metadata(&mut provider);
-    ProviderService::validate_provider_settings(&app_type, &provider)?;
-    ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
-
-    let passthrough_yaml = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.omp_passthrough_yaml.clone());
-    // 冲突检查的底是数据库那一行（list() 时与 models.yml 同步过），不是编辑器重组的
-    // 新配置：表单控件对字段顺序/表示的归一化不应被当成外部修改。
-    let previous_native = crate::omp_config::replace_omp_provider_if_present(
-        &original_id,
-        &existing.settings_config,
-        &provider.settings_config,
-        passthrough_yaml.as_deref(),
-    )?;
-    if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
-        if let Some(previous_native) = previous_native.as_ref() {
-            if let Err(rollback) = crate::omp_config::replace_omp_provider(
-                &original_id,
-                &provider.settings_config,
-                previous_native,
-            ) {
-                return Err(AppError::Config(format!(
-                    "failed to save Oh My Pi provider: {error}; native rollback failed: {rollback}"
-                )));
-            }
-        }
-        return Err(error);
-    }
-    Ok(true)
+        .get_provider_by_id(&provider.id, "omp")?
+        .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
+    prepare(&mut provider)?;
+    omp_config::change_and_commit(
+        &provider.id,
+        Some(&provider.settings_config),
+        Change::ReplaceIfPresent,
+        |_| {
+            state.db.save_provider("omp", &provider)?;
+            Ok(true)
+        },
+    )
 }
-
 pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
-    let app_type = AppType::Omp;
-    let _guard =
-        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    let Some(_) = state.db.get_provider_by_id(id, app_type.as_str())? else {
-        return Ok(());
-    };
-    let removed = crate::omp_config::remove_omp_provider(id)?;
-
-    if let Err(error) = state.db.delete_provider(app_type.as_str(), id) {
-        if let Some(removed) = removed.as_ref() {
-            if let Err(rollback) = crate::omp_config::restore_omp_provider_if_missing(id, removed) {
-                return Err(AppError::Config(format!(
-                    "failed to delete Oh My Pi provider: {error}; native rollback failed: {rollback}"
-                )));
-            }
-        }
-        return Err(error);
-    }
-    Ok(())
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    omp_config::change_and_commit(id, None, Change::Remove, |_| {
+        state.db.delete_provider("omp", id)
+    })
 }
-
 pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
-    let app_type = AppType::Omp;
-    let _guard =
-        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    let provider = state
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    let mut provider = state
         .db
-        .get_provider_by_id(id, app_type.as_str())?
-        .ok_or_else(|| AppError::InvalidInput(format!("Oh My Pi provider '{id}' not found")))?;
-    let Some(removed) = crate::omp_config::remove_omp_provider(id)? else {
-        return Ok(());
-    };
-    let mut synced = provider;
-    merge_native_config(&mut synced, removed.clone());
-    if let Err(error) = state.db.save_provider(app_type.as_str(), &synced) {
-        if let Err(rollback) = crate::omp_config::restore_omp_provider_if_missing(id, &removed) {
-            return Err(AppError::Config(format!(
-                "failed to preserve Oh My Pi provider before removal: {error}; native rollback failed: {rollback}"
-            )));
+        .get_provider_by_id(id, "omp")?
+        .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
+    omp_config::change_and_commit(id, None, Change::Remove, |old| {
+        if let Some(config) = old {
+            provider.settings_config = config;
+            state.db.save_provider("omp", &provider)?;
         }
-        return Err(error);
-    }
-    Ok(())
+        Ok(())
+    })
 }
-
 pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppError> {
-    let app_type = AppType::Omp;
-    let _guard =
-        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    let provider = state
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    let mut provider = state
         .db
-        .get_provider_by_id(id, app_type.as_str())?
-        .ok_or_else(|| AppError::InvalidInput(format!("Oh My Pi provider '{id}' not found")))?;
-
-    if let Some(native) = crate::omp_config::read_omp_native_provider(id)? {
-        let mut synced = provider;
-        merge_native_config(&mut synced, native);
-        // models.yml 是真相源：切换后刷新 passthrough 快照，编辑器读到的是
-        // 当前文件内容，不会用旧 meta 文本把外部修改盖回去。
-        if let Ok(Some(text)) = crate::omp_config::read_omp_provider_entry_raw(id) {
-            synced
-                .meta
-                .get_or_insert_with(ProviderMeta::default)
-                .omp_passthrough_yaml = Some(text);
-        }
-        state.db.save_provider(app_type.as_str(), &synced)?;
+        .get_provider_by_id(id, "omp")?
+        .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
+    if let Some(native) = omp_config::get_providers()?.get(id) {
+        provider.settings_config = native.clone();
+        state.db.save_provider("omp", &provider)?;
         return Ok(SwitchResult::default());
     }
-
-    ProviderService::validate_provider_settings(&app_type, &provider)?;
-    crate::omp_config::insert_omp_provider(id, &provider.settings_config)?;
-    // D3: enable = add only. `modelRoles.default` is left unchanged; the
-    // read-only state service still shows the active provider, and a separate
-    // "set as default" action is future frontend work.
-    Ok(SwitchResult::default())
+    ProviderService::validate_provider_settings(&AppType::Omp, &provider)?;
+    omp_config::change_and_commit(id, Some(&provider.settings_config), Change::Insert, |_| {
+        Ok(SwitchResult::default())
+    })
 }
 
-fn sync_native_locked(
-    state: &AppState,
-    native: &IndexMap<String, Value>,
-) -> Result<usize, AppError> {
-    let saved = state.db.get_all_providers(OMP_APP)?;
-    let mut changed = 0;
-
-    for (id, config) in native {
-        let mut provider = saved.get(id).cloned().unwrap_or_else(|| {
-            let mut imported = Provider::with_id(id.clone(), id.clone(), config.clone(), None);
-            imported.category = Some("custom".to_string());
-            imported
-        });
-        let is_new = !saved.contains_key(id);
-        let previous_name = provider.name.clone();
-        let previous_config = provider.settings_config.clone();
-        merge_native_config(&mut provider, config.clone());
-        if !is_new && provider.name == previous_name && provider.settings_config == previous_config
-        {
-            continue;
-        }
-
-        state.db.save_provider(OMP_APP, &provider)?;
-        changed += 1;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{database::Database, omp_config::test_support::TestAgentDir};
+    use serde_json::json;
+    use std::{fs, sync::Arc};
+    fn provider() -> Provider {
+        Provider::with_id(
+            "cc-switch-test".into(),
+            "Test".into(),
+            json!({"baseUrl":"https://example.com/v1","apiKey":"!literal credential","api":"openai-completions","models":[{"id":"a"}]}),
+            None,
+        )
+    }
+    #[test]
+    #[serial_test::serial]
+    fn written_round_trip_keeps_comments_and_unmanaged_nodes() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let path = omp_config::get_omp_models_path().unwrap();
+        let before = "# user header\nnotes: 'verbatim'\nproviders:\n  other:\n    baseUrl: https://other.example # keep\n\n# user footer\n";
+        fs::write(&path, before).unwrap();
+        add(&state, provider(), true).unwrap();
+        let mut edited = provider();
+        edited.settings_config["models"][0]["id"] = json!("b");
+        edited.settings_config["apiKey"] = json!("cc-switch-validation-key");
+        update(&state, None, edited).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.starts_with("# user header\nnotes: 'verbatim'\nproviders:\n  other:\n    baseUrl: https://other.example # keep\n"));
+        assert!(written.ends_with("\n# user footer\n"));
+        assert_eq!(
+            omp_config::get_providers().unwrap()["cc-switch-test"]["models"][0]["id"],
+            "b"
+        );
+        remove(&state, "cc-switch-test").unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), before);
     }
 
-    Ok(changed)
-}
+    #[test]
+    #[serial_test::serial]
+    fn usage_metadata_update_preserves_native_settings_and_pi_provider() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let baseline = provider();
+        add(&state, baseline.clone(), true).unwrap();
+        state.db.save_provider("pi", &baseline).unwrap();
 
-fn merge_native_config(provider: &mut Provider, config: Value) {
-    if let Some(name) = native_provider_name(&config) {
-        provider.name = name.to_string();
+        let mut external = baseline.settings_config.clone();
+        external["apiKey"] = json!("rotated-outside");
+        omp_config::change_and_commit(
+            &baseline.id,
+            Some(&external),
+            Change::ReplaceIfPresent,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let path = omp_config::get_omp_models_path().unwrap();
+        let native_bytes = fs::read(&path).unwrap();
+        let script = serde_json::from_value(json!({
+            "enabled": true,
+            "language": "javascript",
+            "code": "return {}",
+        }))
+        .unwrap();
+
+        ProviderService::update_pi_usage_script(&state, AppType::Omp, &baseline.id, script)
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), native_bytes);
+        let saved = list(&state).unwrap();
+        let saved = &saved[&baseline.id];
+        assert_eq!(saved.settings_config, external);
+        assert_eq!(
+            saved
+                .meta
+                .as_ref()
+                .unwrap()
+                .usage_script
+                .as_ref()
+                .unwrap()
+                .code,
+            "return {}"
+        );
+        let pi = state
+            .db
+            .get_provider_by_id(&baseline.id, "pi")
+            .unwrap()
+            .unwrap();
+        assert_eq!(pi.settings_config, baseline.settings_config);
+        assert!(pi.meta.and_then(|meta| meta.usage_script).is_none());
     }
-    provider.settings_config = config;
-}
 
-fn native_provider_name(config: &Value) -> Option<&str> {
-    config
-        .get("name")
-        .and_then(Value::as_str)
-        .filter(|name| !name.trim().is_empty())
-}
-
-fn strip_unsupported_omp_metadata(provider: &mut Provider) {
-    provider.in_failover_queue = false;
-    let Some(meta) = provider.meta.take() else {
-        return;
-    };
-    provider.meta = Some(ProviderMeta {
-        usage_script: meta.usage_script,
-        is_partner: meta.is_partner,
-        partner_promotion_key: meta.partner_promotion_key,
-        omp_passthrough_yaml: meta.omp_passthrough_yaml,
-        ..ProviderMeta::default()
-    });
+    #[test]
+    #[serial_test::serial]
+    fn membership_add_update_remove_enable_delete_never_touches_defaults_or_login() {
+        let _agent = TestAgentDir::new();
+        let dir = omp_config::get_omp_agent_dir().unwrap();
+        let defaults = "# user's defaults\nmodelRoles:\n  # null\n";
+        fs::write(dir.join("config.yml"), defaults).unwrap();
+        fs::write(dir.join("agent.db"), b"native login").unwrap();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        ProviderService::add(&state, AppType::Omp, provider(), true).unwrap();
+        assert!(omp_config::get_providers()
+            .unwrap()
+            .contains_key("cc-switch-test"));
+        let mut changed = provider();
+        changed.settings_config["models"][0]["id"] = json!("b");
+        ProviderService::update(&state, AppType::Omp, None, changed).unwrap();
+        assert_eq!(
+            omp_config::get_providers().unwrap()["cc-switch-test"]["models"][0]["id"],
+            "b"
+        );
+        ProviderService::remove_from_live_config(&state, AppType::Omp, "cc-switch-test").unwrap();
+        assert!(omp_config::get_providers().unwrap().is_empty());
+        ProviderService::switch(&state, AppType::Omp, "cc-switch-test").unwrap();
+        assert_eq!(
+            omp_config::get_providers().unwrap()["cc-switch-test"]["models"][0]["id"],
+            "b"
+        );
+        ProviderService::delete(&state, AppType::Omp, "cc-switch-test").unwrap();
+        assert!(omp_config::get_providers().unwrap().is_empty());
+        assert_eq!(
+            fs::read_to_string(dir.join("config.yml")).unwrap(),
+            defaults
+        );
+        assert_eq!(fs::read(dir.join("agent.db")).unwrap(), b"native login");
+    }
+    #[test]
+    #[serial_test::serial]
+    fn db_failure_restores_native_bytes_and_catalog_only_add_does_not_write() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        add(&state, provider(), false).unwrap();
+        assert!(!omp_config::get_omp_models_path().unwrap().exists());
+        enable(&state, "cc-switch-test").unwrap();
+        let path = omp_config::get_omp_models_path().unwrap();
+        let bytes = fs::read(&path).unwrap();
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA query_only = ON")
+            .unwrap();
+        assert!(remove(&state, "cc-switch-test").is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert!(delete(&state, "cc-switch-test").is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
 }
