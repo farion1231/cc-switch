@@ -92,8 +92,6 @@ interface ManagedAccountsGroupProps {
   onSetDefault: (accountId: string) => void;
   settingDefault: boolean;
   onRemove: (accountId: string, login: string) => void;
-  /** 标题行 ⋯ 里的「删除全部账号」；不传就没有这个菜单（Kimi） */
-  onRemoveAll?: () => void;
   removing: boolean;
   login: GroupLoginFlow;
   /** 确认框等 */
@@ -104,7 +102,7 @@ const PILL =
   "inline-flex h-[18px] shrink-0 items-center rounded-full px-1.5 text-badge";
 
 /**
- * 授权中心的一个服务（v7 Auth 画板）：标题行（图标、名字、「?」、添加账号、⋯ 删除全部），
+ * 授权中心的一个服务（v7 Auth 画板）：标题行（图标、名字、「?」、添加账号），
  * 每个账号一行（头像、名字 + 默认 / 需要重新登录、第二行、额度、⋯），空状态，
  * 登录等待块。删账号走确认框（列出受影响的供应商），由调用方传进 children。
  */
@@ -130,7 +128,6 @@ export function ManagedAccountsGroup({
   onSetDefault,
   settingDefault,
   onRemove,
-  onRemoveAll,
   removing,
   login,
   children,
@@ -248,37 +245,6 @@ export function ManagedAccountsGroup({
             <Plus className="h-3.5 w-3.5" strokeWidth={2} />
             {t("authCenter.addAccount", { defaultValue: "添加账号" })}
           </Button>
-        )}
-        {ready && accounts.length > 1 && onRemoveAll && (
-          <DropdownMenu>
-            <HoverTip content={t("common.more", { defaultValue: "更多" })}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="quiet"
-                  size="icon-compact"
-                  aria-label={t("authCenter.groupMenu", {
-                    defaultValue: "{{service}} 的更多操作",
-                    service: name,
-                  })}
-                >
-                  <MoreHorizontal className="h-[15px] w-[15px]" />
-                </Button>
-              </DropdownMenuTrigger>
-            </HoverTip>
-            <DropdownMenuContent
-              align="end"
-              className="w-[168px] rounded-panel bg-surface p-1 shadow-v7-md"
-            >
-              <DropdownMenuItem
-                disabled={removing}
-                onSelect={onRemoveAll}
-                className="h-[30px] rounded-control px-2.5 text-body text-danger-text focus:text-danger-text"
-              >
-                {t("authCenter.removeAll", { defaultValue: "删除全部账号…" })}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         )}
       </div>
 

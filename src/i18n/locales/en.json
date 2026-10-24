@@ -4878,9 +4878,7 @@
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
     },
     "addAccount": "Add account",
-    "groupMenu": "More actions for {{service}}",
     "accountMenu": "More actions for {{login}}",
-    "removeAll": "Delete all accounts",
     "removeAccount": "Delete account",
     "setDefault": "Set as default",
     "reauth": "Sign in again",

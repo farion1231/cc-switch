@@ -197,12 +197,6 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
         onRemove={(accountId, login) =>
           setRemoveTarget({ kind: "one", accountId, login })
         }
-        onRemoveAll={() =>
-          setRemoveTarget({
-            kind: "all",
-            accountIds: accounts.map((account) => account.id),
-          })
-        }
         removing={isRemovingAccount}
         login={{
           starting: isAddingAccount && !isPolling,

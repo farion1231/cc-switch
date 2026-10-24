@@ -4879,9 +4879,7 @@
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。"
     },
     "addAccount": "新增帳號",
-    "groupMenu": "{{service}} 的更多操作",
     "accountMenu": "{{login}} 的更多操作",
-    "removeAll": "刪除全部帳號",
     "removeAccount": "刪除帳號",
     "setDefault": "設為預設",
     "reauth": "重新登入",

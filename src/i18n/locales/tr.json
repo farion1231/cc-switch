@@ -4868,9 +4868,7 @@
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz."
     },
     "addAccount": "Hesap ekle",
-    "groupMenu": "{{service}} için daha fazla eylem",
     "accountMenu": "{{login}} için daha fazla eylem",
-    "removeAll": "Tüm hesapları sil",
     "removeAccount": "Hesabı sil",
     "setDefault": "Varsayılan olarak ayarla",
     "reauth": "Tekrar oturum açın",

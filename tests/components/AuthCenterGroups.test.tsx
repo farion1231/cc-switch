@@ -143,7 +143,7 @@ describe("Auth Center account groups", () => {
     });
     render(<CopilotAuthSection />);
 
-    // 只有一个账号时没有「删除全部」的 ⋯
+    // 标题行没有 ⋯，只有账号行有
     expect(
       screen.queryByRole("button", { name: "GitHub Copilot 的更多操作" }),
     ).not.toBeInTheDocument();

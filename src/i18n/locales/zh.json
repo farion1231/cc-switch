@@ -4878,9 +4878,7 @@
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。"
     },
     "addAccount": "添加账号",
-    "groupMenu": "{{service}} 的更多操作",
     "accountMenu": "{{login}} 的更多操作",
-    "removeAll": "删除全部账号",
     "removeAccount": "删除账号",
     "setDefault": "设为默认",
     "reauth": "重新登录",
