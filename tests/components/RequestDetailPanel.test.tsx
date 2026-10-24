@@ -61,6 +61,33 @@ describe("RequestDetailPanel", () => {
     expect(screen.getByText("$0.0670")).toBeInTheDocument();
   });
 
+  it("shows native Antigravity timing without estimate labels", () => {
+    renderWith(
+      log({
+        appType: "agy",
+        dataSource: "agy_session",
+        outputTokens: 600,
+        latencyMs: 5000,
+        firstTokenMs: 2000,
+      }),
+    );
+    expect(screen.getByText("usage.speedValue:200")).toBeInTheDocument();
+    expect(screen.getByText("usage.detail.firstToken")).toBeInTheDocument();
+    expect(screen.getByText("2.0s")).toBeInTheDocument();
+    expect(screen.getByText("5.0s")).toBeInTheDocument();
+    expect(screen.queryByText("usage.detail.durationEstimated")).toBeNull();
+    expect(screen.queryByText("usage.detail.providerId")).toBeNull();
+  });
+
+  it("leaves untimed Antigravity sessions without a fabricated duration", () => {
+    renderWith(
+      log({ dataSource: "agy_session", latencyMs: 0, firstTokenMs: undefined }),
+    );
+    expect(
+      screen.getByText("usage.detail.noTimingSession"),
+    ).toBeInTheDocument();
+  });
+
   it("explains why short outputs have no speed", () => {
     renderWith(
       log({ outputTokens: 64, latencyMs: 2_400, firstTokenMs: 1_900 }),
