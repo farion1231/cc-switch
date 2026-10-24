@@ -39,7 +39,16 @@ const mocks = vi.hoisted(() => ({
   error: vi.fn(),
 }));
 
+const wb = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+  start: vi.fn(),
+  quit: vi.fn(),
+  updateSettings: vi.fn(),
+  autoSaveSettings: vi.fn(),
+}));
+
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
+vi.mock("@/lib/api/workbuddyApp", () => ({ workbuddyAppApi: wb }));
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopStatus: async () => ({ supported: true, configured: true }),
@@ -48,8 +57,8 @@ vi.mock("@/lib/api/providers", () => ({
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({
     settings: { visibleApps: undefined },
-    updateSettings: vi.fn(),
-    autoSaveSettings: vi.fn(async () => null),
+    updateSettings: wb.updateSettings,
+    autoSaveSettings: wb.autoSaveSettings,
   }),
 }));
 vi.mock("sonner", () => ({ toast: mocks }));
@@ -197,6 +206,21 @@ afterAll(() => {
   } else {
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   }
+});
+
+// WorkBuddy 行默认当作没装，免得它的查询干扰 CLI 行的测试（例如 console.error 计数）
+beforeEach(() => {
+  wb.getStatus.mockReset().mockResolvedValue({
+    installed: false,
+    version: null,
+    path: null,
+    running: false,
+    quitSupported: true,
+  });
+  wb.start.mockReset().mockResolvedValue(undefined);
+  wb.quit.mockReset().mockResolvedValue({ stillRunning: false });
+  wb.updateSettings.mockReset();
+  wb.autoSaveSettings.mockReset().mockResolvedValue(null);
 });
 
 describe("AppsPage concurrent CLI upgrades", () => {
@@ -1938,5 +1962,156 @@ describe("AppsPage visibility column", () => {
       expect(element).toHaveAttribute("data-size", "sm");
       expect(element).not.toHaveAttribute("data-tone");
     }
+  });
+});
+
+describe("AppsPage WorkBuddy row", () => {
+  const installed = {
+    installed: true,
+    version: "5.8.3",
+    path: "/Applications/WorkBuddy.app",
+    running: false,
+    quitSupported: true,
+  };
+  const running = { ...installed, running: true };
+
+  beforeEach(() => {
+    vi.resetModules();
+    mocks.getToolVersions.mockReset().mockResolvedValue([]);
+    mocks.listToolInstallations.mockReset().mockResolvedValue([]);
+    mocks.warning.mockReset();
+    mocks.error.mockReset();
+    wb.getStatus.mockResolvedValue(installed);
+  });
+
+  const button = (name: string | RegExp) =>
+    card("WorkBuddy").queryByRole("button", { name });
+
+  it("shows the installed version and path with Start when not running", async () => {
+    await renderApps();
+    expect(await card("WorkBuddy").findByText("5.8.3")).toBeInTheDocument();
+    expect(
+      card("WorkBuddy").getByText("/Applications/WorkBuddy.app"),
+    ).toBeInTheDocument();
+    expect(card("WorkBuddy").queryByText("appsPage.workbuddy.running")).toBe(
+      null,
+    );
+    expect(button("appsPage.workbuddy.quit")).toBeNull();
+    // 不做更新、下载和卸载
+    expect(button("settings.toolUpdate")).toBeNull();
+    expect(button(/appPage\.moreActions/)).toBeNull();
+
+    await userEvent.click(button("appsPage.workbuddy.start")!);
+    expect(wb.start).toHaveBeenCalledTimes(1);
+    expect(wb.quit).not.toHaveBeenCalled();
+  });
+
+  it("closes a running WorkBuddy by asking it to quit and refreshes the state", async () => {
+    wb.getStatus.mockResolvedValue(running);
+    await renderApps();
+    expect(
+      await card("WorkBuddy").findByText("appsPage.workbuddy.running"),
+    ).toBeInTheDocument();
+    expect(button("appsPage.workbuddy.start")).toBeNull();
+
+    wb.getStatus.mockResolvedValue(installed);
+    await userEvent.click(button("appsPage.workbuddy.quit")!);
+    expect(wb.quit).toHaveBeenCalledTimes(1);
+    expect(
+      await card("WorkBuddy").findByRole("button", {
+        name: "appsPage.workbuddy.start",
+      }),
+    ).toBeInTheDocument();
+    expect(card("WorkBuddy").queryByText("appsPage.workbuddy.running")).toBe(
+      null,
+    );
+    expect(mocks.warning).not.toHaveBeenCalled();
+  });
+
+  it("asks the user to quit manually when WorkBuddy is still running", async () => {
+    wb.getStatus.mockResolvedValue(running);
+    wb.quit.mockResolvedValue({ stillRunning: true });
+    await renderApps();
+    await userEvent.click(
+      await card("WorkBuddy").findByRole("button", {
+        name: "appsPage.workbuddy.quit",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.warning).toHaveBeenCalledWith(
+        "appsPage.workbuddy.quitStillRunning",
+        expect.anything(),
+      ),
+    );
+    expect(button("appsPage.workbuddy.quit")).toBeEnabled();
+  });
+
+  it("toasts the error when the quit request fails", async () => {
+    wb.getStatus.mockResolvedValue(running);
+    wb.quit.mockRejectedValue(new Error("not allowed"));
+    await renderApps();
+    await userEvent.click(
+      await card("WorkBuddy").findByRole("button", {
+        name: "appsPage.workbuddy.quit",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.error).toHaveBeenCalledWith(
+        "not allowed",
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("hides Close where quitting isn't supported", async () => {
+    wb.getStatus.mockResolvedValue({ ...running, quitSupported: false });
+    await renderApps();
+    expect(
+      await card("WorkBuddy").findByText("appsPage.workbuddy.running"),
+    ).toBeInTheDocument();
+    expect(button("appsPage.workbuddy.quit")).toBeNull();
+    expect(button("appsPage.workbuddy.start")).toBeNull();
+  });
+
+  it("only says Not installed when WorkBuddy is missing", async () => {
+    wb.getStatus.mockResolvedValue({
+      installed: false,
+      version: null,
+      path: null,
+      running: false,
+      quitSupported: true,
+    });
+    await renderApps();
+    expect(
+      await card("WorkBuddy").findByText("common.notInstalled"),
+    ).toBeInTheDocument();
+    // 只剩名字旁的帮助按钮：不给启动 / 关闭 / 下载入口
+    expect(button("appsPage.workbuddy.start")).toBeNull();
+    expect(button("appsPage.workbuddy.quit")).toBeNull();
+    expect(card("WorkBuddy").queryAllByRole("button")).toHaveLength(1);
+  });
+
+  it("shows Installed when the version can't be read", async () => {
+    wb.getStatus.mockResolvedValue({ ...installed, version: null });
+    await renderApps();
+    expect(
+      await card("WorkBuddy").findByText("appsPage.workbuddy.installed"),
+    ).toBeInTheDocument();
+    expect(button("appsPage.workbuddy.start")).toBeInTheDocument();
+  });
+
+  it("hides WorkBuddy from the sidebar with its visibility switch", async () => {
+    await renderApps();
+    const toggle = card("WorkBuddy").getByRole("switch", {
+      name: "appsPage.showInSidebar",
+    });
+    expect(toggle).toBeChecked();
+    await userEvent.click(toggle);
+    expect(wb.updateSettings).toHaveBeenCalledWith({
+      visibleApps: expect.objectContaining({ workbuddy: false, claude: true }),
+    });
+    expect(wb.autoSaveSettings).toHaveBeenCalledWith({
+      visibleApps: expect.objectContaining({ workbuddy: false }),
+    });
   });
 });
