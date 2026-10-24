@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isMac } from "@/lib/platform";
 import { TerminalSelect } from "@/components/settings/TerminalSettings";
 import {
   SettingsBlock,
@@ -101,6 +101,19 @@ export function GeneralSection({
               />
             }
           />
+          {isMac() && (
+            <SettingsSwitchRow
+              label={t("settings.general.neutralAppIcon")}
+              help={{
+                title: t("settings.general.neutralAppIcon"),
+                body: t("settings.general.neutralAppIconHelp"),
+              }}
+              checked={settings.neutralAppIcon ?? false}
+              onCheckedChange={(value) =>
+                void onAutoSave({ neutralAppIcon: value })
+              }
+            />
+          )}
           <SettingsRow
             label={t("settings.general.quotaDisplay")}
             help={{

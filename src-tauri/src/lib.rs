@@ -46,6 +46,7 @@ mod session_manager;
 mod settings;
 mod store;
 
+mod app_icon;
 mod tray;
 mod tray_panel;
 mod usage_events;
@@ -1468,6 +1469,13 @@ pub fn run() {
                             log::info!("已禁用 WebKitGTK 硬件加速");
                         }
                     });
+                }
+            }
+
+            #[cfg(target_os = "macos")]
+            if crate::settings::get_settings().neutral_app_icon {
+                if let Err(err) = app_icon::apply(app.handle()) {
+                    log::warn!("Failed to apply app icon: {err}");
                 }
             }
 

@@ -520,6 +520,9 @@ pub struct AppSettings {
     /// 授权中心和托盘一起变；余额、Credits、重置次数不受影响（#8024）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_display: Option<String>,
+    /// Optional macOS app branding; absent preserves the original icon.
+    #[serde(default)]
+    pub neutral_app_icon: bool,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -670,6 +673,7 @@ impl Default for AppSettings {
             common_config_confirmed: None,
             language: None,
             quota_display: None,
+            neutral_app_icon: false,
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,

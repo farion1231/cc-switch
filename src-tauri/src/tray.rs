@@ -2441,6 +2441,12 @@ const DOT_RING_RADIUS: f32 = 0.21;
 /// 托盘平时的图标和它是不是 macOS 模板图：macOS 用单色模板图（跟随菜单栏深浅色），读不到时
 /// 和其它平台一样用应用图标。读一次缓存起来，出问题 / 恢复时在它上面加减圆点。
 pub fn base_tray_icon(app: &tauri::AppHandle) -> Option<(Image<'static>, bool)> {
+    #[cfg(target_os = "macos")]
+    if crate::settings::get_settings().neutral_app_icon {
+        return Image::from_bytes(include_bytes!("../icons/neutral-template.png"))
+            .ok()
+            .map(|icon| (icon, true));
+    }
     static BASE: OnceLock<Option<(Image<'static>, bool)>> = OnceLock::new();
     BASE.get_or_init(|| {
         #[cfg(target_os = "macos")]
@@ -2464,6 +2470,22 @@ pub fn base_tray_icon(app: &tauri::AppHandle) -> Option<(Image<'static>, bool)> 
         }
     })
     .clone()
+}
+
+/// Switch the base immediately, then rebuild the problem indicator from current state.
+#[cfg(target_os = "macos")]
+pub fn apply_app_icon(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if let Some((icon, template)) = base_tray_icon(app) {
+            tray.set_icon(Some(icon)).map_err(|err| err.to_string())?;
+            tray.set_icon_as_template(template)
+                .map_err(|err| err.to_string())?;
+        }
+    }
+    *lock(&APPLIED_INDICATOR) = None;
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || refresh_tray_menu(&app));
+    Ok(())
 }
 
 /// 出问题时的图标：右下角一个实心圆点，圆点外挖一圈透明边和图形隔开。模板图只看不透明度，

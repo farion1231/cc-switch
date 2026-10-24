@@ -20,7 +20,10 @@ import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
 import { WhatsNewDialog } from "@/components/WhatsNewDialog";
 import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
-import ccswitchLogo from "@/assets/icons/logo.svg";
+import defaultLogo from "@/assets/icons/logo.svg";
+import neutralLogo from "@/assets/icons/neutral.svg";
+import { useSettingsQuery } from "@/lib/query";
+import { isMac } from "@/lib/platform";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface AboutSectionProps {
@@ -46,6 +49,9 @@ function readStarPromptDismissed(): boolean {
  * 命令行应用的安装与升级在侧栏「应用」页。
  */
 export function AboutSection({ isPortable }: AboutSectionProps) {
+  const { data: brandingSettings } = useSettingsQuery();
+  const ccswitchLogo =
+    isMac() && brandingSettings?.neutralAppIcon ? neutralLogo : defaultLogo;
   const { t } = useTranslation();
   // 惰性初始化自模块缓存：重挂时首帧即渲染上次的值，避免 loading 闪烁；首次挂载缓存
   // 为空则回退到原始初值（null / loading）。

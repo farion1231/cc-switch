@@ -83,6 +83,31 @@ pub async fn save_settings(
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
+    #[cfg(target_os = "macos")]
+    if crate::settings::get_settings().neutral_app_icon != existing.neutral_app_icon {
+        let handle = app.clone();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let result = match app.run_on_main_thread(move || {
+            let _ = sender.send(crate::app_icon::apply(&handle));
+        }) {
+            Ok(()) => receiver
+                .await
+                .map_err(|err| err.to_string())
+                .and_then(|result| result),
+            Err(err) => Err(err.to_string()),
+        };
+        if let Err(err) = result {
+            let mut rollback = crate::settings::get_settings();
+            rollback.neutral_app_icon = existing.neutral_app_icon;
+            crate::settings::update_settings(rollback).map_err(|err| err.to_string())?;
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let _ = crate::app_icon::apply(&handle);
+            });
+            return Err(err);
+        }
+    }
+
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
