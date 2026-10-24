@@ -1802,7 +1802,8 @@
     "tierEndpointLabel": "档位端点",
     "endpointModelsFetchError": "获取端点模型列表失败",
     "endpointModelsLoading": "正在获取模型列表…",
-    "endpointModelsEmpty": "未获取到模型，可手动输入或稍后再试"
+    "endpointModelsEmpty": "未获取到模型，可手动输入或稍后再试",
+    "fetchModelsNeedConnection": "请先填写 API 地址与密钥"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",
@@ -3983,7 +3984,8 @@
     "savedAndSynced": "已保存并同步到所有应用",
     "saveAndSyncError": "保存并同步失败",
     "configJsonPreview": "配置 JSON 预览",
-    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）"
+    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）",
+    "fetchedHint": "已获取 {{count}} 个模型，点击主模型旁的下拉选择"
   },
   "omo": {
     "editProfile": "编辑 OMO 配置",

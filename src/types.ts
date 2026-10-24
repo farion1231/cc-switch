@@ -825,8 +825,11 @@ export interface McpConfigResponse {
 // 统一供应商的应用启用状态
 export interface UniversalProviderApps {
   claude: boolean;
+  /** serde 后端缺省 false；TS 侧可选以兼容旧构造点 */
+  claudeDesktop?: boolean;
   codex: boolean;
   gemini: boolean;
+  hermes?: boolean;
 }
 
 // Claude 模型配置

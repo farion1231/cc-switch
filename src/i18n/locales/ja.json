@@ -1802,7 +1802,8 @@
     "tierEndpointLabel": "ティアエンドポイント",
     "endpointModelsFetchError": "エンドポイントのモデル取得に失敗",
     "endpointModelsLoading": "モデル一覧を取得中…",
-    "endpointModelsEmpty": "モデルが取得できません。手入力か再試行を"
+    "endpointModelsEmpty": "モデルが取得できません。手入力か再試行を",
+    "fetchModelsNeedConnection": "API URL とキーを先に入力してください"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",
@@ -3983,7 +3984,8 @@
     "savedAndSynced": "すべてのアプリに保存・同期されました",
     "saveAndSyncError": "保存と同期に失敗しました",
     "configJsonPreview": "設定 JSON プレビュー",
-    "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）"
+    "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）",
+    "fetchedHint": "{{count}} 件のモデルを取得。主モデル横のドロップダウンで選択"
   },
   "omo": {
     "editProfile": "OMO 設定を編集",

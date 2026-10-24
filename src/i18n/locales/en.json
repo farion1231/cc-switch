@@ -1802,7 +1802,8 @@
     "tierEndpointLabel": "Tier Endpoint",
     "endpointModelsFetchError": "Failed to fetch endpoint models",
     "endpointModelsLoading": "Fetching models…",
-    "endpointModelsEmpty": "No models fetched; type manually or retry"
+    "endpointModelsEmpty": "No models fetched; type manually or retry",
+    "fetchModelsNeedConnection": "Fill API URL and key first"
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -3983,7 +3984,8 @@
     "savedAndSynced": "Saved and synced to all apps",
     "saveAndSyncError": "Failed to save and sync",
     "configJsonPreview": "Config JSON Preview",
-    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
+    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)",
+    "fetchedHint": "{{count}} models fetched; use the dropdown next to the main model"
   },
   "omo": {
     "editProfile": "Edit OMO Config",

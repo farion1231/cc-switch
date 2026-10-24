@@ -1073,10 +1073,14 @@ pub fn apply_tier_mappings_to_settings(settings: &mut Value, tiers: &TierMapping
 pub struct UniversalProviderApps {
     #[serde(default)]
     pub claude: bool,
+    #[serde(default, rename = "claudeDesktop")]
+    pub claude_desktop: bool,
     #[serde(default)]
     pub codex: bool,
     #[serde(default)]
     pub gemini: bool,
+    #[serde(default)]
+    pub hermes: bool,
 }
 
 /// Claude 模型配置
@@ -1369,6 +1373,96 @@ requires_openai_auth = true"#
 
         Some(Provider {
             id: format!("universal-gemini-{}", self.id),
+            name: self.name.clone(),
+            settings_config,
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+            endpoint_ref: Some(self.id.clone()),
+            tier_mappings: None,
+        })
+    }
+
+    /// Claude Desktop 子条目：与 Claude 同形态（env.ANTHROPIC_*），
+    /// 模型配置复用 models.claude。开关独立于 apps.claude。
+    pub fn to_claude_desktop_provider(&self) -> Option<Provider> {
+        if !self.apps.claude_desktop {
+            return None;
+        }
+        let models = self.models.claude.as_ref();
+        let model = models
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+        let haiku = models
+            .and_then(|m| m.haiku_model.clone())
+            .unwrap_or_else(|| model.clone());
+        let sonnet = models
+            .and_then(|m| m.sonnet_model.clone())
+            .unwrap_or_else(|| model.clone());
+        let opus = models
+            .and_then(|m| m.opus_model.clone())
+            .unwrap_or_else(|| model.clone());
+
+        let settings_config = serde_json::json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": self.base_url,
+                "ANTHROPIC_AUTH_TOKEN": self.api_key,
+                "ANTHROPIC_MODEL": model,
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku,
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet,
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": opus,
+            }
+        });
+
+        Some(Provider {
+            id: format!("universal-claude-desktop-{}", self.id),
+            name: self.name.clone(),
+            settings_config,
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+            endpoint_ref: Some(self.id.clone()),
+            tier_mappings: None,
+        })
+    }
+
+    /// Hermes 子条目：Hermes 原生顶级形态（base_url/api_key/api_mode/models），
+    /// 主模型复用 models.claude 的 model
+    pub fn to_hermes_provider(&self) -> Option<Provider> {
+        if !self.apps.hermes {
+            return None;
+        }
+        let model = self
+            .models
+            .claude
+            .as_ref()
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "claude-sonnet-5".to_string());
+
+        let settings_config = serde_json::json!({
+            "name": self.name,
+            "base_url": self.base_url,
+            "api_key": self.api_key,
+            "api_mode": "anthropic_messages",
+            "models": [
+                { "id": model, "context_length": 200000 }
+            ]
+        });
+
+        Some(Provider {
+            id: format!("universal-hermes-{}", self.id),
             name: self.name.clone(),
             settings_config,
             website_url: self.website_url.clone(),

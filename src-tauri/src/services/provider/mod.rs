@@ -8392,6 +8392,14 @@ impl ProviderService {
                 let gemini_id = format!("universal-gemini-{id}");
                 let _ = state.db.delete_provider("gemini", &gemini_id);
             }
+            if p.apps.claude_desktop {
+                let desktop_id = format!("universal-claude-desktop-{id}");
+                let _ = state.db.delete_provider("claude-desktop", &desktop_id);
+            }
+            if p.apps.hermes {
+                let hermes_id = format!("universal-hermes-{id}");
+                let _ = state.db.delete_provider("hermes", &hermes_id);
+            }
         }
 
         Ok(true)
@@ -8484,6 +8492,48 @@ impl ProviderService {
         } else {
             let gemini_id = format!("universal-gemini-{id}");
             let _ = state.db.delete_provider("gemini", &gemini_id);
+        }
+
+        // 同步到 Claude Desktop
+        if let Some(mut desktop_provider) = provider.to_claude_desktop_provider() {
+            if let Some(existing) =
+                state.db.get_provider_by_id(&desktop_provider.id, "claude-desktop")?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &desktop_provider.settings_config);
+                desktop_provider.settings_config = merged;
+                desktop_provider.meta = existing.meta;
+                desktop_provider.created_at = existing.created_at;
+                desktop_provider.sort_index = existing.sort_index;
+            }
+            state.db.save_provider("claude-desktop", &desktop_provider)?;
+            Self::project_universal_child_to_live(
+                state,
+                AppType::ClaudeDesktop,
+                &desktop_provider.id,
+                &mut live_failures,
+            );
+        } else {
+            let desktop_id = format!("universal-claude-desktop-{id}");
+            let _ = state.db.delete_provider("claude-desktop", &desktop_id);
+        }
+
+        // 同步到 Hermes（连接即条目，不做 live 投影——Hermes 接管由其独立流程处理）
+        if let Some(mut hermes_provider) = provider.to_hermes_provider() {
+            if let Some(existing) =
+                state.db.get_provider_by_id(&hermes_provider.id, "hermes")?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &hermes_provider.settings_config);
+                hermes_provider.settings_config = merged;
+                hermes_provider.meta = existing.meta;
+                hermes_provider.created_at = existing.created_at;
+                hermes_provider.sort_index = existing.sort_index;
+            }
+            state.db.save_provider("hermes", &hermes_provider)?;
+        } else {
+            let hermes_id = format!("universal-hermes-{id}");
+            let _ = state.db.delete_provider("hermes", &hermes_id);
         }
 
         if live_failures.is_empty() {

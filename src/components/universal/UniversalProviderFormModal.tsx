@@ -1,10 +1,29 @@
 import { useState, useLayoutEffect, useCallback, useMemo } from "react";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useTranslation } from "react-i18next";
-import { Eye, EyeOff, RefreshCw } from "lucide-react";
+import {
+  ChevronDown,
+  Download,
+  Eye,
+  EyeOff,
+  Loader2,
+  RefreshCw,
+  Wand2,
+} from "lucide-react";
+import { toast } from "@/lib/toast";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+} from "@/lib/api/model-fetch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -20,6 +39,7 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import JsonEditor from "@/components/JsonEditor";
 import type { UniversalProvider, UniversalProviderModels } from "@/types";
 import {
+  claudeLibraryUniversalPresets,
   universalProviderPresets,
   createUniversalProviderFromPreset,
   type UniversalProviderPreset,
@@ -61,6 +81,8 @@ export function UniversalProviderFormModal({
 
   // 应用启用状态
   const [claudeEnabled, setClaudeEnabled] = useState(true);
+  const [claudeDesktopEnabled, setClaudeDesktopEnabled] = useState(false);
+  const [hermesEnabled, setHermesEnabled] = useState(false);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
 
@@ -83,6 +105,8 @@ export function UniversalProviderFormModal({
       setWebsiteUrl(editingProvider.websiteUrl || "");
       setNotes(editingProvider.notes || "");
       setClaudeEnabled(editingProvider.apps.claude);
+      setClaudeDesktopEnabled(editingProvider.apps.claudeDesktop ?? false);
+      setHermesEnabled(editingProvider.apps.hermes ?? false);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
       setModels(editingProvider.models || {});
@@ -119,12 +143,55 @@ export function UniversalProviderFormModal({
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
         setModels(deepClone(preset.defaultModels));
+        // 厂商标准信息：协议格式随预设自动选中
+        setApiFormat(preset.defaultApiFormat ?? "anthropic");
       }
     },
     [isEditMode],
   );
 
   // 更新模型配置
+  // 模型列表获取（按当前连接的 baseUrl/apiKey/apiFormat）+ 一键设置
+  const [fetchedModelIds, setFetchedModelIds] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+
+  const handleFetchModels = useCallback(async () => {
+    if (!baseUrl.trim() || !apiKey.trim()) {
+      toast.error(
+        t("providerForm.fetchModelsNeedConnection", {
+          defaultValue: "请先填写 API 地址与密钥",
+        }),
+      );
+      return;
+    }
+    setFetchingModels(true);
+    try {
+      const models = await fetchModelsForConfig(
+        baseUrl.trim(),
+        apiKey.trim(),
+        undefined,
+        undefined,
+        undefined,
+        { apiFormat: apiFormat ?? undefined },
+      );
+      setFetchedModelIds(models.map((m) => m.id));
+      toast.success(
+        t("providerForm.fetchModelsSuccess", {
+          defaultValue: "已获取 {{count}} 个模型",
+          count: models.length,
+        }),
+      );
+    } catch (error) {
+      showFetchModelsError(error, t, {
+        hasApiKey: Boolean(apiKey.trim()),
+        hasBaseUrl: Boolean(baseUrl.trim()),
+      });
+    } finally {
+      setFetchingModels(false);
+    }
+  }, [apiFormat, apiKey, baseUrl, t]);
+
   const updateModel = useCallback(
     (app: "claude" | "codex" | "gemini", field: string, value: string) => {
       setModels((prev) => ({
@@ -214,8 +281,10 @@ requires_openai_auth = true`;
           notes: notes.trim() || undefined,
           apps: {
             claude: claudeEnabled,
+            claudeDesktop: claudeDesktopEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            hermes: hermesEnabled,
           },
           models,
         }
@@ -251,8 +320,10 @@ requires_openai_auth = true`;
     websiteUrl,
     notes,
     claudeEnabled,
+    claudeDesktopEnabled,
     codexEnabled,
     geminiEnabled,
+    hermesEnabled,
     models,
     selectedPreset,
     onSave,
@@ -275,8 +346,10 @@ requires_openai_auth = true`;
           notes: notes.trim() || undefined,
           apps: {
             claude: claudeEnabled,
+            claudeDesktop: claudeDesktopEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            hermes: hermesEnabled,
           },
           models,
         }
@@ -379,8 +452,11 @@ requires_openai_auth = true`;
                 defaultValue: "选择预设类型",
               })}
             </Label>
-            <div className="flex flex-wrap gap-2">
-              {universalProviderPresets.map((preset) => (
+            <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto">
+              {[
+                ...universalProviderPresets,
+                ...claudeLibraryUniversalPresets(),
+              ].map((preset) => (
                 <button
                   key={preset.providerType}
                   type="button"
@@ -546,6 +622,16 @@ requires_openai_auth = true`;
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div className="flex items-center gap-2">
+                <ProviderIcon icon="claude" name="Claude Desktop" size={20} />
+                <span className="font-medium">Claude Desktop</span>
+              </div>
+              <Switch
+                checked={claudeDesktopEnabled}
+                onCheckedChange={setClaudeDesktopEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
                 <ProviderIcon icon="openai" name="Codex" size={20} />
                 <span className="font-medium">OpenAI Codex</span>
               </div>
@@ -564,14 +650,80 @@ requires_openai_auth = true`;
                 onCheckedChange={setGeminiEnabled}
               />
             </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="hermes" name="Hermes" size={20} />
+                <span className="font-medium">Hermes</span>
+              </div>
+              <Switch
+                checked={hermesEnabled}
+                onCheckedChange={setHermesEnabled}
+              />
+            </div>
           </div>
         </div>
 
         {/* 模型配置 */}
         <div className="space-y-4">
-          <Label>
-            {t("universalProvider.modelConfig", { defaultValue: "模型配置" })}
-          </Label>
+          <div className="flex items-center gap-2">
+            <Label>
+              {t("universalProvider.modelConfig", { defaultValue: "模型配置" })}
+            </Label>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1"
+                disabled={fetchingModels}
+                onClick={handleFetchModels}
+              >
+                {fetchingModels ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {t("providerForm.fetchModels", {
+                  defaultValue: "获取模型列表",
+                })}
+              </Button>
+              {(claudeEnabled || claudeDesktopEnabled) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1"
+                  disabled={!models.claude?.model?.trim()}
+                  onClick={() => {
+                    const main = models.claude?.model?.trim();
+                    if (!main) return;
+                    setModels((prev) => ({
+                      ...prev,
+                      claude: {
+                        ...prev.claude,
+                        haikuModel: main,
+                        sonnetModel: main,
+                        opusModel: main,
+                      },
+                    }));
+                  }}
+                >
+                  <Wand2 className="h-3.5 w-3.5" />
+                  {t("providerForm.quickSetModels", {
+                    defaultValue: "一键设置",
+                  })}
+                </Button>
+              )}
+            </div>
+          </div>
+          {fetchedModelIds.length > 0 && (
+            <p className="text-xs text-fg-3">
+              {t("universalProvider.fetchedHint", {
+                defaultValue: `已获取 ${fetchedModelIds.length} 个模型，点击主模型旁的下拉选择`,
+                count: fetchedModelIds.length,
+              })}
+            </p>
+          )}
 
           {/* Claude 模型 */}
           {claudeEnabled && (
@@ -585,13 +737,50 @@ requires_openai_auth = true`;
                   <Label className="text-xs">
                     {t("universalProvider.model", { defaultValue: "主模型" })}
                   </Label>
-                  <Input
-                    value={models.claude?.model || ""}
-                    onChange={(e) =>
-                      updateModel("claude", "model", e.target.value)
-                    }
-                    placeholder="claude-sonnet-4-20250514"
-                  />
+                  <div className="flex gap-1">
+                    <Input
+                      value={models.claude?.model || ""}
+                      onChange={(e) =>
+                        updateModel("claude", "model", e.target.value)
+                      }
+                      placeholder="claude-sonnet-4-20250514"
+                    />
+                    <Popover
+                      open={modelPickerOpen}
+                      onOpenChange={setModelPickerOpen}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-9 w-9 shrink-0"
+                          disabled={fetchedModelIds.length === 0}
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-72 p-0" align="end">
+                        <ScrollArea className="h-56">
+                          <div className="p-1">
+                            {fetchedModelIds.map((model) => (
+                              <button
+                                key={model}
+                                type="button"
+                                className="w-full truncate rounded px-2 py-1.5 text-left font-mono text-xs hover:bg-subtle"
+                                onClick={() => {
+                                  updateModel("claude", "model", model);
+                                  setModelPickerOpen(false);
+                                }}
+                              >
+                                {model}
+                              </button>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Haiku</Label>
