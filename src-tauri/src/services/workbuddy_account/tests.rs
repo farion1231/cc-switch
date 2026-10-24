@@ -790,3 +790,138 @@ async fn current_account_without_running_workbuddy_reports_not_running() {
     assert_eq!(quota.unavailable, Some(QuotaUnavailable::NotRunning));
     assert!(quota.snapshot.is_none());
 }
+
+// ---------- 重新登录 ----------
+
+#[test]
+fn reauth_back_into_the_same_account_replaces_its_expired_snapshot() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager();
+    fixture.write_profile("u-1", "Alice", "pro");
+    let expired = json!({
+        "account": {"uid": "u-1", "type": "personal"},
+        "auth": {"refreshExpiresAt": 1_000_000_000_000_i64},
+    });
+    std::fs::write(fixture.paths.info(), serde_json::to_vec(&expired).unwrap()).unwrap();
+    let before = manager.import_current().unwrap().account;
+    assert!(before.expired);
+    assert!(manager.prepare_reauth("missing").is_err());
+
+    manager.prepare_reauth("u-1").unwrap();
+    // 走「登录另一个账号」：只在本机写登出标记，`.info` 原样留着
+    assert!(fixture.paths.logout_marker().exists());
+    assert_eq!(manager.live_state().reauth, None);
+
+    // 用户在 WorkBuddy 里重新登录了同一个号；画像暂时读不到时也保留原来的昵称
+    std::fs::remove_file(&fixture.paths.profile_snapshot).unwrap();
+    fixture.sign_in("u-1", 3);
+    let live = manager.live_state();
+    let id = live
+        .reauth
+        .as_ref()
+        .map(|outcome| outcome.id)
+        .unwrap_or_default();
+    assert_eq!(
+        live.reauth,
+        Some(WorkBuddyReauthOutcome {
+            id,
+            target_id: "u-1".into(),
+            target_login: "Alice".into(),
+            account_id: "u-1".into(),
+            login: "Alice".into(),
+            same_account: true,
+            created: false,
+        })
+    );
+    assert!(live.imported);
+    // 结果留一会儿：别处先读到了也不会把它吞掉，界面按 id 只提示一次
+    assert_eq!(
+        manager.live_state().reauth.map(|outcome| outcome.id),
+        Some(id)
+    );
+
+    let status = manager.status().unwrap();
+    assert_eq!(status.accounts.len(), 1);
+    let after = &status.accounts[0];
+    assert_eq!(after.id, "u-1");
+    assert_eq!(after.nickname.as_deref(), Some("Alice"));
+    assert_eq!(after.added_at, before.added_at);
+    assert!(!after.expired);
+    let store = manager.lock();
+    let saved = &store.accounts["u-1"];
+    assert_eq!(saved.bundle.info, STANDARD.encode(info_doc("u-1", 3)));
+    assert!(store.dismissed.is_empty());
+}
+
+#[test]
+fn reauth_into_another_account_adds_it_and_keeps_the_target() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager();
+    fixture.sign_in("u-1", 0);
+    manager.import_current().unwrap();
+
+    manager.prepare_reauth("u-1").unwrap();
+    fixture.sign_in("u-3", 0);
+    // 自动收录（状态刷新）先收下了新登录，结果仍然报给界面
+    let status = manager.status().unwrap();
+    assert_eq!(status.current_account_id.as_deref(), Some("u-3"));
+    assert_eq!(status.accounts.len(), 2);
+    let outcome = manager.live_state().reauth.unwrap();
+    assert!(!outcome.same_account);
+    assert!(outcome.created);
+    assert_eq!(outcome.target_id, "u-1");
+    assert_eq!(outcome.account_id, "u-3");
+    // 原账号的快照不动
+    let store = manager.lock();
+    assert_eq!(
+        store.accounts["u-1"].bundle.info,
+        STANDARD.encode(info_doc("u-1", 0))
+    );
+}
+
+#[test]
+fn reauth_while_workbuddy_runs_waits_for_a_login_inside_workbuddy() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager();
+    fixture.sign_in("u-1", 0);
+    manager.import_current().unwrap();
+    fixture.sign_in("u-2", 0);
+    manager.import_current().unwrap();
+
+    fixture.running.store(true, Ordering::SeqCst);
+    assert!(manager.prepare_reauth("u-1").is_err());
+    assert!(
+        !fixture.paths.logout_marker().exists(),
+        "运行中不写登出标记"
+    );
+    // 当前那个号自己刷新 token 不算新登录
+    fixture.sign_in("u-2", 1);
+    assert_eq!(manager.live_state().reauth, None);
+
+    // 用户在 WorkBuddy 里退出、重新登录目标账号
+    fixture.sign_in("u-1", 4);
+    let outcome = manager.live_state().reauth.unwrap();
+    assert!(outcome.same_account);
+    assert_eq!(
+        manager.lock().accounts["u-1"].bundle.info,
+        STANDARD.encode(info_doc("u-1", 4))
+    );
+}
+
+#[test]
+fn plain_new_login_and_removal_cancel_a_pending_reauth() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager();
+    fixture.sign_in("u-1", 0);
+    manager.import_current().unwrap();
+
+    manager.prepare_reauth("u-1").unwrap();
+    manager.prepare_new_login().unwrap();
+    fixture.sign_in("u-3", 0);
+    assert_eq!(manager.live_state().reauth, None);
+
+    manager.prepare_reauth("u-1").unwrap();
+    manager.remove("u-1").unwrap();
+    fixture.sign_in("u-4", 0);
+    assert_eq!(manager.live_state().reauth, None);
+}

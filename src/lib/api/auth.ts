@@ -134,6 +134,22 @@ export interface WorkBuddyLiveState {
   signedIn: boolean;
   recognized: boolean;
   imported: boolean;
+  /** 最近一次「重新登录」的结果（后端会留一会儿，按 id 只提示一次） */
+  reauth?: WorkBuddyReauthOutcome | null;
+}
+
+/** 「重新登录」的结果：登回了原来的号（替换了它的快照），或登进了别的号（按普通收录处理）。 */
+export interface WorkBuddyReauthOutcome {
+  /** 这次结果的标识（完成时刻，毫秒） */
+  id: number;
+  targetId: string;
+  targetLogin: string;
+  accountId: string;
+  login: string;
+  /** 登回的就是发起重新登录的那个号 */
+  sameAccount: boolean;
+  /** 登进了别的号，而且是新收录的 */
+  created: boolean;
 }
 
 export interface WorkBuddyImportResult {
@@ -154,10 +170,16 @@ export async function workbuddyAccountImportCurrent(): Promise<WorkBuddyImportRe
 /**
  * 先收录当前账号，再在本机写登出标记，让 WorkBuddy 下次打开停在登录页
  * （不调用服务端登出）。要求 WorkBuddy 已退出。
+ *
+ * 传 `reauthAccountId` 是「重新登录」这个账号：之后登回它时替换它的旧快照，结果经
+ * `workbuddyAccountLiveState` 的 `reauth` 告诉界面。WorkBuddy 运行中时照样报错，但目标已记下。
  */
-export async function workbuddyAccountPrepareNewLogin(): Promise<ManagedAuthAccount | null> {
+export async function workbuddyAccountPrepareNewLogin(
+  reauthAccountId?: string,
+): Promise<ManagedAuthAccount | null> {
   return invoke<ManagedAuthAccount | null>(
     "workbuddy_account_prepare_new_login",
+    { reauthAccountId: reauthAccountId ?? null },
   );
 }
 

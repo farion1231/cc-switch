@@ -55,14 +55,19 @@ pub async fn workbuddy_account_import_current(
 }
 
 /// 收录当前账号后在本机写登出标记，WorkBuddy 下次打开停在登录页（不调用服务端登出）。
-#[tauri::command]
+/// 传了 `reauth_account_id` 就是「重新登录」这个账号：之后登回它时替换它的旧快照，
+/// 结果经 `workbuddy_account_live_state` 的 `reauth` 报一次。
+#[tauri::command(rename_all = "camelCase")]
 pub async fn workbuddy_account_prepare_new_login(
+    reauth_account_id: Option<String>,
     state: tauri::State<'_, WorkBuddyAccountState>,
 ) -> Result<Option<ManagedAuthAccount>, String> {
-    run_workbuddy(&state.0, |manager| {
-        Ok(manager
-            .prepare_new_login()?
-            .map(|account| map_workbuddy_account(account, None)))
+    run_workbuddy(&state.0, move |manager| {
+        let captured = match reauth_account_id.as_deref() {
+            Some(account_id) => manager.prepare_reauth(account_id)?,
+            None => manager.prepare_new_login()?,
+        };
+        Ok(captured.map(|account| map_workbuddy_account(account, None)))
     })
     .await
 }

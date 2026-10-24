@@ -4985,7 +4985,12 @@
     },
     "workbuddy": {
       "addedOn": "{{date}}收錄",
-      "expiredNote": "登入已過期，請在 WorkBuddy 裡重新登入這個帳號後再新增",
+      "expiredNote": "登入已過期，點「重新登入」後在 WorkBuddy 裡登入這個帳號",
+      "reauthPrepared": "WorkBuddy 開啟後會停在登入頁。請登入 {{login}}，登入後 CC Switch 會用新的登入取代它的快照。",
+      "reauthRunningTitle": "WorkBuddy 正在執行，無法讓它停在登入頁",
+      "reauthRunningBody": "可以先完全結束 WorkBuddy（含選單列/系統匣）再點「重新登入」；也可以直接在 WorkBuddy 裡登出目前帳號、重新登入 {{login}}，CC Switch 會自動取代它的快照。",
+      "reauthOtherAdded": "登入的不是 {{target}}，已將 {{login}} 收錄為新帳號。",
+      "reauthOtherUpdated": "登入的不是 {{target}}，{{login}} 已在清單裡，副本已更新。",
       "statusLoadFailed": "無法讀取 WorkBuddy 帳號，請重試。",
       "empty": "還沒有 WorkBuddy 帳號。先在 WorkBuddy 裡登入，再收錄目前登入的帳號。",
       "importCurrent": "收錄目前登入",

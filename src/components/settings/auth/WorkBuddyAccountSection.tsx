@@ -24,6 +24,12 @@ import { WorkBuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
 const PROVIDER = "workbuddy_account";
 const LIVE_KEY = WORKBUDDY_LIVE_KEY;
 
+/**
+ * 已经提示过的「重新登录」结果（按 id）。后端会把结果留一会儿，供应商列表等别处也会读到
+ * 同一份状态，这里保证同一次结果只弹一次。
+ */
+const notifiedReauth = new Set<number>();
+
 /** 添加账号后要给用户看的下一步：当前号已收录（想加另一个）、或 WorkBuddy 没登录。 */
 type AddHint = "already" | "signedOut" | null;
 
@@ -100,7 +106,7 @@ export function WorkBuddyAccountSection({
     });
 
   const prepareMutation = useMutation({
-    mutationFn: authApi.workbuddyAccountPrepareNewLogin,
+    mutationFn: () => authApi.workbuddyAccountPrepareNewLogin(),
     onSuccess: async () => {
       setAddHint(null);
       toast.success(
@@ -117,6 +123,83 @@ export function WorkBuddyAccountSection({
     },
   });
 
+  const accountLogin = (accountId: string) =>
+    accounts.find((account) => account.id === accountId)?.login ?? accountId;
+
+  // 重新登录：走「登录另一个账号」的流程，并让后端记住目标账号。之后登回它时替换它的旧快照，
+  // 登进了别的号就按普通收录处理；结果经 live 状态的 `reauth` 回来。
+  const reauthMutation = useMutation({
+    mutationFn: (accountId: string) =>
+      authApi.workbuddyAccountPrepareNewLogin(accountId),
+    onSuccess: async (_captured, accountId) => {
+      setAddHint(null);
+      toast.success(
+        t("authCenter.workbuddy.reauthPrepared", {
+          defaultValue:
+            "WorkBuddy 打开后会停在登录页。请登录 {{login}}，登录后 CC Switch 会用新的登录替换它的快照。",
+          login: accountLogin(accountId),
+        }),
+      );
+      await refresh();
+      await openApp();
+    },
+    onError: async (error, accountId) => {
+      // WorkBuddy 在运行时没法让它停在登录页：说明可以在 WorkBuddy 里直接重新登录（目标已记下）
+      const state = await authApi.workbuddyAccountLiveState().catch(() => null);
+      if (state?.running) {
+        toast.error(
+          t("authCenter.workbuddy.reauthRunningTitle", {
+            defaultValue: "WorkBuddy 正在运行，没法让它停在登录页",
+          }),
+          {
+            description: t("authCenter.workbuddy.reauthRunningBody", {
+              defaultValue:
+                "可以先完全退出 WorkBuddy（含菜单栏/托盘）再点「重新登录」；也可以直接在 WorkBuddy 里退出当前账号、重新登录 {{login}}，CC Switch 会自动替换它的快照。",
+              login: accountLogin(accountId),
+            }),
+            closeButton: true,
+          },
+        );
+      } else {
+        toast.error(message(error));
+      }
+      await refresh();
+    },
+  });
+
+  const reauthOutcome = live?.reauth ?? null;
+  React.useEffect(() => {
+    if (!reauthOutcome || notifiedReauth.has(reauthOutcome.id)) return;
+    notifiedReauth.add(reauthOutcome.id);
+    if (reauthOutcome.sameAccount) {
+      toast.success(
+        t("authCenter.toast.reauthed", {
+          defaultValue: "{{login}} 已重新登录。",
+          login: reauthOutcome.login,
+        }),
+      );
+    } else {
+      const values = {
+        target: reauthOutcome.targetLogin,
+        login: reauthOutcome.login,
+      };
+      toast.warning(
+        reauthOutcome.created
+          ? t("authCenter.workbuddy.reauthOtherAdded", {
+              defaultValue:
+                "登录的不是 {{target}}，已把 {{login}} 作为新账号收录。",
+              ...values,
+            })
+          : t("authCenter.workbuddy.reauthOtherUpdated", {
+              defaultValue:
+                "登录的不是 {{target}}，{{login}} 已在列表里，副本已更新。",
+              ...values,
+            }),
+      );
+    }
+    void refetchStatus();
+  }, [reauthOutcome, refetchStatus, t]);
+
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
@@ -128,7 +211,8 @@ export function WorkBuddyAccountSection({
     const details: React.ReactNode[] = account.requires_reauth
       ? [
           t("authCenter.workbuddy.expiredNote", {
-            defaultValue: "登录已过期，在 WorkBuddy 里重新登录这个号后再添加",
+            defaultValue:
+              "登录已过期，点「重新登录」后在 WorkBuddy 里登录这个号",
           }),
         ]
       : [
@@ -291,8 +375,10 @@ export function WorkBuddyAccountSection({
       defaultLabel={t("authCenter.workbuddy.current", {
         defaultValue: "WorkBuddy 在用",
       })}
-      canReauth={false}
-      onReauth={() => {}}
+      canReauth
+      onReauth={(accountId) => {
+        if (!reauthMutation.isPending) reauthMutation.mutate(accountId);
+      }}
       settingDefault={false}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })

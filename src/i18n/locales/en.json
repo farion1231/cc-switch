@@ -4984,7 +4984,12 @@
     },
     "workbuddy": {
       "addedOn": "Added {{date}}",
-      "expiredNote": "Sign-in expired. Sign in to this account again in WorkBuddy, then add it again",
+      "expiredNote": "Sign-in expired. Click Sign in again, then sign in to this account in WorkBuddy",
+      "reauthPrepared": "WorkBuddy will open at its sign-in page. Sign in as {{login}}; CC Switch then replaces its snapshot with the new sign-in.",
+      "reauthRunningTitle": "WorkBuddy is running, so it can't be sent to its sign-in page",
+      "reauthRunningBody": "Quit WorkBuddy completely (including the menu bar / tray) and click Sign in again, or sign out in WorkBuddy and sign in as {{login}} there. CC Switch replaces its snapshot automatically.",
+      "reauthOtherAdded": "You signed in to a different account than {{target}}. {{login}} was added as a new account.",
+      "reauthOtherUpdated": "You signed in to a different account than {{target}}. {{login}} is already in the list; its copy was updated.",
       "statusLoadFailed": "Couldn't load WorkBuddy accounts. Try again.",
       "empty": "No WorkBuddy accounts yet. Sign in in WorkBuddy, then add the account it's signed in with.",
       "importCurrent": "Add current sign-in",

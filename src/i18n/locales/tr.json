@@ -4853,7 +4853,12 @@
     },
     "workbuddy": {
       "addedOn": "{{date}} eklendi",
-      "expiredNote": "Oturumun süresi doldu. WorkBuddy'de bu hesapla yeniden oturum açıp tekrar ekleyin",
+      "expiredNote": "Oturumun süresi doldu. Tekrar oturum açın'a tıklayın, ardından WorkBuddy'de bu hesapla oturum açın",
+      "reauthPrepared": "WorkBuddy oturum açma sayfasında açılacak. {{login}} olarak oturum açın; CC Switch anlık görüntüsünü yeni oturumla değiştirir.",
+      "reauthRunningTitle": "WorkBuddy çalışıyor, oturum açma sayfasında açılamıyor",
+      "reauthRunningBody": "WorkBuddy'den tamamen çıkıp (menü çubuğu / tepsi dahil) Tekrar oturum açın'a tıklayın ya da WorkBuddy'de oturumu kapatıp orada {{login}} olarak oturum açın. CC Switch anlık görüntüsünü otomatik olarak değiştirir.",
+      "reauthOtherAdded": "{{target}} yerine başka bir hesapla oturum açtınız. {{login}} yeni hesap olarak eklendi.",
+      "reauthOtherUpdated": "{{target}} yerine başka bir hesapla oturum açtınız. {{login}} zaten listede; kopyası güncellendi.",
       "statusLoadFailed": "WorkBuddy hesapları yüklenemedi. Tekrar deneyin.",
       "empty": "Henüz WorkBuddy hesabı yok. WorkBuddy'de oturum açın, ardından açık olan hesabı ekleyin.",
       "importCurrent": "Geçerli oturumu ekle",

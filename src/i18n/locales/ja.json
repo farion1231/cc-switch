@@ -4984,7 +4984,12 @@
     },
     "workbuddy": {
       "addedOn": "{{date}}に取り込み",
-      "expiredNote": "ログインの有効期限が切れています。WorkBuddy でこのアカウントに再ログインしてから追加してください",
+      "expiredNote": "ログインの有効期限が切れています。「再ログイン」をクリックし、WorkBuddy でこのアカウントにログインしてください",
+      "reauthPrepared": "WorkBuddy はログイン画面で開きます。{{login}} でログインすると、CC Switch が新しいログインでスナップショットを置き換えます。",
+      "reauthRunningTitle": "WorkBuddy が実行中のため、ログイン画面で開けません",
+      "reauthRunningBody": "WorkBuddy を完全に終了（メニューバー / トレイを含む）してから「再ログイン」をクリックするか、WorkBuddy で現在のアカウントからログアウトして {{login}} で再ログインしてください。CC Switch がスナップショットを自動で置き換えます。",
+      "reauthOtherAdded": "{{target}} ではないアカウントにログインしました。{{login}} を新しいアカウントとして取り込みました。",
+      "reauthOtherUpdated": "{{target}} ではないアカウントにログインしました。{{login}} はすでに一覧にあり、コピーを更新しました。",
       "statusLoadFailed": "WorkBuddy のアカウントを読み込めませんでした。もう一度お試しください。",
       "empty": "WorkBuddy のアカウントはまだありません。WorkBuddy でログインしてから、現在のアカウントを取り込んでください。",
       "importCurrent": "現在のログインを取り込む",

@@ -13,6 +13,18 @@ const mocks = vi.hoisted(() => ({
   openApp: vi.fn(),
   setDefault: vi.fn(),
   quota: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
+  toastWarning: vi.fn(),
+}));
+
+vi.mock("@/lib/toast", () => ({
+  toast: {
+    success: mocks.toastSuccess,
+    error: mocks.toastError,
+    warning: mocks.toastWarning,
+    info: vi.fn(),
+  },
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -164,12 +176,15 @@ describe("WorkBuddyAccountSection", () => {
       screen.queryByRole("button", { name: "WorkBuddy 的更多操作" }),
     ).not.toBeInTheDocument();
 
-    // 授权中心不再切换：⋯ 菜单里只有删除
+    // 授权中心不再切换：⋯ 菜单里只有重新登录和删除
     await userEvent.click(
       screen.getByRole("button", { name: "u-2 的更多操作" }),
     );
     expect(
       await screen.findByRole("menuitem", { name: /删除/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "重新登录" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("menuitem", { name: /切换/ }),
@@ -236,5 +251,128 @@ describe("WorkBuddyAccountSection", () => {
     renderWithClient(<WorkBuddyAccountSection />);
 
     expect(await screen.findByText("WorkBuddy 正在运行")).toBeInTheDocument();
+  });
+
+  describe("sign in again", () => {
+    it("shows the inline button only on expired accounts and starts a new login for it", async () => {
+      const auth = baseAuth();
+      auth.accounts = [
+        account("u-1", { login: "Alice", requires_reauth: true }),
+        account("u-2"),
+      ];
+      auth.defaultAccountId = "u-2";
+      mocks.useManagedAuth.mockReturnValue(auth);
+      mocks.prepareNewLogin.mockResolvedValue(account("u-2"));
+      renderWithClient(<WorkBuddyAccountSection />);
+
+      // 只有过期的那行有行内按钮
+      const buttons = screen.getAllByRole("button", { name: "重新登录" });
+      expect(buttons).toHaveLength(1);
+      await userEvent.click(buttons[0]);
+
+      await waitFor(() =>
+        expect(mocks.prepareNewLogin).toHaveBeenCalledWith("u-1"),
+      );
+      await waitFor(() => expect(mocks.openApp).toHaveBeenCalledOnce());
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        expect.stringContaining("请登录 Alice"),
+      );
+    });
+
+    it("offers sign in again in every account's menu", async () => {
+      const auth = baseAuth();
+      auth.accounts = [account("u-1"), account("u-2")];
+      auth.defaultAccountId = "u-1";
+      mocks.useManagedAuth.mockReturnValue(auth);
+      mocks.prepareNewLogin.mockResolvedValue(account("u-1"));
+      renderWithClient(<WorkBuddyAccountSection />);
+
+      expect(
+        screen.queryByRole("button", { name: "重新登录" }),
+      ).not.toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "u-1 的更多操作" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: "重新登录" }),
+      );
+      await waitFor(() =>
+        expect(mocks.prepareNewLogin).toHaveBeenCalledWith("u-1"),
+      );
+      await waitFor(() => expect(mocks.openApp).toHaveBeenCalledOnce());
+    });
+
+    it("explains signing in again inside WorkBuddy while it runs", async () => {
+      const auth = baseAuth();
+      auth.accounts = [
+        account("u-1", { login: "Alice", requires_reauth: true }),
+      ];
+      mocks.useManagedAuth.mockReturnValue(auth);
+      mocks.liveState.mockResolvedValue(live({ running: true }));
+      mocks.prepareNewLogin.mockRejectedValue(
+        new Error("WorkBuddy is running"),
+      );
+      renderWithClient(<WorkBuddyAccountSection />);
+
+      await userEvent.click(screen.getByRole("button", { name: "重新登录" }));
+      await waitFor(() =>
+        expect(mocks.toastError).toHaveBeenCalledWith(
+          "WorkBuddy 正在运行，没法让它停在登录页",
+          expect.objectContaining({
+            description: expect.stringContaining("重新登录 Alice"),
+          }),
+        ),
+      );
+      expect(mocks.openApp).not.toHaveBeenCalled();
+    });
+
+    it("reports when the same account signed in again and its snapshot was replaced", async () => {
+      const auth = baseAuth();
+      auth.accounts = [account("u-1", { login: "Alice" })];
+      mocks.useManagedAuth.mockReturnValue(auth);
+      const outcome = {
+        id: 101,
+        targetId: "u-1",
+        targetLogin: "Alice",
+        accountId: "u-1",
+        login: "Alice",
+        sameAccount: true,
+        created: false,
+      };
+      mocks.liveState.mockResolvedValue({ ...live(), reauth: outcome });
+      renderWithClient(<WorkBuddyAccountSection />);
+
+      await waitFor(() =>
+        expect(mocks.toastSuccess).toHaveBeenCalledWith("Alice 已重新登录。"),
+      );
+      expect(auth.refetchStatus).toHaveBeenCalled();
+      expect(mocks.toastWarning).not.toHaveBeenCalled();
+    });
+
+    it("says a different account was added when the sign-in isn't the original one", async () => {
+      const auth = baseAuth();
+      auth.accounts = [account("u-1", { login: "Alice" }), account("u-3")];
+      mocks.useManagedAuth.mockReturnValue(auth);
+      mocks.liveState.mockResolvedValue({
+        ...live(),
+        reauth: {
+          id: 102,
+          targetId: "u-1",
+          targetLogin: "Alice",
+          accountId: "u-3",
+          login: "u-3",
+          sameAccount: false,
+          created: true,
+        },
+      });
+      renderWithClient(<WorkBuddyAccountSection />);
+
+      await waitFor(() =>
+        expect(mocks.toastWarning).toHaveBeenCalledWith(
+          "登录的不是 Alice，已把 u-3 作为新账号收录。",
+        ),
+      );
+      expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    });
   });
 });

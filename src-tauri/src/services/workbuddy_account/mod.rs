@@ -34,7 +34,7 @@ pub use quota::{account_quota, WorkBuddyQuota, WorkBuddyQuotaSnapshot};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,10 @@ const OBSERVATION_PREFIX: &str = "workbuddy-desktop.info.";
 const OBSERVATION_SUFFIX: &str = ".observation.json";
 /// 锁目录这么久内被碰过就当 WorkBuddy 还在写（proper-lockfile 默认 10 秒内续一次）。
 const LOCK_FRESH: Duration = Duration::from_secs(30);
+/// 点「重新登录」后这么久内出现的新登录才按重新登录处理，过了就当普通收录。
+const REAUTH_WINDOW: Duration = Duration::from_secs(30 * 60);
+/// 「重新登录」的结果留这么久给界面读（界面按 `id` 只提示一次）。
+const REAUTH_NOTICE: Duration = Duration::from_secs(10 * 60);
 
 /// WorkBuddy 凭据所在的位置。测试用临时目录覆盖，绝不碰真实文件。
 #[derive(Debug, Clone)]
@@ -230,6 +234,36 @@ pub struct WorkBuddyLiveState {
     pub recognized: bool,
     /// 当前登录已经收录过
     pub imported: bool,
+    /// 最近一次「重新登录」的结果（留一会儿，界面按 `id` 只提示一次）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reauth: Option<WorkBuddyReauthOutcome>,
+}
+
+/// 「重新登录」的结果：登回了原来的号（替换了它的快照），还是登进了别的号（按普通收录处理）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkBuddyReauthOutcome {
+    /// 这次结果的标识（完成时刻，毫秒）
+    pub id: i64,
+    /// 发起重新登录的账号
+    pub target_id: String,
+    pub target_login: String,
+    /// 实际登进来的账号
+    pub account_id: String,
+    pub login: String,
+    /// 登回的就是目标账号
+    pub same_account: bool,
+    /// 登进了别的号，而且是新收录的
+    pub created: bool,
+}
+
+/// 等着 WorkBuddy 出现新登录的「重新登录」。
+struct PendingReauth {
+    target: String,
+    /// 发起时 WorkBuddy 这边那份登录（`.info` 的 base64）和它的 uid：没变就不算新登录
+    baseline_info: Option<String>,
+    baseline_uid: Option<String>,
+    started: Instant,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -294,6 +328,10 @@ pub struct WorkBuddyAccountManager {
     store: Mutex<StoreFile>,
     /// 额度查询同一时间只开一条 WBIPC 会话
     quota_gate: tokio::sync::Mutex<()>,
+    /// 进行中的「重新登录」（只在内存里；先拿 `store` 锁再拿它）
+    reauth: Mutex<Option<PendingReauth>>,
+    /// 最近一次「重新登录」的结果和完成时刻
+    reauth_outcome: Mutex<Option<(Instant, WorkBuddyReauthOutcome)>>,
 }
 
 impl WorkBuddyAccountManager {
@@ -324,6 +362,8 @@ impl WorkBuddyAccountManager {
             running,
             store: Mutex::new(store),
             quota_gate: tokio::sync::Mutex::new(()),
+            reauth: Mutex::new(None),
+            reauth_outcome: Mutex::new(None),
         }
     }
 
@@ -340,11 +380,17 @@ impl WorkBuddyAccountManager {
         let mut store = self.lock();
         let current = match self.read_live() {
             Ok(LiveLogin::Known { bundle, identity }) => {
-                let (id, changed) = absorb_known(&mut store, bundle, identity, false);
-                if changed {
+                if let Some(pending) = self.take_settled_reauth(&bundle, &identity) {
+                    let account = self.settle_reauth(&mut store, pending, bundle, identity);
                     self.persist(&store)?;
+                    Some(account.id)
+                } else {
+                    let (id, changed) = absorb_known(&mut store, bundle, identity, false);
+                    if changed {
+                        self.persist(&store)?;
+                    }
+                    id
                 }
-                id
             }
             Ok(_) => None,
             Err(error) => {
@@ -360,19 +406,40 @@ impl WorkBuddyAccountManager {
 
     pub fn live_state(&self) -> WorkBuddyLiveState {
         let running = (self.running)();
-        let store = self.lock();
+        let mut store = self.lock();
         let (signed_in, recognized, imported) = match self.read_live() {
-            Ok(LiveLogin::Known { identity, .. }) => {
+            Ok(LiveLogin::Known { bundle, identity }) => {
+                // 等着重新登录时顺手收下新登录，好把结果告诉界面
+                if let Some(pending) = self.take_settled_reauth(&bundle, &identity) {
+                    self.settle_reauth(&mut store, pending, bundle, identity.clone());
+                    if let Err(error) = self.persist(&store) {
+                        log::warn!("[WorkBuddyAccount] 保存重新登录的账号失败: {error}");
+                    }
+                }
                 (true, true, store.accounts.contains_key(&identity.id))
             }
             Ok(LiveLogin::Unrecognized(_)) => (true, false, false),
             Ok(LiveLogin::None) | Err(_) => (false, false, false),
+        };
+        let reauth = {
+            let mut outcome = self
+                .reauth_outcome
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if outcome
+                .as_ref()
+                .is_some_and(|(at, _)| at.elapsed() > REAUTH_NOTICE)
+            {
+                *outcome = None;
+            }
+            outcome.as_ref().map(|(_, outcome)| outcome.clone())
         };
         WorkBuddyLiveState {
             running,
             signed_in,
             recognized,
             imported,
+            reauth,
         }
     }
 
@@ -395,9 +462,14 @@ impl WorkBuddyAccountManager {
             }
             LiveLogin::Known { bundle, identity } => {
                 let created = !store.accounts.contains_key(&identity.id);
-                // 手动收录是明确意愿，解除之前的「删除」标记
-                store.dismissed.remove(&identity.id);
-                let account = upsert(&mut store, bundle, identity);
+                let account = if let Some(pending) = self.take_settled_reauth(&bundle, &identity)
+                {
+                    self.settle_reauth(&mut store, pending, bundle, identity)
+                } else {
+                    // 手动收录是明确意愿，解除之前的「删除」标记
+                    store.dismissed.remove(&identity.id);
+                    upsert(&mut store, bundle, identity)
+                };
                 self.persist(&store)?;
                 Ok(ImportOutcome { account, created })
             }
@@ -432,13 +504,19 @@ impl WorkBuddyAccountManager {
         let current = match live {
             LiveLogin::Known { bundle, identity } => {
                 let id = identity.id.clone();
-                // 当前登着的号即便之前被删过也要收回来，免得切走后这份登录彻底丢了
-                let was_dismissed = store.dismissed.remove(&id);
-                if was_dismissed
-                    || store.accounts.get(&id).map(|data| &data.bundle) != Some(&bundle)
-                {
-                    upsert(&mut store, bundle, identity);
+                if let Some(pending) = self.take_settled_reauth(&bundle, &identity) {
+                    // 等着的重新登录先了结，再切走
+                    self.settle_reauth(&mut store, pending, bundle, identity);
                     self.persist(&store)?;
+                } else {
+                    // 当前登着的号即便之前被删过也要收回来，免得切走后这份登录彻底丢了
+                    let was_dismissed = store.dismissed.remove(&id);
+                    if was_dismissed
+                        || store.accounts.get(&id).map(|data| &data.bundle) != Some(&bundle)
+                    {
+                        upsert(&mut store, bundle, identity);
+                        self.persist(&store)?;
+                    }
                 }
                 Some(id)
             }
@@ -451,6 +529,8 @@ impl WorkBuddyAccountManager {
         if current.as_deref() == Some(account_id) {
             return Ok(());
         }
+        // 切走以后 WorkBuddy 登的换成了别的号，还没等到的「重新登录」作废
+        self.clear_reauth();
         // 收回后用最新的副本（目标就是刚收回的那个时上面已经返回了）
         let target_bundle = store
             .accounts
@@ -481,9 +561,51 @@ impl WorkBuddyAccountManager {
     /// 让 WorkBuddy 下次打开时停在登录页，好登录另一个账号：先收录当前账号，再写登出标记。
     /// 只在本机写标记（和 WorkBuddy 自己登出时一样），不调用服务端登出，`.info` 原样留着。
     pub fn prepare_new_login(&self) -> Result<Option<WorkBuddyAccount>, AppError> {
+        self.prepare_login(None)
+    }
+
+    /// 「重新登录」这个账号：走登录另一个账号的流程（收录当前登录 → 写登出标记），并记住
+    /// 目标。之后收录到的新登录如果就是它，用新的整组文件替换它的旧快照（账号 id、昵称、
+    /// 绑定它的卡都不变）；登进了别的号就按普通收录处理。两种结果都经 `live_state` 的 `reauth` 告诉界面。
+    ///
+    /// WorkBuddy 正在运行时照样返回「正在运行」的错误、不写登出标记，但目标已经记下：
+    /// 用户直接在 WorkBuddy 里退出再登录这个号，也会替换快照。
+    pub fn prepare_reauth(&self, account_id: &str) -> Result<Option<WorkBuddyAccount>, AppError> {
+        self.prepare_login(Some(account_id))
+    }
+
+    fn prepare_login(
+        &self,
+        reauth_target: Option<&str>,
+    ) -> Result<Option<WorkBuddyAccount>, AppError> {
         let mut store = self.lock();
+        if let Some(target) = reauth_target {
+            if !store.accounts.contains_key(target) {
+                return Err(account_not_found(target));
+            }
+        }
+        let live = self.read_live();
+        let (baseline_info, baseline_uid) = match &live {
+            Ok(LiveLogin::Known { bundle, identity }) => {
+                (Some(bundle.info.clone()), Some(identity.id.clone()))
+            }
+            Ok(LiveLogin::Unrecognized(bundle)) => (Some(bundle.info.clone()), None),
+            Ok(LiveLogin::None) | Err(_) => (None, None),
+        };
+        // 新的一轮：旧结果不再提示；普通的「登录另一个账号」也会取消之前没等到的重新登录
+        *self
+            .reauth_outcome
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+        *self.reauth.lock().unwrap_or_else(|p| p.into_inner()) =
+            reauth_target.map(|target| PendingReauth {
+                target: target.to_string(),
+                baseline_info,
+                baseline_uid,
+                started: Instant::now(),
+            });
         self.ensure_quiet()?;
-        let captured = match self.read_live()? {
+        let captured = match live? {
             LiveLogin::Known { bundle, identity } => {
                 store.dismissed.remove(&identity.id);
                 let account = upsert(&mut store, bundle, identity);
@@ -511,6 +633,11 @@ impl WorkBuddyAccountManager {
             return Err(account_not_found(account_id));
         }
         store.dismissed.insert(account_id.to_string());
+        let mut pending = self.reauth.lock().unwrap_or_else(|p| p.into_inner());
+        if pending.as_ref().is_some_and(|p| p.target == account_id) {
+            *pending = None;
+        }
+        drop(pending);
         self.persist(&store)
     }
 
@@ -561,6 +688,79 @@ impl WorkBuddyAccountManager {
     }
 
     // ---------- 内部 ----------
+
+    fn clear_reauth(&self) {
+        *self.reauth.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    /// 有进行中的「重新登录」且 WorkBuddy 这边出现了它要等的新登录时，取出它。
+    /// 新登录指：登的就是目标、且和发起时那份不同；或者登进了发起时之外的另一个号。
+    /// 发起时那个号自己刷新 token 不算（还在等）。超时的直接作废。
+    fn take_settled_reauth(&self, bundle: &Bundle, identity: &Identity) -> Option<PendingReauth> {
+        let mut pending = self.reauth.lock().unwrap_or_else(|p| p.into_inner());
+        let settled = match pending.as_ref() {
+            None => return None,
+            Some(p) if p.started.elapsed() > REAUTH_WINDOW => {
+                *pending = None;
+                return None;
+            }
+            Some(p) if identity.id == p.target => {
+                p.baseline_info.as_deref() != Some(bundle.info.as_str())
+            }
+            Some(p) => p.baseline_uid.as_deref() != Some(identity.id.as_str()),
+        };
+        if settled {
+            pending.take()
+        } else {
+            None
+        }
+    }
+
+    /// 收下重新登录得到的新登录，记下结果等 `live_state` 报给界面。
+    fn settle_reauth(
+        &self,
+        store: &mut StoreFile,
+        pending: PendingReauth,
+        bundle: Bundle,
+        identity: Identity,
+    ) -> WorkBuddyAccount {
+        let target_login = store
+            .accounts
+            .get(&pending.target)
+            .map(|data| WorkBuddyAccount::from(data).label())
+            .unwrap_or_else(|| pending.target.clone());
+        let same_account =
+            identity.id == pending.target && store.accounts.contains_key(&pending.target);
+        let created = !store.accounts.contains_key(&identity.id);
+        store.dismissed.remove(&identity.id);
+        // 同一个号时 `upsert` 就是替换快照：账号 id、收录时间、额度缓存不变（绑定它的官方卡按 id
+        // 找它，不受影响），昵称读不到时保留旧的；到期时间换成新会话的，过期状态随之清掉。
+        let account = upsert(store, bundle, identity);
+        log::info!(
+            "[WorkBuddyAccount] 重新登录完成（{}）",
+            if same_account {
+                "同一账号，已替换快照"
+            } else {
+                "登进了另一个账号"
+            }
+        );
+        *self
+            .reauth_outcome
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some((
+            Instant::now(),
+            WorkBuddyReauthOutcome {
+                id: chrono::Utc::now().timestamp_millis(),
+                target_id: pending.target,
+                target_login,
+                account_id: account.id.clone(),
+                login: account.label(),
+                same_account,
+                created: !same_account && created,
+            },
+        ));
+        account
+    }
 
     /// WorkBuddy 没在运行、也没在写凭据。
     fn ensure_quiet(&self) -> Result<(), AppError> {

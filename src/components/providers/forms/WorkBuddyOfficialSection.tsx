@@ -75,7 +75,7 @@ export function WorkBuddyOfficialSection({
     ]);
 
   const prepare = useMutation({
-    mutationFn: authApi.workbuddyAccountPrepareNewLogin,
+    mutationFn: () => authApi.workbuddyAccountPrepareNewLogin(),
     onSuccess: async () => {
       toast.success(t("workbuddy.official.preparedNewLogin"), {
         closeButton: true,

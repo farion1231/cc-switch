@@ -4984,7 +4984,12 @@
     },
     "workbuddy": {
       "addedOn": "{{date}}收录",
-      "expiredNote": "登录已过期，在 WorkBuddy 里重新登录这个号后再添加",
+      "expiredNote": "登录已过期，点「重新登录」后在 WorkBuddy 里登录这个号",
+      "reauthPrepared": "WorkBuddy 打开后会停在登录页。请登录 {{login}}，登录后 CC Switch 会用新的登录替换它的快照。",
+      "reauthRunningTitle": "WorkBuddy 正在运行，没法让它停在登录页",
+      "reauthRunningBody": "可以先完全退出 WorkBuddy（含菜单栏/托盘）再点「重新登录」；也可以直接在 WorkBuddy 里退出当前账号、重新登录 {{login}}，CC Switch 会自动替换它的快照。",
+      "reauthOtherAdded": "登录的不是 {{target}}，已把 {{login}} 作为新账号收录。",
+      "reauthOtherUpdated": "登录的不是 {{target}}，{{login}} 已在列表里，副本已更新。",
       "statusLoadFailed": "无法读取 WorkBuddy 账号，请重试。",
       "empty": "还没有 WorkBuddy 账号。先在 WorkBuddy 里登录，再收录当前登录的账号。",
       "importCurrent": "收录当前登录",
