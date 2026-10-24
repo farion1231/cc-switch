@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import type { AppId } from "@/lib/api";
+import { settingsApi, type AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
@@ -162,6 +162,11 @@ export function AppsPage() {
   const { data: desktopStatus } = useQuery({
     queryKey: ["claude-desktop-status"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
+    staleTime: 30_000,
+  });
+  const { data: workbuddyStatus } = useQuery({
+    queryKey: ["config-status", "workbuddy"],
+    queryFn: () => settingsApi.getConfigStatus("workbuddy"),
     staleTime: 30_000,
   });
 
@@ -360,6 +365,16 @@ export function AppsPage() {
                   name={
                     <span className="truncate">
                       {APP_DISPLAY_NAME.workbuddy}
+                    </span>
+                  }
+                  version={
+                    <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+                      {workbuddyStatus?.exists
+                        ? t("appsPage.desktopConnected")
+                        : t("appsPage.desktopNotConnected")}
+                      <HelpTip title={APP_DISPLAY_NAME.workbuddy} align="end">
+                        {t("appsPage.workbuddyHelp")}
+                      </HelpTip>
                     </span>
                   }
                   visibility={visibilitySwitch("workbuddy")}

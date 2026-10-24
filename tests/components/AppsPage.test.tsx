@@ -28,6 +28,10 @@ type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
 const mocks = vi.hoisted(() => ({
   getToolVersions: vi.fn(),
+  getConfigStatus: vi.fn(async () => ({
+    exists: true,
+    path: "/home/me/.workbuddy",
+  })),
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
@@ -1948,6 +1952,14 @@ describe("AppsPage visibility column", () => {
       .closest("[data-tool-row]") as HTMLElement;
     expect(row).not.toBeNull();
     expect(within(row).getByRole("switch")).toBeInTheDocument();
-    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+    // 和 Claude Desktop 一样：接入状态 + 说明，没有操作按钮
+    expect(
+      await within(row).findByText("appsPage.desktopConnected"),
+    ).toBeInTheDocument();
+    expect(mocks.getConfigStatus).toHaveBeenCalledWith("workbuddy");
+    // 唯一的按钮是说明的问号
+    expect(within(row).getAllByRole("button")).toEqual([
+      within(row).getByRole("button", { name: "WorkBuddy" }),
+    ]);
   });
 });

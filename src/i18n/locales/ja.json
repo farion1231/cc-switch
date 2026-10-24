@@ -4239,6 +4239,7 @@
     "columnVisible": "表示",
     "visibleHelp": "オフにすると、このアプリはサイドバー、トレイメニュー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。表示しないだけで、プロバイダーや MCP などの設定はそのまま残り、アプリ自身の設定ファイルも変更されません。",
     "desktopHelp": "Claude Desktop はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch は設定ファイル経由で接続します。",
+    "workbuddyHelp": "WorkBuddy はデスクトップアプリのため、ここではインストールやアップグレードはできません（自動で更新されます）。CC Switch は設定ファイル（~/.workbuddy/models.json）を通じて連携します。",
     "desktopUnsupported": "このシステムには対応していません",
     "desktopConnected": "接続済み",
     "desktopNotConnected": "未接続",
