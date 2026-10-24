@@ -385,10 +385,12 @@ export function ClaudeDesktopProviderForm({
   );
   const activeProviderType =
     activePreset?.providerType ?? initialData?.meta?.providerType;
-  // Match the backend URL fallback without changing managed-account authentication.
+  // Codex/xAI OAuth ignore editable URLs and use fixed backend endpoints.
   const usesAutomaticCopilotFormat =
     activeProviderType === "github_copilot" ||
-    baseUrl.includes("githubcopilot.com");
+    (activeProviderType !== "codex_oauth" &&
+      activeProviderType !== "xai_oauth" &&
+      baseUrl.includes("githubcopilot.com"));
   const { isAuthenticated: isCopilotAuthenticated, accounts: copilotAccounts } =
     useCopilotAuth();
   const {

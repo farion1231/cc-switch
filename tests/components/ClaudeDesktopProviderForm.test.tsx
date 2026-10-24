@@ -195,6 +195,51 @@ describe("ClaudeDesktopProviderForm", () => {
     },
   );
 
+  it.each(["codex_oauth", "xai_oauth"])(
+    "%s 忽略 Copilot 地址并保留自身协议与认证方式",
+    (providerType) => {
+      renderForm({
+        name: "Managed OAuth Provider",
+        settingsConfig: {
+          env: { ANTHROPIC_BASE_URL: "https://api.githubcopilot.com" },
+        },
+        meta: {
+          providerType,
+          claudeDesktopMode: "proxy",
+          apiFormat: "openai_responses",
+        },
+      });
+
+      expect(
+        screen.queryByText("copilot.automaticFormat"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("copilot.automaticFormatHint"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("copilot-auth-section"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByTestId(
+          providerType === "codex_oauth"
+            ? "codex-oauth-section"
+            : "xai-oauth-section",
+        ),
+      ).toBeVisible();
+      if (providerType === "codex_oauth") {
+        expect(
+          screen
+            .getAllByRole("combobox")
+            .find((control) =>
+              control.textContent?.includes(
+                "OpenAI Responses API (需开启路由)",
+              ),
+            ),
+        ).toBeEnabled();
+      }
+    },
+  );
+
   it.each(["anthropic", "openai_chat", "openai_responses"] as const)(
     "手动配置 Copilot 地址时禁用旧格式 %s 的手选",
     (apiFormat) => {
