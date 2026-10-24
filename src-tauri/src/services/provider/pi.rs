@@ -1,7 +1,7 @@
 use super::{ProviderService, SwitchResult};
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::provider::{Provider, ProviderMeta, UsageScript};
+use crate::provider::{Provider, ProviderMeta};
 use crate::store::AppState;
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -79,38 +79,6 @@ pub(super) fn add(
         }
         return Err(error);
     }
-    Ok(true)
-}
-
-// Pi、Omp 的用量脚本只更新数据库，避免用旧快照覆盖外部修改过的原生配置。
-pub(super) fn update_usage_script(
-    state: &AppState,
-    app_type: AppType,
-    id: &str,
-    script: UsageScript,
-) -> Result<bool, AppError> {
-    if !matches!(app_type, AppType::Pi | AppType::Omp) {
-        return Err(AppError::InvalidInput(
-            "Usage metadata updates only support Pi and Omp".into(),
-        ));
-    }
-    let _guard =
-        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    super::validate_usage_script(&script)?;
-
-    let mut provider = state
-        .db
-        .get_provider_by_id(id, app_type.as_str())?
-        .ok_or_else(|| {
-            AppError::InvalidInput(format!("{} provider '{id}' not found", app_type.as_str()))
-        })?;
-    provider
-        .meta
-        .get_or_insert_with(ProviderMeta::default)
-        .usage_script = Some(script);
-    strip_unsupported_pi_metadata(&mut provider);
-    ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
-    state.db.save_provider(app_type.as_str(), &provider)?;
     Ok(true)
 }
 
@@ -298,7 +266,7 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::pi_config::test_support::TestAgentDir;
-    use crate::provider::ProviderMeta;
+    use crate::provider::{ProviderMeta, UsageScript};
     use serde_json::json;
     use serial_test::serial;
     use std::fs;
@@ -696,7 +664,7 @@ mod tests {
         )
         .expect("edit native provider");
 
-        ProviderService::update_pi_usage_script(
+        ProviderService::update_usage_script(
             &state,
             AppType::Pi,
             "cc-switch-test",

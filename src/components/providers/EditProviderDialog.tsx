@@ -195,7 +195,8 @@ export function EditProviderDialog({
       if (
         appId === "opencode" ||
         appId === "pi" ||
-        appId === "omp" || appId === "mcode" ||
+        appId === "omp" ||
+        appId === "mcode" ||
         appId === "kimi"
       ) {
         if (!cancelled) {

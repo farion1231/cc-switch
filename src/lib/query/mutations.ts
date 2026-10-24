@@ -71,7 +71,8 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "openclaw" ||
         appId === "hermes" ||
         appId === "pi" ||
-        appId === "omp" || appId === "mcode" ||
+        appId === "omp" ||
+        appId === "mcode" ||
         appId === "kimi"
       ) {
         if (

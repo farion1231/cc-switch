@@ -1618,7 +1618,7 @@ pub fn run() {
             // Pi native provider and session views
             commands::get_pi_current_state,
             commands::get_omp_current_state,
-            commands::update_pi_provider_usage_script,
+            commands::update_provider_usage_script,
             commands::get_pi_session_discovery,
             // Profile management (项目配置方案)
             commands::list_profiles,

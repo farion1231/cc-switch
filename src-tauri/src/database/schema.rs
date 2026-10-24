@@ -4015,13 +4015,13 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v22_to_v23_keeps_rows_flags_and_dao_reads() -> Result<(), AppError> {
+    fn migrate_v22_to_v23_adds_omp_and_preserves_existing_data() -> Result<(), AppError> {
         let db = Database::memory()?;
         {
             let conn = db.conn.lock().unwrap();
             conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;
-                INSERT INTO mcp_servers (id, name, server_config, enabled_codex, enabled_pi, enabled_mcode)
-                  VALUES ('existing', 'Existing', '{}', 1, 1, 1);
+                INSERT INTO mcp_servers (id, name, server_config, enabled_codex, enabled_pi, enabled_mcode, enabled_agy, enabled_kimi)
+                  VALUES ('existing', 'Existing', '{}', 1, 1, 1, 1, 1);
                 INSERT INTO skills (id, name, directory, installed_at, enabled_codex, enabled_mcode)
                   VALUES ('existing', 'Existing', 'existing', 1, 1, 1);")?;
             Database::set_user_version(&conn, 22)?;
@@ -4035,12 +4035,15 @@ mod tests {
             )?;
             assert_eq!(flag, 0);
             assert!(!Database::has_column(&conn, "skills", "enabled_omp")?);
+            Database::apply_schema_migrations_on_conn(&conn)?;
         }
         let servers = db.get_all_mcp_servers()?;
         assert!(
             servers["existing"].apps.codex
                 && servers["existing"].apps.pi
                 && servers["existing"].apps.mcode
+                && servers["existing"].apps.agy
+                && servers["existing"].apps.kimi
         );
         assert!(!servers["existing"].apps.omp);
         let skills = db.get_all_installed_skills()?;

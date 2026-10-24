@@ -293,7 +293,8 @@ export function AddProviderDialog({
           appId === "openclaw" ||
           appId === "hermes" ||
           appId === "pi" ||
-          appId === "omp" || appId === "mcode" ||
+          appId === "omp" ||
+          appId === "mcode" ||
           appId === "kimi") &&
         values.providerKey
       ) {

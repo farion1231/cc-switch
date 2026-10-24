@@ -619,7 +619,8 @@ function App() {
     const checkEnvOnSwitch = async () => {
       try {
         if (
-          activeApp === "mcode" || activeApp === "omp" ||
+          activeApp === "mcode" ||
+          activeApp === "omp" ||
           activeApp === "kimi" ||
           activeApp === "agy"
         )
@@ -869,7 +870,7 @@ function App() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         const description =
-          ((activeApp === "pi" || activeApp === "omp")
+          (activeApp === "pi" || activeApp === "omp"
             ? translatePiProviderMutationError(detail, t)
             : activeApp === "kimi"
               ? translateKimiProviderMutationError(detail, t)
@@ -1393,7 +1394,8 @@ function App() {
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
-              activeApp === "omp" || activeApp === "mcode" ||
+              activeApp === "omp" ||
+              activeApp === "mcode" ||
               activeApp === "kimi"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined

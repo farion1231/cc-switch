@@ -39,7 +39,7 @@ fn sync_native(state: &AppState) -> Result<usize, AppError> {
                 .unwrap_or(&id);
             let mut provider = Provider::with_id(id.clone(), name.into(), config.clone(), None);
             provider.category = Some("custom".into());
-            provider.icon = Some("pi".into());
+            provider.icon = Some("omp".into());
             provider
         });
         if saved.contains_key(&id) && provider.settings_config == config {
@@ -185,54 +185,59 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn usage_metadata_update_preserves_native_settings_and_pi_provider() {
-        let _agent = TestAgentDir::new();
-        let state = AppState::new(Arc::new(Database::memory().unwrap()));
-        let baseline = provider();
-        add(&state, baseline.clone(), true).unwrap();
-        state.db.save_provider("pi", &baseline).unwrap();
+        for pi_saved in [false, true] {
+            let _agent = TestAgentDir::new();
+            let state = AppState::new(Arc::new(Database::memory().unwrap()));
+            let baseline = provider();
+            add(&state, baseline.clone(), true).unwrap();
+            if pi_saved {
+                state.db.save_provider("pi", &baseline).unwrap();
+            }
 
-        let mut external = baseline.settings_config.clone();
-        external["apiKey"] = json!("rotated-outside");
-        omp_config::change_and_commit(
-            &baseline.id,
-            Some(&external),
-            Change::ReplaceIfPresent,
-            |_| Ok(()),
-        )
-        .unwrap();
-        let path = omp_config::models_path().unwrap();
-        let native_bytes = fs::read(&path).unwrap();
-        let script = serde_json::from_value(json!({
-            "enabled": true,
-            "language": "javascript",
-            "code": "return {}",
-        }))
-        .unwrap();
+            let mut external = baseline.settings_config.clone();
+            external["apiKey"] = json!("rotated-outside");
+            omp_config::change_and_commit(
+                &baseline.id,
+                Some(&external),
+                Change::ReplaceIfPresent,
+                |_| Ok(()),
+            )
+            .unwrap();
+            let path = omp_config::models_path().unwrap();
+            let native_bytes = fs::read(&path).unwrap();
+            let script = serde_json::from_value(json!({
+                "enabled": true,
+                "language": "javascript",
+                "code": "return {}",
+            }))
+            .unwrap();
 
-        ProviderService::update_pi_usage_script(&state, AppType::Omp, &baseline.id, script)
-            .unwrap();
-        assert_eq!(fs::read(&path).unwrap(), native_bytes);
-        let saved = list(&state).unwrap();
-        let saved = &saved[&baseline.id];
-        assert_eq!(saved.settings_config, external);
-        assert_eq!(
-            saved
-                .meta
-                .as_ref()
-                .unwrap()
-                .usage_script
-                .as_ref()
-                .unwrap()
-                .code,
-            "return {}"
-        );
-        let pi = state
-            .db
-            .get_provider_by_id(&baseline.id, "pi")
-            .unwrap()
-            .unwrap();
-        assert_eq!(pi.settings_config, baseline.settings_config);
-        assert!(pi.meta.and_then(|meta| meta.usage_script).is_none());
+            ProviderService::update_usage_script(&state, AppType::Omp, &baseline.id, script)
+                .unwrap();
+            assert_eq!(fs::read(&path).unwrap(), native_bytes);
+            let saved = list(&state).unwrap();
+            let saved = &saved[&baseline.id];
+            assert_eq!(saved.settings_config, external);
+            assert_eq!(
+                saved
+                    .meta
+                    .as_ref()
+                    .unwrap()
+                    .usage_script
+                    .as_ref()
+                    .unwrap()
+                    .code,
+                "return {}"
+            );
+            let pi = state.db.get_provider_by_id(&baseline.id, "pi").unwrap();
+            if pi_saved {
+                let pi = pi.unwrap();
+                assert_eq!(pi.settings_config, baseline.settings_config);
+                assert!(pi.meta.and_then(|meta| meta.usage_script).is_none());
+            } else {
+                assert!(pi.is_none());
+            }
+        }
     }
 
     #[test]

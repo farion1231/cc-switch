@@ -55,7 +55,7 @@ vi.mock("@/lib/query", () => ({
 
 const providersApiUpdateMock = vi.fn();
 const providersApiUpdateTrayMenuMock = vi.fn();
-const piApiUpdateProviderUsageScriptMock = vi.fn();
+const providersApiUpdateUsageScriptMock = vi.fn();
 const settingsApiGetMock = vi.fn();
 const settingsApiApplyMock = vi.fn();
 const openclawApiGetModelCatalogMock = vi.fn();
@@ -63,11 +63,9 @@ const openclawApiGetDefaultModelMock = vi.fn();
 const openclawApiSetDefaultModelMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
-  piApi: {
-    updateProviderUsageScript: (...args: unknown[]) =>
-      piApiUpdateProviderUsageScriptMock(...args),
-  },
   providersApi: {
+    updateUsageScript: (...args: unknown[]) =>
+      providersApiUpdateUsageScriptMock(...args),
     update: (...args: unknown[]) => providersApiUpdateMock(...args),
     updateTrayMenu: (...args: unknown[]) =>
       providersApiUpdateTrayMenuMock(...args),
@@ -118,7 +116,7 @@ beforeEach(() => {
   switchProviderMutateAsync.mockReset();
   providersApiUpdateMock.mockReset();
   providersApiUpdateTrayMenuMock.mockReset();
-  piApiUpdateProviderUsageScriptMock.mockReset();
+  providersApiUpdateUsageScriptMock.mockReset();
   settingsApiGetMock.mockReset();
   settingsApiApplyMock.mockReset();
   openclawApiGetModelCatalogMock.mockReset();
@@ -782,7 +780,7 @@ describe("useProviderActions", () => {
   it.each(["pi", "omp"] as const)(
     "saves %s usage metadata without updating the native provider config",
     async (app) => {
-      piApiUpdateProviderUsageScriptMock.mockResolvedValueOnce(true);
+      providersApiUpdateUsageScriptMock.mockResolvedValueOnce(true);
       const { wrapper } = createWrapper();
       const provider = createProvider({
         settingsConfig: {
@@ -804,7 +802,7 @@ describe("useProviderActions", () => {
         await result.current.saveUsageScript(provider, script);
       });
 
-      expect(piApiUpdateProviderUsageScriptMock).toHaveBeenCalledWith(
+      expect(providersApiUpdateUsageScriptMock).toHaveBeenCalledWith(
         provider.id,
         script,
         app,

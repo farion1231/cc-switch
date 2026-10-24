@@ -5,7 +5,7 @@ use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta};
+use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
 use crate::services::provider::{EditorSave, EditorView};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
@@ -119,6 +119,18 @@ pub async fn get_provider_editor_view(
     })
     .await
     .map_err(|e| format!("读取编辑器内容失败: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) fn update_provider_usage_script(
+    state: State<'_, AppState>,
+    app: String,
+    id: String,
+    #[allow(non_snake_case)] usageScript: UsageScript,
+) -> Result<bool, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ProviderService::update_usage_script(state.inner(), app_type, &id, usageScript)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

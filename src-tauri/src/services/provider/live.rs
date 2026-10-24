@@ -1133,6 +1133,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Omp
         | AppType::Mcode
         | AppType::Kimi => {
             unreachable!("additive mode apps are handled by early return")

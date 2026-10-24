@@ -1627,7 +1627,8 @@ impl SkillService {
         let dest = ssot_dir.join(&skill.directory);
         let mut deployments = Vec::new();
         for app in [
-            AppType::Pi | AppType::Omp,
+            AppType::Pi,
+            AppType::Omp,
             AppType::Mcode,
             AppType::Agy,
             AppType::Kimi,
@@ -6389,6 +6390,7 @@ mod tests {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
             let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+            let _omp_dir = crate::omp_config::test_support::TestAgentDir::new();
             let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
             let db = Arc::new(Database::memory().unwrap());
             let mut skill = poisoned_skill("test-skill", "test-skill");

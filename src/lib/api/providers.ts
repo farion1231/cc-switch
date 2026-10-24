@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Provider,
   ProviderMeta,
+  UsageScript,
   UniversalProvider,
   UniversalProvidersMap,
 } from "@/types";
@@ -126,6 +127,18 @@ export const providersApi = {
       ...(category ? { category } : {}),
       ...(providerId ? { providerId } : {}),
       ...(meta ? { meta } : {}),
+    });
+  },
+
+  async updateUsageScript(
+    id: string,
+    usageScript: UsageScript,
+    app: "pi" | "omp",
+  ): Promise<boolean> {
+    return await invoke("update_provider_usage_script", {
+      id,
+      usageScript,
+      app,
     });
   },
 

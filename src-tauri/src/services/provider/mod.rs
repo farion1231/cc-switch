@@ -32,7 +32,7 @@ use serde_json::Value;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::provider::{Provider, ProviderMeta, UsageResult};
+use crate::provider::{Provider, ProviderMeta, UsageResult, UsageScript};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -6472,13 +6472,42 @@ impl ProviderService {
         Ok(true)
     }
 
-    pub(crate) fn update_pi_usage_script(
+    // Pi、Omp 的用量脚本只更新数据库，避免用旧快照覆盖外部修改过的原生配置。
+    pub(crate) fn update_usage_script(
         state: &AppState,
         app_type: AppType,
         id: &str,
-        script: crate::provider::UsageScript,
+        script: UsageScript,
     ) -> Result<bool, AppError> {
-        pi::update_usage_script(state, app_type, id, script)
+        if !matches!(app_type, AppType::Pi | AppType::Omp) {
+            return Err(AppError::InvalidInput(
+                "Usage metadata updates only support Pi and Omp".into(),
+            ));
+        }
+        let _guard =
+            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+        validate_usage_script(&script)?;
+
+        let mut provider = state
+            .db
+            .get_provider_by_id(id, app_type.as_str())?
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!("{} provider '{id}' not found", app_type.as_str()))
+            })?;
+        provider
+            .meta
+            .get_or_insert_with(ProviderMeta::default)
+            .usage_script = Some(script);
+        provider.in_failover_queue = false;
+        provider.meta = provider.meta.map(|meta| ProviderMeta {
+            usage_script: meta.usage_script,
+            is_partner: meta.is_partner,
+            partner_promotion_key: meta.partner_promotion_key,
+            ..Default::default()
+        });
+        ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        state.db.save_provider(app_type.as_str(), &provider)?;
+        Ok(true)
     }
 
     /// Delete a provider

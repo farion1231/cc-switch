@@ -140,156 +140,11 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
     providers(&parse(text)?)
 }
 
-const APIS: &[&str] = &[
-    "openai-completions",
-    "openai-responses",
-    "openai-codex-responses",
-    "azure-openai-responses",
-    "anthropic-messages",
-    "bedrock-converse-stream",
-    "google-generative-ai",
-    "google-gemini-cli",
-    "google-vertex",
-    "openrouter-decisions",
-    "openai-decisions",
-    "workers-ai-systemone",
-    "typesafe",
-];
+mod validation;
+pub(crate) use validation::validate_provider;
 
 fn invalid_provider() -> AppError {
     AppError::Config("omp.errors.invalidProvider".into())
-}
-
-fn check_type(node: &Value, keys: &[&str], check: impl Fn(&Value) -> bool) -> Result<(), AppError> {
-    for key in keys {
-        if node.get(key).is_some_and(|v| !check(v)) {
-            return Err(invalid_provider());
-        }
-    }
-    Ok(())
-}
-
-fn string_map(v: &Value) -> bool {
-    v.as_object()
-        .is_some_and(|m| m.values().all(Value::is_string))
-}
-
-fn check_common(node: &Value) -> Result<(), AppError> {
-    if !node.is_object() {
-        return Err(invalid_provider());
-    }
-    check_type(node, &["baseUrl", "apiKey"], |v| {
-        v.as_str().is_some_and(|s| !s.is_empty())
-    })?;
-    check_type(node, &["api"], |v| {
-        v.as_str().is_some_and(|s| APIS.contains(&s))
-    })?;
-    check_type(node, &["headers"], string_map)?;
-    if let Some(compat) = node.get("compat") {
-        if !compat.is_object() {
-            return Err(invalid_provider());
-        }
-        check_type(
-            compat,
-            &[
-                "supportsStore",
-                "supportsDeveloperRole",
-                "supportsReasoningEffort",
-                "supportsUsageInStreaming",
-                "requiresToolResultName",
-                "requiresMistralToolIds",
-                "requiresAssistantAfterToolResult",
-                "requiresThinkingAsText",
-                "supportsStrictMode",
-            ],
-            Value::is_boolean,
-        )?;
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_provider(id: &str, node: &Value) -> Result<(), AppError> {
-    if id.trim().is_empty() {
-        return Err(invalid_provider());
-    }
-    check_common(node)?;
-    let models = match node.get("models") {
-        None => &[][..],
-        Some(v) => v.as_array().ok_or_else(invalid_provider)?.as_slice(),
-    };
-    if models.is_empty() {
-        let overrides = [
-            "baseUrl",
-            "headers",
-            "apiKey",
-            "compat",
-            "disableStrictTools",
-            "guardrailIdentifier",
-            "requestMetadata",
-            "remoteCompaction",
-            "discovery",
-        ];
-        if !overrides.iter().any(|k| {
-            node.get(k).is_some_and(|value| match value {
-                Value::Bool(b) => *b,
-                Value::String(s) => !s.is_empty(),
-                _ => !value.is_null(),
-            })
-        }) && node.get("auth").and_then(Value::as_str) != Some("none")
-            && node
-                .get("modelOverrides")
-                .and_then(Value::as_object)
-                .is_none_or(|m| m.is_empty())
-        {
-            return Err(invalid_provider());
-        }
-    } else if node.get("baseUrl").is_none()
-        || (node.get("apiKey").is_none()
-            && !matches!(
-                node.get("auth").and_then(Value::as_str),
-                Some("none" | "oauth")
-            ))
-    {
-        return Err(invalid_provider());
-    }
-    for model in models {
-        check_common(model)?;
-        if model
-            .get("id")
-            .and_then(Value::as_str)
-            .is_none_or(|id| id.is_empty())
-            || (model.get("api").is_none() && node.get("api").is_none())
-        {
-            return Err(invalid_provider());
-        }
-        check_type(model, &["input"], |v| {
-            v.as_array().is_some_and(|a| {
-                a.iter()
-                    .all(|v| matches!(v.as_str(), Some("text" | "image")))
-            })
-        })?;
-        check_type(model, &["contextWindow", "maxTokens"], |v| {
-            v.as_f64().is_some_and(|n| n > 0.0)
-        })?;
-        if let Some(cost) = model.get("cost") {
-            if !cost.is_object()
-                || ["input", "output", "cacheRead", "cacheWrite"]
-                    .iter()
-                    .any(|k| cost.get(k).is_none_or(|v| !v.is_number()))
-            {
-                return Err(invalid_provider());
-            }
-        }
-    }
-    // Proxy discovery supplies its API at runtime, as in omp's native validator.
-    if let Some(discovery) = node.get("discovery") {
-        if discovery.get("type").and_then(Value::as_str) != Some("proxy")
-            && node.get("api").is_none()
-        {
-            return Err(invalid_provider());
-        }
-    }
-    Ok(())
 }
 
 fn manual_edit() -> AppError {
@@ -759,6 +614,103 @@ mod tests {
             .unwrap()
             .starts_with(before));
         assert!(edit_provider(before, "bad", None).is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn invalid_native_fields_never_write_or_commit() {
+        let _agent = test_support::TestAgentDir::new();
+        let path = models_path().unwrap();
+        let before = edit_provider(
+            "# keep\nproviders:\n  future: {api: future-api, compat: {future: true}}\n",
+            "p",
+            Some(&provider()),
+        )
+        .unwrap();
+        fs::write(&path, &before).unwrap();
+        for (key, value) in [
+            ("authHeader", json!("yes")),
+            ("auth", json!("typo")),
+            ("disableStrictTools", json!(null)),
+            ("requestMetadata", json!({"tag": 1})),
+            ("compat", json!({"maxTokensField": "typo"})),
+            (
+                "compat",
+                json!({"whenThinking": {"supportsStrictMode": "yes"}}),
+            ),
+            ("compat", json!({"openRouterRouting": {"only": [1]}})),
+            ("compat", json!({"reasoningEffortMap": {"high": false}})),
+            ("compat", json!({"promptCacheMinimumTokens": -1})),
+            ("remoteCompaction", json!({"enabled": "yes"})),
+            ("discovery", json!({"type": "ollama", "timeoutMs": 0})),
+            ("discovery", json!({"type": "proxy", "injectV1": true})),
+            ("modelOverrides", json!([])),
+            ("modelOverrides", json!({"model-a": {"reasoning": "yes"}})),
+            (
+                "modelOverrides",
+                json!({"model-a": {"cost": {"input": "free"}}}),
+            ),
+            (
+                "modelOverrides",
+                json!({"model-a": {"thinking": {"mode": "effort"}}}),
+            ),
+            (
+                "models",
+                json!([{"id": "a", "thinking": {"mode": "typo", "efforts": ["high"]}}]),
+            ),
+            (
+                "models",
+                json!([{"id": "a", "thinking": {"mode": "effort", "levels": ["typo"]}}]),
+            ),
+            (
+                "models",
+                json!([{"id": "a", "contextWindow": 100, "maxContextWindow": 99}]),
+            ),
+            ("models", json!([{"id": "a", "maxContextWindow": 1.5}])),
+            ("models", json!([{"id": "a", "kind": "embedding"}])),
+        ] {
+            let mut invalid = provider();
+            invalid[key] = value;
+            let result: Result<(), AppError> =
+                change_and_commit("p", Some(&invalid), Change::ReplaceIfPresent, |_| {
+                    panic!("invalid provider must not reach the database commit");
+                });
+            assert!(result.is_err(), "accepted {invalid}");
+            assert_eq!(fs::read(&path).unwrap(), before.as_bytes());
+        }
+    }
+
+    #[test]
+    fn accepts_native_overrides_thinking_and_runner_models() {
+        let mut config = provider();
+        config["authHeader"] = json!(false);
+        config["compat"] = json!({
+            "maxTokensField": "max_tokens",
+            "whenThinking": {"thinkingFormat": "openai", "reasoningEffortMap": {"high": "enabled"}},
+            "openRouterRouting": {"order": ["provider"]},
+            "extraBody": {"future": [1, true]},
+            "futureField": {"anything": true},
+        });
+        config["models"][0]["thinking"] = json!({
+            "mode": "effort", "efforts": ["low", "high"], "defaultLevel": "high",
+        });
+        config["modelOverrides"] = json!({
+            "model-a": {"cost": {"input": 0}, "thinking": {"mode": "budget", "minLevel": "low", "maxLevel": "high"}},
+        });
+        assert!(validate_provider("p", &config).is_ok());
+        config["models"][0]["api"] = json!("openai-embeddings");
+        config["models"][0]["kind"] = json!("embedding");
+        assert!(validate_provider("p", &config).is_ok());
+        assert!(validate_provider(
+            "p",
+            &json!({"modelOverrides": {"builtin": {"maxTokens": 0}}})
+        )
+        .is_ok());
+        assert!(validate_provider(
+            "p",
+            &json!({"discovery": {"type": "proxy"}, "auth": "none"})
+        )
+        .is_ok());
     }
 
     #[test]
