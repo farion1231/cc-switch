@@ -15,6 +15,10 @@ import {
 } from "./PromptLibrary";
 import { PromptCopyDialog } from "./PromptCopyDialog";
 import { PromptPageFrame } from "./PromptPageFrame";
+import {
+  PromptFileProtection,
+  usePromptFileProtection,
+} from "./PromptFileProtection";
 import { toggleEffectText, usePromptPageCommon } from "./usePromptPageCommon";
 import {
   copyText,
@@ -70,6 +74,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   } = usePromptActions(appId, { notify: false });
   const reloadRef = React.useRef(reload);
   reloadRef.current = reload;
+  const fileProtection = usePromptFileProtection(appId, reload);
+  const fileReadOnly = fileProtection.readOnly;
   const { displayPath, location, fileName, invalidate, moreItems } =
     usePromptPageCommon(appId);
 
@@ -122,7 +128,13 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   }, []);
 
   const beginWrite = () => {
-    if (loading || reloadLockRef.current || writeLockRef.current) return false;
+    if (
+      fileReadOnly ||
+      loading ||
+      reloadLockRef.current ||
+      writeLockRef.current
+    )
+      return false;
     writeLockRef.current = true;
     setWritePending(true);
     return true;
@@ -182,6 +194,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   useTauriEvent("profile-applied", runExternalReload);
 
   const handleAdd = () => {
+    if (fileReadOnly) return;
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
     }
@@ -191,6 +204,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   };
 
   const handleEdit = (id: string) => {
+    if (fileReadOnly) return;
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
     }
@@ -495,13 +509,15 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       primary={{
         label: t("prompts.add"),
         onClick: handleAdd,
-        disabled: controlsDisabled,
+        disabled: controlsDisabled || fileReadOnly,
       }}
       moreItems={moreItems(
         {
           key: "import",
           label: renderSegs(t("prompts.importCurrent", { file: fileName })),
-          reason: importReason,
+          reason: fileReadOnly
+            ? t("prompts.fileProtection.readOnly")
+            : importReason,
           onSelect: () => void handleImport(),
         },
         { label: t("prompts.copyFilePath"), path: location.data?.path },
@@ -511,6 +527,15 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
         path: displayPath,
         meta: ` · ${fileMeta}`,
       }}
+      notices={
+        fileProtection.supported ? (
+          <PromptFileProtection
+            state={fileProtection}
+            disabled={interactionBlocked}
+            fileName={fileName}
+          />
+        ) : undefined
+      }
       search={
         listEmpty
           ? null
@@ -533,7 +558,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
             app={appId}
             displayPath={displayPath}
             fileText={fileText}
-            disabled={controlsDisabled}
+            disabled={controlsDisabled || fileReadOnly}
             onImport={() => void handleImport()}
             onAdd={handleAdd}
           />
@@ -544,6 +569,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
           searchQuery={searchQuery}
           listLabel={t("prompts.listLabel", { app: APP_DISPLAY_NAME[appId] })}
           disabled={controlsDisabled}
+          readOnly={fileReadOnly}
           onClearSearch={() => setSearchQuery("")}
           onToggle={(id, enabled) => void handleToggle(id, enabled)}
           onEdit={handleEdit}

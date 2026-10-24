@@ -13,6 +13,19 @@ use crate::services::prompt::PromptService;
 use crate::store::AppState;
 
 #[tauri::command]
+pub fn get_prompt_file_protection(app: String) -> Result<bool, String> {
+    let app = AppType::from_str(&app).map_err(|error| error.to_string())?;
+    crate::prompt_files::get_prompt_file_protection(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_prompt_file_protection(app: String, protected: bool) -> Result<(), String> {
+    let app = AppType::from_str(&app).map_err(|error| error.to_string())?;
+    crate::prompt_files::set_prompt_file_protection(&app, protected)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn get_prompts(
     app: String,
     state: State<'_, AppState>,

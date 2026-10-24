@@ -439,11 +439,12 @@ impl ProfileService {
                     None => warnings.push(format!(
                         "[{app_str}] prompt '{target_prompt}' no longer exists, skipped"
                     )),
-                    Some(p) if p.enabled => {}
                     Some(_) => {
-                        if let Err(e) =
-                            PromptService::enable_prompt(state, app.clone(), target_prompt)
-                        {
+                        if let Err(e) = PromptService::enable_prompt_if_needed(
+                            state,
+                            app.clone(),
+                            target_prompt,
+                        ) {
                             warnings.push(format!(
                                 "[{app_str}] enable prompt '{target_prompt}' failed: {e}"
                             ));
