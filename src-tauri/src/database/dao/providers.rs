@@ -26,6 +26,42 @@ fn tier_mappings_to_json(provider: &Provider) -> Result<Option<String>, AppError
         .map_err(|e| AppError::Database(format!("Failed to serialize tier_mappings: {e}")))
 }
 
+/// 引用端点的条目保存前物化：端点凭据 + 无跨端点引用的档位写入
+/// settings_config。悬空引用（端点已删）告警并保留原值——保存不炸，
+/// 语义等同独立条目，直到引用修复或清除。
+pub(crate) fn materialized_settings(
+    tx: &rusqlite::Transaction<'_>,
+    provider: &Provider,
+) -> Result<serde_json::Value, AppError> {
+    use crate::provider::{apply_endpoint_to_settings, apply_tier_mappings_to_settings};
+
+    let mut settings = provider.settings_config.clone();
+    let Some(ref_id) = provider.endpoint_ref.as_deref().filter(|s| !s.is_empty()) else {
+        return Ok(settings);
+    };
+    match tx.query_row(
+        "SELECT id, name, category, base_url, api_key, auth_binding,
+                website_url, icon, icon_color, notes, meta, created_at, sort_index
+         FROM endpoints WHERE id = ?1",
+        [ref_id],
+        crate::database::dao::endpoints::row_to_endpoint,
+    ) {
+        Ok(endpoint) => {
+            apply_endpoint_to_settings(&mut settings, &endpoint);
+            if let Some(tiers) = &provider.tier_mappings {
+                apply_tier_mappings_to_settings(&mut settings, tiers);
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                "条目 {} 的端点 {ref_id} 不可读（{e}），凭据保持原值",
+                provider.id
+            );
+        }
+    }
+    Ok(settings)
+}
+
 impl Database {
     /// Detach Codex providers bound to these deleted local accounts, atomically.
     /// Only this device's account IDs are passed in: provider rows sync across
@@ -296,6 +332,10 @@ impl Database {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
+        // 端点引用化（P2 写路径收口）：引用端点的条目在保存时物化——
+        // 引用是 SSOT，settings_config 是派生缓存，可随时重算
+        let settings_config = materialized_settings(&tx, provider)?;
+
         let existing: Option<(bool, bool)> = tx
             .query_row(
                 "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
@@ -329,7 +369,7 @@ impl Database {
                 WHERE id = ?13 AND app_type = ?14",
                 params![
                     provider.name,
-                    serde_json::to_string(&provider.settings_config).map_err(|e| {
+                    serde_json::to_string(&settings_config).map_err(|e| {
                         AppError::Database(format!("Failed to serialize settings_config: {e}"))
                     })?,
                     provider.website_url,
@@ -362,7 +402,7 @@ impl Database {
                     provider.id,
                     app_type,
                     provider.name,
-                    serde_json::to_string(&provider.settings_config)
+                    serde_json::to_string(&settings_config)
                         .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?,
                     provider.website_url,
                     provider.category,
@@ -413,6 +453,9 @@ impl Database {
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 与 save_provider 同款物化（换 id 不改变引用语义）
+        let settings_config = materialized_settings(&tx, provider)?;
+
         let (is_current, in_failover_queue) = tx
             .query_row(
                 "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
@@ -455,7 +498,7 @@ impl Database {
                 provider.id,
                 app_type,
                 provider.name,
-                serde_json::to_string(&provider.settings_config).map_err(|e| {
+                serde_json::to_string(&settings_config).map_err(|e| {
                     AppError::Database(format!("Failed to serialize settings_config: {e}"))
                 })?,
                 provider.website_url,

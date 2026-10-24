@@ -1010,13 +1010,56 @@ pub fn apply_endpoint_to_settings(settings: &mut Value, endpoint: &Endpoint) -> 
                 }
             }
             if rewritten {
-                obj.insert("config".to_string(), Value::String(doc.to_string()));
+                let mut text = doc.to_string();
+                // 保真：原文档无尾换行时物化也不引入（避免无关 diff 噪声）
+                if !config.ends_with('\n') {
+                    while text.ends_with('\n') {
+                        text.pop();
+                    }
+                }
+                obj.insert("config".to_string(), Value::String(text));
             }
         }
         return true;
     }
 
     false
+}
+
+/// tier 档位映射物化：无 `endpoint` 的档位把模型名写入对应 env 键。
+/// 只覆盖条目已使用的键（档位已启用才接管），不向 codex/gemini 等
+/// 不认这些键的形态注入。带 `endpoint` 的档位不写 env——CLI 直连单条目
+/// 一个 base_url，跨端点只在代理模式生效（P3 运行时分流）。
+// P3 在代理层消费带 endpoint 的档位；当前无 lib 调用点
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn apply_tier_mappings_to_settings(settings: &mut Value, tiers: &TierMappings) -> bool {
+    let Some(env) = settings
+        .as_object_mut()
+        .and_then(|obj| obj.get_mut("env"))
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    let mut touched = false;
+    let entries: [(Option<&TierMapping>, &str); 6] = [
+        (tiers.haiku.as_ref(), "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+        (tiers.sonnet.as_ref(), "ANTHROPIC_DEFAULT_SONNET_MODEL"),
+        (tiers.opus.as_ref(), "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+        (tiers.fable.as_ref(), "ANTHROPIC_DEFAULT_FABLE_MODEL"),
+        (tiers.subagent.as_ref(), "CLAUDE_CODE_SUBAGENT_MODEL"),
+        (tiers.default.as_ref(), "ANTHROPIC_MODEL"),
+    ];
+    for (tier, key) in entries {
+        let Some(tier) = tier else { continue };
+        let Some(model) = tier.model.as_deref().filter(|m| !m.trim().is_empty()) else {
+            continue;
+        };
+        if tier.endpoint.is_none() && env.contains_key(key) {
+            env.insert(key.to_string(), Value::String(model.to_string()));
+            touched = true;
+        }
+    }
+    touched
 }
 
 /// 统一供应商的应用启用状态
@@ -1157,6 +1200,26 @@ impl UniversalProvider {
     }
 
     /// 生成 Claude 供应商配置
+    /// 升格为全局端点（P2 双轨收口：universal 编辑同步写 endpoints 表，
+    /// id 保留——迁移 v25 已按此约定回填子条目引用）
+    pub fn to_endpoint(&self) -> Endpoint {
+        Endpoint {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            category: Some(self.provider_type.clone()),
+            base_url: self.base_url.trim_end_matches('/').to_string(),
+            api_key: self.api_key.clone(),
+            auth_binding: self.meta.as_ref().and_then(|m| m.auth_binding.clone()),
+            website_url: self.website_url.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            notes: self.notes.clone(),
+            meta: None,
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+        }
+    }
+
     pub fn to_claude_provider(&self) -> Option<Provider> {
         if !self.apps.claude {
             return None;
@@ -1200,7 +1263,7 @@ impl UniversalProvider {
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
-            endpoint_ref: None,
+            endpoint_ref: Some(self.id.clone()),
             tier_mappings: None,
         })
     }
@@ -1267,7 +1330,7 @@ requires_openai_auth = true"#
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
-            endpoint_ref: None,
+            endpoint_ref: Some(self.id.clone()),
             tier_mappings: None,
         })
     }
@@ -1304,7 +1367,7 @@ requires_openai_auth = true"#
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
-            endpoint_ref: None,
+            endpoint_ref: Some(self.id.clone()),
             tier_mappings: None,
         })
     }

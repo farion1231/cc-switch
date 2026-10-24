@@ -972,6 +972,61 @@ pub fn get_universal_providers(
     ProviderService::list_universal(state.inner()).map_err(|e| e.to_string())
 }
 
+// ==================== 全局端点（端点引用化） ====================
+
+#[tauri::command]
+pub fn get_endpoints(
+    state: State<'_, AppState>,
+) -> Result<indexmap::IndexMap<String, crate::provider::Endpoint>, String> {
+    state.db.get_all_endpoints().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_endpoint(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<crate::provider::Endpoint>, String> {
+    state.db.get_endpoint(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_endpoint(
+    state: State<'_, AppState>,
+    endpoint: crate::provider::Endpoint,
+) -> Result<(), String> {
+    state.db.save_endpoint(&endpoint).map_err(|e| e.to_string())
+}
+
+/// 删除端点；被条目引用时返回引用数（调用方提示改用停用）。
+/// 引用条目列表同命令返回，前端可直接展示归属。
+#[tauri::command]
+pub fn delete_endpoint(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Result<(), Vec<(String, String)>>, String> {
+    match state.db.delete_endpoint(&id).map_err(|e| e.to_string())? {
+        Ok(()) => Ok(Ok(())),
+        Err(_) => {
+            let refs = state
+                .db
+                .endpoint_referencing_providers(&id)
+                .map_err(|e| e.to_string())?;
+            Ok(Err(refs))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn endpoint_referencing_providers(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<(String, String)>, String> {
+    state
+        .db
+        .endpoint_referencing_providers(&id)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_universal_provider(
     state: State<'_, AppState>,

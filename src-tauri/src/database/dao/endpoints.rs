@@ -68,9 +68,13 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    /// 保存端点（新增或整体更新）
+    /// 保存端点（新增或整体更新），并级联重物化所有引用条目——
+    /// 端点是凭据 SSOT，一处改全局生效
     pub fn save_endpoint(&self, endpoint: &Endpoint) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let auth_binding = endpoint
             .auth_binding
             .as_ref()
@@ -83,7 +87,7 @@ impl Database {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| AppError::Database(e.to_string()))?;
-        conn.execute(
+        tx.execute(
             "INSERT INTO endpoints
                 (id, name, category, base_url, api_key, auth_binding,
                  website_url, icon, icon_color, notes, meta, created_at, sort_index)
@@ -118,6 +122,70 @@ impl Database {
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 级联：引用条目逐条重物化（tier 档位一起按现值重算）
+        let referencing: Vec<(String, String)> = {
+            let mut stmt = tx
+                .prepare("SELECT id, app_type FROM providers WHERE endpoint_ref = ?1")
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map([endpoint.id.as_str()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            rows
+        };
+        for (provider_id, app_type) in referencing {
+            let updated: Option<String> = {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT settings_config, endpoint_ref, tier_mappings
+                         FROM providers WHERE id = ?1 AND app_type = ?2",
+                    )
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                let row = stmt
+                    .query_row(rusqlite::params![provider_id, app_type], |row| {
+                        let settings_text: String = row.get(0)?;
+                        let endpoint_ref: Option<String> = row.get(1)?;
+                        let tier_text: Option<String> = row.get(2)?;
+                        Ok((settings_text, endpoint_ref, tier_text))
+                    })
+                    .optional()
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                match row {
+                    Some((settings_text, endpoint_ref, tier_text)) => {
+                        let mut provider = crate::provider::Provider::with_id(
+                            provider_id.clone(),
+                            String::new(),
+                            serde_json::from_str(&settings_text).unwrap_or(serde_json::Value::Null),
+                            None,
+                        );
+                        provider.endpoint_ref = endpoint_ref;
+                        provider.tier_mappings = tier_text
+                            .filter(|s| !s.is_empty())
+                            .and_then(|s| serde_json::from_str(&s).ok());
+                        let materialized = super::providers::materialized_settings(&tx, &provider)?;
+                        Some(
+                            serde_json::to_string(&materialized)
+                                .map_err(|e| AppError::Database(e.to_string()))?,
+                        )
+                    }
+                    None => None,
+                }
+            };
+            if let Some(settings_json) = updated {
+                tx.execute(
+                    "UPDATE providers SET settings_config = ?1
+                     WHERE id = ?2 AND app_type = ?3",
+                    rusqlite::params![settings_json, provider_id, app_type],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -163,7 +231,7 @@ impl Database {
     }
 }
 
-fn row_to_endpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Endpoint> {
+pub(crate) fn row_to_endpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Endpoint> {
     let auth_binding_str: Option<String> = row.get(5)?;
     let meta_str: Option<String> = row.get(10)?;
     Ok(Endpoint {

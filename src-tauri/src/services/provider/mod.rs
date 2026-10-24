@@ -8364,6 +8364,8 @@ impl ProviderService {
         icon::validate_icon(provider.icon.as_deref())?;
         // 保存统一供应商
         state.db.save_universal_provider(&provider)?;
+        // 双轨收口：端点层同步（同 id）——子条目引用端点，保存时物化取这里的新值
+        state.db.save_endpoint(&provider.to_endpoint())?;
 
         Ok(true)
     }
@@ -8403,6 +8405,8 @@ impl ProviderService {
             .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
         // 子供应商经 save_provider 直接入库，不走保存校验，图标在这里把关
         icon::validate_icon(provider.icon.as_deref())?;
+        // 端点层先刷新（sync 可能独立于 upsert 被调用）——子条目保存时物化取端点现值
+        state.db.save_endpoint(&provider.to_endpoint())?;
 
         // Keep DB and live projections in sync independently per application:
         // one broken config file must not prevent the other two apps from being

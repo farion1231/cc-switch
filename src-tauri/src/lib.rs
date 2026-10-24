@@ -1812,6 +1812,12 @@ pub fn run() {
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
+            // Endpoint management（端点引用化）
+            commands::get_endpoints,
+            commands::get_endpoint,
+            commands::save_endpoint,
+            commands::delete_endpoint,
+            commands::endpoint_referencing_providers,
             // Custom icon library
             commands::get_custom_icons,
             commands::add_custom_icon,

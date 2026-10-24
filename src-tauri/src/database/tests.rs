@@ -1461,3 +1461,166 @@ fn incremental_vacuum_reclaims_entire_freelist() {
     Database::incremental_vacuum_on_conn(&conn).expect("incremental vacuum");
     assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
 }
+
+// ==================== 端点引用化（P2） ====================
+
+#[test]
+fn save_provider_materializes_credentials_and_tiers_from_endpoint() {
+    let db = Database::memory().expect("create memory db");
+    let endpoint = crate::provider::Endpoint::new(
+        "ep-1".to_string(),
+        "Relay".to_string(),
+        "https://new.example".to_string(),
+        "sk-new".to_string(),
+    );
+    db.save_endpoint(&endpoint).expect("save endpoint");
+
+    let mut provider = Provider::with_id(
+        "p1".to_string(),
+        "P1".to_string(),
+        json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://old.example",
+                "ANTHROPIC_AUTH_TOKEN": "sk-old",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "old-haiku"
+            }
+        }),
+        None,
+    );
+    provider.endpoint_ref = Some("ep-1".to_string());
+    provider.tier_mappings = Some(crate::provider::TierMappings {
+        haiku: Some(crate::provider::TierMapping {
+            endpoint: None,
+            model: Some("new-haiku".to_string()),
+        }),
+        subagent: Some(crate::provider::TierMapping {
+            endpoint: Some("ep-other".to_string()),
+            model: Some("gpt-5.4-mini".to_string()),
+        }),
+        ..Default::default()
+    });
+    db.save_provider("claude", &provider)
+        .expect("save provider");
+
+    let saved = db
+        .get_provider_by_id("p1", "claude")
+        .expect("get")
+        .expect("exists");
+    let env = &saved.settings_config["env"];
+    assert_eq!(env["ANTHROPIC_BASE_URL"], "https://new.example");
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-new");
+    // 无 endpoint 的档位接管对应键
+    assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "new-haiku");
+    // 带 endpoint 的档位不写 env（P3 代理运行时分流）
+    assert!(env.get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
+}
+
+#[test]
+fn save_endpoint_cascades_rematerialization_to_referencing_providers() {
+    let db = Database::memory().expect("create memory db");
+    db.save_endpoint(&crate::provider::Endpoint::new(
+        "ep-1".to_string(),
+        "Relay".to_string(),
+        "https://a.example".to_string(),
+        "sk-a".to_string(),
+    ))
+    .expect("seed endpoint");
+
+    let mut provider = Provider::with_id(
+        "p1".to_string(),
+        "P1".to_string(),
+        json!({"env": {"ANTHROPIC_BASE_URL": "https://a.example", "ANTHROPIC_AUTH_TOKEN": "sk-a"}}),
+        None,
+    );
+    provider.endpoint_ref = Some("ep-1".to_string());
+    db.save_provider("claude", &provider)
+        .expect("save provider");
+
+    // 改端点凭据（一处编辑）→ 引用条目级联重物化（全局生效）
+    db.save_endpoint(&crate::provider::Endpoint::new(
+        "ep-1".to_string(),
+        "Relay".to_string(),
+        "https://b.example".to_string(),
+        "sk-b".to_string(),
+    ))
+    .expect("rotate credentials");
+
+    let saved = db
+        .get_provider_by_id("p1", "claude")
+        .expect("get")
+        .expect("exists");
+    assert_eq!(
+        saved.settings_config["env"]["ANTHROPIC_BASE_URL"],
+        "https://b.example"
+    );
+    assert_eq!(saved.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-b");
+}
+
+#[test]
+fn save_provider_with_dangling_endpoint_ref_keeps_original_settings() {
+    let db = Database::memory().expect("create memory db");
+    let mut provider = Provider::with_id(
+        "p1".to_string(),
+        "P1".to_string(),
+        json!({"env": {"ANTHROPIC_BASE_URL": "https://keep.example", "ANTHROPIC_AUTH_TOKEN": "sk-keep"}}),
+        None,
+    );
+    provider.endpoint_ref = Some("ghost-endpoint".to_string());
+    db.save_provider("claude", &provider)
+        .expect("save provider");
+
+    let saved = db
+        .get_provider_by_id("p1", "claude")
+        .expect("get")
+        .expect("exists");
+    assert_eq!(
+        saved.settings_config["env"]["ANTHROPIC_BASE_URL"],
+        "https://keep.example"
+    );
+    assert_eq!(
+        saved.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+        "sk-keep"
+    );
+}
+
+#[test]
+fn delete_endpoint_blocked_while_referenced_and_allowed_after_release() {
+    let db = Database::memory().expect("create memory db");
+    db.save_endpoint(&crate::provider::Endpoint::new(
+        "ep-1".to_string(),
+        "Relay".to_string(),
+        "https://a.example".to_string(),
+        "sk-a".to_string(),
+    ))
+    .expect("seed endpoint");
+
+    let mut provider = Provider::with_id(
+        "p1".to_string(),
+        "P1".to_string(),
+        json!({"env": {"ANTHROPIC_BASE_URL": "https://a.example", "ANTHROPIC_AUTH_TOKEN": "sk-a"}}),
+        None,
+    );
+    provider.endpoint_ref = Some("ep-1".to_string());
+    db.save_provider("claude", &provider)
+        .expect("save provider");
+
+    // 被引用：拒绝删除并给出引用列表
+    match db.delete_endpoint("ep-1").expect("delete call") {
+        Err(count) => assert_eq!(count, 1),
+        Ok(()) => panic!("被引用的端点不应允许删除"),
+    }
+    let refs = db.endpoint_referencing_providers("ep-1").expect("refs");
+    assert_eq!(refs.len(), 1);
+
+    // 解除引用后可删
+    let mut released = db
+        .get_provider_by_id("p1", "claude")
+        .expect("get")
+        .expect("exists");
+    released.endpoint_ref = None;
+    db.save_provider("claude", &released).expect("release ref");
+    db.delete_endpoint("ep-1")
+        .expect("delete after release")
+        .expect("deletes cleanly");
+    assert!(db.get_endpoint("ep-1").expect("get").is_none());
+}
