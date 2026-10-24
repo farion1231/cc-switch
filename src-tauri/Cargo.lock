@@ -768,6 +768,7 @@ dependencies = [
  "base64 0.22.1",
  "brotli 7.0.0",
  "bytes",
+ "cairo-rs",
  "chrono",
  "dirs 5.0.1",
  "flate2",

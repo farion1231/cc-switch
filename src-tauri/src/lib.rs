@@ -50,6 +50,7 @@ mod tray;
 mod tray_panel;
 mod usage_events;
 mod usage_script;
+mod window_chrome;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
@@ -474,6 +475,12 @@ pub fn run() {
             // 托盘面板自己处理关闭（只隐藏），不走主窗口的「最小化到托盘 / 退出」
             if window.label() == tray_panel::PANEL_LABEL {
                 return;
+            }
+            // Tao 0.35 在最大化 / 还原时会重置 Wayland 标题栏布局；Resized 回调
+            // 晚于它的 resizable_notify，在这里重新套用系统设置。
+            #[cfg(target_os = "linux")]
+            if matches!(event, tauri::WindowEvent::Resized(_)) {
+                linux_fix::reapply_header_layout(window);
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 log::info!("收到窗口关闭请求: label={}", window.label());
@@ -1538,6 +1545,7 @@ pub fn run() {
             commands::open_config_folder,
             commands::pick_directory,
             commands::open_external,
+            commands::get_window_controls_layout,
             commands::get_init_error,
             commands::get_migration_result,
             commands::get_skills_migration_result,

@@ -396,6 +396,8 @@ export interface Settings {
   minimizeToTrayOnClose: boolean;
   // 是否启用应用级窗口控制按钮（最小化/最大化/关闭）
   useAppWindowControls?: boolean;
+  // Linux：应用级窗口按钮是否使用本机 GTK 主题样式（默认开启）
+  useGtkWindowControls?: boolean;
   // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）
   enableClaudePluginIntegration?: boolean;
   // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）

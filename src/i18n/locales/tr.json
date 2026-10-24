@@ -251,6 +251,7 @@
     "routeMapHint": "Sonnet, Opus ve Haiku katmanlarının her biri için istekte kullanılacak gerçek modeli girin. DeepSeek veya Kimi gibi markalı modeller için menüde görünecek adı kullanın. Boş bırakılan katman, Sonnet katmanındaki modeli (veya ilk doldurduğunuz katmanın modelini) kullanır; böylece alt ajanların çağırdığı Haiku her zaman kullanılabilir.",
     "routeModelLabel": "Model rolü",
     "routeRoleSonnet": "Sonnet",
+    "routeRoleCompat": "{{role}} · Uyumlu",
     "routeRoleOpus": "Opus",
     "routeRoleFable": "Fable",
     "routeRoleHaiku": "Haiku",
@@ -814,6 +815,8 @@
     "minimizeToTrayDescription": "İşaretlendiğinde kapat düğmesine basıldığında sistem tepsisinde gizlenir, aksi halde uygulama doğrudan çıkar.",
     "useAppWindowControls": "Uygulama düzeyinde pencere kontrollerini etkinleştir",
     "useAppWindowControlsDescription": "Uygulama başlığındaki yerleşik küçültme, büyütme/geri yükleme ve kapatma düğmelerini kullanın.",
+    "useGtkWindowControls": "Yerel GTK düğme stilini kullan",
+    "useGtkWindowControlsDescription": "Bu makinenin GTK temasındaki pencere düğmelerini uygulamaya yerleştirir. Kapatıldığında yerleşik simgeler kullanılır. GTK temasını değiştirdikten sonra uygulamayı yeniden başlatın.",
     "enableClaudePluginIntegration": "Claude Code uzantısına uygula",
     "enableClaudePluginIntegrationDescription": "Etkinleştirildiğinde VS Code Claude Code uzantı sağlayıcısı bu uygulamayla geçiş yapacak",
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
@@ -2112,6 +2115,8 @@
     "regionLabel": "Bölge"
   },
   "usage": {
+    "hour": "Saat",
+    "minute": "Dakika",
     "title": "Kullanım İstatistikleri",
     "subtitle": "Yapay zeka modeli kullanımını ve maliyet istatistiklerini görüntüleyin",
     "today": "24 Saat",
