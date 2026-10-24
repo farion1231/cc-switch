@@ -2,7 +2,6 @@ import * as React from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
-
 /**
  * 说明卡（v7 第八轮「?」，规格见 docs/research/2026-09-30-ui-design-v7/HELP_BRIEF.md）。
  *
@@ -86,6 +85,8 @@ function useHoverCard() {
 interface HelpCardProps {
   id: string;
   title?: React.ReactNode;
+  /** 标题同一行右端的内容（比如状态），与标题左右对齐 */
+  titleExtra?: React.ReactNode;
   children: React.ReactNode;
   side?: "top" | "bottom";
   align?: "start" | "end";
@@ -96,6 +97,7 @@ interface HelpCardProps {
 function HelpCard({
   id,
   title,
+  titleExtra,
   children,
   side = "bottom",
   align = "start",
@@ -116,10 +118,17 @@ function HelpCard({
         onCloseAutoFocus={(event) => event.preventDefault()}
         onPointerEnter={onPointerEnter}
         onPointerLeave={onPointerLeave}
-        className="z-[120] w-max max-w-[300px] rounded-[8px] border border-border bg-surface px-3 pb-2.5 pt-[9px] text-caption text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
+        className="z-[120] w-max max-w-[320px] rounded-[8px] border border-border bg-surface px-3 pb-2.5 pt-[9px] text-caption text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
       >
         {title ? (
-          <span className="mb-0.5 block font-semibold">{title}</span>
+          <span className="mb-0.5 flex items-baseline justify-between gap-3">
+            <span className="shrink-0 font-semibold">{title}</span>
+            {titleExtra ? (
+              <span className="min-w-0 truncate whitespace-nowrap">
+                {titleExtra}
+              </span>
+            ) : null}
+          </span>
         ) : null}
         {children}
       </PopoverPrimitive.Content>
@@ -130,8 +139,12 @@ function HelpCard({
 export interface HelpTipProps {
   /** 卡片标题，同时是「?」按钮的无障碍名字。写成问题或名词。 */
   title: string;
+  /** 标题同一行右端的内容（比如状态），与标题左右对齐 */
+  titleExtra?: React.ReactNode;
   /** 正文，一句话，≤ 80 字。 */
   children: React.ReactNode;
+  /** 「?」按钮里的图标；缺省是问号 */
+  icon?: React.ReactNode;
   side?: "top" | "bottom";
   align?: "start" | "end";
   className?: string;
@@ -140,7 +153,9 @@ export interface HelpTipProps {
 /** 放在被解释的词后面的「?」按钮。 */
 export function HelpTip({
   title,
+  titleExtra,
   children,
+  icon,
   side,
   align,
   className,
@@ -173,12 +188,13 @@ export function HelpTip({
             className,
           )}
         >
-          <CircleHelp className="h-3.5 w-3.5" strokeWidth={1.5} />
+          {icon ?? <CircleHelp className="h-3.5 w-3.5" strokeWidth={1.5} />}
         </button>
       </PopoverPrimitive.Trigger>
       <HelpCard
         id={id}
         title={title}
+        titleExtra={titleExtra}
         side={side}
         align={align}
         onPointerEnter={hover.onPointerEnter}

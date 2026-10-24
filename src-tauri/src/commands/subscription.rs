@@ -43,3 +43,12 @@ pub async fn get_subscription_quota(
     }
     inner
 }
+
+/// 社区重置预测（codex-resets.com）：全局数据，与账号无关，后端内存缓存 10 分钟。
+/// 前端按「Codex 重置预测」设置开关决定是否查询；`force` 供额度刷新按钮联动时绕过缓存。
+#[tauri::command]
+pub async fn get_codex_resets_status(
+    force: Option<bool>,
+) -> Result<crate::services::codex_resets::CodexResetsStatus, String> {
+    crate::services::codex_resets::get_status(force.unwrap_or(false)).await
+}

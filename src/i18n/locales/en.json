@@ -171,6 +171,8 @@
     "searchAriaLabel": "Search providers",
     "searchScopeHint": "Matches provider name, notes, website, and API address.",
     "searchButtonTip": "Search providers ({{shortcut}})",
+    "refreshQuotaTip": "Refresh all provider quotas",
+    "refreshQuotaAriaLabel": "Refresh all provider quotas",
     "searchCloseHint": "Press Esc to close",
     "searchCloseAriaLabel": "Close provider search",
     "noSearchResults": "No providers match your search.",
@@ -864,6 +866,8 @@
     "codexSessionCompressionDescription": "When on, Codex compresses session files that haven't changed for 7 days in the background each time it starts, which saves a lot of disk space. Codex decompresses a session automatically when you continue it. CC Switch still lists and counts compressed sessions; the list just doesn't show a preview of their last reply. This is a Codex feature still under development: Codex shows a notice on every start while it's on. Requires a recent Codex version and takes effect after restarting Codex. Turning it off stops compressing; sessions already compressed stay as they are.",
     "codexSessionCompressionUsage": "Sessions currently use {{size}}",
     "codexSessionCompressionFailed": "Failed to change the Codex session compression setting",
+    "codexResetPrediction": "Codex reset prediction",
+    "codexResetPredictionDescription": "Show community-observed rate-limit reset predictions on the official Codex provider card. Data comes from the third-party site codex-resets.com (not official OpenAI information); enabling this polls that service periodically",
     "unifyCodexHistoryRestoreCompleted": "Official session history restored from backup ({{files}} session files, {{rows}} index rows)",
     "unifyCodexHistoryRestoreFailed": "Failed to restore official session history, please try again",
     "unifyCodexHistoryRestoreNothing": "No restorable migration backup for the current Codex directory",
@@ -4486,6 +4490,22 @@
     "windows": {
       "title": "All limits",
       "showAll": "Show all limits"
+    },
+    "resetPrediction": {
+      "label": "Reset prediction",
+      "lastResetLine": "Last reset · {{time}} ({{type}})",
+      "scheduledLine": "Regular reset · {{time}}",
+      "watch": "Reset signal · {{chance}}% chance",
+      "chipWatch": "Reset · {{chance}}%",
+      "chipScheduled": "In {{time}}",
+      "watchActive": "Reset signal watch active",
+      "scheduledIn": "Regular reset expected in {{time}}",
+      "noSignal": "No reset signal right now",
+      "unavailable": "No data yet",
+      "loading": "Loading…",
+      "source": "Data from codex-resets.com — not official OpenAI information",
+      "typeRegular": "regular",
+      "typeBanked": "banked"
     }
   },
   "appMatrix": {

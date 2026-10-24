@@ -55,6 +55,8 @@ export interface PanelProvider {
   icon: string | null;
   iconColor: string | null;
   quota: PanelQuota | null;
+  /** Codex 官方订阅行：子面板里在额度下方显示社区重置预测 */
+  resetPrediction: boolean;
 }
 
 export interface PanelRow {
@@ -75,6 +77,8 @@ export interface PanelApp {
   header: string | null;
   attention: string | null;
   quota: PanelQuota | null;
+  /** Codex 当前在用官方订阅：主面板应用行的额度下面也显示社区重置预测 */
+  resetPrediction: boolean;
   addId: string | null;
   addText: string;
   rows: PanelRow[];

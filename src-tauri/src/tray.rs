@@ -909,6 +909,19 @@ enum TrayUsageSource {
     Script,
 }
 
+/// 这一行/这个应用当前用的是不是 Codex 官方订阅（托管账号或 CLI 登录）：
+/// 是的话托盘面板要显示社区重置预测。
+fn is_codex_official_source(
+    app_type: &AppType,
+    source: Option<&TrayUsageSource>,
+) -> bool {
+    *app_type == AppType::Codex
+        && matches!(
+            source,
+            Some(TrayUsageSource::ManagedCodex(_)) | Some(TrayUsageSource::Subscription)
+        )
+}
+
 /// Keep the tray's refresh and display paths on the same credentials and toggle.
 fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsageSource> {
     if *app_type == AppType::Codex {
@@ -2072,6 +2085,9 @@ pub struct PanelApp {
     pub header: Option<String>,
     pub attention: Option<&'static str>,
     pub quota: Option<PanelQuota>,
+    /// Codex 当前在用官方订阅（托管账号或 CLI 登录）：主面板应用行的额度下面
+    /// 也显示社区重置预测，不用展开子面板。
+    pub reset_prediction: bool,
     /// 还没有供应商：点这一行去添加。
     pub add_id: Option<String>,
     pub add_text: String,
@@ -2122,6 +2138,8 @@ pub struct PanelProvider {
     pub icon: Option<String>,
     pub icon_color: Option<String>,
     pub quota: Option<PanelQuota>,
+    /// Codex 官方订阅行（托管账号或 CLI 登录）：子面板里在额度下方显示社区重置预测。
+    pub reset_prediction: bool,
 }
 
 fn panel_quota(
@@ -2240,6 +2258,9 @@ fn panel_rows(
                             cached_reset_credits(usage_cache, &snapshot.app, source.as_ref());
                         panel_quota(texts, &view, now, credits)
                     }),
+                    // 重置预测显示在 Codex 官方订阅行（托管账号 / CLI 登录）上，
+                    // 与 ProviderCard 的 codexOfficialIdentity 判定保持同一人群
+                    reset_prediction: is_codex_official_source(&snapshot.app, source.as_ref()),
                 })
             });
             let kind = if provider.is_some() {
@@ -2286,6 +2307,14 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             .quota
             .as_ref()
             .map(|view| panel_quota(&texts, view, now, credits));
+        // 一级面板：Codex 当前在用官方订阅时，应用行的额度下面直接显示重置预测
+        let reset_prediction = snapshot
+            .current_id
+            .as_deref()
+            .and_then(|id| providers.get(id))
+            .and_then(|provider| tray_usage_source(&snapshot.app, provider))
+            .as_ref()
+            .is_some_and(|source| is_codex_official_source(&snapshot.app, Some(source)));
         apps.push(PanelApp {
             app: app.to_string(),
             name: app_display_name(&snapshot.app),
@@ -2303,6 +2332,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             header,
             attention: snapshot.needs_attention.then_some(texts.needs_attention),
             quota,
+            reset_prediction,
             add_id: snapshot
                 .providers
                 .is_empty()

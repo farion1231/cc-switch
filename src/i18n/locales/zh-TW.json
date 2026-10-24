@@ -171,6 +171,8 @@
     "searchAriaLabel": "搜尋供應商",
     "searchScopeHint": "根據名稱、備註、官網和請求位址比對結果。",
     "searchButtonTip": "搜尋供應商（{{shortcut}}）",
+    "refreshQuotaTip": "重新整理所有供應商的額度",
+    "refreshQuotaAriaLabel": "重新整理所有供應商的額度",
     "searchCloseHint": "按 Esc 關閉",
     "searchCloseAriaLabel": "關閉供應商搜尋",
     "noSearchResults": "沒有符合搜尋條件的供應商。",
@@ -864,6 +866,8 @@
     "codexSessionCompressionDescription": "開啟後，Codex 每次啟動時會在背景把 7 天以上沒動過的對話檔案壓縮保存，明顯減少佔用的磁碟空間；在這些對話上繼續對話時 Codex 會自動解壓。CC Switch 照常顯示和統計壓縮過的對話，只是列表裡不顯示它們最後一則回覆的預覽。這是 Codex 還在開發中的功能，開啟後 Codex 每次啟動會顯示一條提示；需要較新版本的 Codex，重新啟動 Codex 後生效。關閉後不再壓縮，已壓縮的對話保持原樣",
     "codexSessionCompressionUsage": "對話目錄目前佔用 {{size}}",
     "codexSessionCompressionFailed": "修改 Codex 對話壓縮設定失敗",
+    "codexResetPrediction": "Codex 重置預測",
+    "codexResetPredictionDescription": "在 Codex 官方供應商卡片上顯示社群觀測的額度重置預測。資料來自第三方網站 codex-resets.com（並非 OpenAI 官方資訊），開啟後會定期向該服務發起請求",
     "unifyCodexHistoryRestoreCompleted": "已按備份還原官方會話歷史（{{files}} 個會話檔案、{{rows}} 條索引記錄）",
     "unifyCodexHistoryRestoreFailed": "還原官方會話歷史失敗，請重試",
     "unifyCodexHistoryRestoreNothing": "目前 Codex 目錄沒有可恢復的遷移備份",
@@ -4487,6 +4491,22 @@
     "windows": {
       "title": "各檔額度",
       "showAll": "查看各檔額度"
+    },
+    "resetPrediction": {
+      "label": "重置預測",
+      "lastResetLine": "上次重置 · {{time}}（{{type}}）",
+      "scheduledLine": "常規重置 · {{time}}",
+      "watch": "重置信號 · 機率 {{chance}}%",
+      "chipWatch": "重置預測 · {{chance}}%",
+      "chipScheduled": "預計 {{time}}",
+      "watchActive": "重置信號觀測中",
+      "scheduledIn": "預計 {{time}} 後常規重置",
+      "noSignal": "目前沒有重置信號",
+      "unavailable": "暫時沒有資料",
+      "loading": "查詢中…",
+      "source": "資料來自 codex-resets.com，並非 OpenAI 官方資訊",
+      "typeRegular": "常規",
+      "typeBanked": "Banked"
     }
   },
   "appMatrix": {

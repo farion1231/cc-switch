@@ -1591,6 +1591,7 @@ pub fn run() {
             // subscription quota
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
+            commands::get_codex_resets_status,
             commands::get_codex_oauth_models,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,

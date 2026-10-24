@@ -21,6 +21,7 @@ import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+import { CodexResetPrediction } from "@/components/quota/CodexResetPrediction";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
@@ -379,6 +380,12 @@ export function ProviderCard({
                 consecutiveFailures={health.consecutive_failures}
                 isHealthy={health.is_healthy}
               />
+            )}
+            {/* 官方 Codex 行的社区重置预测入口（设置里可关）：CLI 原生登录和
+                绑定托管账号两种官方行都显示；详情悬浮在问号上，不占额度列 */}
+            {(codexOfficialIdentity === "managed_account" ||
+              codexOfficialIdentity === "native_login") && (
+              <CodexResetPrediction />
             )}
           </div>
 

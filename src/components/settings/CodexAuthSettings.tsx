@@ -174,6 +174,16 @@ export function CodexAuthSettings({
         onCheckedChange={(value) => void handleSessionCompressionChange(value)}
       />
 
+      <SettingsSwitchRow
+        label={t("settings.codexResetPrediction")}
+        help={{
+          title: t("settings.codexResetPrediction"),
+          body: t("settings.codexResetPredictionDescription"),
+        }}
+        checked={settings.codexResetPrediction ?? false}
+        onCheckedChange={(value) => onChange({ codexResetPrediction: value })}
+      />
+
       <ConfirmDialog
         isOpen={showEnableConfirm}
         title={t("confirm.unifyCodexHistory.title")}

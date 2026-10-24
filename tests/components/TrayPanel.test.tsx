@@ -62,6 +62,7 @@ const state: TrayPanelState = {
       header: null,
       attention: null,
       quota: null,
+      resetPrediction: false,
       addId: null,
       addText: "Add provider",
       rows: [
@@ -299,6 +300,7 @@ describe("TrayPanel window layout", () => {
             icon: null,
             iconColor: null,
             quota: null,
+            resetPrediction: false,
           },
         })),
       };

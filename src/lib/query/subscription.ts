@@ -1,5 +1,9 @@
 import { useRef } from "react";
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import {
+  useQuery,
+  type QueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
 import type { AppId } from "@/lib/api/types";
@@ -15,6 +19,8 @@ const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 export const subscriptionKeys = {
   all: ["subscription"] as const,
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
+  codexResets: () =>
+    [...subscriptionKeys.all, "codex-resets", "status"] as const,
 };
 
 /**
@@ -265,4 +271,37 @@ export function useKimiAccountQuota(
   });
 
   return useQuotaKeepLastGood(query, accountId);
+}
+
+/**
+ * codex-resets.com 社区重置预测。全局数据（不分账号），所有卡片共享同一份
+ * 请求缓存；后端还有 10 分钟内存缓存，这里同样按 10 分钟轮询。失败不保留
+ * 占位数据：预测行显示「暂时没有数据」，不影响额度行。
+ */
+export function useCodexResetsStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: subscriptionKeys.codexResets(),
+    queryFn: () => subscriptionApi.getCodexResetsStatus(),
+    enabled,
+    refetchInterval: 10 * 60 * 1000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+    staleTime: 10 * 60 * 1000,
+    retry: 1,
+  });
+}
+
+/**
+ * 立即强制刷新重置预测（绕过后端缓存），成功后写回共享的 query 缓存。
+ * 给额度刷新按钮联动用：失败静默保留上次的预测，不打扰额度刷新本身。
+ */
+export async function forceRefreshCodexResets(
+  queryClient: QueryClient,
+): Promise<void> {
+  try {
+    const status = await subscriptionApi.getCodexResetsStatus(true);
+    queryClient.setQueryData(subscriptionKeys.codexResets(), status);
+  } catch (error) {
+    console.warn("Failed to refresh codex reset prediction:", error);
+  }
 }

@@ -1,11 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { SubscriptionQuota } from "@/types/subscription";
+import type {
+  CodexResetsStatus,
+  SubscriptionQuota,
+} from "@/types/subscription";
 
 export const subscriptionApi = {
   getQuota: (tool: string): Promise<SubscriptionQuota> =>
     invoke("get_subscription_quota", { tool }),
   getCodexOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
     invoke("get_codex_oauth_quota", { accountId }),
+  getCodexResetsStatus: (force = false): Promise<CodexResetsStatus> =>
+    invoke("get_codex_resets_status", { force }),
   getXaiOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
     invoke("get_xai_oauth_quota", { accountId }),
   getAgyAccountQuota: (accountId: string): Promise<SubscriptionQuota> =>

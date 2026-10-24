@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { AppGlyph } from "@/components/shell/AppGlyph";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { TrayCodexResetPrediction } from "./TrayCodexResetPrediction";
 import { cn } from "@/lib/utils";
 import type { AppMode } from "@/types/proxy";
 import {
@@ -314,9 +315,11 @@ function AppRow({
       ) : (
         <Chevron className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
       )}
-      {app.quota && (
+      {(app.quota || app.resetPrediction) && (
         <span className="col-span-2 col-start-2 min-w-0">
-          <QuotaBlock quota={app.quota} texts={texts} />
+          {app.quota && <QuotaBlock quota={app.quota} texts={texts} />}
+          {/* Codex 当前在用官方订阅：一级行的额度下面直接显示重置预测 */}
+          {app.resetPrediction && <TrayCodexResetPrediction />}
         </span>
       )}
     </button>
@@ -403,9 +406,12 @@ function SubRow({
           {texts.inUse}
         </span>
       )}
-      {provider?.quota && (
+      {(provider?.quota || provider?.resetPrediction) && (
         <span className="min-w-0 [grid-column:2/-1]">
-          <QuotaBlock quota={provider.quota} texts={texts} compact />
+          {provider?.quota && (
+            <QuotaBlock quota={provider.quota} texts={texts} compact />
+          )}
+          {provider?.resetPrediction && <TrayCodexResetPrediction />}
         </span>
       )}
     </button>

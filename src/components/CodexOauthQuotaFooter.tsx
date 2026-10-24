@@ -1,6 +1,10 @@
 import React from "react";
 import type { ProviderMeta } from "@/types";
-import { useCodexOauthQuota } from "@/lib/query/subscription";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  forceRefreshCodexResets,
+  useCodexOauthQuota,
+} from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 
@@ -17,6 +21,7 @@ interface CodexOauthQuotaFooterProps {
  *
  * 复用 SubscriptionQuotaView 的全部渲染逻辑（5 状态 × inline/expanded）。
  * 数据源切换为 cc-switch 自管的 OAuth token 而非 Codex CLI 凭据。
+ * 点 ↻ 刷新额度时顺带强制刷新一次社区重置预测（见 forceRefreshCodexResets）。
  */
 const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
   meta,
@@ -25,6 +30,7 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
   autoQueryInterval = 5,
 }) => {
   const display = useQuotaDisplay();
+  const queryClient = useQueryClient();
   const {
     data: quota,
     isFetching: loading,
@@ -35,11 +41,16 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
     autoQueryIntervalMinutes: autoQueryInterval,
   });
 
+  const handleRefresh = React.useCallback(() => {
+    void forceRefreshCodexResets(queryClient);
+    return refetch();
+  }, [queryClient, refetch]);
+
   return (
     <SubscriptionQuotaView
       quota={quota}
       loading={loading}
-      refetch={refetch}
+      refetch={handleRefresh}
       appIdForExpiredHint="codex_oauth"
       inline={inline}
       display={display}

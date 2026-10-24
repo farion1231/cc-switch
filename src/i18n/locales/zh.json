@@ -171,6 +171,8 @@
     "searchAriaLabel": "搜索供应商",
     "searchScopeHint": "根据名称、备注、官网和请求地址匹配结果。",
     "searchButtonTip": "搜索供应商（{{shortcut}}）",
+    "refreshQuotaTip": "刷新所有供应商的额度",
+    "refreshQuotaAriaLabel": "刷新所有供应商的额度",
     "searchCloseHint": "按 Esc 关闭",
     "searchCloseAriaLabel": "关闭供应商搜索",
     "noSearchResults": "没有符合搜索条件的供应商。",
@@ -864,6 +866,8 @@
     "codexSessionCompressionDescription": "打开后，Codex 每次启动时会在后台把 7 天以上没动过的会话文件压缩保存，明显减少占用的磁盘空间；在这些会话上继续对话时 Codex 会自动解压。CC Switch 照常显示和统计压缩过的会话，只是列表里不显示它们最后一条回复的预览。这是 Codex 还在开发中的功能，打开后 Codex 每次启动会显示一条提示；需要较新版本的 Codex，重启 Codex 后生效。关闭后不再压缩，已压缩的会话保持原样",
     "codexSessionCompressionUsage": "会话目录当前占用 {{size}}",
     "codexSessionCompressionFailed": "修改 Codex 会话压缩设置失败",
+    "codexResetPrediction": "Codex 重置预测",
+    "codexResetPredictionDescription": "在 Codex 官方供应商卡片上显示社区观测的额度重置预测。数据来自第三方站点 codex-resets.com（并非 OpenAI 官方信息），开启后会周期性向该服务发起请求",
     "unifyCodexHistoryRestoreCompleted": "已按备份还原官方会话历史（{{files}} 个会话文件、{{rows}} 条索引记录）",
     "unifyCodexHistoryRestoreFailed": "还原官方会话历史失败，请重试",
     "unifyCodexHistoryRestoreNothing": "当前 Codex 目录没有可恢复的迁移备份",
@@ -4486,6 +4490,22 @@
     "windows": {
       "title": "各档额度",
       "showAll": "查看各档额度"
+    },
+    "resetPrediction": {
+      "label": "重置预测",
+      "lastResetLine": "上次重置 · {{time}}（{{type}}）",
+      "scheduledLine": "常规重置 · {{time}}",
+      "watch": "重置信号 · 概率 {{chance}}%",
+      "chipWatch": "重置预测 · {{chance}}%",
+      "chipScheduled": "预计 {{time}}",
+      "watchActive": "重置信号观测中",
+      "scheduledIn": "预计 {{time}} 后常规重置",
+      "noSignal": "当前没有重置信号",
+      "unavailable": "暂时没有数据",
+      "loading": "查询中…",
+      "source": "数据来自 codex-resets.com，并非 OpenAI 官方信息",
+      "typeRegular": "常规",
+      "typeBanked": "Banked"
     }
   },
   "appMatrix": {

@@ -48,6 +48,8 @@ vi.mock("@/lib/query/failover", () => ({
 
 vi.mock("@/lib/query/queries", () => ({
   useUsageQuery: () => ({ data: undefined }),
+  // 官方 Codex 行的重置预测 chip 读设置；没开时不渲染也不发请求
+  useSettingsQuery: () => ({ data: undefined }),
 }));
 
 const managedProvider = (

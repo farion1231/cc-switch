@@ -434,6 +434,8 @@ export interface Settings {
   unifyCodexSessionHistory?: boolean;
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
+  // 在 Codex 官方供应商卡片上显示社区重置预测（codex-resets.com，非 OpenAI 官方数据；默认关）
+  codexResetPrediction?: boolean;
   // Codex aggregation: every catalog row uses the classic (v1) sub-agent tools,
   // so a sub-agent on another provider can read its task (on by default)
   codexStackClassicTools?: boolean;

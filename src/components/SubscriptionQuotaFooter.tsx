@@ -1,8 +1,12 @@
 import React from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import type { AppId } from "@/lib/api";
-import { useSubscriptionQuota } from "@/lib/query/subscription";
+import {
+  forceRefreshCodexResets,
+  useSubscriptionQuota,
+} from "@/lib/query/subscription";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
@@ -361,6 +365,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   autoQueryInterval = 5,
 }) => {
   const display = useQuotaDisplay();
+  const queryClient = useQueryClient();
   const {
     data: quota,
     isFetching: loading,
@@ -372,13 +377,21 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
     autoQueryInterval,
   );
 
+  // Codex 的官方行点 ↻ 刷新额度时，顺带强制刷新一次社区重置预测
+  const handleRefresh = React.useCallback(() => {
+    if (appId === "codex") {
+      void forceRefreshCodexResets(queryClient);
+    }
+    return refetch();
+  }, [appId, queryClient, refetch]);
+
   if (!isCurrent) return null;
 
   return (
     <SubscriptionQuotaView
       quota={quota}
       loading={loading}
-      refetch={refetch}
+      refetch={handleRefresh}
       // expiredHint 里的 {tool} 是 CLI 命令名：Grok 的命令是 `grok` 而非 appId
       appIdForExpiredHint={appId === "grokbuild" ? "grok" : appId}
       inline={inline}

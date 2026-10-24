@@ -110,6 +110,7 @@ import { WhatsNewNotice } from "@/components/WhatsNewDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { RefreshAllQuotaButton } from "@/components/providers/RefreshAllQuotaButton";
 import { HelpTip } from "@/components/ui/help-tip";
 import { PageTabs } from "@/components/ui/page-tabs";
 import {
@@ -1378,6 +1379,7 @@ function App() {
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
+          {currentView === "providers" && <RefreshAllQuotaButton />}
           {currentView === "providers" &&
             (settingsData?.showProviderSearch ?? true) && (
               <HoverTip

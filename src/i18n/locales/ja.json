@@ -171,6 +171,8 @@
     "searchAriaLabel": "プロバイダーを検索",
     "searchScopeHint": "名前・メモ・公式サイト・API アドレスを対象に検索します。",
     "searchButtonTip": "プロバイダーを検索（{{shortcut}}）",
+    "refreshQuotaTip": "すべてのプロバイダーの残量を更新",
+    "refreshQuotaAriaLabel": "すべてのプロバイダーの残量を更新",
     "searchCloseHint": "Esc で閉じる",
     "searchCloseAriaLabel": "検索を閉じる",
     "noSearchResults": "一致するプロバイダーがありません。",
@@ -864,6 +866,8 @@
     "codexSessionCompressionDescription": "オンにすると、Codex は起動するたびに 7 日以上更新のないセッションファイルをバックグラウンドで圧縮し、ディスク使用量を大きく減らします。圧縮したセッションで会話を続けると Codex が自動的に展開します。CC Switch は圧縮されたセッションも通常どおり表示・集計しますが、一覧には最後の返信のプレビューが表示されません。Codex でまだ開発中の機能のため、オンの間は Codex の起動時に毎回通知が表示されます。新しめの Codex が必要で、Codex を再起動すると有効になります。オフにすると圧縮は止まりますが、圧縮済みのセッションはそのまま残ります。",
     "codexSessionCompressionUsage": "セッションの現在の使用量: {{size}}",
     "codexSessionCompressionFailed": "Codex セッション圧縮の設定を変更できませんでした",
+    "codexResetPrediction": "Codex リセット予測",
+    "codexResetPredictionDescription": "公式 Codex プロバイダーカードにコミュニティ観測によるリセット予測を表示します。データは第三者サイト codex-resets.com によるものであり（OpenAI 公式情報ではありません）、有効にするとこのサービスへ定期的に問い合わせます",
     "unifyCodexHistoryRestoreCompleted": "バックアップから公式セッション履歴を復元しました（セッションファイル {{files}} 件、インデックス {{rows}} 行）",
     "unifyCodexHistoryRestoreFailed": "公式セッション履歴の復元に失敗しました。もう一度お試しください",
     "unifyCodexHistoryRestoreNothing": "現在の Codex ディレクトリに復元可能な移行バックアップはありません",
@@ -4486,6 +4490,22 @@
     "windows": {
       "title": "各枠の残量",
       "showAll": "各枠の残量を表示"
+    },
+    "resetPrediction": {
+      "label": "リセット予測",
+      "lastResetLine": "最終リセット · {{time}}（{{type}}）",
+      "scheduledLine": "通常リセット · {{time}}",
+      "watch": "リセットシグナル · 確率 {{chance}}%",
+      "chipWatch": "リセット予測 · {{chance}}%",
+      "chipScheduled": "約{{time}}後",
+      "watchActive": "リセットシグナル観測中",
+      "scheduledIn": "約 {{time}} 後に通常リセット予定",
+      "noSignal": "現在シグナルはありません",
+      "unavailable": "データなし",
+      "loading": "取得中…",
+      "source": "データは codex-resets.com によるもので、OpenAI 公式ではありません",
+      "typeRegular": "通常",
+      "typeBanked": "Banked"
     }
   },
   "appMatrix": {

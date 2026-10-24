@@ -474,6 +474,11 @@ pub struct AppSettings {
     /// providers. Opt-in: defaults to false.
     #[serde(default)]
     pub unify_codex_session_history: bool,
+    /// 在 Codex 官方供应商卡片上显示社区重置预测（codex-resets.com 汇总的
+    /// 真实重置时刻；非 OpenAI 官方数据）。开启后前端会周期性请求该服务。
+    /// Opt-in: defaults to false.
+    #[serde(default)]
+    pub codex_reset_prediction: bool,
     /// User opted in (via the enable dialog checkbox) to migrate existing
     /// official sessions ("openai" bucket) into the shared bucket. Persisted so
     /// a failed migration retries at startup; cleared when the toggle turns off.
@@ -658,6 +663,7 @@ impl Default for AppSettings {
             native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
+            codex_reset_prediction: false,
             unify_codex_migrate_existing: None,
             codex_stack_classic_tools: true,
             codex_stack_subagent_model: None,

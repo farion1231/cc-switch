@@ -171,6 +171,8 @@
     "searchAriaLabel": "Sağlayıcılarda ara",
     "searchScopeHint": "Sağlayıcının adı, notları, web sitesi ve API adresiyle eşleşir.",
     "searchButtonTip": "Sağlayıcılarda ara ({{shortcut}})",
+    "refreshQuotaTip": "Tüm sağlayıcı kotalarını yenile",
+    "refreshQuotaAriaLabel": "Tüm sağlayıcı kotalarını yenile",
     "searchCloseHint": "Kapatmak için Esc tuşuna basın",
     "searchCloseAriaLabel": "Sağlayıcı aramasını kapat",
     "noSearchResults": "Aramanızla eşleşen sağlayıcı yok.",
@@ -864,6 +866,8 @@
     "codexSessionCompressionDescription": "Codex açıkken, her başlatıldığında arka planda 7 gün boyunca değişmeyen oturum dosyalarını sıkıştırır ve bu da çok fazla disk alanı tasarrufu sağlar. Codex, devam ettiğinizde oturumun sıkıştırmasını otomatik olarak açar. CC Switch hala sıkıştırılmış oturumları listeliyor ve sayıyor; liste yalnızca son yanıtlarının önizlemesini göstermiyor. Bu, halen geliştirilmekte olan bir Codex özelliğidir: Codex, açıkken her başlangıçta bir bildirim gösterir. Yeni bir Codex sürümü gerektirir ve Codex yeniden başlatıldıktan sonra etkili olur. Kapatıldığında sıkıştırma durdurulur; zaten sıkıştırılmış olan oturumlar olduğu gibi kalır.",
     "codexSessionCompressionUsage": "Oturumlar şu anda {{size}} kullanıyor",
     "codexSessionCompressionFailed": "Codex oturum sıkıştırma ayarı değiştirilemedi",
+    "codexResetPrediction": "Codex sıfırlama tahmini",
+    "codexResetPredictionDescription": "Resmi Codex sağlayıcı kartında topluluk gözlemli sıfırlama tahminlerini gösterir. Veriler üçüncü taraf site codex-resets.com'dan gelir (OpenAI resmi bilgisi değildir); etkinleştirildiğinde bu hizmete düzenli olarak istek gönderilir",
     "unifyCodexHistoryRestoreCompleted": "Yedeklemeden geri yüklenen resmi oturum geçmişi ({{files}} oturum dosyaları, {{rows}} dizin satırları)",
     "unifyCodexHistoryRestoreFailed": "Resmi oturum geçmişi geri yüklenemedi, lütfen tekrar deneyin",
     "unifyCodexHistoryRestoreNothing": "Geçerli Codex dizini için geri yüklenebilir geçiş yedeği yok",
@@ -4479,6 +4483,22 @@
     "windows": {
       "title": "Tüm sınırlar",
       "showAll": "Tüm sınırları göster"
+    },
+    "resetPrediction": {
+      "label": "Sıfırlama tahmini",
+      "lastResetLine": "Son sıfırlama · {{time}} ({{type}})",
+      "scheduledLine": "Normal sıfırlama · {{time}}",
+      "watch": "Sıfırlama sinyali · %{{chance}} olasılık",
+      "chipWatch": "Sıfırlama · %{{chance}}",
+      "chipScheduled": "{{time}} içinde",
+      "watchActive": "Sıfırlama sinyali izleniyor",
+      "scheduledIn": "Yaklaşık {{time}} içinde normal sıfırlama bekleniyor",
+      "noSignal": "Şu anda sinyal yok",
+      "unavailable": "Henüz veri yok",
+      "loading": "Yükleniyor…",
+      "source": "Veriler codex-resets.com'dan; OpenAI resmi bilgisi değildir",
+      "typeRegular": "normal",
+      "typeBanked": "banked"
     }
   },
   "appMatrix": {
