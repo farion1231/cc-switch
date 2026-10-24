@@ -33,6 +33,9 @@ const mocks = vi.hoisted(() => ({
   runToolLifecycleAction: vi.fn(),
   prepareToolUninstall: vi.fn(),
   copyText: vi.fn(),
+  updateSettings: vi.fn(),
+  autoSaveSettings: vi.fn(async () => null),
+  visibleApps: undefined as Record<string, boolean> | undefined,
   info: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
@@ -47,9 +50,9 @@ vi.mock("@/lib/api/providers", () => ({
 }));
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({
-    settings: { visibleApps: undefined },
-    updateSettings: vi.fn(),
-    autoSaveSettings: vi.fn(async () => null),
+    settings: { visibleApps: mocks.visibleApps },
+    updateSettings: mocks.updateSettings,
+    autoSaveSettings: mocks.autoSaveSettings,
   }),
 }));
 vi.mock("sonner", () => ({ toast: mocks }));
@@ -1844,6 +1847,48 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeEnabled();
   });
 
+  it("lists CodeBuddy Code last, like the sidebar, and upgrades it on its own", async () => {
+    outdated.add("codebuddy");
+    const view = await renderApps();
+    const names = Array.from(
+      view.container.querySelectorAll("[data-tool-row]"),
+      (row) => row.textContent ?? "",
+    );
+    const codebuddy = names.findIndex((name) =>
+      name.includes("CodeBuddy Code"),
+    );
+    expect(codebuddy).toBe(names.length - 1);
+    expect(names[codebuddy - 1]).toContain("Antigravity CLI");
+    expect(card("CodeBuddy Code").getByText("1.0.0")).toBeInTheDocument();
+
+    fireEvent.click(updateButton("CodeBuddy Code"));
+    await waitFor(() => expect(isReady("CodeBuddy Code")).toBe(true));
+    expect(mocks.probeToolInstallations).toHaveBeenCalledWith(["codebuddy"]);
+    expect(
+      mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
+    ).toEqual([["codebuddy"]]);
+  });
+
+  it("offers to install CodeBuddy Code when it is missing", async () => {
+    missing.add("codebuddy");
+    await renderApps();
+    expect(
+      card("CodeBuddy Code").queryByRole("button", {
+        name: "appPage.moreActions",
+      }),
+    ).toBeNull();
+    fireEvent.click(
+      card("CodeBuddy Code").getByRole("button", {
+        name: "settings.toolInstall",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
+      ).toEqual([["codebuddy"]]),
+    );
+  });
+
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
     const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
@@ -1937,6 +1982,57 @@ describe("AppsPage visibility column", () => {
     for (const element of switches) {
       expect(element).toHaveAttribute("data-size", "sm");
       expect(element).not.toHaveAttribute("data-tone");
+    }
+  });
+
+  it("hides CodeBuddy Code from the sidebar with its own switch", async () => {
+    vi.resetModules();
+    mocks.updateSettings.mockReset();
+    mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
+    await renderApps();
+    const toggle = card("CodeBuddy Code").getByRole("switch", {
+      name: /appsPage\.showInSidebar/,
+    });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(mocks.updateSettings).toHaveBeenCalledWith({
+      visibleApps: expect.objectContaining({ codebuddy: false, kimi: true }),
+    });
+    expect(mocks.autoSaveSettings).toHaveBeenCalledWith({
+      visibleApps: expect.objectContaining({ codebuddy: false }),
+    });
+  });
+
+  it("keeps CodeBuddy Code on when it is the last visible app", async () => {
+    vi.resetModules();
+    mocks.updateSettings.mockReset();
+    mocks.visibleApps = Object.fromEntries(
+      [
+        "claude",
+        "claude-desktop",
+        "codex",
+        "gemini",
+        "grokbuild",
+        "opencode",
+        "openclaw",
+        "hermes",
+        "pi",
+        "mcode",
+        "kimi",
+        "agy",
+      ].map((app) => [app, false]),
+    );
+    try {
+      await renderApps();
+      const toggle = card("CodeBuddy Code").getByRole("switch", {
+        name: /appsPage\.showInSidebar/,
+      });
+      expect(toggle).toBeChecked();
+      expect(toggle).toBeDisabled();
+      fireEvent.click(toggle);
+      expect(mocks.updateSettings).not.toHaveBeenCalled();
+    } finally {
+      mocks.visibleApps = undefined;
     }
   });
 });
