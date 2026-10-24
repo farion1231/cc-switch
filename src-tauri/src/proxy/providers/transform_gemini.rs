@@ -291,6 +291,278 @@ pub fn extract_gemini_model(body: &Value) -> Option<&str> {
     body.get("model").and_then(|value| value.as_str())
 }
 
+/// 将 Gemini `generateContent` 请求转换为 Anthropic Messages 请求格式。
+///
+/// 用于 Gemini 客户端经代理连接 OpenAI / Anthropic 协议上游的场景：
+/// 本函数先把 Gemini 请求转成 Anthropic 中间格式，再由调用方按需转成
+/// OpenAI Chat Completions（`transform::anthropic_to_openai_with_reasoning_content`）。
+///
+/// 与响应方向的 `gemini_to_anthropic` 不同：那个函数转换的是 candidates 响应，
+/// 本函数转换的是 contents 请求。
+pub fn gemini_request_to_anthropic(body: Value) -> Result<Value, ProxyError> {
+    let mut result = json!({});
+
+    if let Some(model) = body.get("model").and_then(|value| value.as_str()) {
+        result["model"] = json!(model);
+    }
+
+    // 透传顶层 stream 标志（OpenAI Chat 的流式语义在请求体里）
+    if body.get("stream").and_then(|value| value.as_bool()) == Some(true) {
+        result["stream"] = json!(true);
+    }
+
+    // systemInstruction.parts[*].text → system
+    if let Some(system) = body.get("systemInstruction") {
+        let texts: Vec<&str> = system
+            .get("parts")
+            .and_then(|value| value.as_array())
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !texts.is_empty() {
+            result["system"] = json!(texts.join("\n"));
+        }
+    }
+
+    // contents[*] → messages
+    let mut messages = Vec::new();
+    if let Some(contents) = body.get("contents").and_then(|value| value.as_array()) {
+        for content in contents {
+            let role = content
+                .get("role")
+                .and_then(|value| value.as_str())
+                .unwrap_or("user");
+            let parts = content
+                .get("parts")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut text_blocks = Vec::new();
+            let mut tool_uses = Vec::new();
+            let mut tool_results = Vec::new();
+
+            for part in &parts {
+                if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
+                    if part.get("thought").and_then(|value| value.as_bool()) == Some(true) {
+                        text_blocks.push(json!({ "type": "thinking", "thinking": text }));
+                    } else {
+                        text_blocks.push(json!({ "type": "text", "text": text }));
+                    }
+                } else if let Some(function_call) = part.get("functionCall") {
+                    tool_uses.push(json!({
+                        "type": "tool_use",
+                        "id": function_call
+                            .get("id")
+                            .cloned()
+                            .or_else(|| function_call.get("name").cloned())
+                            .unwrap_or(Value::Null),
+                        "name": function_call.get("name").cloned().unwrap_or(Value::Null),
+                        "input": function_call.get("args").cloned().unwrap_or_else(|| json!({}))
+                    }));
+                } else if let Some(function_response) = part.get("functionResponse") {
+                    // functionResponse.response 一般是 { "result": ... } 或任意 JSON；
+                    // 单字符串 result 直接作为 tool_result 文本，其余序列化为 JSON 字符串
+                    let response = function_response.get("response").cloned();
+                    let tool_content = match response {
+                        Some(Value::Object(mut map)) => {
+                            if map.len() == 1 {
+                                map.remove("result").unwrap_or(Value::Null)
+                            } else {
+                                Value::String(
+                                    serde_json::to_string(&Value::Object(map)).unwrap_or_default(),
+                                )
+                            }
+                        }
+                        Some(other) => other,
+                        None => Value::Null,
+                    };
+                    let tool_use_id = function_response
+                        .get("id")
+                        .cloned()
+                        .or_else(|| function_response.get("name").cloned())
+                        .unwrap_or(Value::Null);
+                    tool_results.push(json!({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": tool_content
+                    }));
+                }
+            }
+
+            // tool_result 必须挂在 user 消息上；其余按 role 归属
+            if !tool_results.is_empty() {
+                messages.push(json!({ "role": "user", "content": tool_results }));
+            }
+            if !text_blocks.is_empty() || !tool_uses.is_empty() {
+                let mut content_blocks = text_blocks;
+                content_blocks.extend(tool_uses);
+                let anthropic_role = if role == "model" { "assistant" } else { "user" };
+                messages.push(json!({ "role": anthropic_role, "content": content_blocks }));
+            }
+        }
+    }
+    if !messages.is_empty() {
+        result["messages"] = json!(messages);
+    }
+
+    // tools[*].functionDeclarations[*] → tools[*]{name, description, input_schema}
+    let mut anthropic_tools = Vec::new();
+    if let Some(tools) = body.get("tools").and_then(|value| value.as_array()) {
+        for tool in tools {
+            let declarations = tool
+                .get("functionDeclarations")
+                .and_then(|value| value.as_array())
+                .map(|value| value.as_slice())
+                .unwrap_or(std::slice::from_ref(tool));
+            for declaration in declarations {
+                let schema = declaration
+                    .get("parametersJsonSchema")
+                    .or_else(|| declaration.get("parameters"))
+                    .cloned()
+                    .unwrap_or_else(|| json!({ "type": "object" }));
+                let mut anthropic_tool = json!({
+                    "name": declaration.get("name").cloned().unwrap_or(Value::Null),
+                    "input_schema": schema
+                });
+                if let Some(description) = declaration
+                    .get("description")
+                    .and_then(|value| value.as_str())
+                {
+                    anthropic_tool["description"] = json!(description);
+                }
+                anthropic_tools.push(anthropic_tool);
+            }
+        }
+    }
+    if !anthropic_tools.is_empty() {
+        result["tools"] = json!(anthropic_tools);
+    }
+
+    // generationConfig → max_tokens / temperature / top_p / top_k / stop_sequences
+    if let Some(config) = body.get("generationConfig") {
+        if let Some(max_output_tokens) = config
+            .get("maxOutputTokens")
+            .and_then(|value| value.as_u64())
+        {
+            result["max_tokens"] = json!(max_output_tokens);
+        }
+        for (gemini_key, anthropic_key) in [
+            ("temperature", "temperature"),
+            ("topP", "top_p"),
+            ("topK", "top_k"),
+        ] {
+            if let Some(value) = config.get(gemini_key).and_then(|value| value.as_f64()) {
+                result[anthropic_key] = json!(value);
+            }
+        }
+        if let Some(stop) = config
+            .get("stopSequences")
+            .and_then(|value| value.as_array())
+        {
+            result["stop_sequences"] = json!(stop);
+        }
+    }
+
+    Ok(result)
+}
+
+/// 将 Anthropic 响应转换为 Gemini `generateContent` 响应格式。
+///
+/// 用于 Gemini 客户端经代理连接 OpenAI / Anthropic 协议上游的场景：
+/// 上游响应先归一为 Anthropic 格式（openai_chat 上游经 `openai_to_anthropic`，
+/// anthropic 上游原样），再由本函数转成 Gemini 格式返回给客户端。
+/// 与 `build_anthropic_usage` 的 token 语义互逆：promptTokenCount 含缓存命中，
+/// anthropic 的 input + cache_read + cache_creation 全部计入 prompt。
+pub fn anthropic_response_to_gemini(body: Value, model: &str) -> Result<Value, ProxyError> {
+    let content = body
+        .get("content")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut parts = Vec::new();
+    for block in &content {
+        match block.get("type").and_then(|value| value.as_str()) {
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(|value| value.as_str()) {
+                    parts.push(json!({ "text": text }));
+                }
+            }
+            Some("thinking") => {
+                if let Some(thinking) = block.get("thinking").and_then(|value| value.as_str()) {
+                    parts.push(json!({ "text": thinking, "thought": true }));
+                }
+            }
+            Some("tool_use") => {
+                parts.push(json!({
+                    "functionCall": {
+                        "id": block.get("id").cloned().unwrap_or(Value::Null),
+                        "name": block.get("name").cloned().unwrap_or(Value::Null),
+                        "args": block.get("input").cloned().unwrap_or_else(|| json!({}))
+                    }
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    let finish_reason = match body.get("stop_reason").and_then(|value| value.as_str()) {
+        Some("max_tokens") => "MAX_TOKENS",
+        // gemini 以 content.parts 里的 functionCall 表达工具调用，finishReason 仍为 STOP
+        Some("tool_use") | Some("stop_sequence") | Some("end_turn") | None => "STOP",
+        Some(other) => {
+            log::warn!("[Gemini/Upstream] Unknown Anthropic stop_reason `{other}`, using STOP");
+            "STOP"
+        }
+    };
+
+    let usage = body.get("usage");
+    let input_tokens = usage
+        .and_then(|value| value.get("input_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let output_tokens = usage
+        .and_then(|value| value.get("output_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let cache_read = usage
+        .and_then(|value| value.get("cache_read_input_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let cache_creation = usage
+        .and_then(|value| value.get("cache_creation_input_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+
+    // Anthropic 语义：input 不含缓存；Gemini 语义：promptTokenCount 含缓存命中
+    let prompt_tokens = input_tokens + cache_read + cache_creation;
+    let total_tokens = prompt_tokens + output_tokens;
+
+    let mut usage_metadata = json!({
+        "promptTokenCount": prompt_tokens,
+        "candidatesTokenCount": output_tokens,
+        "totalTokenCount": total_tokens
+    });
+    if cache_read > 0 {
+        usage_metadata["cachedContentTokenCount"] = json!(cache_read);
+    }
+
+    Ok(json!({
+        "modelVersion": model,
+        "candidates": [{
+            "index": 0,
+            "content": { "role": "model", "parts": parts },
+            "finishReason": finish_reason
+        }],
+        "usageMetadata": usage_metadata
+    }))
+}
+
 fn build_system_instruction(
     system: Option<&Value>,
     messages: Option<&[Value]>,
@@ -2689,5 +2961,59 @@ mod tests {
                 .is_none(),
             "functionResponse.id must also be omitted for synthesized ids"
         );
+    }
+
+    #[test]
+    fn anthropic_response_to_gemini_maps_text_usage_and_finish_reason() {
+        let input = json!({
+            "id": "msg_1",
+            "model": "deepseek-flash",
+            "stop_reason": "end_turn",
+            "content": [
+                { "type": "text", "text": "Hello" }
+            ],
+            "usage": { "input_tokens": 12, "output_tokens": 8, "cache_read_input_tokens": 3 }
+        });
+
+        let result = anthropic_response_to_gemini(input, "deepseek-flash").unwrap();
+        assert_eq!(result["modelVersion"], "deepseek-flash");
+        assert_eq!(result["candidates"][0]["finishReason"], "STOP");
+        assert_eq!(
+            result["candidates"][0]["content"]["parts"][0]["text"],
+            "Hello"
+        );
+        // prompt 含缓存命中（Anthropic input 不含 cache，Gemini prompt 含 cache）
+        assert_eq!(result["usageMetadata"]["promptTokenCount"], 15);
+        assert_eq!(result["usageMetadata"]["candidatesTokenCount"], 8);
+        assert_eq!(result["usageMetadata"]["totalTokenCount"], 23);
+        assert_eq!(result["usageMetadata"]["cachedContentTokenCount"], 3);
+    }
+
+    #[test]
+    fn anthropic_response_to_gemini_maps_max_tokens_and_tool_use() {
+        let input = json!({
+            "model": "m",
+            "stop_reason": "max_tokens",
+            "content": [
+                { "type": "thinking", "thinking": "hmm" },
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "get_weather",
+                    "input": { "city": "Tokyo" }
+                }
+            ],
+            "usage": { "input_tokens": 5, "output_tokens": 10 }
+        });
+
+        let result = anthropic_response_to_gemini(input, "m").unwrap();
+        assert_eq!(result["candidates"][0]["finishReason"], "MAX_TOKENS");
+        let parts = result["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(parts[1]["functionCall"]["name"], "get_weather");
+        assert_eq!(parts[1]["functionCall"]["args"]["city"], "Tokyo");
+        assert_eq!(result["usageMetadata"]["promptTokenCount"], 5);
     }
 }

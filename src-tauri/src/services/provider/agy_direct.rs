@@ -18,6 +18,20 @@ pub(crate) fn is_official(provider: &Provider) -> bool {
             == Some("google-official")
 }
 
+/// 这张卡要不要本地代理做协议转换：第三方 Key 卡且 `meta.apiFormat` 选了
+/// OpenAI Chat / Anthropic 上游。启动时 base_url 会被改写到本地代理的
+/// `/agy/<provider_id>` 命名空间，由代理按卡内保存的上游地址转换协议。
+pub(crate) fn uses_protocol_translation(provider: &Provider) -> bool {
+    if is_official(provider) {
+        return false;
+    }
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .is_some_and(|format| format == "openai_chat" || format == "anthropic")
+}
+
 fn live_settings(provider: &Provider) -> Result<Value, AppError> {
     crate::gemini_config::validate_gemini_settings(&provider.settings_config)?;
     let mut settings = provider.settings_config.clone();
@@ -68,6 +82,15 @@ fn live_settings(provider: &Provider) -> Result<Value, AppError> {
             "gemini.validation.missing_api_key",
             "Gemini 配置缺少必需字段: GEMINI_API_KEY",
             "Gemini config missing required field: GEMINI_API_KEY",
+        ));
+    }
+    // 协议转换由本地代理转发到 OpenAI / Anthropic 上游，卡里必须存上上游地址，
+    // 否则代理无处可发。
+    if uses_protocol_translation(provider) && !has_endpoint {
+        return Err(AppError::localized(
+            "agy.validation.translation_needs_endpoint",
+            "协议转换（OpenAI Chat / Anthropic）需要填写上游 API 地址",
+            "Protocol translation (OpenAI Chat / Anthropic) requires an upstream API endpoint",
         ));
     }
     Ok(settings)
@@ -162,6 +185,44 @@ mod tests {
         let mut row = provider("Relay");
         row.settings_config["env"]["GEMINI_API_KEY"] = json!(123);
         assert!(live_settings(&row).is_err());
+    }
+
+    #[test]
+    fn agy_translation_cards_require_an_upstream_endpoint() {
+        let mut row = provider("Relay");
+        row.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_chat".into()),
+            ..Default::default()
+        });
+        // 有上游地址：合法
+        assert!(live_settings(&row).is_ok());
+        assert!(uses_protocol_translation(&row));
+        // 没上游地址：代理无处可发，拒绝启动
+        row.settings_config["env"]
+            .as_object_mut()
+            .unwrap()
+            .remove("GOOGLE_GEMINI_BASE_URL");
+        assert!(live_settings(&row).is_err());
+        // 官方卡即使写了 apiFormat 也不走转换
+        let mut official = row.clone();
+        official.category = Some("official".into());
+        official.settings_config = json!({"env":{"GEMINI_API_KEY":"k","GOOGLE_GEMINI_BASE_URL":"https://x.example"}});
+        assert!(!uses_protocol_translation(&official));
+        // 没写 apiFormat 的 Key 卡保持原生透传
+        let mut native = provider("Relay");
+        native.meta = None;
+        assert!(!uses_protocol_translation(&native));
+        assert!(live_settings(&native).is_ok());
+    }
+
+    #[test]
+    fn agy_anthropic_translation_is_detected() {
+        let mut row = provider("Relay");
+        row.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("anthropic".into()),
+            ..Default::default()
+        });
+        assert!(uses_protocol_translation(&row));
     }
 
     #[test]

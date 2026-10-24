@@ -71,6 +71,7 @@ pub use codex::{
     strip_codex_hosted_web_search,
 };
 pub use gemini::GeminiAdapter;
+pub(crate) use gemini::{get_upstream_api_format, rewrite_gemini_transform_endpoint};
 
 /// 供应商类型枚举
 ///
@@ -270,10 +271,12 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
     Some(match app_type {
         AppType::Claude | AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
-        AppType::Gemini => Box::new(GeminiAdapter::new()),
+        // Antigravity CLI 的 Key 卡与 Gemini 共用同一套 env 配置
+        // （GEMINI_API_KEY / GOOGLE_GEMINI_BASE_URL），协议翻译复用 Gemini 适配器。
+        AppType::Gemini | AppType::Agy => Box::new(GeminiAdapter::new()),
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy | AppType::Omp => return None,
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => return None,
     })
 }
 
