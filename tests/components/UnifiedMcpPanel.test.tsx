@@ -428,6 +428,35 @@ describe("UnifiedMcpPanel", () => {
     );
   });
 
+  it("rewrites Oh My Pi cell by cell on retry, because the toggle never reached the DB", async () => {
+    // omp commits only after the config write succeeds (`sync_and_commit`), so a
+    // failed write leaves the row's flag unset: the retry must re-write that
+    // value instead of resyncing from the (unchanged) database state.
+    mocks.visibleApps = ["ohmypi"];
+    mocks.serversMap = { serena: makeServer("serena") };
+    mocks.toggle.mockRejectedValueOnce(new Error("models.yml line 3"));
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "appMatrix.cell.off" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+
+    await waitFor(() =>
+      expect(mocks.bulkToggle).toHaveBeenCalledWith({
+        serverIds: ["serena"],
+        app: "ohmypi",
+        enabled: true,
+      }),
+    );
+    expect(mocks.toggle).toHaveBeenCalledTimes(1);
+    expect(mocks.resync).not.toHaveBeenCalled();
+  });
+
   it("keeps the notice when the resync retry fails again", async () => {
     mocks.serversMap = { serena: makeServer("serena") };
     mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));

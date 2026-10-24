@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 11] = [
+const VALID_TOOLS: [&str; 12] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "agy",
+    "agy", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -626,6 +626,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "omp" => "Oh My Pi",
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
         "agy" => "Antigravity CLI",
@@ -877,6 +878,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
+        "omp" => Some("bun install -g @oh-my-pi/pi-coding-agent@latest"),
         _ => None,
     }
 }
@@ -1283,6 +1285,7 @@ async fn get_single_tool_version_impl(
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
+        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
     };
 
@@ -2506,6 +2509,16 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             push_unique_path(&mut search_paths, path);
         }
     }
+    if tool == "omp" {
+        // omp ships only as a Bun global package (`bun install -g
+        // @oh-my-pi/pi-coding-agent`), and Bun's global bin is not on the PATH
+        // a GUI process inherits — same reason OpenCode scans it. Without this,
+        // version probing, install enumeration and anchored updates report the
+        // tool as not installed whenever the launcher is only reachable there.
+        if !home.as_os_str().is_empty() {
+            push_unique_path(&mut search_paths, home.join(".bun").join("bin"));
+        }
+    }
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
@@ -3296,6 +3309,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
+        "omp" => Some("@oh-my-pi/pi-coding-agent"),
         _ => None,
     }
 }
@@ -4733,6 +4747,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
         "pi" => crate::settings::get_pi_override_dir(),
+        "omp" => crate::settings::get_ohmypi_override_dir(),
         _ => None,
     }?;
 
@@ -7135,6 +7150,27 @@ mod tests {
         // The verified distribution exposes `pi --version`, but no updater
         // contract is assumed; upgrades stay on the package-manager path.
         assert_eq!(official_update_args("pi"), None);
+    }
+
+    #[test]
+    fn omp_lifecycle_metadata_names_the_tool_and_keeps_one_package() {
+        let requested = vec!["unsupported".to_string(), "omp".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["omp"]);
+        // Without this arm the user-facing strings read "Unknown at
+        // <path> was not installed by npm..." and the batch header prints
+        // `========== Unknown ==========`.
+        assert_eq!(tool_display_name("omp"), "Oh My Pi");
+        // Install and the version check must agree on one package: omp is
+        // distributed as @oh-my-pi/pi-coding-agent and installed with bun.
+        assert_eq!(npm_package_for("omp"), Some("@oh-my-pi/pi-coding-agent"));
+        assert_eq!(
+            npm_install_command_for("omp"),
+            Some("bun install -g @oh-my-pi/pi-coding-agent@latest")
+        );
+        // No updater contract is assumed; upgrades stay on the package-manager
+        // path (an unmanaged standalone binary is reported, not silently
+        // reinstalled through npm).
+        assert_eq!(official_update_args("omp"), None);
     }
 
     #[test]
@@ -10064,6 +10100,18 @@ mod tests {
                 .join("Codex")
                 .join("bin")
         ));
+    }
+
+    #[test]
+    fn omp_search_paths_include_the_bun_global_bin() {
+        // omp is distributed only as a Bun global package, and a GUI process does
+        // not inherit `~/.bun/bin`: without it the Apps page reports the tool as
+        // not installed and updates lose their anchor.
+        let home = dirs::home_dir().expect("home should resolve");
+        let bun_bin = home.join(".bun").join("bin");
+        assert!(build_tool_search_paths("omp").contains(&bun_bin));
+        // Other Bun-installable tools keep their previous search set.
+        assert!(!build_tool_search_paths("gemini").contains(&bun_bin));
     }
 
     #[cfg(target_os = "windows")]

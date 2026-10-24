@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import {
+  ohmypiApi,
   piApi,
   providersApi,
   settingsApi,
@@ -309,6 +310,10 @@ export function useProviderActions(
 
         if (activeApp === "pi") {
           await piApi.updateProviderUsageScript(provider.id, script);
+        } else if (activeApp === "ohmypi") {
+          // The dedicated command only touches the DB row: it must keep
+          // working for providers already removed from models.yml.
+          await ohmypiApi.updateProviderUsageScript(provider.id, script);
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }

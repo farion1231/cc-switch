@@ -755,7 +755,7 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [relay],
       isInConfig: () => false,
-      piStateUnavailable: true,
+      nativeStateUnavailable: true,
       actions: additiveActions(),
     });
 
@@ -765,6 +765,25 @@ describe("buildAdditiveSections", () => {
     });
     expect(item(sections, "relay").deleteDisabledReason).toBe(
       "pi.current.stateUnavailableHint",
+    );
+  });
+
+  it("blocks every Oh My Pi change while its current state is unavailable", () => {
+    const sections = buildAdditiveSections({
+      app: "ohmypi",
+      t,
+      providers: [relay],
+      isInConfig: () => false,
+      nativeStateUnavailable: true,
+      actions: additiveActions(),
+    });
+
+    expect(button(sections, "relay", "add")).toMatchObject({
+      label: "providerCard.action.enable",
+      disabledReason: "ohmypi.current.stateUnavailableHint",
+    });
+    expect(item(sections, "relay").deleteDisabledReason).toBe(
+      "ohmypi.current.stateUnavailableHint",
     );
   });
 });

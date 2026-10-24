@@ -59,6 +59,30 @@ export const translatePiProviderMutationError = (
   return "";
 };
 
+export const translateOhMyPiProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+
+  if (
+    message.includes("changed outside CC Switch") ||
+    message.includes("no longer present in models.yml") ||
+    message.includes("another value now owns the key")
+  ) {
+    return t("ohmypi.provider.writeConflict");
+  }
+
+  if (
+    message.includes("Oh My Pi provider") &&
+    message.includes("already exists")
+  ) {
+    return t("ohmypi.form.providerKeyDuplicate");
+  }
+
+  return "";
+};
+
 /**
  * Kimi 的默认模型可能在 Kimi Code 里被改过、页面上还是旧的，
  * 后端按 config.toml 现读拒绝后，把这两条英文原因换成说明。
