@@ -325,29 +325,6 @@ export const providerPresets: ProviderPreset[] = [
     icon: "openmodel",
   },
   {
-    name: "EveryAPI",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    // 官网接入说明（everyapi.ai，2026-10-17 核对）：Anthropic 客户端 base 用
-    // 站点根（不带 /v1）、Key 填 AUTH_TOKEN。各 Claude 分组都有 haiku-5-5，
-    // 四档跟随 Claude Code 默认即可。api-cn 是官方的国内优先线路
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.everyapi.ai",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    endpointCandidates: [
-      "https://api.everyapi.ai",
-      "https://api-cn.everyapi.ai",
-    ],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
-  },
-  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",

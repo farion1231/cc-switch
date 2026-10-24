@@ -776,7 +776,7 @@ describe("buildAdditiveSections", () => {
     );
   });
 
-  it("protects every official Kimi OAuth provider, including inactive accounts", () => {
+  it("lets official Kimi accounts edit models and leave Kimi, but not be deleted while there", () => {
     const accounts = ["managed:kimi-code", "kimi-code-ccs-second"].map((id) =>
       provider(id, {
         settingsConfig: {
@@ -794,12 +794,16 @@ describe("buildAdditiveSections", () => {
     });
     for (const account of accounts) {
       const presentation = item(sections, account.id);
-      expect(presentation.editDisabledReason).toBe("kimi.oauth.managedHint");
+      expect(presentation.editDisabledReason).toBeUndefined();
       expect(presentation.deleteDisabledReason).toBe("kimi.oauth.managedHint");
-      expect(button(sections, account.id, "remove").disabledReason).toBe(
-        "kimi.oauth.managedHint",
-      );
     }
+    // 只有正在用的那个号不能移除
+    expect(button(sections, accounts[0].id, "remove").disabledReason).toBe(
+      "providerCard.reason.currentCannotRemove",
+    );
+    expect(
+      button(sections, accounts[1].id, "remove").disabledReason,
+    ).toBeUndefined();
     expect(
       item(sections, accounts[1].id).menuItems?.find(
         (action) => action.key === "setDefault",

@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
@@ -21,12 +21,16 @@ const account = {
   primary: false,
 };
 
-function renderFooter(name: string) {
+function renderFooter(name: string, inline = false) {
   const client = createTestQueryClient();
   const invalidate = vi.spyOn(client, "invalidateQueries");
   render(
     <QueryClientProvider client={client}>
-      <KimiAccountQuotaFooter accountId={account.id} name={name} />
+      <KimiAccountQuotaFooter
+        accountId={account.id}
+        name={name}
+        inline={inline}
+      />
     </QueryClientProvider>,
   );
   return invalidate;
@@ -66,5 +70,30 @@ describe("KimiAccountQuotaFooter", () => {
     expect(invalidate).not.toHaveBeenCalledWith({
       queryKey: ["providers", "kimi"],
     });
+  });
+
+  it("says the account has no subscription when the quota comes back empty", async () => {
+    vi.mocked(kimiOAuthApi.quota).mockResolvedValue({
+      tool: "kimi_oauth",
+      credentialStatus: "valid",
+      credentialMessage: null,
+      success: true,
+      tiers: [],
+      extraUsage: null,
+      error: null,
+      queriedAt: 0,
+    });
+    renderFooter(account.name, true);
+    expect(
+      await screen.findByText("kimi.oauth.noSubscription"),
+    ).toBeInTheDocument();
+  });
+
+  it("stays silent when the account has no login on this device", async () => {
+    renderFooter(account.name, true);
+    await waitFor(() => expect(kimiOAuthApi.quota).toHaveBeenCalled());
+    expect(
+      screen.queryByText("kimi.oauth.noSubscription"),
+    ).not.toBeInTheDocument();
   });
 });

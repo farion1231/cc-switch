@@ -846,8 +846,10 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
-      const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
-      const protectedReason = live ? officialReason : undefined;
+      // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
+      // 官方卡不能直接删，删号在授权中心（连登录一起删）
+      const deleteProtectedReason =
+        official && live ? t("kimi.oauth.managedHint") : undefined;
       if (official) {
         chips.push({
           key: "official",
@@ -877,11 +879,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         buttons.push({
           key: "remove",
           label: t("providerCard.action.remove"),
-          disabledReason:
-            protectedReason ??
-            (current
-              ? t("providerCard.reason.currentCannotRemove")
-              : undefined),
+          disabledReason: current
+            ? t("providerCard.reason.currentCannotRemove")
+            : undefined,
           onClick: () => actions.remove(p),
         });
       }
@@ -895,9 +895,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           chips,
           buttons,
           menuItems: menuItems.length ? menuItems : undefined,
-          editDisabledReason: officialReason,
           deleteDisabledReason:
-            protectedReason ??
+            deleteProtectedReason ??
             (current ? t("providerCard.reason.inUseCannotDelete") : undefined),
         },
       });
