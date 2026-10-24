@@ -3117,7 +3117,11 @@ fn format_tray_cost(usd: &str) -> String {
         .currency
         .clone()
         .unwrap_or_else(|| "USD".to_string());
-    let rate = display.exchange_rates.get(&currency).copied().unwrap_or(1.0);
+    let rate = display
+        .exchange_rates
+        .get(&currency)
+        .copied()
+        .unwrap_or(1.0);
     format_tray_cost_value(usd, &currency, rate)
 }
 
@@ -3146,9 +3150,7 @@ fn tray_usage_title_text(app_state: &AppState) -> Option<String> {
         .get_usage_summary(start, None, None, None, None)
         .ok()?;
     match mode {
-        "todayTokens" | "totalTokens" => {
-            Some(format_tray_tokens(summary.real_total_tokens))
-        }
+        "todayTokens" | "totalTokens" => Some(format_tray_tokens(summary.real_total_tokens)),
         "todayCost" | "totalCost" => Some(format_tray_cost(&summary.total_cost)),
         _ => None,
     }
@@ -3156,40 +3158,40 @@ fn tray_usage_title_text(app_state: &AppState) -> Option<String> {
 
 /// 更新菜单栏托盘图标左侧的用量数字（NSStatusItem title，仅 macOS）。
 /// 设置为只显示图标时清掉；查询失败时保留上次的数字。其余平台无事可做。
+///
+/// 用运行时 `cfg!` 而不是 `#[cfg]`：`set_title` 本身是全平台 API，这样那几个
+/// 只在 macOS 分支用到的格式化函数在所有平台都算「被使用」，Linux / Windows
+/// 上 `clippy -D warnings` 不会报 dead_code。
 pub fn update_tray_usage_title(app: &tauri::AppHandle) {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = app;
+    if !cfg!(target_os = "macos") {
+        return;
     }
-    #[cfg(target_os = "macos")]
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    if crate::settings::get_settings().tray_usage_title().is_none() {
+        if lock(&APPLIED_TRAY_TITLE).take().is_some() {
+            if let Err(e) = tray.set_title(None::<&str>) {
+                log::warn!("[Tray] 清除菜单栏用量数字失败: {e}");
+            }
+        }
+        return;
+    }
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let Some(text) = tray_usage_title_text(state.inner()) else {
+        return;
+    };
     {
-        let Some(tray) = app.tray_by_id(TRAY_ID) else {
-            return;
-        };
-        if crate::settings::get_settings().tray_usage_title().is_none() {
-            if lock(&APPLIED_TRAY_TITLE).take().is_some() {
-                if let Err(e) = tray.set_title(None::<&str>) {
-                    log::warn!("[Tray] 清除菜单栏用量数字失败: {e}");
-                }
-            }
+        let mut applied = lock(&APPLIED_TRAY_TITLE);
+        if applied.as_deref() == Some(text.as_str()) {
             return;
         }
-        let Some(state) = app.try_state::<AppState>() else {
-            return;
-        };
-        let Some(text) = tray_usage_title_text(state.inner()) else {
-            return;
-        };
-        {
-            let mut applied = lock(&APPLIED_TRAY_TITLE);
-            if applied.as_deref() == Some(text.as_str()) {
-                return;
-            }
-            *applied = Some(text.clone());
-        }
-        if let Err(e) = tray.set_title(Some(text.as_str())) {
-            log::warn!("[Tray] 更新菜单栏用量数字失败: {e}");
-        }
+        *applied = Some(text.clone());
+    }
+    if let Err(e) = tray.set_title(Some(text.as_str())) {
+        log::warn!("[Tray] 更新菜单栏用量数字失败: {e}");
     }
 }
 

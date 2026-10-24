@@ -81,8 +81,7 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
-    let tray_usage_title_changed =
-        merged.tray_usage_title != existing.tray_usage_title;
+    let tray_usage_title_changed = merged.tray_usage_title != existing.tray_usage_title;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
