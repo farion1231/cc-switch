@@ -1,13 +1,12 @@
 import type { TFunction } from "i18next";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import type { AppId } from "@/lib/api";
+import { APP_DISPLAY_NAME, type GlyphApp } from "@/components/shell/AppGlyph";
 
 /**
  * 后端给会话日志导入的用量返回的占位供应商名（`usage_stats.rs` 的
  * `provider_name_coalesce`）。这些名字同时是供应商筛选的取值，原样回传后端
  * 精确匹配，所以只在显示时翻译，不能改动传给后端的值。
  */
-const SESSION_PROVIDER_APPS: Record<string, AppId> = {
+const SESSION_PROVIDER_APPS: Record<string, GlyphApp> = {
   "Claude (Session)": "claude",
   "Codex (Session)": "codex",
   "Gemini (Session)": "gemini",
@@ -17,6 +16,8 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Kimi Code (Session)": "kimi",
   "Pi (Session)": "pi",
   "Antigravity (Session)": "agy",
+  "ZCode (Session)": "zcode",
+  "DeepSeek Harness (Session)": "dsh",
 };
 
 export interface UsageProviderLabel {
