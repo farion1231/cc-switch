@@ -48,6 +48,7 @@ export const TOOL_NAMES = [
   "hermes",
   "pi",
   "mcode",
+  "kimi",
   "agy",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -122,6 +123,10 @@ const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy By
   "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
 )}`;
 
+const KIMI_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
+)}`;
+
 const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
   "irm https://antigravity.google/cli/install.ps1 | iex",
 )}`;
@@ -154,6 +159,8 @@ ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/herm
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
 ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
+# Kimi Code
+${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
 # Antigravity CLI
 ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}`;
 
@@ -175,6 +182,8 @@ ${HERMES_WINDOWS_INSTALL_COMMAND}
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
 ${MCODE_WINDOWS_INSTALL_COMMAND}
+# Kimi Code
+${KIMI_WINDOWS_INSTALL_COMMAND}
 # Antigravity CLI
 ${AGY_WINDOWS_INSTALL_COMMAND}`;
 
@@ -192,6 +201,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  kimi: "Kimi Code",
   agy: "Antigravity CLI",
 };
 
@@ -211,6 +221,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "mcode",
+  kimi: "kimi",
   agy: "agy",
 };
 

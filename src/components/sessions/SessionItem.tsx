@@ -106,9 +106,11 @@ export function SessionItem({
 
   const deleteReason = !deletable
     ? t(
-        session.providerId === "agy"
-          ? "sessionManager.agyDeleteHint"
-          : "sessionManager.mcodeDeleteHint",
+        session.providerId === "kimi"
+          ? "kimi.deleteSessionHint"
+          : session.providerId === "agy"
+            ? "sessionManager.agyDeleteHint"
+            : "sessionManager.mcodeDeleteHint",
         {
           defaultValue: "请在 MiniMax Code 中删除",
         },
