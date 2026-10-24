@@ -4826,6 +4826,33 @@
       "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
     }
   },
+  "qwen": {
+    "modelSelectionHint": "Sağlayıcıyı geçerli yapmak için karttaki geçiş düğmesini kullanın. Başka bir model kullanmak için Qwen Code içinde /model komutunu çalıştırın.",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrlRequired": "Anthropic protokolü için istek adresi gereklidir.",
+    "baseUrlInvalid": "İstek adresi http:// veya https:// ile başlamalıdır.",
+    "envKey": "Ortam değişkeni",
+    "envKeyHint": "Bu sağlayıcı anahtarını bu ortam değişkeninden okur. Qwen Code'un yerel yapılandırmasında yönetilir ve burada değiştirilemez.",
+    "modelOverride": "Yalnızca bu modelin kullandığı protokol ve uç nokta (yerel yapılandırmadan)",
+    "removeModel": "Modeli kaldır",
+    "contextWindowSize": "Bağlam penceresi",
+    "duplicateModelId": "Bu model kimliği zaten kullanılıyor.",
+    "empty": {
+      "title": "Qwen Code sağlayıcısı ekleyin",
+      "description": "Adres, API anahtarı ve modelleri yapılandırın. settings.json içindeki mevcut sağlayıcılar burada otomatik olarak görünür."
+    },
+    "deleteSessionHint": "Dizin ve arşivin birlikte güncellenmesi için oturumu Qwen Code içinden (qwen sessions) silin.",
+    "error": {
+      "currentModelInUse": "Qwen Code bu sağlayıcının bir modelini kullanıyor. Önce başka bir sağlayıcıya geçin ya da Qwen Code içinde /model ile başka bir model seçin.",
+      "modelOwnedByOther": "Aynı uç noktadaki bu model başka bir sağlayıcıya ait. Model kimliğini veya uç noktayı değiştirin."
+    }
+  },
   "omp": {
     "empty": {
       "title": "Henüz API anahtarı sağlayıcısı yok",

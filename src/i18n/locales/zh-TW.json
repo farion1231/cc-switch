@@ -4977,6 +4977,33 @@
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用此供應商的模型，請先在 Kimi Code 中用 /secondary-model 更換"
     }
   },
+  "qwen": {
+    "modelSelectionHint": "點擊供應商卡片的切換按鈕選擇目前供應商；若要使用其他模型，請在 Qwen Code 中使用 /model。",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrlRequired": "Anthropic 協定需要填寫請求位址。",
+    "baseUrlInvalid": "請求位址需以 http:// 或 https:// 開頭。",
+    "envKey": "環境變數",
+    "envKeyHint": "此供應商的 Key 讀取自這個環境變數，由 Qwen Code 原生設定管理，這裡無法修改。",
+    "modelOverride": "此模型單獨使用的協定與請求位址（來自原生設定）",
+    "removeModel": "移除模型",
+    "contextWindowSize": "上下文視窗",
+    "duplicateModelId": "模型 ID 重複。",
+    "empty": {
+      "title": "新增 Qwen Code 供應商",
+      "description": "設定請求位址、API Key 和模型；settings.json 中已有的供應商會自動顯示在這裡。"
+    },
+    "deleteSessionHint": "請在 Qwen Code 中刪除（qwen sessions），以同時更新工作階段索引和封存。",
+    "error": {
+      "currentModelInUse": "Qwen Code 正在使用此供應商的模型，請先切換到其他供應商，或在 Qwen Code 中用 /model 換成其他模型",
+      "modelOwnedByOther": "同一請求位址下的這個模型已屬於另一個供應商，請更換模型 ID 或請求位址"
+    }
+  },
   "omp": {
     "empty": {
       "title": "尚未新增 API Key 供應商",

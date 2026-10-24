@@ -4976,6 +4976,33 @@
       "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"
     }
   },
+  "qwen": {
+    "modelSelectionHint": "プロバイダーカードの切り替えボタンで現在のプロバイダーを選択します。別のモデルを使うには、Qwen Code で /model を使用してください。",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrlRequired": "Anthropic プロトコルにはリクエスト URL が必要です。",
+    "baseUrlInvalid": "リクエスト URL は http:// または https:// で始めてください。",
+    "envKey": "環境変数",
+    "envKeyHint": "このプロバイダーのキーはこの環境変数から読み込まれます。Qwen Code のネイティブ設定で管理されるため、ここでは変更できません。",
+    "modelOverride": "このモデル専用のプロトコルとリクエスト先（ネイティブ設定から）",
+    "removeModel": "モデルを削除",
+    "contextWindowSize": "コンテキストウィンドウ",
+    "duplicateModelId": "このモデル ID は重複しています。",
+    "empty": {
+      "title": "Qwen Code プロバイダーを追加",
+      "description": "URL、API キー、モデルを設定します。settings.json にある既存のプロバイダーは自動的にここに表示されます。"
+    },
+    "deleteSessionHint": "インデックスとアーカイブを同期するため、Qwen Code 内（qwen sessions）でセッションを削除してください。",
+    "error": {
+      "currentModelInUse": "Qwen Code がこのプロバイダーのモデルを使用中です。先にほかのプロバイダーに切り替えるか、Qwen Code の /model でほかのモデルを選んでください。",
+      "modelOwnedByOther": "同じリクエスト先のこのモデルは別のプロバイダーに属しています。モデル ID かリクエスト先を変更してください。"
+    }
+  },
   "omp": {
     "empty": {
       "title": "API キープロバイダーはまだありません",

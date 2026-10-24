@@ -5466,9 +5466,11 @@ impl ProviderService {
         if app_type == AppType::Omp {
             return omp::list(state);
         }
-        if matches!(app_type, AppType::Mcode | AppType::Kimi) {
+        if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Qwen) {
             let native = if app_type == AppType::Kimi {
                 crate::kimi_config::get_providers()?
+            } else if app_type == AppType::Qwen {
+                crate::qwen_config::get_providers()?
             } else {
                 crate::mcode_config::get_providers()?
             };
@@ -5519,6 +5521,9 @@ impl ProviderService {
         if app_type == AppType::Kimi {
             return crate::kimi_config::current_provider();
         }
+        if app_type == AppType::Qwen {
+            return crate::qwen_config::current_provider();
+        }
         // Additive mode apps have no "current" provider concept
         if app_type.is_additive_mode() {
             return Ok(String::new());
@@ -5552,6 +5557,22 @@ impl ProviderService {
                 )
             } else {
                 state.db.save_provider("kimi", provider)?;
+                Ok(true)
+            };
+        }
+        if app_type == &AppType::Qwen {
+            return if write_live {
+                crate::qwen_config::save_and_commit(
+                    &provider.id,
+                    Some(provider.settings_config.clone()),
+                    create,
+                    || {
+                        state.db.save_provider("qwen", provider)?;
+                        Ok(true)
+                    },
+                )
+            } else {
+                state.db.save_provider("qwen", provider)?;
                 Ok(true)
             };
         }
@@ -5639,7 +5660,7 @@ impl ProviderService {
             return Self::add_codex(state, provider);
         }
 
-        if matches!(app_type, AppType::Mcode | AppType::Kimi) {
+        if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Qwen) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
             // Adds are serialized here; the live write repeats the check under MCode's file lock.
             let _guard = futures::executor::block_on(
@@ -5651,6 +5672,8 @@ impl ProviderService {
                 .is_some()
                 || if app_type == AppType::Kimi {
                     crate::kimi_config::provider_key_exists(&provider.id)?
+                } else if app_type == AppType::Qwen {
+                    crate::qwen_config::provider_key_exists(&provider.id)?
                 } else {
                     crate::mcode_config::provider_key_exists(&provider.id)?
                 }
@@ -6358,7 +6381,7 @@ impl ProviderService {
             )?;
             Self::set_provider_live_config_managed(&mut provider, live_config_managed);
 
-            if matches!(app_type, AppType::Mcode | AppType::Kimi) {
+            if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Qwen) {
                 return Self::save_native_provider(
                     state,
                     &app_type,
@@ -6520,6 +6543,11 @@ impl ProviderService {
             }
             return Ok(());
         }
+        if app_type == AppType::Qwen {
+            return crate::qwen_config::save_and_commit(id, None, false, || {
+                state.db.delete_provider("qwen", id)
+            });
+        }
 
         if app_type == AppType::Omp {
             return omp::delete(state, id);
@@ -6568,6 +6596,7 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+                    AppType::Qwen => crate::qwen_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -6598,13 +6627,25 @@ impl ProviderService {
         Ok(())
     }
 
-    /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
+    /// Kimi / Qwen「添加」：把卡片写进原生配置，但不改默认模型（「切换」才改）。
     /// 其他累加式应用的添加就是 `switch`，不走这里。
     pub fn add_to_live_config(
         state: &AppState,
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
+        if app_type == AppType::Qwen {
+            let mut provider = state
+                .db
+                .get_provider_by_id(id, "qwen")?
+                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+            Self::set_provider_live_config_managed(&mut provider, true);
+            return crate::qwen_config::add_and_commit(
+                id,
+                provider.settings_config.clone(),
+                || state.db.save_provider("qwen", &provider),
+            );
+        }
         if app_type != AppType::Kimi {
             return Err(AppError::InvalidInput(format!(
                 "{} adds providers through switch",
@@ -6642,6 +6683,15 @@ impl ProviderService {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, "kimi")? {
                     Self::set_provider_live_config_managed(&mut provider, false);
                     state.db.save_provider("kimi", &provider)?;
+                }
+                Ok(())
+            });
+        }
+        if app_type == AppType::Qwen {
+            return crate::qwen_config::save_and_commit(id, None, false, || {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, "qwen")? {
+                    Self::set_provider_live_config_managed(&mut provider, false);
+                    state.db.save_provider("qwen", &provider)?;
                 }
                 Ok(())
             });
@@ -6688,6 +6738,7 @@ impl ProviderService {
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+            AppType::Qwen => crate::qwen_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6804,6 +6855,21 @@ impl ProviderService {
                 |config| {
                     provider.settings_config = config;
                     state.db.save_provider("kimi", &provider)
+                },
+            )?;
+            return Ok(SwitchResult::default());
+        }
+        if app_type == AppType::Qwen {
+            let mut provider = _provider.clone();
+            Self::set_provider_live_config_managed(&mut provider, true);
+            crate::qwen_config::switch_and_commit(
+                id,
+                provider.settings_config.clone(),
+                |config| {
+                    if !config.is_null() {
+                        provider.settings_config = config;
+                    }
+                    state.db.save_provider("qwen", &provider)
                 },
             )?;
             return Ok(SwitchResult::default());
@@ -6973,6 +7039,7 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
                     AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
+                    AppType::Qwen => crate::qwen_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -7236,9 +7303,12 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy | AppType::Omp => {
-                Ok(String::new())
-            }
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Qwen
+            | AppType::Agy
+            | AppType::Omp => Ok(String::new()),
         }
     }
 
@@ -7256,9 +7326,12 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy | AppType::Omp => {
-                Ok(String::new())
-            }
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Qwen
+            | AppType::Agy
+            | AppType::Omp => Ok(String::new()),
         }
     }
 
@@ -8027,6 +8100,9 @@ impl ProviderService {
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::Qwen => {
+                crate::qwen_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
@@ -8234,6 +8310,20 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::Qwen => Ok((
+                provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into(),
+                provider
+                    .settings_config
+                    .get("baseUrl")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into(),
+            )),
             AppType::Kimi => Ok((
                 provider
                     .settings_config

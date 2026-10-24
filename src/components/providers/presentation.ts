@@ -698,7 +698,7 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
-  /** Kimi：原生 default_model 别名所属的供应商。 */
+  /** Kimi / Qwen：原生当前模型所属的供应商。 */
   kimiCurrentId?: string | null;
   actions: {
     add: (provider: Provider) => void;
@@ -719,8 +719,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
-    if (app === "kimi") {
-      const official = isOfficialAccount(app, p);
+    if (app === "kimi" || app === "qwen") {
+      // Qwen Code has no official account; only Kimi's managed login is protected.
+      const official = app === "kimi" && isOfficialAccount(app, p);
       const live = input.isInConfig(p);
       // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
       // 官方卡不能直接删，删号在授权中心（连登录一起删）
@@ -734,8 +735,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         });
       }
       const current = live && p.id === input.kimiCurrentId;
-      // 「添加」只写进 config.toml（模型出现在 Kimi 的 /model 列表），「移除」从 config.toml
-      // 拿掉、卡片留着；改 default_model 的「设为默认」和 OpenCode 一样收在「更多」菜单里
+      // 「添加」只写进原生配置（模型出现在 Kimi / Qwen 的 /model 列表），「移除」从原生配置
+      // 拿掉、卡片留着；改默认模型的「设为默认」和 OpenCode 一样收在「更多」菜单里
       const buttons: CardButton[] = [];
       const menuItems: CardMenuItem[] = [];
       if (!live) {
