@@ -5,6 +5,7 @@ import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { hermesProviderPresets } from "@/config/hermesProviderPresets";
 import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
+import { piProviderPresets } from "@/config/piProviderPresets";
 
 const LONGCAT_MODEL = "LongCat-2.0";
 const LONGCAT_DISPLAY_NAME = "LongCat 2.0";
@@ -27,6 +28,32 @@ function findLongcatPreset<T extends { name: string }>(presets: T[]): T {
 }
 
 describe("Longcat provider presets", () => {
+  it("exports Pi's binary thinking protocol without OpenAI effort parameters", () => {
+    const preset = findLongcatPreset(piProviderPresets);
+    const exported = JSON.parse(JSON.stringify(preset.settingsConfig));
+    const model = exported.models[0];
+
+    expect(exported.api).toBe("openai-completions");
+    expect(exported.baseUrl).toBe(LONGCAT_OPENAI_BASE_URL);
+    expect(model.reasoning).toBe(true);
+    expect(model.compat).toMatchObject({
+      thinkingFormat: "deepseek",
+      supportsReasoningEffort: false,
+      maxTokensField: "max_tokens",
+      supportsDeveloperRole: false,
+      supportsStore: false,
+      supportsStrictMode: false,
+    });
+    expect(model.thinkingLevelMap.off).not.toBeNull();
+    expect(model.thinkingLevelMap.high).not.toBeNull();
+    for (const level of ["minimal", "low", "medium", "xhigh", "max"]) {
+      expect(model.thinkingLevelMap[level]).toBeNull();
+    }
+    expect(model.input).toEqual(["text"]);
+    expect(model.contextWindow).toBe(1048576);
+    expect(model.maxTokens).toBe(131072);
+  });
+
   it("uses the official LongCat 2.0 model for Claude Code", () => {
     const preset = findLongcatPreset(providerPresets);
     const env = (preset.settingsConfig as { env: Record<string, unknown> }).env;
