@@ -1,5 +1,6 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
+import type { PiFamilyAppId } from "@/lib/api/pi";
 import type { VisibleApps } from "@/types";
 import {
   ClaudeIcon,
@@ -30,6 +31,7 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -46,6 +48,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   agy: true,
+  omp: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -61,6 +64,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export type ProxyAppId = Extract<
@@ -110,7 +114,7 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "rpi" | "mcode" | "kimi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "rpi" | "mcode" | "kimi" | "omp"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -121,10 +125,18 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "hermes",
   "pi",
   "rpi",
+  "omp",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
+}
+
+/** Oh My Pi 是 Pi 的分支：供应商表单、启用状态和用量脚本命令与 Pi 共用。 */
+export const PI_FAMILY_APP_IDS: PiFamilyAppId[] = ["pi", "rpi", "omp"];
+
+export function isPiFamilyApp(appId: string): appId is PiFamilyAppId {
+  return (PI_FAMILY_APP_IDS as string[]).includes(appId);
 }
 
 /**
@@ -156,6 +168,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -296,6 +309,16 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
     badgeClass:
       "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
+  },
+  omp: {
+    label: "Oh My Pi",
+    icon: (
+      <ProviderIcon icon="omp" name="Oh My Pi" size={14} showFallback={false} />
+    ),
+    activeClass:
+      "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+    badgeClass:
+      "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
   },
 };
 

@@ -691,6 +691,9 @@ impl SkillService {
             AppType::Pi | AppType::Rpi => {
                 return Ok(crate::pi_config::agent_dir(app)?.join("skills"));
             }
+            AppType::Omp => {
+                return Ok(crate::omp_config::get_omp_agent_dir()?.join("skills"));
+            }
             AppType::Agy => {
                 return Ok(crate::config::get_home_dir()
                     .join(".gemini")
@@ -715,7 +718,10 @@ impl SkillService {
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
+
             AppType::Pi | AppType::Rpi => crate::pi_config::agent_dir(app)?.join("skills"),
+            AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
+
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
         })
     }
@@ -790,6 +796,7 @@ impl SkillService {
         let mut skills = db.get_all_installed_skills()?;
         for skill in skills.values_mut() {
             Self::refresh_native_exists_flags(skill);
+            skill.apps.omp = Self::skill_exists_in_app(&skill.directory, &AppType::Omp);
         }
         Ok(skills.into_values().collect())
     }
@@ -1084,11 +1091,12 @@ impl SkillService {
                             managed_destinations.push(destination);
                         }
                     }
+
                     let mut preserved_pi_paths = Vec::new();
                     let mut pi_cleanup_incomplete = false;
                     let mut pi_removal_paths = Vec::new();
 
-                    for app in [AppType::Pi, AppType::Rpi] {
+                    for app in [AppType::Pi, AppType::Rpi, AppType::Omp] {
                         match Self::get_app_skills_dir(&app) {
                             Ok(app_dir) => {
                                 let destination = app_dir.join(&directory);
@@ -1157,6 +1165,7 @@ impl SkillService {
                             app,
                             AppType::Pi
                                 | AppType::Rpi
+                                | AppType::Omp
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
@@ -1169,6 +1178,7 @@ impl SkillService {
 
                     // 从 SSOT 删除
                     let skill_path = ssot_dir.join(&directory);
+
                     let overlaps_preserved_pi = preserved_pi_paths
                         .iter()
                         .any(|path| Self::paths_overlap(&skill_path, path));
@@ -1529,6 +1539,7 @@ impl SkillService {
             .get_installed_skill(skill_id)?
             .ok_or_else(|| anyhow!("Skill not found: {skill_id}"))?;
         Self::refresh_native_exists_flags(&mut skill);
+        skill.apps.omp = Self::skill_exists_in_app(&skill.directory, &AppType::Omp);
 
         // 本函数后续三种危险操作都用 directory 拼路径：备份源（把任意目录复制进
         // 备份区并在界面列出）、remove_dir_all（删任意目录）、copy_dir_recursive
@@ -1559,6 +1570,9 @@ impl SkillService {
             if skill.apps.is_enabled_for(&app) {
                 Self::get_distinct_app_skills_dir(&ssot_dir, &app)?;
             }
+        }
+        if skill.apps.omp {
+            Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Omp)?;
         }
 
         // 下载仓库
@@ -1634,6 +1648,7 @@ impl SkillService {
         }
         Self::require_valid_directory(&current_skill.directory)?;
         Self::refresh_native_exists_flags(&mut current_skill);
+        current_skill.apps.omp = Self::skill_exists_in_app(&current_skill.directory, &AppType::Omp);
         let skill = current_skill;
 
         let dest = ssot_dir.join(&skill.directory);
@@ -1641,6 +1656,7 @@ impl SkillService {
         for app in [
             AppType::Pi,
             AppType::Rpi,
+            AppType::Omp,
             AppType::Mcode,
             AppType::Agy,
             AppType::Kimi,
@@ -1729,12 +1745,18 @@ impl SkillService {
             Self::persist_updated_skill_metadata(db, &updated_metadata)?
         };
         Self::refresh_native_exists_flags(&mut updated_skill);
+        updated_skill.apps.omp = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Omp);
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy | AppType::Kimi
+                AppType::Pi
+                    | AppType::Rpi
+                    | AppType::Omp
+                    | AppType::Mcode
+                    | AppType::Agy
+                    | AppType::Kimi
             ) {
                 continue;
             }
@@ -2246,7 +2268,7 @@ impl SkillService {
 
         // Pi follows its native exists=active rule; other apps keep their
         // established persisted desired-state flags.
-        if !matches!(app, AppType::Pi | AppType::Rpi) {
+        if !matches!(app, AppType::Pi | AppType::Rpi | AppType::Omp) {
             db.update_skill_apps(id, &skill.apps)?;
         }
 
@@ -2401,8 +2423,10 @@ impl SkillService {
 
             // 其他应用保存用户选择；Pi 的 exists=active 必须直接来自原生目录。
             let mut apps = selection.apps;
+
             apps.pi = SkillService::skill_exists_in_app(&dir_name, &AppType::Pi);
             apps.rpi = SkillService::skill_exists_in_app(&dir_name, &AppType::Rpi);
+            apps.omp = Self::skill_exists_in_app(&dir_name, &AppType::Omp);
 
             // An explicitly imported MCode link must point at the managed copy
             // so subsequent toggles and updates can verify its ownership.
@@ -2450,7 +2474,12 @@ impl SkillService {
             for app in AppType::all() {
                 if matches!(
                     app,
-                    AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy | AppType::Kimi
+                    AppType::Pi
+                        | AppType::Rpi
+                        | AppType::Omp
+                        | AppType::Mcode
+                        | AppType::Agy
+                        | AppType::Kimi
                 ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
                 {
@@ -2557,7 +2586,12 @@ impl SkillService {
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
         if !matches!(
             app,
-            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy | AppType::Kimi
+            AppType::Pi
+                | AppType::Rpi
+                | AppType::Omp
+                | AppType::Mcode
+                | AppType::Agy
+                | AppType::Kimi
         ) {
             return Ok(());
         }
@@ -2734,7 +2768,12 @@ impl SkillService {
 
         if matches!(
             app,
-            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy | AppType::Kimi
+            AppType::Pi
+                | AppType::Rpi
+                | AppType::Omp
+                | AppType::Mcode
+                | AppType::Agy
+                | AppType::Kimi
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
@@ -2930,14 +2969,20 @@ impl SkillService {
             .iter()
             .any(|path| Self::paths_overlap(&skill_path, path))
         {
-            log::debug!("Skill {directory} 的 {app:?} 路径与保留的 Pi 副本相同，跳过删除");
+            log::debug!("Skill {directory} 的 {app:?} 路径与保留的 Pi-family 副本相同，跳过删除");
+
             return Ok(());
         }
 
         if skill_path.exists() || Self::is_symlink(&skill_path) {
             if matches!(
                 app,
-                AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy | AppType::Kimi
+                AppType::Pi
+                    | AppType::Rpi
+                    | AppType::Omp
+                    | AppType::Mcode
+                    | AppType::Agy
+                    | AppType::Kimi
             ) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;
@@ -2962,12 +3007,12 @@ impl SkillService {
     fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Rpi
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Rpi | AppType::Omp
         )
     }
 
     /// 「立即重新同步」：按数据库里的开关和当前同步方式，把 Skill 重新投影到各应用目录，
-    /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi/RPI 不由这里同步，不在结果里）。
+    /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi/RPI/Omp 不由这里同步，不在结果里）。
     pub fn resync_all_apps(db: &Arc<Database>) -> Vec<SkillAppSyncOutcome> {
         let _state_guard = skill_state_read_guard();
         AppType::all()

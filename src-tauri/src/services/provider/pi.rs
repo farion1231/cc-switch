@@ -87,14 +87,19 @@ pub(super) fn add(
     Ok(true)
 }
 
+// Pi、Omp 的用量脚本只更新数据库，避免用旧快照覆盖外部修改过的原生配置。
 pub(super) fn update_usage_script(
     state: &AppState,
-    app: &AppType,
+    app_type: AppType,
     id: &str,
     script: UsageScript,
 ) -> Result<bool, AppError> {
-    let label = crate::pi_config::display_name(app);
-    let app_type = app.clone();
+    if !matches!(app_type, AppType::Pi | AppType::Rpi | AppType::Omp) {
+        return Err(AppError::InvalidInput(
+            "Usage metadata updates only support Pi, RPI and Omp".into(),
+        ));
+    }
+    let label = crate::pi_config::display_name(&app_type);
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     super::validate_usage_script(&script)?;
@@ -846,9 +851,9 @@ mod tests {
         )
         .expect("edit native provider");
 
-        update_usage_script(
+        ProviderService::update_pi_usage_script(
             &state,
-            &AppType::Pi,
+            AppType::Pi,
             "cc-switch-test",
             usage_script("return {}"),
         )

@@ -62,6 +62,7 @@ const DIRECTORY_KEYS = [
   "hermesConfigDir",
   "piConfigDir",
   "rpiConfigDir",
+  "ompConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -135,6 +136,7 @@ export function useSettings(): UseSettingsResult {
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
       rpi: sanitizeDir(data?.rpiConfigDir),
+      omp: sanitizeDir(data?.ompConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -223,6 +225,7 @@ export function useSettings(): UseSettingsResult {
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedRpiDir = sanitizeDir(mergedSettings.rpiConfigDir);
+        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -239,6 +242,7 @@ export function useSettings(): UseSettingsResult {
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
           rpiConfigDir: sanitizedRpiDir,
+          ompConfigDir: sanitizedOmpDir,
           language: mergedSettings.language,
         };
 
@@ -360,6 +364,7 @@ export function useSettings(): UseSettingsResult {
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedRpiDir = sanitizeDir(mergedSettings.rpiConfigDir);
+        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -369,6 +374,7 @@ export function useSettings(): UseSettingsResult {
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
         const previousPiDir = sanitizeDir(data?.piConfigDir);
         const previousRpiDir = sanitizeDir(data?.rpiConfigDir);
+        const previousOmpDir = sanitizeDir(data?.ompConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -385,6 +391,7 @@ export function useSettings(): UseSettingsResult {
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
           rpiConfigDir: sanitizedRpiDir,
+          ompConfigDir: sanitizedOmpDir,
           language: mergedSettings.language,
         };
 
@@ -475,6 +482,7 @@ export function useSettings(): UseSettingsResult {
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         const piDirChanged = sanitizedPiDir !== previousPiDir;
+        const ompDirChanged = sanitizedOmpDir !== previousOmpDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
@@ -497,6 +505,9 @@ export function useSettings(): UseSettingsResult {
         }
         if (sanitizedRpiDir !== previousRpiDir) {
           await invalidatePiDirectoryCaches(queryClient, "rpi");
+        }
+        if (ompDirChanged) {
+          await invalidatePiDirectoryCaches(queryClient, "omp");
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);

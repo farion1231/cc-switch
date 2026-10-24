@@ -43,6 +43,9 @@ export const translatePiProviderMutationError = (
   app: string = "pi",
 ): string => {
   if (!message) return "";
+  // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
 
   if (
     message.includes("models.json changed") ||
@@ -91,6 +94,9 @@ export const translateMcpBackendError = (
   t: (key: string, opts?: any) => string,
 ): string => {
   if (!message) return "";
+  // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
   const msg = String(message).trim();
 
   // 基础字段与结构校验相关

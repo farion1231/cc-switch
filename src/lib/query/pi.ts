@@ -32,8 +32,7 @@ export const invalidatePiDirectoryCaches = async (
     queryClient.invalidateQueries({ queryKey: ["providers", app] }),
     queryClient.invalidateQueries({ queryKey: promptKeys.list(app) }),
     queryClient.invalidateQueries({ queryKey: promptKeys.location(app) }),
-    queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
-    queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+    queryClient.invalidateQueries({ queryKey: ["skills"] }),
     queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   ]);
 };

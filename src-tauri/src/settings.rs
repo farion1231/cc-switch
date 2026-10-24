@@ -51,6 +51,8 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
+    #[serde(default)]
+    pub omp: bool,
     #[serde(default = "default_true")]
     pub rpi: bool,
     #[serde(default = "default_true")]
@@ -77,6 +79,7 @@ impl Default for VisibleApps {
             mcode: true,
             kimi: true,
             agy: true,
+            omp: true,
         }
     }
 }
@@ -98,6 +101,7 @@ impl VisibleApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Agy => self.agy,
+            AppType::Omp => self.omp,
         }
     }
 }
@@ -542,8 +546,10 @@ pub struct AppSettings {
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rpi_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omp_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -680,6 +686,7 @@ impl Default for AppSettings {
             hermes_config_dir: None,
             pi_config_dir: None,
             rpi_config_dir: None,
+            omp_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -777,6 +784,12 @@ impl AppSettings {
 
         self.rpi_config_dir = self
             .rpi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        self.omp_config_dir = self
+            .omp_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1272,6 +1285,13 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .as_ref()
         .map(|path| resolve_override_path(path))
 }
+pub fn get_omp_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .omp_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
 
 pub fn get_rpi_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
@@ -1363,7 +1383,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi => None,
+        AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Omp => None,
     }
 }
 
@@ -1383,7 +1403,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi => {}
+        AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Omp => {}
     })
 }
 

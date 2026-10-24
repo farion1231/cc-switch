@@ -74,6 +74,7 @@ describe("useDirectorySettings", () => {
       if (app === "openclaw") return "/remote/openclaw";
       if (app === "pi") return "/remote/pi";
       if (app === "rpi") return "/remote/rpi";
+      if (app === "omp") return "/remote/omp";
       return "/remote/hermes";
     });
     selectConfigDirectoryMock.mockReset();
@@ -100,6 +101,7 @@ describe("useDirectorySettings", () => {
       hermes: "/remote/hermes",
       pi: "/remote/pi",
       rpi: "/remote/rpi",
+      omp: "/remote/omp",
     });
   });
 

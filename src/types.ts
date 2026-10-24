@@ -318,6 +318,7 @@ export interface VisibleApps {
   mcode: boolean;
   kimi: boolean;
   agy: boolean;
+  omp: boolean;
 }
 
 // WebDAV 同步状态
@@ -482,6 +483,8 @@ export interface Settings {
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
   rpiConfigDir?: string;
+  // 覆盖 Oh My Pi agent 配置目录（可选）
+  ompConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -779,6 +782,7 @@ export interface McpApps {
   hermes: boolean;
   pi?: boolean;
   rpi?: boolean;
+  omp?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）

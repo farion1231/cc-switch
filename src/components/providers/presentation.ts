@@ -2,6 +2,7 @@ import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
+import { isPiFamilyApp } from "@/config/appConfig";
 import {
   isOfficialAccount,
   providerNeedsRouting,
@@ -695,7 +696,7 @@ export interface AdditiveInput {
   /** Hermes：model.provider 指向的那家 */
   hermesCurrentId?: string | null;
   isHermesManaged?: (provider: Provider) => boolean;
-  /** Pi：读不到当前配置时一律不能改 */
+  /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
@@ -711,7 +712,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
-  const isPiFamily = app === "pi" || app === "rpi";
+  const isPiFamily = isPiFamilyApp(app);
   const piBlocked =
     isPiFamily && input.piStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
@@ -722,8 +723,10 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
-      const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
-      const protectedReason = live ? officialReason : undefined;
+      // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
+      // 官方卡不能直接删，删号在授权中心（连登录一起删）
+      const deleteProtectedReason =
+        official && live ? t("kimi.oauth.managedHint") : undefined;
       if (official) {
         chips.push({
           key: "official",
@@ -753,11 +756,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         buttons.push({
           key: "remove",
           label: t("providerCard.action.remove"),
-          disabledReason:
-            protectedReason ??
-            (current
-              ? t("providerCard.reason.currentCannotRemove")
-              : undefined),
+          disabledReason: current
+            ? t("providerCard.reason.currentCannotRemove")
+            : undefined,
           onClick: () => actions.remove(p),
         });
       }
@@ -771,9 +772,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           chips,
           buttons,
           menuItems: menuItems.length ? menuItems : undefined,
-          editDisabledReason: officialReason,
           deleteDisabledReason:
-            protectedReason ??
+            deleteProtectedReason ??
             (current ? t("providerCard.reason.inUseCannotDelete") : undefined),
         },
       });
@@ -846,7 +846,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           buttons: [
             {
               key: "add",
-              label: isPiFamily
+              label: isPiFamilyApp(app)
                 ? t("providerCard.action.enable")
                 : t("providerCard.action.add"),
               onClick: () => actions.add(p),

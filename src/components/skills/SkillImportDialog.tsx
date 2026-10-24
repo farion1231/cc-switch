@@ -12,8 +12,9 @@ import { MatrixSearch } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS, V7Dialog } from "@/components/mcp/formBits";
 
 /** Pi-family activation follows native directory presence, not import-time flags. */
+const NATIVE_DIR_APPS: AppId[] = ["pi", "rpi", "omp"];
 const IMPORT_APP_IDS = SKILLS_APP_IDS.filter(
-  (app) => app !== "pi" && app !== "rpi",
+  (app) => !NATIVE_DIR_APPS.includes(app),
 );
 
 interface SkillImportDialogProps {
@@ -48,7 +49,7 @@ export function SkillImportDialog({
     const set = new Set<AppId>();
     for (const skill of skills) {
       for (const found of skill.foundIn) {
-        if (isAppId(found) && found !== "pi" && found !== "rpi") set.add(found);
+        if (isAppId(found) && !NATIVE_DIR_APPS.includes(found)) set.add(found);
       }
     }
     return set;

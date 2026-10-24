@@ -18,7 +18,9 @@ type AppDirectoryKey =
   | "openclaw"
   | "hermes"
   | "pi"
-  | "rpi";
+  | "rpi"
+  | "omp";
+
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -31,7 +33,9 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   pi: string;
+
   rpi: string;
+  omp: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -47,7 +51,9 @@ const APP_DIRECTORY_META: Record<
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   pi: { key: "pi", defaultFolder: ".pi/agent" },
+
   rpi: { key: "rpi", defaultFolder: ".rpi/agent" },
+  omp: { key: "omp", defaultFolder: ".omp/agent" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -62,7 +68,9 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+
   rpi: "rpiConfigDir",
+  omp: "ompConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -173,7 +181,9 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+
     rpi: "",
+    omp: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -187,7 +197,9 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+
     rpi: "",
+    omp: "",
   });
   // 已保存的数据目录（保存按钮和「需要重启」都和它比）。ref 给回调用，state 让比较它的
   // 组件在保存后重渲染：保存成功要把它更新成刚存的值，否则保存按钮一直在、改回去存不了
@@ -217,7 +229,10 @@ export function useDirectorySettings({
           openclawDir,
           hermesDir,
           piDir,
+
           rpiDir,
+          ompDir,
+
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -227,7 +242,9 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultPiDir,
+
           defaultRpiDir,
+          defaultOmpDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           loadConfigDirectory("claude"),
@@ -239,6 +256,8 @@ export function useDirectorySettings({
           loadConfigDirectory("hermes"),
           loadConfigDirectory("pi"),
           loadConfigDirectory("rpi"),
+          loadConfigDirectory("omp"),
+
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -248,7 +267,9 @@ export function useDirectorySettings({
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("pi"),
+
           computeDefaultConfigDir("rpi"),
+          computeDefaultConfigDir("omp"),
         ]);
 
         if (!active) return;
@@ -265,7 +286,9 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           pi: defaultPiDir ?? "",
+
           rpi: defaultRpiDir ?? "",
+          omp: defaultOmpDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -273,6 +296,7 @@ export function useDirectorySettings({
 
         setResolvedDirs({
           appConfig: normalizedOverride ?? defaultsRef.current.appConfig,
+
           claude: resolvedOrDefault(claudeDir, defaultsRef.current.claude),
           codex: resolvedOrDefault(codexDir, defaultsRef.current.codex),
           gemini: resolvedOrDefault(geminiDir, defaultsRef.current.gemini),
@@ -288,6 +312,7 @@ export function useDirectorySettings({
           hermes: resolvedOrDefault(hermesDir, defaultsRef.current.hermes),
           pi: resolvedOrDefault(piDir, defaultsRef.current.pi),
           rpi: resolvedOrDefault(rpiDir, defaultsRef.current.rpi),
+          omp: resolvedOrDefault(ompDir, defaultsRef.current.omp),
         });
       } catch (error) {
         console.error(
@@ -500,7 +525,9 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         pi: overrides?.pi ?? defaultsRef.current.pi,
+
         rpi: overrides?.rpi ?? defaultsRef.current.rpi,
+        omp: overrides?.omp ?? defaultsRef.current.omp,
       });
     },
     [],
