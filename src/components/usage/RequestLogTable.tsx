@@ -123,6 +123,7 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   mcode: "MiniMax",
   kimi: "Kimi",
   agy: "Antigravity",
+  omp: "omp",
 };
 
 export function appShortName(appType: string): string {
@@ -619,7 +620,8 @@ export function RequestLogTable({
             key: id,
             className: cn(
               cells[id].props.className,
-              groupBreaks.has(id) && usageTable.groupGap,
+              usageTable.denseCell,
+              groupBreaks.has(id) && usageTable.denseGroupGap,
               pin.className,
             ),
             style: pin.style,
@@ -671,7 +673,8 @@ export function RequestLogTable({
                     ref={index === 0 ? firstHeadRef : undefined}
                     className={cn(
                       usageTable.th,
-                      groupBreaks.has(id) && usageTable.groupGap,
+                      usageTable.denseCell,
+                      groupBreaks.has(id) && usageTable.denseGroupGap,
                       pin.className,
                     )}
                     style={pin.style}

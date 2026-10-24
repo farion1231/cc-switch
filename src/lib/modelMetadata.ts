@@ -288,11 +288,14 @@ function findByProvider(
 }
 
 /**
- * 原厂兜底：同名条目指向的原厂条目；没有条目指向时，才用原厂自己名下的同名
- * 条目。指向不止一家原厂时说不清是哪个模型，放弃。
+ * 原厂兜底：同名条目指向的原厂条目；指向都落空（没写，或原厂名下没有这一条）
+ * 时，才用原厂自己名下的同名条目。指向不止一家原厂时说不清是哪个模型，放弃。
  *
  * 「原厂名下」只是退路：原厂也会托管别家的模型（NVIDIA 名下有
  * `minimaxai/minimax-m2.7`），和指向结果并列就会被当成第二家原厂。
+ * 自己指向别家的条目也不算自有：指向的条目缺失时（models.dev 的 deepseek 名下
+ * 没有 `deepseek-v4.1-flash-1017`），thinkingmachines 名下指回 deepseek 的 LoRA
+ * 微调条目只收文字、窗口 262144，不能冒充原厂资料（#8765）。
  */
 function findByVendor(
   index: ModelsDevIndex,
@@ -313,6 +316,7 @@ function findByVendor(
         pointed.set(canonical, vendorModel);
         continue;
       }
+      if (vendorId !== providerId) continue;
     }
     if (index.vendors.has(providerId)) {
       owned.set(`${providerId}/${model.id ?? normalized}`, model);
