@@ -2027,6 +2027,11 @@
     "keyFieldsHint": "位址、Key、模型、推理檔位、上下文視窗和相容開關隨供應商切換；其餘是 Codex 全域設定，儲存後對所有供應商生效。",
     "inactiveFieldsHint": "這些是舊版存進卡裡的設定，現在切換不會寫出去。點一下複製 TOML，需要時貼到上方。",
     "inactiveFieldCopied": "已複製",
+    "providerIdLabel": "Provider ID",
+    "providerIdPlaceholder": "預設 custom，可留空",
+    "providerIdHint": "寫入 config.toml 的 model_provider 與提供商表鍵，和顯示名稱分開。留空保持預設 custom；修改後 Codex 歷史會話按標識分桶，不會自動遷移。本地路由（聚合/代理）模式下仍使用 custom。",
+    "providerIdReservedError": "該標識是 Codex 保留名，請換一個（區分大小寫，OpenAI 是合法的自定義 ID）。",
+    "providerIdControlError": "Provider ID 不能包含控制字元。",
     "upstreamFormatCopilotRouteHint": "所有模式都需要開啟路由，由路由注入 Copilot 帳號憑證；手動指定的協定模型不支援時會報錯。",
     "maxOutputTokensWarning": "不要超過模型或閘道的真實輸出上限，否則會回傳 400。",
     "routeOnlySettingsHint": "以下兩項只在路由、聚合模式下生效。"
@@ -3561,7 +3566,8 @@
       "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
       "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
       "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
-    }
+    },
+    "modelProvider": "Provider ID"
   },
   "iconPicker": {
     "search": "搜尋圖示",

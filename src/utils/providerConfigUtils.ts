@@ -503,6 +503,9 @@ export const hasExplicitNonOpenAiCodexModelProvider = (
   return Boolean(providerName && providerName.trim() !== "openai");
 };
 
+// 路由表在 TOML 里的表头文本：键按 TOML 转义（生成 `[model_providers."My Provider"]`）。
+// 所有 Codex 读写 helper 统一经这里拿表名，查找（getTomlSectionRange 的严格相等）和
+// 追加新表头用的是同一个转义形态，带引号/中文/空格的 id 才能读写同一张表。
 const getCodexProviderSectionName = (
   configText: string,
 ): string | undefined => {
@@ -527,6 +530,78 @@ const getCodexCustomProviderSectionName = (
   return providerName && isCustomCodexModelProviderId(providerName)
     ? tomlTableName("model_providers", providerName)
     : undefined;
+};
+
+// ========== Codex provider id utils (issue #7856) ==========
+
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// 显式 Provider ID 的校验，与后端 validate_codex_model_provider_id 对齐：
+// 保留名精确小写拒绝（"OpenAI" 合法）、控制字符拒绝。返回错误类别供表单提示。
+export const codexModelProviderIdError = (
+  providerId: string,
+): "reserved" | "control" | null => {
+  const id = providerId.trim();
+  if (!id) return null;
+  if (CODEX_RESERVED_MODEL_PROVIDER_IDS.has(id)) return "reserved";
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(id)) return "control";
+  return null;
+};
+
+// 顶层 model_provider 选路值（Provider ID 输入框的回显来源）；没有选路行返回 undefined。
+export const extractCodexProviderId = (
+  configText: string | undefined | null,
+): string | undefined => {
+  if (typeof configText !== "string") return undefined;
+  return getCodexModelProviderName(configText);
+};
+
+// 把 Codex 配置的路由表改名为新的 Provider ID：顶层 `model_provider` 行和
+// `[model_providers.<old>]` 表（含 http_headers、auth、aws 等子表）一起改——只改父表头
+// 会把同一家路由的配置拆成两个 provider；找不到选路行或表头锚点、或目标父表已存在时
+// 原样返回（部分改写比不改写更糟）。
+export const setCodexProviderId = (
+  configText: string,
+  providerId: string,
+): string => {
+  const normalizedText = normalizeTomlText(configText);
+  if (!normalizedText) return normalizedText;
+
+  const lines = normalizedText.split("\n");
+  const selectorIndex = getTopLevelModelProviderLineIndex(lines);
+  const currentId = getCodexModelProviderName(normalizedText);
+  if (selectorIndex === -1 || !currentId) return normalizedText;
+
+  const nextId = providerId.trim() || "custom";
+  if (nextId === currentId) return normalizedText;
+
+  const currentKey = tomlTableName(currentId);
+  const nextKey = tomlTableName(nextId);
+  const targetHeaderPattern = new RegExp(
+    `^\\s*\\[model_providers\\.${escapeRegExp(nextKey)}\\]\\s*$`,
+  );
+  if (lines.some((line) => targetHeaderPattern.test(line))) {
+    return normalizedText;
+  }
+  // 父表和子表（`[model_providers.<old>.<sub>]`）都命中；`customish` 这类前缀撞名不命中。
+  const headerPattern = new RegExp(
+    `^(\\s*\\[model_providers\\.)${escapeRegExp(currentKey)}((?:\\.[^\\]\\r\\n]+)?\\]\\s*)$`,
+  );
+
+  let renamed = false;
+  const nextLines = lines.map((line, index) => {
+    if (index === selectorIndex) {
+      return `model_provider = ${tomlBasicString(nextId)}`;
+    }
+    const match = line.match(headerPattern);
+    if (!match) return line;
+    renamed = true;
+    return `${match[1]}${nextKey}${match[2]}`;
+  });
+  if (!renamed) return normalizedText;
+  return finalizeTomlText(nextLines);
 };
 
 const findTomlAssignmentInRange = (

@@ -83,6 +83,7 @@ import { cn } from "@/lib/utils";
 import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import { codexPresetModelSources } from "@/config/presetModelMetadata";
+import { codexModelProviderIdError } from "@/utils/providerConfigUtils";
 import {
   fillCodexCatalogModel,
   metadataFilledAnything,
@@ -182,6 +183,12 @@ interface CodexFormFieldsProps {
   codexModel?: string;
   onModelChange?: (model: string) => void;
 
+  // Provider ID（config.toml 的 `model_provider` 与 `[model_providers.<id>]` 表键）
+  codexProviderId?: string;
+  // 输入框是否被用户改过：回显的既有选路（含内置保留名如 amazon-bedrock）不当非法
+  // 自定义 id 提示，保留名校验只对用户输入的值生效。
+  providerIdEdited?: boolean;
+  onProviderIdChange?: (providerId: string) => void;
   // Subagent defaults (config.toml `[agents]`). Codex only: Grok Build has no
   // such keys, and the Stack layout omits them (subagents follow the main model).
   subagentModel?: string;
@@ -575,6 +582,9 @@ export function CodexFormFields({
   onAutoSelectChange,
   codexModel = "",
   onModelChange,
+  codexProviderId = "",
+  providerIdEdited = false,
+  onProviderIdChange,
   subagentModel = "",
   onSubagentModelChange,
   subagentReasoningEffort = "",
@@ -646,6 +656,11 @@ export function CodexFormFields({
   // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
   // 对应词条在 grokBuild.* 下。
   const isGrokBuild = appId === "grokbuild";
+  // 与后端 validate_codex_model_provider_id 对齐：保留名/控制字符当场提示。只对用户
+  // 输入过的 id 生效——回显的既有选路（如 amazon-bedrock BuiltIn 路由）是合法状态。
+  const providerIdError = providerIdEdited
+    ? codexModelProviderIdError(codexProviderId)
+    : null;
   const canEditCatalog = Boolean(onCatalogModelsChange);
   // 有模型列表的卡（两种布局）：列表第一行就是默认模型，没有单独的默认模型框；列表为空时
   // 直连布局才显示默认模型框。Grok Build 没有列表，官方卡不显示列表。
@@ -2178,6 +2193,49 @@ export function CodexFormFields({
                   })}
                 </Button>
               )}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Provider ID —— config.toml 的 model_provider 与 [model_providers.<id>] 表键。
+          留空保持默认 custom（会话桶不变）；显式修改后 Codex 历史会话按新标识分桶。 */}
+      {category !== "official" && !isGrokBuild && onProviderIdChange && (
+        <div className="space-y-1.5">
+          <FormLabel htmlFor="codexProviderId">
+            {t("codexConfig.providerIdLabel", { defaultValue: "Provider ID" })}
+          </FormLabel>
+          <Input
+            id="codexProviderId"
+            value={codexProviderId}
+            onChange={(event) => onProviderIdChange(event.target.value)}
+            placeholder={t("codexConfig.providerIdPlaceholder", {
+              defaultValue: "默认 custom，可留空",
+            })}
+            aria-invalid={Boolean(providerIdError)}
+            className={cn(
+              "flex-1",
+              providerIdError &&
+                "border-destructive focus-visible:ring-destructive",
+            )}
+          />
+          {providerIdError ? (
+            <p className="text-xs leading-relaxed text-destructive">
+              {providerIdError === "reserved"
+                ? t("codexConfig.providerIdReservedError", {
+                    defaultValue:
+                      "该标识是 Codex 保留名，请换一个（区分大小写，OpenAI 是合法的自定义 ID）。",
+                  })
+                : t("codexConfig.providerIdControlError", {
+                    defaultValue: "Provider ID 不能包含控制字符。",
+                  })}
+            </p>
+          ) : (
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.providerIdHint", {
+                defaultValue:
+                  "写入 config.toml 的 model_provider 与提供商表键，和显示名称分开。留空保持默认 custom；修改后 Codex 历史会话按标识分桶，不会自动迁移。本地路由（聚合/代理）模式下仍使用 custom。",
+              })}
             </p>
           )}
         </div>

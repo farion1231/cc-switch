@@ -139,6 +139,11 @@ pub struct DeepLinkImportRequest {
     /// Optional Opus model (Claude only, v3.7.1+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opus_model: Option<String>,
+    /// Optional Codex model provider id (`modelProvider`, Codex only). Selects the
+    /// top-level `model_provider` and the `[model_providers.<id>]` table key; absent
+    /// or blank keeps the legacy `custom` id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
     /// 供应商的接口格式：`anthropic` | `openai_chat` | `openai_responses` | `gemini_native`，
     /// 按应用换算成各自的字段（见 `provider::ApiFormat`）。没写时用各应用的默认格式。
     #[serde(skip_serializing_if = "Option::is_none")]

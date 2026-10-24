@@ -4,9 +4,11 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexProviderId,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
   setCodexAgentsString,
   setCodexModelName as setCodexModelNameInConfig,
+  setCodexProviderId as setCodexProviderIdInConfig,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
@@ -106,6 +108,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexApiKey, setCodexApiKey] = useState("");
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
   const [codexModel, setCodexModel] = useState("");
+  const [codexProviderId, setCodexProviderId] = useState("");
+  // Provider ID 输入框是否被用户改过：区分「用户输入的自定义 id」和「从 TOML 回显的
+  // 既有选路」。保留名（amazon-bedrock 等）作为已有 BuiltIn 路由是合法的，只有用户
+  // 新建/修改自定义 id 时才拦（issue #7856 review）。
+  const [codexProviderIdEdited, setCodexProviderIdEdited] = useState(false);
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
   >([]);
@@ -115,6 +122,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
   const isUpdatingCodexModelRef = useRef(false);
+  const isUpdatingCodexProviderIdRef = useRef(false);
 
   // 初始化 Codex 配置（编辑模式）
   useEffect(() => {
@@ -174,6 +182,18 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     }
     const extracted = extractCodexModelName(codexConfig) || "";
     setCodexModel((prev) => (prev === extracted ? prev : extracted));
+  }, [codexConfig]);
+
+  // 与 TOML 配置保持 Provider ID 同步（model_provider 选路；无选路行显示为空 = 默认 custom）
+  useEffect(() => {
+    if (isUpdatingCodexProviderIdRef.current) {
+      return;
+    }
+    const extracted = extractCodexProviderId(codexConfig) || "";
+    setCodexProviderId((prev) => (prev === extracted ? prev : extracted));
+    // 回显的值（含已有内置路由如 amazon-bedrock 的选路）不是用户新建的自定义 id：
+    // 保留名校验只对用户输入过的值生效，配置一回显就复位。
+    setCodexProviderIdEdited(false);
   }, [codexConfig]);
 
   // 获取 API Key（从 auth JSON）
@@ -285,6 +305,23 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     [setCodexConfig],
   );
 
+  // 处理 Provider ID 变化（改写 model_provider 选路与 [model_providers.<id>] 表键；
+  // 清空回到默认 custom）。剥控制字符：粘贴进去的换行等会破坏单行 TOML 语义。
+  const handleCodexProviderIdChange = useCallback(
+    (providerId: string) => {
+      const sanitized = providerId.replace(/[\u0000-\u001f\u007f]/g, "");
+      setCodexProviderId(sanitized);
+      setCodexProviderIdEdited(true);
+
+      isUpdatingCodexProviderIdRef.current = true;
+      setCodexConfig((prev) => setCodexProviderIdInConfig(prev, sanitized));
+      setTimeout(() => {
+        isUpdatingCodexProviderIdRef.current = false;
+      }, 0);
+    },
+    [setCodexConfig],
+  );
+
   // 子代理的默认模型和推理强度（`[agents]` 表）：直接从 TOML 读，改动实时写回，清空则删键
   const codexSubagentModel = useMemo(
     () => extractCodexAgentsString(codexConfig, "default_subagent_model") || "",
@@ -362,6 +399,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexProviderId,
+    codexProviderIdEdited,
     codexSubagentModel,
     codexSubagentReasoningEffort,
     codexCatalogModels,
@@ -374,6 +413,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexProviderIdChange,
     handleCodexSubagentModelChange,
     handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange,

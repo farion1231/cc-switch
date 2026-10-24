@@ -154,6 +154,11 @@ fn parse_provider_deeplink(
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
     let opus_model = params.get("opusModel").cloned();
+    // Optional Codex model provider id (issue #7856). Absent or blank keeps `custom`.
+    let model_provider = params
+        .get("modelProvider")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
     // 在解析阶段就核对，用户当场看到「这个应用不支持这种接口」，而不是确认导入之后才失败
     let api_format = params.get("apiFormat").cloned();
     if let Some(ref format) = api_format {
@@ -211,6 +216,7 @@ fn parse_provider_deeplink(
         haiku_model,
         sonnet_model,
         opus_model,
+        model_provider,
         api_format,
         content: None,
         description: None,
@@ -304,6 +310,7 @@ fn parse_prompt_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        model_provider: None,
         api_format: None,
         apps: None,
         repo: None,
@@ -386,6 +393,7 @@ fn parse_mcp_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        model_provider: None,
         api_format: None,
         content: None,
         description: None,
@@ -443,6 +451,7 @@ fn parse_skill_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        model_provider: None,
         api_format: None,
         content: None,
         description: None,

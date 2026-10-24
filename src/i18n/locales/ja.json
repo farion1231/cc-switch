@@ -2026,6 +2026,11 @@
     "keyFieldsHint": "エンドポイント、キー、モデル、推論レベル、コンテキストウィンドウ、互換スイッチはプロバイダーに合わせて切り替わります。それ以外は Codex のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
     "inactiveFieldsHint": "旧バージョンがこのプロバイダーに保存した設定で、切り替えでは反映されなくなりました。クリックすると TOML をコピーできるので、必要なら上に貼り付けてください。",
     "inactiveFieldCopied": "コピーしました",
+    "providerIdLabel": "Provider ID",
+    "providerIdPlaceholder": "デフォルトは custom、空欄可",
+    "providerIdHint": "config.toml の model_provider とプロバイダーテーブルキーを表示名とは別に書き込みます。空欄の場合はデフォルトの custom を維持します。変更すると Codex の過去セッションは ID ごとに分かれ、自動移行されません。ローカルルーティング（集約/プロキシ）では custom が使われます。",
+    "providerIdReservedError": "この ID は Codex の予約名です。別の ID を指定してください（大文字小文字を区別。OpenAI は有効なカスタム ID です）。",
+    "providerIdControlError": "Provider ID に制御文字は使えません。",
     "upstreamFormatCopilotRouteHint": "どのモードでもルーティングが必要で、ルーティングが Copilot アカウントの認証情報を注入します。手動指定したプロトコルにモデルが対応していないとエラーになります。",
     "maxOutputTokensWarning": "モデルやゲートウェイの実際の出力上限を超えないでください。超えると 400 が返ります。",
     "routeOnlySettingsHint": "以下の二つはルーティングモードと集約モードでのみ有効です。"
@@ -3560,7 +3565,8 @@
       "envHijack": "この設定には、プロセスの読み込み動作を変える環境変数（ライブラリの注入、CA 証明書の差し替えなど）が含まれています。信頼できる提供元か確認してください。",
       "privateEndpoint": "このアドレスはローカルホストまたは内部ネットワークを指しています。自分で立てたローカルサービス以外はインポートしないでください。",
       "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。"
-    }
+    },
+    "modelProvider": "Provider ID"
   },
   "iconPicker": {
     "search": "アイコンを検索",
