@@ -138,6 +138,13 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        app @ (AppType::Qoder | AppType::QoderCn) => {
+            let directory = crate::qoder_config::data_dir(&app);
+            Ok(ConfigStatus {
+                exists: directory.join("settings.json").exists(),
+                path: directory.to_string_lossy().into_owned(),
+            })
+        }
         AppType::Kimi => {
             let file = crate::kimi_config::config_path();
             Ok(ConfigStatus {
@@ -206,6 +213,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
         AppType::Kimi => crate::kimi_config::data_dir(),
         AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
+        app @ (AppType::Qoder | AppType::QoderCn) => crate::qoder_config::data_dir(&app),
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
@@ -232,6 +240,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
         AppType::Kimi => crate::kimi_config::data_dir(),
         AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
+        app @ (AppType::Qoder | AppType::QoderCn) => crate::qoder_config::data_dir(&app),
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()

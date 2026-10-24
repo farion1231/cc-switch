@@ -30,6 +30,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::Qoder | AppType::QoderCn => Ok(false),
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
@@ -306,6 +307,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Qoder
+        | AppType::QoderCn
         | AppType::Agy
         | AppType::Omp
         | AppType::ClaudeDesktop => false,
@@ -385,6 +388,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Qoder
+        | AppType::QoderCn
         | AppType::ClaudeDesktop
         | AppType::Agy
         | AppType::Omp => Ok(settings.clone()),
@@ -702,6 +707,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Qoder | AppType::QoderCn => {
+            return Err(AppError::InvalidInput(
+                "Manage Qoder models on the Qoder model settings page".into(),
+            ))
+        }
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -855,7 +865,12 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in AppType::all() {
         if matches!(
             app_type,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp
+            AppType::Pi
+                | AppType::Omp
+                | AppType::Mcode
+                | AppType::Kimi
+                | AppType::Qoder
+                | AppType::QoderCn
         ) {
             continue;
         }
@@ -1013,6 +1028,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
+        AppType::Qoder | AppType::QoderCn => Ok(json!({})),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1028,6 +1044,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 /// Returns `Ok(true)` if a provider was actually imported,
 /// `Ok(false)` if skipped (providers already exist for this app).
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+    if crate::qoder_config::is_qoder(&app_type) {
+        return Ok(false);
+    }
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
     // import_xxx_providers_from_live functions, not this generic default config import
     if app_type.is_additive_mode() {
@@ -1140,6 +1159,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Qoder
+        | AppType::QoderCn
         | AppType::Omp => {
             unreachable!("additive mode apps are handled by early return")
         }
@@ -1213,7 +1234,7 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() {
+    if app_type.is_additive_mode() || crate::qoder_config::is_qoder(app_type) {
         return Ok(false);
     }
 

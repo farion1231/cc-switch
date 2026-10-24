@@ -16,6 +16,8 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   pi: "Pi",
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
+  qoder: "Qoder CLI",
+  "qoder-cn": "Qoder CLI CN",
   agy: "Antigravity",
   omp: "Oh My Pi",
 };
@@ -32,6 +34,8 @@ const APP_ICON_NAME: Record<AppId, string> = {
   pi: "pi",
   mcode: "minimax",
   kimi: "kimi",
+  qoder: "qoder",
+  "qoder-cn": "qoder",
   agy: "antigravity",
   omp: "omp",
 };

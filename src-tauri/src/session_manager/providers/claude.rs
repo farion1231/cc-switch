@@ -121,7 +121,7 @@ fn last_relocated_cwd(path: &Path) -> Option<String> {
 
 /// 列表扫描用：读不了（权限、文件被占用等）返回 `Err`，不进解析缓存、下轮重试；
 /// 读到了但不是会话返回 `Ok(None)`，可以缓存。
-fn scan_session_file(path: &Path) -> std::io::Result<Option<SessionMeta>> {
+pub(super) fn scan_session_file(path: &Path) -> std::io::Result<Option<SessionMeta>> {
     if is_agent_session(path) {
         return Ok(None);
     }

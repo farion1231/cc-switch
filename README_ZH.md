@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、Kimi Code、Oh My Pi 的全方位管理工具
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、Kimi Code、Oh My Pi、Qoder CLI 的全方位管理工具
 
 **一键切换 API 供应商，统一管理 MCP、Skills 与提示词，不用再手改 JSON / TOML / YAML 配置文件。**
 
@@ -236,7 +236,7 @@ Claude Code、Codex、Gemini CLI 等 AI 编程工具各有各的配置格式。�
 
 **CC Switch** 把这些工作集中到一个桌面应用里：选一个预设、填入 Key，一键即可切换。切换时只替换地址、Key、模型这几项连接信息，你自己加的插件、Hook、MCP 和注释都原样保留。
 
-- **一个应用，十二个工具** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi
+- **一个应用，多种工具** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code、Qoder CLI、Oh My Pi
 - **告别手动编辑** — 90+ 供应商预设，包括 AWS Bedrock、NVIDIA NIM 和社区中转服务
 - **直连、路由、聚合，按需选择** — 直连是工具直接连供应商；路由经本机转发，能转换接口格式、自动故障转移，让 Claude Code 用 GPT、Codex 用 Claude；聚合把多家供应商的模型放进 Claude Code 或 Codex 的同一个模型列表，选哪个模型，请求就发给哪一家
 - **MCP、Skills 与提示词集中管理** — MCP 和 Skills 添加一次，按工具勾选同步；提示词按工具分别维护
@@ -357,6 +357,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | [Kimi Code](docs/kimi-code-integration-zh.md) | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| [Qoder CLI／国内版](docs/qoder-cli-integration-zh.md) | 原生模型配置 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
 
 - **切换**：同一时间只启用一个供应商；**共存**：多个供应商同时写入工具自身的配置，在工具里选择使用。
 - **本地路由**：由 CC Switch 在本机转发请求并转换接口格式，见下方[本地路由与故障转移](#本地路由与故障转移)。Claude Desktop 的供应商可选“直连”或“模型映射”，选“模型映射”时经本地路由转发。
@@ -426,7 +427,7 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch 支持哪些 AI 工具？</strong></summary>
 
-CC Switch 支持十二个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code**、**Oh My Pi**。每个工具都有专属的供应商预设和配置管理，各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
+CC Switch 支持以下工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code**、**Oh My Pi**、**Qoder CLI**（国际版／国内版）。Qoder 的模型通过原生模型配置管理，官方账号统一在「授权中心」新增、重新登录和切换，两个版本分别管理。各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
 
 </details>
 
