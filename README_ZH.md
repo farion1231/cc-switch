@@ -94,13 +94,23 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
-<td width="180"><a href="https://dit.ai/register"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
-<td>感谢 DIT.ai 赞助了本项目！DIT.ai 是一个 AI Token 交易市场，通过多供应商路由降低调用成本。开发者只需一个 OpenAI 兼容 API，即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流 AI 模型，覆盖文本、图像、视频和音频。合格供应商在 160 多条线路上为每个请求竞价，DIT 实时选出性价比最优的线路，价格通常比官方定价低 30–70%。DIT.ai 面向开发者、初创公司以及规模化运行 Agent 或 AI 产品的团队：只需更换 Base URL 和 API Key，保留现有技术栈，即可享受自动路由与故障转移。CC Switch 用户通过<a href="https://dit.ai/register">此链接</a>注册并使用优惠码 <strong>ccswitch</strong>，即可领取 5 美元新人券！</td>
+<td width="180"><a href="https://dit.ai?utm_source=ccswitch"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
+<td>感谢 DIT.ai 赞助了本项目！DIT.ai 是一个 AI Token 交易市场，通过多供应商路由降低调用成本。开发者只需一个 OpenAI 兼容 API，即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流 AI 模型，覆盖文本、图像、视频和音频。合格供应商在 160 多条线路上为每个请求竞价，DIT 实时选出性价比最优的线路，价格通常比官方定价低 30–70%。DIT.ai 面向开发者、初创公司以及规模化运行 Agent 或 AI 产品的团队：只需更换 Base URL 和 API Key，保留现有技术栈，即可享受自动路由与故障转移。CC Switch 用户通过<a href="https://dit.ai?utm_source=ccswitch">此链接</a>注册并使用优惠码 <strong>ccswitch</strong>，即可领取 5 美元新人券！</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
-<td>感谢胜算云赞助了本项目！胜算云是专为AI Native Teams服务的超级工厂，工业级AI任务并行执行平台，模型商城集采直供聚合接入了Claude、Chatgpt、Gemini等海内外LLM及图片视频多媒体模型算力，绝无逆向掺水、全站模型SLA可用性高达99.7%、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">监测接口</a>日常全绿。更有企业级专属定制网关，实现团队精细化成本与权限管控，智能路由+安全防护+BYOK企业自带密钥托管。平台按量及tokens plan（即将上线）计费，可开票，使用<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">此链接</a>注册新用户可获10元模力及首充10%赠送。</td>
+<td width="180"><a href="https://buytoken.work/sign-up?aff=cc-switch"><img src="assets/partners/logos/buytoken-banner.png" alt="BuyToken" width="150"></a></td>
+<td>感谢 BuyToken 赞助了本项目！BuyToken 提供 Claude Code / Codex / DeepSeek 等各类中转服务，支持企业级并发、可极速开票，做的就是稳定长久站。本站也为 CC Switch 的用户提供了特别优惠，使用<a href="https://buytoken.work/sign-up?aff=cc-switch">此链接</a>注册，可得 3 元体验额度，并且通过本站充值的用户，首充 9 折！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
+<td>感谢 V-API 赞助了本项目！V-API 三年老品牌，致力于为个人、开发者和企业提供稳定、快速、安全的高品质的大语言模型 API 服务平台，支持合同签约、正规开票（普票 / 专票）。V-API 为 CC Switch 的用户提供了特别优惠，使用<a href="https://gpt.ge/signup?aff=URNP">此链接</a>注册的用户，可享受首单减 2 元和 9 折优惠！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
+<td>感谢 FluxA &amp; Baidu AI Cloud 赞助了本项目！ FluxA 与百度智能云联合推出 AgenticPlan，为 AI Agent 提供自主购买/管理/使用模型、API、工具的能力。内含百度千帆 TokenPlan，低至6折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗舰模型，并获赠 FluxA AgentMarket API的调用额度，解锁搜索、数据抓取、社交媒体、金融、加密、生图、视频等 13000+ 付费 API。<br>在用户授权下，AI Agent 还可借助官方的Visa卡支付自主采购资源、管理 API Key、监控用量并规划续费，帮助 Agent 从「自主完成任务」升级为真正能够「自主规划预算，完成任务」。通过<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">此链接</a>购买！</td>
 </tr>
 
 <tr>
@@ -119,8 +129,8 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
-<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
-<td>感谢 FluxA &amp; Baidu AI Cloud 赞助了本项目！ FluxA 与百度智能云联合推出 AgenticPlan，为 AI Agent 提供自主购买/管理/使用模型、API、工具的能力。内含百度千帆 TokenPlan，低至6折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗舰模型，并获赠 FluxA AgentMarket API的调用额度，解锁搜索、数据抓取、社交媒体、金融、加密、生图、视频等 13000+ 付费 API。<br>在用户授权下，AI Agent 还可借助官方的Visa卡支付自主采购资源、管理 API Key、监控用量并规划续费，帮助 Agent 从「自主完成任务」升级为真正能够「自主规划预算，完成任务」。通过<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">此链接</a>购买！</td>
+<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
+<td>感谢胜算云赞助了本项目！胜算云是专为AI Native Teams服务的超级工厂，工业级AI任务并行执行平台，模型商城集采直供聚合接入了Claude、Chatgpt、Gemini等海内外LLM及图片视频多媒体模型算力，绝无逆向掺水、全站模型SLA可用性高达99.7%、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">监测接口</a>日常全绿。更有企业级专属定制网关，实现团队精细化成本与权限管控，智能路由+安全防护+BYOK企业自带密钥托管。平台按量及tokens plan（即将上线）计费，可开票，使用<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">此链接</a>注册新用户可获10元模力及首充10%赠送。</td>
 </tr>
 
 <tr>
@@ -326,7 +336,7 @@ paru -S cc-switch-bin
 - **Skills**：点击侧栏的“Skills” →“发现技能” → 搜索 skills.sh 或浏览 GitHub 仓库 → 一键安装到支持的工具
 - **项目**：先在「设置 → 通用」里打开“显示项目切换”，然后在 Claude Code、Claude Desktop 或 Codex 页面，打开顶部的项目切换器 →“新建项目”，把当前配置保存下来，之后从切换器里选择即可整套切换
 - **会话**：点击侧栏的“会话” → 浏览、搜索会话历史，打开阅读页，或恢复各工具的会话
-- **授权中心**：点击侧栏的“授权中心”，登录 GitHub Copilot、ChatGPT、xAI（Grok）账号，把订阅当作供应商使用
+- **授权中心**：点击侧栏的“授权中心”，登录 GitHub Copilot、ChatGPT、xAI（Grok）、Kimi Code 账号，把订阅当作供应商使用。Kimi Code 支持同时保存多个官方账号，每个账号使用独立凭据和原生供应商，首个登录沿用 Kimi 原生默认凭据槽位，在此添加、重新登录和退出账号。仍在原生配置中的 Kimi 官方 OAuth 节点在供应商页受到保护；原生节点被移除后，可以删除留下的档案。
 
 > **注意**：首次启动时，CC Switch 会自动把 Claude Code、Codex、Gemini CLI、Grok Build 的现有配置导入为名为 `default` 的供应商，并为这几个工具和 Claude Desktop 添加官方供应商，原有配置不会丢失。
 
@@ -433,7 +443,7 @@ CC Switch 支持十一个工具：**Claude Code**、**Claude Desktop**、**Codex
 - **Codex、Gemini CLI、Grok Build**：需要重启终端或 CLI 工具才能生效（切换成功后会有提示）。路由模式下，请求会立即转发到新供应商；但如果切换改变了模型，这三个工具仍可能需要重启。
 - **聚合模式**：Claude Code 的聚合模型改动立即生效；Codex 进入或退出聚合、改动聚合模型列表后都要彻底重启，见下一条。
 - **Claude Desktop**：需要完全退出并重新打开 Claude Desktop；使用“模型映射”时，还需要保持 CC Switch 运行。
-- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：这些是共存式工具，点击“添加”（Pi 为“启用”）会把供应商写入工具自身的配置、与其他供应商共存，之后在工具里选择要使用的模型即可。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code**：这些是共存式工具，点击“添加”（Pi 为“启用”）会把供应商写入工具自身的配置、与其他供应商共存，之后在工具里选择要使用的模型即可。Kimi Code 还提供“切换”按钮选择供应商的模型；主模型或子代理模型池仍引用的模型不能移除。配置与账号详情见 [Kimi Code 接入说明](docs/kimi-code-integration-zh.md)。
 
 </details>
 
