@@ -487,7 +487,12 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-fn map_reasoning_effort<'a>(
+/// 把请求档位映射到目标上游接受的 `reasoning_effort` 值（`mode` 决定词表）。
+///
+/// `zen` 分支同时供 Claude 路由的 OpenCode 平台规则复用
+/// （[`super::opencode_chat_reasoning::resolve_opencode_effort`]），两条路径共用同一份
+/// 档位序与钳制语义。
+pub(crate) fn map_reasoning_effort<'a>(
     effort: &str,
     mode: Option<&str>,
     effort_levels: Option<&'a [String]>,
