@@ -4215,10 +4215,7 @@
       "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
       "agy": "公式インストールスクリプトでインストール",
       "omp": "公式インストールスクリプトでインストール"
-    },
-    "ompDiscoveryHelpTitle": "Oh My Pi が実際に読み込む範囲",
-    "ompDiscoveryHelp": "Oh My Pi は ~/.omp/agent 自身の設定に加え、他の Agent のディレクトリ（Claude の ~/.claude、Codex の ~/.codex など）からも MCP サーバー、スキル、コマンド、フック、ルール、設定を発見します。Oh My Pi の実際の読み込み内容を CC Switch の表示と一致させるには、~/.omp/agent/config.yml の disabledProviders で不要な発行元を無効化してください（id はドキュメント準拠：claude、codex、gemini、opencode、github、agents など）。",
-    "ompDiscoveryDocsLink": "ドキュメント：context-files（disabledProviders）"
+    }
   },
   "appPage": {
     "moreActions": "{{name}} のその他の操作",
@@ -4515,6 +4512,11 @@
       "on": "{{name}} · {{app}}：有効",
       "off": "{{name}} · {{app}}：無効",
       "fail": "{{name}} · {{app}}：書き込み失敗、クリックで再試行"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi が実際に読み込む範囲",
+      "help": "Oh My Pi は ~/.omp/agent 自身の設定に加え、他の Agent のディレクトリ（Claude の ~/.claude、Codex の ~/.codex など）からも MCP サーバー、スキル、コマンド、フック、ルール、設定を発見します。Oh My Pi の実際の読み込み内容を CC Switch の表示と一致させるには、~/.omp/agent/config.yml の disabledProviders で不要な発行元を無効化してください（id はドキュメント準拠：claude、codex、gemini、opencode、github、agents など）。",
+      "docsLink": "Oh My Pi に他の Agent の設定を読み込ませない方法"
     }
   },
   "mcpPage": {

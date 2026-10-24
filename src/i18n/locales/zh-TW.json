@@ -4216,10 +4216,7 @@
       "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
       "agy": "安裝時執行官方安裝腳本",
       "omp": "安裝時執行官方安裝腳本"
-    },
-    "ompDiscoveryHelpTitle": "Oh My Pi 的實際載入範圍",
-    "ompDiscoveryHelp": "Oh My Pi 除了 ~/.omp/agent 自己的設定，還會從其他 Agent 的目錄發現 MCP 伺服器、技能、命令、鉤子、規則和設定（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要讓 Oh My Pi 的實際生效內容與 CC Switch 介面一致，請在 ~/.omp/agent/config.yml 用 disabledProviders 停用不需要的發現來源（id 與文件一致，如 claude、codex、gemini、opencode、github、agents）。",
-    "ompDiscoveryDocsLink": "參考文件：context-files（disabledProviders）"
+    }
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4516,6 +4513,11 @@
       "on": "{{name}} · {{app}}：已啟用",
       "off": "{{name}} · {{app}}：未啟用",
       "fail": "{{name}} · {{app}}：寫入失敗，點按重試"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi 的實際載入範圍",
+      "help": "Oh My Pi 除了 ~/.omp/agent 自己的設定，還會從其他 Agent 的目錄發現 MCP 伺服器、技能、命令、鉤子、規則和設定（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要讓 Oh My Pi 的實際生效內容與 CC Switch 介面一致，請在 ~/.omp/agent/config.yml 用 disabledProviders 停用不需要的發現來源（id 與文件一致，如 claude、codex、gemini、opencode、github、agents）。",
+      "docsLink": "怎樣讓 Oh My Pi 不讀取其他 Agent 的設定"
     }
   },
   "mcpPage": {

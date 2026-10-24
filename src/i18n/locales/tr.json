@@ -4205,10 +4205,7 @@
       "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
       "agy": "Resmî kurulum betiğiyle yüklenir",
       "omp": "Resmi komut dosyasıyla yüklenir"
-    },
-    "ompDiscoveryHelpTitle": "Oh My Pi'nin gerçekte yükledikleri",
-    "ompDiscoveryHelp": "Oh My Pi, kendi ~/.omp/agent yapılandırmasının yanı sıra diğer ajanların dizinlerinden (ör. Claude'un ~/.claude, Codex'in ~/.codex) MCP sunucularını, becerileri, komutları, kancaları, kuralları ve ayarları da keşfeder. Oh My Pi'nin gerçekte yüklediklerini CC Switch arayüzüyle uyumlu tutmak için ~/.omp/agent/config.yml içinde disabledProviders ile gereksiz keşif kaynaklarını kapatın (kimlikler belgelerle aynıdır, ör. claude, codex, gemini, opencode, github, agents).",
-    "ompDiscoveryDocsLink": "Belgeler: context-files (disabledProviders)"
+    }
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -4505,6 +4502,11 @@
       "on": "{{name}} · {{app}}: etkin",
       "off": "{{name}} · {{app}}: kapalı",
       "fail": "{{name}} · {{app}}: yazma başarısız oldu, yeniden denemek için tıklayın"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi'nin gerçekte yükledikleri",
+      "help": "Oh My Pi, kendi ~/.omp/agent yapılandırmasının yanı sıra diğer ajanların dizinlerinden (ör. Claude'un ~/.claude, Codex'in ~/.codex) MCP sunucularını, becerileri, komutları, kancaları, kuralları ve ayarları da keşfeder. Oh My Pi'nin gerçekte yüklediklerini CC Switch arayüzüyle uyumlu tutmak için ~/.omp/agent/config.yml içinde disabledProviders ile gereksiz keşif kaynaklarını kapatın (kimlikler belgelerle aynıdır, ör. claude, codex, gemini, opencode, github, agents).",
+      "docsLink": "Oh My Pi'nin diğer ajanların yapılandırmasını yüklemesi nasıl engellenir"
     }
   },
   "mcpPage": {

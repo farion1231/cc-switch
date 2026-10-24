@@ -4215,10 +4215,7 @@
       "mcode": "Installs with the official script, falls back to npm",
       "agy": "Installs with the official script",
       "omp": "Installs with the official script"
-    },
-    "ompDiscoveryHelpTitle": "What Oh My Pi actually loads",
-    "ompDiscoveryHelp": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
-    "ompDiscoveryDocsLink": "Docs: context-files (disabledProviders)"
+    }
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",
@@ -4515,6 +4512,11 @@
       "on": "{{name}} · {{app}}: enabled",
       "off": "{{name}} · {{app}}: off",
       "fail": "{{name}} · {{app}}: write failed, click to retry"
+    },
+    "ompDiscovery": {
+      "title": "What Oh My Pi actually loads",
+      "help": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
+      "docsLink": "How to stop Oh My Pi from loading other agents' config"
     }
   },
   "mcpPage": {
