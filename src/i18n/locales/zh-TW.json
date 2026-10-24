@@ -932,6 +932,7 @@
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
     "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
+    "ompConfigDir": "Oh My Pi 設定目錄",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -940,6 +941,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
     "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
+    "browsePlaceholderOmp": "例如：/home/<您的帳號>/.omp/agent",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -975,7 +977,7 @@
     "uninstallCommandCopied": "解除安裝指令已複製",
     "uninstallCommandCopyFailed": "複製失敗，請手動選取並複製指令。",
     "oneClickInstall": "一鍵安裝",
-    "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
     "localEnvCheck": "本地環境檢查",
     "updateAllTools": "全部更新（{{count}}）",
     "currentVersion": "目前版本",
@@ -1099,7 +1101,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1631,7 +1634,6 @@
       "fluxa": "FluxA 與百度智能雲聯合推出 AgenticPlan，讓 AI Agent 能自主購買、管理和使用模型、API 與工具。內含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗艦模型，並獲贈 FluxA AgentMarket API 呼叫額度，解鎖搜尋、資料抓取、社群媒體、金融、加密、生圖、影片等 13000+ 付費 API。",
       "88api": "88API 是由香港企業營運的一站式多模型 API 平台，透過統一介面接入文字、圖片、語音和影片模型，支援國際主流付款方式，可開立發票，提供企業級穩定服務。透過專屬連結註冊可獲得專屬贈送額度！",
       "modelflare": "Modelflare 是穩定、低成本的 AI 模型閘道，一個 Key 即可呼叫 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 使用者專享福利：首次儲值使用優惠碼「CCSWITCH」可享 9 折優惠！",
-      "everyapi": "EveryAPI 自帶桌面客戶端，Claude Code、Codex、Cursor 等 20 多個工具一鍵自動設定；一把金鑰直接呼叫 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，換模型不用改設定。註冊即送 14 元額度，GPT 低至 1.5 折；CC Switch 使用者專享：首儲時使用折扣碼「ccswitch」享 20% 優惠，不限時！",
       "alltokens": "AllTokens 秉持「穩定為基，真實為本」，致力於讓每一次 AI 呼叫都穩定、真實、值得託付：服務可靠、計費透明，一個平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量計費、支援額度上限。註冊即送 1 美元體驗金！",
       "alltokens_si": "AllTokens SI 秉持「穩定為基，真實為本」，是專為企業打造的 AI Token 中轉與團隊協作平台：成員、金鑰、用量與餘額統一納入企業控制台，以清晰的權限與額度設定，讓團隊協作有據可查、安心可控。",
       "openmodel": "OpenModel 為 Codex 和 Claude Code 提供客戶端專屬折扣，所支援的模型透過 Codex 呼叫最高優惠 90%、透過 Claude Code 呼叫最高優惠 60%。CC Switch 使用者透過此連結註冊並使用優惠碼「cc-switch」，即可享受首次儲值九折優惠！",
@@ -4202,8 +4204,12 @@
       "hermes": "安裝時執行官方安裝腳本",
       "pi": "透過 npm 安裝",
       "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
-      "agy": "安裝時執行官方安裝腳本"
-    }
+      "agy": "安裝時執行官方安裝腳本",
+      "omp": "安裝時執行官方安裝腳本"
+    },
+    "ompDiscoveryHelpTitle": "Oh My Pi 的實際載入範圍",
+    "ompDiscoveryHelp": "Oh My Pi 除了 ~/.omp/agent 自己的設定，還會從其他 Agent 的目錄發現 MCP 伺服器、技能、命令、鉤子、規則和設定（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要讓 Oh My Pi 的實際生效內容與 CC Switch 介面一致，請在 ~/.omp/agent/config.yml 用 disabledProviders 停用不需要的發現來源（id 與文件一致，如 claude、codex、gemini、opencode、github、agents）。",
+    "ompDiscoveryDocsLink": "參考文件：context-files（disabledProviders）"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4930,6 +4936,7 @@
       "removeAccount": "刪除帳號",
       "dismissAccount": "移出列表",
       "signedOut": "尚未登入",
+      "noSubscription": "未訂閱",
       "statusFailed": "無法讀取登入狀態",
       "expired": "授權碼已過期，請重新登入。",
       "denied": "授權已遭拒絕，請重新登入。",
@@ -4940,7 +4947,8 @@
       "primaryHidden": "Kimi Code 自己的登入已移出列表，重新登入同一帳號即可找回",
       "removeCurrentHint": "這個帳號正在使用，請先切換到其他帳號再刪除",
       "manageAccounts": "管理 Kimi 帳號",
-      "managedHint": "請在授權中心管理 Kimi 官方帳號。",
+      "managedHint": "先移除這個官方帳號，或到授權中心刪除它（連同登入一起刪）。",
+      "connectionManaged": "連線和登入由授權中心管理，這裡只編輯模型。拉取模型會讀取這個帳號目前可用的官方模型。",
       "current": "Kimi 使用中",
       "primaryShort": "Kimi Code 自己的登入",
       "empty": "還沒有 Kimi 帳號。Kimi Code 中已登入的帳號會自動出現在這裡。",
@@ -4967,6 +4975,38 @@
     "error": {
       "defaultModelInUse": "Kimi Code 正在使用此供應商的模型，請先在 Kimi Code 中用 /model 切換到其他模型",
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用此供應商的模型，請先在 Kimi Code 中用 /secondary-model 更換"
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "尚未新增 API Key 供應商",
+      "description": "點擊右上角的 +，從預設或自訂設定新增供應商。"
+    },
+    "provider": {
+      "enabled": "已在 Oh My Pi 中啟用",
+      "enableFailed": "無法在 Oh My Pi 中啟用此供應商",
+      "removed": "已從 Oh My Pi 移除"
+    },
+    "current": {
+      "readFailed": "無法讀取 Oh My Pi 供應商設定",
+      "stateUnavailableHint": "CC Switch 讀取到 Oh My Pi 供應商設定前，供應商變更會暫時停用。"
+    },
+    "form": {
+      "discoveryType": "模型自動探索",
+      "discoveryOff": "不自動探索",
+      "discoveryHint": "由 Oh My Pi 定期從端點擷取模型列表，端點回傳的上下文長度等中繼資料會自動套用；手動新增的模型仍然生效。開啟後可以不設定模型。"
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi 設定超過 1 MiB 大小限制。",
+      "externalChange": "Oh My Pi 設定已被其他程式修改，請重新整理後重試。",
+      "rollbackConflict": "資料庫儲存失敗，且 Oh My Pi 設定已被其他程式修改，請手動還原。",
+      "invalidMcp": "Oh My Pi MCP JSON 格式無效，根節點和 mcpServers 必須為物件。",
+      "invalidYaml": "Oh My Pi YAML 無效，根節點和 providers 必須是映射。",
+      "invalidProvider": "Oh My Pi 供應商設定無效，請檢查必填欄位、API 格式和欄位類型。",
+      "manualEdit": "此 YAML 使用了 CC Switch 無法安全編輯的格式或語法，請手動編輯 models.yml。",
+      "duplicateProvider": "此 Oh My Pi 供應商識別碼已存在。",
+      "renameProvider": "Oh My Pi 供應商識別碼不能重新命名。",
+      "providerMissing": "此 Oh My Pi 供應商已不在儲存的清單中。"
     }
   }
 }

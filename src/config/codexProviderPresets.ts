@@ -580,26 +580,6 @@ requires_openai_auth = true`,
     icon: "openmodel",
   },
   {
-    name: "EveryAPI",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "everyapi",
-      "https://api.everyapi.ai/v1",
-      "gpt-5.6-sol",
-    ),
-    endpointCandidates: [
-      "https://api.everyapi.ai/v1",
-      "https://api-cn.everyapi.ai/v1",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
-  },
-  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",

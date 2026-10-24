@@ -932,6 +932,7 @@
     "hermesConfigDirDescription": "Hermes yapılandırma dizinini (config.yaml) geçersiz kılın.",
     "piConfigDir": "Pi Yapılandırma Dizini",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
+    "ompConfigDir": "Oh My Pi Yapılandırma Dizini",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -940,6 +941,7 @@
     "browsePlaceholderOpenclaw": "ör. /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "ör. /home/<your-username>/.hermes",
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
+    "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",
     "checkForUpdates": "Güncellemeleri Kontrol Et",
@@ -1098,7 +1100,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1630,7 +1633,6 @@
       "fluxa": "FluxA ve Baidu AI Cloud, AI ajanlerinin modelleri, API'leri ve araçları kendi başlarına satın almasına, yönetmesine ve kullanmasına olanak tanıyan AgenticPlan'ı ortaklaşa başlattı. DeepSeek V4, GLM 5.2 ve Kimi gibi amiral gemisi modellerinde %40'a varan indirim sağlayan Baidu Qianfan TokenPlan'ın yanı sıra arama, veri kazıma, sosyal medya, finans, kripto, görüntü oluşturma ve video için 13.000'den fazla ücretli API'nin kilidini açan bonus FluxA AgentMarket API kredilerini içerir.",
       "88api": "88API, bir Hong Kong şirketi tarafından işletilen ve metin, görüntü, konuşma ve video modellerine birleşik erişim sağlayan tek noktadan çok modelli bir API platformudur. Başlıca uluslararası ödeme yöntemlerini kabul eder, fatura düzenleyebilir ve kurumsal düzeyde istikrarlı hizmet sağlar. Bonus kredileri almak için özel bağlantı üzerinden kaydolun!",
       "modelflare": "Modelflare, tek anahtarla GPT, Claude, Gemini, Grok ve diğer önde gelen modellere erişim sağlayan, istikrarlı ve daha düşük maliyetli bir yapay zekâ model ağ geçididir. CC Switch kullanıcılarına özel: ilk yüklemenizde %10 indirim için \"CCSWITCH\" kodunu kullanın!",
-      "everyapi": "EveryAPI, Claude Code, Codex, Cursor ve 20'den fazla aracı tek tıkla otomatik yapılandıran kendi masaüstü uygulamasını sunar. Tek anahtarla Claude, GPT, DeepSeek, GLM, MiniMax, Kimi ve Doubao'ya erişebilir, yapılandırmayı değiştirmeden modeller arasında geçiş yapabilirsiniz. Kaydolduğunuzda ¥14 ücretsiz bakiye alın; GPT modellerinin fiyatı resmî ücretin yalnızca %15'inden başlar. CC Switch kullanıcılarına özel: ilk bakiye yüklemenizde %20 indirim için \"ccswitch\" kodunu kullanın; teklifin süresi yoktur!",
       "alltokens": "AllTokens; güvenilir hizmet, şeffaf ücretlendirme ve GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi ve diğer önde gelen modellere erişim sağlayan kullandıkça öde platformuyla her yapay zekâ isteğini istikrarlı ve güvenilir kılmayı hedefler. Kaydolduğunuzda $1 deneme bakiyesi kazanın!",
       "alltokens_si": "AllTokens SI, istikrar ve güvenilirliği temel alan kurumsal bir yapay zekâ token aktarım ve ekip iş birliği platformudur. Üyeler, anahtarlar, kullanım ve bakiye tek bir şirket konsolunda yönetilir; açık izinler ve harcama sınırları ekip kullanımının izlenebilir ve denetimli olmasını sağlar.",
       "openmodel": "OpenModel, desteklenen modellerde Codex için %90'a, Claude Code için %60'a varan uygulamaya özel indirimler sunar. Bu bağlantıyla kaydolup \"cc-switch\" promosyon kodunu kullanan CC Switch kullanıcıları ilk yüklemelerinde %10 indirim kazanır!",
@@ -4201,8 +4203,12 @@
       "hermes": "Resmi komut dosyasıyla yüklenir",
       "pi": "Npm ile yüklenir",
       "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
-      "agy": "Resmî kurulum betiğiyle yüklenir"
-    }
+      "agy": "Resmî kurulum betiğiyle yüklenir",
+      "omp": "Resmi komut dosyasıyla yüklenir"
+    },
+    "ompDiscoveryHelpTitle": "Oh My Pi'nin gerçekte yükledikleri",
+    "ompDiscoveryHelp": "Oh My Pi, kendi ~/.omp/agent yapılandırmasının yanı sıra diğer ajanların dizinlerinden (ör. Claude'un ~/.claude, Codex'in ~/.codex) MCP sunucularını, becerileri, komutları, kancaları, kuralları ve ayarları da keşfeder. Oh My Pi'nin gerçekte yüklediklerini CC Switch arayüzüyle uyumlu tutmak için ~/.omp/agent/config.yml içinde disabledProviders ile gereksiz keşif kaynaklarını kapatın (kimlikler belgelerle aynıdır, ör. claude, codex, gemini, opencode, github, agents).",
+    "ompDiscoveryDocsLink": "Belgeler: context-files (disabledProviders)"
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -4933,7 +4939,7 @@
       "cancelled": "Bu oturum açma işlemi iptal edildi veya başka bir işlemle değiştirildi. Yeniden oturum açın.",
       "success": "Kimi Code'da oturum açıldı ve resmî modeller eklendi.",
       "manageAccounts": "Kimi hesaplarını yönet",
-      "managedHint": "Yetkilendirme Merkezi'nde Kimi'nin resmî hesaplarını yönetin.",
+      "managedHint": "Önce bu resmî hesabı kaldırın veya Yetkilendirme Merkezi'nde oturumuyla birlikte silin.",
       "removeAccount": "Hesabı kaldır",
       "dismissAccount": "Listeden gizle",
       "removeConfirm": "{{name}} kaldırılsın mı? Bu hesabın sağlayıcısı ve modelleri, yerel kimlik bilgileri ve kartıyla birlikte Kimi Code'dan kaldırılır. Diğer hesaplar etkilenmez.",
@@ -4966,6 +4972,38 @@
     "error": {
       "defaultModelInUse": "Kimi Code bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /model komutuyla başka bir modele geçin.",
       "secondaryModelInUse": "Kimi Code'un alt ajan modeli bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /secondary-model komutuyla değiştirin."
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "Henüz API anahtarı sağlayıcısı yok",
+      "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın."
+    },
+    "provider": {
+      "enabled": "Oh My Pi içinde etkinleştirildi",
+      "enableFailed": "Sağlayıcı Oh My Pi içinde etkinleştirilemedi",
+      "removed": "Oh My Pi içinden kaldırıldı"
+    },
+    "current": {
+      "readFailed": "Oh My Pi sağlayıcı yapılandırması okunamadı",
+      "stateUnavailableHint": "Oh My Pi yapılandırması okunana kadar sağlayıcı değişiklikleri devre dışıdır."
+    },
+    "form": {
+      "discoveryType": "Model keşfi",
+      "discoveryOff": "Kapalı",
+      "discoveryHint": "Oh My Pi model listesini uç noktadan düzenli olarak alır ve bağlam penceresi gibi meta verileri uygular. Elle eklenen modeller geçerliliğini korur; keşif açıkken model listesi boş bırakılabilir."
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi yapılandırması 1 MiB sınırını aşıyor.",
+      "externalChange": "Oh My Pi yapılandırması dışarıdan değiştirildi. Yenileyip tekrar deneyin.",
+      "rollbackConflict": "Veritabanı kaydı başarısız oldu ve Oh My Pi yapılandırması dışarıdan değiştirildi. Elle geri yükleyin.",
+      "invalidMcp": "Oh My Pi MCP JSON geçersiz. Kök ve mcpServers nesne olmalıdır.",
+      "invalidYaml": "Geçersiz Oh My Pi YAML. Kök ve providers birer eşleme olmalıdır.",
+      "invalidProvider": "Geçersiz Oh My Pi sağlayıcısı. Gerekli alanları, API biçimini ve alan türlerini kontrol edin.",
+      "manualEdit": "Bu YAML yapısını CC Switch güvenle düzenleyemiyor. models.yml dosyasını elle düzenleyin.",
+      "duplicateProvider": "Bu Oh My Pi sağlayıcı anahtarı zaten var.",
+      "renameProvider": "Oh My Pi sağlayıcı anahtarları yeniden adlandırılamaz.",
+      "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil."
     }
   }
 }
