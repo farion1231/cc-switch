@@ -241,30 +241,28 @@ export const IconPicker: React.FC<IconPickerProps> = ({
           {t("iconPicker.myIcons")}
         </h3>
         <div className={GRID_CLASS}>
-          <HoverTip content={t("iconPicker.uploadHint")}>
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                "flex w-full flex-col items-center gap-1 p-3 rounded-lg",
-                "border-2 border-dashed border-border text-fg-2 transition-colors",
-                "hover:border-primary/50 hover:bg-subtle hover:text-fg-1",
-                "disabled:cursor-wait disabled:opacity-60",
+          <button
+            type="button"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+            className={cn(
+              "flex w-full flex-col items-center gap-1 p-3 rounded-lg",
+              "border-2 border-dashed border-border text-fg-2 transition-colors",
+              "hover:border-primary/50 hover:bg-subtle hover:text-fg-1",
+              "disabled:cursor-wait disabled:opacity-60",
+            )}
+          >
+            <span className="flex h-8 w-8 items-center justify-center">
+              {uploading ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Plus className="h-5 w-5" />
               )}
-            >
-              <span className="flex h-8 w-8 items-center justify-center">
-                {uploading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Plus className="h-5 w-5" />
-                )}
-              </span>
-              <span className="text-xs truncate w-full text-center">
-                {t("iconPicker.upload")}
-              </span>
-            </button>
-          </HoverTip>
+            </span>
+            <span className="text-xs truncate w-full text-center">
+              {t("iconPicker.upload")}
+            </span>
+          </button>
           <input
             ref={fileInputRef}
             type="file"
@@ -335,11 +333,12 @@ export const IconPicker: React.FC<IconPickerProps> = ({
             </div>
           ))}
         </div>
-        {library.length === 0 && !currentUnsaved && (
-          <p className="mt-2 text-xs text-fg-3">
-            {t("iconPicker.myIconsEmpty")}
-          </p>
-        )}
+        <p className="mt-2 text-xs text-fg-3">
+          {library.length === 0 && !currentUnsaved
+            ? `${t("iconPicker.myIconsEmpty")} `
+            : ""}
+          {t("iconPicker.uploadHint")}
+        </p>
       </section>
 
       <section>
