@@ -585,6 +585,7 @@ export function ProviderCard({
               // 它们 base_url 故意留空、走客户端默认/OAuth 端点，没有可靠的探测目标。
               onTest &&
               appId !== "mcode" &&
+              appId !== "dsh" &&
               appId !== "kimi" &&
               provider.category !== "official"
                 ? () => onTest(provider)
