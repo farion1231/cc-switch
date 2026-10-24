@@ -4530,6 +4530,7 @@
     "importHelpTitle": "What import reads",
     "importHelp": "Only user-level configs are read. MCP servers that claude mcp add puts in a project by default, and ones bundled with plugins, are not imported.",
     "columnName": "Name",
+    "bulkActionsHint": "Click an app icon in the header for bulk enable/disable options for the current list.",
     "noMatch": "No MCP server's name, command or URL matches “{{query}}”",
     "clearSearch": "Clear search",
     "listLabel": "MCP servers",

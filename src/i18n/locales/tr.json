@@ -4415,6 +4415,7 @@
     "importHelpTitle": "İçe aktarma ne okur?",
     "importHelp": "Yalnızca kullanıcı düzeyindeki yapılandırmalar okunur. claude mcp add komutunun varsayılan olarak proje düzeyinde eklediği MCP sunucuları ve eklentilerle gelen sunucular içe aktarılmaz.",
     "columnName": "İsim",
+    "bulkActionsHint": "Geçerli listedeki MCP sunucularını topluca etkinleştirme veya devre dışı bırakma seçenekleri için sütun başlığındaki uygulama simgesine tıklayın.",
     "noMatch": "Hiçbir MCP sunucusunun adı, komutu veya URL'si “{{query}}” ile eşleşmiyor",
     "clearSearch": "Aramayı temizle",
     "listLabel": "MCP sunucuları",

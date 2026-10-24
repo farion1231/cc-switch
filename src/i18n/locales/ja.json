@@ -4530,6 +4530,7 @@
     "importHelpTitle": "取り込みで読む設定",
     "importHelp": "ユーザー単位の設定だけを読みます。claude mcp add で既定でプロジェクトに追加した MCP や、プラグイン同梱の MCP は取り込みません。",
     "columnName": "名前",
+    "bulkActionsHint": "列見出しのアプリアイコンから、現在の一覧の MCP を一括で有効・無効にできます。",
     "noMatch": "名前・コマンド・URL が「{{query}}」に一致する MCP はありません",
     "clearSearch": "検索をクリア",
     "listLabel": "MCP 一覧",
