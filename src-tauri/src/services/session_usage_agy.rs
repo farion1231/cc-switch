@@ -291,7 +291,10 @@ mod tests {
                 "SELECT model,total_cost_usd FROM proxy_request_logs WHERE request_id='agy:subagent:3'", [],
                 |r| Ok((r.get(0)?,r.get(1)?)),
             ).unwrap();
-            assert_eq!(flash, ("gemini-3.8-flash-tiered".into(), "0".into()));
+            assert_eq!(
+                flash,
+                ("gemini-3.8-flash-tiered".into(), "0.00009375".into())
+            );
         }
         // A missing native table must not erase recovered names or block newer counters.
         native.execute_batch("DROP TABLE gen_metadata").unwrap();
