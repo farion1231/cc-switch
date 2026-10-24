@@ -1636,7 +1636,6 @@
       "fluxa": "FluxA と Baidu AI Cloud が共同で提供する AgenticPlan は、AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにします。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4・GLM 5.2・Kimi などの主力モデルを利用可能。さらに FluxA AgentMarket の API クレジットが付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。",
       "88api": "88API は香港企業が運営するワンストップのマルチモデル API プラットフォームで、統一インターフェースからテキスト・画像・音声・動画モデルを利用できます。主要な国際決済方法に対応し、請求書の発行も可能で、エンタープライズ級の安定したサービスを提供します。専用リンクから登録すると特典クレジットがもらえます！",
       "modelflare": "Modelflare は安定・低コストの AI モデルゲートウェイで、1 つのキーで GPT、Claude、Gemini、Grok などの主要モデルを利用できます。CC Switch ユーザー限定特典：初回チャージ時にクーポンコード \"CCSWITCH\" を入力すると 10% オフ！",
-      "everyapi": "EveryAPI は専用のデスクトップクライアントを備え、Claude Code、Codex、Cursor など 20 以上のツールをワンクリックで自動設定できます。1 つのキーで Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、Doubao を利用でき、モデルを切り替えても設定の変更は不要です。登録で 14 元分のクレジットを進呈、GPT は公式価格の 15% から。CC Switch ユーザー限定：初回チャージ時に割引コード \"ccswitch\" を使うと 20% オフ（期限なし）！",
       "alltokens": "AllTokens は「安定を基に、誠実を本に」を掲げ、すべての AI 呼び出しを安定的で正直、安心して任せられるものにすることを目指しています。信頼できるサービスと透明な課金で、GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi などの主要モデルを 1 つのプラットフォームで利用でき、従量課金と利用上限の設定に対応しています。登録で 1 ドル分のお試しクレジットを進呈！",
       "alltokens_si": "AllTokens SI は「安定を基に、誠実を本に」を掲げる、企業向けの AI トークン中継・チーム協業プラットフォームです。メンバー、キー、使用量、残高を企業コンソールで一元管理し、明確な権限と利用上限の設定により、チームの利用を追跡可能で安心して管理できます。",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
@@ -1796,6 +1795,8 @@
     "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。"
   },
   "copilot": {
+    "automaticFormat": "モデルに応じてルーティングが自動選択",
+    "automaticFormatHint": "Copilot の上流形式はモデルに応じてルーティングが自動選択し、手動設定は適用されません。",
     "authSection": "GitHub Copilot 認証",
     "authStatus": "認証状態",
     "authenticated": "認証済み: {{username}}",
@@ -1893,7 +1894,12 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
-    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。",
+    "loginMethod": "ログイン方法",
+    "browserLogin": "ブラウザでログイン",
+    "deviceCodeLogin": "デバイスコードでログイン",
+    "openBrowserLogin": "ブラウザのログイン画面を開く",
+    "loginExpired": "ログインの有効期限が切れました。もう一度お試しください。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 認証",
@@ -4962,6 +4968,7 @@
       "removeAccount": "アカウントを削除",
       "dismissAccount": "一覧から外す",
       "signedOut": "未ログイン",
+      "noSubscription": "未契約",
       "statusFailed": "ログイン状態を取得できません",
       "expired": "認証コードの有効期限が切れました。再ログインしてください。",
       "denied": "認証が拒否されました。再ログインしてください。",
@@ -4972,7 +4979,8 @@
       "primaryHidden": "Kimi Code 自身のログインは一覧から外されています。同じアカウントで再ログインすると戻ります",
       "removeCurrentHint": "このアカウントは使用中です。別のアカウントに切り替えてから削除してください",
       "manageAccounts": "Kimi アカウントを管理",
-      "managedHint": "Kimi 公式アカウントは認証センターで管理してください。",
+      "managedHint": "先にこの公式アカウントを「削除」で Kimi の設定から外すか、認証センターでログインごと削除してください。",
+      "connectionManaged": "接続とログインは認証センターで管理されます。ここではモデルのみ編集できます。モデルを取得すると、このアカウントで現在使える公式モデルを読み込みます。",
       "current": "Kimi で使用中",
       "primaryShort": "Kimi Code 自身のログイン",
       "empty": "Kimi アカウントはまだありません。Kimi Code でログイン中のアカウントは自動的にここに表示されます。",
