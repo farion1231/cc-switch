@@ -4936,6 +4936,7 @@
       "removeAccount": "Remove account",
       "dismissAccount": "Hide from list",
       "signedOut": "Signed out",
+      "noSubscription": "No subscription",
       "statusFailed": "Cannot read sign-in status",
       "expired": "The authorization code expired. Please sign in again.",
       "denied": "Authorization was denied. Please sign in again.",

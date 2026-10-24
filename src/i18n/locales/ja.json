@@ -4936,6 +4936,7 @@
       "removeAccount": "アカウントを削除",
       "dismissAccount": "一覧から外す",
       "signedOut": "未ログイン",
+      "noSubscription": "未契約",
       "statusFailed": "ログイン状態を取得できません",
       "expired": "認証コードの有効期限が切れました。再ログインしてください。",
       "denied": "認証が拒否されました。再ログインしてください。",

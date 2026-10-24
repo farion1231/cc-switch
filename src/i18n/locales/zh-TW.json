@@ -4937,6 +4937,7 @@
       "removeAccount": "刪除帳號",
       "dismissAccount": "移出列表",
       "signedOut": "尚未登入",
+      "noSubscription": "未訂閱",
       "statusFailed": "無法讀取登入狀態",
       "expired": "授權碼已過期，請重新登入。",
       "denied": "授權已遭拒絕，請重新登入。",

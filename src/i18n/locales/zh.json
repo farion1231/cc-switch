@@ -4936,6 +4936,7 @@
       "removeAccount": "删除账号",
       "dismissAccount": "移出列表",
       "signedOut": "未登录",
+      "noSubscription": "未订阅",
       "statusFailed": "无法读取登录状态",
       "expired": "授权码已过期，请重新登录。",
       "denied": "授权已被拒绝，请重新登录。",
