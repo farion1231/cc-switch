@@ -102,7 +102,7 @@ describe("McpFormModal (drawer)", () => {
     renderForm();
     await userEvent.click(addButton());
     expect(
-      screen.getByText("mcpPage.drawer.errors.nameRequired"),
+      screen.getByText("mcpPage.drawer.errors.idRequired"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("mcpPage.drawer.errors.commandRequired"),
@@ -126,7 +126,7 @@ describe("McpFormModal (drawer)", () => {
       target: { value: "fetch" },
     });
     expect(
-      screen.getByText("mcpPage.drawer.errors.nameExists"),
+      screen.getByText("mcpPage.drawer.errors.idExists"),
     ).toBeInTheDocument();
   });
 
