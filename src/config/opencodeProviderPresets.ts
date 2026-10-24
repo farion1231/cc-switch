@@ -513,34 +513,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "ZetaAPI",
-      options: {
-        baseURL: "https://api.zetaapi.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol", reasoning: true },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
@@ -603,6 +575,45 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+  },
+  {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "hao.ai",
+      options: {
+        baseURL: "https://api.hao.ai/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -719,6 +730,54 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "EveryAPI",
+      options: {
+        baseURL: "https://api.everyapi.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.6-sol": {
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
@@ -756,6 +815,123 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "DIT.ai",
+      options: {
+        baseURL: "https://api.dit.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "BuyToken",
+      options: {
+        baseURL: "https://api.buytoken.work/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "V-API",
+      options: {
+        baseURL: "https://api.gpt.ge/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
   },
   {
     name: "TokenFactory",
@@ -822,42 +998,45 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "tokenfactory",
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。阵容与窗口按 FluxA 产品页模型表
+    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
+    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
+    // Kimi K2.6 是定稿赞助文案点名的模型，FluxA 产品页模型表与百度国际站
+    // team 文档都没列它：id / 窗口取 FluxA baidu-ai-cloud 模型目录（categories
+    // 只有 text）与国内 Token Plan 预设（262144）双重印证，非臆造。
+    // 不开 setCacheKey：与仓库内其余 Token Plan 预设（腾讯/百度）保持一致
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
     settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "Shengsuanyun",
+      npm: "@ai-sdk/openai-compatible",
+      name: "FluxA Token Plan",
       options: {
-        baseURL: "https://router.shengsuanyun.com/api/v1",
+        baseURL: "https://api.baiduqianfan.ai/v2/tokenplan/team",
         apiKey: "",
-        setCacheKey: true,
       },
       models: {
-        "anthropic/claude-opus-5": { name: "Claude Opus 5", reasoning: true },
-        "anthropic/claude-sonnet-5": {
-          name: "Claude Sonnet 5",
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro", reasoning: true },
+        "deepseek-v4-flash-0731": {
+          name: "DeepSeek V4 Flash 0731",
           reasoning: true,
         },
-        "anthropic/claude-opus-5.5": {
-          name: "Claude Opus 5.5",
-          reasoning: true,
-          limit: { context: 1000000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "anthropic/claude-fable-5.1": {
-          name: "Claude Fable 5.1",
-          reasoning: true,
-          limit: { context: 1000000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
+        "deepseek-v3.2": { name: "DeepSeek V3.2" },
+        "glm-5.2": { name: "GLM-5.2", reasoning: true },
+        "glm-5.1": { name: "GLM-5.1", reasoning: true },
+        "glm-5": { name: "GLM-5", reasoning: true },
+        "kimi-k2.6": { name: "Kimi K2.6", reasoning: true },
       },
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1013,45 +1192,42 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
-    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
-    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
-    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
-    // .../personal 是两套部署，勿合并。阵容与窗口按 FluxA 产品页模型表
-    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
-    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
-    // Kimi K2.6 是定稿赞助文案点名的模型，FluxA 产品页模型表与百度国际站
-    // team 文档都没列它：id / 窗口取 FluxA baidu-ai-cloud 模型目录（categories
-    // 只有 text）与国内 Token Plan 预设（262144）双重印证，非臆造。
-    // 不开 setCacheKey：与仓库内其余 Token Plan 预设（腾讯/百度）保持一致
-    name: "FluxA Token Plan",
-    websiteUrl: "https://agentmarket.fluxapay.xyz/",
-    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "FluxA Token Plan",
+      npm: "@ai-sdk/anthropic",
+      name: "Shengsuanyun",
       options: {
-        baseURL: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+        baseURL: "https://router.shengsuanyun.com/api/v1",
         apiKey: "",
+        setCacheKey: true,
       },
       models: {
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro", reasoning: true },
-        "deepseek-v4-flash-0731": {
-          name: "DeepSeek V4 Flash 0731",
+        "anthropic/claude-opus-5": { name: "Claude Opus 5", reasoning: true },
+        "anthropic/claude-sonnet-5": {
+          name: "Claude Sonnet 5",
           reasoning: true,
         },
-        "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
-        "deepseek-v3.2": { name: "DeepSeek V3.2" },
-        "glm-5.2": { name: "GLM-5.2", reasoning: true },
-        "glm-5.1": { name: "GLM-5.1", reasoning: true },
-        "glm-5": { name: "GLM-5", reasoning: true },
-        "kimi-k2.6": { name: "Kimi K2.6", reasoning: true },
+        "anthropic/claude-opus-5.5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-fable-5.1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "fluxa",
-    icon: "fluxa",
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1905,54 +2081,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
-  },
-  {
-    name: "EveryAPI",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
-    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
-    settingsConfig: {
-      npm: "@ai-sdk/openai",
-      name: "EveryAPI",
-      options: {
-        baseURL: "https://api.everyapi.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": {
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "gpt-6-sol": {
-          name: "GPT-6 Sol",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "gpt-6-astra": {
-          name: "GPT-6 Astra",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-      },
-    },
-    category: "aggregator",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
   },
   {
     name: "AllTokens",

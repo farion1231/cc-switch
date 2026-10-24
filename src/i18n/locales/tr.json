@@ -1584,7 +1584,6 @@
       "subrouter": "SubRouter, bir anahtarın birden fazla modele ve sağlayıcıya erişmesine olanak tanıyan bir AI aktarma toplayıcıdır.",
       "qiniu": "Qiniu Cloud, çok protokollü bir yapay zeka aktarımıdır: yerel Claude, GPT ve Gemini modelleri için tek bir anahtar; Anthropic, OpenAI ve Gemini API'lerinin tümü desteklenir.",
       "fenno": "Fenno.ai, geniş bir ana akım model yelpazesine erişmenizi sağlayan istikrarlı, verimli bir API rölesidir. Özel CC Switch teklifi: Bu bağlantı aracılığıyla 7 gün geçerli, 50$ kredi değerindeki 1,99$ Deneme Planına abone olun!",
-      "zetaapi": "ZetaAPI gerçek, bozulmamış modelleri resmi fiyatlandırmanın %35'i kadar düşük bir fiyatla sunar. Özel CC Switch teklifi: bu bağlantı aracılığıyla kaydolun ve ilk yüklemenizde %10 indirim için CC-SWITCH promosyon kodunu kullanın!",
       "teamorouter": "TeamoRouter, %90'a varan indirimlerle kurumsal düzeyde bir Agentic LLM ağ geçididir. CC Switch kullanıcılarına özel avantajlar sunar: ilk yüklemenizde %10 indirim için bu bağlantı aracılığıyla yeni bir kullanıcı olarak kaydolun!",
       "ppio": "PPIO, Çin'in önde gelen bağımsız Aracı Bulut sağlayıcısıdır ve her amiral gemisi açık kaynak modeline tek bir API anahtarı aracılığıyla hizmet verir. 10 ¥ değerinde kredi kuponu almak için bu bağlantı aracılığıyla kaydolun ve kimlik doğrulamayı tamamlayın.",
       "xycai": "XycAi kurumsal düzeyde bir token fabrikasıdır: 200'den fazla global modele tek tıklamayla erişim, otomatik SLA telafisi ve anormal önbellek ücretleri için %100 geri ödeme!",
@@ -2071,6 +2070,7 @@
     "universalDetail": "Claude Code, Codex, Gemini CLI ile eşitle edildi",
     "manageUniversal": "Mevcut evrensel sağlayıcıları yönetin ›",
     "loginWith": {
+      "kimi": "Kimi hesabıyla giriş yap",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",
@@ -2194,6 +2194,8 @@
       "actionEllipsis": "Codex Kullanımını Yeniden Oluşturun"
     },
     "totalRecords": "Toplam {{total}} kayıt",
+    "pageSize": "Sayfa başına {{count}}",
+    "pageSizeLabel": "Sayfa başına satır",
     "goToPage": "Git",
     "pageInputPlaceholder": "Sayfa",
     "modelPricing": "Model Fiyatlandırması",
@@ -2328,16 +2330,14 @@
     "cacheReadCostPerMillion": "Önbellek Okuma Maliyeti (milyon token başına, USD)",
     "cacheCreationCostPerMillion": "Önbellek Yazma Maliyeti (milyon token başına, USD)",
     "syncStatus": {
-      "auto": "Oturum günlükleri · otomatik tarama",
-      "justNow": "Oturum günlükleri · az önce eşitle edildi",
-      "minutesAgo": "Oturum günlükleri · {{count}} dakika önce eşitle edildi",
-      "off": "Oturum günlükleri · otomatik tarama kapalı",
-      "tipAuto": "Arka planda her 10 dakikada bir taranır; bu sayfa açıkken sağdaki aralıkla taranır",
-      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır"
+      "justNow": "Az önce eşitlendi",
+      "minutesAgo": "{{count}} dk önce eşitlendi",
+      "syncing": "Eşitleniyor…",
+      "tip": "Şimdi eşitlemek için tıklayın",
+      "tipOff": "Otomatik tarama kapalı. Şimdi eşitlemek için tıklayın"
     },
     "refreshMenu": {
-      "label": "Her {{seconds}} saniyede tara",
-      "seconds": "{{seconds}}'ler"
+      "label": "Her {{seconds}} saniyede tara"
     },
     "dataSources": "Veri kaynakları",
     "providerFilter": {
@@ -2372,16 +2372,17 @@
       "requests": "İstekler",
       "tokens": "Tokenlar",
       "cost": "Maliyet",
-      "requestsLegend": "İstekler"
+      "requestsLegend": "İstekler",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "saatlik",
+      "daily": "günlük"
     },
     "tabs": {
       "label": "Ayrıntılar",
       "providers": "Sağlayıcılar",
       "models": "Modeller",
-      "pricing": "Fiyatlandırma",
-      "settings": "Ayarlar"
+      "pricing": "Fiyatlandırma"
     },
-    "sortedByRequests": "İsteklere göre sıralandı",
     "app": "Uygulama",
     "speed": "Hız",
     "speedValue": "{{value}} tok/sn",
@@ -2405,7 +2406,6 @@
       "performance": "Performans",
       "source": "Kaynak",
       "sourceProxy": "Yönlendirme hizmeti · durumu {{code}}",
-      "sourceSession": "Oturum günlüğü",
       "total": "Toplam",
       "firstToken": "İlk token",
       "duration": "Süre",
@@ -2465,7 +2465,22 @@
     "firstTokenHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
     "firstTokenSumHelpTitle": "İlk token süresi nasıl hesaplanır?",
     "firstTokenSumHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca yönlendirme hizmetinden geçen başarılı akış istekleri hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda yönlendirilmiş istek verisi yoksa gösterilir.",
-    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)"
+    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)",
+    "settings": {
+      "title": "Kullanım ayarları",
+      "pricingSummary": "Model başına milyon token fiyatlarını ayarlayın veya models.dev'den eşitleyin",
+      "managePricing": "Fiyatlandırmayı yönet…"
+    },
+    "logColumns": {
+      "reset": "Varsayılana sıfırla",
+      "cacheWrite": "Önbellek Yazma",
+      "hitRate": "İsabet Oranı",
+      "hitRateTip": "Önbelleğe alınabilir {{total}} girdinin {{read}} kadarı önbellekten geldi",
+      "duration": "Toplam Süre"
+    },
+    "display": {
+      "logColumns": "İstek günlüğü sütunları"
+    }
   },
   "usageScript": {
     "title": "Kullanım Sorgusunu Yapılandır",
@@ -4769,6 +4784,39 @@
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin"
+    }
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "Bu hesabı kullan",
+      "title": "Kimi Code resmî girişi",
+      "description": "Ayrı kimlik bilgileri ve sağlayıcılarla birden fazla Kimi kodlama planı hesabı ekleyin. Girişi burada yönetin, ardından resmî modellerini kullanmak için bir hesap seçin.",
+      "region": "Giriş bölgesi",
+      "mainland-cn": "Çin ana karası",
+      "global": "Küresel",
+      "signIn": "Kimi hesabına giriş yap",
+      "signedOut": "Giriş yapılmadı",
+      "statusFailed": "Giriş durumu okunamadı",
+      "expired": "Yetkilendirme kodunun süresi doldu. Yeniden giriş yapın.",
+      "denied": "Yetkilendirme reddedildi. Yeniden giriş yapın.",
+      "cancelled": "Bu giriş iptal edildi veya değiştirildi. Yeniden giriş yapın.",
+      "success": "Kimi Code girişi yapıldı ve resmî modeller eklendi.",
+      "manageAccounts": "Kimi hesaplarını yönet",
+      "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
+    },
+    "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
+    "contextSize": "Bağlam uzunluğu",
+    "deleteSessionHint": "Dizin ve geçmişin birlikte güncellenmesi için oturumu Kimi Code içinden silin.",
+    "empty": {
+      "title": "Kimi Code sağlayıcısı ekleyin",
+      "description": "Adres, API anahtarı ve modelleri yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
+    },
+    "capabilities": {
+      "image_in": "Görsel girişi",
+      "thinking": "Düşünme",
+      "always_thinking": "Her zaman düşünme",
+      "tool_use": "Araç kullanımı",
+      "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
     }
   }
 }

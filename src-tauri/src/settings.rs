@@ -64,6 +64,8 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub mcode: bool,
     #[serde(default = "default_true")]
+    pub kimi: bool,
+    #[serde(default = "default_true")]
     pub agy: bool,
 }
 
@@ -80,6 +82,7 @@ impl Default for VisibleApps {
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
+            kimi: true,
             agy: true,
         }
     }
@@ -99,6 +102,7 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::Kimi => self.kimi,
             AppType::Agy => self.agy,
         }
     }
@@ -1360,7 +1364,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi | AppType::Mcode => None,
+        AppType::Pi | AppType::Mcode | AppType::Kimi => None,
     }
 }
 
@@ -1380,7 +1384,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi | AppType::Mcode => {}
+        AppType::Pi | AppType::Mcode | AppType::Kimi => {}
     })
 }
 

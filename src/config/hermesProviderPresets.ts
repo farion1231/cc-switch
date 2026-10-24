@@ -283,25 +283,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      name: "zetaapi",
-      base_url: "https://api.zetaapi.ai/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-    suggestedDefaults: {
-      model: { default: "gpt-5.6-sol", provider: "zetaapi" },
-    },
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
@@ -349,6 +330,36 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "claude-opus-5", provider: "aicodemirror" },
     },
+  },
+  {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      name: "hao_ai",
+      base_url: "https://api.hao.ai/anthropic",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "anthropic/claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "anthropic/claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "anthropic/claude-opus-5-5", provider: "hao_ai" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -446,6 +457,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    settingsConfig: {
+      name: "everyapi",
+      // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+      // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+      base_url: "https://api.everyapi.ai/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "everyapi" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
@@ -474,6 +511,96 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
+    settingsConfig: {
+      name: "dit_ai",
+      base_url: "https://api.dit.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "dit_ai" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    settingsConfig: {
+      name: "buytoken",
+      base_url: "https://api.buytoken.work",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "buytoken" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    settingsConfig: {
+      name: "vapi",
+      base_url: "https://api.gpt.ge",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "vapi" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
   },
   {
     name: "TokenFactory",
@@ -514,30 +641,42 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "tokenfactory",
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。OpenAI 兼容基址走
+    // chat_completions。阵容与窗口按 FluxA 产品页模型表
+    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
+    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
+    // Kimi K2.6 是定稿赞助文案点名的模型，FluxA 产品页模型表与百度国际站
+    // team 文档都没列它：id / 窗口取 FluxA baidu-ai-cloud 模型目录（categories
+    // 只有 text）与国内 Token Plan 预设（262144）双重印证，非臆造
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
     settingsConfig: {
-      name: "shengsuanyun",
-      base_url: "https://router.shengsuanyun.com/api/v1",
+      name: "fluxa_tokenplan",
+      base_url: "https://api.baiduqianfan.ai/v2/tokenplan/team",
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        {
-          id: "openai/gpt-6-astra",
-          name: "GPT-6 Astra",
-          context_length: 272000,
-        },
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731" },
+        { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v3.2", name: "DeepSeek V3.2" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "glm-5.1", name: "GLM-5.1" },
+        { id: "glm-5", name: "GLM-5" },
+        { id: "kimi-k2.6", name: "Kimi K2.6" },
       ],
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
     suggestedDefaults: {
-      model: { default: "openai/gpt-5.6-sol", provider: "shengsuanyun" },
+      model: { default: "deepseek-v4-pro", provider: "fluxa_tokenplan" },
     },
   },
   {
@@ -644,42 +783,30 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
-    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
-    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
-    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
-    // .../personal 是两套部署，勿合并。OpenAI 兼容基址走
-    // chat_completions。阵容与窗口按 FluxA 产品页模型表
-    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
-    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
-    // Kimi K2.6 是定稿赞助文案点名的模型，FluxA 产品页模型表与百度国际站
-    // team 文档都没列它：id / 窗口取 FluxA baidu-ai-cloud 模型目录（categories
-    // 只有 text）与国内 Token Plan 预设（262144）双重印证，非臆造
-    name: "FluxA Token Plan",
-    websiteUrl: "https://agentmarket.fluxapay.xyz/",
-    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     settingsConfig: {
-      name: "fluxa_tokenplan",
-      base_url: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+      name: "shengsuanyun",
+      base_url: "https://router.shengsuanyun.com/api/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
-        { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731" },
-        { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
-        { id: "deepseek-v3.2", name: "DeepSeek V3.2" },
-        { id: "glm-5.2", name: "GLM-5.2" },
-        { id: "glm-5.1", name: "GLM-5.1" },
-        { id: "glm-5", name: "GLM-5" },
-        { id: "kimi-k2.6", name: "Kimi K2.6" },
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
+        {
+          id: "openai/gpt-6-astra",
+          name: "GPT-6 Astra",
+          context_length: 272000,
+        },
       ],
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "fluxa",
-    icon: "fluxa",
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
     suggestedDefaults: {
-      model: { default: "deepseek-v4-pro", provider: "fluxa_tokenplan" },
+      model: { default: "openai/gpt-5.6-sol", provider: "shengsuanyun" },
     },
   },
   {
@@ -1474,32 +1601,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
-  },
-  {
-    name: "EveryAPI",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    settingsConfig: {
-      name: "everyapi",
-      // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
-      // supported_endpoint_types 为 openai-response，2026-10-17 核对）
-      base_url: "https://api.everyapi.ai/v1",
-      api_key: "",
-      api_mode: "codex_responses",
-      models: [
-        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
-      ],
-    },
-    category: "aggregator",
-    suggestedDefaults: {
-      model: { default: "gpt-5.6-sol", provider: "everyapi" },
-    },
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
   },
   {
     name: "AllTokens",

@@ -136,6 +136,56 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
+    // Gemini 原生 /v1beta 在站点根；网关也认 x-goog-api-key（2026-10-21 用假 Key
+    // 探测为 invalid_api_key 而非 missing_api_key）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.dit.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.dit.ai",
+    model: "gemini-3.8-flash",
+    description: "DIT.ai",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    // Gemini 原生 /v1beta（含 streamGenerateContent）在站点根，令牌选 gemini 或
+    // gemini_cli 分组（gpt.ge/models/gemini-3.8-flash，2026-10-23）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.gpt.ge",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.gpt.ge",
+    model: "gemini-3.8-flash",
+    description: "V-API",
+    category: "aggregator",
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge",
+      "https://api.vveai.com",
+      "https://run.v3.cm",
+      "https://api1.v3.cm",
+      "https://api2.v3.cm",
+      "https://us.gpt.ge",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",

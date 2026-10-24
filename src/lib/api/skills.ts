@@ -13,6 +13,7 @@ export type AppType =
   | "hermes"
   | "pi"
   | "mcode"
+  | "kimi"
   | "agy";
 
 /** Skill 应用启用状态 */
@@ -27,6 +28,7 @@ export interface SkillApps {
   hermes: boolean;
   pi: boolean;
   mcode?: boolean;
+  kimi?: boolean;
   agy?: boolean;
 }
 
