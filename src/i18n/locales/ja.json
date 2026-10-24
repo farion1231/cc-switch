@@ -4664,9 +4664,20 @@
     "resync": "ここのスイッチで各アプリの設定を書き直す"
   },
   "skillsPage": {
+    "linkSource": {
+      "menu": "ローカルの原本をリンク…",
+      "select": "SKILL.md を含む元のスキルフォルダーを選択",
+      "success": "{{name}} をリンクしました。原本の編集は共有されます",
+      "label": "リンクされた原本",
+      "preserved": "原本と外部リンクは保持されました。CC Switch が作成したリンクのみ削除されました。",
+      "uninstallBody": "リンクされた原本と外部リンクは保持し、CC Switch が作成したリンクのみ削除します。他に選択した Skill は削除前に {{path}} にバックアップします。",
+      "convertTitle": "{{name}} に選択した原本を使いますか？",
+      "convertBody": "現在有効なアプリと選択したインストール先の原本を {{path}} にします。選択したフォルダーは変更せず、以前の管理コピーを Skill バックアップに保存します。独立したアプリのコピーや外部リンクがある場合は競合を報告し、結合や上書きは行いません。",
+      "convertAction": "この原本を使用"
+    },
     "noun": "Skill",
     "helpTitle": "Skills の同期のしくみ",
-    "help": "本体は CC Switch のフォルダーに置き、チェックしたアプリへ同期します。Claude Desktop と OpenClaw は Skills 非対応のため列がありません。",
+    "help": "通常、Skill は管理フォルダーに保存します。「ローカルの原本をリンク」は原本を元の場所に保ち、シンボリックリンクで編集を共有します。Claude Desktop と OpenClaw は Skills 非対応です。",
     "add": "Skill を追加",
     "addMenu": {
       "discover": "「見つける」で探す",

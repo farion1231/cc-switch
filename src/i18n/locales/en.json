@@ -4664,9 +4664,20 @@
     "resync": "Rewrite every app's config from these switches"
   },
   "skillsPage": {
+    "linkSource": {
+      "menu": "Link local original…",
+      "select": "Select the original Skill folder containing SKILL.md",
+      "success": "Linked {{name}}; edits in its original folder are shared",
+      "label": "Linked original",
+      "preserved": "The original and external links were kept. Only routes created by CC Switch were removed.",
+      "uninstallBody": "Linked originals and external links are kept; only routes created by CC Switch are removed. Other selected Skills are backed up to {{path}} before removal.",
+      "convertTitle": "Use the selected original for {{name}}?",
+      "convertBody": "Use {{path}} as the original for the currently enabled apps and the selected install targets. Keep the selected folder unchanged and save the old managed snapshot in Skill backups. Independent app copies or external links cause a conflict; no merge or overwrite is performed.",
+      "convertAction": "Use this original"
+    },
     "noun": "Skills",
     "helpTitle": "How Skills sync",
-    "help": "The main copy lives in CC Switch's folder and is synced to the apps you tick. Claude Desktop and OpenClaw don't support Skills, so they have no column.",
+    "help": "Skills normally live in managed storage. “Link local original” keeps an existing original in its own folder and shares edits through symbolic links. Claude Desktop and OpenClaw do not support Skills.",
     "add": "Add Skill",
     "addMenu": {
       "discover": "Browse in Discover",
