@@ -4904,7 +4904,7 @@
       "cancelled": "Bu giriş iptal edildi veya değiştirildi. Yeniden giriş yapın.",
       "success": "Kimi Code girişi yapıldı ve resmî modeller eklendi.",
       "manageAccounts": "Kimi hesaplarını yönet",
-      "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
+      "managedHint": "Önce bu resmî hesabı kaldırın veya Yetkilendirme Merkezi'nde oturumuyla birlikte silin."
     },
     "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
     "contextSize": "Bağlam uzunluğu",
