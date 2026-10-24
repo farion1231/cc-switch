@@ -4205,7 +4205,7 @@
       "pi": "通过 npm 安装",
       "mcode": "安装时运行官方安装脚本，失败时改用 npm",
       "agy": "安装时运行官方安装脚本",
-      "omp": "通过 Bun 安装（需 Bun 1.3.14+）"
+      "omp": "安装时运行官方安装脚本"
     },
     "ompDiscoveryHelpTitle": "Oh My Pi 的实际加载范围",
     "ompDiscoveryHelp": "Oh My Pi 除了 ~/.omp/agent 自己的配置，还会从其他 Agent 的目录发现 MCP 服务器、技能、命令、钩子、规则和设置（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要让 Oh My Pi 的实际生效内容与 CC Switch 界面一致，请在 ~/.omp/agent/config.yml 用 disabledProviders 关闭不需要的发现来源（id 与文档一致，如 claude、codex、gemini、opencode、github、agents）。",
