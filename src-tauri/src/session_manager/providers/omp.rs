@@ -1,273 +1,59 @@
-//! Native OMP session buckets, active journal branches and transcript blocks.
+//! Oh My Pi 会话：格式沿用 Pi（会话树、活动分支、转录块），差异见 `pi::Dialect`。
 
-use super::pi::{is_valid_tree_id, MAX_SESSION_BYTES, MAX_TREE_ENTRIES};
-use super::pi_blocks::PiTranscript;
-use super::utils::{
-    for_each_jsonl_value, parse_timestamp_to_ms, path_basename, truncate_summary, TITLE_MAX_CHARS,
-};
+use super::pi::{self, Dialect, SessionLayout, SessionRootResolution};
 use crate::session_manager::{SessionMessage, SessionMeta};
-use serde_json::Value;
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const PROVIDER_ID: &str = "omp";
+const OMP: Dialect = Dialect {
+    provider_id: "omp",
+    label: "Oh My Pi",
+    resolve_root: resolve_session_root,
+    resume_command,
+    title_slot: true,
+    model_selector: true,
+};
 
-#[derive(Debug, Clone, Copy)]
-enum SessionLayout {
-    Flat,
-    ProjectBuckets,
-}
-
-fn resolve_session_root() -> Result<(PathBuf, SessionLayout), String> {
+/// omp 与 Pi 共用 `PI_CODING_AGENT_SESSION_DIR`（上游行为）；未设置时按 profile 放在数据目录下。
+fn resolve_session_root() -> SessionRootResolution {
     if let Some(raw) = std::env::var_os("PI_CODING_AGENT_SESSION_DIR").filter(|raw| !raw.is_empty())
     {
-        let root = PathBuf::from(raw);
-        if !root.is_absolute() {
-            return Err(format!(
-                "Relative Oh My Pi session directory requires a project cwd: {}",
-                root.display()
-            ));
-        }
-        return Ok((root, SessionLayout::Flat));
+        let root = PathBuf::from(&raw);
+        return if root.is_absolute() {
+            SessionRootResolution::Available {
+                root,
+                layout: SessionLayout::Flat,
+            }
+        } else {
+            SessionRootResolution::RequiresProjectContext {
+                configured_path: raw.to_string_lossy().into_owned(),
+            }
+        };
     }
-    crate::omp_config::get_omp_data_dir()
-        .map(|dir| (dir.join("sessions"), SessionLayout::ProjectBuckets))
-        .map_err(|error| error.to_string())
+    match crate::omp_config::get_omp_data_dir() {
+        Ok(dir) => SessionRootResolution::Available {
+            root: dir.join("sessions"),
+            layout: SessionLayout::ProjectDirectories,
+        },
+        Err(error) => SessionRootResolution::Unavailable {
+            reason: error.to_string(),
+        },
+    }
 }
 
 pub fn session_roots() -> Vec<PathBuf> {
-    match resolve_session_root() {
-        Ok((root, _)) => vec![root],
-        Err(error) => {
-            log::warn!("Oh My Pi session discovery unavailable: {error}");
-            Vec::new()
-        }
-    }
+    pi::session_roots_for(&OMP)
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let (root, layout) = match resolve_session_root() {
-        Ok(resolution) => resolution,
-        Err(error) => {
-            log::warn!("Oh My Pi session discovery unavailable: {error}");
-            return Vec::new();
-        }
-    };
-    collect_session_files(&root, layout)
-        .into_iter()
-        .filter_map(|path| {
-            validate_source(&root, &path, layout)
-                .and_then(|(_, path)| parse_session(&path))
-                .map_err(|error| {
-                    log::debug!("Skipping Oh My Pi session {}: {error}", path.display())
-                })
-                .ok()
-        })
-        .collect()
-}
-
-fn collect_session_files(root: &Path, layout: SessionLayout) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut files = Vec::new();
-    for entry in entries.flatten() {
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
-        let candidates = match layout {
-            SessionLayout::Flat if kind.is_file() => vec![entry],
-            SessionLayout::ProjectBuckets if kind.is_dir() => fs::read_dir(entry.path())
-                .map(|entries| entries.flatten().collect())
-                .unwrap_or_default(),
-            _ => continue,
-        };
-        files.extend(candidates.into_iter().filter_map(|entry| {
-            (entry.file_type().is_ok_and(|kind| kind.is_file())
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension == "jsonl"))
-            .then(|| entry.path())
-        }));
-    }
-    files
-}
-
-fn validate_source(
-    root: &Path,
-    source: &Path,
-    layout: SessionLayout,
-) -> Result<(PathBuf, PathBuf), String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve Oh My Pi session root: {error}"))?;
-    let source = source
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve Oh My Pi session: {error}"))?;
-    let relative = source
-        .strip_prefix(&root)
-        .map_err(|_| "Oh My Pi session source is outside the session root".to_string())?;
-    let expected_depth = match layout {
-        SessionLayout::Flat => 1,
-        SessionLayout::ProjectBuckets => 2,
-    };
-    if relative.components().count() != expected_depth
-        || source
-            .extension()
-            .is_none_or(|extension| extension != "jsonl")
-    {
-        return Err(
-            "Oh My Pi session source does not match the active directory layout".to_string(),
-        );
-    }
-    let metadata = fs::metadata(&source)
-        .map_err(|error| format!("Failed to inspect Oh My Pi session: {error}"))?;
-    if !metadata.is_file() || metadata.len() > MAX_SESSION_BYTES {
-        return Err("Invalid or oversized Oh My Pi session file".to_string());
-    }
-    Ok((root, source))
-}
-
-struct SessionTree {
-    header: Value,
-    title: Option<String>,
-    active_indexes: HashSet<usize>,
-    last_active_at: Option<i64>,
-}
-
-fn read_tree(path: &Path) -> Result<SessionTree, String> {
-    let mut header = None;
-    let mut title_slot = None;
-    let mut parents = HashMap::<String, (Option<String>, usize)>::new();
-    let mut latest_id = None;
-    let mut legacy_previous_id = None;
-    let mut last_active_at = None;
-    let mut index = 0usize;
-    for_each_jsonl_value(path, |_, value| {
-        index += 1;
-        if index > MAX_TREE_ENTRIES {
-            return Err("Oh My Pi session exceeds the entry limit".to_string());
-        }
-        if header.is_none() {
-            if index == 1 && value.get("type").and_then(Value::as_str) == Some("title") {
-                title_slot = value
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                return Ok(());
-            }
-            if value.get("type").and_then(Value::as_str) != Some("session")
-                || !value
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(is_valid_tree_id)
-            {
-                return Err("Oh My Pi session has no valid header".to_string());
-            }
-            header = Some(value);
-            return Ok(());
-        }
-        let version = header
-            .as_ref()
-            .and_then(|header| header.get("version"))
-            .and_then(Value::as_u64)
-            .unwrap_or(1);
-        let identity = if version < 2 {
-            Some((format!("legacy-{index}"), legacy_previous_id.clone()))
-        } else {
-            value
-                .get("id")
-                .and_then(Value::as_str)
-                .filter(|id| is_valid_tree_id(id))
-                .and_then(|id| {
-                    let parent = match value.get("parentId") {
-                        None | Some(Value::Null) => None,
-                        Some(Value::String(parent)) if is_valid_tree_id(parent) => {
-                            Some(parent.clone())
-                        }
-                        _ => return None,
-                    };
-                    Some((id.to_string(), parent))
-                })
-        };
-        if let Some((id, parent)) = identity {
-            parents.insert(id.clone(), (parent, index));
-            latest_id = Some(id.clone());
-            legacy_previous_id = Some(id);
-        }
-        if let Some(timestamp) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
-            last_active_at =
-                Some(last_active_at.map_or(timestamp, |current: i64| current.max(timestamp)));
-        }
-        Ok(())
-    })?;
-    let header = header.ok_or_else(|| "Oh My Pi session has no valid header".to_string())?;
-    let title = title_slot.or_else(|| {
-        header
-            .get("title")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    });
-    let mut active_indexes = HashSet::new();
-    let mut visited = HashSet::new();
-    while let Some(id) = latest_id {
-        if !visited.insert(id.clone()) {
-            break;
-        }
-        let Some((parent, index)) = parents.get(&id) else {
-            break;
-        };
-        active_indexes.insert(*index);
-        latest_id = parent.clone();
-    }
-    Ok(SessionTree {
-        header,
-        title,
-        active_indexes,
-        last_active_at,
-    })
-}
-
-fn read_active_messages(path: &Path, tree: &SessionTree) -> Result<Vec<SessionMessage>, String> {
-    let mut transcript = PiTranscript::new();
-    let mut index = 0usize;
-    for_each_jsonl_value(path, |span, mut value| {
-        index += 1;
-        if !tree.active_indexes.contains(&index) {
-            return Ok(());
-        }
-        // OMP stores a complete model selector; Pi's block mapper uses two fields.
-        if value.get("type").and_then(Value::as_str) == Some("model_change") {
-            if let Some(model) = value
-                .get("model")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-            {
-                if let Some((provider, model_id)) = model.split_once('/') {
-                    value["provider"] = Value::String(provider.to_string());
-                    value["modelId"] = Value::String(model_id.to_string());
-                } else {
-                    value["modelId"] = Value::String(model);
-                }
-            }
-        }
-        let id = value.get("id").and_then(Value::as_str).map(str::to_string);
-        transcript.push_entry(&value, span, id);
-        Ok(())
-    })?;
-    Ok(transcript.finish())
+    pi::scan_sessions_for(&OMP)
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let (root, layout) = resolve_session_root()?;
-    let (_, source) = validate_source(&root, path, layout)?;
-    let tree = read_tree(&source)?;
-    read_active_messages(&source, &tree)
+    pi::load_messages_for(&OMP, path)
 }
 
-fn resume_command(source: &Path) -> Result<String, String> {
+fn resume_command(source: &str) -> Result<String, String> {
     use crate::session_manager::terminal::shell_escape;
     let agent = crate::omp_config::get_omp_agent_dir().map_err(|error| error.to_string())?;
     let native_agent =
@@ -301,81 +87,31 @@ fn resume_command(source: &Path) -> Result<String, String> {
     Ok(format!(
         "{} omp --resume {}",
         assignments.join(" "),
-        shell_escape(&source.to_string_lossy())
+        shell_escape(source)
     ))
 }
 
-fn parse_session(path: &Path) -> Result<SessionMeta, String> {
-    let tree = read_tree(path)?;
-    let messages = read_active_messages(path, &tree)?;
-    let cwd = tree
-        .header
-        .get("cwd")
-        .and_then(Value::as_str)
-        .filter(|cwd| !cwd.is_empty())
-        .map(str::to_string);
-    let title = tree
-        .title
-        .filter(|title| !title.trim().is_empty())
-        .or_else(|| {
-            messages
-                .iter()
-                .find(|message| message.role == "user" && !message.content.trim().is_empty())
-                .map(|message| truncate_summary(&message.content, TITLE_MAX_CHARS))
-                .or_else(|| cwd.as_deref().and_then(path_basename))
-        });
-    let summary = messages
-        .iter()
-        .rev()
-        .find(|message| {
-            matches!(message.role.as_str(), "user" | "assistant")
-                && !message.content.trim().is_empty()
-        })
-        .map(|message| truncate_summary(&message.content, 160));
-    let created_at = tree.header.get("timestamp").and_then(parse_timestamp_to_ms);
-    Ok(SessionMeta {
-        provider_id: PROVIDER_ID.to_string(),
-        session_id: tree.header["id"]
-            .as_str()
-            .expect("validated session id")
-            .to_string(),
-        title,
-        summary,
-        project_dir: cwd,
-        created_at,
-        last_active_at: tree.last_active_at.or(created_at),
-        source_path: Some(path.to_string_lossy().to_string()),
-        resume_command: Some(resume_command(path)?),
-    })
-}
-
+/// 删会话文件后，再清掉同名的产物目录（子代理会话、草稿）和它自己的 `.bak` 备份。
+/// 产物是符号链接时只删链接本身，不碰它指向的目录。
 pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
-    let (configured_root, layout) = resolve_session_root()?;
-    let (validated_root, source) = validate_source(&configured_root, path, layout)?;
-    if root.canonicalize().map_err(|error| error.to_string())? != validated_root {
-        return Err("Oh My Pi session root changed before deletion".to_string());
-    }
-    let tree = read_tree(&source)?;
-    if tree.header["id"].as_str() != Some(session_id) {
-        return Err("Oh My Pi session ID mismatch".to_string());
-    }
+    let source = path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve Oh My Pi session: {error}"))?;
+    pi::delete_session_for(&OMP, root, &source, session_id)?;
     let artifacts = source.with_extension("");
-    let artifacts_type = match fs::symlink_metadata(&artifacts) {
-        Ok(metadata) => Some(metadata.file_type()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+    match fs::symlink_metadata(&artifacts) {
+        Ok(metadata) => {
+            let result = if metadata.is_dir() {
+                fs::remove_dir_all(&artifacts)
+            } else {
+                fs::remove_file(&artifacts)
+            };
+            result.map_err(|error| {
+                format!("Oh My Pi session deleted but artifact cleanup failed: {error}")
+            })?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("Failed to inspect Oh My Pi artifacts: {error}")),
-    };
-    fs::remove_file(&source)
-        .map_err(|error| format!("Failed to delete Oh My Pi session: {error}"))?;
-    if let Some(kind) = artifacts_type {
-        let result = if kind.is_dir() {
-            fs::remove_dir_all(&artifacts)
-        } else {
-            fs::remove_file(&artifacts)
-        };
-        result.map_err(|error| {
-            format!("Oh My Pi session deleted but artifact cleanup failed: {error}")
-        })?;
     }
     let prefix = format!(
         "{}.",
@@ -384,20 +120,19 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
             .expect("validated session file")
             .to_string_lossy()
     );
-    if let Ok(entries) = fs::read_dir(source.parent().expect("validated session parent")) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with(&prefix)
-                && name.ends_with(".bak")
-                && entry.file_type().is_ok_and(|kind| !kind.is_dir())
-            {
-                if let Err(error) = fs::remove_file(entry.path()) {
-                    log::warn!(
-                        "Failed to remove Oh My Pi session backup {}: {error}",
-                        entry.path().display()
-                    );
-                }
+    let parent = source.parent().expect("validated session parent");
+    for entry in fs::read_dir(parent).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(&prefix)
+            && name.ends_with(".bak")
+            && entry.file_type().is_ok_and(|kind| !kind.is_dir())
+        {
+            if let Err(error) = fs::remove_file(entry.path()) {
+                log::warn!(
+                    "Failed to remove Oh My Pi session backup {}: {error}",
+                    entry.path().display()
+                );
             }
         }
     }
@@ -410,6 +145,7 @@ mod tests {
     use crate::omp_config::test_support::TestAgentDir;
     use crate::session_manager::model::{ContentRef, SessionBlock};
     use serde_json::json;
+    use serde_json::Value;
     use serial_test::serial;
 
     struct SessionDirEnv(Option<std::ffi::OsString>);
@@ -551,9 +287,13 @@ mod tests {
     fn relative_custom_root_never_falls_back_to_default_history() {
         let _agent = TestAgentDir::new();
         let _env = SessionDirEnv::set(Some(Path::new(".omp/project-sessions")));
-        assert!(resolve_session_root()
+        assert!(matches!(
+            resolve_session_root(),
+            SessionRootResolution::RequiresProjectContext { .. }
+        ));
+        assert!(load_messages(Path::new("/tmp/any.jsonl"))
             .unwrap_err()
-            .contains("requires a project cwd"));
+            .contains("cannot be globally resolved"));
         assert!(session_roots().is_empty());
         assert!(scan_sessions().is_empty());
     }
@@ -607,7 +347,7 @@ mod tests {
         let _env = SessionDirEnv::set(None);
         let directory = crate::omp_config::get_omp_agent_dir().unwrap();
         let source = directory.join("sessions/project/quote'$(false) name.jsonl");
-        let command = resume_command(&source).unwrap();
+        let command = resume_command(source.to_str().unwrap()).unwrap();
         let shell=format!("omp() {{ printf '%s\\n' \"$OMP_PROFILE\" \"$PI_CODING_AGENT_DIR\" \"$@\"; }}; {command}");
         let result = std::process::Command::new("sh")
             .arg("-c")
