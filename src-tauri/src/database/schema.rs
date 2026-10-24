@@ -117,7 +117,36 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1, private BOOLEAN NOT NULL DEFAULT 0,
+            PRIMARY KEY (owner, name)
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6a. 仓库 → 令牌的绑定
+        //
+        // 单独一张表是因为它和凭据本身一样属于**设备本地**数据：token 在钥匙串里，
+        // 另一台机器拿到这个 id 也解析不出来。挂在 skill_repos 上就会随同步整表覆盖，
+        // 两台机器各绑一次永远稳不下来。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_repo_credentials (
+            owner TEXT NOT NULL, name TEXT NOT NULL, credential_id TEXT NOT NULL,
+            PRIMARY KEY (owner, name)
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6b. Git 凭据元数据表
+        //
+        // 只存"有哪些凭据"（id / host / 名称），token 本体在系统密钥链里，
+        // 按 `git:{host}:{id}` 存放。元数据落库是为了能列表、能排序、能在删除时
+        // 连带清掉引用它的仓库；密钥链不适合当查询用的存储。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS git_credentials (
+            id TEXT PRIMARY KEY, host TEXT NOT NULL, name TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -620,6 +649,11 @@ impl Database {
                         }
                         Self::set_user_version(conn, 23)?;
                     }
+                    23 => {
+                        log::info!("迁移数据库从 v23 到 v24（Skills 私有仓库支持）");
+                        Self::migrate_v23_to_v24(conn)?;
+                        Self::set_user_version(conn, 24)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -628,6 +662,7 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+
             Ok(())
         })();
 
@@ -643,6 +678,50 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// v23 -> v24 迁移：Skills 私有仓库支持。
+    ///
+    /// 三件事同一条迁移做完：
+    /// - `skill_repos.private`：这个仓库是不是私有。存量行默认 0（公开）——改动前
+    ///   只有匿名下载这一条路径，私有仓库本来也拉不到；把旧行当成私有，会让它们
+    ///   在用户还没配凭据时直接报 AUTH_REQUIRED，技能面板整个空掉。
+    /// - `git_credentials`：凭据元数据（id / host / 名称）。token 本体留系统密钥链，
+    ///   按 `git:{host}:{id}` 存放；落库只是为了能列表、能排序、能在删除时连带清掉
+    ///   引用它的仓库。
+    /// - `skill_repo_credentials`：这个仓库用哪一枚凭据。绑定和凭据本身一样是
+    ///   设备本地的，所以单独一张表并进同步跳过/保留列表，而不是挂在 skill_repos 上。
+    ///
+    /// 全程只用 `CREATE TABLE IF NOT EXISTS` / `add_column_if_missing`，重复执行安全。
+    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS git_credentials (
+            id TEXT PRIMARY KEY, host TEXT NOT NULL, name TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_repo_credentials (
+            owner TEXT NOT NULL, name TEXT NOT NULL, credential_id TEXT NOT NULL,
+            PRIMARY KEY (owner, name)
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 与 v18/v19 的臂一致：老库可能压根没有这张表，缺表时跳过而不是报错
+        if Self::table_exists(conn, "skill_repos")? {
+            Self::add_column_if_missing(
+                conn,
+                "skill_repos",
+                "private",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
