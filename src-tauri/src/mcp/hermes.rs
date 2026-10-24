@@ -7,12 +7,12 @@
 //! | CC Switch unified (JSON)                        | Hermes config.yaml (YAML)       |
 //! |-------------------------------------------------|---------------------------------|
 //! | `{"type":"stdio","command":"npx","args":[...],"env":{}}` | `command: npx`, `args: [...]`, `env: {}` |
-//! | `{"type":"http","url":"...","headers":{}}` | `url: "..."`, `headers: {}`    |
-//! | `{"type":"sse","url":"...","headers":{}}` | `url: "..."`, `headers: {}`, `transport: sse` |
+//! | `{"type":"sse"/"http","url":"...","headers":{}}` | `url: "..."`, `headers: {}`    |
 //!
 //! Key differences from Claude format:
 //! - Hermes has NO explicit `type` field -- it infers stdio (has `command`) vs HTTP (has `url`)
-//! - Hermes connects to a `url` over Streamable HTTP; only `transport: sse` selects SSE
+//! - Hermes connects to a `url` over Streamable HTTP and falls back to SSE; `transport: sse`
+//!   makes it use SSE only. Import maps `transport: sse` to `sse` and any other `url` to `http`
 //! - Hermes has extra fields: `enabled`, `timeout`, `connect_timeout`, `tools`, `sampling`
 //! - These Hermes-specific fields are preserved on merge-on-write and stripped on import
 
@@ -58,7 +58,7 @@ fn should_sync_hermes_mcp() -> bool {
 ///
 /// Conversion rules:
 /// - `stdio`: output `command`, `args`, `env` (strip `type` field)
-/// - `sse`/`http`: output `url`, `headers` (strip `type` field); `sse` adds `transport: sse`
+/// - `sse`/`http`: output `url`, `headers` (strip `type` field)
 /// - Always add `enabled: true`
 fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
     let obj = spec
@@ -94,9 +94,6 @@ fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
                 {
                     result.insert("headers".into(), headers.clone());
                 }
-            }
-            if typ == "sse" {
-                result.insert("transport".into(), json!("sse"));
             }
         }
         _ => {
@@ -200,7 +197,7 @@ pub fn sync_single_server_to_hermes(
 
         let merged_json = if let Some(existing_yaml) = servers.get(&id_yaml) {
             let existing_json = hermes_config::yaml_to_json(existing_yaml)?;
-            merge_hermes_spec(&existing_json, &hermes_spec)
+            merge_into_existing_entry(&existing_json, &hermes_spec, server_spec)
         } else {
             hermes_spec.clone()
         };
@@ -209,6 +206,23 @@ pub fn sync_single_server_to_hermes(
         servers.insert(id_yaml, merged_yaml_value);
         Ok(())
     })
+}
+
+/// Merge `hermes_spec`, converted from `server_spec`, into the existing Hermes entry.
+///
+/// `transport: sse` makes Hermes use SSE without falling back to Streamable HTTP, so it is kept
+/// while the server stays SSE but never added: rows stored as `sse` by earlier importers came
+/// from plain `url` entries that Hermes reaches over Streamable HTTP.
+fn merge_into_existing_entry(existing: &Value, hermes_spec: &Value, server_spec: &Value) -> Value {
+    let mut merged = merge_hermes_spec(existing, hermes_spec);
+    if spec_transport_type(server_spec) == "sse"
+        && existing.get("transport").and_then(|v| v.as_str()) == Some("sse")
+    {
+        if let Some(obj) = merged.as_object_mut() {
+            obj.insert("transport".into(), json!("sse"));
+        }
+    }
+    merged
 }
 
 /// Merge new spec into existing Hermes spec, preserving Hermes-specific fields.
@@ -395,7 +409,7 @@ mod tests {
         assert!(result.get("type").is_none());
         assert_eq!(result["url"], "https://example.com/mcp");
         assert_eq!(result["headers"]["Authorization"], "Bearer xxx");
-        assert_eq!(result["transport"], "sse");
+        assert!(result.get("transport").is_none());
         assert_eq!(result["enabled"], true);
     }
 
@@ -511,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_hermes_sse_transport_round_trip() {
+    fn test_convert_hermes_sse_transport_to_unified() {
         let spec = json!({
             "url": "https://example.com/sse",
             "transport": "sse",
@@ -521,10 +535,53 @@ mod tests {
         let unified = convert_from_hermes_format("legacy-server", &spec).unwrap();
         assert_eq!(unified["type"], "sse");
         assert!(unified.get("transport").is_none());
+    }
 
-        let written = convert_to_hermes_format(&unified).unwrap();
-        assert_eq!(written["url"], "https://example.com/sse");
-        assert_eq!(written["transport"], "sse");
+    #[test]
+    fn test_merge_keeps_hermes_sse_transport_while_server_is_sse() {
+        let existing = json!({
+            "url": "https://example.com/sse",
+            "transport": "sse",
+            "enabled": true
+        });
+        let server_spec = json!({ "type": "sse", "url": "https://example.com/sse" });
+
+        let hermes_spec = convert_to_hermes_format(&server_spec).unwrap();
+        let merged = merge_into_existing_entry(&existing, &hermes_spec, &server_spec);
+        assert_eq!(merged["url"], "https://example.com/sse");
+        assert_eq!(merged["transport"], "sse");
+    }
+
+    #[test]
+    fn test_merge_does_not_add_transport_to_rows_stored_as_sse() {
+        // Earlier importers stored every Hermes `url` entry as `sse`; Hermes reaches these
+        // over Streamable HTTP, and `transport: sse` would take that away.
+        let existing = json!({
+            "url": "https://mcp.notion.com/mcp",
+            "enabled": true,
+            "timeout": 30
+        });
+        let server_spec = json!({ "type": "sse", "url": "https://mcp.notion.com/mcp" });
+
+        let hermes_spec = convert_to_hermes_format(&server_spec).unwrap();
+        let merged = merge_into_existing_entry(&existing, &hermes_spec, &server_spec);
+        assert_eq!(merged["url"], "https://mcp.notion.com/mcp");
+        assert_eq!(merged["timeout"], 30);
+        assert!(merged.get("transport").is_none());
+    }
+
+    #[test]
+    fn test_merge_drops_sse_transport_when_server_is_http() {
+        let existing = json!({
+            "url": "https://example.com/mcp",
+            "transport": "sse",
+            "enabled": true
+        });
+        let server_spec = json!({ "type": "http", "url": "https://example.com/mcp" });
+
+        let hermes_spec = convert_to_hermes_format(&server_spec).unwrap();
+        let merged = merge_into_existing_entry(&existing, &hermes_spec, &server_spec);
+        assert!(merged.get("transport").is_none());
     }
 
     #[test]
