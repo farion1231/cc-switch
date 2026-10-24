@@ -36,6 +36,7 @@ use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Map, Number, Value};
 
 use super::transform_codex_responses_namespace::{restore_sse_event_namespaces, NamespacedName};
+use super::transform_native_responses::{ensure_grokbuild_required_fields, SseSequenceNumbers};
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 
 /// Codex plugin-private fields removed recursively at any nesting depth.
@@ -1057,12 +1058,14 @@ fn whole_float_to_json_int(number: &Number) -> Option<Number> {
     }
 }
 
-/// Wrap a native Responses SSE byte stream: restore flattened namespace names
-/// and rewrite completed function-call argument JSON. Delta fragments that are
-/// not complete JSON pass through unchanged.
+/// Wrap a native Responses SSE byte stream: restore flattened namespace names,
+/// rewrite completed function-call argument JSON, and (for Grok Build) fill the
+/// required fields and `sequence_number`s strict clients fail on. Delta
+/// fragments that are not complete JSON pass through unchanged.
 pub(crate) fn create_xai_native_responses_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     restore_map: HashMap<String, NamespacedName>,
+    grokbuild: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where
     E: std::error::Error + Send + 'static,
@@ -1070,6 +1073,7 @@ where
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sequence = SseSequenceNumbers::new();
 
         tokio::pin!(stream);
 
@@ -1081,7 +1085,12 @@ where
                         if block.trim().is_empty() {
                             continue;
                         }
-                        yield Ok(rewrite_xai_native_sse_block(&block, &restore_map));
+                        yield Ok(rewrite_xai_native_sse_block(
+                            &block,
+                            &restore_map,
+                            grokbuild,
+                            &mut sequence,
+                        ));
                     }
                 }
                 Err(e) => {
@@ -1096,7 +1105,12 @@ where
         }
         let tail = std::mem::take(&mut buffer);
         if !tail.trim().is_empty() {
-            yield Ok(rewrite_xai_native_sse_block(&tail, &restore_map));
+            yield Ok(rewrite_xai_native_sse_block(
+                &tail,
+                &restore_map,
+                grokbuild,
+                &mut sequence,
+            ));
         }
     }
 }
@@ -1104,6 +1118,8 @@ where
 fn rewrite_xai_native_sse_block(
     block: &str,
     restore_map: &HashMap<String, NamespacedName>,
+    grokbuild: bool,
+    sequence: &mut SseSequenceNumbers,
 ) -> Bytes {
     let mut event_name: Option<&str> = None;
     let mut data_parts: Vec<&str> = Vec::new();
@@ -1132,6 +1148,10 @@ fn rewrite_xai_native_sse_block(
 
     let mut changed = restore_sse_event_namespaces(&mut event, restore_map);
     changed |= normalize_xai_function_call_integer_arguments(&mut event);
+    if grokbuild {
+        changed |= ensure_grokbuild_required_fields(&mut event);
+        changed |= sequence.ensure(&mut event);
+    }
     if !changed {
         return Bytes::from(format!("{block}\n\n"));
     }
@@ -1591,7 +1611,12 @@ mod tests {
             "event: response.function_call_arguments.done\n",
             r#"data: {"type":"response.function_call_arguments.done","arguments":"{\"session_id\":92116.0,\"yield_time_ms\":120000.0}"}"#,
         );
-        let rewritten = rewrite_xai_native_sse_block(done, &HashMap::new());
+        let rewritten = rewrite_xai_native_sse_block(
+            done,
+            &HashMap::new(),
+            false,
+            &mut SseSequenceNumbers::new(),
+        );
         let rewritten = String::from_utf8(rewritten.to_vec()).unwrap();
         let data = rewritten
             .lines()
@@ -1608,11 +1633,168 @@ mod tests {
             "event: response.function_call_arguments.delta\n",
             r#"data: {"type":"response.function_call_arguments.delta","delta":"{\"session_id\":92116.0"}"#,
         );
-        let passed = rewrite_xai_native_sse_block(delta, &HashMap::new());
+        let passed = rewrite_xai_native_sse_block(
+            delta,
+            &HashMap::new(),
+            false,
+            &mut SseSequenceNumbers::new(),
+        );
         assert_eq!(
             String::from_utf8(passed.to_vec()).unwrap(),
             format!("{delta}\n\n")
         );
+    }
+
+    #[test]
+    fn grokbuild_sse_fills_required_fields_and_sequence_numbers() {
+        let mut sequence = SseSequenceNumbers::new();
+        let item_done = concat!(
+            "event: response.output_item.done\n",
+            r#"data: {"type":"response.output_item.done","item":{"type":"function_call","name":"shell","status":"completed"}}"#,
+        );
+        let rewritten = String::from_utf8(
+            rewrite_xai_native_sse_block(item_done, &HashMap::new(), true, &mut sequence).to_vec(),
+        )
+        .unwrap();
+        let event: Value = serde_json::from_str(
+            rewritten
+                .lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(event["item"]["arguments"], json!(""));
+        assert_eq!(event["sequence_number"], json!(0));
+
+        let part_added = concat!(
+            "event: response.content_part.added\n",
+            r#"data: {"type":"response.content_part.added","part":{"type":"output_text","text":""}}"#,
+        );
+        let rewritten = String::from_utf8(
+            rewrite_xai_native_sse_block(part_added, &HashMap::new(), true, &mut sequence).to_vec(),
+        )
+        .unwrap();
+        let event: Value = serde_json::from_str(
+            rewritten
+                .lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(event["part"]["annotations"], json!([]));
+        assert_eq!(event["sequence_number"], json!(1));
+    }
+
+    #[test]
+    fn grokbuild_sse_keeps_upstream_sequence_numbers_and_follows_them() {
+        let mut sequence = SseSequenceNumbers::new();
+        let numbered = concat!(
+            "event: response.output_item.added\n",
+            r#"data: {"type":"response.output_item.added","sequence_number":7}"#,
+        );
+        assert_eq!(
+            String::from_utf8(
+                rewrite_xai_native_sse_block(numbered, &HashMap::new(), true, &mut sequence)
+                    .to_vec()
+            )
+            .unwrap(),
+            format!("{numbered}\n\n")
+        );
+
+        let missing = r#"data: {"type":"response.output_item.done"}"#;
+        let rewritten = String::from_utf8(
+            rewrite_xai_native_sse_block(missing, &HashMap::new(), true, &mut sequence).to_vec(),
+        )
+        .unwrap();
+        let event: Value = serde_json::from_str(
+            rewritten
+                .lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(event["sequence_number"], json!(8));
+    }
+
+    #[test]
+    fn non_grokbuild_native_sse_stays_unfilled() {
+        let mut sequence = SseSequenceNumbers::new();
+        let block = concat!(
+            "event: response.output_item.done\n",
+            r#"data: {"type":"response.output_item.done","item":{"type":"function_call","name":"shell"}}"#,
+        );
+        assert_eq!(
+            String::from_utf8(
+                rewrite_xai_native_sse_block(block, &HashMap::new(), false, &mut sequence).to_vec()
+            )
+            .unwrap(),
+            format!("{block}\n\n")
+        );
+    }
+
+    /// #8387 复审锁定的串联顺序：Grok Build 的必填字段补齐排在迟到参数修补后面，
+    /// 否则上游（实测 MiniMax）先发的空参数结束事件会以空串落进 grok CLI。
+    #[tokio::test]
+    async fn grokbuild_chain_repairs_late_arguments_before_filling_fields() {
+        use super::super::responses_late_arguments::create_late_arguments_repair_stream;
+
+        let blocks: Vec<Result<Bytes, std::io::Error>> = vec![
+            Ok(Bytes::from(
+                "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_0\",\"name\":\"shell\",\"arguments\":\"\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_0\",\"arguments\":\"\"}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_0\",\"name\":\"shell\",\"arguments\":\"\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_0\",\"delta\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n",
+            )),
+        ];
+        let upstream = futures::stream::iter(blocks);
+        let chained = create_xai_native_responses_sse_stream(
+            create_late_arguments_repair_stream(upstream),
+            HashMap::new(),
+            true,
+        );
+        let events: Vec<Value> = chained
+            .map(|bytes| {
+                let text = String::from_utf8(bytes.unwrap().to_vec()).unwrap();
+                serde_json::from_str(
+                    text.lines()
+                        .find_map(|line| line.strip_prefix("data: "))
+                        .unwrap(),
+                )
+                .unwrap()
+            })
+            .collect()
+            .await;
+
+        let types: Vec<&str> = events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "response.output_item.added",
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.done",
+                "response.output_item.done",
+                "response.completed",
+            ]
+        );
+        let done = &events[2];
+        assert_eq!(done["arguments"], r#"{"cmd":"ls"}"#);
+        let numbers: Vec<u64> = events
+            .iter()
+            .map(|event| event["sequence_number"].as_u64().unwrap())
+            .collect();
+        assert_eq!(numbers, vec![0, 1, 2, 3, 4]);
     }
 
     #[test]
