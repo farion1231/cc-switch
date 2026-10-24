@@ -1178,9 +1178,6 @@ function App() {
         <DropdownMenuItem onSelect={() => openSettings("appConfig", activeApp)}>
           {t("appPage.configDirectory")}
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => openPage("apps")}>
-          {t("appPage.installAndUpgrade")}
-        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           disabled={Object.values(visibleApps).filter(Boolean).length <= 1}

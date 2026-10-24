@@ -4215,7 +4215,6 @@
     "moreActions": "More actions for {{name}}",
     "viewSessions": "View sessions",
     "configDirectory": "Config directory",
-    "installAndUpgrade": "Install and upgrade",
     "hideFromSidebar": "Hide from sidebar",
     "providers": "Providers",
     "workspace": "Workspace",
