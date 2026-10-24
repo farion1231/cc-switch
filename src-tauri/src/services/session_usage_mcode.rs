@@ -92,7 +92,7 @@ fn sync_from_database(
         result.skipped += u32::from(changed == 0);
         cursor = id;
     }
-    enrich_unknown_models(&tx, &mut history, &mut result)?;
+    enrich_unknown_models(&tx, source, &mut history, &mut result)?;
     // Commit the watermark with the imported rows; pruned logs must never be reimported.
     tx.execute(
         "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
@@ -106,16 +106,19 @@ fn sync_from_database(
 
 /// 已导入的 unknown 行补全（#8790）：用量行可能先于历史落库，或旧版回查失败；
 /// 游标只进不退 + INSERT OR IGNORE 让这些行永远停在 unknown。每次 sync 结尾对
-/// 最近的 unknown 行按秒窗口重查历史，命中就更新模型；原成本是按 unknown 兜底
-/// 成 "0" 的行顺带用新模型补算。补全计入 imported，让打开的表格和详情面板刷新。
+/// 最近的 unknown 行按秒窗口重查历史，命中就更新模型；导入时因缺模型把成本兜底
+/// 成 "0" 的行（源表 `cost_usd` 为 NULL / 非有限 / 负）顺带用新模型补算——原生
+/// 记录的 0 费用（`cost_usd = 0`）保持不变，别按 API 价重收一遍（复审 P2）。
+/// 补全计入 imported，让打开的表格和详情面板刷新。
 fn enrich_unknown_models(
     tx: &rusqlite::Transaction,
+    source: &rusqlite::Connection,
     history: &mut HistoryModels,
     result: &mut SessionSyncResult,
 ) -> Result<(), AppError> {
     let mut pending = tx.prepare(
         "SELECT request_id, session_id, created_at, input_tokens, output_tokens,
-                cache_read_tokens, cache_creation_tokens, total_cost_usd
+                cache_read_tokens, cache_creation_tokens
          FROM proxy_request_logs
          WHERE data_source = 'mcode_session' AND model = 'unknown'
          ORDER BY rowid DESC LIMIT 500",
@@ -130,18 +133,35 @@ fn enrich_unknown_models(
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, i64>(6)?,
-                row.get::<_, String>(7)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(pending);
 
     let mut changed = 0u32;
-    for (request_id, session_id, created_at, input, output, cache_read, cache_write, cost) in rows {
+    for (request_id, session_id, created_at, input, output, cache_read, cache_write) in rows {
         let Some(model) = history.lookup_by_second(&session_id, created_at) else {
             continue;
         };
-        if cost == "0" {
+        // 源行 id 在 request_id 尾段（`mcode:{session}:{id}`）。原生成本有效的行
+        // 只更新模型；只有导入时兜底成 "0" 的才允许按定价补算。
+        let source_id = request_id
+            .rsplit(':')
+            .next()
+            .and_then(|id| id.parse::<i64>().ok());
+        let native_cost: Option<f64> = match source_id {
+            Some(id) => source
+                .query_row(
+                    "SELECT cost_usd FROM local_runtime_token_usage WHERE id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        let needs_recompute = !matches!(native_cost, Some(cost) if cost.is_finite() && cost >= 0.0);
+        if needs_recompute {
             let usage = TokenUsage {
                 input_tokens: input.clamp(0, u32::MAX as i64) as u32,
                 output_tokens: output.clamp(0, u32::MAX as i64) as u32,
@@ -492,6 +512,66 @@ mod tests {
                 ("MiniMax-M3".into(), "MiniMax-M3".into()),
                 ("MiniMax-M3".into(), "MiniMax-M3".into()),
                 ("new/model".into(), "new/model".into()),
+            ]
+        );
+    }
+
+    /// 复审 P2：原生记录的 0 费用（`cost_usd = 0`，订阅内免费轮）在补全模型时
+    /// 必须保持 0，不能被当成「unknown 兜底的 0」按 API 价重算。
+    #[test]
+    fn mcode_enrichment_keeps_native_zero_cost() {
+        let source = rusqlite::Connection::open_in_memory().unwrap();
+        source
+            .execute_batch(
+                "CREATE TABLE local_runtime_token_usage (
+            id INTEGER PRIMARY KEY,session_id TEXT,model TEXT,ts INTEGER,input_tokens INTEGER,
+            output_tokens INTEGER,reasoning_tokens INTEGER,cache_read_tokens INTEGER,
+            cache_write_tokens INTEGER,cost_usd REAL);
+            CREATE TABLE local_runtime_pi_history_rows (
+            id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,created_at_ms INTEGER,data_json TEXT);
+            INSERT INTO local_runtime_token_usage VALUES
+            (1,'s1',NULL,100000,10,20,0,0,0,0),
+            (2,'s1',NULL,101500,10,20,0,0,0,NULL);",
+            )
+            .unwrap();
+        let db = Database::memory().unwrap();
+        assert_eq!(
+            sync_from_database(&db, &source, "zero-cost")
+                .unwrap()
+                .imported,
+            2
+        );
+
+        // 历史这时才落库，两行都是 unknown：一行原生 0 费用，一行缺成本。
+        source
+            .execute_batch(
+                "INSERT INTO local_runtime_pi_history_rows VALUES
+            (1,'s1','assistant',100000,'{\"role\":\"assistant\",\"model\":\"MiniMax-M2\"}'),
+            (2,'s1','assistant',101900,'{\"role\":\"assistant\",\"model\":\"MiniMax-M2\"}');",
+            )
+            .unwrap();
+
+        let second = sync_from_database(&db, &source, "zero-cost").unwrap();
+        assert_eq!(second.imported, 2, "both unknown rows get enriched");
+
+        let conn = db.conn.lock().unwrap();
+        let rows: Vec<(String, String)> = {
+            let mut query = conn
+                .prepare("SELECT model, total_cost_usd FROM proxy_request_logs ORDER BY rowid")
+                .unwrap();
+            query
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            rows,
+            vec![
+                // 原生 0 费用：模型补上，费用保持导入时记下的 0。
+                ("MiniMax-M2".into(), "0".into()),
+                // cost_usd 为 NULL：导入时按 unknown 兜底 0，补全时按内置定价补算。
+                ("MiniMax-M2".into(), "0.000027".into()),
             ]
         );
     }
