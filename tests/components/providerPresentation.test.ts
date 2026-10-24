@@ -767,6 +767,25 @@ describe("buildAdditiveSections", () => {
       "pi.current.stateUnavailableHint",
     );
   });
+
+  it("blocks every Oh My Pi change while its current state is unavailable", () => {
+    const sections = buildAdditiveSections({
+      app: "omp",
+      t,
+      providers: [relay],
+      isInConfig: () => false,
+      piStateUnavailable: true,
+      actions: additiveActions(),
+    });
+
+    expect(button(sections, "relay", "add")).toMatchObject({
+      label: "providerCard.action.enable",
+      disabledReason: "omp.current.stateUnavailableHint",
+    });
+    expect(item(sections, "relay").deleteDisabledReason).toBe(
+      "omp.current.stateUnavailableHint",
+    );
+  });
 });
 
 describe("buildAdditiveSections — WorkBuddy official sign-in", () => {

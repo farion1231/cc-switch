@@ -308,8 +308,8 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi") {
-          await piApi.updateProviderUsageScript(provider.id, script);
+        if (activeApp === "pi" || activeApp === "omp") {
+          await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }
