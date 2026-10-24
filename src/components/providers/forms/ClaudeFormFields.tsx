@@ -835,7 +835,7 @@ export function ClaudeFormFields({
 
   const copilotRoutingNotice = isCopilotPreset && (
     <p className="text-xs leading-relaxed text-fg-2">
-      {t("copilot.automaticFormatHint")}
+      {t("copilot.autoModelHint")} {t("copilot.automaticFormatHint")}
     </p>
   );
 
