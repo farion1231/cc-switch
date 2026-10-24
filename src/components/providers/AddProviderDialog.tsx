@@ -32,7 +32,6 @@ import {
 import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
-import { EndpointPanel } from "@/components/endpoints";
 import { endpointsApi } from "@/lib/api";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
@@ -85,7 +84,6 @@ export function AddProviderDialog({
   const [step, setStep] = useState<"pick" | "form">("pick");
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
   const [manageUniversalOpen, setManageUniversalOpen] = useState(false);
-  const [manageEndpointsOpen, setManageEndpointsOpen] = useState(false);
   // 档位映射整合：新建时也可就地配置跨端点档位
   const [tierEndpoints, setTierEndpoints] = useState<Endpoint[]>([]);
   const [tierMappings, setTierMappings] = useState<TierMappings | undefined>();
@@ -535,7 +533,7 @@ export function AddProviderDialog({
         type="button"
         variant="neutral"
         size="regular"
-        onClick={() => setManageEndpointsOpen(true)}
+        onClick={() => setManageUniversalOpen(true)}
       >
         {t("endpoints.manage", { defaultValue: "管理全局端点" })}
       </Button>
@@ -633,22 +631,12 @@ export function AddProviderDialog({
         />
       )}
 
-      {showUniversalTab && (
-        <FullScreenPanel
-          isOpen={manageUniversalOpen}
-          title={t("universalProvider.manage")}
-          onClose={() => setManageUniversalOpen(false)}
-        >
-          <UniversalProviderPanel />
-        </FullScreenPanel>
-      )}
-
       <FullScreenPanel
-        isOpen={manageEndpointsOpen}
-        title={t("endpoints.manage", { defaultValue: "管理全局端点" })}
-        onClose={() => setManageEndpointsOpen(false)}
+        isOpen={manageUniversalOpen}
+        title={t("universalProvider.manage")}
+        onClose={() => setManageUniversalOpen(false)}
       >
-        <EndpointPanel />
+        <UniversalProviderPanel />
       </FullScreenPanel>
 
       <AuthSettingsPanel

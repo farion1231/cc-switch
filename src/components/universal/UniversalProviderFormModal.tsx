@@ -4,6 +4,13 @@ import { useTranslation } from "react-i18next";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
@@ -45,6 +52,8 @@ export function UniversalProviderFormModal({
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [apiFormat, setApiFormat] =
+    useState<UniversalProvider["apiFormat"]>("anthropic");
   const [showApiKey, setShowApiKey] = useState(false);
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [notes, setNotes] = useState("");
@@ -69,6 +78,7 @@ export function UniversalProviderFormModal({
       setName(editingProvider.name);
       setBaseUrl(editingProvider.baseUrl);
       setApiKey(editingProvider.apiKey);
+      setApiFormat(editingProvider.apiFormat ?? "anthropic");
       setWebsiteUrl(editingProvider.websiteUrl || "");
       setNotes(editingProvider.notes || "");
       setClaudeEnabled(editingProvider.apps.claude);
@@ -88,6 +98,7 @@ export function UniversalProviderFormModal({
       setName(defaultPreset.name);
       setBaseUrl("");
       setApiKey("");
+      setApiFormat("anthropic");
       setWebsiteUrl(defaultPreset.websiteUrl || "");
       setNotes("");
       setClaudeEnabled(defaultPreset.defaultApps.claude);
@@ -197,6 +208,7 @@ requires_openai_auth = true`;
           name: name.trim(),
           baseUrl: baseUrl.trim(),
           apiKey: apiKey.trim(),
+          apiFormat,
           websiteUrl: websiteUrl.trim() || undefined,
           notes: notes.trim() || undefined,
           apps: {
@@ -216,6 +228,7 @@ requires_openai_auth = true`;
 
     // 如果是新建，更新应用启用状态和模型
     if (!editingProvider) {
+      provider.apiFormat = apiFormat;
       provider.apps = {
         claude: claudeEnabled,
         codex: codexEnabled,
@@ -233,6 +246,7 @@ requires_openai_auth = true`;
     name,
     baseUrl,
     apiKey,
+    apiFormat,
     websiteUrl,
     notes,
     claudeEnabled,
@@ -446,6 +460,38 @@ requires_openai_auth = true`;
                 )}
               </Button>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="universalApiFormat">
+              {t("endpoints.apiFormat", { defaultValue: "协议格式" })}
+            </Label>
+            <Select
+              value={apiFormat ?? "anthropic"}
+              onValueChange={(value) =>
+                setApiFormat(value as UniversalProvider["apiFormat"])
+              }
+            >
+              <SelectTrigger id="universalApiFormat">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="anthropic">Anthropic Messages</SelectItem>
+                <SelectItem value="openai_chat">
+                  OpenAI Chat Completions
+                </SelectItem>
+                <SelectItem value="openai_responses">
+                  OpenAI Responses
+                </SelectItem>
+                <SelectItem value="gemini_native">Gemini Native</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-fg-3">
+              {t("endpoints.apiFormatHint", {
+                defaultValue:
+                  "代理按此格式在 Claude / OpenAI / Gemini 协议间转换；大多数中转站选 Anthropic",
+              })}
+            </p>
           </div>
 
           <div className="space-y-2">

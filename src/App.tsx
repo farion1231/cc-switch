@@ -79,7 +79,7 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
-import { EndpointPanel } from "@/components/endpoints";
+import { UniversalProviderPanel } from "@/components/universal";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import {
@@ -1657,7 +1657,7 @@ function App() {
         title={t("endpoints.manage", { defaultValue: "全局端点" })}
         onClose={() => setEndpointsPanelOpen(false)}
       >
-        <EndpointPanel embedded />
+        <UniversalProviderPanel />
       </FullScreenPanel>
       <AddProviderDialog
         open={isAddOpen}

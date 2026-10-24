@@ -9,8 +9,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { endpointsApi } from "@/lib/api";
-import { EndpointFormModal } from "./EndpointFormModal";
+import { endpointsApi, universalProvidersApi } from "@/lib/api";
+import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import type { EndpointsMap } from "@/types";
 
 const STANDALONE = "__standalone__";
@@ -110,14 +110,18 @@ export function EndpointRefSection({
         </p>
       </div>
 
-      <EndpointFormModal
+      <UniversalProviderFormModal
         isOpen={createOpen}
         onClose={() => setCreateOpen(false)}
-        editing={null}
-        onSave={async (endpoint) => {
-          await endpointsApi.save(endpoint);
-          setEndpoints((prev) => ({ ...prev, [endpoint.id]: endpoint }));
-          onChange(endpoint.id);
+        editingProvider={null}
+        onSave={async (provider) => {
+          // 统一供应商表单新建：upsert 双轨写端点表（apps 全关，只做连接）
+          await universalProvidersApi.upsert(provider);
+          const endpoint = await endpointsApi.get(provider.id);
+          if (endpoint) {
+            setEndpoints((prev) => ({ ...prev, [endpoint.id]: endpoint }));
+            onChange(endpoint.id);
+          }
           setCreateOpen(false);
         }}
       />

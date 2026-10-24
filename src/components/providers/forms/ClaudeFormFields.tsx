@@ -59,8 +59,8 @@ import {
 } from "@/lib/api/model-fetch";
 import type { Endpoint, TierMappings } from "@/types";
 import { CustomUserAgentField } from "./CustomUserAgentField";
-import { EndpointFormModal } from "@/components/endpoints/EndpointFormModal";
-import { endpointsApi } from "@/lib/api";
+import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
+import { universalProvidersApi } from "@/lib/api";
 import {
   ClaudeStackModelsField,
   type ClaudeStackModelRow,
@@ -1740,22 +1740,23 @@ export function ClaudeFormFields({
       )}
 
       {tierEnabled && (
-        <EndpointFormModal
+        <UniversalProviderFormModal
           isOpen={createTierEndpointOpen}
           onClose={() => {
             setCreateTierEndpointOpen(false);
             setCreateTierTarget(null);
           }}
-          editing={null}
-          onSave={async (endpoint) => {
-            await endpointsApi.save(endpoint);
+          editingProvider={null}
+          onSave={async (provider) => {
+            // 统一供应商表单新建：upsert 双轨写端点表（apps 全关，只做连接）
+            await universalProvidersApi.upsert(provider);
             onEndpointsChanged?.();
             if (createTierTarget) {
               handleTierEndpointChange(
                 createTierTarget.role,
                 createTierTarget.envField,
                 createTierTarget.currentModel,
-                endpoint.id,
+                provider.id,
               );
             }
             setCreateTierEndpointOpen(false);

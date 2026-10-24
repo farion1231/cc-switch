@@ -1148,6 +1148,11 @@ pub struct UniversalProvider {
     /// API 密钥
     #[serde(rename = "apiKey")]
     pub api_key: String,
+    /// 上游 wire 格式（anthropic/openai_chat/openai_responses/gemini_native），
+    /// 缺省 anthropic——同步进端点表驱动代理协议转换
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "apiFormat")]
+    pub api_format: Option<String>,
     /// 各应用的模型配置
     #[serde(default)]
     pub models: UniversalProviderModels,
@@ -1192,6 +1197,7 @@ impl UniversalProvider {
             name,
             provider_type,
             apps: UniversalProviderApps::default(),
+            api_format: None,
             base_url,
             api_key,
             models: UniversalProviderModels::default(),
@@ -1216,7 +1222,7 @@ impl UniversalProvider {
             base_url: self.base_url.trim_end_matches('/').to_string(),
             api_key: self.api_key.clone(),
             auth_binding: self.meta.as_ref().and_then(|m| m.auth_binding.clone()),
-            api_format: None,
+            api_format: self.api_format.clone(),
             website_url: self.website_url.clone(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),

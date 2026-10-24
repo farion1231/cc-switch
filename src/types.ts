@@ -863,6 +863,8 @@ export interface UniversalProvider {
   apps: UniversalProviderApps;
   baseUrl: string;
   apiKey: string;
+  /** 上游 wire 格式（同步进端点表驱动代理协议转换）；缺省 anthropic */
+  apiFormat?: EndpointApiFormat;
   models: UniversalProviderModels;
   websiteUrl?: string;
   notes?: string;
