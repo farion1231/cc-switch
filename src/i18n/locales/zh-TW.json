@@ -4190,6 +4190,7 @@
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
     "newVersion": "有新版本 {{version}}",
+    "notDetected": "未偵測到",
     "notRunnable": "無法執行",
     "updateNeedsNode": "新版本 {{version}} 需要 Node {{required}}，這處安裝用的是 Node {{current}}，需要先升級 Node。",
     "otherInstalls": "另有 {{count}} 處安裝",
