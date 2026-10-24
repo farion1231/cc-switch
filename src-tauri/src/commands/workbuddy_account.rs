@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use crate::commands::auth::{map_workbuddy_account, ManagedAuthAccount};
 use crate::error::AppError;
-use crate::services::workbuddy_account::{WorkBuddyAccountManager, WorkBuddyLiveState};
+use crate::services::workbuddy_account::{
+    WorkBuddyAccountManager, WorkBuddyLiveState, WorkBuddyQuota,
+};
 
 pub struct WorkBuddyAccountState(pub Arc<WorkBuddyAccountManager>);
 
@@ -116,4 +118,22 @@ fn open_workbuddy() -> Result<(), String> {
         "Couldn't open WorkBuddy. Open it manually.",
     )
     .to_string())
+}
+
+/// 这个 WorkBuddy 账号的套餐与积分。只有 WorkBuddy 正在运行、且它就是当前登着的号时才经
+/// WorkBuddy 的本地 IPC 只读查一次（5 分钟内走缓存，`force` 跳过）；其他情况给上次缓存的结果
+/// 和没刷新的原因。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn workbuddy_account_quota(
+    account_id: String,
+    force: Option<bool>,
+    state: tauri::State<'_, WorkBuddyAccountState>,
+) -> Result<WorkBuddyQuota, String> {
+    crate::services::workbuddy_account::account_quota(
+        Arc::clone(&state.0),
+        account_id,
+        force.unwrap_or(false),
+    )
+    .await
+    .map_err(|error| error.to_string())
 }

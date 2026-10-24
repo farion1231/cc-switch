@@ -22,6 +22,7 @@ impl Fixture {
             profile_snapshot: dir
                 .path()
                 .join(".workbuddy/storage/skeleton/account-snapshot.json"),
+            wbipc_discovery: dir.path().join(".workbuddy/wbipc/endpoint.json"),
         };
         std::fs::create_dir_all(&data_dir).unwrap();
         std::fs::create_dir_all(&paths.auth_dir).unwrap();
@@ -488,4 +489,308 @@ fn restore_rejects_tampered_observation_names() {
     };
     assert!(manager.restore(&bundle).is_err());
     assert!(!fixture.paths.info().exists());
+}
+
+// ---------- 额度（WBIPC） ----------
+
+#[test]
+fn parses_the_resource_summary_like_workbuddy_does() {
+    let body = json!({
+        "code": 0,
+        "msg": "",
+        "data": {
+            "Packages": [
+                {"CycleTotalCapacity": "1000", "CycleRemainCapacity": "250.5", "CycleUsedCapacity": "749.5"},
+                {"CycleTotalCapacity": 500, "CycleRemainCapacity": 500, "CycleUsedCapacity": "0"},
+                {"CycleTotalCapacity": "-3", "CycleRemainCapacity": "NaN", "CycleUsedCapacity": null},
+            ],
+            "SubscriptionPackageName": " 体验版 ",
+            "IsPaidUser": false,
+        }
+    });
+    let snapshot = quota::parse_summary(&serde_json::to_vec(&body).unwrap(), 42).expect("parses");
+    assert_eq!(
+        snapshot,
+        WorkBuddyQuotaSnapshot {
+            plan_name: Some("体验版".into()),
+            is_paid: false,
+            total: 1500.0,
+            remaining: 750.5,
+            used: 749.5,
+            queried_at: 42,
+        }
+    );
+
+    let refused = json!({"code": 11001, "msg": "invalid", "data": null});
+    assert!(matches!(
+        quota::parse_summary(&serde_json::to_vec(&refused).unwrap(), 0),
+        Err(quota::FetchError::Failed(_))
+    ));
+}
+
+/// 已知答案：和 WorkBuddy 自带的 `workbuddy_ipc` 客户端算法逐字节一致（同一算法对真实 WorkBuddy 握手通过）。
+#[test]
+fn wbipc_handshake_proofs_match_workbuddy() {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use hmac::Mac as _;
+    let proof = |server| {
+        URL_SAFE_NO_PAD.encode(
+            quota::proof_mac("kat-ticket", server, "/tmp/wbipc/b-1.sock", "cn", "sn")
+                .finalize()
+                .into_bytes(),
+        )
+    };
+    assert_eq!(proof(true), "sILCVa9XnCRcCgWrcPty_T1RVIw0TmYoWGVHAG8z0z8");
+    assert_eq!(proof(false), "RkKbgsulra7aFlNdWWSUW-q-dfOf4maFzdlBN1z5nt0");
+    assert_eq!(quota::ticket_id("kat-ticket"), "a5c716b74d187c0e");
+}
+
+#[test]
+fn quota_cache_survives_re_captures_of_the_login() {
+    let fx = Fixture::new();
+    fx.sign_in("u-1", 1);
+    let manager = fx.manager();
+    manager.import_current().unwrap();
+    let snapshot = WorkBuddyQuotaSnapshot {
+        plan_name: Some("体验版".into()),
+        is_paid: false,
+        total: 10.0,
+        remaining: 4.0,
+        used: 6.0,
+        queried_at: 1,
+    };
+    assert!(manager.save_quota("u-1", snapshot.clone()).unwrap());
+    // WorkBuddy 刷新了 token：重新收回副本时额度缓存不能丢
+    fx.sign_in("u-1", 2);
+    manager.status().unwrap();
+    let reloaded = fx.manager();
+    assert_eq!(
+        reloaded.quota_context("u-1").unwrap().cached,
+        Some(snapshot)
+    );
+}
+
+#[cfg(unix)]
+mod wbipc {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+
+    pub struct FakeBroker {
+        /// 收到的帧（按顺序）
+        pub frames: Arc<Mutex<Vec<Value>>>,
+        pub task: tokio::task::JoinHandle<()>,
+    }
+
+    /// 起一个按 WorkBuddy 协议握手的假 broker，并写好发现文件。`server_ticket` 和发现文件里的
+    /// ticket 不同时，它就证明不了自己。
+    pub fn start(fx: &Fixture, ticket: &str, server_ticket: &str, body: Value) -> FakeBroker {
+        let socket = fx.data_dir.join("b-test.sock");
+        let endpoint = socket.to_string_lossy().to_string();
+        std::fs::create_dir_all(fx.paths.wbipc_discovery.parent().unwrap()).unwrap();
+        std::fs::write(
+            &fx.paths.wbipc_discovery,
+            serde_json::to_vec(&json!({"endpoint": endpoint, "ticket": ticket})).unwrap(),
+        )
+        .unwrap();
+        let listener = UnixListener::bind(&socket).unwrap();
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&frames);
+        let server_ticket = server_ticket.to_string();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read_half, mut writer) = tokio::io::split(stream);
+            let mut lines = BufReader::new(read_half).lines();
+            let mut client_nonce = String::new();
+            let server_nonce = "server-nonce".to_string();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let frame: Value = serde_json::from_str(&line).unwrap();
+                seen.lock().unwrap().push(frame.clone());
+                let reply = match frame.get("type").and_then(Value::as_str) {
+                    Some("session_hello") => {
+                        client_nonce = frame["client_nonce"].as_str().unwrap().to_string();
+                        let proof = URL_SAFE.encode(
+                            quota::proof_mac(
+                                &server_ticket,
+                                true,
+                                &endpoint,
+                                &client_nonce,
+                                &server_nonce,
+                            )
+                            .finalize()
+                            .into_bytes(),
+                        );
+                        json!({
+                            "type": "session_challenge",
+                            "protocol": 1,
+                            "server_nonce": server_nonce,
+                            "server_proof": proof,
+                        })
+                    }
+                    Some("session_prove") => {
+                        let expected = URL_SAFE.encode(
+                            quota::proof_mac(
+                                &server_ticket,
+                                false,
+                                &endpoint,
+                                &client_nonce,
+                                &server_nonce,
+                            )
+                            .finalize()
+                            .into_bytes(),
+                        );
+                        assert_eq!(frame["client_proof"], json!(expected));
+                        json!({"type": "session_hello_ack", "pipes": ["wb.request"]})
+                    }
+                    _ => match frame["method"].as_str() {
+                        Some("broker/GetPipe") => json!({
+                            "jsonrpc": "2.0",
+                            "id": frame["id"],
+                            "result": {"channel": "c:wb.request", "methods": ["http.fetch"]},
+                        }),
+                        Some("c:wb.request/http.fetch") => json!({
+                            "jsonrpc": "2.0",
+                            "id": frame["id"],
+                            "result": {
+                                "status": 200,
+                                "headers": {"content-type": "application/json"},
+                                "body_b64": STANDARD.encode(serde_json::to_vec(&body).unwrap()),
+                            },
+                        }),
+                        _ => continue,
+                    },
+                };
+                let mut out = serde_json::to_vec(&reply).unwrap();
+                out.push(b'\n');
+                writer.write_all(&out).await.unwrap();
+            }
+        });
+        FakeBroker { frames, task }
+    }
+
+    const URL_SAFE: base64::engine::GeneralPurpose =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    use hmac::Mac as _;
+
+    fn summary() -> Value {
+        json!({
+            "code": 0,
+            "data": {
+                "Packages": [{"CycleTotalCapacity": "100", "CycleRemainCapacity": "40", "CycleUsedCapacity": "60"}],
+                "SubscriptionPackageName": "体验版",
+                "IsPaidUser": false,
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn queries_the_current_account_through_wbipc_and_caches_it() {
+        let fx = Fixture::new();
+        fx.sign_in("u-1", 1);
+        fx.running.store(true, Ordering::SeqCst);
+        let manager = Arc::new(fx.manager());
+        manager.import_current().unwrap();
+        let broker = start(&fx, "the-ticket", "the-ticket", summary());
+
+        let quota = account_quota(Arc::clone(&manager), "u-1".into(), false)
+            .await
+            .unwrap();
+        assert!(quota.current);
+        assert_eq!(quota.unavailable, None);
+        let snapshot = quota.snapshot.expect("fresh snapshot");
+        assert_eq!(snapshot.plan_name.as_deref(), Some("体验版"));
+        assert_eq!(
+            (snapshot.total, snapshot.remaining, snapshot.used),
+            (100.0, 40.0, 60.0)
+        );
+        broker.task.await.unwrap();
+
+        let frames = broker.frames.lock().unwrap().clone();
+        // ticket 本身从不上线，只发 sha256 前缀
+        assert!(frames
+            .iter()
+            .all(|frame| !frame.to_string().contains("the-ticket")));
+        assert_eq!(
+            frames[0]["ticket_id"],
+            json!(quota::ticket_id("the-ticket"))
+        );
+        // 只有一次后端请求：空 body 的额度汇总查询
+        let fetches: Vec<&Value> = frames
+            .iter()
+            .filter(|frame| frame["method"] == json!("c:wb.request/http.fetch"))
+            .collect();
+        assert_eq!(fetches.len(), 1);
+        assert_eq!(fetches[0]["params"]["method"], json!("POST"));
+        assert_eq!(fetches[0]["params"]["path"], json!(quota::SUMMARY_PATH));
+        assert_eq!(
+            fetches[0]["params"]["body_b64"],
+            json!(STANDARD.encode("{}"))
+        );
+
+        // WorkBuddy 退出后：缓存还在，强制刷新说明是因为没在运行
+        fx.running.store(false, Ordering::SeqCst);
+        let reloaded = Arc::new(fx.manager());
+        let cached = account_quota(Arc::clone(&reloaded), "u-1".into(), true)
+            .await
+            .unwrap();
+        assert_eq!(cached.unavailable, Some(QuotaUnavailable::NotRunning));
+        assert_eq!(cached.snapshot, Some(snapshot.clone()));
+        // 不强制时 5 分钟内直接用缓存
+        let within_ttl = account_quota(reloaded, "u-1".into(), false).await.unwrap();
+        assert_eq!(within_ttl.unavailable, None);
+        assert_eq!(within_ttl.snapshot, Some(snapshot));
+    }
+
+    #[tokio::test]
+    async fn refuses_an_endpoint_that_cannot_prove_the_ticket() {
+        let fx = Fixture::new();
+        fx.sign_in("u-1", 1);
+        fx.running.store(true, Ordering::SeqCst);
+        let manager = Arc::new(fx.manager());
+        manager.import_current().unwrap();
+        let broker = start(&fx, "the-ticket", "someone-else", summary());
+
+        let quota = account_quota(manager, "u-1".into(), true).await.unwrap();
+        assert_eq!(quota.unavailable, Some(QuotaUnavailable::Failed));
+        assert!(quota.snapshot.is_none());
+        broker.task.await.unwrap();
+        // 对面证明不了自己：只发了 hello，没有 prove，更没有请求
+        let frames = broker.frames.lock().unwrap().clone();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["type"], json!("session_hello"));
+    }
+}
+
+#[tokio::test]
+async fn other_accounts_only_get_their_cached_quota() {
+    let fx = Fixture::new();
+    fx.running.store(true, Ordering::SeqCst);
+    fx.sign_in("u-1", 1);
+    let manager = Arc::new(fx.manager());
+    manager.import_current().unwrap();
+    fx.sign_in("u-2", 1);
+    manager.import_current().unwrap();
+    // 没有发现文件：要是去连了也只会是 not_running，这里应当根本不查
+    let quota = account_quota(Arc::clone(&manager), "u-1".into(), true)
+        .await
+        .unwrap();
+    assert!(!quota.current);
+    assert_eq!(quota.unavailable, Some(QuotaUnavailable::NotCurrent));
+    assert!(quota.snapshot.is_none());
+    assert!(account_quota(manager, "missing".into(), false)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn current_account_without_running_workbuddy_reports_not_running() {
+    let fx = Fixture::new();
+    fx.sign_in("u-1", 1);
+    let manager = Arc::new(fx.manager());
+    manager.import_current().unwrap();
+    let quota = account_quota(manager, "u-1".into(), false).await.unwrap();
+    assert!(quota.current);
+    assert_eq!(quota.unavailable, Some(QuotaUnavailable::NotRunning));
+    assert!(quota.snapshot.is_none());
 }

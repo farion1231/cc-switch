@@ -23,6 +23,13 @@
 //! - 从 CC Switch 删账号只删自己的副本，不替 WorkBuddy 登出。
 //! - 只管 `workbuddy-desktop`：不要和 WorkBuddy AI（`workbuddy-desktop-ai.info`、
 //!   `~/.workbuddy-ai`）或 CodeBuddy（`Tencent-Cloud.coding-copilot.info`）混淆。
+//! - 额度只能经运行中的 WorkBuddy 的本地 IPC 只读查当前登着的号，结果缓存进账号表（见 [`quota`]）。
+
+mod quota;
+
+#[cfg(test)]
+use quota::QuotaUnavailable;
+pub use quota::{account_quota, WorkBuddyQuota, WorkBuddyQuotaSnapshot};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -57,6 +64,9 @@ pub struct WorkBuddyPaths {
     /// `~/.workbuddy/storage/skeleton/account-snapshot.json`：WorkBuddy 自己维护的当前登录画像
     /// （明文 uid / 昵称 / 版型）。只读，用来补上 `.info` 里加密读不到的昵称和套餐。
     pub profile_snapshot: PathBuf,
+    /// `~/.workbuddy/wbipc/endpoint.json`：WorkBuddy 给本机客户端的 IPC 发现文件（端点 + 握手用的
+    /// ticket，0600）。只在查额度时读，ticket 不出 [`quota`] 模块。
+    pub wbipc_discovery: PathBuf,
 }
 
 impl WorkBuddyPaths {
@@ -67,6 +77,7 @@ impl WorkBuddyPaths {
             auth_dir: system_shared_data_dir().join("auth"),
             keyblob: data_dir.join("keyblob"),
             profile_snapshot: data_dir.join("storage/skeleton/account-snapshot.json"),
+            wbipc_discovery: data_dir.join("wbipc/endpoint.json"),
         }
     }
 
@@ -145,6 +156,9 @@ struct AccountData {
     added_at: i64,
     /// 最近一次收回副本的时间（秒）
     captured_at: i64,
+    /// 最近一次经 WorkBuddy 查到的套餐与积分（不敏感）；WorkBuddy 没运行时照样显示它
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    quota: Option<WorkBuddyQuotaSnapshot>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -278,6 +292,8 @@ pub struct WorkBuddyAccountManager {
     running: RunningCheck,
     /// 账号表；同时充当所有改动（含写 WorkBuddy 的文件）的互斥锁
     store: Mutex<StoreFile>,
+    /// 额度查询同一时间只开一条 WBIPC 会话
+    quota_gate: tokio::sync::Mutex<()>,
 }
 
 impl WorkBuddyAccountManager {
@@ -307,6 +323,7 @@ impl WorkBuddyAccountManager {
             paths,
             running,
             store: Mutex::new(store),
+            quota_gate: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -504,6 +521,52 @@ impl WorkBuddyAccountManager {
         store.dismissed.extend(removed.iter().cloned());
         self.persist(&store)?;
         Ok(removed)
+    }
+
+    // ---------- 额度 ----------
+
+    /// 查额度前要知道的：上次缓存、它是不是 WorkBuddy 当前登着的号、WorkBuddy 在不在运行。
+    /// 顺手把当前登录收录 / 更新进账号表（同 `status`）。
+    fn quota_context(&self, account_id: &str) -> Result<quota::QuotaContext, AppError> {
+        let current = self.status()?.current_account_id;
+        let cached = {
+            let store = self.lock();
+            store
+                .accounts
+                .get(account_id)
+                .ok_or_else(|| account_not_found(account_id))?
+                .quota
+                .clone()
+        };
+        let current = current.as_deref() == Some(account_id);
+        Ok(quota::QuotaContext {
+            cached,
+            current,
+            running: current && (self.running)(),
+            discovery: self.paths.wbipc_discovery.clone(),
+        })
+    }
+
+    /// 把查到的额度记进账号表。查询期间 WorkBuddy 换了号（当前登录已经不是它）就不记，返回 false。
+    fn save_quota(
+        &self,
+        account_id: &str,
+        snapshot: WorkBuddyQuotaSnapshot,
+    ) -> Result<bool, AppError> {
+        let mut store = self.lock();
+        let still_current = matches!(
+            self.read_live(),
+            Ok(LiveLogin::Known { ref identity, .. }) if identity.id == account_id
+        );
+        let Some(account) = store.accounts.get_mut(account_id) else {
+            return Ok(false);
+        };
+        if !still_current {
+            return Ok(false);
+        }
+        account.quota = Some(snapshot);
+        self.persist(&store)?;
+        Ok(true)
     }
 
     // ---------- 内部 ----------
@@ -715,6 +778,7 @@ fn upsert(store: &mut StoreFile, bundle: Bundle, identity: Identity) -> WorkBudd
             bundle: bundle.clone(),
             added_at: now,
             captured_at: now,
+            quota: None,
         });
     entry.bundle = bundle;
     entry.captured_at = now;
