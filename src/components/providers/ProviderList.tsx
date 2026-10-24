@@ -333,7 +333,7 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
-    if (appId === "agy") {
+    if (appId === "agy" || appId === "copilot") {
       return buildLaunchSections({
         app: appId,
         t,
@@ -469,7 +469,7 @@ export function ProviderList({
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
   const isCurrentFor = (provider: Provider) => {
     if (isPiFamilyApp(appId)) return false;
-    if (appId === "agy") return true;
+    if (appId === "agy" || appId === "copilot") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;
@@ -493,7 +493,9 @@ export function ProviderList({
       }
       onOpenWebsite={onOpenWebsite}
       // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
-      onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
+      onOpenTerminal={
+        appId === "agy" || appId === "copilot" ? undefined : onOpenTerminal
+      }
       onTest={handleTest}
       isTesting={isChecking(provider.id)}
     />

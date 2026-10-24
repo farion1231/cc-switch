@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 12] = [
+const VALID_TOOLS: [&str; 13] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "agy", "omp",
+    "agy", "omp", "copilot",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -630,6 +630,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
         "agy" => "Antigravity CLI",
+        "copilot" => "GitHub Copilot CLI",
         _ => "Unknown",
     }
 }
@@ -891,6 +892,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
+        "copilot" => Some("npm i -g @github/copilot@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -1307,6 +1309,7 @@ async fn get_single_tool_version_impl(
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
+        "copilot" => fetch_npm_latest_for_tool(&client, "@github/copilot", tool, local).await,
         _ => None,
     };
 
@@ -3330,6 +3333,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
         "omp" => Some("@oh-my-pi/pi-coding-agent"),
+        "copilot" => Some("@github/copilot"),
         _ => None,
     }
 }
@@ -4852,6 +4856,7 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
 pub async fn open_provider_terminal(
     state: State<'_, crate::store::AppState>,
     agy_accounts: State<'_, crate::commands::AgyAccountState>,
+    copilot_auth: State<'_, crate::commands::CopilotAuthState>,
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
@@ -4871,6 +4876,10 @@ pub async fn open_provider_terminal(
         AppType::Agy => {
             switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
             agy_terminal_launch(provider)?
+        }
+        AppType::Copilot => {
+            let account = copilot_bound_account(&copilot_auth, provider).await?;
+            copilot_terminal_launch(provider, account)?
         }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
@@ -5120,6 +5129,85 @@ pub(crate) fn open_agy_resume_terminal(
     let cwd = resolve_launch_cwd(cwd)?;
     launch_provider_terminal(&launch, cwd.as_deref()).map_err(|e| format!("启动终端失败: {e}"))
 }
+
+/// 官方卡绑定的授权中心 GitHub 账号的 Token 和域名；没绑时为 `None`，跟着 Copilot CLI 自己的登录走。
+async fn copilot_bound_account(
+    auth: &crate::commands::CopilotAuthState,
+    provider: &crate::provider::Provider,
+) -> Result<Option<(String, String)>, String> {
+    let Some(account_id) = crate::services::provider::copilot_direct::bound_account_id(provider)
+    else {
+        return Ok(None);
+    };
+    let credentials = auth
+        .0
+        .read()
+        .await
+        .github_credentials_for_account(&account_id)
+        .await;
+    match credentials {
+        Some(credentials) => Ok(Some(credentials)),
+        None => Err(crate::error::AppError::localized(
+            "copilot.account.bound_missing",
+            format!(
+                "「{}」绑定的 GitHub 账号不在授权中心里：请先在授权中心添加它，或编辑这张卡改选账号",
+                provider.name
+            ),
+            format!(
+                "The GitHub account bound to \"{}\" is not in the Auth Center. Add it there, or edit the card to choose another account.",
+                provider.name
+            ),
+        )
+        .to_string()),
+    }
+}
+
+/// GitHub Copilot CLI：官方卡跑 `copilot`，卡上设了模型就加 `--model`；绑了授权中心账号时
+/// 经 `COPILOT_GITHUB_TOKEN` 只给这一个进程。自带模型卡的 Key、地址和模型只经环境变量传入。
+fn copilot_terminal_launch(
+    provider: &crate::provider::Provider,
+    account: Option<(String, String)>,
+) -> Result<ProviderLaunch, String> {
+    let launch = crate::services::provider::copilot_direct::terminal_launch(provider)
+        .map_err(|e| e.to_string())?;
+    let mut env = launch.env;
+    if !launch.byok {
+        if let Some((token, domain)) = account {
+            env.push(("COPILOT_GITHUB_TOKEN", Some(token)));
+            env.push(("COPILOT_GH_HOST", Some(domain)));
+        }
+    }
+    let (mut args, mut batch_command, batch_vars) = match launch.model {
+        Some(model) => (
+            vec![format!("--model={model}")],
+            format!("copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\""),
+            vec![(COPILOT_MODEL_BATCH_VAR, model)],
+        ),
+        None => (Vec::new(), "copilot".to_string(), Vec::new()),
+    };
+    // 只会是 copilot_config::REASONING_EFFORTS 里的小写单词（已校验），可以直接写进命令。
+    if let Some(effort) = launch.reasoning_effort {
+        args.push(format!("--reasoning-effort={effort}"));
+        batch_command.push_str(&format!(" --reasoning-effort={effort}"));
+    }
+    Ok(ProviderLaunch {
+        title: if launch.byok {
+            "Starting GitHub Copilot CLI with this provider's model"
+        } else {
+            "Starting GitHub Copilot CLI with your GitHub sign-in"
+        },
+        detail: None,
+        program: "copilot",
+        args,
+        batch_command,
+        env,
+        batch_vars,
+        cleanup: Vec::new(),
+    })
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const COPILOT_MODEL_BATCH_VAR: &str = "CC_SWITCH_COPILOT_MODEL";
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const AGY_DIR_BATCH_VAR: &str = "CC_SWITCH_AGY_DIR";
@@ -6765,6 +6853,98 @@ mod tests {
         let launch = agy_terminal_launch(&row).unwrap();
         assert_eq!(unix_launch_command(&launch), "agy");
         assert_eq!(launch.batch_command, "agy");
+    }
+
+    #[test]
+    fn copilot_byok_launch_passes_the_provider_only_through_the_environment() {
+        let row = crate::provider::Provider::with_id(
+            "relay".into(),
+            "Relay".into(),
+            serde_json::json!({"env":{
+                "COPILOT_PROVIDER_BASE_URL":"https://relay.test/v1",
+                "COPILOT_PROVIDER_API_KEY":"fixture-key",
+                "COPILOT_PROVIDER_WIRE_API":"responses",
+                "COPILOT_MODEL":"gpt-5.4"
+            }}),
+            None,
+        );
+        // A bound account never applies to bring-your-own-model cards.
+        let launch =
+            copilot_terminal_launch(&row, Some(("gho_x".into(), "github.com".into()))).unwrap();
+        let command = unix_launch_command(&launch);
+        assert!(command.ends_with(" copilot"), "{command}");
+        assert!(!command.contains("fixture-key"), "{command}");
+        assert!(!command.contains("gho_x"), "{command}");
+        assert!(
+            command.contains("-u COPILOT_PROVIDER_BEARER_TOKEN"),
+            "{command}"
+        );
+        let env_file = unix_launch_env_file(&launch);
+        assert!(env_file.contains("fixture-key"));
+        assert!(env_file.contains("gpt-5.4"));
+        assert!(!env_file.contains("gho_x"));
+        assert_eq!(launch.batch_command, "copilot");
+    }
+
+    #[test]
+    fn copilot_launch_passes_the_card_reasoning_effort() {
+        let row = crate::provider::Provider::with_id(
+            "relay".into(),
+            "Relay".into(),
+            serde_json::json!({"env":{
+                "COPILOT_PROVIDER_BASE_URL":"https://relay.test/v1",
+                "COPILOT_PROVIDER_API_KEY":"fixture-key",
+                "COPILOT_PROVIDER_WIRE_API":"responses",
+                "COPILOT_MODEL":"deepseek-v4-flash"
+            },"reasoningEffort":"none"}),
+            None,
+        );
+        let launch = copilot_terminal_launch(&row, None).unwrap();
+        assert!(
+            unix_launch_command(&launch).ends_with(" copilot --reasoning-effort=none"),
+            "{}",
+            unix_launch_command(&launch)
+        );
+        assert_eq!(launch.batch_command, "copilot --reasoning-effort=none");
+    }
+
+    #[test]
+    fn copilot_login_launch_uses_the_model_flag_and_bound_account() {
+        let mut row = crate::provider::Provider::with_id(
+            "login".into(),
+            "GitHub".into(),
+            serde_json::json!({"env":{"COPILOT_MODEL":"claude-sonnet-4.6"}}),
+            None,
+        );
+        row.category = Some("official".into());
+        let launch = copilot_terminal_launch(&row, None).unwrap();
+        let command = unix_launch_command(&launch);
+        assert!(
+            command.ends_with(" copilot --model=claude-sonnet-4.6"),
+            "{command}"
+        );
+        assert!(
+            command.contains("-u COPILOT_PROVIDER_BASE_URL"),
+            "{command}"
+        );
+        assert_eq!(
+            launch.batch_command,
+            format!("copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\"")
+        );
+
+        let launch = copilot_terminal_launch(
+            &row,
+            Some(("gho_fixture".into(), "github.example.com".into())),
+        )
+        .unwrap();
+        assert!(!unix_launch_command(&launch).contains("gho_fixture"));
+        let env_file = unix_launch_env_file(&launch);
+        assert!(env_file.contains("gho_fixture"));
+        assert!(env_file.contains("github.example.com"));
+
+        row.settings_config = serde_json::json!({"env":{}});
+        let launch = copilot_terminal_launch(&row, None).unwrap();
+        assert!(unix_launch_command(&launch).ends_with(" copilot"));
     }
 
     #[cfg(unix)]

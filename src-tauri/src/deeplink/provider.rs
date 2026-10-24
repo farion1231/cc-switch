@@ -157,8 +157,8 @@ pub fn import_provider_from_deeplink(
         }
     }
 
-    // If enabled=true, set as current provider. Antigravity 没有「启用」，只导入。
-    if !additive && activate && app_type != AppType::Agy {
+    // If enabled=true, set as current provider. Antigravity、Copilot CLI 没有「启用」，只导入。
+    if !additive && activate && !matches!(app_type, AppType::Agy | AppType::Copilot) {
         ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }
@@ -220,6 +220,9 @@ impl ApiFormat {
             (AppType::Hermes, Anthropic) => Some("anthropic_messages"),
             (AppType::Hermes, OpenAiChat) => Some("chat_completions"),
             (AppType::Hermes, OpenAiResponses) => Some("codex_responses"),
+            (AppType::Copilot, Anthropic) => Some("anthropic"),
+            (AppType::Copilot, OpenAiChat) => Some("completions"),
+            (AppType::Copilot, OpenAiResponses) => Some("responses"),
             _ => None,
         }
     }
@@ -350,6 +353,7 @@ pub(crate) fn build_provider_from_request(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
+        AppType::Copilot => build_copilot_settings(request, api_format),
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]
@@ -732,6 +736,38 @@ requires_openai_auth = true
 }
 
 /// Build Gemini settings configuration
+/// Copilot CLI 自带模型的环境变量：接口格式换算成 `COPILOT_PROVIDER_TYPE` 和
+/// `COPILOT_PROVIDER_WIRE_API`。
+fn build_copilot_settings(
+    request: &DeepLinkImportRequest,
+    api_format: Option<ApiFormat>,
+) -> serde_json::Value {
+    let mut env = serde_json::Map::new();
+    env.insert(
+        "COPILOT_PROVIDER_BASE_URL".into(),
+        json!(get_primary_endpoint(request)),
+    );
+    if let Some(key) = request.api_key.as_deref() {
+        env.insert(
+            "COPILOT_PROVIDER_API_KEY".into(),
+            json!(normalize_deeplink_api_key(key)),
+        );
+    }
+    match native_protocol(&AppType::Copilot, api_format) {
+        "anthropic" => {
+            env.insert("COPILOT_PROVIDER_TYPE".into(), json!("anthropic"));
+        }
+        wire => {
+            env.insert("COPILOT_PROVIDER_TYPE".into(), json!("openai"));
+            env.insert("COPILOT_PROVIDER_WIRE_API".into(), json!(wire));
+        }
+    }
+    if let Some(model) = request.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        env.insert("COPILOT_MODEL".into(), json!(model.trim()));
+    }
+    json!({ "env": env })
+}
+
 fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let mut env = serde_json::Map::new();
     env.insert("GEMINI_API_KEY".to_string(), json!(request.api_key));
@@ -998,6 +1034,7 @@ pub fn parse_and_merge_config(
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "agy" => merge_agy_config(&mut merged, &config_value)?,
+        "copilot" => merge_copilot_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" | "pi" => {
@@ -1169,6 +1206,37 @@ fn merge_agy_config(
             .map(str::to_string);
     }
     merge_gemini_config(request, env)
+}
+
+/// Copilot CLI：`config` 是 `{env:{...}}` 或扁平的 `COPILOT_*` 键；只取地址、Key、模型，
+/// 其余环境变量不从链接导入。URL 参数优先。
+fn merge_copilot_config(
+    request: &mut DeepLinkImportRequest,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    let env = config.get("env").unwrap_or(config);
+    if !env.is_object() {
+        return Err(AppError::InvalidInput(
+            "Copilot CLI config/env must be an object".into(),
+        ));
+    }
+    let get = |key: &str| {
+        env.get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    if request.api_key.is_none() {
+        request.api_key = get("COPILOT_PROVIDER_API_KEY");
+    }
+    if request.endpoint.is_none() {
+        request.endpoint = get("COPILOT_PROVIDER_BASE_URL");
+    }
+    if request.model.is_none() {
+        request.model = get("COPILOT_MODEL");
+    }
+    Ok(())
 }
 
 /// Merge Gemini configuration from config file

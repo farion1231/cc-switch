@@ -14,7 +14,8 @@ use std::time::Instant;
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+    agy, claude, codex, copilot, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode,
+    pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +95,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(mcode::scan_sessions());
     sessions.extend(kimi::scan_sessions());
     sessions.extend(agy::scan_sessions());
+    sessions.extend(copilot::scan_sessions());
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
@@ -129,6 +131,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
         "omp" => omp::load_messages(path),
+        "copilot" => copilot::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -179,6 +182,12 @@ fn delete_session_source(
     if provider_id == "kimi" {
         return Err(
             "Delete this session in Kimi Code to keep its session index and history consistent"
+                .into(),
+        );
+    }
+    if provider_id == "copilot" {
+        return Err(
+            "Delete this session in GitHub Copilot CLI to keep its session store and history consistent"
                 .into(),
         );
     }
@@ -252,6 +261,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "kimi" => kimi::session_roots(),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
+        "copilot" => copilot::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

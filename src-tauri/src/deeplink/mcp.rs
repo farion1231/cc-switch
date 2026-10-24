@@ -162,6 +162,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         hermes: false,
         mcode: false,
         kimi: false,
+        copilot: false,
         pi: false,
         omp: false,
     };
@@ -181,6 +182,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "hermes" => apps.hermes = true,
             "mcode" => apps.mcode = true,
             "kimi" => apps.kimi = true,
+            "copilot" => apps.copilot = true,
             "pi" => apps.pi = true,
             "omp" => apps.omp = true,
             other => {

@@ -660,6 +660,7 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "kimi" => kimi::scan_sessions(),
         "omp" => omp::scan_sessions(),
         "agy" => super::providers::agy::scan_sessions(),
+        "copilot" => super::providers::copilot::scan_sessions(),
         _ => return None,
     };
     let project = sessions

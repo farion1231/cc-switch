@@ -93,6 +93,12 @@ export function terminalIsIsolated(
   if (appId === "agy") {
     return provider.category !== "official" && filled("GEMINI_API_KEY");
   }
+  // Copilot CLI：自带模型的地址、Key 和模型只经环境变量交给这个 copilot 进程。
+  if (appId === "copilot") {
+    return (
+      provider.category !== "official" && filled("COPILOT_PROVIDER_BASE_URL")
+    );
+  }
   return (
     filled("ANTHROPIC_BASE_URL") &&
     (filled("ANTHROPIC_AUTH_TOKEN") || filled("ANTHROPIC_API_KEY"))
@@ -223,7 +229,9 @@ export function OpenTerminalDialog({
               {t(
                 appId === "agy"
                   ? "provider.openTerminalDialog.isolationBodyAgy"
-                  : "provider.openTerminalDialog.isolationBody",
+                  : appId === "copilot"
+                    ? "provider.openTerminalDialog.isolationBodyCopilot"
+                    : "provider.openTerminalDialog.isolationBody",
                 { name: provider.name },
               )}
             </Notice>
