@@ -1180,9 +1180,9 @@
       "contextWindow": "Context window",
       "maxTokens": "Max output tokens",
       "compatibility": "Compatibility",
-      "compatibilityHint": "Adjust request behavior for compatible or local endpoints.",
+      "compatibilityHint": "Only needed when an endpoint claims to be OpenAI-compatible but rejects some requests. Each option describes one quirk of the endpoint: for example, supportsDeveloperRole = false means it doesn't accept the developer role, and maxTokensField = max_tokens means it only accepts the older field name. Presets fill in what they need; leave it empty to use the defaults.",
       "addCompatibilityOption": "Add",
-      "noCompatibilityOptions": "No compatibility options configured",
+      "noCompatibilityOptions": "Not set — defaults apply",
       "optionKey": "Option",
       "optionValue": "Value",
       "removeCompatibilityOption": "Remove compatibility option",
@@ -4204,6 +4204,9 @@
     "moreActions": "More actions",
     "manualCommands": "Manual install commands",
     "columnApp": "App",
+    "sectionInstalled": "Installed · {{count}}",
+    "sectionNotInstalled": "Not installed · {{count}}",
+    "dragHandle": "Drag to reorder {{name}}",
     "columnVersion": "Version",
     "columnVisible": "Show",
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
@@ -4229,10 +4232,7 @@
       "mcode": "Installs with the official script, falls back to npm",
       "agy": "Installs with the official script",
       "omp": "Installs with the official script"
-    },
-    "ompDiscoveryHelpTitle": "What Oh My Pi actually loads",
-    "ompDiscoveryHelp": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
-    "ompDiscoveryDocsLink": "Docs: context-files (disabledProviders)"
+    }
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",
@@ -4471,7 +4471,6 @@
     "used": "{{value}}% used",
     "usedUp": "Used up",
     "balance": "Balance {{value}}",
-    "balanceUsedUp": "Balance used up",
     "planExpired": "Plan expired",
     "failed": "Quota unavailable",
     "reason": {
@@ -4530,6 +4529,11 @@
       "on": "{{name}} · {{app}}: enabled",
       "off": "{{name}} · {{app}}: off",
       "fail": "{{name}} · {{app}}: write failed, click to retry"
+    },
+    "ompDiscovery": {
+      "title": "What Oh My Pi actually loads",
+      "help": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
+      "docsLink": "How to stop Oh My Pi from loading other agents' config"
     }
   },
   "mcpPage": {
@@ -5017,7 +5021,16 @@
     "form": {
       "discoveryType": "Model discovery",
       "discoveryOff": "Off",
-      "discoveryHint": "Oh My Pi periodically fetches the model list from the endpoint and applies metadata such as the context window. Manually added models still apply, and with discovery on the model list may be left empty."
+      "discoveryHint": "When on, Oh My Pi asks the endpoint which models it offers, so you don't have to list them by hand and new models show up on their own. Most online services use “OpenAI model list”; for models running on your machine, pick the matching app. Anthropic-format endpoints usually have no model list, so leave this off. Manually added models still apply.",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI model list (most online services)",
+        "proxy": "Proxy (each model sets its own format)",
+        "ollama": "Ollama (local)",
+        "llamaCpp": "llama.cpp (local)",
+        "lmStudio": "LM Studio (local)",
+        "litellm": "LiteLLM gateway",
+        "appleFoundationModels": "Apple on-device models (macOS)"
+      }
     },
     "errors": {
       "fileTooLarge": "Oh My Pi configuration exceeds the 1 MiB limit.",
@@ -5029,7 +5042,8 @@
       "manualEdit": "This YAML uses a layout or construct CC Switch cannot safely edit. Edit models.yml by hand.",
       "duplicateProvider": "This Oh My Pi provider key already exists.",
       "renameProvider": "Oh My Pi provider keys cannot be renamed.",
-      "providerMissing": "This Oh My Pi provider is no longer saved."
+      "providerMissing": "This Oh My Pi provider is no longer saved.",
+      "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
     }
   }
 }

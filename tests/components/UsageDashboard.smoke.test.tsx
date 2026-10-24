@@ -187,12 +187,12 @@ describe("UsageDashboard (smoke)", () => {
       usageApiMock.getUsageSummaryByApp,
       usageApiMock.getUsageTrends,
       usageApiMock.getProviderStats,
+      usageApiMock.getModelStats,
       usageApiMock.getRequestLogs,
     ];
     const counts = queries.map((query) => query.mock.calls.length);
+    // 三个页签的计数都查，没打开的页签也有数字
     expect(counts.every((count) => count > 0)).toBe(true);
-    // 模型页签没打开：它的计数不查
-    expect(usageApiMock.getModelStats).not.toHaveBeenCalled();
     // 没有新用量：扫描不触发重查，只有「今天」这类范围每分钟重算一次
     await act(() => vi.advanceTimersByTimeAsync(59000));
     expect(queries.map((query) => query.mock.calls.length)).toEqual(counts);

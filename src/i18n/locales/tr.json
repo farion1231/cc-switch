@@ -1164,9 +1164,9 @@
       "contextWindow": "Bağlam penceresi",
       "maxTokens": "Maksimum çıkış tokenları",
       "compatibility": "Uyumluluk",
-      "compatibilityHint": "Uyumlu veya yerel uç noktalar için istek davranışını ayarlayın.",
+      "compatibilityHint": "Yalnızca OpenAI uyumlu olduğunu söyleyen bir uç nokta bazı istekleri reddettiğinde gerekir. Her seçenek uç noktanın bir farkını belirtir: örneğin supportsDeveloperRole = false, developer rolünü kabul etmediği; maxTokensField = max_tokens, yalnızca eski alan adını kabul ettiği anlamına gelir. Hazır ayarlar gerekenleri kendisi doldurur; boş bırakılırsa varsayılanlar kullanılır.",
       "addCompatibilityOption": "Ekle",
-      "noCompatibilityOptions": "Hiçbir uyumluluk seçeneği yapılandırılmadı",
+      "noCompatibilityOptions": "Ayarlanmadı — varsayılanlar kullanılır",
       "optionKey": "Seçenek",
       "optionValue": "Değer",
       "removeCompatibilityOption": "Uyumluluk seçeneğini kaldır",
@@ -4205,10 +4205,7 @@
       "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
       "agy": "Resmî kurulum betiğiyle yüklenir",
       "omp": "Resmi komut dosyasıyla yüklenir"
-    },
-    "ompDiscoveryHelpTitle": "Oh My Pi'nin gerçekte yükledikleri",
-    "ompDiscoveryHelp": "Oh My Pi, kendi ~/.omp/agent yapılandırmasının yanı sıra diğer ajanların dizinlerinden (ör. Claude'un ~/.claude, Codex'in ~/.codex) MCP sunucularını, becerileri, komutları, kancaları, kuralları ve ayarları da keşfeder. Oh My Pi'nin gerçekte yüklediklerini CC Switch arayüzüyle uyumlu tutmak için ~/.omp/agent/config.yml içinde disabledProviders ile gereksiz keşif kaynaklarını kapatın (kimlikler belgelerle aynıdır, ör. claude, codex, gemini, opencode, github, agents).",
-    "ompDiscoveryDocsLink": "Belgeler: context-files (disabledProviders)"
+    }
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -4447,7 +4444,6 @@
     "used": "%{{value}} kullanıldı",
     "usedUp": "Tükendi",
     "balance": "Bakiye {{value}}",
-    "balanceUsedUp": "Bakiye tükendi",
     "planExpired": "Planın süresi doldu",
     "failed": "Kota bilgisi alınamıyor",
     "reason": {
@@ -4506,6 +4502,11 @@
       "on": "{{name}} · {{app}}: etkin",
       "off": "{{name}} · {{app}}: kapalı",
       "fail": "{{name}} · {{app}}: yazma başarısız oldu, yeniden denemek için tıklayın"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi'nin gerçekte yükledikleri",
+      "help": "Oh My Pi, kendi ~/.omp/agent yapılandırmasının yanı sıra diğer ajanların dizinlerinden (ör. Claude'un ~/.claude, Codex'in ~/.codex) MCP sunucularını, becerileri, komutları, kancaları, kuralları ve ayarları da keşfeder. Oh My Pi'nin gerçekte yüklediklerini CC Switch arayüzüyle uyumlu tutmak için ~/.omp/agent/config.yml içinde disabledProviders ile gereksiz keşif kaynaklarını kapatın (kimlikler belgelerle aynıdır, ör. claude, codex, gemini, opencode, github, agents).",
+      "docsLink": "Oh My Pi'nin diğer ajanların yapılandırmasını yüklemesi nasıl engellenir"
     }
   },
   "mcpPage": {
@@ -4991,7 +4992,7 @@
     "form": {
       "discoveryType": "Model keşfi",
       "discoveryOff": "Kapalı",
-      "discoveryHint": "Oh My Pi model listesini uç noktadan düzenli olarak alır ve bağlam penceresi gibi meta verileri uygular. Elle eklenen modeller geçerliliğini korur; keşif açıkken model listesi boş bırakılabilir."
+      "discoveryHint": "Açıkken Oh My Pi uç noktaya hangi modelleri sunduğunu sorar; modelleri tek tek yazmanız gerekmez ve yeni modeller kendiliğinden görünür. Çevrimiçi servislerin çoğunda “OpenAI model list”, kendi bilgisayarınızda çalışan modellerde ilgili uygulamayı seçin. Anthropic biçimli uç noktalarda genellikle model listesi yoktur, kapalı bırakın. Elle eklenen modeller geçerliliğini korur."
     },
     "errors": {
       "fileTooLarge": "Oh My Pi yapılandırması 1 MiB sınırını aşıyor.",

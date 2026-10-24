@@ -1180,9 +1180,9 @@
       "contextWindow": "コンテキストウィンドウ",
       "maxTokens": "最大出力トークン数",
       "compatibility": "互換性",
-      "compatibilityHint": "互換エンドポイントやローカル環境向けにリクエスト動作を調整します。",
+      "compatibilityHint": "OpenAI 互換をうたうエンドポイントが一部のリクエストを拒否する場合にだけ設定します。各項目はそのエンドポイントの癖を一つ表します。たとえば supportsDeveloperRole を false にすると developer ロールを受け付けないこと、maxTokensField を max_tokens にすると古いフィールド名しか受け付けないことを示します。プリセットを選ぶと必要な項目は自動で入ります。空のままならデフォルトで動作します。",
       "addCompatibilityOption": "追加",
-      "noCompatibilityOptions": "互換性オプションはありません",
+      "noCompatibilityOptions": "未設定（デフォルトで動作）",
       "optionKey": "オプション",
       "optionValue": "値",
       "removeCompatibilityOption": "互換性オプションを削除",
@@ -4204,6 +4204,9 @@
     "moreActions": "その他の操作",
     "manualCommands": "手動インストールコマンド",
     "columnApp": "アプリ",
+    "sectionInstalled": "インストール済み · {{count}}",
+    "sectionNotInstalled": "未インストール · {{count}}",
+    "dragHandle": "ドラッグして {{name}} の順序を変更",
     "columnVersion": "バージョン",
     "columnVisible": "表示",
     "visibleHelp": "オフにすると、このアプリはサイドバー、トレイメニュー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。表示しないだけで、プロバイダーや MCP などの設定はそのまま残り、アプリ自身の設定ファイルも変更されません。",
@@ -4229,10 +4232,7 @@
       "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
       "agy": "公式インストールスクリプトでインストール",
       "omp": "公式インストールスクリプトでインストール"
-    },
-    "ompDiscoveryHelpTitle": "Oh My Pi が実際に読み込む範囲",
-    "ompDiscoveryHelp": "Oh My Pi は ~/.omp/agent 自身の設定に加え、他の Agent のディレクトリ（Claude の ~/.claude、Codex の ~/.codex など）からも MCP サーバー、スキル、コマンド、フック、ルール、設定を発見します。Oh My Pi の実際の読み込み内容を CC Switch の表示と一致させるには、~/.omp/agent/config.yml の disabledProviders で不要な発行元を無効化してください（id はドキュメント準拠：claude、codex、gemini、opencode、github、agents など）。",
-    "ompDiscoveryDocsLink": "ドキュメント：context-files（disabledProviders）"
+    }
   },
   "appPage": {
     "moreActions": "{{name}} のその他の操作",
@@ -4471,7 +4471,6 @@
     "used": "使用済み {{value}}%",
     "usedUp": "使い切り",
     "balance": "残高 {{value}}",
-    "balanceUsedUp": "残高なし",
     "planExpired": "プラン期限切れ",
     "failed": "残量を取得できません",
     "reason": {
@@ -4530,6 +4529,11 @@
       "on": "{{name}} · {{app}}：有効",
       "off": "{{name}} · {{app}}：無効",
       "fail": "{{name}} · {{app}}：書き込み失敗、クリックで再試行"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi が実際に読み込む範囲",
+      "help": "Oh My Pi は ~/.omp/agent 自身の設定に加え、他の Agent のディレクトリ（Claude の ~/.claude、Codex の ~/.codex など）からも MCP サーバー、スキル、コマンド、フック、ルール、設定を発見します。Oh My Pi の実際の読み込み内容を CC Switch の表示と一致させるには、~/.omp/agent/config.yml の disabledProviders で不要な発行元を無効化してください（id はドキュメント準拠：claude、codex、gemini、opencode、github、agents など）。",
+      "docsLink": "Oh My Pi に他の Agent の設定を読み込ませない方法"
     }
   },
   "mcpPage": {
@@ -5017,7 +5021,16 @@
     "form": {
       "discoveryType": "モデルの自動検出",
       "discoveryOff": "使用しない",
-      "discoveryHint": "Oh My Pi がエンドポイントからモデルリストを定期的に取得し、コンテキスト長などのメタデータを自動的に適用します。手動で追加したモデルも有効です。有効にするとモデルを設定しなくても構いません。"
+      "discoveryHint": "オンにすると、Oh My Pi がエンドポイントに利用できるモデルを問い合わせるので、モデルを一つずつ入力する必要がなく、新しいモデルも自動で表示されます。オンラインサービスの多くは「OpenAI モデル一覧」を、ローカルで動かすモデルは対応するアプリを選んでください。Anthropic 形式のエンドポイントは通常モデル一覧がないので、「使用しない」のままにします。手動で追加したモデルも有効です。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI モデル一覧（多くのオンラインサービス）",
+        "proxy": "プロキシ（モデルごとに形式を指定）",
+        "ollama": "Ollama（ローカル）",
+        "llamaCpp": "llama.cpp（ローカル）",
+        "lmStudio": "LM Studio（ローカル）",
+        "litellm": "LiteLLM ゲートウェイ",
+        "appleFoundationModels": "Apple オンデバイスモデル（macOS）"
+      }
     },
     "errors": {
       "fileTooLarge": "Oh My Pi の設定が 1 MiB の上限を超えています。",
@@ -5029,7 +5042,8 @@
       "manualEdit": "この YAML の構造は CC Switch で安全に編集できません。models.yml を手動で編集してください。",
       "duplicateProvider": "この Oh My Pi プロバイダキーは既に存在します。",
       "renameProvider": "Oh My Pi プロバイダキーは変更できません。",
-      "providerMissing": "この Oh My Pi プロバイダは保存済みリストにありません。"
+      "providerMissing": "この Oh My Pi プロバイダは保存済みリストにありません。",
+      "legacyModelsJson": "Oh My Pi にはまだ旧形式の models.json があり、omp は次回起動時にこれを models.yml へ移行します。omp を一度起動してから、もう一度プロバイダを追加してください。"
     }
   }
 }
