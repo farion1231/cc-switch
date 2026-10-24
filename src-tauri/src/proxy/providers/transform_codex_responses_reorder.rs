@@ -97,12 +97,22 @@ mod tests {
             user("continue"),
         ]});
         assert!(normalize_tool_output_grouping(&mut body));
-        let types: Vec<String> = body["input"].as_array().unwrap().iter().map(|i| i["call_id"].as_str().unwrap_or(i["type"].as_str().unwrap_or("")).to_string()).collect();
+        let types: Vec<String> = body["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| {
+                i["call_id"]
+                    .as_str()
+                    .unwrap_or(i["type"].as_str().unwrap_or(""))
+                    .to_string()
+            })
+            .collect();
         // 批次输出必须紧跟调用批次，提示全部后置。
-        assert_eq!(types, vec![
-            "message", "c0", "c1", "c2", "c0", "c1", "c2",
-            "message", "message", "message",
-        ]);
+        assert_eq!(
+            types,
+            vec!["message", "c0", "c1", "c2", "c0", "c1", "c2", "message", "message", "message",]
+        );
     }
 
     #[test]
