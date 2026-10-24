@@ -165,7 +165,7 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
         </div>
 
         {/* 错误详情 / 数据库路径 */}
-        <div className="space-y-1 rounded-lg border border-border/50 bg-subtle p-3 text-xs text-fg-2">
+        <div className="selectable space-y-1 rounded-lg border border-border/50 bg-subtle p-3 text-xs text-fg-2">
           {payload.error && (
             <p className="break-words font-mono">{payload.error}</p>
           )}
