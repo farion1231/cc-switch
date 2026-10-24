@@ -11,6 +11,7 @@ use tauri::State;
 use tokio::sync::RwLock;
 
 /// Copilot 认证状态
+#[derive(Clone)]
 pub struct CopilotAuthState(pub Arc<RwLock<CopilotAuthManager>>);
 
 // ==================== 设备码流程 ====================

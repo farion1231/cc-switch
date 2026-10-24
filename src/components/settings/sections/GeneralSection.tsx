@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { isLinux } from "@/lib/platform";
 import { TerminalSelect } from "@/components/settings/TerminalSettings";
+import { RemoteSettings } from "@/components/settings/RemoteSettings";
 import {
   SettingsBlock,
   SettingsCard,
@@ -277,6 +278,8 @@ export function GeneralSection({
           />
         </SettingsCard>
       </SettingsBlock>
+
+      <RemoteSettings settings={settings} onChange={onAutoSave} />
     </>
   );
 }

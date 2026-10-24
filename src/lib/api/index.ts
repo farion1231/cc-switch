@@ -14,6 +14,14 @@ export { proxyApi } from "./proxy";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
 export { workspaceApi } from "./workspace";
+export { remoteApi, REMOTE_COMMANDS } from "./remote";
+export type {
+  RemoteCommandName,
+  RemoteConfig,
+  BindScope,
+  CorsMode,
+  PairedClientMeta,
+} from "./remote";
 export * as authApi from "./auth";
 export * as copilotApi from "./copilot";
 export type { ProviderSwitchEvent } from "./providers";
