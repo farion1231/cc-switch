@@ -393,6 +393,9 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// 档位路由的请求（`tier_router`）：实际服务家是档位端点而非路由条目，
+    /// 属设计内行为——抑制会话重映射与当前供应商切换（熔断/用量照常按端点记）。
+    tier_routed: bool,
 }
 
 impl RequestForwarder {
@@ -511,12 +514,19 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            tier_routed: false,
         }
     }
 
     /// 标记为 Stack 模型的请求。
     pub fn stack_request(mut self, stack_request: bool) -> Self {
         self.stack_request = stack_request;
+        self
+    }
+
+    /// 标记为档位路由的请求（影子端点置首，实际服务家 ≠ 路由条目是设计内行为）。
+    pub fn tier_routed(mut self, tier_routed: bool) -> Self {
+        self.tier_routed = tier_routed;
         self
     }
 
@@ -678,7 +688,7 @@ impl RequestForwarder {
             // 会话模式下新会话本来就可能落到非指针账号；与路由选中账号比
             // 才是真故障转移，避免 route 指针随轮询来回翻转、托盘反复刷新。
             let route_anchor = selected_provider_id.unwrap_or(&self.current_provider_id_at_start);
-            if route_anchor != provider.id.as_str() {
+            if route_anchor != provider.id.as_str() && !self.tier_routed {
                 status.failover_count += 1;
 
                 let fm = self.failover_manager.clone();
@@ -829,7 +839,10 @@ impl RequestForwarder {
                     guard.attach_counters(vec![handle.detach()]);
                 }
                 if let Some(selected) = selected_provider_id.as_deref() {
-                    if fr.provider.id != selected && self.session_client_provided {
+                    if fr.provider.id != selected
+                        && self.session_client_provided
+                        && !self.tier_routed
+                    {
                         // 实际服务账号 ≠ 路由选中账号（failover 成功）→ 会话重映射
                         // （设计 4.1 迁移回写：成功后会话跟随实际成功账号）
                         self.router.remap_session(
@@ -4892,6 +4905,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            tier_routed: false,
         }
     }
 

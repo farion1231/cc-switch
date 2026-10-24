@@ -40,7 +40,7 @@ pub(crate) fn materialized_settings(
         return Ok(settings);
     };
     match tx.query_row(
-        "SELECT id, name, category, base_url, api_key, auth_binding,
+        "SELECT id, name, category, base_url, api_key, auth_binding, api_format,
                 website_url, icon, icon_color, notes, meta, created_at, sort_index
          FROM endpoints WHERE id = ?1",
         [ref_id],

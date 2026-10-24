@@ -35,6 +35,7 @@ mod tests_load_balance;
 pub mod thinking_budget_rectifier;
 pub mod thinking_optimizer;
 pub mod thinking_rectifier;
+pub mod tier_router;
 pub(crate) mod tool_media;
 pub(crate) mod types;
 pub mod usage;

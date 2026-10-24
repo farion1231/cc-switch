@@ -446,6 +446,7 @@ impl Database {
                 base_url TEXT NOT NULL,
                 api_key TEXT NOT NULL DEFAULT '',
                 auth_binding TEXT,
+                api_format TEXT,
                 website_url TEXT,
                 icon TEXT,
                 icon_color TEXT,
@@ -459,6 +460,7 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
         Self::add_column_if_missing(conn, "providers", "endpoint_ref", "TEXT")?;
         Self::add_column_if_missing(conn, "providers", "tier_mappings", "TEXT")?;
+        Self::add_column_if_missing(conn, "endpoints", "api_format", "TEXT")?;
 
         // 删除旧的 failover_queue 表（如果存在）
         let _ = conn.execute("DROP INDEX IF EXISTS idx_failover_queue_order", []);
@@ -1984,6 +1986,7 @@ impl Database {
                 base_url TEXT NOT NULL,
                 api_key TEXT NOT NULL DEFAULT '',
                 auth_binding TEXT,
+                api_format TEXT,
                 website_url TEXT,
                 icon TEXT,
                 icon_color TEXT,
@@ -2002,6 +2005,7 @@ impl Database {
         }
         Self::add_column_if_missing(conn, "providers", "endpoint_ref", "TEXT")?;
         Self::add_column_if_missing(conn, "providers", "tier_mappings", "TEXT")?;
+        Self::add_column_if_missing(conn, "endpoints", "api_format", "TEXT")?;
 
         // ---- 1. Universal 并入 ----
         let universal_blob: Option<String> = conn
@@ -2092,16 +2096,23 @@ impl Database {
             app_type: String,
             name: String,
             settings: serde_json::Value,
+            /// 条目 meta 里的 apiFormat（有 meta 列才读；首个建端点的条目捐赠）
+            api_format: Option<String>,
         }
+        let meta_column_exists = Self::has_column(conn, "providers", "meta")?;
+        let select_sql = if meta_column_exists {
+            "SELECT id, app_type, name, settings_config, meta
+             FROM providers WHERE endpoint_ref IS NULL ORDER BY app_type, id"
+        } else {
+            "SELECT id, app_type, name, settings_config, NULL AS meta
+             FROM providers WHERE endpoint_ref IS NULL ORDER BY app_type, id"
+        };
         let mut rows: Vec<Row> = Vec::new();
         {
             // 只引用最初 schema 就有的列（id/app_type/name/settings_config）——
-            // 合成的旧版本库（如 v4 测试）providers 可能没有 category/icon 列
+            // 合成的旧版本库（如 v4 测试）providers 可能没有 category/meta 列
             let mut stmt = conn
-                .prepare(
-                    "SELECT id, app_type, name, settings_config
-                     FROM providers WHERE endpoint_ref IS NULL ORDER BY app_type, id",
-                )
+                .prepare(select_sql)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             let mapped = stmt
                 .query_map([], |row| {
@@ -2113,11 +2124,24 @@ impl Database {
                         }
                         _ => serde_json::Value::Null,
                     };
+                    let api_format = match row.get_ref(4)? {
+                        rusqlite::types::ValueRef::Text(meta_text) => {
+                            serde_json::from_slice::<serde_json::Value>(meta_text)
+                                .ok()
+                                .and_then(|meta| {
+                                    meta.get("apiFormat")
+                                        .and_then(serde_json::Value::as_str)
+                                        .map(str::to_string)
+                                })
+                        }
+                        _ => None,
+                    };
                     Ok(Row {
                         id: row.get(0)?,
                         app_type: row.get(1)?,
                         name: row.get(2)?,
                         settings,
+                        api_format,
                     })
                 })
                 .map_err(|e| AppError::Database(e.to_string()))?;
@@ -2137,9 +2161,9 @@ impl Database {
                     seq += 1;
                     let new_id = format!("ep-{seq}");
                     conn.execute(
-                        "INSERT INTO endpoints (id, name, base_url, api_key, created_at)
-                         VALUES (?1, ?2, ?3, ?4, strftime('%s','now'))",
-                        rusqlite::params![new_id, row.name, base_url, api_key],
+                        "INSERT INTO endpoints (id, name, base_url, api_key, api_format, created_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, strftime('%s','now'))",
+                        rusqlite::params![new_id, row.name, base_url, api_key, row.api_format],
                     )
                     .map_err(|e| AppError::Database(e.to_string()))?;
                     by_connection.insert((base_url.clone(), api_key.clone()), new_id.clone());

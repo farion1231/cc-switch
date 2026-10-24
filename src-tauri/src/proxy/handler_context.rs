@@ -73,6 +73,9 @@ pub struct RequestContext {
     pub copilot_optimizer_config: CopilotOptimizerConfig,
     /// Stack 模型的请求（`mode::stack`）：直达 Stack 里的那一家，不读也不写任何路由状态。
     pub is_stack: bool,
+    /// 档位路由的请求（`tier_router`）：实际服务家 ≠ 路由条目是设计内行为——
+    /// 不做会话重映射、不触发当前供应商切换。
+    pub tier_routed: bool,
 }
 
 impl RequestContext {
@@ -133,6 +136,7 @@ impl RequestContext {
         );
 
         let is_stack = stack.is_some();
+        let mut tier_routed = false;
         let (provider, providers, current_provider_id, request_model) = match stack {
             Some(target) => {
                 // Stack 模型：只发往 Stack 里的那一家，不读代理路由、不经熔断器选家。按「单家、
@@ -183,7 +187,7 @@ impl RequestContext {
                         app_type_str.as_ref(),
                     )
                     && crate::mode::stack::stack_mode_now(&app_type);
-                let providers = if stack_mode {
+                let mut providers = if stack_mode {
                     app_config.auto_failover_enabled = false;
                     vec![current_provider.ok_or(ProxyError::NoProvidersConfigured)?]
                 } else {
@@ -210,7 +214,7 @@ impl RequestContext {
                         })?
                 };
 
-                let provider = providers
+                let mut provider = providers
                     .first()
                     .cloned()
                     .ok_or(ProxyError::NoAvailableProvider)?;
@@ -223,6 +227,40 @@ impl RequestContext {
                     providers.len(),
                     session_id
                 );
+
+                // 档位路由（端点引用化 P3）：条目 tier_mappings 命中带端点引用
+                // 的档位时，影子端点置首、原池保留为回落链——目标家挂了退回
+                // 自家该档模型，不摊给整个主队列。端点熔断打开时不构造影子
+                // （直接回落本地，连续失败期间不多打一次）。
+                if let Some(route) =
+                    crate::proxy::tier_router::resolve_tier_route(&provider, &request_model)
+                {
+                    let endpoint = state.db.get_endpoint(&route.endpoint_id).ok().flatten();
+                    if let Some(endpoint) = endpoint {
+                        let allowed = state
+                            .provider_router
+                            .allow_provider_request(&endpoint.id, app_type_str.as_ref())
+                            .await
+                            .allowed;
+                        if allowed {
+                            let shadow =
+                                crate::proxy::tier_router::shadow_provider(&endpoint, &route);
+                            log::debug!(
+                                "[{}] Tier route: {} → endpoint {} (model {}), local fallback retained",
+                                tag,
+                                request_model,
+                                endpoint.id,
+                                route.model
+                            );
+                            let mut chained = Vec::with_capacity(providers.len() + 1);
+                            chained.push(shadow.clone());
+                            chained.extend(providers);
+                            providers = chained;
+                            provider = shadow;
+                            tier_routed = true;
+                        }
+                    }
+                }
                 (provider, providers, current_provider_id, request_model)
             }
         };
@@ -244,6 +282,7 @@ impl RequestContext {
             optimizer_config,
             copilot_optimizer_config,
             is_stack,
+            tier_routed,
         })
     }
 
@@ -314,6 +353,7 @@ impl RequestContext {
             max_retries,
         )
         .stack_request(self.is_stack)
+        .tier_routed(self.tier_routed)
     }
 
     /// 获取 Provider 列表（用于故障转移）

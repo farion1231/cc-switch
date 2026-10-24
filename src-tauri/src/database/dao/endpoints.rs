@@ -15,7 +15,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, category, base_url, api_key, auth_binding,
+                "SELECT id, name, category, base_url, api_key, auth_binding, api_format,
                         website_url, icon, icon_color, notes, meta, created_at, sort_index
                  FROM endpoints
                  ORDER BY COALESCE(sort_index, 999999), COALESCE(created_at, 0), id",
@@ -39,7 +39,7 @@ impl Database {
     pub fn get_endpoint(&self, id: &str) -> Result<Option<Endpoint>, AppError> {
         let conn = lock_conn!(self.conn);
         conn.query_row(
-            "SELECT id, name, category, base_url, api_key, auth_binding,
+            "SELECT id, name, category, base_url, api_key, auth_binding, api_format,
                     website_url, icon, icon_color, notes, meta, created_at, sort_index
              FROM endpoints WHERE id = ?1",
             [id],
@@ -57,7 +57,7 @@ impl Database {
     ) -> Result<Option<Endpoint>, AppError> {
         let conn = lock_conn!(self.conn);
         conn.query_row(
-            "SELECT id, name, category, base_url, api_key, auth_binding,
+            "SELECT id, name, category, base_url, api_key, auth_binding, api_format,
                     website_url, icon, icon_color, notes, meta, created_at, sort_index
              FROM endpoints
              WHERE rtrim(base_url, '/') = rtrim(?1, '/') AND api_key = ?2",
@@ -89,15 +89,16 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         tx.execute(
             "INSERT INTO endpoints
-                (id, name, category, base_url, api_key, auth_binding,
+                (id, name, category, base_url, api_key, auth_binding, api_format,
                  website_url, icon, icon_color, notes, meta, created_at, sort_index)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 category = excluded.category,
                 base_url = excluded.base_url,
                 api_key = excluded.api_key,
                 auth_binding = excluded.auth_binding,
+                api_format = excluded.api_format,
                 website_url = excluded.website_url,
                 icon = excluded.icon,
                 icon_color = excluded.icon_color,
@@ -112,6 +113,7 @@ impl Database {
                 endpoint.base_url.trim_end_matches('/'),
                 endpoint.api_key,
                 auth_binding,
+                endpoint.api_format,
                 endpoint.website_url,
                 endpoint.icon,
                 endpoint.icon_color,
@@ -233,7 +235,7 @@ impl Database {
 
 pub(crate) fn row_to_endpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Endpoint> {
     let auth_binding_str: Option<String> = row.get(5)?;
-    let meta_str: Option<String> = row.get(10)?;
+    let meta_str: Option<String> = row.get(11)?;
     Ok(Endpoint {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -243,14 +245,15 @@ pub(crate) fn row_to_endpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Endpo
         auth_binding: auth_binding_str
             .filter(|s| !s.is_empty())
             .and_then(|s| serde_json::from_str(&s).ok()),
-        website_url: row.get(6)?,
-        icon: row.get(7)?,
-        icon_color: row.get(8)?,
-        notes: row.get(9)?,
+        api_format: row.get(6)?,
+        website_url: row.get(7)?,
+        icon: row.get(8)?,
+        icon_color: row.get(9)?,
+        notes: row.get(10)?,
         meta: meta_str
             .filter(|s| !s.is_empty())
             .and_then(|s| serde_json::from_str(&s).ok()),
-        created_at: row.get(11)?,
-        sort_index: row.get(12)?,
+        created_at: row.get(12)?,
+        sort_index: row.get(13)?,
     })
 }

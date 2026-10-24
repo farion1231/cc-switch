@@ -119,6 +119,11 @@ P1-P2 完成即消除冗余（改密钥一处生效）；P3 完成即支持跨�
 
 **P1 实测（2026-10-24，本机真实库 214MB 副本重放 v24→v25）**：50 条 provider → 12 个端点、43 条完成归并（86%）、0 悬空引用、归并条目凭据与所指端点 100% 一致（重放 harness：`CC_SWITCH_REPLAY_DB=<副本> cargo test --lib replay_v25 -- --ignored`）。
 
+**P2/P3 已实现（2026-10-24）**：
+- P2：save_provider/replace_provider_id 保存物化（悬空引用容忍）；save_endpoint 级联重物化引用条目（一处改全局生效）；endpoints CRUD 命令五枚；universal upsert/sync 双轨合流（子条目构造绑定 endpoint_ref）
+- P3：`proxy/tier_router.rs`——档位识别与 `ModelMapping::map_model` 同序（fable→haiku→opus→sonnet、subagent 等值含 1M 剥离、default 兜底）；影子 Provider（id=端点 id，熔断/usage/在途按端点归因；`ANTHROPIC_MODEL`=目标模型使任意请求名落 default 档；`meta.api_format` 来自端点驱动 transform 管线跨家转换）；Endpoint 增 `api_format` 列（迁移从条目 meta.apiFormat 回填，首个建端点的条目捐赠）；handler 选池后影子置首、原池保留回落链；端点熔断打开时不构造影子（直接回落本地）；forwarder `tier_routed` 标志抑制会话重映射与当前供应商切换
+- 实机端到端走查（进代理→跨端点档位分流→usage 分账）待真实上游 Key 验证，同 Hermes 走查待办
+
 ## 九、风险与对策
 
 1. **迁移不可逆** → 迁移前自动备份已内建；归并保守线；NULL 条目行为不变
