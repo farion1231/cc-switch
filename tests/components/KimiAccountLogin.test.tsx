@@ -401,5 +401,7 @@ describe("Kimi official account login", () => {
     expect(screen.getByText("需要重新登录")).toBeInTheDocument();
     expect(kimiOAuthApi.quota).toHaveBeenCalledWith(account.id);
     expect(kimiOAuthApi.quota).not.toHaveBeenCalledWith(second.id);
+    // 默认 mock 查成功但一档都没有，即没订阅 Kimi Code 的号
+    expect(screen.getByText("kimi.oauth.noSubscription")).toBeInTheDocument();
   });
 });

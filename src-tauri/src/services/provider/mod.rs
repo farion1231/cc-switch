@@ -6228,12 +6228,25 @@ impl ProviderService {
         original_id: Option<&str>,
         provider: Provider,
     ) -> Result<bool, AppError> {
+        let mut provider = provider;
         if app_type == AppType::Kimi {
-            Self::ensure_kimi_provider_editable(original_id.unwrap_or(&provider.id))?;
-            if crate::kimi_config::is_official_provider(&provider.settings_config) {
-                return Err(AppError::InvalidInput(
-                    "Manage Kimi official accounts in the Authorization Center".into(),
-                ));
+            // Official cards come from signing in. Their models, name and notes are
+            // editable; the connection stays as signed in, and no edit may turn
+            // another card into an official one.
+            let id = original_id.unwrap_or(&provider.id).to_string();
+            match Self::kimi_official_connection(state, &id)? {
+                Some(_) if provider.id != id => {
+                    return Err(AppError::InvalidInput(
+                        "Kimi official account keys cannot be changed".into(),
+                    ));
+                }
+                Some(connection) => provider.settings_config["provider"] = connection,
+                None if crate::kimi_config::is_official_provider(&provider.settings_config) => {
+                    return Err(AppError::InvalidInput(
+                        "Manage Kimi official accounts in the Authorization Center".into(),
+                    ));
+                }
+                None => {}
             }
         }
         if app_type == AppType::Pi {
@@ -6244,7 +6257,6 @@ impl ProviderService {
             return omp::update(state, original_id, provider);
         }
 
-        let mut provider = provider;
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
         let provider_id_changed = original_id != provider.id;
         // 读旧行、判断谁是当前供应商、存行、写 live 都在切换锁里：进入代理和切换都等这次
@@ -6682,7 +6694,8 @@ impl ProviderService {
             return pi::remove(state, id);
         }
         if app_type == AppType::Kimi {
-            Self::ensure_kimi_provider_editable(id)?;
+            // An official account leaves Kimi's config but keeps its login and card,
+            // so「添加」can put it back.
             return crate::kimi_config::save_and_commit(id, None, false, || {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, "kimi")? {
                     Self::set_provider_live_config_managed(&mut provider, false);
@@ -6760,6 +6773,23 @@ impl ProviderService {
         Ok(())
     }
 
+    /// The signed-in connection node of a Kimi official card: Kimi's live node
+    /// first, else the saved card (an official card removed from Kimi's config).
+    fn kimi_official_connection(state: &AppState, id: &str) -> Result<Option<Value>, AppError> {
+        if let Some(live) = crate::kimi_config::get_providers()?.get(id) {
+            return Ok(
+                crate::kimi_config::is_official_provider(live).then(|| live["provider"].clone())
+            );
+        }
+        Ok(state
+            .db
+            .get_provider_by_id(id, "kimi")?
+            .filter(|saved| crate::kimi_config::is_official_provider(&saved.settings_config))
+            .map(|saved| saved.settings_config["provider"].clone()))
+    }
+
+    /// Deleting an official account that is still in Kimi's config goes through
+    /// the Authorization Center (it also deletes the login); remove it first.
     fn ensure_kimi_provider_editable(id: &str) -> Result<(), AppError> {
         let native = crate::kimi_config::get_providers()?;
         if native

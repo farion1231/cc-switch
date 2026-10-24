@@ -43,10 +43,11 @@ export interface AccountQuotaRow {
   line: QuotaLine;
 }
 
-/** 额度列要画的东西：成功按档画条；查询失败写「额度没查到」+ 原因；null 表示不显示 */
+/** 额度列要画的东西：成功按档画条；查询失败写「额度没查到」+ 原因；查成功但没有额度时写一句灰字；null 表示不显示 */
 export type AccountQuotaState =
   | { kind: "rows"; rows: AccountQuotaRow[] }
   | { kind: "failed"; reason: string }
+  | { kind: "note"; text: string }
   | { kind: "loading" }
   | null;
 
@@ -139,6 +140,10 @@ export function AccountQuotaColumn({
               {state.reason}
             </span>
           </>
+        )}
+        {state.kind === "note" && (
+          // 写在额度行数值（「剩余 91%」）那一格：靠右，和别的号的数值对齐
+          <span className="self-end text-caption text-fg-3">{state.text}</span>
         )}
         {state.kind === "loading" && (
           <span className="text-caption text-fg-3">
@@ -356,10 +361,22 @@ export function KimiAccountQuota({
     isFetching: loading,
     refetch,
   } = useKimiAccountQuota(accountId, { enabled: true, autoQuery: false });
+  const state = subscriptionQuotaState(
+    t,
+    quota,
+    loading,
+    i18n.language,
+    display,
+  );
   return (
     <AccountQuotaColumn
       login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
+      // 没订阅 Kimi Code 的号，额度接口返回空对象：查成功但一档都没有
+      state={
+        !state && quota?.success
+          ? { kind: "note", text: t("kimi.oauth.noSubscription") }
+          : state
+      }
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
