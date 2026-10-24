@@ -57,7 +57,7 @@ export function useCodebuddyLogin(options?: ManagedAuthOptions) {
   const queryClient = useQueryClient();
   const onCompleteRef = React.useRef(options?.onLoginComplete);
   onCompleteRef.current = options?.onLoginComplete;
-  const auth = useManagedAuth("codebuddy_oauth", undefined, {
+  const auth = useManagedAuth("codebuddy_oauth", undefined, undefined, {
     onLoginComplete: (account) => {
       void queryClient.invalidateQueries({ queryKey: CODEBUDDY_LIVE_KEY });
       onCompleteRef.current?.(account);

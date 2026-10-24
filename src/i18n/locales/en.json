@@ -1793,6 +1793,8 @@
     "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card."
   },
   "copilot": {
+    "automaticFormat": "Selected automatically by routing",
+    "automaticFormatHint": "Routing selects the Copilot upstream format per model; manual format settings are ignored.",
     "authSection": "GitHub Copilot Authentication",
     "authStatus": "Authentication Status",
     "authenticated": "Authenticated as {{username}}",
@@ -1868,7 +1870,12 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
-    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate.",
+    "loginMethod": "Login method",
+    "browserLogin": "Browser login",
+    "deviceCodeLogin": "Device-code login",
+    "openBrowserLogin": "Open browser login",
+    "loginExpired": "Login expired. Please try again."
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth authentication",

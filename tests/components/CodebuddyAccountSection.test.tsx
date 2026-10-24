@@ -125,6 +125,7 @@ describe("CodebuddyAccountSection", () => {
     expect(mocks.useManagedAuth).toHaveBeenCalledWith(
       "codebuddy_oauth",
       undefined,
+      undefined,
       expect.objectContaining({ onLoginComplete: expect.any(Function) }),
     );
     const current = screen.getByText("alice").parentElement!;
