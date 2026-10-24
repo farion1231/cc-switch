@@ -10,13 +10,13 @@ static WRITE_LOCK: Mutex<()> = Mutex::new(());
 const TRANSPORT_FIELDS: [&str; 7] = ["command", "args", "env", "cwd", "url", "headers", "type"];
 
 #[derive(Clone, Copy)]
-pub(crate) enum OhMyPiChange<'a> {
+pub(crate) enum OmpChange<'a> {
     Enable(&'a Value, &'a Value),
     Disable(&'a Value, &'a Value),
     Remove(Option<&'a Value>),
 }
 
-impl<'a> OhMyPiChange<'a> {
+impl<'a> OmpChange<'a> {
     pub(crate) fn from_enabled(spec: &'a Value, enabled: bool) -> Self {
         Self::from_previous(spec, spec, enabled)
     }
@@ -29,15 +29,15 @@ impl<'a> OhMyPiChange<'a> {
     }
 }
 
-pub fn sync_single_server_to_ohmypi(id: &str, spec: &Value) -> Result<(), AppError> {
-    sync(id, OhMyPiChange::Enable(spec, spec))
+pub fn sync_single_server_to_omp(id: &str, spec: &Value) -> Result<(), AppError> {
+    sync(id, OmpChange::Enable(spec, spec))
 }
 
-pub fn remove_server_from_ohmypi(id: &str) -> Result<(), AppError> {
-    sync(id, OhMyPiChange::Remove(None))
+pub fn remove_server_from_omp(id: &str) -> Result<(), AppError> {
+    sync(id, OmpChange::Remove(None))
 }
 
-fn sync(id: &str, change: OhMyPiChange<'_>) -> Result<(), AppError> {
+fn sync(id: &str, change: OmpChange<'_>) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
@@ -46,14 +46,14 @@ fn sync(id: &str, change: OhMyPiChange<'_>) -> Result<(), AppError> {
 
 pub(crate) fn sync_and_commit<T>(
     id: &str,
-    change: OhMyPiChange<'_>,
+    change: OmpChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
     crate::mcode_config::write_and_commit(
-        &crate::ohmypi_config::get_ohmypi_mcp_path()?,
+        &crate::omp_config::get_omp_mcp_path()?,
         || sync_locked(id, change),
         commit,
     )
@@ -77,8 +77,8 @@ fn update_list(document: &mut Value, field: &str, id: &str, include: bool) -> Re
     Ok(())
 }
 
-fn sync_locked(id: &str, change: OhMyPiChange<'_>) -> Result<(), AppError> {
-    crate::ohmypi_config::update_ohmypi_mcp_document(|document| {
+fn sync_locked(id: &str, change: OmpChange<'_>) -> Result<(), AppError> {
+    crate::omp_config::update_omp_mcp_document(|document| {
         let before = document.clone();
         let servers = document
             .as_object_mut()
@@ -90,7 +90,7 @@ fn sync_locked(id: &str, change: OhMyPiChange<'_>) -> Result<(), AppError> {
                 AppError::Config("Oh My Pi MCP 'mcpServers' must be an object".into())
             })?;
         match change {
-            OhMyPiChange::Enable(spec, previous) | OhMyPiChange::Disable(spec, previous) => {
+            OmpChange::Enable(spec, previous) | OmpChange::Disable(spec, previous) => {
                 let unified = unified_spec(spec);
                 super::validation::validate_server_spec(&unified)?;
                 if servers
@@ -117,18 +117,18 @@ fn sync_locked(id: &str, change: OhMyPiChange<'_>) -> Result<(), AppError> {
                 );
                 entry.insert(
                     "enabled".into(),
-                    json!(matches!(change, OhMyPiChange::Enable(_, _))),
+                    json!(matches!(change, OmpChange::Enable(_, _))),
                 );
                 servers.insert(id.into(), merged);
                 update_list(
                     document,
                     "disabledServers",
                     id,
-                    matches!(change, OhMyPiChange::Disable(_, _)),
+                    matches!(change, OmpChange::Disable(_, _)),
                 )?;
                 update_list(document, "enabledServers", id, false)?;
             }
-            OhMyPiChange::Remove(expected) => {
+            OmpChange::Remove(expected) => {
                 if expected.is_some_and(|spec| {
                     servers
                         .get(id)
@@ -147,7 +147,7 @@ fn sync_locked(id: &str, change: OhMyPiChange<'_>) -> Result<(), AppError> {
 
 fn read_document() -> Result<Value, AppError> {
     let mut result = json!({});
-    crate::ohmypi_config::update_ohmypi_mcp_document(|document| {
+    crate::omp_config::update_omp_mcp_document(|document| {
         result = document.clone();
         Ok(false)
     })?;
@@ -179,7 +179,7 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
     if document["mcpServers"].get(id).is_some_and(|entry| {
         entry.get("enabled") == Some(&json!(false)) && transport_spec(entry) == transport_spec(spec)
     }) {
-        sync_locked(id, OhMyPiChange::Remove(Some(spec)))?;
+        sync_locked(id, OmpChange::Remove(Some(spec)))?;
     }
     Ok(())
 }
@@ -221,7 +221,7 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
                 skipped.push(format!("'{id}': conflicts with an existing server"));
                 continue;
             }
-            server.apps.ohmypi = enabled;
+            server.apps.omp = enabled;
             server
         } else {
             count += 1;
@@ -230,7 +230,7 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
                 name: id.clone(),
                 server: spec,
                 apps: McpApps {
-                    ohmypi: enabled,
+                    omp: enabled,
                     ..Default::default()
                 },
                 description: None,

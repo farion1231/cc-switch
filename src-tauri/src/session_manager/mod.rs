@@ -14,7 +14,7 @@ use std::time::Instant;
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, ohmypi, openclaw, opencode, pi,
+    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,7 +67,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         let h6 = s.spawn(hermes::scan_sessions);
         let h7 = s.spawn(grokbuild::scan_sessions);
         let h8 = s.spawn(pi::scan_sessions);
-        let h9 = s.spawn(ohmypi::scan_sessions);
+        let h9 = s.spawn(omp::scan_sessions);
         (
             h1.join().unwrap_or_default(),
             h2.join().unwrap_or_default(),
@@ -128,7 +128,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
-        "ohmypi" => ohmypi::load_messages(path),
+        "omp" => omp::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -234,7 +234,7 @@ fn delete_session_with_roots(
         "grokbuild" => grokbuild::delete_session(&validated_root, &validated_source, session_id),
         "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
-        "ohmypi" => ohmypi::delete_session(&validated_root, &validated_source, session_id),
+        "omp" => omp::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -251,7 +251,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "agy" => agy::session_roots(),
-        "ohmypi" => ohmypi::session_roots(),
+        "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

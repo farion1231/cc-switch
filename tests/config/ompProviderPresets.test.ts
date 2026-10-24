@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ohmypiProviderPresets } from "@/config/ohmypiProviderPresets";
+import { ompProviderPresets } from "@/config/ompProviderPresets";
 import { piProviderPresets } from "@/config/piProviderPresets";
 
 describe("Oh My Pi provider preset translation", () => {
   it("translates Pi's DeepSeek switch and reasoning replay to native controls", () => {
     let translated = 0;
     for (const source of piProviderPresets) {
-      const target = ohmypiProviderPresets.find(
+      const target = ompProviderPresets.find(
         (preset) => preset.providerKey === source.providerKey,
       )!;
       const entries = [

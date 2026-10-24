@@ -6,7 +6,7 @@ import { providersApi, settingsApi } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import {
   invalidatePiDirectoryCaches,
-  invalidateOhMyPiDirectoryCaches,
+  invalidateOmpDirectoryCaches,
   useSettingsQuery,
   useSaveSettingsMutation,
 } from "@/lib/query";
@@ -62,7 +62,7 @@ const DIRECTORY_KEYS = [
   "openclawConfigDir",
   "hermesConfigDir",
   "piConfigDir",
-  "ohmypiConfigDir",
+  "ompConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -135,7 +135,7 @@ export function useSettings(): UseSettingsResult {
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
-      ohmypi: sanitizeDir(data?.ohmypiConfigDir),
+      omp: sanitizeDir(data?.ompConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -223,7 +223,7 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.openclawConfigDir,
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
-        const sanitizedOhmypiDir = sanitizeDir(mergedSettings.ohmypiConfigDir);
+        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -239,7 +239,7 @@ export function useSettings(): UseSettingsResult {
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
-          ohmypiConfigDir: sanitizedOhmypiDir,
+          ompConfigDir: sanitizedOmpDir,
           language: mergedSettings.language,
         };
 
@@ -360,7 +360,7 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.openclawConfigDir,
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
-        const sanitizedOhmypiDir = sanitizeDir(mergedSettings.ohmypiConfigDir);
+        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -369,7 +369,7 @@ export function useSettings(): UseSettingsResult {
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
         const previousPiDir = sanitizeDir(data?.piConfigDir);
-        const previousOhmypiDir = sanitizeDir(data?.ohmypiConfigDir);
+        const previousOmpDir = sanitizeDir(data?.ompConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -385,7 +385,7 @@ export function useSettings(): UseSettingsResult {
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
-          ohmypiConfigDir: sanitizedOhmypiDir,
+          ompConfigDir: sanitizedOmpDir,
           language: mergedSettings.language,
         };
 
@@ -476,7 +476,7 @@ export function useSettings(): UseSettingsResult {
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         const piDirChanged = sanitizedPiDir !== previousPiDir;
-        const ohmypiDirChanged = sanitizedOhmypiDir !== previousOhmypiDir;
+        const ompDirChanged = sanitizedOmpDir !== previousOmpDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
@@ -497,8 +497,8 @@ export function useSettings(): UseSettingsResult {
         if (piDirChanged) {
           await invalidatePiDirectoryCaches(queryClient);
         }
-        if (ohmypiDirChanged) {
-          await invalidateOhMyPiDirectoryCaches(queryClient);
+        if (ompDirChanged) {
+          await invalidateOmpDirectoryCaches(queryClient);
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);

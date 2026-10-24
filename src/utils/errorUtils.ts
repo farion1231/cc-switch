@@ -59,7 +59,7 @@ export const translatePiProviderMutationError = (
   return "";
 };
 
-export const translateOhMyPiProviderMutationError = (
+export const translateOmpProviderMutationError = (
   message: string,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string => {
@@ -70,14 +70,14 @@ export const translateOhMyPiProviderMutationError = (
     message.includes("no longer present in models.yml") ||
     message.includes("another value now owns the key")
   ) {
-    return t("ohmypi.provider.writeConflict");
+    return t("omp.provider.writeConflict");
   }
 
   if (
     message.includes("Oh My Pi provider") &&
     message.includes("already exists")
   ) {
-    return t("ohmypi.form.providerKeyDuplicate");
+    return t("omp.form.providerKeyDuplicate");
   }
 
   return "";

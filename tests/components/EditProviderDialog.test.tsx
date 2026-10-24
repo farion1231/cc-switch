@@ -633,7 +633,7 @@ describe("EditProviderDialog", () => {
         provider={provider}
         onOpenChange={vi.fn()}
         onSubmit={vi.fn()}
-        appId="ohmypi"
+        appId="omp"
       />,
     );
 

@@ -72,7 +72,7 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
-            enabled_ohmypi BOOLEAN NOT NULL DEFAULT 0
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -105,7 +105,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_ohmypi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -611,7 +611,7 @@ impl Database {
                                 Self::add_column_if_missing(
                                     conn,
                                     table,
-                                    "enabled_ohmypi",
+                                    "enabled_omp",
                                     "BOOLEAN NOT NULL DEFAULT 0",
                                 )?;
                             }

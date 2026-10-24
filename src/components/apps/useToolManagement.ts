@@ -229,7 +229,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   mcode: "mcode",
   kimi: "kimi",
   agy: "agy",
-  omp: "ohmypi",
+  omp: "omp",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

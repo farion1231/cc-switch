@@ -1460,7 +1460,7 @@ fn incremental_vacuum_reclaims_entire_freelist() {
 }
 
 #[test]
-fn migration_v20_to_v21_adds_enabled_ohmypi_columns() {
+fn migration_v20_to_v21_adds_enabled_omp_columns() {
     let conn = Connection::open_in_memory().expect("open memory db");
     // v20 形态：含 Mcode/Pi 列（v18->v20 产物），无 Oh My Pi 列
     conn.execute_batch(
@@ -1498,8 +1498,8 @@ fn migration_v20_to_v21_adds_enabled_ohmypi_columns() {
     for (table, column) in [
         ("mcp_servers", "enabled_agy"),
         ("skills", "enabled_agy"),
-        ("mcp_servers", "enabled_ohmypi"),
-        ("skills", "enabled_ohmypi"),
+        ("mcp_servers", "enabled_omp"),
+        ("skills", "enabled_omp"),
     ] {
         assert!(
             Database::has_column(&conn, table, column).expect("check column"),
@@ -1507,20 +1507,20 @@ fn migration_v20_to_v21_adds_enabled_ohmypi_columns() {
         );
     }
     // 既有标志列的值必须保留
-    let (mcp_hermes, mcp_mcode, mcp_pi, mcp_ohmypi): (i64, i64, i64, i64) = conn
+    let (mcp_hermes, mcp_mcode, mcp_pi, mcp_omp): (i64, i64, i64, i64) = conn
         .query_row(
-            "SELECT enabled_hermes, enabled_mcode, enabled_pi, enabled_ohmypi FROM mcp_servers WHERE id = 'mcp-1'",
+            "SELECT enabled_hermes, enabled_mcode, enabled_pi, enabled_omp FROM mcp_servers WHERE id = 'mcp-1'",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("read mcp row");
-    assert_eq!((mcp_hermes, mcp_mcode, mcp_pi, mcp_ohmypi), (1, 1, 1, 0));
-    let (skill_hermes, skill_mcode, skill_ohmypi): (i64, i64, i64) = conn
+    assert_eq!((mcp_hermes, mcp_mcode, mcp_pi, mcp_omp), (1, 1, 1, 0));
+    let (skill_hermes, skill_mcode, skill_omp): (i64, i64, i64) = conn
         .query_row(
-            "SELECT enabled_hermes, enabled_mcode, enabled_ohmypi FROM skills WHERE id = 'skill-1'",
+            "SELECT enabled_hermes, enabled_mcode, enabled_omp FROM skills WHERE id = 'skill-1'",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("read skill row");
-    assert_eq!((skill_hermes, skill_mcode, skill_ohmypi), (1, 0, 0));
+    assert_eq!((skill_hermes, skill_mcode, skill_omp), (1, 0, 0));
 }

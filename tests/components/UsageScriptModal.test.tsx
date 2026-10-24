@@ -156,7 +156,7 @@ describe("UsageScriptModal official subscription hint", () => {
 });
 
 /**
- * Oh My Pi has its own `AppId` ("ohmypi"), so it never matched the `pi` branch
+ * Oh My Pi has its own `AppId` ("omp"), so it never matched the `pi` branch
  * and both built-in tests reported "API key is empty" on an omp card. The
  * provider key and base URL must reach the balance API like they do for Pi.
  */
@@ -184,7 +184,7 @@ describe("UsageScriptModal Oh My Pi credentials", () => {
               api: "openai-completions",
             },
           }}
-          appId="ohmypi"
+          appId="omp"
           isOpen
           onClose={() => {}}
           onSave={() => {}}

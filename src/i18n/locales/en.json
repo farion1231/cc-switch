@@ -932,8 +932,8 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
-    "ohmypiConfigDir": "Oh My Pi Configuration Directory",
-    "ohmypiConfigDirDescription": "Override the Oh My Pi configuration directory (models.yml, config.yml, prompts, skills, and sessions).",
+    "ompConfigDir": "Oh My Pi Configuration Directory",
+    "ompConfigDirDescription": "Override the Oh My Pi configuration directory (models.yml, config.yml, prompts, skills, and sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -942,7 +942,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
-    "browsePlaceholderOhMyPi": "e.g., /home/<your-username>/.omp/agent",
+    "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -1102,7 +1102,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "ohmypi": "Oh My Pi"
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -4976,7 +4976,7 @@
       "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
     }
   },
-  "ohmypi": {
+  "omp": {
     "empty": {
       "title": "No custom providers added yet",
       "description": "Oh My Pi manages its built-in providers. Click + in the top right to add a provider from a preset or custom configuration."

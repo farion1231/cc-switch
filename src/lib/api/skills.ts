@@ -15,7 +15,7 @@ export type AppType =
   | "mcode"
   | "kimi"
   | "agy"
-  | "ohmypi";
+  | "omp";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -31,7 +31,7 @@ export interface SkillApps {
   mcode?: boolean;
   kimi?: boolean;
   agy?: boolean;
-  ohmypi: boolean;
+  omp: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

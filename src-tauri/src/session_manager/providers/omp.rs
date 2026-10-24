@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const PROVIDER_ID: &str = "ohmypi";
+const PROVIDER_ID: &str = "omp";
 
 #[derive(Debug, Clone, Copy)]
 enum SessionLayout {
@@ -31,7 +31,7 @@ fn resolve_session_root() -> Result<(PathBuf, SessionLayout), String> {
         }
         return Ok((root, SessionLayout::Flat));
     }
-    crate::ohmypi_config::get_ohmypi_data_dir()
+    crate::omp_config::get_omp_data_dir()
         .map(|dir| (dir.join("sessions"), SessionLayout::ProjectBuckets))
         .map_err(|error| error.to_string())
 }
@@ -269,11 +269,11 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
 fn resume_command(source: &Path) -> Result<String, String> {
     use crate::session_manager::terminal::shell_escape;
-    let agent = crate::ohmypi_config::get_ohmypi_agent_dir().map_err(|error| error.to_string())?;
+    let agent = crate::omp_config::get_omp_agent_dir().map_err(|error| error.to_string())?;
     let native_agent =
-        crate::ohmypi_config::get_ohmypi_native_agent_dir().map_err(|error| error.to_string())?;
+        crate::omp_config::get_omp_native_agent_dir().map_err(|error| error.to_string())?;
     let profile = if agent == native_agent {
-        crate::ohmypi_config::get_ohmypi_active_profile().map_err(|error| error.to_string())?
+        crate::omp_config::get_omp_active_profile().map_err(|error| error.to_string())?
     } else {
         None
     };
@@ -407,7 +407,7 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ohmypi_config::test_support::TestAgentDir;
+    use crate::omp_config::test_support::TestAgentDir;
     use crate::session_manager::model::{ContentRef, SessionBlock};
     use serde_json::json;
     use serial_test::serial;
@@ -605,7 +605,7 @@ mod tests {
     fn resume_preserves_custom_agent_directory_and_quotes_absolute_source() {
         let _agent = TestAgentDir::new();
         let _env = SessionDirEnv::set(None);
-        let directory = crate::ohmypi_config::get_ohmypi_agent_dir().unwrap();
+        let directory = crate::omp_config::get_omp_agent_dir().unwrap();
         let source = directory.join("sessions/project/quote'$(false) name.jsonl");
         let command = resume_command(&source).unwrap();
         let shell=format!("omp() {{ printf '%s\\n' \"$OMP_PROFILE\" \"$PI_CODING_AGENT_DIR\" \"$@\"; }}; {command}");

@@ -932,8 +932,8 @@
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "piConfigDir": "Pi 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
-    "ohmypiConfigDir": "Oh My Pi 配置目录",
-    "ohmypiConfigDirDescription": "覆盖 Oh My Pi 配置目录（models.yml、config.yml、提示词、Skills 与会话）。",
+    "ompConfigDir": "Oh My Pi 配置目录",
+    "ompConfigDirDescription": "覆盖 Oh My Pi 配置目录（models.yml、config.yml、提示词、Skills 与会话）。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -942,7 +942,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
-    "browsePlaceholderOhMyPi": "例如：/home/<你的用户名>/.omp/agent",
+    "browsePlaceholderOmp": "例如：/home/<你的用户名>/.omp/agent",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -1102,7 +1102,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "ohmypi": "Oh My Pi"
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -4976,7 +4976,7 @@
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用该供应商的模型，请先在 Kimi Code 中用 /secondary-model 更换"
     }
   },
-  "ohmypi": {
+  "omp": {
     "empty": {
       "title": "还没有添加自定义供应商",
       "description": "Oh My Pi 内置供应商由 Oh My Pi 自行管理。点击右上角 +，从预设或自定义配置添加供应商。"

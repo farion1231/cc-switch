@@ -770,7 +770,7 @@ describe("buildAdditiveSections", () => {
 
   it("blocks every Oh My Pi change while its current state is unavailable", () => {
     const sections = buildAdditiveSections({
-      app: "ohmypi",
+      app: "omp",
       t,
       providers: [relay],
       isInConfig: () => false,
@@ -780,10 +780,10 @@ describe("buildAdditiveSections", () => {
 
     expect(button(sections, "relay", "add")).toMatchObject({
       label: "providerCard.action.enable",
-      disabledReason: "ohmypi.current.stateUnavailableHint",
+      disabledReason: "omp.current.stateUnavailableHint",
     });
     expect(item(sections, "relay").deleteDisabledReason).toBe(
-      "ohmypi.current.stateUnavailableHint",
+      "omp.current.stateUnavailableHint",
     );
   });
 });

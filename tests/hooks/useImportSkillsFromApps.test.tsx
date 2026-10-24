@@ -35,7 +35,7 @@ function makeSkill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
       openclaw: false,
       hermes: false,
       pi: false,
-      ohmypi: false,
+      omp: false,
     },
     installedAt: 0,
     updatedAt: 0,

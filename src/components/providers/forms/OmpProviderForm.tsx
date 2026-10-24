@@ -41,11 +41,11 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import { ohmypiProviderPresets } from "@/config/ohmypiProviderPresets";
+import { ompProviderPresets } from "@/config/ompProviderPresets";
 
 import type { ProviderCategory } from "@/types";
 
-// Allowed `api` values per ohmypi models.yml (see oh-my-pi docs/models.md).
+// Allowed `api` values per omp models.yml (see oh-my-pi docs/models.md).
 const API_FORMATS = [
   { value: "openai-completions", label: "OpenAI Chat Completions" },
   { value: "openai-responses", label: "OpenAI Responses" },
@@ -58,7 +58,7 @@ const API_FORMATS = [
   { value: "google-vertex", label: "Google Vertex" },
 ] as const satisfies ReadonlyArray<{ value: string; label: string }>;
 
-// `discovery.type` values per ohmypi models.yml (see oh-my-pi docs/models.md).
+// `discovery.type` values per omp models.yml (see oh-my-pi docs/models.md).
 // `proxy` auto-detects each model's wire, so it needs no provider-level api;
 // every other type requires one (models-config loader enforces this).
 const DISCOVERY_TYPES = [
@@ -94,7 +94,7 @@ const MODEL_CONTROLLED_KEYS: Record<string, true> = {
   maxTokens: true,
 };
 
-interface OhMyPiModelDraft {
+interface OmpModelDraft {
   key: string;
   id: string;
   name: string;
@@ -110,18 +110,18 @@ interface OhMyPiModelDraft {
   passthrough: Record<string, unknown>;
 }
 
-class OhMyPiFormValidationError extends Error {
+class OmpFormValidationError extends Error {
   constructor(
     message: string,
     readonly fieldSelector?: string,
     readonly modelKey?: string,
   ) {
     super(message);
-    this.name = "OhMyPiFormValidationError";
+    this.name = "OmpFormValidationError";
   }
 }
 
-function validateOhMyPiField<T>(
+function validateOmpField<T>(
   operation: () => T,
   fieldSelector: string,
   modelKey?: string,
@@ -129,7 +129,7 @@ function validateOhMyPiField<T>(
   try {
     return operation();
   } catch (error) {
-    throw new OhMyPiFormValidationError(
+    throw new OmpFormValidationError(
       error instanceof Error ? error.message : String(error),
       fieldSelector,
       modelKey,
@@ -219,7 +219,7 @@ function positiveNumber(
 ): number {
   const parsed = Number(value);
   if (value.trim() === "" || !Number.isFinite(parsed) || parsed <= 0) {
-    throw new OhMyPiFormValidationError(errorMessage, fieldSelector);
+    throw new OmpFormValidationError(errorMessage, fieldSelector);
   }
   return parsed;
 }
@@ -251,7 +251,7 @@ function modelDraft(
   options: {
     key?: string;
   } = {},
-): OhMyPiModelDraft {
+): OmpModelDraft {
   const model = asObject(value);
   return {
     key: options.key ?? crypto.randomUUID(),
@@ -277,7 +277,7 @@ function modelDraft(
   };
 }
 
-function newModel(): OhMyPiModelDraft {
+function newModel(): OmpModelDraft {
   return {
     key: crypto.randomUUID(),
     id: "",
@@ -295,7 +295,7 @@ function newModel(): OhMyPiModelDraft {
   };
 }
 
-function modelPreview(model: OhMyPiModelDraft): Record<string, unknown> {
+function modelPreview(model: OmpModelDraft): Record<string, unknown> {
   const displayName = model.name.trim();
   const previewNumber = (value: string): number | string | undefined => {
     if (!value.trim()) return undefined;
@@ -320,7 +320,7 @@ function modelPreview(model: OhMyPiModelDraft): Record<string, unknown> {
   };
 }
 
-function buildOhMyPiSettingsConfig({
+function buildOmpSettingsConfig({
   passthrough,
   name,
   baseUrl,
@@ -376,7 +376,7 @@ function controlledBlockYaml(
   includeCompat: boolean,
   discoveryType: string,
   discoveryExtra: Record<string, unknown>,
-  models: OhMyPiModelDraft[],
+  models: OmpModelDraft[],
   includeModels: boolean,
 ): string {
   const controlled: Record<string, unknown> = {
@@ -436,7 +436,7 @@ function stripControlledKeys(text: string): string {
   return kept.join("\n");
 }
 
-export function OhMyPiProviderForm({
+export function OmpProviderForm({
   providerId,
   submitLabel,
   onSubmit,
@@ -488,7 +488,7 @@ export function OhMyPiProviderForm({
   // 两者在 displayYaml 里组合，实现控件 ⇄ YAML 双向实时同步。
   const [unmanagedText, setUnmanagedText] = useState(() => {
     // Prefer the raw text (comments, order preserved) captured from models.yml.
-    const raw = initialData?.meta?.ohmypiPassthroughYaml;
+    const raw = initialData?.meta?.ompPassthroughYaml;
     const source =
       raw !== undefined && raw.trim() !== ""
         ? raw
@@ -509,11 +509,11 @@ export function OhMyPiProviderForm({
   const [discoveryExtra, setDiscoveryExtra] = useState<Record<string, unknown>>(
     () => discoveryExtras(initialConfig.discovery),
   );
-  const initialModels = useMemo<OhMyPiModelDraft[]>(() => {
+  const initialModels = useMemo<OmpModelDraft[]>(() => {
     if (!Array.isArray(initialConfig.models)) return [];
     return initialConfig.models.map((model) => modelDraft(model));
   }, [initialConfig.models]);
-  const [models, setModels] = useState<OhMyPiModelDraft[]>(initialModels);
+  const [models, setModels] = useState<OmpModelDraft[]>(initialModels);
   const [expandedModelKeys, setExpandedModelKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -588,7 +588,7 @@ export function OhMyPiProviderForm({
         unmanagedText.trim() === ""
           ? {}
           : (parsedPassthrough ?? providerPassthrough);
-      return buildOhMyPiSettingsConfig({
+      return buildOmpSettingsConfig({
         passthrough,
         name: displayName,
         baseUrl,
@@ -663,8 +663,8 @@ export function OhMyPiProviderForm({
 
   const presetEntries = useMemo(
     () =>
-      ohmypiProviderPresets.map((preset, index) => ({
-        id: `ohmypi-${index}`,
+      ompProviderPresets.map((preset, index) => ({
+        id: `omp-${index}`,
         preset,
       })),
     [],
@@ -694,7 +694,7 @@ export function OhMyPiProviderForm({
       websiteUrl: "",
       notes: "",
       settingsConfig: JSON.stringify(
-        buildOhMyPiSettingsConfig({
+        buildOmpSettingsConfig({
           passthrough: {},
           name: initialDisplayName,
           baseUrl: "",
@@ -889,7 +889,7 @@ export function OhMyPiProviderForm({
 
   const updateModelOverride = (
     key: string,
-    update: Partial<Omit<OhMyPiModelDraft, "key">>,
+    update: Partial<Omit<OmpModelDraft, "key">>,
   ) => {
     setModels((current) =>
       current.map((model) =>
@@ -986,33 +986,33 @@ export function OhMyPiProviderForm({
         isEdit ? (providerId ?? "") : providerKey || trimmedName,
       );
       if (!trimmedName) {
-        throw new OhMyPiFormValidationError(
-          t("ohmypi.form.nameRequired"),
+        throw new OmpFormValidationError(
+          t("omp.form.nameRequired"),
           'input[name="name"]',
         );
       }
       if (!isEdit && !trimmedKey) {
-        throw new OhMyPiFormValidationError(
-          t("ohmypi.form.providerKeyRequired"),
-          "#ohmypi-provider-key",
+        throw new OmpFormValidationError(
+          t("omp.form.providerKeyRequired"),
+          "#omp-provider-key",
         );
       }
       const seen = new Set<string>();
       for (const model of includeModels ? models : []) {
         const id = model.id.trim();
         if (id.length === 0) {
-          throw new OhMyPiFormValidationError(
-            t("ohmypi.form.modelIdRequired", {
+          throw new OmpFormValidationError(
+            t("omp.form.modelIdRequired", {
               index: models.indexOf(model) + 1,
             }),
-            `#ohmypi-model-id-${model.key}`,
+            `#omp-model-id-${model.key}`,
             model.key,
           );
         }
         if (seen.has(id)) {
-          throw new OhMyPiFormValidationError(
-            t("ohmypi.form.duplicateModel", { id }),
-            `#ohmypi-model-id-${model.key}`,
+          throw new OmpFormValidationError(
+            t("omp.form.duplicateModel", { id }),
+            `#omp-model-id-${model.key}`,
             model.key,
           );
         }
@@ -1023,30 +1023,30 @@ export function OhMyPiProviderForm({
         const includeContextWindow = !isEdit || model.hasContextWindow;
         const includeMaxTokens = !isEdit || model.hasMaxTokens;
         if (includeContextWindow) {
-          validateOhMyPiField(
+          validateOmpField(
             () =>
               positiveNumber(
                 model.contextWindow,
-                t("ohmypi.form.positiveNumberRequired", {
-                  label: t("ohmypi.form.contextWindow"),
+                t("omp.form.positiveNumberRequired", {
+                  label: t("omp.form.contextWindow"),
                 }),
-                `#ohmypi-model-context-window-${model.key}`,
+                `#omp-model-context-window-${model.key}`,
               ),
-            `#ohmypi-model-context-window-${model.key}`,
+            `#omp-model-context-window-${model.key}`,
             model.key,
           );
         }
         if (includeMaxTokens) {
-          validateOhMyPiField(
+          validateOmpField(
             () =>
               positiveNumber(
                 model.maxTokens,
-                t("ohmypi.form.positiveNumberRequired", {
-                  label: t("ohmypi.form.maxTokens"),
+                t("omp.form.positiveNumberRequired", {
+                  label: t("omp.form.maxTokens"),
                 }),
-                `#ohmypi-model-max-tokens-${model.key}`,
+                `#omp-model-max-tokens-${model.key}`,
               ),
-            `#ohmypi-model-max-tokens-${model.key}`,
+            `#omp-model-max-tokens-${model.key}`,
             model.key,
           );
         }
@@ -1055,22 +1055,22 @@ export function OhMyPiProviderForm({
       // models.yml 校验：discovery 需要供应商级 api，proxy 除外（每模型
       // 自动识别接口，见 docs/models.md "Discovery"）。
       if (discoveryType && discoveryType !== "proxy" && !api.trim()) {
-        throw new OhMyPiFormValidationError(
-          t("ohmypi.form.discoveryApiRequired"),
-          "#ohmypi-provider-api-select",
+        throw new OmpFormValidationError(
+          t("omp.form.discoveryApiRequired"),
+          "#omp-provider-api-select",
         );
       }
 
       if (baseUrl.trim()) {
-        validateOhMyPiField(
+        validateOmpField(
           () =>
             validateAbsoluteHttpUrl(
               baseUrl.trim(),
-              t("ohmypi.form.absoluteHttpUrlRequired", {
+              t("omp.form.absoluteHttpUrlRequired", {
                 label: t("opencode.baseUrl", { defaultValue: "Base URL" }),
               }),
             ),
-          "#ohmypi-provider-base-url",
+          "#omp-provider-base-url",
         );
       }
 
@@ -1089,17 +1089,17 @@ export function OhMyPiProviderForm({
           ...initialData?.meta,
           // The edited raw text (comments included) is persisted and reused
           // verbatim when writing this entry into models.yml.
-          ohmypiPassthroughYaml: displayYaml.trim() ? displayYaml : undefined,
+          ompPassthroughYaml: displayYaml.trim() ? displayYaml : undefined,
         },
       };
       await onSubmit(values);
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : String(error);
       setFormError(rawMessage);
-      if (error instanceof OhMyPiFormValidationError) {
+      if (error instanceof OmpFormValidationError) {
         const modelKey =
           error.modelKey ??
-          error.fieldSelector?.match(/#ohmypi-model-([0-9a-f-]{36})$/)?.[1];
+          error.fieldSelector?.match(/#omp-model-([0-9a-f-]{36})$/)?.[1];
         if (modelKey) {
           setExpandedModelKeys((current) => {
             const next = new Set(current);
@@ -1167,7 +1167,7 @@ export function OhMyPiProviderForm({
             role="status"
             className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
           >
-            {t("ohmypi.form.fixYamlFirst")}
+            {t("omp.form.fixYamlFirst")}
           </p>
         )}
 
@@ -1181,8 +1181,8 @@ export function OhMyPiProviderForm({
               beforeNameSlot={
                 isEdit || selectedPresetId === "custom" ? (
                   <div className="space-y-2">
-                    <Label htmlFor="ohmypi-provider-key">
-                      {t("ohmypi.form.providerKey")}
+                    <Label htmlFor="omp-provider-key">
+                      {t("omp.form.providerKey")}
                       <span
                         aria-hidden="true"
                         className="text-destructive ml-1"
@@ -1191,7 +1191,7 @@ export function OhMyPiProviderForm({
                       </span>
                     </Label>
                     <Input
-                      id="ohmypi-provider-key"
+                      id="omp-provider-key"
                       value={providerKey}
                       onChange={(event) =>
                         handleProviderKeyChange(event.target.value)
@@ -1220,7 +1220,7 @@ export function OhMyPiProviderForm({
               label={t("opencode.npmPackage", {
                 defaultValue: "接口格式",
               })}
-              htmlFor="ohmypi-provider-api-select"
+              htmlFor="omp-provider-api-select"
             >
               <Select
                 value={api || "inherit"}
@@ -1228,16 +1228,13 @@ export function OhMyPiProviderForm({
                   handleApiChange(value === "inherit" ? "" : value)
                 }
               >
-                <SelectTrigger
-                  id="ohmypi-provider-api-select"
-                  className="w-full"
-                >
+                <SelectTrigger id="omp-provider-api-select" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {isEdit && (
                     <SelectItem value="inherit">
-                      {t("ohmypi.form.apiInherit")}
+                      {t("omp.form.apiInherit")}
                     </SelectItem>
                   )}
                   {API_FORMATS.map((format) => (
@@ -1252,7 +1249,7 @@ export function OhMyPiProviderForm({
               </Select>
               {isEdit ? (
                 <p className="text-xs text-fg-2">
-                  {t("ohmypi.form.apiInheritHint", {
+                  {t("omp.form.apiInheritHint", {
                     defaultValue:
                       "选择「不指定」时不写 api 键：标识与内置供应商相同时继承其模型的接口格式，proxy 自动发现时每个模型单独自动判断接口格式。",
                   })}
@@ -1267,8 +1264,8 @@ export function OhMyPiProviderForm({
             </Field>
 
             <ApiKeySection
-              id="ohmypi-api-key"
-              label={t("ohmypi.form.credential")}
+              id="omp-api-key"
+              label={t("omp.form.credential")}
               value={apiKey}
               onChange={handleApiKeyChange}
               category={category}
@@ -1278,7 +1275,7 @@ export function OhMyPiProviderForm({
 
             <div className="space-y-2">
               <EndpointField
-                id="ohmypi-provider-base-url"
+                id="omp-provider-base-url"
                 label={t("opencode.baseUrl", { defaultValue: "Base URL" })}
                 value={baseUrl}
                 onChange={handleBaseUrlChange}
@@ -1297,25 +1294,25 @@ export function OhMyPiProviderForm({
             />
 
             <StructuredOptionsEditor
-              id="ohmypi-provider-compat"
-              title={t("ohmypi.form.compatibility")}
-              hint={t("ohmypi.form.compatibilityHint")}
-              addLabel={t("ohmypi.form.addCompatibilityOption")}
-              emptyLabel={t("ohmypi.form.noCompatibilityOptions")}
-              keyLabel={t("ohmypi.form.optionKey")}
-              valueLabel={t("ohmypi.form.optionValue")}
+              id="omp-provider-compat"
+              title={t("omp.form.compatibility")}
+              hint={t("omp.form.compatibilityHint")}
+              addLabel={t("omp.form.addCompatibilityOption")}
+              emptyLabel={t("omp.form.noCompatibilityOptions")}
+              keyLabel={t("omp.form.optionKey")}
+              valueLabel={t("omp.form.optionValue")}
               keyPlaceholder="supportsDeveloperRole"
               valuePlaceholder="false"
-              removeLabel={t("ohmypi.form.removeCompatibilityOption")}
+              removeLabel={t("omp.form.removeCompatibilityOption")}
               options={providerCompat}
               onOptionsChange={handleProviderCompatChange}
             />
 
             <Field
-              label={t("ohmypi.form.modelsMode", {
+              label={t("omp.form.modelsMode", {
                 defaultValue: "模型来源",
               })}
-              htmlFor="ohmypi-models-mode"
+              htmlFor="omp-models-mode"
             >
               <Select
                 value={
@@ -1335,22 +1332,22 @@ export function OhMyPiProviderForm({
                   }
                 }}
               >
-                <SelectTrigger id="ohmypi-models-mode" className="w-full">
+                <SelectTrigger id="omp-models-mode" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="manual">
-                    {t("ohmypi.form.modelsModeManual", {
+                    {t("omp.form.modelsModeManual", {
                       defaultValue: "手动配置模型列表",
                     })}
                   </SelectItem>
                   <SelectItem value="discovery">
-                    {t("ohmypi.form.modelsModeDiscovery", {
+                    {t("omp.form.modelsModeDiscovery", {
                       defaultValue: "自动发现模型列表",
                     })}
                   </SelectItem>
                   <SelectItem value="none">
-                    {t("ohmypi.form.modelsModeNone", {
+                    {t("omp.form.modelsModeNone", {
                       defaultValue: "不配置模型",
                     })}
                   </SelectItem>
@@ -1360,10 +1357,10 @@ export function OhMyPiProviderForm({
 
             {discoveryType && (
               <Field
-                label={t("ohmypi.form.discoveryType", {
+                label={t("omp.form.discoveryType", {
                   defaultValue: "发现方式",
                 })}
-                htmlFor="ohmypi-discovery-type"
+                htmlFor="omp-discovery-type"
               >
                 <Select
                   value={discoveryType}
@@ -1372,13 +1369,13 @@ export function OhMyPiProviderForm({
                     invalidateFetchedModels();
                   }}
                 >
-                  <SelectTrigger id="ohmypi-discovery-type" className="w-full">
+                  <SelectTrigger id="omp-discovery-type" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {DISCOVERY_TYPES.map((type) => (
                       <SelectItem key={type.value} value={type.value}>
-                        {t(`ohmypi.form.discoveryType_${type.value}`, {
+                        {t(`omp.form.discoveryType_${type.value}`, {
                           defaultValue: type.label,
                         })}
                       </SelectItem>
@@ -1393,7 +1390,7 @@ export function OhMyPiProviderForm({
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-fg-2">
-                  {t("ohmypi.form.discoveryHint", {
+                  {t("omp.form.discoveryHint", {
                     defaultValue:
                       "由 Oh My Pi 定期从端点拉取模型列表；端点返回的上下文长度等元数据会自动套用。手动模型行和下方 YAML 的 modelOverrides 仍然生效。",
                   })}
@@ -1402,7 +1399,7 @@ export function OhMyPiProviderForm({
             )}
 
             <div
-              id="ohmypi-models-section"
+              id="omp-models-section"
               tabIndex={-1}
               className="space-y-3 border-l border-border pl-3 outline-none"
             >
@@ -1427,7 +1424,7 @@ export function OhMyPiProviderForm({
                     {t("providerForm.fetchModels")}
                   </Button>
                   <Button
-                    id="ohmypi-add-model"
+                    id="omp-add-model"
                     type="button"
                     variant="outline"
                     size="sm"
@@ -1435,25 +1432,25 @@ export function OhMyPiProviderForm({
                     className="h-7 gap-1"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    {t("ohmypi.form.addModel")}
+                    {t("omp.form.addModel")}
                   </Button>
                 </div>
               </div>
 
               {discoveryType ? (
                 <p role="status" className="py-2 text-sm text-fg-2">
-                  {t("ohmypi.form.modelsDiscoveryHint", {
+                  {t("omp.form.modelsDiscoveryHint", {
                     defaultValue:
                       "模型列表由 Oh My Pi 运行时自动发现，此处无需手动配置；仍可通过下方 YAML 添加 models 或 modelOverrides 微调。",
                   })}
                 </p>
               ) : !includeModels ? (
                 <p role="status" className="py-2 text-sm text-fg-2">
-                  {t("ohmypi.form.modelsHiddenHint")}
+                  {t("omp.form.modelsHiddenHint")}
                 </p>
               ) : models.length === 0 ? (
                 <p role="status" className="py-2 text-sm text-fg-2">
-                  {t("ohmypi.form.noModels", {
+                  {t("omp.form.noModels", {
                     defaultValue: "暂无模型配置",
                   })}
                 </p>
@@ -1462,7 +1459,7 @@ export function OhMyPiProviderForm({
                   <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
                     <span className="w-9" />
                     <span className="flex-1">
-                      {t("ohmypi.form.modelId")}
+                      {t("omp.form.modelId")}
                       <span
                         aria-hidden="true"
                         className="ml-1 text-destructive"
@@ -1470,7 +1467,7 @@ export function OhMyPiProviderForm({
                         *
                       </span>
                     </span>
-                    <span className="flex-1">{t("ohmypi.form.modelName")}</span>
+                    <span className="flex-1">{t("omp.form.modelName")}</span>
                     <span className="w-9" />
                   </div>
                   {models.map((model) => {
@@ -1483,7 +1480,7 @@ export function OhMyPiProviderForm({
                             variant="ghost"
                             size="icon"
                             onClick={() => toggleModelDetails(model.key)}
-                            aria-label={t("ohmypi.form.toggleModelDetails", {
+                            aria-label={t("omp.form.toggleModelDetails", {
                               defaultValue: "展开或收起模型详情",
                             })}
                             className="h-9 w-9 shrink-0"
@@ -1496,13 +1493,13 @@ export function OhMyPiProviderForm({
                           </Button>
                           <div className="flex min-w-0 flex-1 gap-1">
                             <Input
-                              id={`ohmypi-model-id-${model.key}`}
+                              id={`omp-model-id-${model.key}`}
                               value={model.id}
                               onChange={(event) =>
                                 changeModelId(model.key, event.target.value)
                               }
                               placeholder="model-id"
-                              aria-label={t("ohmypi.form.modelId")}
+                              aria-label={t("omp.form.modelId")}
                               required
                               className="min-w-0 flex-1"
                             />
@@ -1514,7 +1511,7 @@ export function OhMyPiProviderForm({
                             )}
                           </div>
                           <Input
-                            id={`ohmypi-model-name-${model.key}`}
+                            id={`omp-model-name-${model.key}`}
                             value={model.name}
                             onChange={(event) =>
                               updateModelOverride(model.key, {
@@ -1522,8 +1519,8 @@ export function OhMyPiProviderForm({
                                 hasName: true,
                               })
                             }
-                            placeholder={t("ohmypi.form.modelNamePlaceholder")}
-                            aria-label={t("ohmypi.form.modelName")}
+                            placeholder={t("omp.form.modelNamePlaceholder")}
+                            aria-label={t("omp.form.modelName")}
                             className="min-w-0 flex-1"
                           />
                           <Button
@@ -1531,7 +1528,7 @@ export function OhMyPiProviderForm({
                             variant="ghost"
                             size="icon"
                             onClick={() => removeModel(model.key)}
-                            aria-label={t("ohmypi.form.removeModel")}
+                            aria-label={t("omp.form.removeModel")}
                             className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -1543,13 +1540,13 @@ export function OhMyPiProviderForm({
                             <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
                               <div className="flex items-center gap-2.5">
                                 <Label
-                                  htmlFor={`ohmypi-model-reasoning-${model.key}`}
+                                  htmlFor={`omp-model-reasoning-${model.key}`}
                                   className="cursor-pointer"
                                 >
-                                  {t("ohmypi.form.reasoning")}
+                                  {t("omp.form.reasoning")}
                                 </Label>
                                 <Switch
-                                  id={`ohmypi-model-reasoning-${model.key}`}
+                                  id={`omp-model-reasoning-${model.key}`}
                                   checked={model.reasoning}
                                   onCheckedChange={(checked) =>
                                     updateModelOverride(model.key, {
@@ -1561,13 +1558,13 @@ export function OhMyPiProviderForm({
                               </div>
                               <div className="flex items-center gap-2.5">
                                 <Label
-                                  htmlFor={`ohmypi-model-image-input-${model.key}`}
+                                  htmlFor={`omp-model-image-input-${model.key}`}
                                   className="cursor-pointer"
                                 >
-                                  {t("ohmypi.form.imageInput")}
+                                  {t("omp.form.imageInput")}
                                 </Label>
                                 <Switch
-                                  id={`ohmypi-model-image-input-${model.key}`}
+                                  id={`omp-model-image-input-${model.key}`}
                                   checked={supportsImageInput(model.input)}
                                   onCheckedChange={(checked) =>
                                     updateModelOverride(model.key, {
@@ -1584,7 +1581,7 @@ export function OhMyPiProviderForm({
                             <Field
                               label={
                                 <>
-                                  {t("ohmypi.form.contextWindow")}
+                                  {t("omp.form.contextWindow")}
                                   <span
                                     aria-hidden="true"
                                     className="ml-1 text-destructive"
@@ -1593,11 +1590,11 @@ export function OhMyPiProviderForm({
                                   </span>
                                 </>
                               }
-                              htmlFor={`ohmypi-model-context-window-${model.key}`}
+                              htmlFor={`omp-model-context-window-${model.key}`}
                             >
                               <Input
-                                id={`ohmypi-model-context-window-${model.key}`}
-                                aria-label={t("ohmypi.form.contextWindow")}
+                                id={`omp-model-context-window-${model.key}`}
+                                aria-label={t("omp.form.contextWindow")}
                                 type="number"
                                 step="any"
                                 min="1"
@@ -1616,7 +1613,7 @@ export function OhMyPiProviderForm({
                             <Field
                               label={
                                 <>
-                                  {t("ohmypi.form.maxTokens")}
+                                  {t("omp.form.maxTokens")}
                                   <span
                                     aria-hidden="true"
                                     className="ml-1 text-destructive"
@@ -1625,11 +1622,11 @@ export function OhMyPiProviderForm({
                                   </span>
                                 </>
                               }
-                              htmlFor={`ohmypi-model-max-tokens-${model.key}`}
+                              htmlFor={`omp-model-max-tokens-${model.key}`}
                             >
                               <Input
-                                id={`ohmypi-model-max-tokens-${model.key}`}
-                                aria-label={t("ohmypi.form.maxTokens")}
+                                id={`omp-model-max-tokens-${model.key}`}
+                                aria-label={t("omp.form.maxTokens")}
                                 type="number"
                                 step="any"
                                 min="1"
@@ -1668,14 +1665,14 @@ export function OhMyPiProviderForm({
             name="settingsConfig"
             render={() => (
               <FormItem className="space-y-2">
-                <Label htmlFor="ohmypi-settings-config">
-                  {t("ohmypi.form.configYaml", {
+                <Label htmlFor="omp-settings-config">
+                  {t("omp.form.configYaml", {
                     defaultValue: "配置 YAML",
                   })}
                 </Label>
                 <JsonEditor
-                  id="ohmypi-settings-config"
-                  ariaLabel={t("ohmypi.form.configYaml", {
+                  id="omp-settings-config"
+                  ariaLabel={t("omp.form.configYaml", {
                     defaultValue: "配置 YAML",
                   })}
                   value={displayYaml}

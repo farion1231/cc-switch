@@ -46,8 +46,7 @@ export function SkillImportDialog({
     const set = new Set<AppId>();
     for (const skill of skills) {
       for (const found of skill.foundIn) {
-        if (isAppId(found) && found !== "pi" && found !== "ohmypi")
-          set.add(found);
+        if (isAppId(found) && found !== "pi" && found !== "omp") set.add(found);
       }
     }
     return set;
@@ -103,7 +102,7 @@ export function SkillImportDialog({
               mcode: chosen.has("mcode"),
               kimi: chosen.has("kimi"),
               agy: chosen.has("agy"),
-              ohmypi: chosen.has("ohmypi"),
+              omp: chosen.has("omp"),
             },
           };
         }),
