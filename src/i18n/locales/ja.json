@@ -1792,6 +1792,8 @@
     "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。"
   },
   "copilot": {
+    "automaticFormat": "モデルに応じてルーティングが自動選択",
+    "automaticFormatHint": "Copilot の上流形式はモデルに応じてルーティングが自動選択し、手動設定は適用されません。",
     "authSection": "GitHub Copilot 認証",
     "authStatus": "認証状態",
     "authenticated": "認証済み: {{username}}",
