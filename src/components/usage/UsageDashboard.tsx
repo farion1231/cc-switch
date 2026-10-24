@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   ListFilter,
+  Info,
   Loader2,
   RefreshCw,
   ListTree,
@@ -45,6 +46,9 @@ import {
   usageKeys,
   useModelStats,
   useProviderStats,
+  useProjectStats,
+  useUsageProjects,
+  useUsageDataQuality,
   useRequestLogs,
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
@@ -59,6 +63,7 @@ import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
+import { ProjectStatsTable } from "./ProjectStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
 import { PricingConfigPanel } from "./PricingConfigPanel";
 import { RequestDetailPanel } from "./RequestDetailPanel";
@@ -98,8 +103,8 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 
 // 页签只放数据视图；显示和定价设置在「用量设置」抽屉里
-type UsageTab = "logs" | "providers" | "models";
-const TABS: UsageTab[] = ["logs", "providers", "models"];
+type UsageTab = "logs" | "projects" | "providers" | "models";
+const TABS: UsageTab[] = ["logs", "projects", "providers", "models"];
 /** 记住的时间范围只认预设：自定义的起止日期过几天就不是用户想看的了，选自定义时不改记下的预设 */
 const REMEMBERED_RANGE_PRESETS: UsageRangePreset[] = [
   "today",
@@ -155,11 +160,18 @@ function MenuMeta({ children }: { children: React.ReactNode }) {
   );
 }
 
+interface UsageProviderSelection {
+  id: string;
+  appType: string;
+  name: string;
+}
+
 /** 级联菜单第二级：某个供应商（或全部供应商）名下的模型，展开时才查 */
 function ScopeModelItems({
   range,
   appType,
-  providerName,
+  provider,
+  projectKey,
   providerCount,
   active,
   selectedModel,
@@ -168,7 +180,8 @@ function ScopeModelItems({
 }: {
   range: UsageRangeSelection;
   appType: AppTypeFilter;
-  providerName: string | undefined;
+  provider: UsageProviderSelection | null;
+  projectKey?: string;
   providerCount: number;
   /** 这一级就是当前选中的供应商（勾才画在它的模型上） */
   active: boolean;
@@ -179,7 +192,12 @@ function ScopeModelItems({
   const { t } = useTranslation();
   const { data } = useModelStats(
     range,
-    { appType, providerName },
+    {
+      appType,
+      providerId: provider?.id,
+      providerAppType: provider?.appType,
+      projectKey,
+    },
     { refetchInterval: false },
   );
   const options = useMemo(() => {
@@ -274,9 +292,9 @@ export function UsageDashboard({
     }
   };
   const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
-  const [providerName, setProviderName] = useState<string | undefined>(
-    undefined,
-  );
+  const [providerSelection, setProviderSelection] =
+    useState<UsageProviderSelection | null>(null);
+  const [projectKey, setProjectKey] = useState<string | undefined>(undefined);
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
 
@@ -338,7 +356,8 @@ export function UsageDashboard({
 
   useEffect(() => {
     setAppType(initialAppType);
-    setProviderName(undefined);
+    setProviderSelection(null);
+    setProjectKey(undefined);
     setModel(undefined);
   }, [initialAppType]);
 
@@ -347,17 +366,18 @@ export function UsageDashboard({
   const changeAppType = (next: AppTypeFilter) => {
     setAppType(next);
     if (next !== appType) {
-      setProviderName(undefined);
+      setProviderSelection(null);
+      setProjectKey(undefined);
       setModel(undefined);
     }
   };
   // 供应商和模型一次选定（级联菜单）
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const pickScope = (
-    nextProvider: string | undefined,
+    nextProvider: UsageProviderSelection | null,
     nextModel: string | undefined,
   ) => {
-    setProviderName(nextProvider);
+    setProviderSelection(nextProvider);
     setModel(nextModel);
     setScopeMenuOpen(false);
   };
@@ -458,7 +478,17 @@ export function UsageDashboard({
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
-    { appType },
+    { appType, projectKey },
+    refetch,
+  );
+  const { data: projectOptionsData } = useUsageProjects(
+    range,
+    appType === "all" ? undefined : appType,
+    refetch,
+  );
+  const { data: dataQuality } = useUsageDataQuality(
+    range,
+    appType === "all" ? undefined : appType,
     refetch,
   );
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
@@ -470,29 +500,60 @@ export function UsageDashboard({
   const isEmpty = allTimeSummary != null && allTimeSummary.totalRequests === 0;
 
   const providerOptions = useMemo(() => {
-    const counts = new Map<string, number>();
+    const map = new Map<
+      string,
+      { id: string; appType: string; name: string; count: number }
+    >();
     for (const stat of providerOptionsData ?? []) {
-      counts.set(
-        stat.providerName,
-        (counts.get(stat.providerName) ?? 0) + stat.requestCount,
-      );
+      map.set(`${stat.appType}:${stat.providerId}`, {
+        id: stat.providerId,
+        appType: stat.appType,
+        name: stat.providerName,
+        count: stat.requestCount,
+      });
     }
     // 数据刷新后选中项可能掉出列表（如改了时间范围）；补回去保证用户看得见、能清除
-    if (providerName && !counts.has(providerName)) counts.set(providerName, 0);
-    return Array.from(counts, ([name, count]) => ({ name, count })).sort(
-      (a, b) => b.count - a.count,
-    );
-  }, [providerOptionsData, providerName]);
+    if (providerSelection) {
+      const key = `${providerSelection.appType}:${providerSelection.id}`;
+      if (!map.has(key)) {
+        map.set(key, { ...providerSelection, count: 0 });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  }, [providerOptionsData, providerSelection]);
 
   const providerTotal = providerOptions.reduce((sum, p) => sum + p.count, 0);
+  const projectOptions = useMemo(() => {
+    const options = (projectOptionsData ?? []).map((project) => ({
+      key: project.projectKey,
+      name:
+        project.projectKey === "" &&
+        !project.projectName &&
+        !project.projectPath
+          ? t("usage.projectFilter.unknown")
+          : project.projectName || project.projectPath || project.projectKey,
+      path: project.projectPath,
+      count: project.requestCount,
+    }));
+    if (projectKey && !options.some((option) => option.key === projectKey)) {
+      options.push({
+        key: projectKey,
+        name: projectKey === "" ? t("usage.projectFilter.unknown") : projectKey,
+        path: "",
+        count: 0,
+      });
+    }
+    return options.sort((a, b) => b.count - a.count);
+  }, [projectOptionsData, projectKey, t]);
+  const projectTotal = projectOptions.reduce((sum, p) => sum + p.count, 0);
   // 触发器：「供应商 / 模型」，哪一级选了就换成选中的名字
-  const providerText = providerName
-    ? getUsageProviderLabel(providerName, t).label
+  const providerText = providerSelection
+    ? getUsageProviderLabel(providerSelection.name, t).label
     : t("usage.providerFilter.label");
   const scopeLabel = `${providerText} / ${model ?? t("usage.modelFilter.label")}`;
   const scopeTitle = `${
-    providerName
-      ? usageProviderTitle(getUsageProviderLabel(providerName, t))
+    providerSelection
+      ? usageProviderTitle(getUsageProviderLabel(providerSelection.name, t))
       : t("usage.providerFilter.all")
   } / ${model ?? t("usage.allModels")}`;
 
@@ -656,56 +717,122 @@ export function UsageDashboard({
           aria-label={t("usage.providerFilter.title")}
           className={cn(menuContentClass, "max-h-[360px] overflow-y-auto")}
         >
-          {[{ name: undefined, count: providerTotal }, ...providerOptions].map(
-            (option) => {
-              const label =
-                option.name == null
-                  ? null
-                  : getUsageProviderLabel(option.name, t);
-              const active = providerName === option.name;
-              return (
-                <DropdownMenuSub key={option.name ?? ""}>
-                  <DropdownMenuSubTrigger
-                    className={menuItemClass}
-                    title={label ? usageProviderTitle(label) : undefined}
-                    onClick={() => pickScope(option.name, undefined)}
+          {[
+            { provider: null, count: providerTotal },
+            ...providerOptions.map(({ count, ...provider }) => ({
+              provider,
+              count,
+            })),
+          ].map((option) => {
+            const provider = option.provider;
+            const label = provider
+              ? getUsageProviderLabel(provider.name, t)
+              : null;
+            const active =
+              provider == null
+                ? providerSelection == null
+                : providerSelection?.id === provider.id &&
+                  providerSelection?.appType === provider.appType;
+            return (
+              <DropdownMenuSub
+                key={
+                  provider
+                    ? JSON.stringify([provider.appType, provider.id])
+                    : "all"
+                }
+              >
+                <DropdownMenuSubTrigger
+                  className={menuItemClass}
+                  title={label ? usageProviderTitle(label) : undefined}
+                  onClick={() => pickScope(provider, undefined)}
+                >
+                  <MenuCheck checked={active} />
+                  <span className="min-w-0 truncate">
+                    {label ? label.label : t("usage.providerFilter.all")}
+                  </span>
+                  <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="-me-0.5 h-3.5 w-3.5 shrink-0 text-fg-3"
+                  />
+                </DropdownMenuSubTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuSubContent
+                    // 子菜单默认顶边对齐触发项；减去自身 1px 边框 + 4px 内边距，第一项才和触发项同一行
+                    alignOffset={-5}
+                    aria-label={t("usage.modelFilter.title")}
+                    className={cn(
+                      menuContentClass,
+                      "max-h-[360px] overflow-y-auto",
+                    )}
                   >
-                    <MenuCheck checked={active} />
-                    <span className="min-w-0 truncate">
-                      {label ? label.label : t("usage.providerFilter.all")}
-                    </span>
-                    <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
-                    <ChevronRight
-                      aria-hidden="true"
-                      className="-me-0.5 h-3.5 w-3.5 shrink-0 text-fg-3"
+                    <ScopeModelItems
+                      range={range}
+                      appType={appType}
+                      provider={provider}
+                      projectKey={projectKey}
+                      providerCount={option.count}
+                      active={active}
+                      selectedModel={active ? model : undefined}
+                      locale={locale}
+                      onPick={(next) => pickScope(provider, next)}
                     />
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuPortal>
-                    <DropdownMenuSubContent
-                      // 子菜单默认顶边对齐触发项；减去自身 1px 边框 + 4px 内边距，第一项才和触发项同一行
-                      alignOffset={-5}
-                      aria-label={t("usage.modelFilter.title")}
-                      className={cn(
-                        menuContentClass,
-                        "max-h-[360px] overflow-y-auto",
-                      )}
-                    >
-                      <ScopeModelItems
-                        range={range}
-                        appType={appType}
-                        providerName={option.name}
-                        providerCount={option.count}
-                        active={active}
-                        selectedModel={active ? model : undefined}
-                        locale={locale}
-                        onPick={(next) => pickScope(option.name, next)}
-                      />
-                    </DropdownMenuSubContent>
-                  </DropdownMenuPortal>
-                </DropdownMenuSub>
-              );
-            },
-          )}
+                  </DropdownMenuSubContent>
+                </DropdownMenuPortal>
+              </DropdownMenuSub>
+            );
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="neutral"
+            size="regular"
+            className="min-w-[78px] max-w-[176px] shrink gap-1 pe-2 ps-3"
+            title={
+              projectKey === ""
+                ? t("usage.projectFilter.unknown")
+                : (projectKey ?? t("usage.projectFilter.title"))
+            }
+          >
+            <span className="min-w-0 truncate">
+              {projectKey == null
+                ? t("usage.projectFilter.label")
+                : projectKey === ""
+                  ? t("usage.projectFilter.unknown")
+                  : (projectOptions.find((option) => option.key === projectKey)
+                      ?.name ?? projectKey)}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          aria-label={t("usage.projectFilter.title")}
+          className={cn(menuContentClass, "max-h-[360px] overflow-y-auto")}
+        >
+          <DropdownMenuItem
+            className={menuItemClass}
+            onSelect={() => setProjectKey(undefined)}
+          >
+            <MenuCheck checked={projectKey == null} />
+            {t("usage.projectFilter.all")}
+            <MenuMeta>{fmtInt(projectTotal, locale)}</MenuMeta>
+          </DropdownMenuItem>
+          {projectOptions.map((option) => (
+            <DropdownMenuItem
+              key={option.key || "__unknown__"}
+              className={menuItemClass}
+              title={option.path || option.name}
+              onSelect={() => setProjectKey(option.key)}
+            >
+              <MenuCheck checked={projectKey === option.key} />
+              <span className="min-w-0 truncate">{option.name}</span>
+              <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
+            </DropdownMenuItem>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -714,27 +841,48 @@ export function UsageDashboard({
   // ── 明细面板 ─────────────────────────────────────────────────────────
   const scopedAppType = appType === "all" ? undefined : appType;
 
+  const scopeFilters = {
+    appType,
+    providerId: providerSelection?.id,
+    providerAppType: providerSelection?.appType,
+    providerName: providerSelection?.name,
+    projectKey,
+    model,
+  };
+
   // 页签上的计数：和各表格同样的查询参数，react-query 会合并成一次请求。
   // 只查当前页签：其余页签显示上次查到的数（缓存），筛选变了、还没查过的就不显示
   const logCount = useRequestLogs({
-    filters: { appType: scopedAppType, providerName, model, statusCode },
+    filters: { ...scopeFilters, appType: scopedAppType, statusCode },
     range,
     page: 0,
     pageSize: logPageSize,
     options: { ...refetch, enabled: tab === "logs" },
   });
-  const providerCount = useProviderStats(
+  const providerCount = useProviderStats(range, scopeFilters, {
+    ...refetch,
+    enabled: tab === "providers",
+  });
+  const modelCount = useModelStats(range, scopeFilters, {
+    ...refetch,
+    enabled: tab === "models",
+  });
+  const projectCount = useProjectStats(
     range,
-    { appType, providerName, model },
-    { ...refetch, enabled: tab === "providers" },
-  );
-  const modelCount = useModelStats(
-    range,
-    { appType, providerName, model },
-    { ...refetch, enabled: tab === "models" },
+    {
+      appType,
+      providerId: providerSelection?.id,
+      providerAppType: providerSelection?.appType,
+      providerName: providerSelection?.name,
+      model,
+    },
+    { ...refetch, enabled: tab === "projects" },
   );
   const tabCount: Record<UsageTab, number | undefined> = {
     logs: logCount.isPlaceholderData ? undefined : logCount.data?.total,
+    projects: projectCount.isPlaceholderData
+      ? undefined
+      : projectCount.data?.length,
     providers: providerCount.isPlaceholderData
       ? undefined
       : providerCount.data?.length,
@@ -742,6 +890,7 @@ export function UsageDashboard({
   };
   const tabLabel: Record<UsageTab, string> = {
     logs: t("usage.requestLogs"),
+    projects: t("usage.tabs.projects"),
     providers: t("usage.tabs.providers"),
     models: t("usage.tabs.models"),
   };
@@ -847,7 +996,10 @@ export function UsageDashboard({
           <RequestLogTable
             range={range}
             appType={appType}
-            providerName={providerName}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            projectKey={projectKey}
             model={model}
             statusCode={statusCode}
             refreshIntervalMs={0}
@@ -860,11 +1012,25 @@ export function UsageDashboard({
             }
           />
         )}
+        {tab === "projects" && (
+          <ProjectStatsTable
+            range={range}
+            appType={appType}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            model={model}
+            refreshIntervalMs={0}
+          />
+        )}
         {tab === "providers" && (
           <ProviderStatsTable
             range={range}
             appType={appType}
-            providerName={providerName}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            projectKey={projectKey}
             model={model}
             refreshIntervalMs={0}
           />
@@ -873,7 +1039,10 @@ export function UsageDashboard({
           <ModelStatsTable
             range={range}
             appType={appType}
-            providerName={providerName}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            projectKey={projectKey}
             model={model}
             refreshIntervalMs={0}
           />
@@ -888,7 +1057,10 @@ export function UsageDashboard({
       <UsageHero
         range={range}
         appType={scopedAppType}
-        providerName={providerName}
+        providerId={providerSelection?.id}
+        providerAppType={providerSelection?.appType}
+        providerName={providerSelection?.name}
+        projectKey={projectKey}
         model={model}
         refreshIntervalMs={0}
         compact={compact}
@@ -900,7 +1072,10 @@ export function UsageDashboard({
         <UsageHeatmap
           metric={metric}
           appType={appType}
-          providerName={providerName}
+          providerId={providerSelection?.id}
+          providerAppType={providerSelection?.appType}
+          providerName={providerSelection?.name}
+          projectKey={projectKey}
           model={model}
           refreshIntervalMs={0}
         />
@@ -909,11 +1084,27 @@ export function UsageDashboard({
           range={range}
           metric={metric}
           appType={appType}
-          providerName={providerName}
+          providerId={providerSelection?.id}
+          providerAppType={providerSelection?.appType}
+          providerName={providerSelection?.name}
+          projectKey={projectKey}
           model={model}
           refreshIntervalMs={0}
         />
       )}
+      {dataQuality &&
+      (dataQuality.unknownProviderRequests > 0 ||
+        dataQuality.unknownProjectRequests > 0) ? (
+        <div className="flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-2">
+          <Info className="h-3.5 w-3.5 shrink-0" />
+          <span>
+            {t("usage.quality.summary", {
+              provider: fmtInt(dataQuality.unknownProviderRequests, locale),
+              project: fmtInt(dataQuality.unknownProjectRequests, locale),
+            })}
+          </span>
+        </div>
+      ) : null}
     </section>
   );
 

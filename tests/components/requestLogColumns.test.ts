@@ -9,11 +9,12 @@ import {
 } from "@/components/usage/requestLogColumns";
 
 describe("request log columns", () => {
-  it("shows the ten original columns by default and hides the new ones", () => {
+  it("shows the default columns including the project dimension", () => {
     expect(resolveRequestLogColumns(undefined)).toEqual([
       "time",
       "app",
       "provider",
+      "project",
       "model",
       "cost",
       "freshInput",
@@ -35,6 +36,7 @@ describe("request log columns", () => {
     ).toEqual([
       "time",
       "provider",
+      "project",
       "model",
       "cost",
       "freshInput",

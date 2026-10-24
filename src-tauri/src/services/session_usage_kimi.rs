@@ -175,8 +175,10 @@ fn sync_file(
         tx.execute("INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-            latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
-        ) VALUES (?1, '_kimi_session', 'kimi', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'kimi_session', 1, '1', ?13, 'kimi_session', ?14)",
+            latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics,
+            attribution_source, attribution_confidence, attribution_reason
+        ) VALUES (?1, '_kimi_session', 'kimi', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'kimi_session', 1, '1', ?13, 'kimi_session', ?14,
+            'unknown', 'unknown', 'kimi_native_session')",
             rusqlite::params![request, model, usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_creation_tokens,
                 amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, created/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token])?;
         result.imported += 1;
@@ -228,6 +230,14 @@ fn refresh_existing(
     let Some((old_model, multiplier, old_latency, old_first)) = stored else {
         return Ok(false);
     };
+    // Kimi 会话没有供应商卡片证据，不能继承代理日志的 proxy/exact 默认值。
+    let attribution_changed = conn.execute(
+        "UPDATE proxy_request_logs
+         SET attribution_source='unknown', attribution_confidence='unknown', attribution_reason='kimi_native_session'
+         WHERE request_id=?1 AND provider_id='_kimi_session' AND app_type='kimi' AND data_source='kimi_session'
+           AND (attribution_source!='unknown' OR attribution_confidence!='unknown' OR attribution_reason!='kimi_native_session')",
+        [request],
+    )? > 0;
     let model_changed = model != old_model && model != "unknown";
     // Preserve native timing when a copied history contains only timestamp estimates.
     let latency = if latency > 0 && (old_first.is_none() || first_token.is_some()) {
@@ -237,7 +247,7 @@ fn refresh_existing(
     };
     let first_token = first_token.or(old_first).filter(|first| *first <= latency);
     if !model_changed && latency == old_latency && first_token == old_first {
-        return Ok(false);
+        return Ok(attribution_changed);
     }
     if model_changed {
         let amounts = costs(
@@ -353,7 +363,7 @@ mod tests {
             );
         }
         let stats = db
-            .get_provider_stats(None, None, Some("kimi"), None, None)
+            .get_provider_stats(None, None, Some("kimi"), None, None, None, None, None)
             .unwrap();
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].request_count, 2);
@@ -369,7 +379,7 @@ mod tests {
             (0, 0, None)
         );
         let models = db
-            .get_model_stats(None, None, Some("kimi"), None, None)
+            .get_model_stats(None, None, Some("kimi"), None, None, None, None, None)
             .unwrap();
         assert_eq!(models.len(), 2);
         assert!(models
@@ -464,6 +474,42 @@ mod tests {
                 .unwrap()
                 .imported,
             0
+        );
+    }
+
+    #[test]
+    fn kimi_usage_marks_native_sessions_unknown_on_insert_and_refresh() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wire.jsonl");
+        write_records(&path, &[message("attribution", 1_700_000_000_000, 20)]);
+        assert_eq!(sync_file(&db, &path, "s", "first", 1).unwrap().imported, 1);
+        let attribution = || {
+            db.conn.lock().unwrap().query_row(
+                "SELECT attribution_source, attribution_confidence, attribution_reason FROM proxy_request_logs WHERE app_type='kimi'",
+                [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+            ).unwrap()
+        };
+        let expected = (
+            "unknown".into(),
+            "unknown".into(),
+            "kimi_native_session".into(),
+        );
+        assert_eq!(attribution(), expected);
+        db.conn.lock().unwrap().execute(
+            "UPDATE proxy_request_logs SET attribution_source='proxy', attribution_confidence='exact', attribution_reason='' WHERE app_type='kimi'", [],
+        ).unwrap();
+        // Replaying a retained receipt repairs attribution without adding usage.
+        assert_eq!(sync_file(&db, &path, "s", "second", 2).unwrap().imported, 1);
+        assert_eq!(attribution(), expected);
+        assert_eq!(
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
         );
     }
 

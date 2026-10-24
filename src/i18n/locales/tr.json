@@ -2138,6 +2138,63 @@
     "realTotalHint": "Giriş + Çıkış + Önbelleğe Yazma + Önbelle Okuma",
     "freshInput": "Önbelleksiz girdi",
     "cacheHitRate": "Önbellek İsabet Oranı",
+    "project": "Proje",
+    "projectFilter": {
+      "label": "Proje",
+      "title": "Projeye göre filtrele",
+      "all": "Tüm projeler",
+      "unknown": "Tanımlanamayan proje"
+    },
+    "projects": {
+      "apps": "Uygulama sayısı",
+      "providers": "Sağlayıcı sayısı",
+      "lastActive": "Son etkinlik",
+      "share": "Proje payı"
+    },
+    "providers": {
+      "expandModels": "Model oranını genişlet"
+    },
+    "share": {
+      "metricLabel": "Oran ölçütü",
+      "metric": {
+        "tokens": "Token",
+        "cost": "Maliyet",
+        "requests": "İstek",
+        "cache": "Önbellek"
+      },
+      "providers": "Sağlayıcı oranı",
+      "providersAria": "Bu projenin sağlayıcı oranı",
+      "models": "Model oranı",
+      "modelsAria": "Model oranı",
+      "modelsIn": "Model oranı · {{provider}}",
+      "cacheHit": "Önbellek isabeti {{rate}}",
+      "requestCount": "{{value}} istek",
+      "total": "Toplam",
+      "other": "Diğer",
+      "allProviders": "Tüm sağlayıcılar",
+      "requestCacheHit": "{{value}} istek · Önbellek isabeti {{rate}}"
+    },
+    "cacheBreakdown": {
+      "models": "Model önbellek dağılımı",
+      "modelsIn": "Model önbellek dağılımı · {{provider}}",
+      "providersInput": "Sağlayıcı girdi payı",
+      "weightedRate": "Ağırlıklı önbellek isabet oranı",
+      "readOfInput": "Okuma {{read}} / Girdi {{input}}",
+      "help": "Önbellek okuma ÷ (yeni girdi + önbellek yazma + önbellek okuma). Token ağırlıklıdır, çıktı hariçtir. Girdi yoksa — gösterilir; eksik veriler toplama katılmaz.",
+      "read": "Önbellek okuma",
+      "write": "Önbellek yazma",
+      "fresh": "Yeni girdi",
+      "order": "Girdi miktarına göre azalan",
+      "missing": "Önbellek verisi yok",
+      "excluded": "Önbellek verisi eksik {{count}} model toplamdan çıkarıldı",
+      "loadError": "Kullanım yüklenemedi"
+    },
+    "attributionSource": "Atıf kaynağı",
+    "attributionConfidence": "Atıf güveni",
+    "attributionReason": "Atıf yapılamama nedeni",
+    "quality": {
+      "summary": "{{provider}} istekte sağlayıcı, {{project}} istekte proje tanımlanamadı"
+    },
     "requestLogs": "İstek günlüğü",
     "providerStats": "Sağlayıcı İstatistikleri",
     "modelStats": "Model İstatistikleri",
@@ -2154,6 +2211,7 @@
     "requestModel": "Talep Modeli",
     "responseModel": "Tepki Modeli",
     "noData": "Veri yok",
+    "loading": "Yükleniyor…",
     "unknownProvider": "Bilinmeyen Sağlayıcı",
     "sessionProvider": {
       "short": "Oturum günlükleri",
@@ -2381,6 +2439,7 @@
       "daily": "günlük"
     },
     "tabs": {
+      "projects": "Projeler",
       "label": "Ayrıntılar",
       "providers": "Sağlayıcılar",
       "models": "Modeller",

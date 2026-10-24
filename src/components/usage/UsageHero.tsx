@@ -25,7 +25,10 @@ import type { UsageMetric } from "./rememberedChoice";
 interface UsageHeroProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
+  projectKey?: string;
   model?: string;
   refreshIntervalMs: number;
   /** 窄容器下指标排成两列 */
@@ -207,7 +210,10 @@ function SubMetric({
 export function UsageHero({
   range,
   appType,
+  providerAppType,
+  providerId,
   providerName,
+  projectKey,
   model,
   refreshIntervalMs,
   compact = false,
@@ -222,7 +228,7 @@ export function UsageHero({
 
   const { data, isLoading } = useUsageSummaryByApp(
     range,
-    { providerName, model },
+    { providerAppType, providerId, providerName, model, projectKey },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },

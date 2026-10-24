@@ -120,6 +120,32 @@ impl<'a> UsageLogger<'a> {
             };
 
         let created_at = chrono::Utc::now().timestamp();
+        let session_key = log
+            .session_id
+            .as_deref()
+            .map(|session_id| {
+                crate::services::usage_attribution::normalize_session_key(
+                    log.app_type.as_str(),
+                    session_id,
+                )
+            })
+            .unwrap_or_default();
+        let project = if session_key.is_empty() {
+            None
+        } else {
+            crate::database::Database::session_project_on_conn(
+                &conn,
+                log.app_type.as_str(),
+                &session_key,
+            )?
+        };
+        let provider_name_snapshot =
+            crate::services::usage_attribution::provider_name_snapshot_on_conn(
+                &conn,
+                log.provider_id.as_str(),
+                log.app_type.as_str(),
+            )?
+            .unwrap_or_default();
         let input_token_semantics =
             if crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str()) {
                 INPUT_TOKEN_SEMANTICS_TOTAL
@@ -172,8 +198,11 @@ impl<'a> UsageLogger<'a> {
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
-                provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+                provider_type, is_streaming, cost_multiplier, created_at,
+                project_key, project_name, project_path, session_key,
+                attribution_source, attribution_confidence, attribution_reason,
+                provider_name_snapshot
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)"
         );
         let affected_rows = conn
             .execute(
@@ -204,6 +233,23 @@ impl<'a> UsageLogger<'a> {
                     log.is_streaming as i64,
                     log.cost_multiplier,
                     created_at,
+                    project
+                        .as_ref()
+                        .map(|p| p.project_key.as_str())
+                        .unwrap_or(""),
+                    project
+                        .as_ref()
+                        .map(|p| p.project_name.as_str())
+                        .unwrap_or(""),
+                    project
+                        .as_ref()
+                        .map(|p| p.project_path.as_str())
+                        .unwrap_or(""),
+                    session_key,
+                    "proxy",
+                    "exact",
+                    "",
+                    provider_name_snapshot,
                 ],
             )
             .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;

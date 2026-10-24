@@ -735,6 +735,25 @@ pub fn run() {
             // 补完上次崩溃时写到一半的客户端文件（写前意图在 ~/.cc-switch/live-state.json），
             // 要在任何写客户端文件的启动步骤之前。
             crate::mode::operation::recover_on_startup(&app_state.db);
+            // 迁移/启动基线：保证升级后新产生的会话有供应商归属依据。
+            crate::services::usage_attribution::ensure_startup_baselines(&app_state.db);
+            // 一次性回填存量 Codex 明细的项目/供应商维度（幂等，无待回填行时快速返回）。
+            match crate::services::session_usage_codex::backfill_codex_usage_attribution(
+                &app_state.db,
+            ) {
+                Ok(stats) if stats.rows_updated > 0 => {
+                    log::info!(
+                        "[USAGE-ATTR] Codex 存量回填: 扫描 {} 个文件、写入 {} 个会话、更新 {} 行",
+                        stats.files_scanned,
+                        stats.sessions_written,
+                        stats.rows_updated
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    log::warn!("[USAGE-ATTR] Codex 存量回填失败（不影响新数据归因）: {err}");
+                }
+            }
 
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
@@ -1780,6 +1799,10 @@ pub fn run() {
             commands::get_usage_first_date,
             commands::get_provider_stats,
             commands::get_model_stats,
+            commands::get_project_stats,
+            commands::get_project_provider_stats,
+            commands::get_usage_projects,
+            commands::get_usage_data_quality,
             commands::get_request_logs,
             commands::get_request_detail,
             commands::get_model_pricing,

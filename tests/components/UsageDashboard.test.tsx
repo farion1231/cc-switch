@@ -21,6 +21,10 @@ const usageApiMock = vi.hoisted(() => ({
   syncSessionUsage: vi.fn(),
   getSessionUsageLastSync: vi.fn(),
   rebuildCodexUsage: vi.fn(),
+  getUsageProjects: vi.fn(),
+  getProjectStats: vi.fn(),
+  getUsageDataQuality: vi.fn(),
+  getRequestLogs: vi.fn(),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -209,6 +213,15 @@ describe("UsageDashboard", () => {
     useModelStatsMock.mockReturnValue({ data: [] });
     useSummaryByAppMock.mockReturnValue({ data: [] });
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 5 });
+    usageApiMock.getUsageProjects.mockReset().mockResolvedValue([]);
+    usageApiMock.getProjectStats.mockReset().mockResolvedValue([]);
+    usageApiMock.getUsageDataQuality.mockReset().mockResolvedValue({
+      unknownProviderRequests: 0,
+      unknownProjectRequests: 0,
+    });
+    usageApiMock.getRequestLogs
+      .mockReset()
+      .mockResolvedValue({ total: 5, data: [] });
     usageApiMock.getSessionUsageLastSync.mockReset().mockResolvedValue(null);
     usageApiMock.syncSessionUsage.mockResolvedValue({
       imported: 2,
@@ -416,9 +429,12 @@ describe("UsageDashboard", () => {
   it("picks a model from the provider's submenu", async () => {
     const user = userEvent.setup();
     useModelStatsMock.mockImplementation(
-      (_range: unknown, filters: { providerName?: string }) => ({
+      (
+        _range: unknown,
+        filters: { providerId?: string; providerAppType?: string },
+      ) => ({
         data:
-          filters.providerName === "DeepSeek"
+          filters.providerId === "p1" && filters.providerAppType === "claude"
             ? [{ model: "deepseek-chat", requestCount: 7 }]
             : [],
       }),
@@ -442,6 +458,99 @@ describe("UsageDashboard", () => {
       ),
     );
     expect(scopeTrigger()).toHaveTextContent("DeepSeek / deepseek-chat");
+  });
+
+  it("keeps a project and same-name provider identities in the model submenu", async () => {
+    const user = userEvent.setup();
+    usageApiMock.getUsageProjects.mockResolvedValue([
+      {
+        projectKey: "/workspace/demo",
+        projectName: "Demo",
+        projectPath: "/workspace/demo",
+        requestCount: 17,
+      },
+    ]);
+    useProviderStatsMock.mockReturnValue({
+      data: [
+        {
+          providerId: "p1",
+          appType: "claude",
+          providerName: "DeepSeek",
+          requestCount: 12,
+        },
+        {
+          providerId: "p1",
+          appType: "codex",
+          providerName: "DeepSeek",
+          requestCount: 5,
+        },
+      ],
+    });
+    useModelStatsMock.mockImplementation(
+      (
+        _range: unknown,
+        filters: {
+          providerId?: string;
+          providerAppType?: string;
+          projectKey?: string;
+        },
+      ) => ({
+        data:
+          filters.providerId === "p1" &&
+          filters.projectKey === "/workspace/demo"
+            ? [{ model: `fixture-${filters.providerAppType}`, requestCount: 5 }]
+            : [],
+      }),
+    );
+    renderDashboard();
+    await user.click(
+      screen.getByRole("button", { name: "usage.projectFilter.label" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: /Demo/ }));
+    await user.click(scopeTrigger());
+    const providers = await screen.findAllByRole("menuitem", {
+      name: /DeepSeek/,
+    });
+    providers[1].focus();
+    await user.keyboard("{ArrowRight}");
+    expect(
+      await screen.findByRole("menuitem", { name: /fixture-codex/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /fixture-claude/ }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: /fixture-codex/ }));
+    await waitFor(() =>
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          providerId: "p1",
+          providerAppType: "codex",
+          projectKey: "/workspace/demo",
+          model: "fixture-codex",
+        }),
+      ),
+    );
+    expect(requestLogTableMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        providerId: "p1",
+        providerAppType: "codex",
+        projectKey: "/workspace/demo",
+        model: "fixture-codex",
+      }),
+    );
+  });
+
+  it("loads project counts only when the project tab is opened", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+    await screen.findByTestId("usage-hero");
+    expect(usageApiMock.getProjectStats).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole("tab", { name: /^usage\.tabs\.projects/ }),
+    );
+    await waitFor(() =>
+      expect(usageApiMock.getProjectStats).toHaveBeenCalled(),
+    );
   });
 
   it("persists refresh interval changes", async () => {
@@ -663,6 +772,17 @@ describe("UsageDashboard", () => {
     );
 
     logsTab.focus();
+    await user.keyboard("{ArrowRight}");
+    const projectsTab = screen.getByRole("tab", {
+      name: /^usage\.tabs\.projects/,
+    });
+    expect(projectsTab).toHaveAttribute("aria-selected", "true");
+    expect(projectsTab).toHaveFocus();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      "usage-tab-projects",
+    );
+
     await user.keyboard("{ArrowRight}");
     const providersTab = screen.getByRole("tab", {
       name: /^usage\.tabs\.providers/,

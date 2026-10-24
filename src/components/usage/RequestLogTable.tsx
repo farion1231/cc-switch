@@ -53,7 +53,10 @@ interface RequestLogTableProps {
   /** 旧接口保留；时间范围由页面顶部的筛选统一控制 */
   rangeLabel?: string;
   appType?: string;
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
+  projectKey?: string;
   model?: string;
   /** 状态码筛选（页签行右侧的下拉） */
   statusCode?: number;
@@ -179,7 +182,10 @@ function StatusBadge({
 export function RequestLogTable({
   range,
   appType: dashboardAppType,
+  providerAppType,
+  providerId,
   providerName,
+  projectKey,
   model,
   statusCode,
   refreshIntervalMs,
@@ -198,7 +204,10 @@ export function RequestLogTable({
       dashboardAppType && dashboardAppType !== "all"
         ? dashboardAppType
         : undefined,
+    providerAppType,
+    providerId,
     providerName,
+    projectKey,
     model,
     statusCode,
   };
@@ -318,7 +327,10 @@ export function RequestLogTable({
     setPage(0);
   }, [
     dashboardAppType,
+    providerAppType,
+    providerId,
     providerName,
+    projectKey,
     model,
     statusCode,
     range.customEndDate,
@@ -407,6 +419,14 @@ export function RequestLogTable({
       log.requestModel && log.requestModel !== log.model
         ? `${log.requestModel} → ${log.model}`
         : log.model;
+    const projectLabel =
+      log.projectName ||
+      log.projectPath ||
+      ((log.projectKey ?? "") === ""
+        ? t("usage.projectFilter.unknown")
+        : log.projectKey);
+    const projectTitle =
+      log.projectPath || log.projectName || log.projectKey || undefined;
     const hasCache = log.cacheReadTokens > 0;
     // OpenAI 协议不单报缓存写入，这几个应用的 0 是「不知道」，不是「没写」
     const cacheWriteUnknown = CACHE_INCLUSIVE_APP_TYPES.has(log.appType);
@@ -466,6 +486,13 @@ export function RequestLogTable({
       provider: (
         <td className={usageTable.td}>
           <span title={usageProviderTitle(providerLabel)}>{provider}</span>
+        </td>
+      ),
+      project: (
+        <td className={usageTable.td}>
+          <span className="block max-w-[240px] truncate" title={projectTitle}>
+            {projectLabel}
+          </span>
         </td>
       ),
       model: (

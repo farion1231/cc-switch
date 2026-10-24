@@ -2193,6 +2193,63 @@
     "realTotalHint": "Input + Output + キャッシュ書込 + キャッシュ命中",
     "freshInput": "新規入力",
     "cacheHitRate": "キャッシュヒット率",
+    "project": "プロジェクト",
+    "projectFilter": {
+      "label": "プロジェクト",
+      "title": "プロジェクトで絞り込む",
+      "all": "すべてのプロジェクト",
+      "unknown": "未識別プロジェクト"
+    },
+    "projects": {
+      "apps": "アプリ数",
+      "providers": "プロバイダー数",
+      "lastActive": "最終アクティブ",
+      "share": "プロジェクト比率"
+    },
+    "providers": {
+      "expandModels": "モデル比率を展開"
+    },
+    "share": {
+      "metricLabel": "比率の基準",
+      "metric": {
+        "tokens": "トークン",
+        "cost": "費用",
+        "requests": "リクエスト",
+        "cache": "キャッシュ"
+      },
+      "providers": "プロバイダー比率",
+      "providersAria": "プロジェクトのプロバイダー比率",
+      "models": "モデル比率",
+      "modelsAria": "モデル比率",
+      "modelsIn": "モデル比率 · {{provider}}",
+      "cacheHit": "キャッシュヒット {{rate}}",
+      "requestCount": "{{value}} 回",
+      "total": "合計",
+      "other": "その他",
+      "allProviders": "すべてのプロバイダー",
+      "requestCacheHit": "{{value}} リクエスト · キャッシュヒット {{rate}}"
+    },
+    "cacheBreakdown": {
+      "models": "モデル別キャッシュ内訳",
+      "modelsIn": "モデル別キャッシュ内訳 · {{provider}}",
+      "providersInput": "プロバイダー別入力割合",
+      "weightedRate": "加重キャッシュヒット率",
+      "readOfInput": "ヒット {{read}} / 入力 {{input}}",
+      "help": "キャッシュ読取 ÷（新規入力 + キャッシュ書込 + キャッシュ読取）。トークン数で加重し、出力は除外。入力ゼロは —、欠損データは集計対象外。",
+      "read": "キャッシュ読取",
+      "write": "キャッシュ書込",
+      "fresh": "新規入力",
+      "order": "入力数の多い順",
+      "missing": "キャッシュデータなし",
+      "excluded": "キャッシュデータがない {{count}} モデルは集計対象外",
+      "loadError": "使用量の読み込みに失敗しました"
+    },
+    "attributionSource": "帰属ソース",
+    "attributionConfidence": "帰属信頼度",
+    "attributionReason": "未帰属の理由",
+    "quality": {
+      "summary": "未識別プロバイダー {{provider}} 件、未識別プロジェクト {{project}} 件"
+    },
     "requestLogs": "リクエストログ",
     "providerStats": "プロバイダー統計",
     "modelStats": "モデル統計",
@@ -2209,6 +2266,7 @@
     "requestModel": "リクエストモデル",
     "responseModel": "レスポンスモデル",
     "noData": "データなし",
+    "loading": "読み込み中…",
     "unknownProvider": "不明なプロバイダー",
     "sessionProvider": {
       "short": "セッションログ",
@@ -2459,6 +2517,7 @@
       "daily": "1 日ごと"
     },
     "tabs": {
+      "projects": "プロジェクト",
       "label": "明細",
       "providers": "プロバイダー",
       "models": "モデル",

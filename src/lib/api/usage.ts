@@ -5,6 +5,9 @@ import type {
   DailyStats,
   ProviderStats,
   ModelStats,
+  ProjectStats,
+  ProjectOption,
+  DataQualityStats,
   RequestLog,
   LogFilters,
   ModelPricing,
@@ -54,15 +57,21 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerAppType?: string,
+    providerId?: string,
     providerName?: string,
     model?: string,
+    projectKey?: string,
   ): Promise<UsageSummary> => {
     return invoke("get_usage_summary", {
       startDate,
       endDate,
       appType,
+      providerAppType,
+      providerId,
       providerName,
       model,
+      projectKey,
     });
   },
 
@@ -76,14 +85,20 @@ export const usageApi = {
   getUsageSummaryByApp: async (
     startDate?: number,
     endDate?: number,
+    providerAppType?: string,
+    providerId?: string,
     providerName?: string,
     model?: string,
+    projectKey?: string,
   ): Promise<UsageSummaryByApp[]> => {
     return invoke("get_usage_summary_by_app", {
       startDate,
       endDate,
+      providerAppType,
+      providerId,
       providerName,
       model,
+      projectKey,
     });
   },
 
@@ -91,28 +106,40 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerAppType?: string,
+    providerId?: string,
     providerName?: string,
     model?: string,
+    projectKey?: string,
   ): Promise<DailyStats[]> => {
     return invoke("get_usage_trends", {
       startDate,
       endDate,
       appType,
+      providerAppType,
+      providerId,
       providerName,
       model,
+      projectKey,
     });
   },
 
   /** 最早有用量记录的本地日期 `YYYY-MM-DD`，没有记录时为 null */
   getUsageFirstDate: async (
     appType?: string,
+    providerAppType?: string,
+    providerId?: string,
     providerName?: string,
     model?: string,
+    projectKey?: string,
   ): Promise<string | null> => {
     return invoke("get_usage_first_date", {
       appType,
+      providerAppType,
+      providerId,
       providerName,
       model,
+      projectKey,
     });
   },
 
@@ -120,15 +147,21 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerAppType?: string,
+    providerId?: string,
     providerName?: string,
     model?: string,
+    projectKey?: string,
   ): Promise<ProviderStats[]> => {
     return invoke("get_provider_stats", {
       startDate,
       endDate,
       appType,
+      providerAppType,
+      providerId,
       providerName,
       model,
+      projectKey,
     });
   },
 
@@ -136,15 +169,79 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerAppType?: string,
+    providerId?: string,
     providerName?: string,
     model?: string,
+    projectKey?: string,
   ): Promise<ModelStats[]> => {
     return invoke("get_model_stats", {
       startDate,
       endDate,
       appType,
+      providerAppType,
+      providerId,
       providerName,
       model,
+      projectKey,
+    });
+  },
+
+  getProjectStats: async (
+    startDate?: number,
+    endDate?: number,
+    appType?: string,
+    providerAppType?: string,
+    providerId?: string,
+    providerName?: string,
+    model?: string,
+  ): Promise<ProjectStats[]> => {
+    return invoke("get_project_stats", {
+      startDate,
+      endDate,
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      model,
+    });
+  },
+
+  getProjectProviderStats: async (
+    projectKey: string,
+    startDate?: number,
+    endDate?: number,
+    appType?: string,
+  ): Promise<ProviderStats[]> => {
+    return invoke("get_project_provider_stats", {
+      projectKey,
+      startDate,
+      endDate,
+      appType,
+    });
+  },
+
+  getUsageProjects: async (
+    startDate?: number,
+    endDate?: number,
+    appType?: string,
+  ): Promise<ProjectOption[]> => {
+    return invoke("get_usage_projects", {
+      startDate,
+      endDate,
+      appType,
+    });
+  },
+
+  getUsageDataQuality: async (
+    startDate?: number,
+    endDate?: number,
+    appType?: string,
+  ): Promise<DataQualityStats> => {
+    return invoke("get_usage_data_quality", {
+      startDate,
+      endDate,
+      appType,
     });
   },
 

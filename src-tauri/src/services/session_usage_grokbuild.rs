@@ -228,6 +228,26 @@ fn sync_single_grok_file(
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
+    let session_key =
+        crate::services::usage_attribution::normalize_session_key("grokbuild", &session_id);
+    let project = file_path
+        .parent()
+        .and_then(|dir| dir.parent())
+        .and_then(|dir| dir.file_name())
+        .and_then(|n| n.to_str())
+        .and_then(|enc_cwd| {
+            crate::services::usage_attribution::project_from_cwd(
+                "grokbuild",
+                &session_key,
+                &format!("file://{enc_cwd}"),
+                "session_path",
+            )
+        });
+    if let Some(project) = project.as_ref() {
+        if let Err(err) = db.upsert_session_project(project) {
+            log::warn!("[GROK-SYNC] 写入会话项目失败: {err}");
+        }
+    }
 
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -288,6 +308,7 @@ fn sync_single_grok_file(
                 model,
                 &session_id,
                 event.created_at,
+                project.as_ref(),
             ) {
                 Ok(true) => result.imported += 1,
                 Ok(false) => result.skipped += 1,
@@ -414,6 +435,7 @@ fn parse_event_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
 }
 
 /// 插入单条 Grok 会话记录到 proxy_request_logs
+#[allow(clippy::too_many_arguments)]
 fn insert_grok_session_entry(
     db: &Database,
     request_id: &str,
@@ -422,8 +444,25 @@ fn insert_grok_session_entry(
     model: &str,
     session_id: &str,
     created_at: i64,
+    project: Option<&crate::services::usage_attribution::SessionProject>,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
+    let attribution = crate::services::usage_attribution::resolve_provider_attribution(
+        &conn,
+        "grokbuild",
+        created_at,
+        created_at,
+        "_grok_session",
+    )?;
+    let provider_name_snapshot =
+        crate::services::usage_attribution::provider_name_snapshot_on_conn(
+            &conn,
+            &attribution.provider_id,
+            "grokbuild",
+        )?
+        .unwrap_or_default();
+    let session_key =
+        crate::services::usage_attribution::normalize_session_key("grokbuild", session_id);
 
     let clamp = |v: u64| v.min(u32::MAX as u64) as u32;
     let usage = TokenUsage {
@@ -527,8 +566,11 @@ fn insert_grok_session_entry(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source,
-            input_token_semantics
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+            input_token_semantics,
+            project_key, project_name, project_path, session_key,
+            attribution_source, attribution_confidence, attribution_reason,
+            provider_name_snapshot
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)
         ON CONFLICT(request_id) DO UPDATE SET
             model = excluded.model,
             input_tokens = excluded.input_tokens,
@@ -548,7 +590,7 @@ fn insert_grok_session_entry(
            OR model != excluded.model)",
         rusqlite::params![
             request_id,
-            "_grok_session",     // provider_id
+            attribution.provider_id,
             "grokbuild",         // app_type
             model,
             model,               // request_model = model
@@ -572,6 +614,14 @@ fn insert_grok_session_entry(
             created_at,
             "grok_session",      // data_source
             INPUT_TOKEN_SEMANTICS_TOTAL,
+            project.map(|p| p.project_key.as_str()).unwrap_or(""),
+            project.map(|p| p.project_name.as_str()).unwrap_or(""),
+            project.map(|p| p.project_path.as_str()).unwrap_or(""),
+            session_key,
+            attribution.source,
+            attribution.confidence,
+            attribution.reason,
+            provider_name_snapshot,
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 Grok Build 会话日志失败: {e}")))?;
