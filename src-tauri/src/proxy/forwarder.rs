@@ -2676,9 +2676,9 @@ impl RequestForwarder {
             );
         }
 
-        // The shared local Codex provider intentionally omits upstream headers.
-        // Resolve them from this request's selected row instead, so aggregate
-        // routing and failover never reuse another provider's header values.
+        // The local provider exposes the route's actor-authorization marker for
+        // Codex tool discovery. Resolve upstream headers from the selected row,
+        // so aggregate routing and failover cannot reuse the route's marker.
         if matches!(app_type, AppType::Codex) && !codex_official_auth_passthrough {
             apply_codex_provider_header_overrides(&mut ordered_headers, provider, is_copilot);
         }
@@ -4368,6 +4368,9 @@ fn apply_codex_provider_header_overrides(
     provider: &Provider,
     is_copilot: bool,
 ) {
+    // The shared client marker belongs to the route, not necessarily the
+    // upstream chosen for this request (Stack or failover).
+    headers.remove("x-openai-actor-authorization");
     let Some(config) = provider
         .settings_config
         .get("config")
@@ -5093,6 +5096,10 @@ x-non-string = 1
             "model_provider = \"other\"\n[model_providers.other.http_headers]\nx-other = \"selected\""
         );
         let mut other_headers = http::HeaderMap::new();
+        other_headers.insert(
+            "x-openai-actor-authorization",
+            http::HeaderValue::from_static("outgoing-route-marker"),
+        );
         apply_codex_provider_header_overrides(&mut other_headers, &provider, false);
         assert_eq!(other_headers["x-other"], "selected");
         assert!(other_headers.get("x-openai-actor-authorization").is_none());
@@ -7104,6 +7111,7 @@ x-non-string = 1
             for (name, value) in [
                 ("content-type", "application/json"),
                 ("authorization", "Bearer chatgpt-access-token"),
+                ("x-openai-actor-authorization", "outgoing-route-marker"),
                 ("chatgpt-account-id", "acct-workspace"),
                 ("originator", "codex_cli_rs"),
                 ("session_id", "session-1"),
@@ -7202,6 +7210,17 @@ x-non-string = 1
                     .to_string();
                 assert!(auth.contains("sk-third-party"), "{api_format}: {auth}");
                 assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
+                let without_marker = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                assert!(!without_marker
+                    .headers
+                    .contains_key("x-openai-actor-authorization"));
             }
 
             // Control: routing requests to native Responses still forward these headers.

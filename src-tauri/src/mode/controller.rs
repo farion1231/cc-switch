@@ -7056,6 +7056,55 @@ model_provider = "c"
         }
     }
 
+    // #8797: Codex inspects the local provider before offering its image tool.
+    #[tokio::test]
+    #[serial]
+    async fn codex_proxy_preserves_actor_authorization_for_client_tool_discovery() {
+        for stack in [false, true] {
+            let _home = Home::new();
+            seed_codex("", Some(&chatgpt_login("acct")));
+            let mut relay = codex_native("relay", "https://relay.example/v1", "", None);
+            let mut config = relay.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .parse::<toml_edit::DocumentMut>()
+                .unwrap();
+            config["model_providers"]["relay"]["http_headers"]["x-openai-actor-authorization"] =
+                toml_edit::value("local-image-extension");
+            config["model_providers"]["relay"]["http_headers"]["X-Upstream-Only"] =
+                toml_edit::value("private");
+            relay.settings_config["config"] = json!(config.to_string());
+            let state = state_with(AppType::Codex, &[relay], "relay").await;
+            enter(&state, &AppType::Codex, stack).await.unwrap();
+            let check = || {
+                let doc = codex_doc();
+                let proxy = &doc["model_providers"]["custom"];
+                assert_eq!(
+                    proxy["http_headers"]["x-openai-actor-authorization"].as_str(),
+                    Some("local-image-extension")
+                );
+                assert!(proxy["http_headers"].get("X-Upstream-Only").is_none());
+                assert_eq!(proxy["requires_openai_auth"].as_bool(), Some(false));
+                assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+            };
+            check();
+            detach_all(&state).await;
+            startup(&state).await;
+            check();
+            let disabled = codex_native("disabled", "https://disabled.example/v1", "", None);
+            state.db.save_provider("codex", &disabled).unwrap();
+            set_route(&state, &AppType::Codex, "disabled")
+                .await
+                .unwrap();
+            assert!(codex_doc()["model_providers"]["custom"]
+                .get("http_headers")
+                .is_none());
+            set_route(&state, &AppType::Codex, "relay").await.unwrap();
+            check();
+            exit(&state, &AppType::Codex).await.unwrap();
+        }
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_proxy_preserves_legacy_remote_compaction_toggle() {
