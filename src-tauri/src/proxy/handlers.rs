@@ -1535,8 +1535,8 @@ async fn handle_codex_late_arguments_repair(
         })
 }
 
-/// Response handler for the native Responses passthrough to xAI: restore
-/// flattened `function_call` names and rewrite whole-float tool arguments.
+/// Response handler for the native Responses passthrough: restore flattened
+/// namespace calls. Only xAI rewrites whole-float tool arguments.
 /// Error bodies pass through unchanged. Usage is collected exactly as
 /// `process_response` would (same `CODEX_PARSER_CONFIG`).
 async fn handle_codex_xai_native_responses_rewrite(
@@ -1569,10 +1569,22 @@ async fn handle_codex_xai_native_responses_rewrite(
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
-        let restore_stream =
-            transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
+        let is_xai = super::providers::provider_needs_xai_responses_compat(&ctx.provider);
+        let source = if is_xai {
+            response.bytes_stream().boxed()
+        } else {
+            // Keep the existing third-party late-argument repair when
+            // adding namespace restoration for configured gateways.
+            super::providers::responses_late_arguments::create_late_arguments_repair_stream(
                 response.bytes_stream(),
+            )
+            .boxed()
+        };
+        let restore_stream =
+            transform_codex_responses_xai_sanitize::create_namespace_responses_sse_stream(
+                source,
                 restore_map,
+                is_xai,
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
@@ -1613,9 +1625,11 @@ async fn handle_codex_xai_native_responses_rewrite(
                 &mut value,
                 &restore_map,
             );
-            transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
-                &mut value,
-            );
+            if super::providers::provider_needs_xai_responses_compat(&ctx.provider) {
+                transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
+                    &mut value,
+                );
+            }
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
             {
