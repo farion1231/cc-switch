@@ -367,3 +367,43 @@ fn opencode_jsonc_omo_registration_removal_and_failure_rollback() {
     }
     assert_eq!(fs::read_to_string(&fixture.config_path).unwrap(), other);
 }
+
+#[test]
+#[serial]
+fn opencode_update_keeps_previous_row_when_live_write_fails() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
+    assert_eq!(
+        import_opencode_providers_from_live(&fixture.state).unwrap(),
+        1
+    );
+    let previous = fixture.imported();
+    let live_before = fs::read_to_string(&fixture.config_path).unwrap();
+
+    let mut edited = previous.clone();
+    edited.name = "Renamed before the live write fails".to_string();
+    // An empty model list is a JSON object, so it passes provider validation, but
+    // `models` must be an object: deserializing it fails and the fragment carries
+    // neither `npm` nor `options`, which is what makes the live write reject it.
+    edited.settings_config = json!({"models": []});
+    let error = ProviderService::update(&fixture.state, AppType::OpenCode, None, edited)
+        .expect_err("update should fail when the live write rejects the fragment");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid config structure for live config"),
+        "unexpected error: {error:?}"
+    );
+
+    let saved = fixture.imported();
+    assert_eq!(saved.name, previous.name, "row should keep the old name");
+    assert_eq!(
+        saved.settings_config, previous.settings_config,
+        "row should keep the old settings_config"
+    );
+    assert_eq!(
+        fs::read_to_string(&fixture.config_path).unwrap(),
+        live_before,
+        "live config should be untouched"
+    );
+}
