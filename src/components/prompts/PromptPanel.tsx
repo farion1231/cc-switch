@@ -127,18 +127,14 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     }
   }, []);
 
-  const beginWrite = () => {
-    if (
-      fileReadOnly ||
-      loading ||
-      reloadLockRef.current ||
-      writeLockRef.current
-    )
-      return false;
+  const acquireWriteLock = () => {
+    if (loading || reloadLockRef.current || writeLockRef.current) return false;
     writeLockRef.current = true;
     setWritePending(true);
     return true;
   };
+
+  const beginWrite = () => !fileReadOnly && acquireWriteLock();
 
   const endWrite = () => {
     writeLockRef.current = false;
@@ -415,7 +411,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   const handleCopyToApps = async (targets: AppId[]) => {
     const source = copyingId ? prompts[copyingId] : undefined;
     if (!source) return;
-    if (!beginWrite()) return;
+    // Copying only writes inactive templates to targets, each with its own policy.
+    if (!acquireWriteLock()) return;
     const timestamp = Math.floor(Date.now() / 1000);
     const created: Array<{ app: AppId; id: string }> = [];
     const failed: AppId[] = [];

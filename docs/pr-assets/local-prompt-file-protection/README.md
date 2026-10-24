@@ -25,3 +25,19 @@ cargo test --locked --features test-hooks --manifest-path src-tauri/Cargo.toml -
 ```
 
 Full backend validation used an isolated `CC_SWITCH_TEST_HOME` and `NO_PROXY=127.0.0.1,localhost,::1` for loopback fixtures. No Windows/Linux native-app or real cloud-storage validation is claimed. This policy governs these applications' prompt-management paths; it is not a filesystem-wide lock against other applications sharing a target or a user explicitly saving another file there.
+
+## Review follow-up: copying from a protected app
+
+The maintainer identified a silent failure on confirmation: the source page's read-only check blocked copying even though only the target receives an inactive template. Cross-app copying now acquires the same loading/reload/write lock without requiring the source to be writable. Target protection is still enforced by the existing backend call, with the existing failure notification.
+
+| Before: confirmation leaves the dialog open | After: inactive template copied, source remains protected |
+|---|---|
+| ![Copy before](copy-before.png) | ![Copy after](copy-after.png) |
+
+[A protected target still reports a failure](copy-protected-target.png).
+
+The before component is from `9186fc0dc038bece5866166433b1d6b1e30ded99`. Both screenshots use the same synthetic source and target state with actual React components and clicks. The counters and file contents are observations of the controlled IPC fixture, not native filesystem evidence.
+
+Three new component cases fail on the prior implementation and pass with the fix. They cover protected Claude-to-Codex and Codex-to-Claude copies, duplicate confirmation, queued refreshes, a protected target among multiple destinations, and undo affecting only a successfully copied target. The full `PromptPanel` suite passes all 41 tests. Browser checks reproduce the silent failure before the fix, then verify successful inactive copying and the protected-target error, with no page errors.
+
+The follow-up frontend rerun passes all 255 files / 3,283 tests, TypeScript, formatting, and the renderer production build. This follow-up changes no Rust code; the backend results above were obtained on the preceding commit.
