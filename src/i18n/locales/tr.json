@@ -67,6 +67,11 @@
     "mustBeObject": "Yapılandırma bir dizi veya başka türde değil, JSON nesnesi olmalıdır",
     "invalidJson": "Geçersiz JSON biçimi"
   },
+  "tagInput": {
+    "placeholder": "Etiket ekle...",
+    "removeAria": "{{tag}} etiketini kaldır",
+    "tagHint": "#etiket"
+  },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Tam Claude Code settings.json içeriği",
