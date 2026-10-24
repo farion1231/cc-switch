@@ -414,6 +414,13 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
         .map_err(|e| format!("创建批处理目录失败: {e}"))?;
     let bat_file = script_dir.path().join(format!("{label}.bat"));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+    if command_line.contains(NPM_CLAUDE_INPLACE_SCRIPT_FILE) {
+        std::fs::write(
+            script_dir.path().join(NPM_CLAUDE_INPLACE_SCRIPT_FILE),
+            NPM_CLAUDE_INPLACE_SCRIPT,
+        )
+        .map_err(|e| format!("写入 Claude Code 覆盖脚本失败: {e}"))?;
+    }
 
     let output = windows_lifecycle_command(&bat_file, &effective_path_string()).output();
 
@@ -1106,11 +1113,23 @@ fn build_tool_action_line(
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
-                match resolve_update_command(tool, &installs) {
-                    UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
-                    UpdateCommand::Unmanaged => {
-                        return Err(unmanaged_update_error(tool, &installs));
-                    }
+                // npm 安装的 Claude：等 `--version` 探测加载的 claude.exe 放开；
+                // 这条路径不能改名时换成原地覆盖命令。
+                let npm_claude = if tool == "claude" {
+                    npm_claude_windows_update_command(&installs)?
+                } else {
+                    None
+                };
+                match npm_claude {
+                    Some(command) => command,
+                    None => match resolve_update_command(tool, &installs) {
+                        UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => {
+                            command
+                        }
+                        UpdateCommand::Unmanaged => {
+                            return Err(unmanaged_update_error(tool, &installs));
+                        }
+                    },
                 }
             }
             ToolLifecycleAction::Install => {
@@ -3701,6 +3720,13 @@ fn grok_native_update_command(update: String) -> String {
 /// 成功 toast 掩盖（用户报告的 “Missing optional dependency” 即源于此）。因此 codex 一律走
 /// npm 锚定升级；真正损坏（`runnable=false`）时由 `installs_anchored_command` 的门控改用
 /// `codex_repair_command` 的 uninstall+install 自愈，而非交给 codex 自身的 self-update。
+///
+/// Windows 上 npm 安装的 Claude 也不走这里生成的 `claude update`。那份安装的真身是
+/// `node_modules/@anthropic-ai/claude-code/bin/claude.exe`，`claude update` 会加载它再让
+/// npm rename 同一文件，Windows 返回 EBUSY（Claude 记为 `update_apply_exe_locked`）。
+/// `|| npm` 与 primary 是同一种失败，而且右侧经常在镜像锁放开前就启动。判定在
+/// `windows_npm_claude_exe` / Windows 版 `anchored_command_from_paths`，不从本名单删掉
+/// `"claude"`：原生安装（`%LOCALAPPDATA%\Programs\claude`）仍要 `claude update`。
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
@@ -3717,6 +3743,46 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
             )
         }
     }
+}
+
+/// npm 全局包里的 Claude 原生镜像。入口通常是前缀下的 `claude.cmd`，真正被 Windows
+/// 锁住的是包内 `bin/claude.exe`。路径大小写和斜杠不参与判定。
+#[cfg(any(target_os = "windows", test))]
+fn is_npm_claude_image(path: &str) -> bool {
+    path.replace('\\', "/")
+        .to_ascii_lowercase()
+        .contains("/node_modules/@anthropic-ai/claude-code/")
+}
+
+/// 找到这次升级会替换的那一份 `claude.exe`。
+///
+/// `real_target` 在 Windows 上经常只是 canonicalize 后的 `claude.cmd`（nvm 符号链接
+/// 解析到 `%APPDATA%\Roaming\nvm\v22\claude.cmd`），不含 `node_modules`。这时从入口
+/// 目录找 sibling `node_modules/@anthropic-ai/claude-code/bin/claude.exe`。VS Code
+/// 扩展自带的 `resources/native-binary/claude.exe` 和 WSL 的 Linux 二进制对不上这条路径。
+#[cfg(any(target_os = "windows", test))]
+fn windows_npm_claude_exe(bin_path: &str, real_target: &str) -> Option<PathBuf> {
+    if is_npm_claude_image(real_target) {
+        return Some(PathBuf::from(real_target));
+    }
+    if is_npm_claude_image(bin_path) {
+        return Some(PathBuf::from(bin_path));
+    }
+    for base in [
+        Path::new(bin_path).parent(),
+        Path::new(real_target).parent(),
+    ] {
+        let exe = base?
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("bin")
+            .join("claude.exe");
+        if exe.is_file() {
+            return Some(exe);
+        }
+    }
+    None
 }
 
 /// Codex 平台分发包损坏的自愈命令。Codex 的 npm 包是「主包 `@openai/codex`（纯 JS
@@ -3974,8 +4040,10 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 /// ① hermes / Grok native → `<bin_path> update`;CLI 自己处理安装环境。
 ///    MiniMax Code 脚本安装 → 带 `MCODE_INSTALL_DIR` 重跑官方 PowerShell installer。
 ///    Codex 独立安装 → 带 `CODEX_INSTALL_DIR` / `CODEX_HOME` 重跑官方 PowerShell installer。
-/// ② 支持官方自升级且 Windows 可安全静默执行的工具 → `<bin_path> update/upgrade || call <包管理器 fallback>`。
-/// ③ 其余 npm 工具 → sibling `npm.cmd`/`.exe` i -g <pkg>@latest。
+/// ② npm 安装的 Claude → 只跑安装它的 `npm.cmd i -g`（sibling 优先，其次前缀目录和 PATH）。
+///    `claude update` 会加载正在被替换的 `claude.exe`，Windows 上必定 EBUSY。
+/// ③ 支持官方自升级且 Windows 可安全静默执行的工具 → `<bin_path> update/upgrade || call <包管理器 fallback>`。
+/// ④ 其余 npm 工具 → sibling `npm.cmd`/`.exe` i -g <pkg>@latest。
 ///
 /// 包管理器 fallback 的 sibling 探测都通过 `sibling_bin_with_ext`(碰 fs):该处无候选
 /// 扩展名存在时,支持官方自升级的工具仍返回 `<bin_path> update/upgrade`,其余工具
@@ -4002,6 +4070,23 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         }
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path);
+    // npm 安装的 Claude：`claude update` 与右侧 npm 都会 rename 同一份正在运行的
+    // claude.exe，只保留 npm 命令。入口旁没有 npm.cmd（默认前缀 `%APPDATA%\npm`）时
+    // 用 `windows_npm_for_claude` 找到的绝对路径；一个 npm.cmd 都找不到才退回静态命令。
+    // 镜像放开与原地覆盖见 `npm_claude_windows_update_command`。
+    if tool == "claude" {
+        if let Some(exe) = windows_npm_claude_exe(bin_path, real_target) {
+            return package_command.or_else(|| {
+                let npm = windows_npm_for_claude(bin_path, real_target, &exe)?;
+                Some(format!(
+                    "{} i -g {}@latest{}",
+                    win_quote_path_for_batch(&npm.to_string_lossy()),
+                    npm_package_for(tool)?,
+                    npm_install_extra_args(tool)
+                ))
+            });
+        }
+    }
     if prefers_official_update(tool, LifecycleCommandShell::WindowsBatch) {
         let update = anchored_official_update_command(tool, bin_path)?;
         return Some(match package_command {
@@ -4088,6 +4173,282 @@ impl CommandDeadline {
 
     fn timeout_error(self) -> String {
         format!("Command timed out after {}s", self.limit.as_secs())
+    }
+}
+
+/// npm 安装的 Claude 在 Windows 上的升级命令。返回 None 时照常走 `resolve_update_command`。
+///
+/// 这里只做探测。用户开着的 Claude Code 会话占着 `bin\claude.exe` 时报错，
+/// 由用户退出会话后重试。镜像放开后这条路径仍不能改名（过滤驱动对它拒绝 DELETE，
+/// 读写却正常）时，返回原地覆盖的批处理命令，与其它工具的命令一起在批处理里执行。
+#[cfg(target_os = "windows")]
+fn npm_claude_windows_update_command(
+    installs: &[ToolInstallation],
+) -> Result<Option<String>, String> {
+    let Some(inst) = default_install(installs) else {
+        return Ok(None);
+    };
+    let real = inst.real.to_string_lossy();
+    let Some(exe) = windows_npm_claude_exe(&inst.path, &real) else {
+        return Ok(None);
+    };
+    wait_for_npm_claude_image_release(&exe)?;
+    match windows_npm_claude_replace_mode(&exe) {
+        NpmClaudeReplaceMode::NpmRename => Ok(None),
+        NpmClaudeReplaceMode::StillLocked => Err(format!(
+            "无法替换 Claude Code（{}）：文件被占用，请稍后重试。",
+            exe.display()
+        )),
+        NpmClaudeReplaceMode::InPlaceOverwrite => {
+            log::info!(
+                "Claude Code update: rename of {} is blocked; overwriting in place",
+                exe.display()
+            );
+            let npm = windows_npm_for_claude(&inst.path, &real, &exe)
+                .ok_or("找不到安装这份 Claude Code 的 npm.cmd，无法原地覆盖升级。")?;
+            let node = windows_node_for_npm(&npm)
+                .ok_or("找不到 npm.cmd 使用的 node.exe，无法原地覆盖升级。")?;
+            let platform = npm_claude_platform_dir(&exe).ok_or_else(|| {
+                format!(
+                    "找不到 Claude Code 的 Windows 平台包（{}）。",
+                    exe.display()
+                )
+            })?;
+            Ok(Some(npm_claude_inplace_command(
+                &npm, &node, &exe, &platform,
+            )))
+        }
+    }
+}
+
+/// 等这份 npm `claude.exe` 不再被任何进程加载。探测 `--version` 的进程刚退出时
+/// 镜像可能还没放开，所以等几秒。超时说明用户还开着使用这份 exe 的会话。
+#[cfg(target_os = "windows")]
+fn wait_for_npm_claude_image_release(exe: &Path) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if !windows_image_in_use(exe) {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Claude Code 正在运行（{}）。请先退出所有 Claude Code 会话后再升级。",
+                exe.display()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// 是否有进程加载着这份镜像。按 canonicalize 后的路径比对进程列表，所以
+/// `C:\Program Files\nodejs` 符号链接和 nvm 真身算同一份，VS Code 扩展自带的
+/// `claude.exe` 不算。枚举失败时退回独占读打开，打不开说明有进程占着文件。
+#[cfg(target_os = "windows")]
+fn windows_image_in_use(exe: &Path) -> bool {
+    match windows_processes_with_image(exe) {
+        Ok(pids) => !pids.is_empty(),
+        Err(error) => {
+            log::warn!("Claude Code update: {error}");
+            !windows_file_exclusively_readable(exe)
+        }
+    }
+}
+
+/// share mode 0 的读打开。有其它句柄开着这个文件时失败。
+#[cfg(target_os = "windows")]
+fn windows_file_exclusively_readable(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(path)
+        .is_ok()
+}
+
+/// 这条路径现在能否被 npm 改名，以 DELETE 访问打开来探测。
+#[cfg(target_os = "windows")]
+fn windows_image_rename_allowed(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const DELETE: u32 = 0x0001_0000;
+    const FILE_SHARE_READ: u32 = 1;
+    const FILE_SHARE_WRITE: u32 = 2;
+    const FILE_SHARE_DELETE: u32 = 4;
+
+    std::fs::OpenOptions::new()
+        .access_mode(DELETE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .open(path)
+        .is_ok()
+}
+
+/// 进程都已退出后，判断怎样替换 `claude.exe`。刚放开的镜像可能短暂拒绝 DELETE，
+/// 两秒内一直不能改名才认定是路径级拒绝。
+#[cfg(target_os = "windows")]
+fn windows_npm_claude_replace_mode(exe: &Path) -> NpmClaudeReplaceMode {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if windows_image_rename_allowed(exe) {
+            return NpmClaudeReplaceMode::NpmRename;
+        }
+        if std::time::Instant::now() >= deadline {
+            return npm_claude_replace_mode(windows_file_exclusively_readable(exe), false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NpmClaudeReplaceMode {
+    NpmRename,
+    InPlaceOverwrite,
+    StillLocked,
+}
+
+/// 能改名就交给 npm。不能改名但能独占读打开，说明没有进程占着文件、是路径级拒绝，
+/// 覆盖写入可以完成升级。
+#[cfg(any(target_os = "windows", test))]
+fn npm_claude_replace_mode(readable: bool, renameable: bool) -> NpmClaudeReplaceMode {
+    if renameable {
+        NpmClaudeReplaceMode::NpmRename
+    } else if readable {
+        NpmClaudeReplaceMode::InPlaceOverwrite
+    } else {
+        NpmClaudeReplaceMode::StillLocked
+    }
+}
+
+/// 原地覆盖脚本，见文件头注释。由 `run_tool_lifecycle_silently` 写到批处理所在目录。
+#[cfg(any(target_os = "windows", test))]
+const NPM_CLAUDE_INPLACE_SCRIPT: &str = include_str!("npm_claude_inplace.cjs");
+#[cfg(target_os = "windows")]
+const NPM_CLAUDE_INPLACE_SCRIPT_FILE: &str = "npm_claude_inplace.cjs";
+
+/// 原地覆盖的批处理命令。npm pack 把主包和平台包下载到批处理所在目录（`%~dp0`），
+/// 再用 npm.cmd 所用的 node 执行覆盖脚本，写文件的进程与 npm 安装时相同。
+/// 两段都加 `call`，路径里的 `%` 才与 `win_quote_path_for_batch` 的两轮展开一致。
+#[cfg(target_os = "windows")]
+fn npm_claude_inplace_command(npm: &Path, node: &Path, exe: &Path, platform_dir: &Path) -> String {
+    let platform = platform_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    format!(
+        "{npm} pack @anthropic-ai/claude-code@latest @anthropic-ai/{platform}@latest --pack-destination \"%~dp0.\" && call {node} \"%~dp0{NPM_CLAUDE_INPLACE_SCRIPT_FILE}\" {exe} {dir} \"%~dp0.\"",
+        npm = win_quote_path_for_batch(&npm.to_string_lossy()),
+        node = win_quote_path_for_batch(&node.to_string_lossy()),
+        exe = win_quote_path_for_batch(&exe.to_string_lossy()),
+        dir = win_quote_path_for_batch(&platform_dir.to_string_lossy()),
+    )
+}
+
+/// `bin/claude.exe` 来自哪个平台包。npm 按 node 的架构只装其中一个；全局安装时
+/// 嵌在主包的 `node_modules` 里，被提升时在主包旁边。找到多个时无法确定，返回 None。
+#[cfg(any(target_os = "windows", test))]
+fn npm_claude_platform_dir(exe: &Path) -> Option<PathBuf> {
+    let package = exe.parent()?.parent()?;
+    let bases = [
+        package.join("node_modules").join("@anthropic-ai"),
+        package.parent()?.to_path_buf(),
+    ];
+    let found: Vec<PathBuf> = bases
+        .iter()
+        .flat_map(|base| {
+            ["claude-code-win32-x64", "claude-code-win32-arm64"]
+                .into_iter()
+                .map(move |name| base.join(name))
+        })
+        .filter(|dir| dir.join("package.json").is_file())
+        .collect();
+    match found.as_slice() {
+        [dir] => Some(dir.clone()),
+        _ => None,
+    }
+}
+
+/// 安装这份 Claude 的 npm.cmd。先找入口、真身和前缀目录（nvm-windows、前缀设在
+/// Node 目录的安装），再按 PATH 找：默认前缀 `%APPDATA%\npm` 里通常没有 npm.cmd，
+/// 管理它的是 PATH 上的 npm。
+#[cfg(target_os = "windows")]
+fn windows_npm_for_claude(bin_path: &str, real_target: &str, exe: &Path) -> Option<PathBuf> {
+    // exe = <prefix>\node_modules\@anthropic-ai\claude-code\bin\claude.exe
+    let prefix = exe.ancestors().nth(5);
+    [
+        Path::new(bin_path).parent(),
+        Path::new(real_target).parent(),
+        prefix,
+    ]
+    .into_iter()
+    .flatten()
+    .map(Path::to_path_buf)
+    .chain(windows_path_dirs())
+    .map(|dir| dir.join("npm.cmd"))
+    .find(|npm| npm.is_file())
+}
+
+/// npm.cmd 优先用同目录的 node.exe，没有时用 PATH 上的 node。
+#[cfg(target_os = "windows")]
+fn windows_node_for_npm(npm: &Path) -> Option<PathBuf> {
+    npm.parent()
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(windows_path_dirs())
+        .map(|dir| dir.join("node.exe"))
+        .find(|node| node.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_path_dirs() -> Vec<PathBuf> {
+    std::env::split_paths(&effective_path_string()).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn windows_processes_with_image(exe: &Path) -> Result<Vec<u32>, String> {
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process -Filter \"Name = 'claude.exe'\" | ForEach-Object { if ($_.ExecutablePath) { Write-Output ($_.ProcessId.ToString() + [char]9 + $_.ExecutablePath) } }",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("无法枚举 claude.exe 进程: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "无法枚举 claude.exe 进程: {}",
+            decode_command_output(&output.stderr).trim()
+        ));
+    }
+    let text = decode_command_output(&output.stdout);
+    let mut pids = Vec::new();
+    for line in text.lines() {
+        let Some((pid, image)) = line.trim().split_once('\t') else {
+            continue;
+        };
+        let Ok(pid) = pid.trim().parse::<u32>() else {
+            continue;
+        };
+        if same_windows_file(exe, Path::new(image.trim())) {
+            pids.push(pid);
+        }
+    }
+    Ok(pids)
+}
+
+#[cfg(target_os = "windows")]
+fn same_windows_file(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy()),
+        _ => left
+            .to_string_lossy()
+            .replace('\\', "/")
+            .eq_ignore_ascii_case(&right.to_string_lossy().replace('\\', "/")),
     }
 }
 
@@ -6207,6 +6568,129 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    use super::is_npm_claude_image;
+    use super::npm_claude_platform_dir;
+    use super::npm_claude_replace_mode;
+    use super::windows_npm_claude_exe;
+    use super::NpmClaudeReplaceMode;
+    use super::NPM_CLAUDE_INPLACE_SCRIPT;
+
+    #[test]
+    fn npm_claude_image_matches_package_path_not_other_claude_exes() {
+        assert!(is_npm_claude_image(
+            r"C:\Users\me\AppData\Roaming\nvm\v22.12.0\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
+        ));
+        assert!(is_npm_claude_image(
+            "/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+        ));
+        assert!(is_npm_claude_image(
+            r"\\?\C:\Program Files\nodejs\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
+        ));
+        assert!(!is_npm_claude_image(
+            r"C:\Users\me\AppData\Roaming\nvm\v22.12.0\claude.cmd"
+        ));
+        assert!(!is_npm_claude_image(
+            r"C:\Users\me\.vscode\extensions\anthropic.claude-code-2.1.304-win32-x64\resources\native-binary\claude.exe"
+        ));
+    }
+
+    #[test]
+    fn windows_npm_shim_resolves_the_locked_exe() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("nodejs");
+        let exe = prefix
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("bin")
+            .join("claude.exe");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"MZ").unwrap();
+        let shim = prefix.join("claude.cmd");
+        std::fs::write(&shim, b"@echo off\r\n").unwrap();
+
+        let found = windows_npm_claude_exe(&shim.to_string_lossy(), &shim.to_string_lossy())
+            .expect("npm shim should resolve bin/claude.exe");
+        assert_eq!(found, exe);
+        assert!(windows_npm_claude_exe(
+            r"C:\Users\me\AppData\Local\Programs\claude\claude.exe",
+            r"C:\Users\me\AppData\Local\Programs\claude\claude.exe",
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn npm_claude_replace_mode_overwrites_when_rename_is_blocked() {
+        assert_eq!(
+            npm_claude_replace_mode(true, true),
+            NpmClaudeReplaceMode::NpmRename
+        );
+        assert_eq!(
+            npm_claude_replace_mode(true, false),
+            NpmClaudeReplaceMode::InPlaceOverwrite
+        );
+        assert_eq!(
+            npm_claude_replace_mode(false, false),
+            NpmClaudeReplaceMode::StillLocked
+        );
+        assert_eq!(
+            npm_claude_replace_mode(false, true),
+            NpmClaudeReplaceMode::NpmRename
+        );
+    }
+
+    #[test]
+    fn npm_claude_platform_dir_picks_the_single_installed_platform_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = dir
+            .path()
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code");
+        let exe = package.join("bin").join("claude.exe");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"MZ").unwrap();
+        assert_eq!(npm_claude_platform_dir(&exe), None);
+
+        let nested = |name: &str| {
+            let platform = package
+                .join("node_modules")
+                .join("@anthropic-ai")
+                .join(name);
+            std::fs::create_dir_all(&platform).unwrap();
+            std::fs::write(platform.join("package.json"), b"{}").unwrap();
+            platform
+        };
+        let arm64 = nested("claude-code-win32-arm64");
+        assert_eq!(npm_claude_platform_dir(&exe), Some(arm64));
+
+        nested("claude-code-win32-x64");
+        assert_eq!(npm_claude_platform_dir(&exe), None);
+    }
+
+    #[test]
+    fn npm_claude_platform_dir_finds_hoisted_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let scope = dir.path().join("node_modules").join("@anthropic-ai");
+        let exe = scope.join("claude-code").join("bin").join("claude.exe");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"MZ").unwrap();
+        let x64 = scope.join("claude-code-win32-x64");
+        std::fs::create_dir_all(&x64).unwrap();
+        std::fs::write(x64.join("package.json"), b"{}").unwrap();
+        assert_eq!(npm_claude_platform_dir(&exe), Some(x64));
+    }
+
+    #[test]
+    fn npm_claude_inplace_script_overwrites_without_rename() {
+        let script = NPM_CLAUDE_INPLACE_SCRIPT;
+        assert!(script.contains("fs.openSync(file, 'r+')"));
+        assert!(script.contains("maxOutputLength"));
+        assert!(script.contains("verify(dest, mainPackage.version)"));
+        assert!(script.contains("rollback()"));
+        assert!(!script.contains("renameSync"));
+        assert!(!script.contains("claude-code-win32-x64"));
+    }
 
     #[test]
     fn shell_command_missing_matches_shell_formats_only() {
@@ -8001,6 +8485,53 @@ mod tests {
                     .split_once("-EncodedCommand ")
                     .map(|(_, encoded)| encoded),
                 Some(expected_encoded.as_str())
+            );
+        }
+
+        #[test]
+        fn npm_claude_windows_update_does_not_launch_the_locked_exe() {
+            let (_dir, sub, bin_path) = setup_sibling("v22.12.0", "claude.cmd", &["npm.cmd"]);
+            let exe = sub
+                .join("node_modules")
+                .join("@anthropic-ai")
+                .join("claude-code")
+                .join("bin")
+                .join("claude.exe");
+            std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+            std::fs::write(&exe, b"MZ").unwrap();
+            let cmd = anchored_command_from_paths("claude", &bin_path, &bin_path)
+                .expect("npm claude should anchor");
+            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            let expected = format!(
+                "{} i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
+                expect_quoted_path(&npm_full)
+            );
+            assert_eq!(cmd, expected);
+            assert!(
+                !cmd.to_ascii_lowercase().contains("update"),
+                "claude update would lock the exe being replaced: {cmd}"
+            );
+        }
+
+        #[test]
+        fn npm_claude_inplace_command_packs_matching_platform_and_runs_script() {
+            let npm = Path::new(r"C:\Program Files\nodejs\npm.cmd");
+            let node = Path::new(r"C:\Program Files\nodejs\node.exe");
+            let package =
+                Path::new(r"C:\Program Files\nodejs\node_modules\@anthropic-ai\claude-code");
+            let exe = package.join("bin").join("claude.exe");
+            let platform = package
+                .join("node_modules")
+                .join("@anthropic-ai")
+                .join("claude-code-win32-arm64");
+            let cmd = npm_claude_inplace_command(npm, node, &exe, &platform);
+            assert_eq!(
+                cmd,
+                format!(
+                    "\"C:\\Program Files\\nodejs\\npm.cmd\" pack @anthropic-ai/claude-code@latest @anthropic-ai/claude-code-win32-arm64@latest --pack-destination \"%~dp0.\" && call \"C:\\Program Files\\nodejs\\node.exe\" \"%~dp0npm_claude_inplace.cjs\" \"{}\" \"{}\" \"%~dp0.\"",
+                    exe.display(),
+                    platform.display()
+                )
             );
         }
 
