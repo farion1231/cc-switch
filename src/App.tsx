@@ -1348,7 +1348,8 @@ function App() {
               activeApp === "hermes" ||
               activeApp === "pi" ||
               activeApp === "mcode" ||
-              activeApp === "kimi"
+              activeApp === "kimi" ||
+              activeApp === "mimo-desktop"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

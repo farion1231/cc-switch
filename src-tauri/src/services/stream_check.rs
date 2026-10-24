@@ -180,6 +180,14 @@ impl StreamCheckService {
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
+            // MiMoDesktop 和 MiMoCode 共用 mimocode.jsonc 格式：{ options: { baseURL, apiKey }, ... }
+            AppType::MimoDesktop | AppType::Mcode | AppType::Kimi => {
+                Self::extract_opencode_base_url(provider).ok_or_else(|| {
+                    AppError::InvalidInput(
+                        "MiMo / Kimi provider is missing `options.baseURL`".to_string(),
+                    )
+                })
+            }
             // agy 的 settings 与 Gemini 同形（env.GOOGLE_GEMINI_BASE_URL），借用 Gemini
             // adapter 提取；未配置端点时 agy 自身走 Google 默认端点，这里保持一致。
             AppType::Agy => {

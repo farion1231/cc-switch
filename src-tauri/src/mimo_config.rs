@@ -10,6 +10,7 @@
 
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
+use crate::jsonc_document::JsoncDocument;
 use indexmap::IndexMap;
 use serde_json::{json, Value};
 use std::{
@@ -20,9 +21,35 @@ use std::{
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
-/// MiMo configuration directory (`~/.config/mimocode`).
+/// MiMo configuration directory.
+///
+/// POSIX: `~/.config/mimocode` (XDG_CONFIG_HOME respected).
+/// Windows: `%LOCALAPPDATA%\mimocode\` (MiMo Code's README says XDG paths live
+/// under %LOCALAPPDATA% on Windows and MIMOCODE_HOME overrides all of them).
 pub(crate) fn config_dir() -> PathBuf {
-    get_home_dir().join(".config").join("mimocode")
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(local_app_data).join("mimocode");
+        }
+        if let Ok(mimocode_home) = std::env::var("MIMOCODE_HOME") {
+            return PathBuf::from(mimocode_home);
+        }
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            return PathBuf::from(home)
+                .join("AppData")
+                .join("Local")
+                .join("mimocode");
+        }
+        get_home_dir().join(".config").join("mimocode")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(mimocode_home) = std::env::var("MIMOCODE_HOME") {
+            return PathBuf::from(mimocode_home);
+        }
+        get_home_dir().join(".config").join("mimocode")
+    }
 }
 
 /// Path to the shared provider configuration file.
@@ -31,6 +58,7 @@ pub(crate) fn config_path() -> PathBuf {
 }
 
 /// Path to the desktop application's preferences file.
+#[allow(dead_code)]
 pub(crate) fn preferences_path() -> PathBuf {
     let base = dirs::config_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
@@ -44,6 +72,7 @@ pub(crate) fn preferences_path() -> PathBuf {
 ///
 /// Uses `json5` which accepts comments and trailing commas — the same engine
 /// [`crate::jsonc_document::JsoncDocument`] uses for format-preserving edits.
+#[allow(dead_code)]
 fn read_jsonc(path: &Path) -> Result<Value, AppError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -65,6 +94,7 @@ fn read_jsonc(path: &Path) -> Result<Value, AppError> {
     Ok(value)
 }
 
+#[allow(dead_code)]
 fn read_json(path: &Path) -> Result<Value, AppError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -194,8 +224,26 @@ fn write_entry(
         path.to_path_buf()
     };
     let _lock = acquire_lock(&canonical)?;
-    let mut document = read_jsonc(&canonical)?;
-    let root = document
+
+    // Read existing source (if any) for format-preserving edits.
+    let existing_source = match fs::read_to_string(&canonical) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(AppError::io(&canonical, e)),
+    };
+
+    let mut document = if existing_source.trim().is_empty() {
+        // No existing file: start from a minimal JSONC document.
+        JsoncDocument::parse("{\n}\n")
+            .map_err(|e| AppError::Config(format!("Failed to parse empty MiMo config: {e}")))?
+    } else {
+        JsoncDocument::parse(&existing_source)
+            .map_err(|e| AppError::Config(format!("Failed to parse MiMo JSONC config: {e}")))?
+    };
+
+    // Apply the change to the semantic value.
+    let mut desired = document.value().clone();
+    let root = desired
         .as_object_mut()
         .ok_or_else(|| AppError::Config("MiMo configuration root must be an object".into()))?;
     let entry = root
@@ -214,9 +262,18 @@ fn write_entry(
     } else {
         providers.remove(id);
     }
-    let json = serde_json::to_string_pretty(&document)
-        .map_err(|_| AppError::Config("Cannot serialize MiMo configuration".into()))?;
-    atomic_write_private(path, json.as_bytes())
+
+    let changed = document
+        .apply(&desired)
+        .map_err(|e| AppError::Config(format!("Failed to apply MiMo config change: {e}")))?;
+    if !changed {
+        return Ok(());
+    }
+
+    let source = document
+        .validated_source()
+        .map_err(|e| AppError::Config(format!("Failed to serialize MiMo config: {e}")))?;
+    atomic_write_private(path, source.as_bytes())
 }
 
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
@@ -239,11 +296,13 @@ pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
 // ─── Preferences ──────────────────────────────────────────────────────────────
 
 /// Returns the parsed `preferences.json`, or an empty object.
+#[allow(dead_code)]
 pub(crate) fn get_preferences() -> Result<Value, AppError> {
     read_json(&preferences_path())
 }
 
 /// Atomically writes `preferences.json`.
+#[allow(dead_code)]
 pub(crate) fn set_preferences(preferences: &Value) -> Result<(), AppError> {
     let path = preferences_path();
     if let Some(parent) = path.parent() {
@@ -256,6 +315,7 @@ pub(crate) fn set_preferences(preferences: &Value) -> Result<(), AppError> {
 }
 
 /// Returns the currently selected model string (e.g. `"quickapi/dots3-note-prev"`).
+#[allow(dead_code)]
 pub(crate) fn current_model() -> Result<String, AppError> {
     let prefs = get_preferences()?;
     Ok(prefs
@@ -266,6 +326,7 @@ pub(crate) fn current_model() -> Result<String, AppError> {
 }
 
 /// Sets the currently selected model string in `preferences.json`.
+#[allow(dead_code)]
 pub(crate) fn set_current_model(model: &str) -> Result<(), AppError> {
     let mut prefs = get_preferences()?;
     if let Some(obj) = prefs.as_object_mut() {
@@ -275,6 +336,7 @@ pub(crate) fn set_current_model(model: &str) -> Result<(), AppError> {
 }
 
 /// Returns the notification settings object from `preferences.json`.
+#[allow(dead_code)]
 pub(crate) fn get_task_notifications() -> Result<Value, AppError> {
     let prefs = get_preferences()?;
     Ok(prefs.get("taskNotifications").cloned().unwrap_or_else(|| json!({
@@ -286,6 +348,7 @@ pub(crate) fn get_task_notifications() -> Result<Value, AppError> {
 }
 
 /// Sets the notification settings object in `preferences.json`.
+#[allow(dead_code)]
 pub(crate) fn set_task_notifications(notifications: &Value) -> Result<(), AppError> {
     let mut prefs = get_preferences()?;
     if let Some(obj) = prefs.as_object_mut() {
@@ -297,6 +360,7 @@ pub(crate) fn set_task_notifications(notifications: &Value) -> Result<(), AppErr
 // ─── Atomic write + commit ────────────────────────────────────────────────────
 
 /// Callers hold their feature lock across the native write and database commit.
+#[allow(dead_code)]
 pub(crate) fn write_and_commit<T>(
     path: &Path,
     write: impl FnOnce() -> Result<(), AppError>,
@@ -333,9 +397,19 @@ mod tests {
 
     #[test]
     fn config_dir_uses_xdg_home() {
-        // On all platforms, the config dir is ~/.config/mimocode
-        let dir = config_dir();
-        assert!(dir.ends_with(".config/mimocode"));
+        // On POSIX: ~/.config/mimocode (XDG_CONFIG_HOME respected).
+        // On Windows: %LOCALAPPDATA%\mimocode\ (MiMo Code's README says XDG paths
+        // live under %LOCALAPPDATA% on Windows and MIMOCODE_HOME overrides all).
+        #[cfg(not(target_os = "windows"))]
+        {
+            let dir = config_dir();
+            assert!(dir.ends_with(".config/mimocode"));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let dir = config_dir();
+            assert!(dir.ends_with("mimocode"));
+        }
     }
 
     #[test]

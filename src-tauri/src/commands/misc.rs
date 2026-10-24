@@ -690,7 +690,7 @@ const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
 const AGY_INSTALL_WINDOWS_SCRIPT: &str = "irm https://antigravity.google/cli/install.ps1 | iex";
 #[cfg(target_os = "windows")]
 const MIMOCODE_INSTALL_WINDOWS_SCRIPT: &str =
-    "npm i -g @mimo-ai/cli @mimo-ai/mimocode-windows-x64@latest";
+    "npm i -g @mimo-ai/cli@latest";
 #[cfg(target_os = "windows")]
 const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
 
@@ -888,7 +888,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
-        "mimocode" => Some("npm i -g @mimo-ai/cli @mimo-ai/mimocode-windows-x64@latest"),
+        "mimocode" => Some("npm i -g @mimo-ai/cli@latest"),
         _ => None,
     }
 }
@@ -1292,6 +1292,7 @@ async fn get_single_tool_version_impl(
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
+        "mimocode" => fetch_npm_latest_for_tool(&client, "@mimo-ai/cli", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         _ => None,
     };
@@ -1633,7 +1634,9 @@ const VERSION_PROBE_SENTINEL: &str = "__CCSWITCH_VERSION__";
 /// 不含单引号，可以直接嵌进外层 `'...'`。
 #[cfg_attr(not(windows), allow(dead_code))]
 fn version_probe_payload(tool: &str) -> String {
-    format!("echo {VERSION_PROBE_SENTINEL}; {tool} --version")
+    // MiMoCode 的 npm 包名是 `mimocode`，但实际二进制名为 `mimo`（`@mimo-ai/cli` 的 bin）。
+    let cmd = if tool == "mimocode" { "mimo" } else { tool };
+    format!("echo {VERSION_PROBE_SENTINEL}; {cmd} --version")
 }
 
 /// WSL 未指定 shell 时依次尝试的 flag：交互式初始化（nvm 等写在 rc 里）优先。
@@ -1718,6 +1721,9 @@ enum ShellProbe {
 fn try_get_version(tool: &str) -> ShellProbe {
     use std::process::Command;
 
+    // MiMoCode 的 npm 包名是 `mimocode`，但实际二进制名为 `mimo`（`@mimo-ai/cli` 的 bin）。
+    let cmd = if tool == "mimocode" { "mimo" } else { tool };
+
     let output = {
         let shell = std::env::var("SHELL")
             .ok()
@@ -1726,7 +1732,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
         let flag = default_flag_for_shell(&shell);
         Command::new(shell)
             .arg(flag)
-            .arg(format!("{tool} --version"))
+            .arg(format!("{cmd} --version"))
             .output()
     };
 
@@ -3046,6 +3052,9 @@ fn resolve_path_default(
 ) -> Result<Option<std::path::PathBuf>, String> {
     use std::process::{Command, Stdio};
 
+    // MiMoCode 的 npm 包名是 `mimocode`，但实际二进制名为 `mimo`（`@mimo-ai/cli` 的 bin）。
+    let cmd_tool = if tool == "mimocode" { "mimo" } else { tool };
+
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| is_valid_shell(s))
@@ -3053,7 +3062,7 @@ fn resolve_path_default(
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg(format!("command -v {tool}"))
+        .arg(format!("command -v {cmd_tool}"))
         // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
         // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
         .stdin(Stdio::null())
@@ -3109,13 +3118,15 @@ fn resolve_path_default(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<Option<std::path::PathBuf>, String> {
+    // MiMoCode 的 npm 包名是 `mimocode`，但实际二进制名为 `mimo`。
+    let lookup_tool = if tool == "mimocode" { "mimo" } else { tool };
     // Restrict `where` to the merged effective PATH. A bare `where {tool}` also
     // searches the current directory first, which would let a project-local
     // `codex.cmd` be executed by a passive version check. The `$PATH:pattern`
     // form searches only the supplied environment variable while still seeing
     // registry PATH entries lost by an in-app-update relaunch (#6061).
     let current_path = effective_path_os().unwrap_or_default();
-    let child = windows_path_lookup_command(tool, &current_path)
+    let child = windows_path_lookup_command(lookup_tool, &current_path)
         .spawn()
         .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
     let out = wait_child_output(child, deadline)?;
@@ -3295,6 +3306,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
+        "mimocode" => Some("@mimo-ai/cli"),
         _ => None,
     }
 }
@@ -4603,7 +4615,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
-        "mimocode" => "npm i -g @mimo-ai/cli @mimo-ai/mimocode-windows-x64@latest".to_string(),
+        "mimocode" => "npm i -g @mimo-ai/cli@latest".to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }

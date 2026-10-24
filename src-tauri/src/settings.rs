@@ -53,7 +53,11 @@ pub struct VisibleApps {
     pub pi: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
-    #[serde(default = "default_true")]
+    #[serde(
+        rename = "mimo-desktop",
+        alias = "mimoDesktop",
+        default = "default_true"
+    )]
     pub mimo_desktop: bool,
     #[serde(default = "default_true")]
     pub kimi: bool,

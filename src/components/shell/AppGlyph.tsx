@@ -31,7 +31,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "minimax",
-  "mimo-desktop": "mimo",
+  "mimo-desktop": "xiaomimimo",
   kimi: "kimi",
   agy: "antigravity",
 };

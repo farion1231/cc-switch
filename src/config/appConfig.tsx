@@ -109,7 +109,7 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "mimo-desktop"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -119,6 +119,7 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "mimo-desktop",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
@@ -288,7 +289,7 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   },
   "mimo-desktop": {
     label: "MiMo Desktop",
-    icon: <ProviderIcon icon="mimo" name="MiMo Desktop" size={14} />,
+    icon: <ProviderIcon icon="xiaomimimo" name="MiMo Desktop" size={14} />,
     activeClass:
       "bg-emerald-500/10 ring-1 ring-emerald-500/20 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400",
     badgeClass:

@@ -294,6 +294,7 @@ export function AddProviderDialog({
           appId === "hermes" ||
           appId === "pi" ||
           appId === "mcode" ||
+          appId === "mimo-desktop" ||
           appId === "kimi") &&
         values.providerKey
       ) {

@@ -12,7 +12,6 @@ import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import { BasicFormFields } from "./BasicFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
-import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { normalizeRequestHeaders } from "./helpers/requestHeaders";
 import {
   mergeOpencodeExtraOptionRows,
@@ -20,11 +19,18 @@ import {
 } from "./helpers/opencodeFormUtils";
 import type { ProviderFormProps } from "./ProviderForm";
 
+// MiMoCode uses AI SDK packages (same npm format as OpenCode).
+// The default npm is @ai-sdk/openai-compatible — the package MiMo Code's README
+// documents for OpenAI-compatible providers.
 const API_FORMATS = [
-  { value: "anthropic-messages", label: "Anthropic Messages" },
-  { value: "openai-completions", label: "OpenAI Chat Completions" },
-  { value: "openai-responses", label: "OpenAI Responses" },
+  { value: "@ai-sdk/openai", label: "OpenAI Responses" },
+  { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible" },
+  { value: "@ai-sdk/anthropic", label: "Anthropic" },
+  { value: "@ai-sdk/amazon-bedrock", label: "Amazon Bedrock" },
+  { value: "@ai-sdk/google", label: "Google (Gemini)" },
 ];
+
+const DEFAULT_NPM = "@ai-sdk/openai-compatible";
 
 const configSchema = z
   .object({
@@ -76,7 +82,7 @@ export function MimoDesktopProviderForm({
   const isDarkMode = useDarkMode();
   const [config, setConfig] = useState<MimoConfig>(
     initialData?.settingsConfig ?? {
-      npm: "anthropic-messages",
+      npm: DEFAULT_NPM,
       options: {},
       models: {},
     },
@@ -214,7 +220,7 @@ export function MimoDesktopProviderForm({
           />
           <OpenCodeFormFields
             apiFormats={API_FORMATS}
-            npm={config.npm ?? "anthropic-messages"}
+            npm={config.npm ?? DEFAULT_NPM}
             onNpmChange={(npm) => update({ ...config, npm })}
             apiKey={config.options?.apiKey ?? ""}
             onApiKeyChange={(apiKey) => updateOptions({ apiKey })}
