@@ -1459,68 +1459,32 @@ fn incremental_vacuum_reclaims_entire_freelist() {
     assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
 }
 
+/// v22 已随 v4.0.19 发布：从它升级必须补上 `mcp_servers.enabled_omp`，否则读 MCP 列表报
+/// `no such column`。Skills 没有 omp 列（启用状态按原生目录现算）。
 #[test]
-fn migration_v20_to_v21_adds_enabled_omp_columns() {
+fn migration_v22_to_v23_adds_enabled_omp_to_mcp_servers_only() {
     let conn = Connection::open_in_memory().expect("open memory db");
-    // v20 形态：含 Mcode/Pi 列（v18->v20 产物），无 Oh My Pi 列
-    conn.execute_batch(
-        "CREATE TABLE mcp_servers (
-            id TEXT PRIMARY KEY,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
-        );
-        CREATE TABLE skills (
-            id TEXT PRIMARY KEY,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_mcode BOOLEAN NOT NULL DEFAULT 0
-        );",
-    )
-    .expect("seed v20 shape");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")
+        .expect("rewind mcp_servers to v22 shape");
     conn.execute(
-        "INSERT INTO mcp_servers (id, enabled_hermes, enabled_mcode, enabled_pi) VALUES ('mcp-1', 1, 1, 1)",
+        "INSERT INTO mcp_servers (id, name, server_config, enabled_pi) VALUES ('mcp-1', 'm', '{}', 1)",
         [],
     )
     .expect("seed mcp row");
-    conn.execute(
-        "INSERT INTO skills (id, enabled_hermes, enabled_mcode) VALUES ('skill-1', 1, 0)",
-        [],
-    )
-    .expect("seed skill row");
-    Database::set_user_version(&conn, 20).expect("set user_version=20");
+    Database::set_user_version(&conn, 22).expect("set user_version=22");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
 
-    assert_eq!(
-        Database::get_user_version(&conn).expect("user_version after migration"),
-        SCHEMA_VERSION
-    );
-    for (table, column) in [
-        ("mcp_servers", "enabled_agy"),
-        ("skills", "enabled_agy"),
-        ("mcp_servers", "enabled_omp"),
-        ("skills", "enabled_omp"),
-    ] {
-        assert!(
-            Database::has_column(&conn, table, column).expect("check column"),
-            "{table}.{column} should exist after v20 -> {SCHEMA_VERSION}"
-        );
-    }
-    // 既有标志列的值必须保留
-    let (mcp_hermes, mcp_mcode, mcp_pi, mcp_omp): (i64, i64, i64, i64) = conn
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp").unwrap());
+    assert!(!Database::has_column(&conn, "skills", "enabled_omp").unwrap());
+    let (pi, omp): (i64, i64) = conn
         .query_row(
-            "SELECT enabled_hermes, enabled_mcode, enabled_pi, enabled_omp FROM mcp_servers WHERE id = 'mcp-1'",
+            "SELECT enabled_pi, enabled_omp FROM mcp_servers WHERE id = 'mcp-1'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("read mcp row");
-    assert_eq!((mcp_hermes, mcp_mcode, mcp_pi, mcp_omp), (1, 1, 1, 0));
-    let (skill_hermes, skill_mcode, skill_omp): (i64, i64, i64) = conn
-        .query_row(
-            "SELECT enabled_hermes, enabled_mcode, enabled_omp FROM skills WHERE id = 'skill-1'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .expect("read skill row");
-    assert_eq!((skill_hermes, skill_mcode, skill_omp), (1, 0, 0));
+    assert_eq!((pi, omp), (1, 0));
 }

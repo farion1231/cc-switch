@@ -35,7 +35,7 @@ pub(crate) fn provider_exists_in_live_config(
         }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
-        AppType::Omp => crate::omp_config::omp_provider_exists(provider_id),
+        AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
         _ => Ok(false),
     }
 }

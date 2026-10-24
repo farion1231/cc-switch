@@ -6,8 +6,9 @@ use crate::store::AppState;
 use serde_json::{json, Value};
 use std::sync::Mutex;
 
+use super::pi::{transport_spec, unified_spec, TRANSPORT_FIELDS};
+
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
-const TRANSPORT_FIELDS: [&str; 7] = ["command", "args", "env", "cwd", "url", "headers", "type"];
 
 #[derive(Clone, Copy)]
 pub(crate) enum OmpChange<'a> {
@@ -246,24 +247,4 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
     } else {
         Err(AppError::InvalidInput(format!("Imported {count} Oh My Pi MCP servers; skipped {}. Native configurations were preserved.", skipped.join("; "))))
     }
-}
-
-fn unified_spec(native: &Value) -> Value {
-    let mut spec = native.clone();
-    if spec.is_object() && spec.get("type").is_none() {
-        if spec.get("command").is_some() {
-            spec["type"] = json!("stdio");
-        } else if spec.get("url").is_some() {
-            spec["type"] = json!("http");
-        }
-    }
-    spec
-}
-
-fn transport_spec(spec: &Value) -> Value {
-    let mut spec = unified_spec(spec);
-    if let Some(object) = spec.as_object_mut() {
-        object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));
-    }
-    spec
 }

@@ -64,7 +64,7 @@ impl McpApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
+            AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
         }
@@ -165,7 +165,7 @@ impl SkillApps {
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
-            AppType::OpenClaw => false, // OpenClaw doesn't support Skills
+            AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
@@ -184,7 +184,7 @@ impl SkillApps {
             AppType::Pi => self.pi = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
-            AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
+            AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
@@ -944,7 +944,6 @@ impl MultiAppConfig {
             AppType::Hermes => &mut config.prompts.hermes.prompts,
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
-            // Omp likewise stores prompts in its native agent config.
             AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy | AppType::Omp => {
                 return Ok(false)
             }
@@ -1131,7 +1130,7 @@ mod tests {
         assert_eq!("omp".parse::<AppType>().unwrap(), AppType::Omp);
         assert_eq!("oh-my-pi".parse::<AppType>().unwrap(), AppType::Omp);
         assert_eq!("oh_my_pi".parse::<AppType>().unwrap(), AppType::Omp);
-        assert_eq!("omp".parse::<AppType>().unwrap(), AppType::Omp);
+        assert_eq!("ohmypi".parse::<AppType>().unwrap(), AppType::Omp);
         assert_eq!("OMP".parse::<AppType>().unwrap(), AppType::Omp);
         assert_eq!(AppType::Omp.as_str(), "omp");
     }
