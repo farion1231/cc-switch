@@ -20,6 +20,8 @@ use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
 
+mod source_download;
+
 // ========== Skills state coordination ==========
 
 /// Coordinates the database `skills` state with the filesystem SSOT.
@@ -402,6 +404,44 @@ const FILE_ENTRY_BUDGET_COST: u64 = DIRECTORY_BUDGET_COST;
 /// 曾经的 128 MiB 会把这类仓库挡在门外。响应体流式落到临时文件而不进内存，
 /// 上限对齐解压预算：压缩体超过解压后能容纳的总量，解压那一步也必然失败。
 const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
+
+// Discovery does not need repository videos, models, or other large assets.
+// Keep the single archive request for small catalogs with hundreds of skills.
+const DISCOVERY_ARCHIVE_THRESHOLD_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_DISCOVERY_TREE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_DISCOVERY_MANIFEST_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_DISCOVERY_METADATA_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_DISCOVERY_MANIFESTS: usize = 4096;
+const DISCOVERY_METADATA_CONCURRENCY: usize = 8;
+const DISCOVERY_PLAN_TTL_SECONDS: u64 = 30 * 60;
+const MAX_DISCOVERY_PLAN_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_DISCOVERY_PLAN_FILES: usize = 128;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SkillDiscoveryPlan {
+    version: u8,
+    fetched_at: u64,
+    resolved_branch: String,
+    /// None keeps the archive path; Some fetches only these manifests.
+    manifest_paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubDiscoveryTree {
+    tree: Vec<GithubDiscoveryEntry>,
+    truncated: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GithubDiscoveryEntry {
+    path: String,
+    #[serde(rename = "type")]
+    kind: String,
+    mode: String,
+    size: Option<u64>,
+    #[serde(default)]
+    sha: Option<String>,
+}
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -1393,33 +1433,25 @@ impl SkillService {
                 enabled: true,
             };
 
-            // 下载仓库 ZIP
-            let (temp_guard, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(e)) => {
-                    log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
-                    failures.push(Self::repo_failure(&repo, e.to_string()));
-                    continue;
-                }
-                Err(_) => {
-                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
-                    failures.push(Self::repo_failure(
-                        &repo,
-                        Self::download_timeout_error(&repo),
-                    ));
-                    continue;
-                }
-            };
+            // Stage complete installed skill sources, excluding unrelated repository assets.
+            let (temp_guard, used_branch) =
+                match self.download_repo_for_skills(&repo, group_skills).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
+                        failures.push(Self::repo_failure(&repo, e.to_string()));
+                        continue;
+                    }
+                };
             let temp_dir = temp_guard.path();
+            let mut resolved_repo = repo.clone();
+            resolved_repo.branch = used_branch;
 
             // 扫描仓库中的所有 Skill 目录
             let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-            if let Err(e) = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills) {
+            if let Err(e) =
+                self.scan_dir_recursive(temp_dir, temp_dir, &resolved_repo, &mut remote_skills)
+            {
                 // 扫到一半失败：已扫到的照常比对，但如实报告这个仓库可能不完整
                 log::warn!("检查更新时扫描 {}/{} 失败: {e}", owner, name);
                 failures.push(Self::repo_failure(&repo, e.to_string()));
@@ -1458,7 +1490,7 @@ impl SkillService {
                 ) {
                     Some((h, freshly_computed)) => {
                         if freshly_computed {
-                            let _ = db.update_skill_hash(&skill.id, &h, 0);
+                            let _ = db.update_skill_hash(&skill.id, &h, skill.updated_at);
                         }
                         Some(h)
                     }
@@ -1559,24 +1591,16 @@ impl SkillService {
             Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Omp)?;
         }
 
-        // 下载仓库
-        let (temp_guard, used_branch) = timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[("owner", &owner), ("name", &name), ("timeout", "60")],
-                Some("checkNetwork"),
-            ))
-        })??;
+        let (temp_guard, used_branch) = self
+            .download_repo_for_skills(&repo, std::slice::from_ref(&skill))
+            .await?;
         let temp_dir = temp_guard.path();
+        let mut resolved_repo = repo.clone();
+        resolved_repo.branch = used_branch.clone();
 
         // 在解压的仓库中查找 Skill 源目录
         let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-        let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
+        let _ = self.scan_dir_recursive(temp_dir, temp_dir, &resolved_repo, &mut remote_skills);
 
         let remote_match = Self::find_remote_skill_for_install(
             &remote_skills,
@@ -3165,10 +3189,155 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_guard, resolved_branch) =
-            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-                .await
-                .map_err(|_| anyhow!(Self::download_timeout_error(repo)))??;
+        Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+        timeout(std::time::Duration::from_secs(60), async {
+            // Fixture-based install/update tests remain offline.
+            #[cfg(test)]
+            if self.repo_fixture.is_some() {
+                return self.fetch_repo_skills_from_archive(repo).await;
+            }
+
+            let cache_dir = get_app_config_dir().join("cache/skill-discovery");
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            let mut cached_error = None;
+            if let Some(plan) = Self::read_discovery_plan(&cache_dir, repo, now) {
+                log::debug!(
+                    "Using cached discovery paths for {}/{}",
+                    repo.owner,
+                    repo.name
+                );
+                match self.fetch_repo_skills_with_plan(repo, plan).await {
+                    Ok(skills) => return Ok(skills),
+                    Err(error) => {
+                        // A manifest can move during the TTL. Re-read paths once,
+                        // retaining the plan until a fresh one replaces it: a
+                        // transient raw-content failure must not lose this route.
+                        log::debug!("Cached discovery paths failed; refreshing: {error}");
+                        cached_error = Some(error);
+                    }
+                }
+            }
+            match Self::fetch_discovery_tree(repo).await {
+                Ok((resolved_repo, tree)) => {
+                    let plan = SkillDiscoveryPlan {
+                        version: 1,
+                        fetched_at: now,
+                        resolved_branch: resolved_repo.branch,
+                        manifest_paths: Self::discovery_manifest_paths(&tree)?,
+                    };
+                    if let Err(error) = Self::write_discovery_plan(&cache_dir, repo, &plan) {
+                        log::debug!("Could not cache skill discovery paths: {error}");
+                    }
+                    self.fetch_repo_skills_with_plan(repo, plan).await
+                }
+                Err(error) => {
+                    if let Some(cached_error) = cached_error {
+                        return Err(cached_error);
+                    }
+                    // Public GitHub APIs have a separate rate limit. Preserve the
+                    // established archive route if preflight is unavailable.
+                    log::warn!(
+                        "Skill discovery preflight failed for {}/{}; trying archive: {error}",
+                        repo.owner,
+                        repo.name
+                    );
+                    self.fetch_repo_skills_from_archive(repo).await
+                }
+            }
+        })
+        .await
+        .map_err(|_| anyhow!(Self::download_timeout_error(repo)))?
+        .map_err(|error| Self::with_repo_context(error, repo))
+    }
+
+    async fn fetch_repo_skills_with_plan(
+        &self,
+        repo: &SkillRepo,
+        plan: SkillDiscoveryPlan,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let mut resolved_repo = repo.clone();
+        resolved_repo.branch = plan.resolved_branch;
+        if let Some(paths) = plan.manifest_paths {
+            Self::fetch_discovery_manifests(&resolved_repo, paths, |url| {
+                Self::fetch_discovery_bytes(url, MAX_DISCOVERY_MANIFEST_BYTES)
+            })
+            .await
+        } else {
+            self.fetch_repo_skills_from_archive(&resolved_repo).await
+        }
+    }
+
+    fn discovery_plan_path(cache_dir: &Path, repo: &SkillRepo) -> PathBuf {
+        use sha2::{Digest, Sha256};
+        let identity = format!(
+            "{}/{}:{}",
+            repo.owner.to_lowercase(),
+            repo.name.to_lowercase(),
+            repo.branch
+        );
+        cache_dir.join(format!("{:x}.json", Sha256::digest(identity.as_bytes())))
+    }
+
+    fn read_discovery_plan(
+        cache_dir: &Path,
+        repo: &SkillRepo,
+        now: u64,
+    ) -> Option<SkillDiscoveryPlan> {
+        use std::io::Read;
+        let file = fs::File::open(Self::discovery_plan_path(cache_dir, repo)).ok()?;
+        let mut bytes = Vec::new();
+        file.take(MAX_DISCOVERY_PLAN_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > MAX_DISCOVERY_PLAN_BYTES {
+            return None;
+        }
+        let plan: SkillDiscoveryPlan = serde_json::from_slice(&bytes).ok()?;
+        if plan.version != 1
+            || plan.fetched_at > now
+            || now - plan.fetched_at >= DISCOVERY_PLAN_TTL_SECONDS
+            || plan.resolved_branch.is_empty()
+            || plan.resolved_branch.eq_ignore_ascii_case("HEAD")
+            || Self::validate_repo_ref(&repo.owner, &repo.name, &plan.resolved_branch).is_err()
+            || plan.manifest_paths.as_ref().is_some_and(|paths| {
+                paths.len() > MAX_DISCOVERY_MANIFESTS
+                    || paths
+                        .iter()
+                        .any(|path| Self::validate_discovery_manifest_path(path).is_err())
+            })
+        {
+            return None;
+        }
+        Some(plan)
+    }
+
+    fn write_discovery_plan(
+        cache_dir: &Path,
+        repo: &SkillRepo,
+        plan: &SkillDiscoveryPlan,
+    ) -> Result<()> {
+        fs::create_dir_all(cache_dir)?;
+        let path = Self::discovery_plan_path(cache_dir, repo);
+        if !path.exists()
+            && fs::read_dir(cache_dir)?
+                .take(MAX_DISCOVERY_PLAN_FILES)
+                .count()
+                >= MAX_DISCOVERY_PLAN_FILES
+        {
+            return Ok(());
+        }
+        let bytes = serde_json::to_vec(plan)?;
+        if bytes.len() as u64 <= MAX_DISCOVERY_PLAN_BYTES {
+            crate::config::atomic_write(&path, &bytes)?;
+        }
+        Ok(())
+    }
+
+    async fn fetch_repo_skills_from_archive(
+        &self,
+        repo: &SkillRepo,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let (temp_guard, resolved_branch) = self.download_repo(repo).await?;
 
         let mut skills = Vec::new();
         let scan_dir = temp_guard.path();
@@ -3176,6 +3345,256 @@ impl SkillService {
         resolved_repo.branch = resolved_branch;
         self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
 
+        Ok(skills)
+    }
+
+    async fn fetch_discovery_tree(repo: &SkillRepo) -> Result<(SkillRepo, GithubDiscoveryTree)> {
+        let mut branches = Vec::new();
+        if repo.branch.is_empty() || repo.branch.eq_ignore_ascii_case("HEAD") {
+            #[derive(Deserialize)]
+            struct RepositoryInfo {
+                default_branch: String,
+            }
+            let bytes = Self::fetch_discovery_bytes(
+                format!("https://api.github.com/repos/{}/{}", repo.owner, repo.name),
+                1024 * 1024,
+            )
+            .await?;
+            let info: RepositoryInfo = serde_json::from_slice(&bytes).map_err(|_| {
+                anyhow!(format_skill_error(
+                    "DISCOVERY_METADATA_INVALID",
+                    &[("reason", "repositoryInfo")],
+                    Some("checkRepoUrl")
+                ))
+            })?;
+            Self::validate_repo_ref(&repo.owner, &repo.name, &info.default_branch)?;
+            if info.default_branch.is_empty() || info.default_branch.eq_ignore_ascii_case("HEAD") {
+                return Err(anyhow!(format_skill_error(
+                    "DISCOVERY_METADATA_INVALID",
+                    &[("reason", "defaultBranch")],
+                    Some("checkRepoUrl")
+                )));
+            }
+            branches.push(info.default_branch);
+        } else {
+            branches.push(repo.branch.clone());
+        }
+        for fallback in ["main", "master"] {
+            if !branches.iter().any(|branch| branch == fallback) {
+                branches.push(fallback.to_string());
+            }
+        }
+        let mut last_error = None;
+        for branch in branches {
+            let mut url = reqwest::Url::parse(&format!(
+                "https://api.github.com/repos/{}/{}/git/trees/",
+                repo.owner, repo.name
+            ))?;
+            url.path_segments_mut()
+                .map_err(|_| anyhow!("Invalid GitHub API URL"))?
+                .pop_if_empty()
+                .push(&branch);
+            url.query_pairs_mut().append_pair("recursive", "1");
+            match Self::fetch_discovery_bytes(url.to_string(), MAX_DISCOVERY_TREE_BYTES).await {
+                Ok(bytes) => {
+                    let tree = serde_json::from_slice(&bytes).map_err(|_| {
+                        anyhow!(format_skill_error(
+                            "DISCOVERY_METADATA_INVALID",
+                            &[("reason", "repositoryTree")],
+                            Some("checkRepoUrl")
+                        ))
+                    })?;
+                    let mut resolved = repo.clone();
+                    resolved.branch = branch;
+                    return Ok((resolved, tree));
+                }
+                Err(error) if Self::is_branch_not_found(&error) => last_error = Some(error),
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow!("No repository branch found")))
+    }
+
+    async fn fetch_discovery_bytes(url: String, limit: u64) -> Result<Vec<u8>> {
+        let mut response = crate::proxy::http_client::get()
+            .get(url)
+            .header(reqwest::header::USER_AGENT, "CC-Switch-Skill-Discovery")
+            .timeout(std::time::Duration::from_secs(20))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16().to_string();
+            return Err(anyhow!(format_skill_error(
+                "DOWNLOAD_FAILED",
+                &[("status", &status)],
+                match status.as_str() {
+                    "403" => Some("http403"),
+                    "404" => Some("http404"),
+                    "429" => Some("http429"),
+                    _ => Some("checkNetwork"),
+                },
+            )));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if (bytes.len() as u64).saturating_add(chunk.len() as u64) > limit {
+                return Err(anyhow!(format_skill_error(
+                    "DISCOVERY_LIMIT_EXCEEDED",
+                    &[("scope", "response"), ("limit", &limit.to_string())],
+                    Some("checkRepoUrl")
+                )));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+
+    fn discovery_manifest_paths(tree: &GithubDiscoveryTree) -> Result<Option<Vec<String>>> {
+        if tree.truncated {
+            return Err(anyhow!(format_skill_error(
+                "DISCOVERY_TREE_TRUNCATED",
+                &[],
+                Some("retryLater")
+            )));
+        }
+        let total_size = tree
+            .tree
+            .iter()
+            .filter(|entry| entry.kind == "blob")
+            .fold(0u64, |total, entry| {
+                total.saturating_add(entry.size.unwrap_or(0))
+            });
+        if total_size <= DISCOVERY_ARCHIVE_THRESHOLD_BYTES {
+            return Ok(None);
+        }
+        let mut metadata_size = 0u64;
+        let mut paths = Vec::new();
+        for entry in &tree.tree {
+            if entry.kind != "blob" {
+                continue;
+            }
+            // Symlink blobs contain their target path, not skill metadata.
+            if !matches!(entry.mode.as_str(), "100644" | "100755")
+                || entry.path.rsplit(['/', '\\']).next() != Some("SKILL.md")
+            {
+                continue;
+            }
+            Self::validate_discovery_manifest_path(&entry.path)?;
+            let size = entry.size.ok_or_else(|| {
+                anyhow!(format_skill_error(
+                    "DISCOVERY_METADATA_INVALID",
+                    &[("reason", "missingSize"), ("path", &entry.path)],
+                    Some("checkRepoUrl")
+                ))
+            })?;
+            metadata_size = metadata_size.saturating_add(size);
+            if size > MAX_DISCOVERY_MANIFEST_BYTES || metadata_size > MAX_DISCOVERY_METADATA_BYTES {
+                return Err(anyhow!(format_skill_error(
+                    "DISCOVERY_LIMIT_EXCEEDED",
+                    &[("scope", "metadata")],
+                    Some("checkRepoUrl")
+                )));
+            }
+            paths.push(entry.path.clone());
+            if paths.len() > MAX_DISCOVERY_MANIFESTS {
+                return Err(anyhow!(format_skill_error(
+                    "DISCOVERY_LIMIT_EXCEEDED",
+                    &[("scope", "files")],
+                    Some("checkRepoUrl")
+                )));
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(Some(paths))
+    }
+
+    fn validate_discovery_manifest_path(path: &str) -> Result<()> {
+        if path.len() > 1024
+            || path.contains('\\')
+            || path.chars().any(char::is_control)
+            || path
+                .split('/')
+                .any(|part| part.is_empty() || matches!(part, "." | ".."))
+            || !(path == "SKILL.md" || path.ends_with("/SKILL.md"))
+        {
+            return Err(anyhow!(format_skill_error(
+                "DISCOVERY_METADATA_INVALID",
+                &[("reason", "invalidPath"), ("path", path)],
+                Some("checkRepoUrl")
+            )));
+        }
+        Ok(())
+    }
+
+    async fn fetch_discovery_manifests<F, Fut>(
+        repo: &SkillRepo,
+        paths: Vec<String>,
+        fetch: F,
+    ) -> Result<Vec<DiscoverableSkill>>
+    where
+        F: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<u8>>>,
+    {
+        use futures::{StreamExt, TryStreamExt};
+        Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+        if paths.len() > MAX_DISCOVERY_MANIFESTS {
+            return Err(anyhow!(format_skill_error(
+                "DISCOVERY_LIMIT_EXCEEDED",
+                &[("scope", "files")],
+                Some("checkRepoUrl")
+            )));
+        }
+        let requests = paths.into_iter().map(|path| {
+            let fetch = &fetch;
+            async move {
+                Self::validate_discovery_manifest_path(&path)?;
+                let mut url = reqwest::Url::parse("https://raw.githubusercontent.com/")?;
+                url.path_segments_mut()
+                    .map_err(|_| anyhow!("Invalid GitHub raw URL"))?
+                    .pop_if_empty()
+                    .extend([repo.owner.as_str(), repo.name.as_str()])
+                    .extend(repo.branch.split('/'))
+                    .extend(path.split('/'));
+                let bytes = fetch(url.to_string()).await?;
+                if bytes.len() as u64 > MAX_DISCOVERY_MANIFEST_BYTES {
+                    return Err(anyhow!(format_skill_error(
+                        "DISCOVERY_LIMIT_EXCEEDED",
+                        &[("scope", "manifest"), ("path", &path)],
+                        Some("checkRepoUrl")
+                    )));
+                }
+                let content = std::str::from_utf8(&bytes).map_err(|_| {
+                    anyhow!(format_skill_error(
+                        "DISCOVERY_METADATA_INVALID",
+                        &[("reason", "invalidUtf8"), ("path", &path)],
+                        Some("checkRepoUrl")
+                    ))
+                })?;
+                let metadata = Self::parse_skill_metadata_content(content);
+                let directory = path.strip_suffix("/SKILL.md").unwrap_or(&repo.name);
+                let skill = Self::skill_from_metadata(metadata, directory, &path, repo);
+                Ok((skill, bytes.len() as u64))
+            }
+        });
+        let (skills, _) = futures::stream::iter(requests)
+            .buffer_unordered(DISCOVERY_METADATA_CONCURRENCY)
+            .try_fold(
+                (Vec::new(), 0u64),
+                |(mut skills, total), (skill, size)| async move {
+                    let total = total.saturating_add(size);
+                    if total > MAX_DISCOVERY_METADATA_BYTES {
+                        return Err(anyhow!(format_skill_error(
+                            "DISCOVERY_LIMIT_EXCEEDED",
+                            &[("scope", "metadata")],
+                            Some("checkRepoUrl")
+                        )));
+                    }
+                    skills.push(skill);
+                    Ok((skills, total))
+                },
+            )
+            .await?;
         Ok(skills)
     }
 
@@ -3211,8 +3630,6 @@ impl SkillService {
             {
                 skills.push(skill);
             }
-
-            return Ok(());
         }
 
         for entry in fs::read_dir(current_dir)? {
@@ -3237,7 +3654,16 @@ impl SkillService {
     ) -> Result<DiscoverableSkill> {
         let meta = self.parse_skill_metadata(skill_md)?;
 
-        Ok(DiscoverableSkill {
+        Ok(Self::skill_from_metadata(meta, directory, doc_path, repo))
+    }
+
+    fn skill_from_metadata(
+        meta: SkillMetadata,
+        directory: &str,
+        doc_path: &str,
+        repo: &SkillRepo,
+    ) -> DiscoverableSkill {
+        DiscoverableSkill {
             key: format!("{}/{}:{}", repo.owner, repo.name, directory),
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
@@ -3246,7 +3672,7 @@ impl SkillService {
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
-        })
+        }
     }
 
     /// 解析技能元数据
@@ -3257,23 +3683,25 @@ impl SkillService {
     /// 静态方法：解析技能元数据
     fn parse_skill_metadata_static(path: &Path) -> Result<SkillMetadata> {
         let content = fs::read_to_string(path)?;
+        Ok(Self::parse_skill_metadata_content(&content))
+    }
+
+    fn parse_skill_metadata_content(content: &str) -> SkillMetadata {
         let content = content.trim_start_matches('\u{feff}');
 
         let parts: Vec<&str> = content.splitn(3, "---").collect();
         if parts.len() < 3 {
-            return Ok(SkillMetadata {
+            return SkillMetadata {
                 name: None,
                 description: None,
-            });
+            };
         }
 
         let front_matter = parts[1].trim();
-        let meta: SkillMetadata = serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
+        serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
             name: None,
             description: None,
-        });
-
-        Ok(meta)
+        })
     }
 
     /// 从 SKILL.md 读取名称和描述，不存在则用目录名兜底
@@ -7507,6 +7935,253 @@ mod tests {
     }
 
     #[test]
+    fn discovery_includes_nested_skills_below_a_root_skill() {
+        let temp = tempdir().expect("tempdir");
+        write_skill(temp.path(), "video-use");
+        write_skill(&temp.path().join("skills/manim-video"), "manim-video");
+        let repo = SkillRepo {
+            owner: "browser-use".to_string(),
+            name: "video-use".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        let mut skills = Vec::new();
+        SkillService::new()
+            .scan_dir_recursive(temp.path(), temp.path(), &repo, &mut skills)
+            .expect("scan root and nested skills");
+        skills.sort_by(|left, right| left.directory.cmp(&right.directory));
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill.directory.as_str())
+                .collect::<Vec<_>>(),
+            ["skills/manim-video", "video-use"],
+            "a root skill must not hide independently installable nested skills"
+        );
+    }
+
+    fn discovery_tree(entries: serde_json::Value, truncated: bool) -> GithubDiscoveryTree {
+        serde_json::from_value(serde_json::json!({
+            "truncated": truncated,
+            "tree": entries,
+        }))
+        .expect("tree fixture")
+    }
+
+    #[test]
+    fn discovery_plan_cache_expires_and_separates_requested_branches() {
+        let cache = tempdir().expect("cache directory");
+        let source = repo("owner", "repo", true);
+        let plan = SkillDiscoveryPlan {
+            version: 1,
+            fetched_at: 100,
+            resolved_branch: "main".to_string(),
+            manifest_paths: Some(vec!["skills/video/SKILL.md".to_string()]),
+        };
+        SkillService::write_discovery_plan(cache.path(), &source, &plan).expect("cache plan");
+        let loaded =
+            SkillService::read_discovery_plan(cache.path(), &source, 101).expect("fresh plan");
+        assert_eq!(loaded.resolved_branch, "main");
+        assert_eq!(loaded.manifest_paths, plan.manifest_paths);
+        assert!(SkillService::read_discovery_plan(cache.path(), &source, 99).is_none());
+        assert!(SkillService::read_discovery_plan(
+            cache.path(),
+            &source,
+            100 + DISCOVERY_PLAN_TTL_SECONDS
+        )
+        .is_none());
+        let mut other_branch = source.clone();
+        other_branch.branch = "master".to_string();
+        assert!(SkillService::read_discovery_plan(cache.path(), &other_branch, 101).is_none());
+    }
+
+    #[test]
+    fn discovery_plan_cache_rejects_corrupt_or_unsafe_paths() {
+        let cache = tempdir().expect("cache directory");
+        let source = repo("owner", "repo", true);
+        let path = SkillService::discovery_plan_path(cache.path(), &source);
+        fs::write(&path, b"not json").expect("corrupt cache");
+        assert!(SkillService::read_discovery_plan(cache.path(), &source, 101).is_none());
+        let mut plan = SkillDiscoveryPlan {
+            version: 1,
+            fetched_at: 100,
+            resolved_branch: "main".to_string(),
+            manifest_paths: Some(vec!["../SKILL.md".to_string()]),
+        };
+        SkillService::write_discovery_plan(cache.path(), &source, &plan)
+            .expect("write unsafe fixture");
+        assert!(SkillService::read_discovery_plan(cache.path(), &source, 101).is_none());
+        plan.manifest_paths = None;
+        plan.resolved_branch = "../../../releases/asset".to_string();
+        SkillService::write_discovery_plan(cache.path(), &source, &plan)
+            .expect("write invalid ref fixture");
+        assert!(SkillService::read_discovery_plan(cache.path(), &source, 101).is_none());
+    }
+
+    #[test]
+    fn discovery_large_repository_reads_only_root_and_nested_manifests() {
+        let tree = discovery_tree(
+            serde_json::json!([
+                {"path": "SKILL.md", "type": "blob", "mode": "100644", "size": 50},
+                {"path": "skills/manim-video/SKILL.md", "type": "blob", "mode": "100644", "size": 80},
+                {"path": "assets/demo.mp4", "type": "blob", "mode": "100644", "size": 500_000_000},
+                {"path": "linked/SKILL.md", "type": "blob", "mode": "120000", "size": 20}
+            ]),
+            false,
+        );
+        assert_eq!(
+            SkillService::discovery_manifest_paths(&tree).expect("bounded tree"),
+            Some(vec![
+                "SKILL.md".to_string(),
+                "skills/manim-video/SKILL.md".to_string()
+            ])
+        );
+        let small = discovery_tree(
+            serde_json::json!([
+                {"path": "a/SKILL.md", "type": "blob", "mode": "100644", "size": 50}
+            ]),
+            false,
+        );
+        assert!(
+            SkillService::discovery_manifest_paths(&small)
+                .unwrap()
+                .is_none(),
+            "small catalogs should retain the single-request archive path"
+        );
+    }
+
+    #[test]
+    fn discovery_small_repository_keeps_archive_limits() {
+        let tree = discovery_tree(
+            serde_json::json!([
+                {"path": "SKILL.md", "type": "blob", "mode": "100644", "size": MAX_DISCOVERY_MANIFEST_BYTES + 1}
+            ]),
+            false,
+        );
+        assert!(SkillService::discovery_manifest_paths(&tree)
+            .expect("archive discovery must not inherit raw metadata limits")
+            .is_none());
+    }
+
+    #[test]
+    fn discovery_rejects_incomplete_trees_and_unsafe_manifest_paths() {
+        let incomplete = discovery_tree(serde_json::json!([]), true);
+        let error = SkillService::discovery_manifest_paths(&incomplete)
+            .expect_err("a truncated GitHub tree must not appear as a complete catalog");
+        let structured: serde_json::Value =
+            serde_json::from_str(&error.to_string()).expect("localized error");
+        assert_eq!(structured["code"], "DISCOVERY_TREE_TRUNCATED");
+        for path in [
+            "../SKILL.md",
+            "/SKILL.md",
+            "a/../SKILL.md",
+            "a\\SKILL.md",
+            "a//SKILL.md",
+        ] {
+            let tree = discovery_tree(
+                serde_json::json!([
+                    {"path": path, "type": "blob", "mode": "100644", "size": 50},
+                    {"path": "video.mp4", "type": "blob", "mode": "100644", "size": 500_000_000}
+                ]),
+                false,
+            );
+            let error = SkillService::discovery_manifest_paths(&tree).expect_err("unsafe path");
+            let structured: serde_json::Value =
+                serde_json::from_str(&error.to_string()).expect("localized error");
+            assert_eq!(
+                structured["code"], "DISCOVERY_METADATA_INVALID",
+                "unsafe path: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn discovery_rejects_oversized_manifests_before_fetching() {
+        let tree = discovery_tree(
+            serde_json::json!([
+                {"path": "SKILL.md", "type": "blob", "mode": "100644", "size": MAX_DISCOVERY_MANIFEST_BYTES + 1},
+                {"path": "video.mp4", "type": "blob", "mode": "100644", "size": 500_000_000}
+            ]),
+            false,
+        );
+        let error = SkillService::discovery_manifest_paths(&tree).expect_err("metadata size limit");
+        let structured: serde_json::Value =
+            serde_json::from_str(&error.to_string()).expect("localized error");
+        assert_eq!(structured["code"], "DISCOVERY_LIMIT_EXCEEDED");
+    }
+
+    #[tokio::test]
+    async fn discovery_manifest_fetch_preserves_names_source_paths_and_errors() {
+        let source = repo("browser-use", "video-use", true);
+        let skills = SkillService::fetch_discovery_manifests(
+            &source,
+            vec![
+                "SKILL.md".to_string(),
+                "skills/manim-video/SKILL.md".to_string(),
+            ],
+            |url| async move {
+                if url.ends_with("/skills/manim-video/SKILL.md") {
+                    Ok(
+                        b"---\nname: manim-video\ndescription: Mathematical animation\n---\n"
+                            .to_vec(),
+                    )
+                } else {
+                    assert_eq!(
+                        url,
+                        "https://raw.githubusercontent.com/browser-use/video-use/main/SKILL.md"
+                    );
+                    Ok(b"---\nname: video-use\ndescription: Video editing\n---\n".to_vec())
+                }
+            },
+        )
+        .await
+        .expect("fetch manifests without repository media");
+        assert_eq!(skills.len(), 2);
+        let nested = skills
+            .iter()
+            .find(|skill| skill.name == "manim-video")
+            .expect("nested skill");
+        assert_eq!(nested.directory, "skills/manim-video");
+        assert_eq!(nested.description, "Mathematical animation");
+        assert_eq!(
+            nested.readme_url.as_deref(),
+            Some("https://github.com/browser-use/video-use/blob/main/skills/manim-video/SKILL.md")
+        );
+
+        let failure = SkillService::fetch_discovery_manifests(
+            &source,
+            vec!["SKILL.md".to_string()],
+            |_| async { Err(anyhow!("fixture HTTP 503")) },
+        )
+        .await
+        .expect_err("failed metadata requests must not silently return zero skills");
+        assert!(failure.to_string().contains("fixture HTTP 503"));
+    }
+
+    #[tokio::test]
+    async fn discovery_manifest_fetch_checks_actual_size_and_utf8() {
+        let source = repo("owner", "large-media-repository", true);
+        for (payload, code) in [
+            (
+                vec![b'a'; MAX_DISCOVERY_MANIFEST_BYTES as usize + 1],
+                "DISCOVERY_LIMIT_EXCEEDED",
+            ),
+            (vec![0xff], "DISCOVERY_METADATA_INVALID"),
+        ] {
+            let result = SkillService::fetch_discovery_manifests(
+                &source,
+                vec!["SKILL.md".to_string()],
+                |_| std::future::ready(Ok(payload.clone())),
+            )
+            .await;
+            let error = result.expect_err("invalid metadata must surface as a repository failure");
+            let structured: serde_json::Value =
+                serde_json::from_str(&error.to_string()).expect("localized error");
+            assert_eq!(structured["code"], code);
+        }
+    }
+
+    #[test]
     fn update_lookup_uses_unique_metadata_name_without_overriding_directory_match() {
         let temp = tempdir().expect("tempdir");
         write_skill(&temp.path().join("skills"), "weread-skills");
@@ -7909,6 +8584,46 @@ mod tests {
             .await
             .expect("discover");
         assert_eq!(skills.len(), 1);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_updates_hash_backfill_preserves_update_timestamp() {
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        let _storage = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().unwrap());
+        let remote = tempdir().unwrap();
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+        let mut installed = poisoned_skill("owner/repo:example", "example");
+        installed.repo_owner = Some("owner".into());
+        installed.repo_name = Some("repo".into());
+        installed.repo_branch = Some("main".into());
+        installed.installed_at = 1_700_000_000;
+        installed.updated_at = 1_720_000_000;
+        installed.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&installed).unwrap();
+        let local = SkillService::get_ssot_dir().unwrap().join("example");
+        assert!(local.starts_with(home.path()));
+        write_skill(&local, "example");
+        write_skill(&remote.path().join("skills/example"), "example");
+
+        let report = service.check_updates_report(&db).await.unwrap();
+        assert!(report.failures.is_empty());
+        assert!(report.updates.is_empty());
+        let stored = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert_eq!(
+            stored.content_hash,
+            Some(SkillService::compute_dir_hash(&local).unwrap())
+        );
+        assert_eq!(stored.updated_at, installed.updated_at);
+        assert_eq!(stored.installed_at, installed.installed_at);
+        assert_eq!(stored.apps, installed.apps);
     }
 
     #[tokio::test]
