@@ -12,6 +12,20 @@ import { piProviderPresets } from "@/config/piProviderPresets";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
+type User = ReturnType<typeof userEvent.setup>;
+
+// 拉到模型会自动打开勾选弹窗；关掉它，接着测每行的下拉。
+async function fetchModelsAndClosePicker(user: User) {
+  await user.click(
+    screen.getByRole("button", { name: "providerForm.fetchModels" }),
+  );
+  await screen.findByRole("dialog");
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+}
+
 function completeModel(id: string, name = id.trim() || "Model") {
   return {
     id,
@@ -1060,9 +1074,7 @@ describe("PiProviderForm", () => {
     fireEvent.change(screen.getByLabelText("Value"), {
       target: { value: "pi-test-agent/1.0" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
 
     await waitFor(() =>
       expect(requestBody).toEqual({
@@ -1141,9 +1153,7 @@ describe("PiProviderForm", () => {
     fireEvent.change(endpoint, {
       target: { value: "https://current.example/v1" },
     });
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
 
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await waitFor(() =>
@@ -1201,9 +1211,7 @@ describe("PiProviderForm", () => {
       },
     );
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
@@ -1252,9 +1260,7 @@ describe("PiProviderForm", () => {
       target: { value: "https://provider-a.example/v1" },
     });
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
@@ -1305,9 +1311,7 @@ describe("PiProviderForm", () => {
         }}
       />,
     );
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
@@ -1366,9 +1370,7 @@ describe("PiProviderForm", () => {
       },
     );
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
 
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
@@ -1448,9 +1450,7 @@ describe("PiProviderForm", () => {
       },
     );
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
 
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
@@ -1521,9 +1521,7 @@ describe("PiProviderForm", () => {
       { target: { value: "https://api.moonshot.cn/v1" } },
     );
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
@@ -2515,6 +2513,144 @@ describe("PiProviderForm", () => {
     expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toMatchObject({
       baseUrl: "https://api.example.com/v1",
       models: [{ id: "model" }],
+    });
+  });
+
+  describe("fetched model picker", () => {
+    function serveModels(ids: string[]) {
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+          HttpResponse.json(ids.map((id) => ({ id, ownedBy: "example" }))),
+        ),
+        http.get(MODELS_DEV_API_URL, () =>
+          HttpResponse.json({
+            example: {
+              api: "https://api.example.com/v1",
+              models: {
+                "model-x": {
+                  reasoning: true,
+                  reasoning_options: [
+                    { type: "effort", values: ["low", "medium", "high"] },
+                  ],
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                  limit: { context: 123456, output: 32000 },
+                },
+              },
+            },
+          }),
+        ),
+      );
+    }
+
+    async function fillCustomProvider(
+      user: User,
+      appId: "pi" | "omp",
+    ): Promise<HTMLTextAreaElement> {
+      render(
+        <PiProviderForm
+          appId={appId}
+          submitLabel="Save picked provider"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />,
+      );
+      await user.click(
+        screen.getByRole("button", { name: "providerPreset.custom" }),
+      );
+      fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+        target: { value: "literal-key" },
+      });
+      fireEvent.change(
+        screen.getByPlaceholderText("https://api.example.com/v1"),
+        { target: { value: "https://api.example.com/v1" } },
+      );
+      return screen.getByLabelText(
+        "provider.configJson",
+      ) as HTMLTextAreaElement;
+    }
+
+    async function pickModels(user: User, toggle: string[]) {
+      await user.click(
+        screen.getByRole("button", { name: "providerForm.fetchModels" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      for (const id of toggle) {
+        await user.click(within(dialog).getByRole("checkbox", { name: id }));
+      }
+      await user.click(
+        within(dialog).getByRole("button", {
+          name: "providerForm.modelPicker.apply",
+        }),
+      );
+    }
+
+    it("adds checked models with models.dev metadata and removes unchecked ones", async () => {
+      const user = userEvent.setup();
+      serveModels(["model-x", "model-y", "model-z"]);
+      const configEditor = await fillCustomProvider(user, "pi");
+      await user.click(
+        screen.getByRole("button", { name: "pi.form.addModel" }),
+      );
+      fireEvent.change(screen.getByLabelText("pi.form.modelId"), {
+        target: { value: "model-z" },
+      });
+
+      // model-z 已在列表里、默认勾着：取消勾选就是移除。
+      await pickModels(user, ["model-x", "model-y", "model-z"]);
+
+      await waitFor(() =>
+        expect(JSON.parse(configEditor.value).models[0]).toMatchObject({
+          contextWindow: 123456,
+        }),
+      );
+      const models = JSON.parse(configEditor.value).models;
+      expect(models.map((model: { id: string }) => model.id)).toEqual([
+        "model-x",
+        "model-y",
+      ]);
+      expect(models[0]).toMatchObject({
+        name: "model-x",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 123456,
+        maxTokens: 32000,
+        thinkingLevelMap: {
+          off: null,
+          minimal: null,
+          low: "low",
+          medium: "medium",
+          high: "high",
+          xhigh: null,
+          max: null,
+        },
+      });
+      // models.dev 没有这款：留 Pi 默认值，窗口和输出上限由用户自己填。
+      expect(models[1]).toMatchObject({
+        name: "model-y",
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(models[1]).not.toHaveProperty("contextWindow");
+      expect(models[1]).not.toHaveProperty("thinkingLevelMap");
+    });
+
+    it("adds picked models to omp without a thinking map", async () => {
+      const user = userEvent.setup();
+      serveModels(["model-x"]);
+      const configEditor = await fillCustomProvider(user, "omp");
+
+      await pickModels(user, ["model-x"]);
+
+      await waitFor(() =>
+        expect(JSON.parse(configEditor.value).models[0]).toMatchObject({
+          id: "model-x",
+          reasoning: true,
+          contextWindow: 123456,
+        }),
+      );
+      expect(JSON.parse(configEditor.value).models[0]).not.toHaveProperty(
+        "thinkingLevelMap",
+      );
     });
   });
 });

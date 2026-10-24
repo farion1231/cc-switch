@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronDown,
-  ChevronRight,
-  Download,
-  Loader2,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "@/lib/toast";
@@ -42,6 +35,10 @@ import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { useProvidersQuery } from "@/lib/query/queries";
 import { cn } from "@/lib/utils";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import {
@@ -1009,10 +1006,10 @@ export function PiProviderForm({
     prefetch: fetchedModels.length > 0,
   });
 
-  // 选中拉取到的模型：改 ID，再补上它已知的窗口、输出上限、推理、图片输入和思考档位。
-  const selectFetchedModelId = (key: string, id: string) => {
+  // 补上模型已知的窗口、输出上限、推理、图片输入和思考档位。补全可能晚到：
+  // 读最新的模型行，确认这一行仍是这个模型再补。
+  const fillModelMetadataFor = (key: string, id: string, silent?: boolean) => {
     const row = modelsRef.current.find((model) => model.key === key);
-    changeModelId(key, id);
     // 模型单独指向别的地址时，按它实际请求的地址查参数。
     const rowBaseUrl = row && piModelProtocol(row, protocolRef.current).baseUrl;
     fillModelMetadata(
@@ -1033,8 +1030,47 @@ export function PiProviderForm({
           ),
         );
       },
-      { baseUrl: rowBaseUrl },
+      { baseUrl: rowBaseUrl, silent },
     );
+  };
+
+  const selectFetchedModelId = (key: string, id: string) => {
+    changeModelId(key, id);
+    fillModelMetadataFor(key, id);
+  };
+
+  // 弹窗里勾选：去掉取消勾选的模型，追加新勾选的模型（已有同 ID 的行不重复加）。
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const removed = new Set(remove);
+    const removedKeys = new Set(
+      modelsRef.current
+        .filter((model) => removed.has(model.id))
+        .map((model) => model.key),
+    );
+    const kept = modelsRef.current.filter(
+      (model) => !removedKeys.has(model.key),
+    );
+    const configured = new Set(kept.map((model) => model.id));
+    const added = add
+      .filter((id) => !configured.has(id))
+      .map((id) => ({ ...newModel(), id, name: id }));
+    const previouslyIncluded = includeModelsRef.current;
+    if (added.length > 0) includeModelsRef.current = true;
+    if (!commitModels([...kept, ...added])) {
+      includeModelsRef.current = previouslyIncluded;
+      return;
+    }
+    if (removedKeys.size > 0) {
+      const prune = (current: Set<string>) =>
+        new Set([...current].filter((key) => !removedKeys.has(key)));
+      setExpandedModelKeys(prune);
+      setExpandedThinkingMapKeys(prune);
+      setEditingThinkingLevel((current) =>
+        current && removedKeys.has(current.modelKey) ? null : current,
+      );
+    }
+    // 弹窗里已经显示过这些参数，补完不再提示。
+    for (const model of added) fillModelMetadataFor(model.key, model.id, true);
   };
 
   const updateThinkingLevelMap = (
@@ -1143,13 +1179,13 @@ export function PiProviderForm({
     )
       .then((result) => {
         if (modelFetchGenerationRef.current !== requestGeneration) return;
-        setFetchedModels(result);
-        if (result.length === 0) {
+        const models = [
+          ...new Map(result.map((model) => [model.id, model])).values(),
+        ];
+        setFetchedModels(models);
+        // 拉到模型时直接打开选择弹窗，不再提示成功。
+        if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: result.length }),
-          );
         }
       })
       .catch((error) => {
@@ -1700,21 +1736,14 @@ export function PiProviderForm({
                   {t("opencode.models", { defaultValue: "模型配置" })}
                 </FormLabel>
                 <div className="flex gap-1">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleFetchModels}
-                    disabled={isFetchingModels}
-                    className="h-7 gap-1"
-                  >
-                    {isFetchingModels ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Download className="h-3.5 w-3.5" />
-                    )}
-                    {t("providerForm.fetchModels")}
-                  </Button>
+                  <FetchedModelPicker
+                    models={fetchedModels}
+                    configuredModelIds={models.map((model) => model.id)}
+                    onApply={handleApplyFetchedModels}
+                    onFetch={handleFetchModels}
+                    isFetching={isFetchingModels}
+                    metadataSource={{ baseUrl, presets: piPresetModelSources }}
+                  />
                   <Button
                     id="pi-add-model"
                     type="button"
