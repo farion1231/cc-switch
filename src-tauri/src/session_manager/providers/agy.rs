@@ -522,14 +522,18 @@ fn antigravity_reader_args(raw: &Value) -> Value {
         for (alias, key) in [
             ("CommandLine", "command"),
             ("AbsolutePath", "path"),
+            ("Path", "path"),
             ("DirectoryPath", "path"),
             ("TargetFile", "path"),
             ("SearchPath", "path"),
             ("SearchDirectory", "path"),
             ("TargetContent", "old_string"),
+            ("Target", "old_string"),
             ("ReplacementContent", "new_string"),
+            ("Replacement", "new_string"),
             ("ReplacementChunks", "edits"),
             ("CodeContent", "content"),
+            ("Content", "content"),
             ("Url", "url"),
             ("Pattern", "pattern"),
             ("StartLine", "start_line"),
@@ -688,13 +692,11 @@ fn antigravity_model_blocks(
             };
             *input_total_len = input.encode_utf16().count().min(u32::MAX as usize) as u32;
         }
-        if let SessionBlock::ToolCall {
-            kind,
-            diff: Some(diff),
-            ..
-        } = &mut block
-        {
-            if antigravity_diff_pairs(&args, *kind).is_some() {
+        if let SessionBlock::ToolCall { kind, diff, .. } = &mut block {
+            if antigravity_diff_pairs(&args, *kind).is_none() {
+                // A partial chunk list must not advertise a complete change summary.
+                *diff = None;
+            } else if let Some(diff) = diff {
                 diff.full = full(format!("{ANTIGRAVITY_READER_REF_PREFIX}{tool_index}/diff"));
             }
         }
@@ -1311,6 +1313,67 @@ mod tests {
             serde_json::json!({"source":"SYSTEM","type":"EPHEMERAL_MESSAGE"}),
         ] {
             assert!(!is_antigravity_tool_result(&step, "run_command"));
+        }
+    }
+
+    #[test]
+    fn legacy_cli_file_tools_use_path_content_target_and_replacement() {
+        // Field names match the local CLI exports; all file names/content are synthetic.
+        let step = serde_json::json!({"tool_calls":[
+            {"name":"read_file","args":{"Path":"123","StartLine":"1","EndLine":"2"}},
+            {"name":"write_file","args":{"Path":"/tmp/new","Content":"{\"ok\":true}"}},
+            {"name":"edit_file","args":{"Path":"/tmp/existing","Target":"false","Replacement":"null"}}
+        ]});
+        let blocks = antigravity_model_blocks(&step, "1", &|_| None);
+        assert!(
+            matches!(&blocks[0], SessionBlock::ToolCall {kind:ToolKind::Read,title,detail,..}
+            if title == "123" && detail.as_deref() == Some(":1-2"))
+        );
+        assert!(
+            matches!(&blocks[1], SessionBlock::ToolCall {kind:ToolKind::Write,title,diff:Some(diff),..}
+            if title == "/tmp/new" && diff.added == 1 && diff.removed == 0)
+        );
+        assert!(
+            matches!(&blocks[2], SessionBlock::ToolCall {kind:ToolKind::Edit,title,diff:Some(diff),..}
+            if title == "/tmp/existing" && diff.added == 1 && diff.removed == 1)
+        );
+        let args = antigravity_reader_args(&step["tool_calls"][1]["args"]);
+        assert_eq!(args["content"], "{\"ok\":true}");
+        let args = antigravity_reader_args(&step["tool_calls"][2]["args"]);
+        assert_eq!(args["old_string"], "false");
+        assert_eq!(args["new_string"], "null");
+    }
+
+    #[test]
+    fn incomplete_multi_replacements_have_no_summary_or_diff_ref() {
+        // The local export includes this shape: the second chunk has replacement text
+        // and an end line but no target text. Keep the raw parameters, not a partial diff.
+        for chunks in [
+            serde_json::json!([
+                {"TargetContent":"old","ReplacementContent":"new","StartLine":1,"EndLine":1},
+                {"ReplacementContent":"more","EndLine":2,"AllowMultiple":false}
+            ]),
+            serde_json::json!([]),
+            serde_json::json!("[{<truncated>"),
+        ] {
+            let step = serde_json::json!({"tool_calls":[{"name":"multi_replace_file_content",
+                "args":{"TargetFile":"/tmp/file","ReplacementChunks":chunks}}]});
+            let blocks = antigravity_model_blocks(&step, "1", &|pointer| {
+                Some(ContentRef::Jsonl {
+                    offset: 0,
+                    len: 1,
+                    pointer,
+                })
+            });
+            assert!(matches!(
+                &blocks[0],
+                SessionBlock::ToolCall { diff: None, .. }
+            ));
+            assert!(resolve_antigravity_reader_content(
+                &step,
+                &format!("{ANTIGRAVITY_READER_REF_PREFIX}0/diff")
+            )
+            .is_err());
         }
     }
 

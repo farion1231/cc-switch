@@ -112,7 +112,11 @@ pub fn normalize_tool(
             | "glob"
             | "list_directory"
             | "search_file_content" => Search,
-            "replace_file_content" | "multi_replace_file_content" | "replace" | "edit" => Edit,
+            "replace_file_content"
+            | "multi_replace_file_content"
+            | "edit_file"
+            | "replace"
+            | "edit" => Edit,
             "write_to_file" | "write_file" => Write,
             "read_url_content" | "search_web" | "web_fetch" | "google_web_search" => Web,
             "ask_question" | "ask_permission" | "ask_user" => Ask,
@@ -643,6 +647,10 @@ pub fn parse_antigravity_args(raw: &Value) -> Value {
                         let text_field = matches!(
                             k.as_str(),
                             "CommandLine"
+                                | "Path"
+                                | "Content"
+                                | "Target"
+                                | "Replacement"
                                 | "AbsolutePath"
                                 | "DirectoryPath"
                                 | "TargetFile"
