@@ -195,6 +195,72 @@ describe("ClaudeDesktopProviderForm", () => {
     },
   );
 
+  it.each(["anthropic", "openai_chat", "openai_responses"] as const)(
+    "手动配置 Copilot 地址时禁用旧格式 %s 的手选",
+    (apiFormat) => {
+      renderForm({
+        name: "Custom Copilot",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
+            ANTHROPIC_AUTH_TOKEN: "test-token",
+          },
+        },
+        meta: { claudeDesktopMode: "proxy", apiFormat },
+      });
+
+      expect(
+        screen.getByText("copilot.automaticFormat").closest("button"),
+      ).toBeDisabled();
+      expect(screen.getByText("copilot.automaticFormatHint")).toBeVisible();
+      expect(screen.getByLabelText("API Key")).toBeVisible();
+      expect(
+        screen.queryByTestId("copilot-auth-section"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("修改自定义上游地址时同步切换自动格式并保留原格式", async () => {
+    renderForm({
+      name: "Custom Provider",
+      settingsConfig: {
+        env: { ANTHROPIC_BASE_URL: "https://api.example.com" },
+      },
+      meta: { claudeDesktopMode: "proxy", apiFormat: "openai_chat" },
+    });
+
+    const formatControl = screen
+      .getAllByRole("combobox")
+      .find((control) =>
+        control.textContent?.includes("OpenAI Chat Completions (需开启路由)"),
+      );
+    expect(formatControl).toBeEnabled();
+    expect(
+      screen.queryByText("copilot.automaticFormatHint"),
+    ).not.toBeInTheDocument();
+
+    const endpoint = screen.getByLabelText("providerForm.apiEndpoint");
+    fireEvent.change(endpoint, {
+      target: { value: "https://api.business.githubcopilot.com" },
+    });
+    expect(formatControl).toBeDisabled();
+    await waitFor(() =>
+      expect(formatControl).toHaveTextContent("copilot.automaticFormat"),
+    );
+    expect(screen.getByText("copilot.automaticFormatHint")).toBeVisible();
+
+    fireEvent.change(endpoint, {
+      target: { value: "https://api.example.com" },
+    });
+    expect(formatControl).toBeEnabled();
+    expect(formatControl).toHaveTextContent(
+      "OpenAI Chat Completions (需开启路由)",
+    );
+    expect(
+      screen.queryByText("copilot.automaticFormatHint"),
+    ).not.toBeInTheDocument();
+  });
+
   it("新建自定义供应商默认使用直连并显示模型列表", () => {
     renderForm(undefined);
 

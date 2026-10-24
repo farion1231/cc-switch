@@ -385,6 +385,10 @@ export function ClaudeDesktopProviderForm({
   );
   const activeProviderType =
     activePreset?.providerType ?? initialData?.meta?.providerType;
+  // Match the backend URL fallback without changing managed-account authentication.
+  const usesAutomaticCopilotFormat =
+    activeProviderType === "github_copilot" ||
+    baseUrl.includes("githubcopilot.com");
   const { isAuthenticated: isCopilotAuthenticated, accounts: copilotAccounts } =
     useCopilotAuth();
   const {
@@ -1119,14 +1123,20 @@ export function ClaudeDesktopProviderForm({
                       </Label>
                       <Select
                         value={apiFormat}
-                        disabled={activeProviderType === "github_copilot"}
+                        disabled={usesAutomaticCopilotFormat}
                         onValueChange={(value) =>
                           setApiFormat(value as ClaudeApiFormat)
                         }
                       >
                         <SelectTrigger className="w-full">
-                          <SelectValue>
-                            {activeProviderType === "github_copilot"
+                          <SelectValue
+                            key={
+                              usesAutomaticCopilotFormat
+                                ? "automatic"
+                                : "manual"
+                            }
+                          >
+                            {usesAutomaticCopilotFormat
                               ? t("copilot.automaticFormat")
                               : undefined}
                           </SelectValue>
@@ -1156,7 +1166,7 @@ export function ClaudeDesktopProviderForm({
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      {activeProviderType === "github_copilot" && (
+                      {usesAutomaticCopilotFormat && (
                         <p className="text-xs leading-relaxed text-fg-2">
                           {t("copilot.automaticFormatHint")}
                         </p>
