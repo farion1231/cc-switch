@@ -4205,7 +4205,7 @@
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
       "agy": "Installs with the official script",
-      "omp": "Installs with Bun (requires Bun 1.3.14+)"
+      "omp": "Installs with the official script"
     },
     "ompDiscoveryHelpTitle": "What Oh My Pi actually loads",
     "ompDiscoveryHelp": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
