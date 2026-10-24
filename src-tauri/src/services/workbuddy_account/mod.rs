@@ -514,15 +514,6 @@ impl WorkBuddyAccountManager {
         self.persist(&store)
     }
 
-    pub fn remove_all(&self) -> Result<Vec<String>, AppError> {
-        let mut store = self.lock();
-        let removed: Vec<String> = store.accounts.keys().cloned().collect();
-        store.accounts.clear();
-        store.dismissed.extend(removed.iter().cloned());
-        self.persist(&store)?;
-        Ok(removed)
-    }
-
     // ---------- 额度 ----------
 
     /// 查额度前要知道的：上次缓存、它是不是 WorkBuddy 当前登着的号、WorkBuddy 在不在运行。

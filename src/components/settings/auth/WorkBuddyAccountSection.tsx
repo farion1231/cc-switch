@@ -52,7 +52,6 @@ export function WorkBuddyAccountSection({
     isStatusError,
     isRemovingAccount,
     removeAccount,
-    logout,
     refetchStatus,
   } = useManagedAuth(PROVIDER);
   const accountUsers = useManagedAccountUsers(PROVIDER, defaultAccountId);
@@ -121,9 +120,7 @@ export function WorkBuddyAccountSection({
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
-    if (!target) return;
-    if (target.kind === "all") logout();
-    else removeAccount(target.accountId);
+    if (target?.kind === "one") removeAccount(target.accountId);
   };
 
   const rows: GroupAccountRow[] = accounts.map((account) => {
@@ -300,12 +297,6 @@ export function WorkBuddyAccountSection({
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
       }
-      onRemoveAll={() =>
-        setRemoveTarget({
-          kind: "all",
-          accountIds: accounts.map((account) => account.id),
-        })
-      }
       removing={isRemovingAccount}
       login={{
         starting: false,
@@ -327,12 +318,8 @@ export function WorkBuddyAccountSection({
         target={removeTarget}
         serviceName="WorkBuddy"
         users={
-          removeTarget
-            ? accountUsers(
-                removeTarget.kind === "one"
-                  ? [removeTarget.accountId]
-                  : removeTarget.accountIds,
-              )
+          removeTarget?.kind === "one"
+            ? accountUsers([removeTarget.accountId])
             : []
         }
         othersRemain={accounts.length > 1}

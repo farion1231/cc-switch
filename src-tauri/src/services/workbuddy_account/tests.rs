@@ -468,10 +468,6 @@ fn removing_only_drops_cc_switch_copies() {
     assert!(manager.remove("u-1").is_err());
     assert_eq!(fixture.info(), info_doc("u-1", 0));
     assert!(!fixture.paths.logout_marker().exists());
-
-    manager.import_current().unwrap();
-    assert_eq!(manager.remove_all().unwrap(), vec!["u-1".to_string()]);
-    assert!(manager.status().unwrap().accounts.is_empty());
     assert_eq!(fixture.keyblob(), "keyblob-u-1-0");
 }
 

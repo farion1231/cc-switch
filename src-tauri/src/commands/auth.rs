@@ -612,7 +612,6 @@ pub async fn auth_logout(
     copilot_state: State<'_, CopilotAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
-    workbuddy_state: State<'_, WorkBuddyAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -631,12 +630,8 @@ pub async fn auth_logout(
             .await
             .map(|_| ())
             .map_err(|e| e.to_string()),
-        AUTH_PROVIDER_WORKBUDDY_ACCOUNT => {
-            run_workbuddy(&workbuddy_state.0, |manager| {
-                manager.remove_all().map(|_| ())
-            })
-            .await
-        }
+        // WorkBuddy 账号只能逐个删除，没有「删除全部」
+        AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Err("WorkBuddy 账号请逐个删除".to_string()),
         _ => unreachable!(),
     }
 }

@@ -159,6 +159,11 @@ describe("WorkBuddyAccountSection", () => {
       ),
     ).toBeInTheDocument();
 
+    // 分组没有「删除全部账号」：只能逐个删除
+    expect(
+      screen.queryByRole("button", { name: "WorkBuddy 的更多操作" }),
+    ).not.toBeInTheDocument();
+
     // 授权中心不再切换：⋯ 菜单里只有删除
     await userEvent.click(
       screen.getByRole("button", { name: "u-2 的更多操作" }),
