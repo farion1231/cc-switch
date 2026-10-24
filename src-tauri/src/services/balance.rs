@@ -111,11 +111,9 @@ async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
     Ok(parse_deepseek_balance(&body))
 }
 
+// `is_available` 只表示余额够不够调用，不代表 Key 失效（失效是 401/403，上面已处理），
+// 所以不拿它判 is_valid，否则零余额 / 欠费会被显示成「套餐已过期」；交给 UI 按余额红字显示（#8812）。
 fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
-    let is_available = body
-        .get("is_available")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
     let mut data = Vec::new();
 
     if let Some(infos) = body.get("balance_infos").and_then(|v| v.as_array()) {
@@ -132,12 +130,8 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
                 total: None,
                 used: None,
                 unit: Some(currency.to_string()),
-                is_valid: Some(is_available),
-                invalid_message: if !is_available {
-                    Some("Insufficient balance".to_string())
-                } else {
-                    None
-                },
+                is_valid: Some(true),
+                invalid_message: None,
                 extra: None,
             });
         }
@@ -677,6 +671,21 @@ mod tests {
             "balance_infos": [{ "currency": "CNY", "total_balance": "0.00" }]
         }));
         assert_eq!(result.data.unwrap()[0].remaining, Some(0.0));
+    }
+
+    #[test]
+    fn deepseek_unavailable_balance_does_not_determine_key_validity() {
+        for (raw, expected) in [("-24.96", -24.96), ("-0.00", 0.0)] {
+            let result = parse_deepseek_balance(&json!({
+                "is_available": false,
+                "balance_infos": [{ "currency": "CNY", "total_balance": raw }]
+            }));
+            assert!(result.success);
+            let balance = result.data.unwrap().remove(0);
+            assert_eq!(balance.remaining, Some(expected));
+            assert_eq!(balance.is_valid, Some(true));
+            assert!(balance.invalid_message.is_none());
+        }
     }
 
     #[test]
