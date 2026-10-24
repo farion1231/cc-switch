@@ -4189,6 +4189,7 @@
     "columnApp": "应用",
     "sectionInstalled": "已安装 · {{count}}",
     "sectionNotInstalled": "未安装 · {{count}}",
+    "dragHandle": "拖动调整 {{name}} 的顺序",
     "columnVersion": "版本",
     "columnVisible": "显示",
     "visibleHelp": "关掉后，这个应用不再出现在侧栏、托盘菜单、MCP / Skills 的应用列，以及提示词和会话的应用下拉里。只是不显示：它的供应商、MCP 等配置都还在，它自己的配置文件也不会被改动。",

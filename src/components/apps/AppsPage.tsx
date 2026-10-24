@@ -1,6 +1,34 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
+  type DragEndEvent,
+  type Modifier,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   AlertTriangle,
   ArrowUpCircle,
@@ -8,6 +36,7 @@ import {
   ChevronDown,
   Copy,
   Download,
+  GripVertical,
   LayoutGrid,
   Loader2,
   MoreHorizontal,
@@ -19,7 +48,7 @@ import { settingsApi } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
 import { isUpdateAvailable } from "@/lib/version";
 import { cn } from "@/lib/utils";
@@ -82,18 +111,38 @@ const SOURCE_LABEL: Record<string, string> = {
 
 type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
 
-const ROWS: Row[] = [
-  { kind: "tool", tool: "claude" },
-  { kind: "desktop" },
-  ...TOOL_NAMES.filter((tool) => tool !== "claude").map(
-    (tool): Row => ({ kind: "tool", tool }),
-  ),
-];
+const ROW_BY_APP = Object.fromEntries([
+  ["claude-desktop", { kind: "desktop" }],
+  ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
+]) as Record<AppId, Row>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
-const rowKey = (row: Row) =>
-  row.kind === "desktop" ? "claude-desktop" : row.tool;
+const rowKey = (row: Row): AppId =>
+  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
+
+// 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
+const verticalDragModifiers: Modifier[] = [
+  ({ transform, draggingNodeRect, containerNodeRect }) => {
+    if (!draggingNodeRect || !containerNodeRect) return { ...transform, x: 0 };
+    const minY = containerNodeRect.top - draggingNodeRect.top;
+    const maxY = containerNodeRect.bottom - draggingNodeRect.bottom;
+    return {
+      ...transform,
+      x: 0,
+      y: Math.min(Math.max(transform.y, minY), maxY),
+    };
+  },
+];
+
+type DragHandle = {
+  attributes: DraggableAttributes;
+  listeners: DraggableSyntheticListeners;
+  isDragging: boolean;
+};
+
+/** 可拖动的行把拖动把手交给里面的 `AppRow`（ToolRow 自己渲染 AppRow，不必逐层传参）。 */
+const DragHandleContext = createContext<DragHandle | null>(null);
 
 /** 本机有这个命令行应用：探到了版本、装了但跑不起来，或探测报告里有安装位置（和「卸载」出现的条件一致）。 */
 function isToolPresent(
@@ -146,9 +195,15 @@ export function AppsPage() {
     if (!info && tools.isLoadingTools) return null;
     return isToolPresent(info, tools.installReports?.[row.tool]);
   };
-  const rowStates = ROWS.map((row) => ({ row, installed: rowInstalled(row) }));
+  // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
+  const appOrder = orderAppIds(settings?.appOrder);
+  const orderedRows = appOrder.map((app) => ROW_BY_APP[app]);
+  const rowStates = orderedRows.map((row) => ({
+    row,
+    installed: rowInstalled(row),
+  }));
   const sections: RowSection[] = rowStates.some((s) => s.installed === null)
-    ? [{ key: "all", title: t("appsPage.columnApp"), rows: ROWS }]
+    ? [{ key: "all", title: t("appsPage.columnApp"), rows: orderedRows }]
     : (
         [
           { key: "installed", installed: true },
@@ -260,6 +315,27 @@ export function AppsPage() {
         time: formatCheckedAt(tools.lastCheckedAt, i18n.language),
       })
     : t("appsPage.neverChecked");
+
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  // 在整份顺序里移动：组内两行之间夹着的别组应用相对次序不变
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!settings || !over || active.id === over.id) return;
+    const oldIndex = appOrder.indexOf(active.id as AppId);
+    const newIndex = appOrder.indexOf(over.id as AppId);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const next = arrayMove(appOrder, oldIndex, newIndex);
+    const previous = settings.appOrder;
+    updateSettings({ appOrder: next });
+    void autoSaveSettings({ appOrder: next }).catch(() =>
+      updateSettings({ appOrder: previous }),
+    );
+  };
 
   const renderRow = (row: Row) =>
     row.kind === "desktop" ? (
@@ -449,9 +525,32 @@ export function AppsPage() {
                   <SectionTitle title={section.title} />
                 </div>
               )}
-              <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
-                {section.rows.map(renderRow)}
-              </div>
+              {section.key === "installed" ? (
+                // 只有已安装的能拖：未安装的排在哪无所谓；首次探测时还不知道装没装，也先不给拖
+                <DndContext
+                  sensors={dragSensors}
+                  modifiers={verticalDragModifiers}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={section.rows.map(rowKey)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+                      {section.rows.map((row) => (
+                        <SortableAppRow key={rowKey(row)} id={rowKey(row)}>
+                          {renderRow(row)}
+                        </SortableAppRow>
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              ) : (
+                <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+                  {section.rows.map(renderRow)}
+                </div>
+              )}
             </section>
           ))}
         </div>
@@ -544,8 +643,25 @@ function AppRow({
   menu?: React.ReactNode;
   footer?: React.ReactNode;
 }) {
+  const { t } = useTranslation();
+  const dragHandle = useContext(DragHandleContext);
   return (
-    <div data-tool-row className="px-4 py-3">
+    <div data-tool-row={app} className="group relative px-4 py-3">
+      {dragHandle && (
+        // 放在行首的内边距里，不占列宽，表头和各列照旧对齐
+        <button
+          type="button"
+          className={cn(
+            "absolute start-0 top-3 flex h-10 w-4 cursor-grab items-center justify-center text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing",
+            dragHandle.isDragging && "cursor-grabbing opacity-100",
+          )}
+          aria-label={t("appsPage.dragHandle", { name: APP_DISPLAY_NAME[app] })}
+          {...dragHandle.attributes}
+          {...dragHandle.listeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+      )}
       <div className={cn(APP_ROW_GRID, "min-h-10")}>
         <div className="flex min-w-0 items-center gap-4">
           <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
@@ -873,6 +989,40 @@ function ToolRow({
       }
       footer={footer}
     />
+  );
+}
+
+function SortableAppRow({
+  id,
+  children,
+}: {
+  id: AppId;
+  children: React.ReactNode;
+}) {
+  const {
+    setNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+  const style: CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    position: "relative",
+    zIndex: isDragging ? 10 : undefined,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(isDragging && "bg-surface shadow-v7-md")}
+    >
+      <DragHandleContext.Provider value={{ attributes, listeners, isDragging }}>
+        {children}
+      </DragHandleContext.Provider>
+    </div>
   );
 }
 

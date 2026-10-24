@@ -4189,6 +4189,7 @@
     "columnApp": "アプリ",
     "sectionInstalled": "インストール済み · {{count}}",
     "sectionNotInstalled": "未インストール · {{count}}",
+    "dragHandle": "ドラッグして {{name}} の順序を変更",
     "columnVersion": "バージョン",
     "columnVisible": "表示",
     "visibleHelp": "オフにすると、このアプリはサイドバー、トレイメニュー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。表示しないだけで、プロバイダーや MCP などの設定はそのまま残り、アプリ自身の設定ファイルも変更されません。",
