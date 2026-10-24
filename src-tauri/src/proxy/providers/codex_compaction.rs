@@ -17,6 +17,7 @@
 //!   换掉。
 
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use axum::http::HeaderMap;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -64,6 +65,45 @@ pub(crate) fn is_compaction_request(body: &Value) -> bool {
     body.get("input")
         .and_then(Value::as_array)
         .is_some_and(|items| items.iter().any(is_compaction_trigger))
+}
+
+/// Identify the Codex auto-compaction request that runs before a turn when the
+/// previous and current compaction hashes differ. Codex exposes this as
+/// `client_metadata["x-codex-turn-metadata"]` and a compatibility HTTP header.
+/// The enum values below use Codex's serialized snake_case spellings.
+pub(crate) fn is_preturn_comp_hash_changed_request(body: &Value, headers: &HeaderMap) -> bool {
+    let metadata = match body
+        .get("client_metadata")
+        .and_then(|client_metadata| client_metadata.get("x-codex-turn-metadata"))
+    {
+        // The body is Codex's canonical projection. If it is present but
+        // malformed or says this is another request kind, do not let a
+        // conflicting compatibility header override it.
+        Some(value) => parse_turn_metadata(value),
+        None => headers
+            .get("x-codex-turn-metadata")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok()),
+    };
+    let Some(metadata) = metadata else {
+        return false;
+    };
+    let Some(compaction) = metadata.get("compaction") else {
+        return false;
+    };
+
+    metadata.get("request_kind").and_then(Value::as_str) == Some("compaction")
+        && compaction.get("trigger").and_then(Value::as_str) == Some("auto")
+        && compaction.get("reason").and_then(Value::as_str) == Some("comp_hash_changed")
+        && compaction.get("phase").and_then(Value::as_str) == Some("pre_turn")
+}
+
+fn parse_turn_metadata(value: &Value) -> Option<Value> {
+    match value {
+        Value::String(raw) => serde_json::from_str(raw).ok(),
+        Value::Object(_) => Some(value.clone()),
+        _ => None,
+    }
 }
 
 pub(crate) fn encode_compaction_summary(summary: &str) -> String {
@@ -496,6 +536,114 @@ mod tests {
             .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
             .collect::<String>();
         parse_events(&merged)
+    }
+
+    #[test]
+    fn identifies_preturn_hash_changed_compaction_from_canonical_client_metadata() {
+        let turn_metadata = json!({
+            "request_kind": "compaction",
+            "compaction": {
+                "trigger": "auto",
+                "reason": "comp_hash_changed",
+                "phase": "pre_turn"
+            }
+        });
+        let body = json!({
+            "client_metadata": {
+                "x-codex-turn-metadata": turn_metadata.to_string()
+            }
+        });
+
+        assert!(is_preturn_comp_hash_changed_request(
+            &body,
+            &HeaderMap::new()
+        ));
+    }
+
+    #[test]
+    fn reads_preturn_hash_changed_compaction_from_compatibility_header_when_body_projection_is_absent(
+    ) {
+        let turn_metadata = json!({
+            "request_kind": "compaction",
+            "compaction": {
+                "trigger": "auto",
+                "reason": "comp_hash_changed",
+                "phase": "pre_turn"
+            }
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-codex-turn-metadata",
+            turn_metadata.to_string().parse().unwrap(),
+        );
+
+        assert!(is_preturn_comp_hash_changed_request(&json!({}), &headers));
+    }
+
+    #[test]
+    fn canonical_body_metadata_wins_over_conflicting_header_metadata() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-codex-turn-metadata",
+            json!({
+                "request_kind": "compaction",
+                "compaction": {
+                    "trigger": "auto",
+                    "reason": "comp_hash_changed",
+                    "phase": "pre_turn"
+                }
+            })
+            .to_string()
+            .parse()
+            .unwrap(),
+        );
+        let body_metadata = json!({ "request_kind": "turn" });
+        let body = json!({
+            "client_metadata": {
+                "x-codex-turn-metadata": body_metadata.to_string()
+            }
+        });
+
+        assert!(!is_preturn_comp_hash_changed_request(&body, &headers));
+    }
+
+    #[test]
+    fn does_not_match_regular_or_other_compaction_requests() {
+        let headers = HeaderMap::new();
+        for metadata in [
+            json!({ "request_kind": "turn" }),
+            json!({
+                "request_kind": "compaction",
+                "compaction": {
+                    "trigger": "auto",
+                    "reason": "model_downshift",
+                    "phase": "pre_turn"
+                }
+            }),
+            json!({
+                "request_kind": "compaction",
+                "compaction": {
+                    "trigger": "auto",
+                    "reason": "comp_hash_changed",
+                    "phase": "post_turn"
+                }
+            }),
+            json!({
+                "request_kind": "compaction",
+                "compaction": {
+                    "trigger": "Auto",
+                    "reason": "CompHashChanged",
+                    "phase": "PreTurn"
+                }
+            }),
+        ] {
+            let body = json!({
+                "client_metadata": {
+                    "x-codex-turn-metadata": metadata.to_string()
+                }
+            });
+            assert!(!is_preturn_comp_hash_changed_request(&body, &headers));
+        }
     }
 
     #[test]
