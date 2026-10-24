@@ -4458,7 +4458,7 @@
     "usedUp": "已用完",
     "balance": "餘額 {{value}}",
     "planExpired": "方案已過期",
-    "failed": "額度沒查到",
+    "failed": "額度查詢失敗",
     "reason": {
       "loginExpired": "登入已過期",
       "tokenRefreshPending": "權杖待重新整理"

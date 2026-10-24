@@ -4457,7 +4457,7 @@
     "usedUp": "已用完",
     "balance": "余额 {{value}}",
     "planExpired": "套餐已过期",
-    "failed": "额度没查到",
+    "failed": "额度查询失败",
     "reason": {
       "loginExpired": "登录已过期",
       "tokenRefreshPending": "令牌待刷新"

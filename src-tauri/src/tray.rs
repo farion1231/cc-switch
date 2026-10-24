@@ -401,9 +401,9 @@ impl TrayTexts {
                 balance: "餘額 {value}",
                 plan_expired: "方案已過期",
                 used_amount: "已使用 {value}",
-                quota_failed: "額度沒查到",
-                quota_failed_login_expired: "額度沒查到：登入已過期",
-                quota_failed_token_refresh_pending: "額度沒查到：權杖待重新整理",
+                quota_failed: "額度查詢失敗",
+                quota_failed_login_expired: "額度查詢失敗：登入已過期",
+                quota_failed_token_refresh_pending: "額度查詢失敗：權杖待重新整理",
                 reset_on_date: "{labelSp}額度 {when}重置",
                 reset_at_time: "{labelSp}額度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -455,9 +455,9 @@ impl TrayTexts {
                 balance: "余额 {value}",
                 plan_expired: "套餐已过期",
                 used_amount: "已使用 {value}",
-                quota_failed: "额度没查到",
-                quota_failed_login_expired: "额度没查到：登录已过期",
-                quota_failed_token_refresh_pending: "额度没查到：令牌待刷新",
+                quota_failed: "额度查询失败",
+                quota_failed_login_expired: "额度查询失败：登录已过期",
+                quota_failed_token_refresh_pending: "额度查询失败：令牌待刷新",
                 reset_on_date: "{labelSp}额度 {when}重置",
                 reset_at_time: "{labelSp}额度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -3724,7 +3724,7 @@ mod tests {
         assert_eq!(title(failed.clone()), None);
         assert_eq!(
             quota_note(&zh(), &failed.unwrap(), now()).as_deref(),
-            Some("额度没查到")
+            Some("额度查询失败")
         );
 
         let login =
@@ -3732,7 +3732,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &login).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：登录已过期")
+            Some("额度查询失败：登录已过期")
         );
         let pending = SubscriptionQuota::error(
             "claude",
@@ -3742,7 +3742,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &pending).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：令牌待刷新")
+            Some("额度查询失败：令牌待刷新")
         );
         // 没有凭据时不说话。
         let missing =
