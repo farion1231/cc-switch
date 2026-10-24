@@ -19,6 +19,7 @@ import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
+import { injectBalanceUsageScript } from "@/config/balanceProviders";
 import {
   useAddProviderMutation,
   useUpdateProviderMutation,
@@ -88,7 +89,11 @@ export function useProviderActions(
         editorSave?: ProviderEditorSave;
       },
     ) => {
-      const enhanced = injectCodingPlanUsageScript(activeApp, provider);
+      // 套餐地址注入 token_plan；不是套餐时，88API 等默认启用的余额供应商注入 balance
+      const enhanced = injectBalanceUsageScript(
+        activeApp,
+        injectCodingPlanUsageScript(activeApp, provider),
+      );
       await addProviderMutation.mutateAsync(enhanced);
 
       // OpenClaw: register models to allowlist after adding provider

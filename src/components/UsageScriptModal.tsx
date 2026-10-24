@@ -33,6 +33,10 @@ import {
   type TemplateType,
 } from "@/config/constants";
 import {
+  BALANCE_PROVIDERS,
+  detectBalanceProvider,
+} from "@/config/balanceProviders";
+import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
@@ -179,25 +183,6 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]:
     "usageScript.templateOfficialSubscription",
 };
-
-/** 官方余额查询供应商检测 */
-const BALANCE_PROVIDERS = [
-  { id: "deepseek", label: "DeepSeek", pattern: /api\.deepseek\.com/i },
-  { id: "stepfun", label: "StepFun", pattern: /api\.stepfun\.(ai|com)/i },
-  {
-    id: "siliconflow",
-    label: "SiliconFlow",
-    pattern: /api\.siliconflow\.(cn|com)/i,
-  },
-  { id: "openrouter", label: "OpenRouter", pattern: /openrouter\.ai/i },
-  { id: "novita", label: "Novita AI", pattern: /api\.novita\.ai/i },
-] as const;
-
-/** 根据 Base URL 自动检测余额查询供应商 */
-function detectBalanceProvider(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
-}
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
   if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
@@ -400,7 +385,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       return createUsageScript({ codingPlanProvider: autoDetected });
     }
 
-    if (detectBalanceProvider(providerCredentials.baseUrl)) {
+    if (detectBalanceProvider(providerCredentials.baseUrl) !== null) {
       return createUsageScript();
     }
 
@@ -503,7 +488,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return TEMPLATE_TYPES.TOKEN_PLAN;
       }
       // 新配置：如果 URL 匹配官方余额查询供应商，自动选择 Balance 模板
-      if (detectBalanceProvider(providerCredentials.baseUrl)) {
+      if (detectBalanceProvider(providerCredentials.baseUrl) !== null) {
         return TEMPLATE_TYPES.BALANCE;
       }
       // 默认使用 GENERAL（与默认代码模板一致）
