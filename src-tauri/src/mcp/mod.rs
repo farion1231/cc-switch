@@ -40,5 +40,6 @@ pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
 
+pub(crate) mod kimi;
 pub(crate) mod mcode;
 pub(crate) mod pi;

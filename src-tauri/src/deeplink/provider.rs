@@ -340,6 +340,11 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
+        AppType::Kimi => {
+            return Err(AppError::InvalidInput(
+                "Add Kimi Code providers from the Kimi Code page".into(),
+            ))
+        }
         AppType::Mcode => {
             return Err(AppError::InvalidInput(
                 "Add MCode providers from the MCode page".into(),
