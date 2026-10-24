@@ -2704,6 +2704,115 @@ fn is_windows_command_script(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// 批处理里第一条真正启动进程的命令行：跳过 `@` 回显开关、`::` 注释标签和
+/// `echo` / `rem` / `chcp` 这些不启动进程的行。npm 生成的 shim 第一行通常是
+/// `GOTO start` 之类的控制流，取出来也解析不出目标，交由调用方保守放弃。
+#[cfg(target_os = "windows")]
+fn first_batch_command(content: &str) -> Option<&str> {
+    for line in content.lines() {
+        let line = line.trim();
+        // `@` 只是关掉这一行的回显，去掉不影响语义。
+        let line = line.strip_prefix('@').unwrap_or(line).trim_start();
+        if line.is_empty() || line.starts_with("::") {
+            continue;
+        }
+        let verb = line.split_whitespace().next().unwrap_or_default();
+        if verb.eq_ignore_ascii_case("echo")
+            || verb.eq_ignore_ascii_case("rem")
+            || verb.eq_ignore_ascii_case("chcp")
+        {
+            continue;
+        }
+        return Some(line);
+    }
+    None
+}
+
+/// 一行的第一个参数，带引号时取引号内的内容（Windows 路径常含空格）。
+#[cfg(target_os = "windows")]
+fn first_command_token(line: &str) -> Option<&str> {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix('"') {
+        return rest.split('"').next().filter(|token| !token.is_empty());
+    }
+    line.split_whitespace().next()
+}
+
+/// `.cmd` / `.bat` 转发壳启动的真身，例如 `@ECHO off` + `"C:\...\opencode.exe" %*`
+/// → `C:\...\opencode.exe`。
+///
+/// 只认「简单单命令转发」：目标是绝对 `*.exe`。相对路径依赖脚本被调用时的 CWD，npm
+/// shim 又带 `GOTO` 控制流，这两种都返回 None、按普通文件处理——宁可少合并一处，
+/// 也不要把两个真实安装误判成一个。Grok 那种 `.cmd → node → js → resolveBinary()`
+/// 的多级链同样解析不出目标，不在本函数职责内。
+#[cfg(target_os = "windows")]
+fn windows_script_forward_target(path: &Path) -> Option<std::path::PathBuf> {
+    if !is_windows_command_script(path) {
+        return None;
+    }
+    // 有界读取：转发壳只有几十字节，异常大的文件直接放弃。
+    if std::fs::metadata(path).ok()?.len() > 4096 {
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    let target = Path::new(first_command_token(first_batch_command(&content)?)?);
+    if !target.is_absolute() {
+        return None;
+    }
+    let is_exe = target
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"));
+    if !is_exe {
+        return None;
+    }
+    Some(target.to_path_buf())
+}
+
+/// 一处安装的去重身份。绝大多数情况就是候选自身 canonicalize 后的真身；Windows 上
+/// 跨目录的 `.cmd` 转发壳例外——它是个普通文本文件，canonicalize 只会得到自己，于是
+/// 「独立安装 + 在 npm bin 目录放个绝对路径转发壳」会被数成两处安装（#8259）。壳的
+/// 身份取它启动的那个 exe 的真身。
+#[cfg(target_os = "windows")]
+fn installation_identity(tool_path: &Path, real: &Path) -> PathBuf {
+    windows_script_forward_target(tool_path)
+        .and_then(|target| std::fs::canonicalize(&target).ok())
+        .unwrap_or_else(|| real.to_path_buf())
+}
+
+/// 是否把该候选排到最后再认领身份。Windows 上是批处理转发壳；其他平台没有壳，
+/// 恒为 false，排序因此是恒等的。
+fn is_deferred_forwarder_candidate(path: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        is_windows_command_script(path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// 该候选是不是 PATH 默认命中的那处。
+///
+/// **两边都要过 `installation_identity`**：`resolve_path_default` 返回的是 `where`
+/// 命中项的 canonical 路径，转发壳所在目录在 PATH 里排在原生目录之前时它就是壳本身。
+/// 只归一化一侧是不够的——留下的是 exe，`installation_identity(exe)` 仍是 exe 的路径，
+/// 和壳的路径永远不相等，默认标记照样丢。反向的情况同样要顾到：壳的目标 exe 存在但
+/// 不在搜索目录里时，列表里只有壳这一项，而它自己就是 PATH 默认。
+///
+/// 默认标记丢了之后，`default_install` 在「多处且无默认标记」时返回 None，锚定退到
+/// 静态命令，可能升级到另一处拷贝去。
+#[cfg(target_os = "windows")]
+fn is_path_default_candidate(tool_path: &Path, real: &Path, path_default: Option<&Path>) -> bool {
+    let Some(default) = path_default else {
+        return false;
+    };
+    // `default` 已经是 canonical 路径，直接当自己的 real 传进去。
+    installation_identity(default, default) == installation_identity(tool_path, real)
+}
+
 /// Convert a canonicalized Windows path back to the form accepted by shell
 /// commands. `std::fs::canonicalize` prefixes local paths with `\\?\` (and UNC
 /// paths with `\\?\UNC\`), but `cmd.exe` cannot `call` a batch file through
@@ -3229,6 +3338,40 @@ fn run_probe_version_command(
     )
 }
 
+/// 按安装身份对候选去重，返回保留下来的候选（`new_path` 原样跟随）。
+///
+/// canonicalize 能解析软链，所以 `/opt/homebrew/bin/x → Cellar/...`、nvm shim 这类
+/// 多个入口指向同一真实文件的情况本来就能合一。Windows 上跨目录的 `.cmd` 转发壳是个
+/// 例外：它只是普通文本文件，canonicalize 得到自己，于是「原生安装 + 在 npm bin 目录
+/// 放个绝对路径转发壳」会被数成两处安装（#8259）。壳的身份取它启动的那个 exe。
+///
+/// 壳必须排在真身之后认领：搜索路径里 `%APPDATA%\npm` 这类硬编码目录排在 PATH 合并
+/// 出来的原生安装目录之前，壳会先被遍历到；先认领的话真身就被丢掉，用户看到的「安装」
+/// 会变成一个没有版本可探测的脚本。非 Windows 没有壳，排序是恒等的。
+///
+/// `T` 是调用方的 `new_path`：Windows 上是 `String`，其他平台是 `OsString`
+/// （`prepend_search_dir_to_path` 的约定，避免非 UTF-8 的 PATH 段被有损转换丢掉）。
+fn dedup_tool_candidates<T>(
+    candidates: Vec<(std::path::PathBuf, T)>,
+) -> Vec<(std::path::PathBuf, T)> {
+    let mut candidates = candidates;
+    candidates.sort_by_key(|(tool_path, _)| is_deferred_forwarder_candidate(tool_path));
+
+    let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
+    let mut kept = Vec::with_capacity(candidates.len());
+    for (tool_path, new_path) in candidates {
+        let real = std::fs::canonicalize(&tool_path).unwrap_or_else(|_| tool_path.clone());
+        #[cfg(target_os = "windows")]
+        let identity = installation_identity(&tool_path, &real);
+        #[cfg(not(target_os = "windows"))]
+        let identity = real;
+        if seen.insert(identity) {
+            kept.push((tool_path, new_path));
+        }
+    }
+    kept
+}
+
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
 /// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
@@ -3248,9 +3391,13 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
     .ok()
     .flatten();
 
-    let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
 
+    // 候选先全部收齐再统一去重：跨目录时转发壳和它启动的真身可能都命中（#8259），
+    // 真身必须先认领自己的身份，否则壳会把真身顶掉、用户看到的「安装」变成一个
+    // 没有意义的脚本。
+    // `new_path` 的类型随平台：Windows 是 String，其他平台是 OsString。
+    let mut candidates: Vec<(std::path::PathBuf, _)> = Vec::new();
     for dir in &search_paths {
         #[cfg(target_os = "windows")]
         let new_path = format!("{};{}", dir.display(), current_path);
@@ -3258,57 +3405,60 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         let new_path = prepend_search_dir_to_path(dir, &current_path);
 
         for tool_path in tool_executable_candidates(tool, dir) {
-            if !tool_path.exists() {
-                continue;
+            if tool_path.exists() {
+                candidates.push((tool_path, new_path.clone()));
             }
-            // canonicalize 解析软链后去重：/opt/homebrew/bin/x → Cellar/...、nvm shim 等
-            // 多个入口可能指向同一真实文件，只算一处安装。
-            let real = std::fs::canonicalize(&tool_path).unwrap_or_else(|_| tool_path.clone());
-            if !seen.insert(real.clone()) {
-                continue;
-            }
-
-            let output = run_probe_version_command(&tool_path, &new_path);
-
-            let (version, runnable, error, exited_with_error) = match output {
-                Ok(out) if out.status.success() => {
-                    let stdout = decode_command_output(&out.stdout).trim().to_string();
-                    let stderr = decode_command_output(&out.stderr).trim().to_string();
-                    let raw = if stdout.is_empty() { stderr } else { stdout };
-                    (Some(extract_version(&raw)), true, None, false)
-                }
-                Ok(out) => {
-                    let stderr = decode_command_output(&out.stderr).trim().to_string();
-                    let stdout = decode_command_output(&out.stdout).trim().to_string();
-                    let detail = if stderr.is_empty() { stdout } else { stderr };
-                    let detail = detail.trim();
-                    let error = if detail.is_empty() {
-                        None
-                    } else {
-                        Some(last_lines(detail, 4))
-                    };
-                    (None, false, error, true)
-                }
-                Err(e) => (None, false, Some(e), false),
-            };
-
-            let is_path_default = path_default.as_ref() == Some(&real);
-            let path_str = tool_path.display().to_string();
-            let source = infer_install_source_for_install(&tool_path, &real);
-
-            installs.push(ToolInstallation {
-                path: path_str,
-                version,
-                runnable,
-                error,
-                exited_with_error,
-                source: source.to_string(),
-                is_path_default,
-                // 复用上面 line ~1357 已 canonicalize 的真身,避免下游
-                // installs_anchored_command 再 canonicalize 一遍同一文件。
-                real: real.clone(),
-            });
         }
+    }
+
+    for (tool_path, new_path) in dedup_tool_candidates(candidates) {
+        // canonicalize 解析软链后去重：/opt/homebrew/bin/x → Cellar/...、nvm shim 等
+        // 多个入口可能指向同一真实文件，只算一处安装。
+        let real = std::fs::canonicalize(&tool_path).unwrap_or_else(|_| tool_path.clone());
+
+        let output = run_probe_version_command(&tool_path, &new_path);
+
+        let (version, runnable, error, exited_with_error) = match output {
+            Ok(out) if out.status.success() => {
+                let stdout = decode_command_output(&out.stdout).trim().to_string();
+                let stderr = decode_command_output(&out.stderr).trim().to_string();
+                let raw = if stdout.is_empty() { stderr } else { stdout };
+                (Some(extract_version(&raw)), true, None, false)
+            }
+            Ok(out) => {
+                let stderr = decode_command_output(&out.stderr).trim().to_string();
+                let stdout = decode_command_output(&out.stdout).trim().to_string();
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                let detail = detail.trim();
+                let error = if detail.is_empty() {
+                    None
+                } else {
+                    Some(last_lines(detail, 4))
+                };
+                (None, false, error, true)
+            }
+            Err(e) => (None, false, Some(e), false),
+        };
+
+        #[cfg(target_os = "windows")]
+        let is_path_default = is_path_default_candidate(&tool_path, &real, path_default.as_deref());
+        #[cfg(not(target_os = "windows"))]
+        let is_path_default = path_default.as_ref() == Some(&real);
+        let path_str = tool_path.display().to_string();
+        let source = infer_install_source_for_install(&tool_path, &real);
+
+        installs.push(ToolInstallation {
+            path: path_str,
+            version,
+            runnable,
+            error,
+            exited_with_error,
+            source: source.to_string(),
+            is_path_default,
+            // 复用上面 line ~1357 已 canonicalize 的真身,避免下游
+            // installs_anchored_command 再 canonicalize 一遍同一文件。
+            real: real.clone(),
+        });
     }
 
     // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
@@ -10308,6 +10458,249 @@ mod tests {
         let preferred = windows_runnable_sibling_for_extensionless_tool(&extensionless);
 
         assert_eq!(preferred.as_deref(), Some(cmd.as_path()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_forward_target_reads_simple_absolute_exe_forwarder() {
+        let dir = tempfile::tempdir().unwrap();
+        let prog = dir.path().join("Programs").join("opencode");
+        std::fs::create_dir_all(&prog).unwrap();
+        let exe = prog.join("opencode.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+
+        // The exact 77-byte shape reported in #8259.
+        let npm = dir.path().join("npm");
+        std::fs::create_dir(&npm).unwrap();
+        let cmd = npm.join("opencode.cmd");
+        std::fs::write(&cmd, format!("@ECHO off\r\n\"{}\" %*\r\n", exe.display())).unwrap();
+
+        assert_eq!(
+            windows_script_forward_target(&cmd).as_deref(),
+            Some(exe.as_path())
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_forward_target_rejects_anything_it_cannot_prove() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            path
+        };
+
+        // An npm-generated shim: control flow, not a direct launch.
+        assert_eq!(
+            windows_script_forward_target(&write(
+                "npm-shim.cmd",
+                "@ECHO off\r\nGOTO start\r\n:start\r\nnode \"%~dp0\\node_modules\\x\\bin\\x\" %*\r\n"
+            )),
+            None
+        );
+        // Relative target depends on the caller's CWD.
+        assert_eq!(
+            windows_script_forward_target(&write(
+                "relative.cmd",
+                "@echo off\r\n.\\tool.exe %*\r\n"
+            )),
+            None
+        );
+        // A non-`.exe` target proves nothing about where the real install lives:
+        // another shim, a `.bat` chain, or an extensionless node entry all keep going.
+        assert_eq!(
+            windows_script_forward_target(&write(
+                "chain.cmd",
+                "@echo off\r\n\"C:\\a\\b.bat\" %*\r\n"
+            )),
+            None
+        );
+        assert_eq!(
+            windows_script_forward_target(&write(
+                "node-entry.cmd",
+                "@echo off\r\n\"C:\\a\\bin\\tool\" %*\r\n"
+            )),
+            None
+        );
+        // `@ECHO off` / `chcp` / comments must be skipped, not mistaken for the command.
+        let commented = write(
+            "commented.cmd",
+            "@ECHO off\r\nchcp 65001 >nul\r\n:: launch the real binary\r\n\"C:\\a\\b.exe\" %*\r\n",
+        );
+        assert_eq!(
+            windows_script_forward_target(&commented).as_deref(),
+            Some(Path::new("C:\\a\\b.exe"))
+        );
+        // Unquoted absolute path, and a body that is only comments.
+        assert_eq!(
+            windows_script_forward_target(&write(
+                "unquoted.cmd",
+                "@echo off\r\nC:\\a\\b.exe %*\r\n"
+            ))
+            .as_deref(),
+            Some(Path::new("C:\\a\\b.exe"))
+        );
+        assert_eq!(
+            windows_script_forward_target(&write("empty.cmd", "@echo off\r\n:: nothing here\r\n")),
+            None
+        );
+        // An oversized file is not a forwarder; give up rather than parse it.
+        let big = dir.path().join("big.cmd");
+        std::fs::write(
+            &big,
+            format!("@echo off\r\n\"C:\\a\\b.exe\" {}\r\n", "x".repeat(8192)),
+        )
+        .unwrap();
+        assert_eq!(windows_script_forward_target(&big), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn dedup_tool_candidates_merges_cross_directory_forwarder() {
+        // #8259: a native install plus an absolute-path forwarder placed in the npm bin
+        // dir used to be reported as two installations. The forwarder sits in the
+        // hardcoded `%APPDATA%\npm` slot, which is scanned before the PATH-merged
+        // native dir, so it is met first and must not evict the real exe.
+        let root = tempfile::tempdir().unwrap();
+        let npm_dir = root.path().join("npm");
+        let prog_dir = root.path().join("Programs").join("opencode");
+        std::fs::create_dir_all(&npm_dir).unwrap();
+        std::fs::create_dir_all(&prog_dir).unwrap();
+
+        let exe = prog_dir.join("opencode.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let cmd = npm_dir.join("opencode.cmd");
+        std::fs::write(&cmd, format!("@ECHO off\r\n\"{}\" %*\r\n", exe.display())).unwrap();
+
+        // npm dir first, exactly the order `build_tool_search_paths` produces.
+        let kept = dedup_tool_candidates(vec![(cmd, String::new()), (exe.clone(), String::new())]);
+
+        assert_eq!(kept.len(), 1, "a forwarder and its target are one install");
+        assert_eq!(
+            kept[0].0, exe,
+            "the survivor must be the native exe, not the forwarder"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn dedup_tool_candidates_keeps_distinct_installs_apart() {
+        // The mirror image: two native exes with no forwarder between them must stay
+        // separate, so the merge cannot be over-eager.
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("a");
+        let second = root.path().join("b");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let first_exe = first.join("opencode.exe");
+        let second_exe = second.join("opencode.exe");
+        std::fs::write(&first_exe, b"MZ").unwrap();
+        std::fs::write(&second_exe, b"MZ").unwrap();
+
+        let kept = dedup_tool_candidates(vec![
+            (first_exe.clone(), String::new()),
+            (second_exe.clone(), String::new()),
+        ]);
+
+        assert_eq!(kept.len(), 2, "two distinct exes must stay two installs");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn dedup_tool_candidates_keeps_forwarder_whose_target_is_not_installed() {
+        // A forwarder whose target is absent from the candidate list is the only entry
+        // for that identity, so it must survive rather than being dropped.
+        let root = tempfile::tempdir().unwrap();
+        let npm_dir = root.path().join("npm");
+        std::fs::create_dir_all(&npm_dir).unwrap();
+        let cmd = npm_dir.join("opencode.cmd");
+        std::fs::write(
+            &cmd,
+            format!(
+                "@ECHO off\r\n\"{}\" %*\r\n",
+                root.path().join("elsewhere").join("opencode.exe").display()
+            ),
+        )
+        .unwrap();
+
+        let kept = dedup_tool_candidates(vec![(cmd.clone(), String::new())]);
+
+        assert_eq!(kept.len(), 1, "a lone forwarder is still an install");
+        assert_eq!(kept[0].0, cmd);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn installation_identity_maps_a_forwarder_to_the_target_it_launches() {
+        // `is_path_default` compares the PATH default against each survivor's identity.
+        // When the PATH default is the forwarder, both sides must normalize to the exe,
+        // or every survivor reads as non-default and `default_install` returns None.
+        let root = tempfile::tempdir().unwrap();
+        let npm_dir = root.path().join("npm");
+        let prog_dir = root.path().join("Programs").join("opencode");
+        std::fs::create_dir_all(&npm_dir).unwrap();
+        std::fs::create_dir_all(&prog_dir).unwrap();
+        let exe = prog_dir.join("opencode.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let cmd = npm_dir.join("opencode.cmd");
+        std::fs::write(&cmd, format!("@ECHO off\r\n\"{}\" %*\r\n", exe.display())).unwrap();
+
+        let from_forwarder = installation_identity(&cmd, &std::fs::canonicalize(&cmd).unwrap());
+        let from_exe = installation_identity(&exe, &std::fs::canonicalize(&exe).unwrap());
+
+        assert_eq!(
+            from_forwarder, from_exe,
+            "the forwarder and its target must share one identity"
+        );
+        assert_eq!(
+            from_forwarder,
+            std::fs::canonicalize(&exe).unwrap(),
+            "that identity must be the real exe"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn is_path_default_candidate_sees_through_a_forwarder_default() {
+        let root = tempfile::tempdir().unwrap();
+        let npm_dir = root.path().join("npm");
+        let prog_dir = root.path().join("Programs").join("opencode");
+        let other_dir = root.path().join("elsewhere");
+        std::fs::create_dir_all(&npm_dir).unwrap();
+        std::fs::create_dir_all(&prog_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        let exe = prog_dir.join("opencode.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let other = other_dir.join("opencode.exe");
+        std::fs::write(&other, b"MZ").unwrap();
+        let cmd = npm_dir.join("opencode.cmd");
+        std::fs::write(&cmd, format!("@ECHO off\r\n\"{}\" %*\r\n", exe.display())).unwrap();
+
+        let default = std::fs::canonicalize(&cmd).unwrap();
+        let real_exe = std::fs::canonicalize(&exe).unwrap();
+        let real_other = std::fs::canonicalize(&other).unwrap();
+
+        // The forwarder is the PATH default and the exe is what survives the merge.
+        assert!(
+            is_path_default_candidate(&exe, &real_exe, Some(&default)),
+            "the survivor of a merged forwarder must inherit the default marker"
+        );
+        // Reverse case: the forwarder is the only entry for that identity and is the
+        // default itself. It must not lose the marker to its own identity mapping.
+        assert!(
+            is_path_default_candidate(&cmd, &default, Some(&default)),
+            "a lone forwarder that is the default must keep the marker"
+        );
+        // A genuinely different install is not the default.
+        assert!(
+            !is_path_default_candidate(&other, &real_other, Some(&default)),
+            "an unrelated install must not be marked default"
+        );
+        assert!(
+            !is_path_default_candidate(&exe, &real_exe, None),
+            "no PATH default means nothing is marked"
+        );
     }
 
     #[cfg(target_os = "windows")]
