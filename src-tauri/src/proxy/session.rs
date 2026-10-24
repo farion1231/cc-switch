@@ -7,7 +7,7 @@
 //! 支持从客户端请求中提取 Session ID，用于关联同一对话的多个请求：
 //! - Claude / Claude Desktop: 从会话 headers、`metadata.user_id` (JSON 字符串或旧版
 //!   `user_xxx_session_yyy` 格式) 或 `metadata.session_id` 提取
-//! - Codex: 从 headers 中的 `session_id` / `x-session-id` 或 `metadata.session_id` 提取
+//! - Codex: 从 headers 中的 `session_id` / `x-session-id` / `session-id` / `thread-id` 或 `metadata.session_id` 提取
 //! - Grok Build: 从 headers 中的 `x-grok-conv-id` / `x-grok-session-id` 提取
 //! - 其他: 生成新的 UUID
 
@@ -55,7 +55,7 @@ pub struct SessionIdResult {
 /// 4. 生成新 UUID
 ///
 /// ### Codex 请求
-/// 1. Headers: `session_id` 或 `x-session-id`
+/// 1. Headers: `session_id` → `x-session-id` → `session-id` → `thread-id`
 /// 2. `metadata.session_id`
 /// 3. 生成新 UUID
 ///
@@ -137,7 +137,8 @@ fn extract_responses_session(
         // conversation ID 时的回退。x-grok-req-id 是逐请求 ID，不能用于聚合。
         &["x-grok-conv-id", "x-grok-session-id"]
     } else {
-        &["session_id", "x-session-id"]
+        // 保留旧拼写的优先级；原生 session-id 优先于 thread-id 回退。
+        &["session_id", "x-session-id", "session-id", "thread-id"]
     };
     for header_name in header_names {
         if let Some(value) = headers.get(*header_name) {
@@ -238,6 +239,9 @@ fn generate_new_session_id() -> SessionIdResult {
         client_provided: false,
     }
 }
+
+#[cfg(test)]
+mod header_tests;
 
 #[cfg(test)]
 mod tests {

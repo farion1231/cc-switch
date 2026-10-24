@@ -1635,7 +1635,9 @@
       "alltokens_si": "AllTokens SI は「安定を基に、誠実を本に」を掲げる、企業向けの AI トークン中継・チーム協業プラットフォームです。メンバー、キー、使用量、残高を企業コンソールで一元管理し、明確な権限と利用上限の設定により、チームの利用を追跡可能で安心して管理できます。",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
       "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！",
-      "dit": "DIT.ai は、複数プロバイダーを低コストでルーティングする AI トークン取引マーケットです。OpenAI 互換の API 1 つで GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要モデルを利用でき、160 以上のルートでプロバイダーがリアルタイムに競い合うため、通常は公式価格より 30〜70% 安くなります。CC Switch ユーザーはこのリンクから登録し、プロモコード \"ccswitch\" を使うと 5 ドル分のウェルカムクーポンを受け取れます！"
+      "dit": "DIT.ai は、複数プロバイダーを低コストでルーティングする AI トークン取引マーケットです。OpenAI 互換の API 1 つで GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要モデルを利用でき、160 以上のルートでプロバイダーがリアルタイムに競い合うため、通常は公式価格より 30〜70% 安くなります。CC Switch ユーザーはこのリンクから登録し、プロモコード \"ccswitch\" を使うと 5 ドル分のウェルカムクーポンを受け取れます！",
+      "buytoken": "BuyToken は Claude Code、Codex、DeepSeek などの中継サービスを提供し、エンタープライズ級の同時実行と迅速な請求書発行に対応、安定して長く続くサービスを目指しています。CC Switch ユーザーはこのリンクから登録すると 3 元分のお試しクレジットを受け取れ、初回チャージは 10% オフになります！",
+      "vapi": "V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスを提供し、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザーはこのリンクから登録すると、初回注文が 2 元引きのうえ 10% オフになります！"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -2124,6 +2126,7 @@
     "universalDetail": "Claude Code・Codex・Gemini CLI に同期",
     "manageUniversal": "既存の統合プロバイダーを管理 ›",
     "loginWith": {
+      "kimi": "Kimi アカウントでログイン",
       "claude": "Claude アカウントでログイン",
       "chatgpt": "ChatGPT アカウントでログイン",
       "github": "GitHub アカウントでログイン",
@@ -2247,6 +2250,8 @@
       "actionEllipsis": "Codex 使用量を再構築"
     },
     "totalRecords": "全 {{total}} 件",
+    "pageSize": "{{count}} 件/ページ",
+    "pageSizeLabel": "1 ページの件数",
     "goToPage": "移動",
     "pageInputPlaceholder": "ページ",
     "modelPricing": "モデル料金",
@@ -2381,16 +2386,14 @@
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
     "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）",
     "syncStatus": {
-      "auto": "セッションログ · 自動スキャン",
-      "justNow": "セッションログ · たった今同期",
-      "minutesAgo": "セッションログ · {{count}} 分前に同期",
-      "off": "セッションログ · 自動スキャンはオフ",
-      "tipAuto": "バックグラウンドでは 10 分ごとにスキャン。このページを開いている間は右側の間隔でスキャンします",
-      "tipOff": "手動で同期したときだけセッションログをスキャンします"
+      "justNow": "たった今同期",
+      "minutesAgo": "{{count}} 分前に同期",
+      "syncing": "同期中…",
+      "tip": "クリックして今すぐ同期",
+      "tipOff": "自動スキャンはオフです。クリックして今すぐ同期"
     },
     "refreshMenu": {
-      "label": "{{seconds}} 秒ごとにスキャン",
-      "seconds": "{{seconds}} 秒"
+      "label": "{{seconds}} 秒ごとにスキャン"
     },
     "dataSources": "データソース",
     "display": {
@@ -2420,7 +2423,6 @@
       },
       "sidebarTodayLimit": "最大 {{count}} 項目まで",
       "logColumns": "リクエストログの列",
-      "logColumnsSummary": "{{shown}} / {{total}} 列",
       "trendChartType": "トレンドグラフの種類",
       "trendChartTypes": {
         "bar": "棒グラフ",
@@ -2459,16 +2461,17 @@
       "requests": "リクエスト",
       "tokens": "Tokens",
       "cost": "コスト",
-      "requestsLegend": "リクエスト数"
+      "requestsLegend": "リクエスト数",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "1 時間ごと",
+      "daily": "1 日ごと"
     },
     "tabs": {
       "label": "明細",
       "providers": "プロバイダー",
       "models": "モデル",
-      "pricing": "料金",
-      "settings": "設定"
+      "pricing": "料金"
     },
-    "sortedByRequests": "リクエスト数順",
     "app": "アプリ",
     "speed": "速度",
     "speedValue": "{{value}} tok/s",
@@ -2505,7 +2508,6 @@
       "performance": "パフォーマンス",
       "source": "ソース",
       "sourceProxy": "ルーティングサービス · ステータス {{code}}",
-      "sourceSession": "セッションログ",
       "total": "合計",
       "firstToken": "最初のトークン",
       "firstTokenEstimated": "最初のトークン（推定）",
@@ -2559,7 +2561,12 @@
       "cacheWrite": "キャッシュ書き込み"
     },
     "prevMonth": "前月",
-    "nextMonth": "翌月"
+    "nextMonth": "翌月",
+    "settings": {
+      "title": "使用量の設定",
+      "pricingSummary": "モデルごとに 100 万トークンあたりの料金を設定します。models.dev から同期することもできます",
+      "managePricing": "料金を管理…"
+    }
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -4918,6 +4925,57 @@
       "removeNote": "agy からはログアウトしません。agy が現在このアカウントを使っている場合、削除後もそのまま使えます。",
       "switched": "切り替えました。新しく起動する agy はこのアカウントを使います。",
       "switchedWhileRunning": "切り替えました。agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。agy を終了してから開き直してください。"
+    }
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "このアカウントを使用",
+      "title": "Kimi Code 公式ログイン",
+      "description": "複数の Kimi コーディングプランのアカウントを、独立した認証情報とプロバイダーとして追加できます。ここでログインを管理し、使用する公式アカウントを選択してください。",
+      "region": "ログイン地域",
+      "mainland-cn": "中国本土版",
+      "global": "グローバル版",
+      "signIn": "Kimi にログイン",
+      "removeAccount": "アカウントを削除",
+      "dismissAccount": "一覧から外す",
+      "signedOut": "未ログイン",
+      "statusFailed": "ログイン状態を取得できません",
+      "expired": "認証コードの有効期限が切れました。再ログインしてください。",
+      "denied": "認証が拒否されました。再ログインしてください。",
+      "cancelled": "ログインがキャンセルされたか、別のログインに置き換えられました。再ログインしてください。",
+      "success": "Kimi Code にログインし、公式モデルを追加しました。",
+      "removeConfirm": "{{name}} を削除しますか？Kimi Code からこのアカウントのプロバイダーとモデルを削除し、ローカル認証情報とカードも削除します。他のアカウントには影響しません。",
+      "dismissConfirm": "{{name}} を一覧から外しますか？これは Kimi Code 自身のログインです。CC Switch はログアウトせず、認証情報とモデルも保持します。ログアウトする場合は Kimi Code で /logout を実行してください。再度ログインすると一覧に戻ります。",
+      "primaryHidden": "Kimi Code 自身のログインは一覧から外されています。同じアカウントで再ログインすると戻ります",
+      "removeCurrentHint": "このアカウントは使用中です。別のアカウントに切り替えてから削除してください",
+      "manageAccounts": "Kimi アカウントを管理",
+      "managedHint": "Kimi 公式アカウントは認証センターで管理してください。",
+      "current": "Kimi で使用中",
+      "primaryShort": "Kimi Code 自身のログイン",
+      "empty": "Kimi アカウントはまだありません。Kimi Code でログイン中のアカウントは自動的にここに表示されます。",
+      "help": "Kimi コーディングプランのアカウントを複数追加でき、それぞれ Kimi Code 内に専用のプロバイダーとモデルを持ちます。「このアカウントを使用」で Kimi Code の既定モデルをそのアカウントに切り替え、以降の新しいセッションで使われます。Kimi Code 自身がログインしているアカウントは自動的にここに表示され、Web 検索と取得には常にこれが使われます。ここで削除してもリストから外すだけで、Kimi Code はログアウトしません。"
+    },
+    "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
+    "contextSize": "コンテキスト長",
+    "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
+    "empty": {
+      "title": "Kimi Code プロバイダーを追加",
+      "description": "URL、API キー、モデルを設定します。既存の Kimi 設定は自動的にインポートされます。"
+    },
+    "capabilities": {
+      "image_in": "画像入力",
+      "thinking": "思考",
+      "always_thinking": "常に思考",
+      "tool_use": "ツール呼び出し",
+      "dynamically_loaded_tools": "必要に応じてツールを読み込む"
+    },
+    "capabilityHints": {
+      "always_thinking": "モデルの思考をオフにできない場合にチェック：このモデルを選ぶと思考が自動でオンになり、オフの選択肢は表示されません",
+      "dynamically_loaded_tools": "モデルがツールの説明を必要に応じて読み込み、リクエストを短くします。Kimi 自社のモデルのみ対応のため、他社モデルではチェックしないでください。KIMI_CODE_EXPERIMENTAL_TOOL_SELECT の有効化も必要です"
+    },
+    "error": {
+      "defaultModelInUse": "Kimi Code がこのプロバイダーのモデルを使用中です。先に Kimi Code の /model でほかのモデルに切り替えてください。",
+      "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"
     }
   }
 }

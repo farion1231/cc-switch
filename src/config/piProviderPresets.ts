@@ -449,7 +449,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     name: "DIT.ai",
     providerKey: "cc-switch-dit-ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     settingsConfig: {
       name: "DIT.ai",
       baseUrl: "https://api.dit.ai",
@@ -464,6 +464,46 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "dit",
     icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    providerKey: "cc-switch-buytoken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    settingsConfig: {
+      name: "BuyToken",
+      baseUrl: "https://api.buytoken.work",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    providerKey: "cc-switch-vapi",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    settingsConfig: {
+      name: "V-API",
+      baseUrl: "https://api.gpt.ge",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
   },
   {
     name: "TokenFactory",
@@ -505,36 +545,44 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "tokenfactory",
   },
+  // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+  // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+  // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+  // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+  // .../personal 是两套部署，勿合并。阵容与 claude/codex/opencode/openclaw/
+  // hermes 五 app 的 FluxA 预设同源：七款取 FluxA 产品页模型表（排除标
+  // Coming soon 的 deepseek-v4-pro-0813 / glm-5.3），kimi-k2.6 是定稿赞助
+  // 文案点名补的。deepseek-v4-flash-0731 无独立目录键，按 v4-flash 同款
+  // 能力取用、id 写真实 wire 名。思考档位（thinkingProfile）不填：国内版
+  // 有、国际 team 部署未实测，与 Codex 侧不声明 codexChatReasoning 同理
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    providerKey: "cc-switch-shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "FluxA Token Plan",
+    providerKey: "cc-switch-fluxa-token-plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
     settingsConfig: {
-      name: "Shengsuanyun",
-      baseUrl: "https://router.shengsuanyun.com/api",
-      api: "anthropic-messages",
+      name: "FluxA Token Plan",
+      baseUrl: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+      api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "anthropic/claude-opus-5",
+        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4-flash-0731",
+          name: "DeepSeek V4 Flash 0731",
         }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "anthropic/claude-sonnet-5",
-        }),
-        piModel("anthropic/claude-opus-5.5", {
-          id: "anthropic/claude-opus-5.5",
-        }),
-        piModel("anthropic/claude-fable-5.1", {
-          id: "anthropic/claude-fable-5.1",
-        }),
+        piModel("deepseek/deepseek-v4-flash", { id: "deepseek-v4-flash" }),
+        piModel("deepseek/deepseek-v3.2", { id: "deepseek-v3.2" }),
+        piModel("zai/glm-5.2", { id: "glm-5.2" }),
+        piModel("zai/glm-5.1", { id: "glm-5.1" }),
+        piModel("zai/glm-5", { id: "glm-5" }),
+        piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
       ],
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
   },
   {
     name: "AIGoCode",
@@ -633,44 +681,36 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     partnerPromotionKey: "subrouter",
     icon: "subrouter",
   },
-  // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
-  // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
-  // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
-  // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
-  // .../personal 是两套部署，勿合并。阵容与 claude/codex/opencode/openclaw/
-  // hermes 五 app 的 FluxA 预设同源：七款取 FluxA 产品页模型表（排除标
-  // Coming soon 的 deepseek-v4-pro-0813 / glm-5.3），kimi-k2.6 是定稿赞助
-  // 文案点名补的。deepseek-v4-flash-0731 无独立目录键，按 v4-flash 同款
-  // 能力取用、id 写真实 wire 名。思考档位（thinkingProfile）不填：国内版
-  // 有、国际 team 部署未实测，与 Codex 侧不声明 codexChatReasoning 同理
   {
-    name: "FluxA Token Plan",
-    providerKey: "cc-switch-fluxa-token-plan",
-    websiteUrl: "https://agentmarket.fluxapay.xyz/",
-    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    providerKey: "cc-switch-shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     settingsConfig: {
-      name: "FluxA Token Plan",
-      baseUrl: "https://api.baiduqianfan.ai/v2/tokenplan/team",
-      api: "openai-completions",
+      name: "Shengsuanyun",
+      baseUrl: "https://router.shengsuanyun.com/api",
+      api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-0731",
-          name: "DeepSeek V4 Flash 0731",
+        piModel("anthropic/claude-opus-5", {
+          id: "anthropic/claude-opus-5",
         }),
-        piModel("deepseek/deepseek-v4-flash", { id: "deepseek-v4-flash" }),
-        piModel("deepseek/deepseek-v3.2", { id: "deepseek-v3.2" }),
-        piModel("zai/glm-5.2", { id: "glm-5.2" }),
-        piModel("zai/glm-5.1", { id: "glm-5.1" }),
-        piModel("zai/glm-5", { id: "glm-5" }),
-        piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
+        piModel("anthropic/claude-sonnet-5", {
+          id: "anthropic/claude-sonnet-5",
+        }),
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5.5",
+        }),
+        piModel("anthropic/claude-fable-5.1", {
+          id: "anthropic/claude-fable-5.1",
+        }),
       ],
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "fluxa",
-    icon: "fluxa",
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
   },
   {
     name: "88API",

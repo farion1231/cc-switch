@@ -8,6 +8,7 @@ pub mod config;
 pub mod env_checker;
 pub mod env_manager;
 pub mod exchange_rates;
+pub mod kimi_oauth;
 pub mod mcp;
 pub mod model_fetch;
 pub mod model_pricing;
@@ -57,6 +58,7 @@ pub use usage_stats::{
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 
+pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 
 pub mod session_usage_agy;
