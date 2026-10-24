@@ -102,7 +102,6 @@ import { AgyAccountSelect } from "./AgyOAuthSection";
 import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
-import { OmpProviderForm } from "./OmpProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import type { AppMode } from "@/types/proxy";
@@ -331,11 +330,8 @@ export interface ProviderFormProps {
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
   if (props.appId === "mcode") return <McodeProviderForm {...props} />;
-  if (props.appId === "pi") {
+  if (props.appId === "pi" || props.appId === "omp") {
     return <PiProviderForm {...props} />;
-  }
-  if (props.appId === "omp") {
-    return <OmpProviderForm {...props} />;
   }
   if (props.appId === "claude-desktop") {
     return <ClaudeDesktopProviderForm {...props} />;

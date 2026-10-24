@@ -610,7 +610,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "Oh My Pi",
     category: "ai-provider",
     shape: "tile",
-    keywords: ["omp", "oh my pi", "omp", "pi"],
+    keywords: ["omp", "oh my pi", "oh-my-pi", "pi"],
     defaultColor: "#9b4dff",
   },
   ollama: {

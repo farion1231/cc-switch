@@ -543,7 +543,7 @@ context_window = 500000
     expect(reopenedButton).toBeDisabled();
   });
 
-  // Oh My Pi 的标识、模型与 YAML 都在表单里，必填项对话框看不见：按钮必须等表单报告就绪。
+  // Oh My Pi 用 Pi 的表单：标识与模型都在表单里，必填项对话框看不见，按钮必须等表单报告就绪。
   it("Oh My Pi 添加表单报告未就绪时禁用添加按钮", async () => {
     mockFormReady = false;
     render(

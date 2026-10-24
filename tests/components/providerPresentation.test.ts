@@ -755,7 +755,7 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [relay],
       isInConfig: () => false,
-      nativeStateUnavailable: true,
+      piStateUnavailable: true,
       actions: additiveActions(),
     });
 
@@ -774,7 +774,7 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [relay],
       isInConfig: () => false,
-      nativeStateUnavailable: true,
+      piStateUnavailable: true,
       actions: additiveActions(),
     });
 

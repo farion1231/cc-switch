@@ -240,8 +240,6 @@ export interface ProviderMeta {
   githubAccountId?: string;
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
-  // Oh My Pi：编辑器“其他字段（YAML，原样保留）”的原文（含注释），写 models.yml 时原样保留
-  ompPassthroughYaml?: string;
 }
 
 // Stack 模式下 Claude Code 供应商发布的一个模型
@@ -826,14 +824,6 @@ export interface UniversalProviderApps {
   codex: boolean;
   gemini: boolean;
 }
-
-/**
- * 统一供应商能投影到的应用（镜像后端 `sync_universal_to_apps`）。
- * 其余应用（含累加模式应用）没有投影路径，不应在预设选择器里展示统一供应商。
- */
-export const UNIVERSAL_PROVIDER_APPS: ReadonlyArray<
-  keyof UniversalProviderApps
-> = ["claude", "codex", "gemini"];
 
 // Claude 模型配置
 export interface ClaudeModelConfig {

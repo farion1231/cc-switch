@@ -1,5 +1,6 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
+import type { PiFamilyAppId } from "@/lib/api/pi";
 import type { VisibleApps } from "@/types";
 import {
   ClaudeIcon,
@@ -127,6 +128,13 @@ export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
 }
 
+/** Oh My Pi 是 Pi 的分支：供应商表单、启用状态和用量脚本命令与 Pi 共用。 */
+export const PI_FAMILY_APP_IDS: PiFamilyAppId[] = ["pi", "omp"];
+
+export function isPiFamilyApp(appId: string): appId is PiFamilyAppId {
+  return (PI_FAMILY_APP_IDS as string[]).includes(appId);
+}
+
 /**
  * 切换只替换关键字段的应用：供应商编辑器显示「切到这个供应商之后配置文件的样子」，由后端
  * `ProviderService::editor_view` 投影。
@@ -141,19 +149,6 @@ export const EDITOR_VIEW_APP_IDS: AppId[] = [
 export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
-
-/**
- * 表单会通过 `onSubmitReadyChange` 报告「现在能不能提交」的应用。
- *
- * 这些表单的必填项不在对话框能看见的字段里（Pi 的激活模型、Oh My Pi 的标识与
- * YAML），所以「保存」按钮必须先等表单说可以。不在此表里的应用保持按钮可用，
- * 由表单自己在提交时报错。
- *
- */
-export const SUBMIT_READY_APPS: Readonly<Partial<Record<AppId, true>>> = {
-  pi: true,
-  omp: true,
-};
 
 /** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
 export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;

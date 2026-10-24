@@ -93,10 +93,7 @@ const IMPORT_SOURCE_FILES: Record<
   omp: { file: "~/.omp/agent/mcp.json" },
 };
 
-/**
- * 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写。
- * Oh My Pi 走 `sync_and_commit`（`mcp/omp.rs`），与 MiniMax Code / Pi 同一份契约。
- */
+/** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
 const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "kimi",
@@ -340,7 +337,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       const entries = rowFailsFor(app);
       let ok = true;
       if (WRITE_THEN_SAVE_APPS.has(app) && entries.length > 0) {
-        // 写失败时开关没入库：按每行想要的值再写一次
+        // MiniMax Code / Pi 写失败时开关没入库：按每行想要的值再写一次
         for (const [key, failure] of entries) {
           const id = key.split("\u0000")[0];
           const { failed } = await writeMany([{ id, app }], failure.desired);

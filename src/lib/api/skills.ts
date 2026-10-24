@@ -31,7 +31,7 @@ export interface SkillApps {
   mcode?: boolean;
   kimi?: boolean;
   agy?: boolean;
-  omp: boolean;
+  omp?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

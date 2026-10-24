@@ -10,7 +10,6 @@ import {
   type PresetStepState,
 } from "@/components/providers/forms/presetStep";
 import type { Provider, CustomEndpoint, UniversalProvider } from "@/types";
-import { UNIVERSAL_PROVIDER_APPS } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi, universalProvidersApi } from "@/lib/api";
 import type {
@@ -19,7 +18,7 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { SUBMIT_READY_APPS, usesEditorView } from "@/config/appConfig";
+import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -65,9 +64,16 @@ export function AddProviderDialog({
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
   // OpenCode and OpenClaw don't support universal providers
-  const showUniversalTab = (
-    UNIVERSAL_PROVIDER_APPS as ReadonlyArray<AppId>
-  ).includes(appId);
+  const showUniversalTab =
+    appId !== "opencode" &&
+    appId !== "openclaw" &&
+    appId !== "hermes" &&
+    appId !== "pi" &&
+    appId !== "omp" &&
+    appId !== "mcode" &&
+    appId !== "kimi" &&
+    appId !== "grokbuild" &&
+    appId !== "claude-desktop";
   // 两步：先选预设，再填写（每次打开都从第 1 步开始）
   const [step, setStep] = useState<"pick" | "form">("pick");
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
@@ -178,12 +184,12 @@ export function AddProviderDialog({
   currentFormReadyToken.current = formReadyToken;
   const [formReadyState, setFormReadyState] = useState({
     token: formReadyToken,
-    ready: !SUBMIT_READY_APPS[appId],
+    ready: !isPiFamilyApp(appId),
   });
   const isFormReady =
     formReadyState.token === formReadyToken
       ? formReadyState.ready
-      : !SUBMIT_READY_APPS[appId];
+      : !isPiFamilyApp(appId);
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
       if (currentFormReadyToken.current === formReadyToken) {
@@ -555,7 +561,7 @@ export function AddProviderDialog({
       contentClassName={
         step === "pick"
           ? "flex h-full flex-col space-y-0 p-0"
-          : appId === "pi" || appId === "omp"
+          : isPiFamilyApp(appId)
             ? "pb-0 pt-4"
             : "pt-4"
       }

@@ -6,7 +6,6 @@ import { providersApi, settingsApi } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import {
   invalidatePiDirectoryCaches,
-  invalidateOmpDirectoryCaches,
   useSettingsQuery,
   useSaveSettingsMutation,
 } from "@/lib/query";
@@ -498,7 +497,7 @@ export function useSettings(): UseSettingsResult {
           await invalidatePiDirectoryCaches(queryClient);
         }
         if (ompDirChanged) {
-          await invalidateOmpDirectoryCaches(queryClient);
+          await invalidatePiDirectoryCaches(queryClient, "omp");
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);

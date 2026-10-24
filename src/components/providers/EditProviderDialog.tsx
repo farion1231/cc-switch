@@ -26,7 +26,7 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { SUBMIT_READY_APPS, usesEditorView } from "@/config/appConfig";
+import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -93,12 +93,12 @@ export function EditProviderDialog({
   currentFormReadyToken.current = formReadyToken;
   const [formReadyState, setFormReadyState] = useState({
     token: formReadyToken,
-    ready: !SUBMIT_READY_APPS[appId],
+    ready: !isPiFamilyApp(appId),
   });
   const isFormReady =
     formReadyState.token === formReadyToken
       ? formReadyState.ready
-      : !SUBMIT_READY_APPS[appId];
+      : !isPiFamilyApp(appId);
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
       if (currentFormReadyToken.current === formReadyToken) {
@@ -189,9 +189,9 @@ export function EditProviderDialog({
         return;
       }
 
-      // Additive mode apps (OpenCode, Oh My Pi) and Pi's shared models.json
-      // (owned by the catalog coordinator) have no per-provider generic live
-      // snapshot that may replace the DB aggregate in this form.
+      // OpenCode uses additive mode, while Pi's (and Oh My Pi's) native models
+      // file is owned by its provider service. Neither has a per-provider generic
+      // live snapshot that may replace the DB aggregate in this form.
       if (
         appId === "opencode" ||
         appId === "pi" ||

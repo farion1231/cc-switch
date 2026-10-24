@@ -2,6 +2,7 @@ import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
+import { isPiFamilyApp } from "@/config/appConfig";
 import {
   isOfficialAccount,
   providerNeedsRouting,
@@ -696,7 +697,7 @@ export interface AdditiveInput {
   hermesCurrentId?: string | null;
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
-  nativeStateUnavailable?: boolean;
+  piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
   actions: {
@@ -711,8 +712,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
-  const stateBlocked =
-    (app === "pi" || app === "omp") && input.nativeStateUnavailable
+  const piBlocked =
+    isPiFamilyApp(app) && input.piStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
@@ -841,16 +842,15 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           chips,
           dim: managed,
           editDisabledReason: readOnlyReason,
-          deleteDisabledReason: readOnlyReason ?? stateBlocked,
+          deleteDisabledReason: readOnlyReason ?? piBlocked,
           buttons: [
             {
               key: "add",
-              label:
-                app === "pi" || app === "omp"
-                  ? t("providerCard.action.enable")
-                  : t("providerCard.action.add"),
+              label: isPiFamilyApp(app)
+                ? t("providerCard.action.enable")
+                : t("providerCard.action.add"),
               onClick: () => actions.add(p),
-              disabledReason: stateBlocked,
+              disabledReason: piBlocked,
             },
           ],
         },
@@ -863,7 +863,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     const menuItems: CardMenuItem[] = [];
     let status: CardPresentation["status"];
     let isDefault = false;
-    let removeReason: string | undefined = stateBlocked;
+    let removeReason: string | undefined = piBlocked;
 
     // OpenCode 的顶层 model 一直允许移走所指的那家，这里不改；OpenClaw 不能
     if (app === "openclaw" || app === "opencode") {
@@ -939,7 +939,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         chips,
         dim: managed,
         editDisabledReason: readOnlyReason,
-        deleteDisabledReason: readOnlyReason ?? stateBlocked,
+        deleteDisabledReason: readOnlyReason ?? piBlocked,
         buttons,
         menuItems: menuItems.length ? menuItems : undefined,
       },
