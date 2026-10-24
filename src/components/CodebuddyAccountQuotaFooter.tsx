@@ -39,10 +39,12 @@ const CodebuddyAccountQuotaFooter: React.FC<
   const lines =
     state.kind === "failed"
       ? failedLines(t, state.reason)
-      : state.rows.map(({ label, line }) => ({
-          ...line,
-          text: `${label} ${line.text}`,
-        }));
+      : state.kind === "note"
+        ? [{ key: "note", left: -2, tone: "muted" as const, text: state.text }]
+        : state.rows.map(({ label, line }) => ({
+            ...line,
+            text: `${label} ${line.text}`,
+          }));
   return (
     <QuotaLines
       lines={lines}
