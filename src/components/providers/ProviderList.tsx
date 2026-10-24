@@ -156,7 +156,7 @@ export function ProviderList({
     error: piCurrentStateError,
   } = usePiCurrentState(appId === "pi");
   const isPiStateReady = appId !== "pi" || isPiCurrentStateSuccess;
-  // CodeBuddy 官方登录卡：绑定的账号是不是 CodeBuddy 现在登着的号、卡片上的「切换」
+  // CodeBuddy 官方登录卡：绑定的账号是不是 CodeBuddy 现在登着的号（决定「已添加 / 可添加」）、卡片上的「添加」
   const hasCodebuddyOfficial =
     appId === "codebuddy" &&
     Object.values(providers).some(

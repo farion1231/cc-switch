@@ -7879,8 +7879,8 @@ impl ProviderService {
     fn codebuddy_official_not_a_model() -> AppError {
         AppError::localized(
             "codebuddy.official.not_a_model",
-            "CodeBuddy 官方登录卡不会写进 models.json，请用卡片上的「切换」切换账号",
-            "CodeBuddy official sign-in cards are not written to models.json; use Switch on the card to change accounts",
+            "CodeBuddy 官方登录卡不会写进 models.json，请在供应商列表里点这张卡的「添加」切换到它的账号",
+            "CodeBuddy official sign-in cards are not written to models.json; click Add on the card in the provider list to sign in with its account",
         )
     }
 
