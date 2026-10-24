@@ -22,9 +22,9 @@ Kimi Code 是独立应用，应用 ID 为 `kimi`。接入面向当前的 [Moonsh
 | MCP | `~/.kimi-code/mcp.json`，支持 stdio、HTTP、SSE；SSE 使用原生的 `transport = "sse"` 字段 |
 | Skills | `~/.kimi-code/skills/`，通过统一 Skills 页面管理 |
 | 全局提示词 | `~/.kimi-code/AGENTS.md`，通过统一提示词页面管理 |
-| 会话 | `~/.kimi-code/sessions/<workDirKey>/<sessionId>/state.json` 和 `agents/main/wire.jsonl` |
+| 会话 | `~/.kimi-code/sessions/<workDirKey>/<sessionId>/state.json` 和 `agents/<agent>/wire.jsonl`（主代理为 `agents/main`，每个子代理各一个 `agents/agent-N`） |
 | 恢复会话 | `kimi --session <id>`，保留原工作目录和数据目录 |
-| 用量 | 从已提交的 assistant 消息导入输入／输出和缓存 token，按 `step.end.messageId` 关联 `llm.request` 中的实际模型；使用项目价格表估算费用 |
+| 用量 | 从已提交的 assistant 消息导入输入／输出和缓存 token，按 `step.end.messageId` 关联 `llm.request` 中的实际模型；使用项目价格表估算费用。含子代理：每个 `agents/<agent>/wire.jsonl` 按各自 agent 的日志导入并归入同一会话，父代理日志里的 `subagent.completed` 汇总不重复计入 |
 
 设置环境变量 `KIMI_CODE_HOME` 后，上述位置全部跟随该目录。CC Switch 进程需要继承这个环境变量。
 
@@ -65,6 +65,7 @@ Ollama、LM Studio 和 vLLM 预设使用各自的本地 OpenAI 兼容地址，�
 - 无法解析的 TOML／MCP JSON 会报错并保留原文件。供应商和 MCP 的原生写入与数据库保存之间发生失败时，恢复写入前的文件。
 - 会话阅读优先使用原生日志中的已提交消息，避免与执行过程记录重复；分支切换后仅展示活动分支。会话删除在 Kimi Code 中完成，以保持会话索引、锁和历史记录一致。
 - 用量使用日志中当时的模型，不从当前供应商推断历史归属。缺少模型时记为 `unknown`；缺少价格时费用为 `0`，并不表示免费。持久去重记录防止重复导入已汇总清理的请求或复制到分支中的历史请求。
+- 子代理用量按各自的 `agents/agent-N/wire.jsonl` 逐请求导入，与父代理记在 `subagent.completed` 里的汇总互斥，只取前者；记录里标了其他代理（`agentId`，或提交消息元数据中的同名字段）的属于镜像记录，不重复导入。主代理的请求 ID 保持 `kimi:<provider>:<id>`，子代理为 `kimi:<agent>:<provider>:<id>`，其中 `<id>` 是消息的 `messageId`，缺失时退化为记录内容的哈希；因此升级不会重导主代理历史，重复同步也不会放大统计。首次升级后的第一轮同步会解析全部历史子代理日志，可能比平时慢，属一次性的历史回填。独立记录的子代理会话目录（`state.json` 里 `custom.session_kind` 为 `child`）不计入，避免与父会话里的同一批请求重复。
 - 首字读取 `step.end` 的原生计时，耗时优先使用首字等待与流式输出时长之和，排除后续工具执行；旧日志缺少原生计时时仅在起止时间可靠时估算耗时，已完成的内容块不能用于推断首字。速度沿用会话日志口径：输出 token ÷ 总耗时（含首字等待），输出至少 200 token、耗时至少 1 秒才显示，并带估算标记。
 - 用量按日志变化进行增量同步；同一次请求稍后补齐的模型和计时会更新到仍保留的明细中。请求 ID 和持久去重记录保持稳定，已汇总清理的历史不会重复导入。
 
