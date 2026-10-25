@@ -2236,6 +2236,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
+      "workbuddy": "WorkBuddy",
       "label": "按应用筛选"
     },
     "rawInputLabel": "原始",

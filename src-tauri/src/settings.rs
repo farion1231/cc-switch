@@ -59,6 +59,9 @@ pub struct VisibleApps {
     pub kimi: bool,
     #[serde(default = "default_true")]
     pub agy: bool,
+    /// WorkBuddy 只参与用量统计（不是 AppType），可见性由前端默认值兜底，这里仅为往返保真
+    #[serde(default = "default_true")]
+    pub workbuddy: bool,
 }
 
 impl Default for VisibleApps {
@@ -77,6 +80,7 @@ impl Default for VisibleApps {
             kimi: true,
             agy: true,
             omp: true,
+            workbuddy: true,
         }
     }
 }
@@ -1670,6 +1674,16 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn visible_apps_roundtrips_workbuddy() {
+        let visible: VisibleApps =
+            serde_json::from_value(serde_json::json!({ "workbuddy": false }))
+                .expect("visible apps");
+        assert!(!visible.workbuddy);
+        let serialized = serde_json::to_value(&visible).expect("serialize");
+        assert_eq!(serialized["workbuddy"], serde_json::json!(false));
     }
 
     #[test]

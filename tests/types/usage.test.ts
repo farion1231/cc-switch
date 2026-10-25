@@ -9,4 +9,9 @@ describe("getCacheWriteAvailability", () => {
     expect(getCacheWriteAvailability(["claude", "codex"])).toBe("partial");
     expect(getCacheWriteAvailability([])).toBe("ok");
   });
+
+  it("treats workbuddy like other cache-inclusive app types", () => {
+    expect(getCacheWriteAvailability(["workbuddy"])).toBe("na");
+    expect(getCacheWriteAvailability(["claude", "workbuddy"])).toBe("partial");
+  });
 });

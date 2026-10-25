@@ -318,6 +318,8 @@ export interface VisibleApps {
   kimi: boolean;
   agy: boolean;
   omp: boolean;
+  // WorkBuddy 仅参与用量统计（无配置切换能力），不出现在应用页/侧栏
+  workbuddy: boolean;
 }
 
 // WebDAV 同步状态

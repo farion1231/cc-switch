@@ -2229,6 +2229,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
+      "workbuddy": "WorkBuddy",
       "label": "Uygulamaya göre filtrele"
     },
     "rawInputLabel": "Ham",

@@ -17,6 +17,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Kimi Code (Session)": "kimi",
   "Pi (Session)": "pi",
   "Antigravity (Session)": "agy",
+  "WorkBuddy (Session)": "workbuddy",
 };
 
 export interface UsageProviderLabel {

@@ -2236,6 +2236,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
+      "workbuddy": "WorkBuddy",
       "label": "アプリで絞り込み"
     },
     "rawInputLabel": "原始",
