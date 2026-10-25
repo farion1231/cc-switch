@@ -102,7 +102,7 @@ export function detectCodingPlanProvider(
 /**
  * 认出套餐地址后，额度查询是否默认启用。火山查额度要账号级 AccessKey ID +
  * Secret（不是推理 Key），新建或导入时还没有这两项，启用了只会在卡片上显示
- * 「额度没查到」，被误读成供应商没生效（#8494）。所以火山只预选套餐、不启用，
+ * 「额度查询失败」，被误读成供应商没生效（#8494）。所以火山只预选套餐、不启用，
  * 等用户在额度设置里填好凭据再打开。与后端深链接导入的默认值一致。
  */
 export function codingPlanEnabledByDefault(
@@ -148,8 +148,12 @@ export function extractBaseUrlForUsageDetection(
       raw = settingsConfig.options?.baseURL;
       break;
     case "pi":
+    case "omp":
     case "openclaw":
       raw = settingsConfig.baseUrl;
+      break;
+    case "kimi":
+      raw = settingsConfig.provider?.base_url;
       break;
     case "hermes":
       raw = settingsConfig.base_url;

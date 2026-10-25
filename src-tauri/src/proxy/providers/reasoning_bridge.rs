@@ -81,13 +81,11 @@ pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option
         .is_some_and(|value| !value.is_empty());
 
     if has_encrypted_content {
+        // An encrypted-only item (no public summary) is carried as an empty
+        // thinking block, the same shape Anthropic returns for omitted
+        // thinking. Claude Code's VS Code extension cannot render
+        // `redacted_thinking`, and replay decodes both carriers identically.
         let envelope = encode_openai_reasoning_item(item)?;
-        if text.is_empty() {
-            return Some(json!({
-                "type": "redacted_thinking",
-                "data": envelope
-            }));
-        }
         return Some(json!({
             "type": "thinking",
             "thinking": text,
@@ -138,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn encrypted_item_without_summary_uses_redacted_thinking() {
+    fn encrypted_item_without_summary_uses_empty_thinking() {
         let item = json!({
             "id": "rs_2",
             "type": "reasoning",
@@ -146,9 +144,18 @@ mod tests {
             "encrypted_content": "opaque"
         });
         let block = anthropic_block_from_openai_reasoning_item(&item).unwrap();
-        assert_eq!(block["type"], "redacted_thinking");
+        assert_eq!(block["type"], "thinking");
+        assert_eq!(block["thinking"], "");
         assert_eq!(
             openai_reasoning_item_from_anthropic_block(&block),
+            Some(item.clone())
+        );
+        // Histories written by older versions still carry redacted_thinking.
+        assert_eq!(
+            openai_reasoning_item_from_anthropic_block(&json!({
+                "type": "redacted_thinking",
+                "data": block["signature"]
+            })),
             Some(item)
         );
     }
