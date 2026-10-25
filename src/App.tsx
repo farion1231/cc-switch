@@ -79,6 +79,7 @@ import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
+import { BulkProviderImportDialog } from "@/components/providers/BulkProviderImportDialog";
 import {
   hasOpencodeDefinition,
   isNativeOpencodeConfig,
@@ -177,6 +178,8 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [bulkImportApp, setBulkImportApp] = useState<AppId | null>(null);
+  const [bulkImportBusy, setBulkImportBusy] = useState(false);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
   const [connectionStatusSlot, setConnectionStatusSlot] =
@@ -799,7 +802,10 @@ function App() {
 
   const currentViewRef = useRef(currentView);
   const managementBusy =
-    mcpManagementBusy || skillsNavigationBusy || promptNavigationBusy;
+    mcpManagementBusy ||
+    skillsNavigationBusy ||
+    promptNavigationBusy ||
+    bulkImportBusy;
   const managementBusyRef = useRef(false);
   managementBusyRef.current = managementBusy;
 
@@ -814,6 +820,7 @@ function App() {
   // 面板的 appId 跟着 activeApp 走，开着切应用会把 A 应用的供应商保存进 B 应用
   const closeProviderPanels = () => {
     setIsAddOpen(false);
+    setBulkImportApp(null);
     setEditingProvider(null);
     setUsageProvider(null);
   };
@@ -875,6 +882,7 @@ function App() {
   useTrayAppPageSeen(currentView === "providers" ? activeApp : null);
 
   useTrayNavigation((navigation) => {
+    if (managementBusyRef.current) return;
     const navigate = () => {
       if (navigation.section) {
         openSettings(navigation.section);
@@ -892,7 +900,7 @@ function App() {
         });
       }
     };
-    if (managementBusyRef.current || !confirmLeave(navigate)) navigate();
+    if (!confirmLeave(navigate)) navigate();
   });
 
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
@@ -1411,6 +1419,15 @@ function App() {
               {t("provider.addProvider")}
             </Button>
           )}
+          {currentView === "providers" && (
+            <Button
+              variant="quiet"
+              size="regular"
+              onClick={() => setBulkImportApp(activeApp)}
+            >
+              {t("provider.bulkImport.title")}
+            </Button>
+          )}
           {currentView === "hermesMemory" && <HermesMemorySaveButton />}
           {appMenu}
         </>
@@ -1801,6 +1818,15 @@ function App() {
         onSubmit={addProvider}
         modeView={formModeView}
       />
+
+      {bulkImportApp && (
+        <BulkProviderImportDialog
+          key={bulkImportApp}
+          appId={bulkImportApp}
+          onClose={() => setBulkImportApp(null)}
+          onNavigationBlockedChange={setBulkImportBusy}
+        />
+      )}
 
       <EditProviderDialog
         open={Boolean(editingProvider)}

@@ -14,6 +14,38 @@ export interface ProviderSortUpdate {
   sortIndex: number;
 }
 
+export type BulkImportApp = AppId;
+export interface BulkProviderPreview {
+  app: BulkImportApp;
+  rows: Array<{
+    row: number;
+    name: string;
+    baseUrl: string;
+    model: string | null;
+    contextWindow?: number | null;
+    apiFormat: string;
+    keyHint: string;
+    keyMayResolveFromEnvironment?: boolean;
+    requiresRouting: boolean;
+    duplicate: boolean;
+    sameName: boolean;
+  }>;
+  errors: Array<{
+    row: number | null;
+    field: string | null;
+    code: string;
+    limit: number | null;
+  }>;
+  token: string | null;
+  newCount: number;
+  duplicateCount: number;
+}
+
+export interface BulkProviderImportResult {
+  addedIds: string[];
+  skipped: number;
+}
+
 export interface ProviderSwitchEvent {
   appType: AppId;
   providerId: string;
@@ -75,6 +107,20 @@ export interface ClaudeDesktopDefaultRoute {
 }
 
 export const providersApi = {
+  async previewBulkImport(
+    app: BulkImportApp,
+    source: string,
+  ): Promise<BulkProviderPreview> {
+    return invoke("preview_provider_bulk_import", { app, source });
+  },
+
+  async importBulk(
+    app: BulkImportApp,
+    source: string,
+    previewToken: string,
+  ): Promise<BulkProviderImportResult> {
+    return invoke("import_provider_bulk", { app, source, previewToken });
+  },
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
   },
