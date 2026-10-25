@@ -639,6 +639,12 @@ pub fn parse_antigravity_args(raw: &Value) -> Value {
         Value::Object(map) => {
             let mut cleaned = serde_json::Map::new();
             for (k, v) in map {
+                // Search quotes can be literal query syntax. Native and exported
+                // samples agree on these strings; do not guess an extra encoding layer.
+                if matches!(k.as_str(), "query" | "Query") {
+                    cleaned.insert(k.clone(), v.clone());
+                    continue;
+                }
                 if let Value::String(s) = v {
                     if let Ok(parsed) = serde_json::from_str::<Value>(s) {
                         // Commands, paths and file text can themselves be valid JSON

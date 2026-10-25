@@ -1398,6 +1398,17 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_reader_preserves_literal_search_quotes() {
+        for key in ["query", "Query"] {
+            for text in ["\"exact phrase\"", "123", "true", "null", "{\"key\":1}"] {
+                let mut args = serde_json::json!({});
+                args[key] = serde_json::json!(text);
+                assert_eq!(antigravity_reader_args(&args)[key], text);
+            }
+        }
+    }
+
+    #[test]
     fn antigravity_reader_refs_serve_normalized_inputs_and_complete_diffs() {
         use crate::session_manager::content::{
             resolve_content_ref, SourceLocation, ValidatedSource,
