@@ -614,4 +614,66 @@ describe("UnifiedMcpPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "mcpPage.add" }));
     expect(onBlocked).toHaveBeenLastCalledWith(false);
   });
+
+  it("prefers description over launch command in subtitle and falls back to summary", () => {
+    mocks.serversMap = {
+      withDesc: makeServer("withDesc", {
+        description: "Postgres database querying tool",
+        server: { command: "npx", args: ["-y", "pg-mcp"] },
+      }),
+      withoutDesc: makeServer("withoutDesc", {
+        server: { command: "uvx", args: ["mcp-server-git"] },
+      }),
+    };
+    renderPanel();
+
+    expect(
+      screen.getByText("Postgres database querying tool"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("uvx mcp-server-git")).toBeInTheDocument();
+  });
+
+  it("renders tag pills with up to 2 badges and +N overflow pill", () => {
+    mocks.serversMap = {
+      tagged: makeServer("tagged", {
+        tags: ["database", "sql", "utility"],
+      }),
+    };
+    renderPanel();
+
+    expect(screen.getByText("#database")).toBeInTheDocument();
+    expect(screen.getByText("#sql")).toBeInTheDocument();
+    expect(screen.getByText("+1")).toBeInTheDocument();
+  });
+
+  it("renders direct homepage and docs link buttons without opening edit drawer", async () => {
+    const openExternal = vi
+      .spyOn(settingsApi, "openExternal")
+      .mockResolvedValue(undefined);
+
+    mocks.serversMap = {
+      linked: makeServer("linked", {
+        homepage: "https://example.com/mcp-home",
+        docs: "https://example.com/mcp-docs",
+      }),
+    };
+    renderPanel();
+
+    const homeBtn = screen.getByRole("button", {
+      name: "mcpPage.openHomepage",
+    });
+    const docsBtn = screen.getByRole("button", { name: "mcpPage.openDocs" });
+    expect(homeBtn).toBeInTheDocument();
+    expect(docsBtn).toBeInTheDocument();
+
+    await userEvent.click(homeBtn);
+    expect(openExternal).toHaveBeenCalledWith("https://example.com/mcp-home");
+    expect(screen.queryByTestId("mcp-drawer")).not.toBeInTheDocument();
+
+    await userEvent.click(docsBtn);
+    expect(openExternal).toHaveBeenCalledWith("https://example.com/mcp-docs");
+    expect(screen.queryByTestId("mcp-drawer")).not.toBeInTheDocument();
+
+    openExternal.mockRestore();
+  });
 });
