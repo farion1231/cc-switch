@@ -528,12 +528,19 @@ impl AgentEnvironment {
             ".kimi-code",
             ".minimax",
             ".hermes",
+            "custom-hermes-home",
             "Library",
         ] {
             let path = ensure_test_home().join(directory);
             if path.exists() {
                 std::fs::remove_dir_all(path).unwrap();
             }
+        }
+        // Hermes uses LOCALAPPDATA on Windows; keep its native directory isolated too.
+        let hermes_home = cc_switch_lib::hermes_config::get_hermes_dir();
+        assert!(hermes_home.starts_with(ensure_test_home()) && hermes_home != ensure_test_home());
+        if hermes_home.exists() {
+            std::fs::remove_dir_all(hermes_home).unwrap();
         }
         Self(originals)
     }
@@ -610,10 +617,6 @@ fn all_agents_append_atomically_without_activation_and_roundtrip_sql_backups() {
             ".openclaw/openclaw.json",
             "{\"models\":{\"providers\":{}}}\n",
         ),
-        (
-            ".hermes/config.yaml",
-            "# keep Hermes settings\ncustom_providers: []\n",
-        ),
         (".pi/agent/models.json", "{\"providers\":{}}\n"),
         (
             ".omp/agent/models.yml",
@@ -632,6 +635,13 @@ fn all_agents_append_atomically_without_activation_and_roundtrip_sql_backups() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, contents).unwrap();
     }
+    let hermes_path = cc_switch_lib::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(hermes_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        hermes_path,
+        "# keep Hermes settings\ncustom_providers: []\n",
+    )
+    .unwrap();
     #[cfg(target_os = "macos")]
     for directory in ["Claude", "Claude-3p"] {
         let dir = ensure_test_home()
@@ -734,10 +744,26 @@ fn coexist_agents_enable_distinct_keys_then_reimport_without_duplicates() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     let _env = AgentEnvironment::isolated();
     let state = create_test_state().unwrap();
-    for app in AppType::all().filter(AppType::is_additive_mode) {
+    let scenarios = AppType::all()
+        .filter(AppType::is_additive_mode)
+        .map(|app| (app, false))
+        .chain(std::iter::once((AppType::Hermes, true)));
+    for (app, custom_hermes_home) in scenarios {
+        let name = if custom_hermes_home {
+            // Exercise a non-default directory on every host, including macOS/Linux.
+            let directory = ensure_test_home().join("custom-hermes-home");
+            cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+                hermes_config_dir: Some(directory.to_string_lossy().into_owned()),
+                ..Default::default()
+            })
+            .unwrap();
+            "Custom home"
+        } else {
+            "Same name"
+        };
         let data = json!([
-            agent_row(&app, "Same name", "synthetic-key-one"),
-            agent_row(&app, "Same name", "synthetic-key-two")
+            agent_row(&app, name, "synthetic-key-one"),
+            agent_row(&app, name, "synthetic-key-two")
         ]);
         let ids = import(&state, app.clone(), data.clone());
         for id in &ids {
@@ -766,23 +792,23 @@ fn coexist_agents_enable_distinct_keys_then_reimport_without_duplicates() {
             app.as_str()
         );
         let path = match app {
-            AppType::OpenCode => ".config/opencode/opencode.json",
-            AppType::OpenClaw => ".openclaw/openclaw.json",
-            AppType::Hermes => ".hermes/config.yaml",
-            AppType::Pi => ".pi/agent/models.json",
-            AppType::Omp => ".omp/agent/models.yml",
-            AppType::Mcode => ".minimax/config.yaml",
-            AppType::Kimi => ".kimi-code/config.toml",
+            AppType::OpenCode => ensure_test_home().join(".config/opencode/opencode.json"),
+            AppType::OpenClaw => ensure_test_home().join(".openclaw/openclaw.json"),
+            AppType::Hermes => cc_switch_lib::hermes_config::get_hermes_config_path(),
+            AppType::Pi => ensure_test_home().join(".pi/agent/models.json"),
+            AppType::Omp => ensure_test_home().join(".omp/agent/models.yml"),
+            AppType::Mcode => ensure_test_home().join(".minimax/config.yaml"),
+            AppType::Kimi => ensure_test_home().join(".kimi-code/config.toml"),
             _ => unreachable!(),
         };
-        let contents =
-            std::fs::read_to_string(ensure_test_home().join(path)).unwrap_or_else(|error| {
-                panic!(
-                    "{} {path}: {error}; native paths: {:?}",
-                    app.as_str(),
-                    native_files().keys().collect::<Vec<_>>()
-                )
-            });
+        let contents = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "{} {}: {error}; native paths: {:?}",
+                app.as_str(),
+                path.display(),
+                native_files().keys().collect::<Vec<_>>()
+            )
+        });
         for id in &ids {
             assert!(
                 contents.contains(id),
