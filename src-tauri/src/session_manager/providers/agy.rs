@@ -174,7 +174,7 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
             let mut meta = if let Some(meta) = summaries.remove(id) {
                 meta
             } else {
-                let Some((text, created_at)) = native::preview(&path) else {
+                let Some((text, created_at, last_active_at)) = native::preview(&path) else {
                     continue;
                 };
                 SessionMeta {
@@ -184,7 +184,7 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
                     summary: (!text.is_empty()).then(|| truncate_summary(&text, 160)),
                     project_dir: None,
                     created_at,
-                    last_active_at: created_at,
+                    last_active_at,
                     source_path: None,
                     resume_command: Some(crate::agy_config::resume_command(gemini_dir, id)),
                 }
@@ -1496,6 +1496,17 @@ mod tests {
             antigravity_reader_args(&serde_json::json!({"command":"pwd", "CommandLine":"\"ls\""}));
         assert_eq!(conflict["command"], "pwd");
         assert_eq!(conflict["CommandLine"], "ls");
+    }
+
+    #[test]
+    fn antigravity_reader_preserves_literal_search_quotes() {
+        for key in ["query", "Query"] {
+            for text in ["\"exact phrase\"", "123", "true", "null", "{\"key\":1}"] {
+                let mut args = serde_json::json!({});
+                args[key] = serde_json::json!(text);
+                assert_eq!(antigravity_reader_args(&args)[key], text);
+            }
+        }
     }
 
     #[test]
