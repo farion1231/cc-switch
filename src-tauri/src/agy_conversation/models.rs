@@ -107,8 +107,13 @@ fn timing_of(bytes: &[u8]) -> Option<Timing> {
     })
 }
 
-pub(crate) fn generations_for_transcript(transcript: &Path, steps: &[u64]) -> Result<HashMap<u64, Generation>, String> {
-    let Some(path) = crate::agy_conversation::for_transcript(transcript)? else { return Ok(HashMap::new()); };
+pub(crate) fn generations_for_transcript(
+    transcript: &Path,
+    steps: &[u64],
+) -> Result<HashMap<u64, Generation>, String> {
+    let Some(path) = crate::agy_conversation::for_transcript(transcript)? else {
+        return Ok(HashMap::new());
+    };
     read_generations(&path, steps).map_err(|error| error.to_string())
 }
 
@@ -118,11 +123,20 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
     generations_in(&tx, steps)
 }
 
-pub(crate) fn models_in(tx: &rusqlite::Transaction<'_>, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
-    Ok(generations_in(tx, steps)?.into_iter().filter_map(|(step, generation)| Some((step, generation.model?))).collect())
+pub(crate) fn models_in(
+    tx: &rusqlite::Transaction<'_>,
+    steps: &[u64],
+) -> rusqlite::Result<HashMap<u64, String>> {
+    Ok(generations_in(tx, steps)?
+        .into_iter()
+        .filter_map(|(step, generation)| Some((step, generation.model?)))
+        .collect())
 }
 
-fn generations_in(tx: &rusqlite::Transaction<'_>, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Generation>> {
+fn generations_in(
+    tx: &rusqlite::Transaction<'_>,
+    steps: &[u64],
+) -> rusqlite::Result<HashMap<u64, Generation>> {
     let mut step_query = tx.prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")?;
     let mut generation_query = tx.prepare("SELECT data FROM gen_metadata WHERE idx=?1")?;
     let mut generations = HashMap::new();
@@ -233,7 +247,7 @@ pub(crate) fn test_model_id(id: &str) -> Vec<u8> {
 
 /// Fields 11 and 12 as durations of the given milliseconds.
 #[cfg(test)]
-pub(super) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
+pub(crate) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
     let duration = |ms: i64| DurationValue {
         seconds: ms / 1000,
         nanos: i32::try_from(ms % 1000 * 1_000_000).unwrap(),
