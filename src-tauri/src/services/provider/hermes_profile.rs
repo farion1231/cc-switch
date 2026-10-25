@@ -7,7 +7,7 @@
 //! - `proxy_config` 行按这个键存（v24 起 CHECK 放行 `hermes:%`）；
 //! - 供应商池仍是 Hermes 应用的全部供应商（按 sort_index 排序），路由目标从
 //!   live-state 的 `proxy_route` 读——独立配置只区分「路由谁、开不开故障转移和
-//! 粘性」，不再单独维护队列。
+//!   粘性」，不再单独维护队列。
 //!
 //! 独立 profile 的 home 由这里写（单 home），统一路由（`hermes_direct::run_enter`）
 //! 跳过已独立的 profile。聚合模式（Stack）只在统一路由提供。
@@ -126,7 +126,10 @@ pub async fn enter(
     let guard = state.proxy_service.lock_switch_for_app(&key).await;
     super::hermes_profile::settle(&state.db, &key)?;
     let projection = hermes_direct::proxy_contract(&route, &base_url).map_err(|e| e.to_string())?;
-    let contract = crate::mode::contract::hermes(&projection, &[home_name.clone()]);
+    let contract = crate::mode::contract::hermes(
+        &projection,
+        std::slice::from_ref(&home_name),
+    );
     hermes_direct::run_enter_homes(
         &state.db,
         "enter",
@@ -203,7 +206,10 @@ pub async fn switch_route(state: &AppState, profile: &str, route_id: &str) -> Re
         return Err(format!("{profile} 不在独立代理模式"));
     }
     let projection = hermes_direct::proxy_contract(&route, &base_url).map_err(|e| e.to_string())?;
-    let contract = crate::mode::contract::hermes(&projection, &[home_name.clone()]);
+    let contract = crate::mode::contract::hermes(
+        &projection,
+        std::slice::from_ref(&home_name),
+    );
     let unchanged = mode
         .contract
         .as_ref()

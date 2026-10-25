@@ -72,15 +72,7 @@ pub enum RoleTarget {
     Restore,
 }
 
-impl RoleTarget {
-    #[cfg_attr(not(test), allow(dead_code))] // 测试使用；lib 内无调用点
-    fn mapping(&self) -> Option<&RoleMapping> {
-        match self {
-            RoleTarget::Route { mapping } => Some(mapping),
-            RoleTarget::Restore => None,
-        }
-    }
-}
+impl RoleTarget {}
 
 /// 一次改写的记录（`written.extra["rewrites"][home]` 的元素）。`to_model` 为空串
 /// 表示删除该项（悬空清理）；还原时按 `role` + `to_model` 匹配文件里的现值写回
@@ -139,17 +131,29 @@ enum Action {
 
 /// 计算一个引用点的处置。`provider` / `model` 是**还原语义后**的现值（已指路由条目
 /// 的点先按记录还原成原始引用再判断）。
-fn resolve_ref(
-    role: &str,
-    provider: &str,
-    model: &str,
+/// 一个引用点的现场信息（resolve_ref 的入参打包，避免长参数列）
+struct RefSite<'a> {
+    role: &'a str,
+    provider: &'a str,
+    model: &'a str,
     has_base_url: bool,
     has_api_key: bool,
+}
+
+fn resolve_ref(
+    site: RefSite<'_>,
     custom_names: &std::collections::BTreeSet<String>,
     target: &RoleTarget,
     recorded: &[RoleRewrite],
     droppable: bool,
 ) -> Action {
+    let RefSite {
+        role,
+        provider,
+        model,
+        has_base_url,
+        has_api_key,
+    } = site;
     // 还原语义：现值是路由条目 → 先按 to_model 反查原始引用
     let (provider, model, restoring) = if provider.trim() == ROUTE_ENTRY_NAME {
         match recorded
@@ -247,11 +251,13 @@ pub(crate) fn apply_role_target(
             let provider = text(&item, "provider");
             let model = text(&item, "model");
             let action = resolve_ref(
-                "fallback",
-                &provider,
-                &model,
-                false,
-                false,
+                RefSite {
+                    role: "fallback",
+                    provider: &provider,
+                    model: &model,
+                    has_base_url: false,
+                    has_api_key: false,
+                },
                 custom_names,
                 target,
                 recorded,
@@ -321,7 +327,7 @@ pub(crate) fn apply_role_target(
             let Some(block_map) = block.as_mapping() else {
                 continue;
             };
-            if !block_map.contains_key(&Yaml::String("provider".into())) {
+            if !block_map.contains_key(Yaml::String("provider".into())) {
                 continue;
             }
             let task_name = task.as_str().unwrap_or_default().to_string();
@@ -349,11 +355,13 @@ pub(crate) fn apply_role_target(
             let h_key = has(block, "api_key");
             let h_mode = has(block, "api_mode");
             let action = resolve_ref(
-                &role,
-                &provider,
-                &model,
-                h_base,
-                h_key,
+                RefSite {
+                    role: &role,
+                    provider: &provider,
+                    model: &model,
+                    has_base_url: h_base,
+                    has_api_key: h_key,
+                },
                 custom_names,
                 target,
                 recorded,
@@ -454,7 +462,7 @@ pub(crate) fn apply_role_target(
         let mut new_moa = moa.clone();
         let mut changed = false;
         if let Some(presets) = moa
-            .get(&Yaml::String("presets".into()))
+            .get(Yaml::String("presets".into()))
             .and_then(Yaml::as_mapping)
         {
             let mut new_presets = presets.clone();
@@ -463,7 +471,7 @@ pub(crate) fn apply_role_target(
                 let mut new_block = block.clone();
                 // reference_models[]
                 if let Some(list) = block
-                    .get(&Yaml::String("reference_models".into()))
+                    .get(Yaml::String("reference_models".into()))
                     .and_then(Yaml::as_sequence)
                 {
                     let mut new_list = Vec::with_capacity(list.len());
@@ -473,11 +481,13 @@ pub(crate) fn apply_role_target(
                         let provider = text(&item, "provider");
                         let model = text(&item, "model");
                         let action = resolve_ref(
-                            &role,
-                            &provider,
-                            &model,
-                            false,
-                            false,
+                            RefSite {
+                                role: &role,
+                                provider: &provider,
+                                model: &model,
+                                has_base_url: false,
+                                has_api_key: false,
+                            },
                             custom_names,
                             target,
                             recorded,
@@ -541,17 +551,19 @@ pub(crate) fn apply_role_target(
                     );
                 }
                 // aggregator
-                if let Some(agg) = block.get(&Yaml::String("aggregator".into())) {
+                if let Some(agg) = block.get(Yaml::String("aggregator".into())) {
                     let mut new_agg = agg.clone();
                     let role = format!("moa:{preset_name}:agg");
                     let provider = text(agg, "provider");
                     let model = text(agg, "model");
                     let action = resolve_ref(
-                        &role,
-                        &provider,
-                        &model,
-                        false,
-                        false,
+                        RefSite {
+                            role: &role,
+                            provider: &provider,
+                            model: &model,
+                            has_base_url: false,
+                            has_api_key: false,
+                        },
                         custom_names,
                         target,
                         recorded,
@@ -877,7 +889,7 @@ impl LivePatch for HermesConfigPatch<'_> {
                                     })
                                     .unwrap_or_default();
                                 let keep = model
-                                    .get(&Yaml::String("default".to_string()))
+                                    .get(Yaml::String("default".to_string()))
                                     .and_then(Yaml::as_str)
                                     .is_some_and(|current| published.iter().any(|m| m == current));
                                 let fallback = published.first().cloned();
@@ -1220,7 +1232,7 @@ mod tests {
     }
 
     fn role_raw() -> String {
-        format!(
+        String::from(
             "model:\n  default: kimi-k2\n  provider: cc-switch-route\ncustom_providers:\n  - name: kimi\n  - name: moa-mglm\nfallback_providers:\n  - provider: custom:kimi\n    model: kimi-k2\n  - provider: custom:moa-mglm\n    model: glm-5.3\n  - provider: custom:cc-switch\n    model: aim\nauxiliary:\n  vision:\n    provider: custom:kimi\n    model: kimi-k2\n    base_url: https://direct.example/v1\n    api_key: sk-direct\n  title_generation:\n    provider: auto\nmoa:\n  presets:\n    heavy:\n      reference_models:\n        - provider: custom:kimi\n          model: kimi-k2\n          enabled: true\n        - provider: custom:moa-mglm\n          model: glm-5.3\n      aggregator:\n        provider: custom:kimi\n        model: kimi-k2\n"
         )
     }

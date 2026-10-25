@@ -783,6 +783,8 @@ impl RequestForwarder {
     /// 出口处都会把 `active_connections` 回收。Per-attempt 维度（成功/失败/熔断
     /// 等）仍由 inner 内自行更新 `success_requests` / `failed_requests`。
     #[allow(clippy::too_many_arguments)]
+    // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
+    #[allow(clippy::result_large_err)]
     pub async fn forward_with_retry(
         &self,
         app_type: &AppType,
@@ -880,6 +882,8 @@ impl RequestForwarder {
     /// * `selected_provider_id` - 路由选中账号（列表首位）；finish_success 以它为
     ///   故障转移判定锚点，会话模式下新会话落到非指针账号不算 failover
     #[allow(clippy::too_many_arguments)]
+    // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
+    #[allow(clippy::result_large_err)]
     async fn forward_with_retry_inner(
         &self,
         app_type: &AppType,
@@ -7551,6 +7555,8 @@ mod tests {
             request
         }
 
+    // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
+    #[allow(clippy::result_large_err)]
         async fn forward_codex(
             forwarder: &RequestForwarder,
             provider: Provider,
@@ -7837,6 +7843,8 @@ mod tests {
             json!({ "model": "listed", "input": input, "stream": true })
         }
 
+    // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
+    #[allow(clippy::result_large_err)]
         async fn forward_sub_agent(
             upstream: &Upstream,
             request: Value,
@@ -8097,6 +8105,8 @@ mod tests {
             forwarder
         }
 
+    // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
+    #[allow(clippy::result_large_err)]
         async fn send(
             forwarder: &RequestForwarder,
             providers: Vec<Provider>,
