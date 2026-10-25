@@ -902,6 +902,9 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
     let op_name = if keep_mode { op::DETACH } else { op::EXIT };
     let was_stack = settled_stack(app).is_ok_and(|stack| stack.enabled);
     let result = write_direct_for_exit(state, app, op_name, keep_mode, &mode);
+    if result.is_ok() {
+        state.proxy_service.restore_proxy_hooks(app);
+    }
     match &result {
         Ok(()) => log::info!(
             "[MODE] {} {op_name}：{} → {}，客户端配置写回直连供应商 {}",

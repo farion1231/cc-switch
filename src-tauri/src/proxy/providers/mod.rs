@@ -95,6 +95,10 @@ pub enum ProviderType {
     GitHubCopilot,
     /// OpenAI Codex (ChatGPT Plus/Pro OAuth，需要 Anthropic ↔ Responses API 转换)
     CodexOAuth,
+    /// 华为 CodeAgent 2.0 (x-auth-token 认证，需要 Anthropic ↔ OpenAI Chat 转换)
+    HuaweiCodeAgent2,
+    /// 华为 CodeAgent 3.0 (x-auth-token + Bearer 认证，MaaS 模型)
+    HuaweiCodeAgent3,
     /// xAI Grok OAuth（需要 Anthropic ↔ Responses API 转换）
     XaiOAuth,
 }
@@ -110,6 +114,8 @@ impl ProviderType {
         match self {
             ProviderType::GitHubCopilot => true,
             ProviderType::CodexOAuth => true,
+            ProviderType::HuaweiCodeAgent2 => true,
+            ProviderType::HuaweiCodeAgent3 => true,
             ProviderType::XaiOAuth => true,
             ProviderType::OpenRouter => false,
             _ => false,
@@ -128,6 +134,8 @@ impl ProviderType {
             ProviderType::OpenRouter => "https://openrouter.ai/api",
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
             ProviderType::CodexOAuth => CHATGPT_CODEX_BASE_URL,
+            ProviderType::HuaweiCodeAgent2 => "https://codeagentcli.rnd.huawei.com",
+            ProviderType::HuaweiCodeAgent3 => "https://codeagentcli.rnd.huawei.com",
             ProviderType::XaiOAuth => XAI_API_BASE_URL,
         }
     }
@@ -156,6 +164,9 @@ impl ProviderType {
                     }
                     if meta.provider_type.as_deref() == Some("codex_oauth") {
                         return Some(ProviderType::CodexOAuth);
+                    }
+                    if let Some(kind) = crate::provider_extensions::proxy_provider_type(provider) {
+                        return Some(kind);
                     }
                     if meta.provider_type.as_deref() == Some("xai_oauth") {
                         return Some(ProviderType::XaiOAuth);
@@ -233,6 +244,8 @@ impl ProviderType {
             ProviderType::OpenRouter => "openrouter",
             ProviderType::GitHubCopilot => "github_copilot",
             ProviderType::CodexOAuth => "codex_oauth",
+            ProviderType::HuaweiCodeAgent2 => "huawei_codeagent_2",
+            ProviderType::HuaweiCodeAgent3 => "huawei_codeagent_3",
             ProviderType::XaiOAuth => "xai_oauth",
         }
     }
@@ -259,6 +272,13 @@ impl std::str::FromStr for ProviderType {
                 Ok(ProviderType::GitHubCopilot)
             }
             "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
+            "huawei_codeagent_2" | "huawei-codeagent-2" | "huaweicodeagent2" | "huawei_w3"
+            | "huawei-w3" | "huaweiw3" | "huawei_idea" | "huawei-idea" | "huaweiidea" => {
+                Ok(ProviderType::HuaweiCodeAgent2)
+            }
+            "huawei_codeagent_3" | "huawei-codeagent-3" | "huaweicodeagent3" => {
+                Ok(ProviderType::HuaweiCodeAgent3)
+            }
             "xai_oauth" | "xai-oauth" | "xaioauth" => Ok(ProviderType::XaiOAuth),
             _ => Err(format!("Invalid provider type: {s}")),
         }
@@ -286,6 +306,8 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         | ProviderType::OpenRouter
         | ProviderType::GitHubCopilot
         | ProviderType::CodexOAuth
+        | ProviderType::HuaweiCodeAgent2
+        | ProviderType::HuaweiCodeAgent3
         | ProviderType::XaiOAuth => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
@@ -407,6 +429,18 @@ mod tests {
             "xai_oauth".parse::<ProviderType>().unwrap(),
             ProviderType::XaiOAuth
         );
+        assert_eq!(
+            "huawei_codeagent_2".parse::<ProviderType>().unwrap(),
+            ProviderType::HuaweiCodeAgent2
+        );
+        assert_eq!(
+            "huawei_w3".parse::<ProviderType>().unwrap(),
+            ProviderType::HuaweiCodeAgent2
+        );
+        assert_eq!(
+            "huawei_idea".parse::<ProviderType>().unwrap(),
+            ProviderType::HuaweiCodeAgent2
+        );
         assert!("invalid".parse::<ProviderType>().is_err());
     }
 
@@ -420,6 +454,10 @@ mod tests {
         assert_eq!(ProviderType::OpenRouter.as_str(), "openrouter");
         assert_eq!(ProviderType::GitHubCopilot.as_str(), "github_copilot");
         assert_eq!(ProviderType::XaiOAuth.as_str(), "xai_oauth");
+        assert_eq!(
+            ProviderType::HuaweiCodeAgent2.as_str(),
+            "huawei_codeagent_2"
+        );
     }
 
     #[test]

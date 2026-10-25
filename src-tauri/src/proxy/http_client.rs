@@ -7,7 +7,7 @@ use once_cell::sync::OnceCell;
 use reqwest::Client;
 use std::env;
 use std::net::IpAddr;
-use std::sync::RwLock;
+use std::sync::{LazyLock, Mutex, RwLock};
 use std::time::Duration;
 
 /// 全局 HTTP 客户端实例
@@ -15,6 +15,49 @@ static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
 
 /// 不走任何代理的客户端：上游是本机地址（Ollama、LM Studio 等）时使用
 static DIRECT_CLIENT: OnceCell<Client> = OnceCell::new();
+
+// Certificate overrides never share pools with verified clients. At most two
+// override pools are retained: direct routes and the current proxy configuration.
+// Authentication remains on individual requests, never in client defaults.
+static OVERRIDE_CLIENTS: LazyLock<Mutex<TlsOverrideClients>> =
+    LazyLock::new(|| Mutex::new(TlsOverrideClients::default()));
+
+#[derive(Default)]
+struct TlsOverrideClients {
+    direct: Option<Client>,
+    configured: Option<(Option<String>, Client)>,
+}
+
+impl TlsOverrideClients {
+    fn get(&mut self, direct: bool, proxy_url: Option<&str>) -> Result<Client, String> {
+        if direct {
+            if self.direct.is_none() {
+                self.direct = Some(
+                    base_builder()
+                        .danger_accept_invalid_certs(true)
+                        .no_proxy()
+                        .build()
+                        .map_err(|e| format!("Failed to build HTTP client: {e}"))?,
+                );
+            }
+            return Ok(self.direct.as_ref().unwrap().clone());
+        }
+        if let Some((cached_url, client)) = &self.configured {
+            if cached_url.as_deref() == proxy_url {
+                return Ok(client.clone());
+            }
+        }
+        let client = build_client_with_tls(proxy_url, true)?;
+        self.configured = Some((proxy_url.map(str::to_owned), client.clone()));
+        Ok(client)
+    }
+}
+
+fn invalidate_override_clients() {
+    if let Ok(mut clients) = OVERRIDE_CLIENTS.lock() {
+        clients.configured = None;
+    }
+}
 
 /// 当前代理 URL（用于日志和状态查询）
 static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
@@ -35,6 +78,7 @@ pub fn set_proxy_port(port: u16) {
         let _ = CC_SWITCH_PROXY_PORT.set(RwLock::new(port));
         log::debug!("[GlobalProxy] Initialized CC Switch proxy port to {port}");
     }
+    invalidate_override_clients();
 }
 
 /// 获取 CC Switch 代理服务器的监听端口
@@ -71,6 +115,8 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
 
     // 初始化代理 URL 记录
     let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
+
+    invalidate_override_clients();
 
     log::info!(
         "[GlobalProxy] Initialized: {}",
@@ -131,6 +177,8 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
         *url = effective_url.map(|s| s.to_string());
     }
 
+    invalidate_override_clients();
+
     log::info!(
         "[GlobalProxy] Applied: {}",
         effective_url
@@ -151,38 +199,7 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
 #[allow(dead_code)]
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
-
-    // 更新客户端
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
-            "Failed to update proxy: lock poisoned".to_string()
-        })?;
-        *client = new_client;
-    } else {
-        // 如果还没初始化，则初始化
-        return init(proxy_url);
-    }
-
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = effective_url.map(|s| s.to_string());
-    }
-
-    log::info!(
-        "[GlobalProxy] Updated: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
-
-    Ok(())
+    apply_proxy(proxy_url)
 }
 
 /// 获取全局 HTTP 客户端
@@ -199,17 +216,87 @@ pub fn get() -> Client {
         })
 }
 
-/// 按目标地址取客户端：本机地址直连，其余同 [`get`]
+/// 按目标地址取客户端：本机地址和系统代理例外直连，其余同 [`get`]
 ///
 /// reqwest 不会自动绕开本机地址：配了全局代理时 `Proxy::all` 对所有目标生效，
 /// 跟随系统代理时也只认 `NO_PROXY` 环境变量（macOS 不读「不使用代理的主机」）。
 /// 本机推理服务因此会被送进代理，代理不能代连本机时请求就失败。
 pub fn get_for_url(url: &str) -> Client {
-    if is_loopback_url(url) {
+    if bypass_proxy_for_url(url) {
         direct_client()
     } else {
         get()
     }
+}
+
+// Environment proxies take precedence over WinINet in reqwest, including its bypass
+// list. Preserve Windows' explicit direct routes when no app proxy was configured.
+fn bypass_proxy_for_url(url: &str) -> bool {
+    is_loopback_url(url) || (get_current_proxy_url().is_none() && system_proxy_bypasses_url(url))
+}
+
+#[cfg(windows)]
+fn system_proxy_bypasses_url(url: &str) -> bool {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let Ok(settings) = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+    else {
+        return false;
+    };
+    if settings.get_value::<u32, _>("ProxyEnable").unwrap_or(0) == 0 {
+        return false;
+    }
+    settings
+        .get_value::<String, _>("ProxyOverride")
+        .map(|rules| matches_windows_proxy_bypass(url, &rules))
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn system_proxy_bypasses_url(_url: &str) -> bool {
+    false
+}
+
+#[cfg(any(windows, test))]
+fn matches_windows_proxy_bypass(url: &str, rules: &str) -> bool {
+    let Ok(url) = url::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.trim_end_matches('.');
+    rules.split(';').any(|rule| {
+        let rule = rule.trim();
+        if rule.eq_ignore_ascii_case("<local>") {
+            return !host.contains('.') && !host.contains(':');
+        }
+        // <-loopback> controls Chromium's implicit bypass, not a host pattern.
+        if rule.is_empty() || rule.starts_with('<') {
+            return false;
+        }
+        let (scheme, pattern) = rule
+            .split_once("://")
+            .map_or((None, rule), |(scheme, pattern)| (Some(scheme), pattern));
+        if scheme.is_some_and(|scheme| !scheme.eq_ignore_ascii_case(url.scheme())) {
+            return false;
+        }
+        let (pattern, port) = pattern
+            .rsplit_once(':')
+            .filter(|(host, port)| !host.contains(':') && port.parse::<u16>().is_ok())
+            .map_or((pattern, None), |(host, port)| {
+                (host, port.parse::<u16>().ok())
+            });
+        if port.is_some() && port != url.port_or_known_default() {
+            return false;
+        }
+        let pattern = regex::escape(pattern).replace(r"\*", ".*");
+        regex::RegexBuilder::new(&format!("^{pattern}$"))
+            .case_insensitive(true)
+            .build()
+            .map(|pattern| pattern.is_match(host))
+            .unwrap_or(false)
+    })
 }
 
 /// 发往 `url` 时应使用的上游代理：本机地址返回 None（直连），其余返回当前全局代理
@@ -296,7 +383,26 @@ fn base_builder() -> reqwest::ClientBuilder {
 
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
-    let mut builder = base_builder();
+    build_client_with_tls(proxy_url, false)
+}
+
+/// Apply a provider's explicit TLS policy without altering the verified pools.
+pub fn get_for_url_with_tls(url: &str, skip_verify: bool) -> Result<Client, String> {
+    if !skip_verify {
+        return Ok(get_for_url(url));
+    }
+    let mut clients = OVERRIDE_CLIENTS
+        .lock()
+        .map_err(|_| "Failed to acquire TLS override client lock".to_string())?;
+    // Snapshot routing while holding the cache lock. A concurrent proxy update
+    // invalidates this cache after publishing its URL, so later requests refresh.
+    let proxy_url = get_current_proxy_url();
+    let direct = is_loopback_url(url) || (proxy_url.is_none() && system_proxy_bypasses_url(url));
+    clients.get(direct, proxy_url.as_deref())
+}
+
+fn build_client_with_tls(proxy_url: Option<&str>, skip_tls: bool) -> Result<Client, String> {
+    let mut builder = base_builder().danger_accept_invalid_certs(skip_tls);
 
     // 有代理地址则使用代理，否则跟随系统代理
     if let Some(url) = proxy_url {
@@ -407,6 +513,47 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
+    #[test]
+    fn test_windows_proxy_bypass_rules() {
+        let rules = "*.huawei.com;127.0.0.1*;<local>;<-loopback>";
+        assert!(matches_windows_proxy_bypass(
+            "https://snapengine.cida.cce.prod-szv-g.dragon.tools.huawei.com/api/v2",
+            rules
+        ));
+        assert!(matches_windows_proxy_bypass(
+            "https://API.HUAWEI.COM./v1",
+            rules
+        ));
+        assert!(matches_windows_proxy_bypass(
+            "http://127.0.0.1:15721",
+            rules
+        ));
+        assert!(matches_windows_proxy_bypass("http://intranet/api", rules));
+        for url in [
+            "https://huawei.com.evil.test",
+            "https://evilhuawei.com",
+            "https://api.example.com",
+        ] {
+            assert!(!matches_windows_proxy_bypass(url, rules));
+        }
+        assert!(matches_windows_proxy_bypass(
+            "https://api.example.com",
+            "https://api.example.com:443"
+        ));
+        assert!(!matches_windows_proxy_bypass(
+            "http://api.example.com",
+            "https://api.example.com:443"
+        ));
+        assert!(!matches_windows_proxy_bypass(
+            "https://api.example.com:8443",
+            "api.example.com:443"
+        ));
+        assert!(!matches_windows_proxy_bypass(
+            "http://127.0.0.1",
+            "<-loopback>"
+        ));
+        assert!(!matches_windows_proxy_bypass("invalid", "*"));
+    }
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
@@ -618,3 +765,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "http_client_pool_tests.rs"]
+mod pool_tests;

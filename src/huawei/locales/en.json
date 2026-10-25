@@ -1,0 +1,38 @@
+{
+  "huaweiCodeAgent2": {
+    "title": "Huawei CodeAgent Authentication",
+    "authCenterTitle": "Huawei CodeAgent",
+    "authCenterDescription": "Manage Huawei CodeAgent accounts",
+    "loggedIn": "Logged In",
+    "notLoggedIn": "Not Authenticated",
+    "login": "Login",
+    "logout": "Logout",
+    "username": "Username",
+    "password": "Password",
+    "loginSuccess": "Huawei CodeAgent login successful",
+    "loginFailed": "Huawei CodeAgent login failed: {{error}}",
+    "emptyCredentials": "Please enter username and password",
+    "tokenValid": "Token valid ({{minutes}} minutes remaining)",
+    "tokenExpired": "Token expired",
+    "description": "Authenticate with Huawei CodeAgent account to access internal LLM service",
+    "loginRequired": "Please login to Huawei CodeAgent first",
+    "accountCount": "{{count}} account(s) available",
+    "selectAccount": "Select Account",
+    "selectAccountPlaceholder": "Select a Huawei CodeAgent account",
+    "useDefaultAccount": "Use Default Account",
+    "accounts": "Huawei CodeAgent Accounts",
+    "defaultAccount": "Default",
+    "expired": "Credentials expired",
+    "reauthRequired": "Re-authentication required",
+    "setAsDefault": "Set as Default",
+    "removeAccount": "Remove Account",
+    "addOrReauth": "Add account or re-login",
+    "logoutAll": "Remove all accounts"
+  },
+  "providerForm": {
+    "presets": {
+      "huaweiCodeAgent2": "Huawei CodeAgent 2.0",
+      "huaweiCodeAgent3": "Huawei CodeAgent 3.0"
+    }
+  }
+}

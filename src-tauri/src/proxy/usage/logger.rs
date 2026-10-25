@@ -172,8 +172,8 @@ impl<'a> UsageLogger<'a> {
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
-                provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+                provider_type, is_streaming, cost_multiplier, created_at, cost_known
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)"
         );
         let affected_rows = conn
             .execute(
@@ -204,6 +204,11 @@ impl<'a> UsageLogger<'a> {
                     log.is_streaming as i64,
                     log.cost_multiplier,
                     created_at,
+                    log.cost.is_some()
+                        || (log.usage.input_tokens == 0
+                            && log.usage.output_tokens == 0
+                            && log.usage.cache_read_tokens == 0
+                            && log.usage.cache_creation_tokens == 0),
                 ],
             )
             .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
@@ -395,7 +400,7 @@ impl<'a> UsageLogger<'a> {
             || usage.cache_creation_tokens > 0;
 
         if pricing.is_none() && has_usage && !is_placeholder_pricing_model(&pricing_model) {
-            log::warn!("[USG-002] 模型定价未找到，成本将记录为 0: {pricing_model}");
+            log::warn!("[USG-002] 模型定价未找到，费用未知（Token 用量仍会记录）: {pricing_model}");
         }
 
         let cost = CostCalculator::try_calculate_for_app(

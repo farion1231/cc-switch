@@ -185,22 +185,22 @@ function useDetailSections(request: RequestLog) {
     {
       key: "input",
       label: t("usage.freshInput"),
-      value: usd(request.inputCostUsd),
+      value: unpriced ? t("usage.unpriced") : usd(request.inputCostUsd),
     },
     {
       key: "output",
       label: t("usage.outputTokens"),
-      value: usd(request.outputCostUsd),
+      value: unpriced ? t("usage.unpriced") : usd(request.outputCostUsd),
     },
     {
       key: "read",
       label: t("usage.cacheReadTokens"),
-      value: usd(request.cacheReadCostUsd),
+      value: unpriced ? t("usage.unpriced") : usd(request.cacheReadCostUsd),
     },
     {
       key: "write",
       label: t("usage.pricing.cacheWrite"),
-      value: usd(request.cacheCreationCostUsd),
+      value: unpriced ? t("usage.unpriced") : usd(request.cacheCreationCostUsd),
     },
   ];
   if (multiplier != null && multiplier !== 1) {

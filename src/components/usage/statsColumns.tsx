@@ -107,3 +107,13 @@ export function PerformanceCells({
     </>
   );
 }
+
+/**
+ * @deprecated Use PerformanceHeaders instead
+ * SuccessSpeedHeaders is an alias for backwards compatibility */
+export const SuccessSpeedHeaders = PerformanceHeaders;
+
+/**
+ * @deprecated Use PerformanceCells instead
+ * SuccessSpeedCells is an alias for backwards compatibility */
+export const SuccessSpeedCells = PerformanceCells;

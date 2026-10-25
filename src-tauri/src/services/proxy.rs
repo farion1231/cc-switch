@@ -5,7 +5,7 @@
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file};
 use crate::database::Database;
-use crate::provider::Provider;
+use crate::provider::{Provider, ProviderMeta};
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
@@ -23,6 +23,7 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    hook_meta: Arc<std::sync::Mutex<Option<ProviderMeta>>>,
 }
 
 /// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
@@ -63,6 +64,7 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            hook_meta: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -90,6 +92,9 @@ impl ProxyService {
     /// 停止代理服务器。同 [`Self::start`]，结束后让托盘比对一次。
     pub async fn stop(&self) -> Result<(), String> {
         let result = self.stop_server().await;
+        if result.is_ok() {
+            self.restore_proxy_hooks(&AppType::Claude);
+        }
         self.notify_tray().await;
         result
     }
@@ -204,10 +209,53 @@ impl ProxyService {
 
     /// 把代理的上游指向 `provider`（状态面板里的「使用中」）。
     pub(crate) async fn set_active_target(&self, app_type: &AppType, provider: &Provider) {
+        if matches!(app_type, AppType::Claude) {
+            self.restore_proxy_hooks(app_type);
+            if let Some(meta) = provider.meta.as_ref() {
+                crate::proxy::hooks::HookRegistry::global().with_provider_hooks(meta, |hooks| {
+                    for hook in hooks {
+                        if let Err(error) = hook.on_takeover(meta) {
+                            log::warn!("Hook on_takeover failed: {error}");
+                        }
+                    }
+                });
+                *self.hook_meta.lock().unwrap() = Some(meta.clone());
+            }
+        }
         if let Some(server) = self.server.read().await.as_ref() {
             server
                 .set_active_target(app_type.as_str(), &provider.id, &provider.name)
                 .await;
+        }
+    }
+
+    pub(crate) fn restore_proxy_hooks(&self, app: &AppType) {
+        if !matches!(app, AppType::Claude) {
+            return;
+        }
+        let meta = self.hook_meta.lock().unwrap().take();
+        if let Some(meta) = meta {
+            Self::restore_hooks_for_meta(&meta);
+        }
+    }
+
+    fn restore_hooks_for_meta(meta: &ProviderMeta) {
+        crate::proxy::hooks::HookRegistry::global().with_provider_hooks(meta, |hooks| {
+            for hook in hooks {
+                if let Err(error) = hook.on_restore(meta) {
+                    log::warn!("Hook on_restore failed: {error}");
+                }
+            }
+        });
+    }
+
+    pub fn cleanup_residual_hook_state(&self) {
+        if let Ok(Some(provider)) =
+            crate::mode::current::provider_in_use(&self.db, &AppType::Claude)
+        {
+            if let Some(meta) = provider.meta.as_ref() {
+                Self::restore_hooks_for_meta(meta);
+            }
         }
     }
 

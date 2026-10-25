@@ -51,6 +51,7 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import React from "react";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import {
   ClaudeStackModelsField,
@@ -108,6 +109,14 @@ interface ClaudeFormFieldsProps {
   onCodexAccountSelect?: (accountId: string | null) => void;
   codexFastMode?: boolean;
   onCodexFastModeChange?: (enabled: boolean) => void;
+
+  // Extension Auth Section (lazy-loaded)
+  extensionAuthSection?: React.LazyExoticComponent<
+    React.ComponentType<Record<string, unknown>>
+  >;
+  extensionFetchModels?: (accountId?: string | null) => Promise<FetchedModel[]>;
+  selectedExtensionAccountId?: string | null;
+  onExtensionAccountSelect?: (accountId: string | null) => void;
 
   // xAI OAuth
   isXaiOauthPreset?: boolean;
@@ -203,6 +212,10 @@ export function ClaudeFormFields({
   onCodexAccountSelect,
   codexFastMode,
   onCodexFastModeChange,
+  extensionAuthSection,
+  extensionFetchModels,
+  selectedExtensionAccountId,
+  onExtensionAccountSelect,
   isXaiOauthPreset,
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
@@ -299,6 +312,18 @@ export function ClaudeFormFields({
   const [xaiOauthModelsLoading, setXaiOauthModelsLoading] = useState(false);
   const xaiOauthModelsRequestRef = useRef(0);
   const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
+
+  const hasExtensionAuth = !!extensionAuthSection;
+  useEffect(() => {
+    extensionModelsRequestRef.current += 1;
+    setExtensionModels([]);
+    setExtensionModelsLoading(false);
+  }, [selectedExtensionAccountId]);
+
+  // Extension model fetch (generic, driven by extensionFetchModels callback)
+  const [extensionModels, setExtensionModels] = useState<FetchedModel[]>([]);
+  const [extensionModelsLoading, setExtensionModelsLoading] = useState(false);
+  const extensionModelsRequestRef = useRef(0);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -443,6 +468,35 @@ export function ClaudeFormFields({
     t,
   ]);
 
+  const handleFetchExtensionModels = useCallback(() => {
+    if (!extensionFetchModels) return;
+    const requestId = extensionModelsRequestRef.current + 1;
+    extensionModelsRequestRef.current = requestId;
+    setExtensionModelsLoading(true);
+    extensionFetchModels(selectedExtensionAccountId)
+      .then((models: FetchedModel[]) => {
+        if (extensionModelsRequestRef.current !== requestId) return;
+        setExtensionModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err: unknown) => {
+        if (extensionModelsRequestRef.current !== requestId) return;
+        console.warn("[Extension] Failed to fetch models:", err);
+        const msg = String(err);
+        toast.error(msg);
+      })
+      .finally(() => {
+        if (extensionModelsRequestRef.current === requestId) {
+          setExtensionModelsLoading(false);
+        }
+      });
+  }, [
+    extensionFetchModels,
+    selectedExtensionAccountId,
+    showModelFetchResult,
+    t,
+  ]);
+
   const handleFetchXaiOauthModels = useCallback(() => {
     if (!isXaiOauthAuthenticated) {
       toast.error(
@@ -487,6 +541,12 @@ export function ClaudeFormFields({
   }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
 
   useEffect(() => {
+    extensionModelsRequestRef.current += 1;
+    setExtensionModels([]);
+    setExtensionModelsLoading(false);
+  }, [hasExtensionAuth]);
+
+  useEffect(() => {
     xaiOauthModelsRequestRef.current += 1;
     setXaiOauthModels([]);
     setXaiOauthModelsLoading(false);
@@ -496,16 +556,20 @@ export function ClaudeFormFields({
     ? modelsLoading
     : isCodexOauthPreset
       ? codexOauthModelsLoading
-      : isXaiOauthPreset
-        ? xaiOauthModelsLoading
-        : isFetchingModels;
+      : hasExtensionAuth
+        ? extensionModelsLoading
+        : isXaiOauthPreset
+          ? xaiOauthModelsLoading
+          : isFetchingModels;
   const handleModelFetchClick = isCopilotPreset
     ? handleFetchCopilotModels
     : isCodexOauthPreset
       ? handleFetchCodexOauthModels
-      : isXaiOauthPreset
-        ? handleFetchXaiOauthModels
-        : handleFetchModels;
+      : hasExtensionAuth
+        ? handleFetchExtensionModels
+        : isXaiOauthPreset
+          ? handleFetchXaiOauthModels
+          : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
@@ -599,15 +663,19 @@ export function ClaudeFormFields({
       );
     }
 
-    // 普通供应商: 使用 ModelInputWithFetch（获取按钮在 section 标题旁）
+    // 普通供应商 / extension auth: 使用 ModelInputWithFetch
+    const models = hasExtensionAuth ? extensionModels : fetchedModels;
+    const loading = hasExtensionAuth
+      ? extensionModelsLoading
+      : isFetchingModels;
     return (
       <ModelInputWithFetch
         id={id}
         value={value}
         onChange={updateValue}
         placeholder={placeholder}
-        fetchedModels={fetchedModels}
-        isLoading={isFetchingModels}
+        fetchedModels={models}
+        isLoading={loading}
       />
     );
   };
@@ -620,6 +688,7 @@ export function ClaudeFormFields({
     modelField: ClaudeModelEnvField;
     displayNameField?: ClaudeModelEnvField;
     inputId: string;
+    supportsOneM?: boolean;
   };
 
   const modelRoleRows: ModelRoleRow[] = [
@@ -715,6 +784,16 @@ export function ClaudeFormFields({
           fastModeEnabled={codexFastMode}
           onFastModeChange={onCodexFastModeChange}
         />
+      )}
+
+      {/* Extension Auth Section */}
+      {extensionAuthSection && (
+        <React.Suspense fallback={null}>
+          {React.createElement(extensionAuthSection, {
+            selectedAccountId: selectedExtensionAccountId,
+            onAccountSelect: onExtensionAccountSelect,
+          })}
+        </React.Suspense>
       )}
 
       {isXaiOauthPreset && (
@@ -1254,17 +1333,19 @@ export function ClaudeFormFields({
                           setClaudeOneMMarker(value, usesOneM),
                         ),
                     )}
-                    <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
-                      <Checkbox
-                        checked={usesOneM}
-                        onCheckedChange={(checked) =>
-                          handleRoleOneMChange(row, checked === true)
-                        }
-                      />
-                      {t("providerForm.modelOneMLabel", {
-                        defaultValue: "1M",
-                      })}
-                    </label>
+                    {row.supportsOneM && (
+                      <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
+                        <Checkbox
+                          checked={usesOneM}
+                          onCheckedChange={(checked) =>
+                            handleRoleOneMChange(row, checked === true)
+                          }
+                        />
+                        {t("providerForm.modelOneMLabel", {
+                          defaultValue: "1M",
+                        })}
+                      </label>
+                    )}
                   </div>
                 );
               })}

@@ -340,11 +340,15 @@ pub fn legacy_mapping_card(db: &Database) -> Option<Provider> {
 }
 
 pub fn provider_mode(provider: &Provider) -> ClaudeDesktopMode {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.claude_desktop_mode.clone())
-        .unwrap_or(ClaudeDesktopMode::Direct)
+    if let Some(meta) = provider.meta.as_ref() {
+        if crate::provider_extensions::capabilities(provider).force_desktop_proxy {
+            return ClaudeDesktopMode::Proxy;
+        }
+        if let Some(mode) = meta.claude_desktop_mode.clone() {
+            return mode;
+        }
+    }
+    ClaudeDesktopMode::Direct
 }
 
 pub fn is_claude_safe_model_id(model: &str) -> bool {
@@ -489,11 +493,12 @@ pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
         if matches!(
             meta.provider_type.as_deref(),
             Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth")
-        ) {
+        ) || crate::provider_extensions::capabilities(provider).force_desktop_proxy
+        {
             return Err(AppError::localized(
                 "claude_desktop.provider.type_unsupported",
-                "Claude Desktop 直连模式不支持需要本地代理转换的供应商",
-                "Claude Desktop direct mode does not support providers that require local proxy conversion",
+                "该供应商需要由本地路由注入认证，请使用本地路由模式",
+                "This provider requires authentication through local routing; use proxy mode",
             ));
         }
 
@@ -589,16 +594,17 @@ fn has_proxy_base_url_and_key(provider: &Provider) -> bool {
 }
 
 fn is_managed_oauth_proxy_provider(provider: &Provider) -> bool {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        .is_some_and(|provider_type| {
-            matches!(
-                provider_type,
-                "github_copilot" | "codex_oauth" | "xai_oauth"
-            )
-        })
+    crate::provider_extensions::capabilities(provider).managed_auth
+        || provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            .is_some_and(|provider_type| {
+                matches!(
+                    provider_type,
+                    "github_copilot" | "codex_oauth" | "xai_oauth"
+                )
+            })
 }
 
 pub fn validate_provider(provider: &Provider) -> Result<(), AppError> {
@@ -708,6 +714,18 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
 pub(crate) fn configured_proxy_model_routes(
     provider: &Provider,
 ) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    // Explicit mappings take precedence over a provider extension's legacy defaults.
+    if provider
+        .meta
+        .as_ref()
+        .is_none_or(|meta| meta.claude_desktop_model_routes.is_empty())
+    {
+        if let Some(routes) = crate::provider_extensions::for_provider(provider)
+            .and_then(|extension| extension.desktop_default_routes(provider))
+        {
+            return routes;
+        }
+    }
     let routes = provider
         .meta
         .as_ref()
@@ -770,7 +788,6 @@ pub(crate) fn configured_proxy_model_routes(
 
     Ok(result)
 }
-
 /// 发布给 Desktop 的模型名。Desktop 按这个名字决定请求参数：映射表里的 Opus / Sonnet 键固定是
 /// `claude-opus-5` / `claude-sonnet-5`，目标是 5.5 时照写，5.5 上游会拒收按 5 组的请求（#8082）。
 /// 和 Claude Code 的路由契约一样换成目录里的 5.5 名字；映射表里的键不变，旧 profile 发来的
@@ -2881,5 +2898,10 @@ mod tests {
             None,
         );
         assert!(!is_compatible_direct_provider(&missing_bearer));
+    }
+
+    mod provider_extension_tests {
+        use super::*;
+        include!("huawei/desktop_tests.rs");
     }
 }

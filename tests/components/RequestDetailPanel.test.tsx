@@ -50,6 +50,29 @@ const renderWith = (request: RequestLog) => {
 };
 
 describe("RequestDetailPanel", () => {
+  it("marks every cost component unknown when pricing is missing", () => {
+    renderWith(log({ costKnown: false, totalCostUsd: "0" }));
+    expect(screen.getAllByText("usage.unpriced").length).toBeGreaterThanOrEqual(
+      5,
+    );
+    expect(screen.queryByText("$0.0000")).not.toBeInTheDocument();
+  });
+
+  it("shows a genuine zero price as free", () => {
+    renderWith(
+      log({
+        costKnown: true,
+        totalCostUsd: "0",
+        inputCostUsd: "0",
+        outputCostUsd: "0",
+        cacheReadCostUsd: "0",
+        cacheCreationCostUsd: "0",
+      }),
+    );
+    expect(screen.queryByText("usage.unpriced")).not.toBeInTheDocument();
+    expect(screen.getAllByText("$0.0000").length).toBeGreaterThanOrEqual(5);
+  });
+
   it("shows speed, first token and duration for routed requests", () => {
     renderWith(log({}));
 

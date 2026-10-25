@@ -2,6 +2,7 @@
 //!
 //! 提供 Tauri 命令，供前端在供应商表单中获取可用模型列表。
 
+use crate::huawei::proxy_processor::{self, ExtraAuthHeader};
 use crate::services::model_fetch::{self, FetchedModel};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -174,12 +175,9 @@ fn parse_opencode_models(output: &str) -> Vec<OpenCodeModelRef> {
         .collect()
 }
 
-/// 获取供应商的可用模型列表
-///
-/// 使用 OpenAI 兼容的 GET /v1/models 端点。优先使用 `models_url` 精确覆写；
-/// 否则对 baseURL 生成候选列表（含「剥离 Anthropic 兼容子路径」兜底），按序尝试。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn fetch_models_for_config(
+    app_handle: tauri::AppHandle,
     base_url: String,
     api_key: String,
     is_full_url: Option<bool>,
@@ -187,21 +185,62 @@ pub async fn fetch_models_for_config(
     custom_user_agent: Option<String>,
     api_format: Option<String>,
     request_headers: Option<BTreeMap<String, String>>,
+    extra_auth_headers: Option<String>,
 ) -> Result<Vec<FetchedModel>, String> {
-    // 与转发 / 检测路径共用 parse_custom_user_agent：非法 UA 静默忽略（不阻断取模型）。
+    log::info!("[ModelFetch] fetch_models_for_config called: base_url={base_url}, has_extra_auth_headers={}", extra_auth_headers.is_some());
+
     let user_agent = crate::provider::parse_custom_user_agent(custom_user_agent.as_deref())
         .ok()
         .flatten();
-    model_fetch::fetch_models(
+
+    let extra_headers = if let Some(json) = extra_auth_headers.as_deref() {
+        let parsed: Vec<ExtraAuthHeader> = serde_json::from_str(json).unwrap_or_else(|e| {
+            log::error!("[ModelFetch] Failed to parse extraAuthHeaders JSON: {e}, input: {json}");
+            vec![]
+        });
+        if parsed.is_empty() {
+            None
+        } else {
+            let mut map = std::collections::HashMap::new();
+            map.insert(
+                "extraAuthHeaders".to_string(),
+                serde_json::to_value(&parsed).unwrap_or_default(),
+            );
+            match proxy_processor::resolve_extra_auth_headers(&map, Some(&app_handle), None).await {
+                Ok(headers) => {
+                    log::info!("[ModelFetch] Resolved {} extra auth headers", headers.len());
+                    Some(headers)
+                }
+                Err(e) => {
+                    log::error!("[ModelFetch] Failed to resolve extra auth headers: {e}");
+                    return Err(e);
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut request_headers = request_headers.unwrap_or_default();
+    if let Some(extra_headers) = extra_headers {
+        request_headers.extend(extra_headers);
+    }
+    let result = model_fetch::fetch_models(
         &base_url,
         &api_key,
         is_full_url.unwrap_or(false),
         models_url.as_deref(),
         user_agent,
         api_format.as_deref(),
-        request_headers.as_ref(),
+        Some(&request_headers),
     )
-    .await
+    .await;
+
+    if let Err(ref e) = result {
+        log::error!("[ModelFetch] fetch_models failed: {e}");
+    }
+
+    result
 }
 
 #[cfg(test)]

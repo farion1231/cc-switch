@@ -16,11 +16,13 @@ export const usageTable = {
   headRow:
     "h-9 bg-subtle text-caption text-fg-2 [&>th]:border-b [&>th]:border-border",
   th: "whitespace-nowrap px-3 text-start font-medium first:ps-4 last:pe-4",
+  thEnd: "whitespace-nowrap px-3 text-end font-medium first:ps-4 last:pe-4",
   // 不可点的行不加 group：固定列的悬停变色（group-hover）只跟着可点的行走
   row: "h-10 [&:not(:last-child)>td]:border-b [&>td]:border-border",
   rowInteractive:
     "group h-10 cursor-pointer transition-colors hover:bg-subtle [&:not(:last-child)>td]:border-b [&>td]:border-border",
   td: "whitespace-nowrap px-3 first:ps-4 last:pe-4",
+  tdEnd: "whitespace-nowrap px-3 text-end first:ps-4 last:pe-4",
   /** 列组之间多留的间距（请求日志按身份 / 成本 / Tokens / 性能分组）：组内列距 24px，换组处 40px */
   groupGap: "ps-7",
   /** 请求日志列多，收紧一档：组内列距 16px，换组处 32px（叠在 th / td / groupGap 之后，首尾 16px 不变） */

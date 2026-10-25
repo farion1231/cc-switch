@@ -1,0 +1,38 @@
+{
+  "huaweiCodeAgent2": {
+    "title": "华为 CodeAgent 认证",
+    "authCenterTitle": "华为 CodeAgent",
+    "authCenterDescription": "管理华为 CodeAgent 账号",
+    "loggedIn": "已登录",
+    "notLoggedIn": "未认证",
+    "login": "登录",
+    "logout": "登出",
+    "username": "用户名",
+    "password": "密码",
+    "loginSuccess": "华为 CodeAgent 登录成功",
+    "loginFailed": "华为 CodeAgent 登录失败: {{error}}",
+    "emptyCredentials": "请输入用户名和密码",
+    "tokenValid": "Token 有效（剩余 {{minutes}} 分钟）",
+    "tokenExpired": "Token 已过期",
+    "description": "使用华为 CodeAgent 账号认证访问内部 LLM 服务",
+    "loginRequired": "请先登录华为 CodeAgent",
+    "accountCount": "{{count}} 个可用账号",
+    "selectAccount": "选择账号",
+    "selectAccountPlaceholder": "选择华为 CodeAgent 账号",
+    "useDefaultAccount": "使用默认账号",
+    "accounts": "华为 CodeAgent 账号",
+    "defaultAccount": "默认",
+    "expired": "凭据已失效",
+    "reauthRequired": "需要重新登录",
+    "setAsDefault": "设为默认",
+    "removeAccount": "移除账号",
+    "addOrReauth": "添加账号或重新登录",
+    "logoutAll": "移除所有账号"
+  },
+  "providerForm": {
+    "presets": {
+      "huaweiCodeAgent2": "华为 CodeAgent 2.0",
+      "huaweiCodeAgent3": "华为 CodeAgent 3.0"
+    }
+  }
+}

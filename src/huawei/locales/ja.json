@@ -1,0 +1,38 @@
+{
+  "huaweiCodeAgent2": {
+    "title": "Huawei CodeAgent 認証",
+    "authCenterTitle": "Huawei CodeAgent",
+    "authCenterDescription": "Huawei CodeAgent アカウントを管理",
+    "loggedIn": "ログイン済み",
+    "notLoggedIn": "未認証",
+    "login": "ログイン",
+    "logout": "ログアウト",
+    "username": "ユーザー名",
+    "password": "パスワード",
+    "loginSuccess": "Huawei CodeAgent ログイン成功",
+    "loginFailed": "Huawei CodeAgent ログイン失敗: {{error}}",
+    "emptyCredentials": "ユーザー名とパスワードを入力してください",
+    "tokenValid": "トークン有効（残り {{minutes}} 分）",
+    "tokenExpired": "トークン期限切れ",
+    "description": "Huawei CodeAgent アカウントで認証して内部 LLM サービスにアクセス",
+    "loginRequired": "先に Huawei CodeAgent にログインしてください",
+    "accountCount": "{{count}} 個のアカウントが利用可能",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "Huawei CodeAgent アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "accounts": "Huawei CodeAgent アカウント",
+    "defaultAccount": "デフォルト",
+    "expired": "資格情報が期限切れ",
+    "reauthRequired": "再認証が必要",
+    "setAsDefault": "デフォルトに設定",
+    "removeAccount": "アカウントを削除",
+    "addOrReauth": "アカウントを追加または再ログイン",
+    "logoutAll": "すべてのアカウントを削除"
+  },
+  "providerForm": {
+    "presets": {
+      "huaweiCodeAgent2": "Huawei CodeAgent 2.0",
+      "huaweiCodeAgent3": "Huawei CodeAgent 3.0"
+    }
+  }
+}

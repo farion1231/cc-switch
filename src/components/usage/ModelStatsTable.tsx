@@ -1,3 +1,4 @@
+import { usageCostLabel } from "@/components/usage/format";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowDown } from "lucide-react";
@@ -107,9 +108,18 @@ export function ModelStatsTable({
                       usageTable.groupGap,
                       "font-medium",
                     )}
-                    title={`${moneyTitle(stat.totalCost, 6)} · ${t("usage.avgCost")} ${money(stat.avgCostPerRequest, 4)}`}
+                    title={
+                      stat.costIncomplete
+                        ? t("usage.costIncomplete")
+                        : `${moneyTitle(stat.totalCost, 6)} · ${t("usage.avgCost")} ${money(stat.avgCostPerRequest, 4)}`
+                    }
                   >
-                    {money(stat.totalCost, 2)}
+                    {usageCostLabel(
+                      stat.totalCost,
+                      stat.costIncomplete,
+                      money(stat.totalCost, 2),
+                      t("usage.unpriced"),
+                    )}
                   </td>
                   <td
                     className={cn(usageTable.td, usageTable.groupGap)}

@@ -386,10 +386,12 @@ export function PricingConfigPanel() {
             <thead>
               <tr className={usageTable.headRow}>
                 <th className={usageTable.th}>{t("usage.model")}</th>
-                <th className={usageTable.th}>{t("usage.inputTokens")}</th>
-                <th className={usageTable.th}>{t("usage.outputTokens")}</th>
-                <th className={usageTable.th}>{t("usage.cacheReadTokens")}</th>
-                <th className={usageTable.th}>
+                <th className={usageTable.thEnd}>{t("usage.inputTokens")}</th>
+                <th className={usageTable.thEnd}>{t("usage.outputTokens")}</th>
+                <th className={usageTable.thEnd}>
+                  {t("usage.cacheReadTokens")}
+                </th>
+                <th className={usageTable.thEnd}>
                   {t("usage.pricing.cacheWrite")}
                 </th>
                 <th className="w-[72px]" aria-label={t("common.actions")} />
@@ -425,16 +427,16 @@ export function PricingConfigPanel() {
                           </span>
                         </span>
                       </td>
-                      <td className={usageTable.td}>
+                      <td className={usageTable.tdEnd}>
                         {formatUnitPrice(model.inputCostPerMillion)}
                       </td>
-                      <td className={usageTable.td}>
+                      <td className={usageTable.tdEnd}>
                         {formatUnitPrice(model.outputCostPerMillion)}
                       </td>
-                      <td className={usageTable.td}>
+                      <td className={usageTable.tdEnd}>
                         {formatUnitPrice(model.cacheReadCostPerMillion)}
                       </td>
-                      <td className={cn(usageTable.td, "text-fg-2")}>
+                      <td className={cn(usageTable.tdEnd, "text-fg-2")}>
                         {formatUnitPrice(model.cacheCreationCostPerMillion)}
                       </td>
                       <td className="whitespace-nowrap pe-1 text-end">

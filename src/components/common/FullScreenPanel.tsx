@@ -80,7 +80,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   children,
   footer,
   contentClassName,
-  motionPreset = "none",
+  motionPreset = "fade",
   trackUnsavedChanges = false,
 }) => {
   // 面板关掉后组件可能还挂着：只在打开时登记，关掉即撤销

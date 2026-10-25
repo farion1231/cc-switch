@@ -1,3 +1,4 @@
+import { usageCostLabel } from "@/components/usage/format";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -44,6 +45,7 @@ export interface UsageTrendStatLike {
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
   totalCost: string | number;
+  costIncomplete?: boolean;
 }
 
 export interface UsageTrendChartPoint {
@@ -64,6 +66,7 @@ export interface UsageTrendChartPoint {
   /** 真实消耗 Tokens = 新增输入 + 输出 + 缓存写入 + 缓存命中（和指标卡同口径） */
   tokens: number;
   cost: number | null;
+  costIncomplete?: boolean;
   /** 缓存命中率（0–1）= 缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中），和指标条同口径；没有输入时为 null */
   hitRate: number | null;
 }
@@ -173,6 +176,7 @@ export function buildUsageTrendChartData(
           stat.totalCacheCreationTokens +
           stat.totalCacheReadTokens,
         cost: cost ?? null,
+        costIncomplete: stat.costIncomplete,
         hitRate: hitRateOf(stat),
       };
     }) || []
@@ -348,7 +352,14 @@ export function UsageTrendChart({
           />
           <span className="text-fg-2">{metricLabel}</span>
           <span className="ms-auto ps-3">
-            {formatMetric(point ? point[metric] : payload[0]?.value)}
+            {metric === "cost" && point
+              ? usageCostLabel(
+                  point.cost,
+                  point.costIncomplete,
+                  money(point.cost, 4),
+                  t("usage.unpriced"),
+                )
+              : formatMetric(point ? point[metric] : payload[0]?.value)}
           </span>
         </div>
       </div>
@@ -369,6 +380,9 @@ export function UsageTrendChart({
         })}
       </h2>
 
+      {metric === "cost" && trends?.some((stat) => stat.costIncomplete) && (
+        <p className="text-caption text-fg-3">{t("usage.costIncomplete")}</p>
+      )}
       <div className="mt-1 h-[132px] w-full">
         {isLoading ? (
           <div className="flex h-full items-center justify-center">

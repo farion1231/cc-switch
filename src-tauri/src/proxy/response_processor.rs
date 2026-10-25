@@ -317,6 +317,41 @@ pub async fn handle_non_streaming(
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
     }
 
+    // Hook: 响应体指纹替换（通过 extra 配置驱动，无 extra 则跳过）
+    let original_len = body_bytes.len();
+    let body_bytes: Bytes = if let Some(meta) = ctx.provider.meta.as_ref() {
+        let mut replaced_body: Option<Vec<u8>> = None;
+        crate::proxy::hooks::HookRegistry::global().with_provider_hooks(meta, |hooks| {
+            for hook in hooks {
+                if let Some(modified) = hook.on_response_body(meta, &body_bytes) {
+                    replaced_body = Some(modified);
+                    break;
+                }
+            }
+        });
+        match replaced_body {
+            Some(b) => b.into(),
+            None => body_bytes,
+        }
+    } else {
+        body_bytes
+    };
+
+    // Hook 可能返回不同长度的 body。此时原 Content-Length
+    // 已失真（截断或读到垃圾字节）；若 read_decoded_body 已解压 gzip，实体头
+    // 已被剥除但 Content-Length 仍缺。仅在 body 真正被改动时重写头部，避免
+    // 对未改写的响应造成无谓变更。
+    if body_bytes.len() != original_len {
+        // 固定长度 body：剥除可能存在的 Transfer-Encoding: chunked，并按新长度
+        // 设置 Content-Length。同时移除 Content-Encoding: gzip —— body 已是明文
+        // JSON，保留该头会让客户端尝试解压明文并失败。
+        response_headers.remove(axum::http::header::TRANSFER_ENCODING);
+        response_headers.remove(axum::http::header::CONTENT_ENCODING);
+        if let Ok(len_value) = axum::http::HeaderValue::from_str(&body_bytes.len().to_string()) {
+            response_headers.insert(axum::http::header::CONTENT_LENGTH, len_value);
+        }
+    }
+
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
     for (key, value) in response_headers.iter() {

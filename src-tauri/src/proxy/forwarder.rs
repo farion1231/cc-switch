@@ -1809,6 +1809,15 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        let mut url = url;
+        if let Some(meta) = provider.meta.as_ref() {
+            crate::proxy::hooks::HookRegistry::global().with_provider_hooks(meta, |hooks| {
+                for hook in hooks {
+                    hook.on_build_url(meta, &mut url);
+                }
+            });
+        }
+
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
         // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。
@@ -2070,6 +2079,14 @@ impl RequestForwarder {
                 }
             }
         }
+        // Hook: 指纹替换（通过 extra 配置驱动，无 extra 则跳过）
+        if let Some(meta) = provider.meta.as_ref() {
+            crate::proxy::hooks::HookRegistry::global().with_provider_hooks(meta, |hooks| {
+                for hook in hooks {
+                    hook.on_request_body(&mut filtered_body, meta);
+                }
+            });
+        }
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
             .get("model")
@@ -2275,6 +2292,37 @@ impl RequestForwarder {
                 Vec::new()
             };
 
+        // 由匹配的扩展解析本次请求的认证头；客户端连接池不保存认证信息。
+        if let Some(meta) = provider.meta.as_ref() {
+            let meta_clone = meta.clone();
+            let app_handle_clone = self.app_handle.clone();
+            let body_ref = &filtered_body;
+            let extra_header_futures = crate::proxy::hooks::HookRegistry::global()
+                .with_provider_hooks(meta, |hooks| {
+                    hooks
+                        .iter()
+                        .map(|h| {
+                            h.on_auth_headers(
+                                &meta_clone,
+                                app_handle_clone.as_ref(),
+                                Some(body_ref),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                });
+            for fut in extra_header_futures {
+                let headers = fut.await;
+                for (name, value) in headers {
+                    if let (Ok(hn), Ok(hv)) = (
+                        http::HeaderName::try_from(name.as_str()),
+                        http::HeaderValue::from_str(&value),
+                    ) {
+                        auth_headers.push((hn, hv));
+                    }
+                }
+            }
+        }
+
         // 自定义 User-Agent：与 stream_check / model_fetch 共用 parse_custom_user_agent，
         // 运行时静默忽略非法值（前端在输入处给非阻断提示，不在保存时阻断）。
         // Copilot 指纹 UA 不可覆盖。
@@ -2416,7 +2464,15 @@ impl RequestForwarder {
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
 
-        for (key, value) in headers {
+        let mut outbound_source_headers = headers.clone();
+        if let Some(meta) = provider.meta.as_ref() {
+            crate::proxy::hooks::HookRegistry::global().with_provider_hooks(meta, |hooks| {
+                for hook in hooks {
+                    hook.filter_outbound_headers(meta, &mut outbound_source_headers);
+                }
+            });
+        }
+        for (key, value) in &outbound_source_headers {
             let key_str = key.as_str();
 
             // --- host — 原位替换为上游 host（保持客户端原始位置） ---
@@ -2725,7 +2781,7 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
+        // 获取全局代理 URL
         let upstream_proxy_url: Option<String> = super::http_client::proxy_url_for(&url);
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
@@ -2741,14 +2797,30 @@ impl RequestForwarder {
             is_copilot,
         );
 
-        // 发送请求
-        let response = if is_socks_proxy || !preserve_exact_header_case {
-            // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
-            // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
+        let (skip_tls, prefer_pooled_client) = provider
+            .meta
+            .as_ref()
+            .map(|meta| {
+                crate::proxy::hooks::HookRegistry::global().with_provider_hooks(meta, |hooks| {
+                    (
+                        hooks.iter().any(|hook| hook.skip_tls_verify(meta)),
+                        hooks.iter().any(|hook| hook.prefer_pooled_client(meta)),
+                    )
+                })
+            })
+            .unwrap_or_default();
+
+        // TLS overrides must use the configurable client; the raw path verifies certificates.
+        let response = if skip_tls
+            || prefer_pooled_client
+            || is_socks_proxy
+            || !preserve_exact_header_case
+        {
             log::debug!(
-                "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
+                "[Forwarder] Using pooled reqwest client (extension={prefer_pooled_client}, preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy}, skip_tls={skip_tls})"
             );
-            let client = super::http_client::get_for_url(&url);
+            let client = super::http_client::get_for_url_with_tls(&url, skip_tls)
+                .map_err(ProxyError::ConfigError)?;
             let mut request = client.request(method.clone(), &url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
@@ -2861,6 +2933,34 @@ impl RequestForwarder {
                 None => raw.to_vec(),
             };
             let body_text = String::from_utf8(decoded).ok();
+
+            let body_text = if let Some(meta) = provider.meta.as_ref() {
+                let hook_error = crate::proxy::hooks::HookRegistry::global().with_provider_hooks(
+                    meta,
+                    |hooks| {
+                        for hook in hooks {
+                            if let Some(err) = hook.transform_upstream_error(
+                                meta,
+                                &serde_json::from_str::<Value>(body_text.as_deref().unwrap_or(""))
+                                    .unwrap_or_default(),
+                            ) {
+                                return Some(err);
+                            }
+                        }
+                        None
+                    },
+                );
+                if let Some(ProxyError::UpstreamError {
+                    body: hook_body, ..
+                }) = hook_error
+                {
+                    hook_body
+                } else {
+                    body_text
+                }
+            } else {
+                body_text
+            };
 
             Err(ProxyError::UpstreamError {
                 status: status_code,
@@ -4218,6 +4318,7 @@ fn is_managed_account_upstream_url(url: &str) -> bool {
     host == "githubcopilot.com"
         || host.ends_with(".githubcopilot.com")
         || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
+        || crate::provider_extensions::is_managed_upstream(&host, uri.path())
         || (host == "api.x.ai" && uri.path().starts_with("/v1/"))
 }
 

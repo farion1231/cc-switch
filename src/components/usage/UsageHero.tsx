@@ -1,3 +1,4 @@
+import { usageCostLabel } from "@/components/usage/format";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
@@ -66,6 +67,7 @@ export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
   return {
     totalRequests,
     totalCost: totalCostNum.toFixed(6),
+    costIncomplete: items.some((item) => item.costIncomplete),
     totalInputTokens: input,
     totalOutputTokens: output,
     totalCacheCreationTokens: cacheCreation,
@@ -272,9 +274,23 @@ export function UsageHero({
       <div className={cn("grid", columns)}>
         <MetricCell
           label={t("usage.totalCost")}
-          value={placeholder ?? (totalCost == null ? "—" : money(totalCost, 2))}
+          value={
+            placeholder ??
+            (totalCost == null
+              ? "—"
+              : usageCostLabel(
+                  totalCost,
+                  summary?.costIncomplete,
+                  money(totalCost, 2),
+                  t("usage.unpriced"),
+                ))
+          }
           title={
-            totalCost == null ? undefined : exact(moneyTitle(totalCost, 6))
+            summary?.costIncomplete
+              ? t("usage.costIncomplete")
+              : totalCost == null
+                ? undefined
+                : exact(moneyTitle(totalCost, 6))
           }
           selected={metric === "cost"}
           onSelect={() => onMetricChange("cost")}

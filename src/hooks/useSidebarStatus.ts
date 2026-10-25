@@ -83,6 +83,7 @@ export function useSidebarStatus() {
   return {
     appStatus,
     todayCost,
+    todayCostIncomplete: todaySummary?.costIncomplete ?? false,
     todayTokens,
     todayRequests,
     todayHitRate,

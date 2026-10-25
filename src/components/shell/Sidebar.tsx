@@ -1,3 +1,4 @@
+import { usageCostLabel } from "@/components/usage/format";
 import { useRef, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
@@ -223,6 +224,7 @@ function MainDirectory({
   const {
     appStatus,
     todayCost,
+    todayCostIncomplete,
     todayTokens,
     todayRequests,
     todayHitRate,
@@ -241,7 +243,16 @@ function MainDirectory({
   const todayValue = (item: SidebarTodayItem): string | null => {
     switch (item) {
       case "cost":
-        return todayCost > 0 ? moneyShort(todayCost) : null;
+        return todayCostIncomplete
+          ? usageCostLabel(
+              todayCost,
+              true,
+              moneyShort(todayCost),
+              t("usage.unpriced"),
+            )
+          : todayCost > 0
+            ? moneyShort(todayCost)
+            : null;
       case "tokens":
         return todayTokens > 0
           ? formatTokensCompact(todayTokens, locale)

@@ -26,6 +26,7 @@ export interface RequestLog {
   cacheReadCostUsd: string;
   cacheCreationCostUsd: string;
   totalCostUsd: string;
+  costKnown?: boolean;
   isStreaming: boolean;
   latencyMs: number;
   /** 路由服务记的是精确首字；会话日志导入的是按时间戳推出来的估算值（看 dataSource） */
@@ -85,6 +86,8 @@ export interface ModelsDevSyncState {
 export interface UsageSummary {
   totalRequests: number;
   totalCost: string;
+  /** True when the amount excludes usage whose price is unknown. */
+  costIncomplete?: boolean;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCacheCreationTokens: number;
@@ -105,6 +108,8 @@ export interface DailyStats {
   date: string;
   requestCount: number;
   totalCost: string;
+  /** True when the amount excludes usage whose price is unknown. */
+  costIncomplete?: boolean;
   totalTokens: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -120,6 +125,8 @@ export interface ProviderStats {
   /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
   totalTokens: number;
   totalCost: string;
+  /** True when the amount excludes usage whose price is unknown. */
+  costIncomplete?: boolean;
   successRate: number;
   avgLatencyMs: number;
   /** 速度分子：有首字、输出 ≥ 100 token 的明细请求的输出之和（日汇总不计） */
@@ -142,6 +149,8 @@ export interface ModelStats {
   /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
   totalTokens: number;
   totalCost: string;
+  /** True when the amount excludes usage whose price is unknown. */
+  costIncomplete?: boolean;
   avgCostPerRequest: string;
   successRate: number;
   /** 速度分子分母，口径同 ProviderStats 的四个速度字段 */
@@ -328,7 +337,7 @@ type UsageCostLog = Pick<
   | "totalCostUsd"
   | "statusCode"
 > &
-  Partial<Pick<RequestLog, "costMultiplier">>;
+  Partial<Pick<RequestLog, "costMultiplier" | "costKnown">>;
 
 export function hasUsageTokens(log: UsageCostLog): boolean {
   return (
@@ -340,6 +349,7 @@ export function hasUsageTokens(log: UsageCostLog): boolean {
 }
 
 export function isUnpricedUsage(log: UsageCostLog): boolean {
+  if (log.costKnown !== undefined) return !log.costKnown;
   const totalCost = Number.parseFloat(log.totalCostUsd);
   const multiplier =
     log.costMultiplier == null

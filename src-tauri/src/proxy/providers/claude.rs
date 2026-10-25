@@ -43,6 +43,18 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         ) {
             return "openai_responses";
         }
+        // Extension hooks can force a specific api_format
+        if let Some(format) = crate::proxy::hooks::HookRegistry::global()
+            .with_provider_hooks(meta, |hooks| {
+                hooks.iter().find_map(|h| h.force_api_format(meta))
+            })
+        {
+            return match format.as_str() {
+                "openai_chat" => "openai_chat",
+                "openai_responses" => "openai_responses",
+                _ => "anthropic",
+            };
+        }
     }
 
     // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
@@ -504,6 +516,10 @@ impl ClaudeAdapter {
             return ProviderType::GitHubCopilot;
         }
 
+        if let Some(kind) = crate::provider_extensions::proxy_provider_type(provider) {
+            return kind;
+        }
+
         // 检测 OpenRouter
         if self.is_openrouter(provider) {
             return ProviderType::OpenRouter;
@@ -785,6 +801,10 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
+        // Managed extensions inject authentication per request through their hook.
+        if crate::provider_extensions::capabilities(provider).managed_auth {
+            return Some(AuthInfo::new(String::new(), AuthStrategy::ManagedExtension));
+        }
         if provider_type == ProviderType::XaiOAuth {
             return Some(AuthInfo::new(
                 "xai_oauth_placeholder".to_string(),
@@ -933,6 +953,10 @@ impl ProviderAdapter for ClaudeAdapter {
                         HeaderValue::from_static(CODEX_OAUTH_CLIENT_VERSION),
                     ),
                 ]
+            }
+            AuthStrategy::ManagedExtension => {
+                // 认证头由 forwarder 通过 meta.extra_auth_headers 配置动态注入
+                vec![]
             }
             AuthStrategy::XaiOAuth => {
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]

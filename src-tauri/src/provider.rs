@@ -624,6 +624,9 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub stack_models: Option<Vec<ClaudeStackModel>>,
+    /// Extension metadata used by registered provider integrations.
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
 }
 
 /// Stack 模式下 Claude Code 供应商发布的一个模型。

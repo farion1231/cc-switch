@@ -845,6 +845,162 @@ describe("UnifiedSkillsPanel", () => {
     dialog.mockRestore();
   });
 
+  it("closes the confirm dialog right away and shows progress while updating", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A" }),
+      makeSkill({ id: "b", name: "B" }),
+    ];
+    m.updates = [
+      { id: "a", name: "A", remoteHash: "x" },
+      { id: "b", name: "B", remoteHash: "y" },
+    ];
+    const pending: Array<(value: InstalledSkill) => void> = [];
+    m.updateSkill.mockImplementation(
+      (id: string) =>
+        new Promise<InstalledSkill>((resolve) => {
+          pending.push(() => resolve(makeSkill({ id, name: id })));
+        }),
+    );
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.updateAllCount" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "skillsPage.confirm.updateAllButton",
+      }),
+    );
+    // 第一个还没更新完，确认框已经关了，进度在按钮上
+    await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByRole("button", {
+        name: "skillsPage.confirm.updateAllButton",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "skillsPage.updatingProgress" }),
+    ).toBeDisabled();
+
+    await act(async () => pending[0]?.(makeSkill()));
+    await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(2));
+    await act(async () => pending[1]?.(makeSkill()));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "skillsPage.updatingProgress" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(m.toastSuccess).toHaveBeenCalledWith(
+      "skills.updateAllSuccess",
+      expect.anything(),
+    );
+  });
+
+  it("asks to update everything right after a check finds updates", async () => {
+    m.installed = [makeSkill({ id: "a", name: "A" })];
+    const updates = [
+      { id: "a", name: "A", remoteHash: "x" },
+      { id: "gone", name: "Gone", remoteHash: "y" },
+    ];
+    m.checkUpdates.mockImplementationOnce(async () => {
+      // 真实的 refetch 会把结果写进查询缓存
+      m.updates = updates;
+      return { data: { updates, failures: [] } };
+    });
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.checkUpdates" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "skillsPage.confirm.updateAllButton",
+      }),
+    );
+    await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(1));
+    expect(m.updateSkill).toHaveBeenCalledWith("a");
+  });
+
+  it("does not call everything up to date when a repository could not be read", async () => {
+    m.installed = [makeSkill()];
+    const failure = {
+      owner: "owner",
+      name: "repo",
+      branch: "main",
+      error: "network down",
+    };
+    m.checkUpdates.mockResolvedValueOnce({
+      data: { updates: [], failures: [failure] },
+    });
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.checkUpdates" }),
+    );
+
+    await waitFor(() =>
+      expect(m.toastWarning).toHaveBeenCalledWith(
+        "skills.updatesIncomplete",
+        expect.anything(),
+      ),
+    );
+    expect(m.toastSuccess).not.toHaveBeenCalledWith(
+      "skills.noUpdates",
+      expect.anything(),
+    );
+  });
+
+  it("shows which repositories the update check could not read", () => {
+    m.installed = [makeSkill()];
+    m.repoFailures = [
+      { owner: "owner", name: "repo", branch: "main", error: "network down" },
+    ];
+    renderPanel();
+    expect(screen.getByText("skillsPage.repoFail.title")).toBeInTheDocument();
+    expect(
+      screen.getByText("skillsPage.repoFail.updatesBody"),
+    ).toBeInTheDocument();
+  });
+
+  it("says which ZIP Skills were skipped because the folder name is taken", async () => {
+    m.installed = [makeSkill()];
+    const dialog = vi
+      .spyOn(skillsApi, "openZipFileDialog")
+      .mockResolvedValue("/tmp/team.zip");
+    m.installFromZip.mockResolvedValueOnce({
+      installed: [],
+      skipped: [
+        {
+          directory: "my-helper",
+          existingId: "local:my-helper",
+          existingName: "My Helper",
+        },
+      ],
+    });
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /skillsPage.add/ }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "skillsPage.addMenu.zip" }),
+    );
+
+    await waitFor(() =>
+      expect(m.toastWarning).toHaveBeenCalledWith(
+        "skills.installFromZip.allSkipped",
+        expect.objectContaining({
+          description: "skills.installFromZip.skippedBody",
+        }),
+      ),
+    );
+    expect(m.toastInfo).not.toHaveBeenCalledWith(
+      "skills.installFromZip.noSkillsFound",
+      expect.anything(),
+    );
+    dialog.mockRestore();
+  });
+
   it("blocks actions but not navigation while checking updates", async () => {
     m.installed = [makeSkill()];
     m.checking = true;

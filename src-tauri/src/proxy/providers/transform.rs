@@ -593,12 +593,69 @@ fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
     schema
 }
 
+fn detect_upstream_error(body: &Value) -> Option<ProxyError> {
+    if body.get("choices").is_some() {
+        return None;
+    }
+    if let Some(error_code) = body.get("error_code").and_then(|v| v.as_str()) {
+        let error_msg = body.get("error_msg").and_then(|v| v.as_str()).unwrap_or("");
+        let status = if error_code.contains("429") {
+            429
+        } else if error_code.starts_with("4")
+            || error_code.contains("400")
+            || error_code.contains("401")
+            || error_code.contains("403")
+        {
+            400
+        } else {
+            502
+        };
+        log::warn!("[Transform] 上游返回非标准错误响应 (error_code={error_code}): {error_msg}");
+        return Some(ProxyError::UpstreamError {
+            status,
+            body: Some(format!(
+                "{{\"error_code\":\"{error_code}\",\"error_msg\":\"{error_msg}\"}}"
+            )),
+        });
+    }
+    if let Some(error_obj) = body.get("error") {
+        let error_str = error_obj.to_string();
+        let status = if error_str.contains("429") || error_str.contains("rate_limit") {
+            429
+        } else {
+            502
+        };
+        log::warn!("[Transform] 上游返回 error 对象: {error_str}");
+        return Some(ProxyError::UpstreamError {
+            status,
+            body: Some(error_str),
+        });
+    }
+    None
+}
+
 /// OpenAI 响应 → Anthropic 响应
 pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
+    if let Some(upstream_err) = detect_upstream_error(&body) {
+        return Err(upstream_err);
+    }
     let choices = body
         .get("choices")
         .and_then(|c| c.as_array())
-        .ok_or_else(|| ProxyError::TransformError("No choices in response".to_string()))?;
+        .ok_or_else(|| {
+            let keys: Vec<&String> = body.as_object().map(|o| o.keys().collect()).unwrap_or_default();
+            let body_preview = body.to_string();
+            let preview = if body_preview.len() > 500 { &body_preview[..500] } else { &body_preview };
+            log::error!(
+                "[Transform] openai_to_anthropic: 响应缺少 choices 字段, 实际字段: {:?}, body 预览: {}",
+                keys, preview
+            );
+            ProxyError::TransformError(format!(
+                "No choices in response (actual fields: {:?}, preview: {})",
+                keys,
+                if body_preview.len() > 200 { format!("{}...", &body_preview[..200]) } else { body_preview.clone() }
+            ))
+        })?;
 
     let choice = choices
         .first()

@@ -559,7 +559,11 @@ async fn handle_claude_transform(
     // 场景（任意上游 is_sse、非 Codex OAuth 等）仍沿用原有流式兜底。
     let aggregate_codex_oauth_responses_sse =
         !is_stream && is_codex_oauth && api_format == "openai_responses";
-    let use_streaming = if aggregate_codex_oauth_responses_sse {
+    // Preserve JSON semantics when an extension requires a streaming-only upstream.
+    let aggregate_extension_chat_sse = !is_stream
+        && api_format == "openai_chat"
+        && crate::provider_extensions::capabilities(&ctx.provider).streaming_only_chat;
+    let use_streaming = if aggregate_codex_oauth_responses_sse || aggregate_extension_chat_sse {
         false
     } else {
         should_use_claude_transform_streaming(
@@ -692,12 +696,17 @@ async fn handle_claude_transform(
     }
 
     // 非流式响应转换 (OpenAI/Responses → Anthropic)
-    let body_timeout =
-        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
-            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+    let body_timeout = if aggregate_extension_chat_sse {
+        std::time::Duration::from_secs(if ctx.app_config.non_streaming_timeout > 0 {
+            ctx.app_config.non_streaming_timeout as u64
         } else {
-            std::time::Duration::ZERO
-        };
+            600
+        })
+    } else if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+        std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+    } else {
+        std::time::Duration::ZERO
+    };
     let enforce_codex_web_search_limit_while_aggregating =
         aggregate_codex_oauth_responses_sse && hosted_web_search_max_uses.is_some();
     let (mut response_headers, direct_anthropic_response, upstream_response) =
@@ -725,6 +734,10 @@ async fn handle_claude_transform(
             let body_str = String::from_utf8_lossy(&body_bytes);
             let upstream_response = if aggregate_codex_oauth_responses_sse {
                 responses_sse_to_response_value(&body_str)?
+            } else if aggregate_extension_chat_sse && body_looks_like_sse(&body_str) {
+                chat_sse_to_response_value(&body_str).map_err(|error| {
+                    aggregate_fallback_error(error, &response_headers, &body_str)
+                })?
             } else {
                 match serde_json::from_slice(&body_bytes) {
                     Ok(value) => value,
@@ -2930,6 +2943,22 @@ fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
                 return Err(ProxyError::TransformError(message));
             }
 
+            // MaaS (InferHub) 非标准错误格式：顶层 error_code + error_msg，
+            // 无 choices 字段。HTTP 200 但实际是 429 限流等错误。
+            if let Some(error_code) = chunk.get("error_code").and_then(|v| v.as_str()) {
+                let error_msg = chunk
+                    .get("error_msg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let status = if error_code.contains("429") { 429 } else { 502 };
+                return Err(ProxyError::UpstreamError {
+                    status,
+                    body: Some(format!(
+                        "{{\"error_code\":\"{error_code}\",\"error_msg\":\"{error_msg}\"}}"
+                    )),
+                });
+            }
+
             // 首个"有意义"的值锁定 envelope。Azure 的 content-filter 前置块带
             // ""/0 占位（streaming.rs 有同款空串守卫），不能让占位值冻结字段
             for (slot, key) in [
@@ -4342,3 +4371,7 @@ mod stack_tests {
         assert_eq!(body, json!({ "data": [], "has_more": false }));
     }
 }
+
+#[cfg(test)]
+#[path = "../huawei/response_tests.rs"]
+mod extension_response_tests;

@@ -20,6 +20,7 @@ mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
 pub mod hermes_config;
+mod huawei;
 mod init_status;
 mod jsonc_document;
 mod kimi_config;
@@ -40,6 +41,7 @@ mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
+mod provider_extensions;
 mod proxy;
 mod services;
 mod session_manager;
@@ -63,6 +65,10 @@ pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use grok_config::get_grok_config_path;
+pub use huawei::auth::manager::{
+    decrypt_password, encrypt_password, HuaweiCodeAgentAuthManager, HuaweiCodeAgentToken,
+};
+pub use huawei::proxy_processor::{resolve_extra_auth_headers, ExtraAuthHeader};
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
@@ -72,6 +78,7 @@ pub use mcp::{
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+pub use proxy::providers::ProviderType;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
@@ -1297,6 +1304,8 @@ pub fn run() {
                 log::info!("✓ CodexOAuthManager initialized");
             }
 
+            crate::huawei::init(app);
+
             // 初始化 xAI OAuthManager (Grok API 反代)
             {
                 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
@@ -1364,6 +1373,10 @@ pub fn run() {
                 }
 
                 initialize_common_config_snippets(&state);
+
+                // 清理残留的 hook 状态（连通性代理端口 + ~/.claude.json 中的 PROXY_MANAGED）。
+                // 必须排在 mode::controller::startup 接管之前，否则会基于残留状态做投影。
+                state.proxy_service.cleanup_residual_hook_state();
 
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
@@ -1434,6 +1447,9 @@ pub fn run() {
                                     "Session usage sync completed with {} error(s)",
                                     result.errors.len()
                                 );
+                                for error in &result.errors {
+                                    log::warn!("[SESSION-SYNC] {error}");
+                                }
                             }
                             Ok(_) => {}
                             Err(error) => log::warn!("Session usage blocking task failed: {error}"),
@@ -1592,6 +1608,16 @@ pub fn run() {
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
             commands::get_codex_oauth_models,
+            // Huawei CodeAgent auth commands
+            crate::huawei::auth::commands::huawei_codeagent_2_start_login,
+            crate::huawei::auth::commands::huawei_codeagent_2_get_status,
+            crate::huawei::auth::commands::huawei_codeagent_2_logout,
+            crate::huawei::auth::commands::huawei_codeagent_2_refresh_token,
+            crate::huawei::auth::commands::huawei_codeagent_2_fetch_models,
+            crate::huawei::auth::commands::huawei_codeagent_2_fetch_quota,
+            crate::huawei::auth::commands::huawei_codeagent_2_list_accounts,
+            crate::huawei::auth::commands::huawei_codeagent_2_remove_account,
+            crate::huawei::auth::commands::huawei_codeagent_2_set_default_account,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,
             commands::get_coding_plan_quota,

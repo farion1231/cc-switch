@@ -29,3 +29,6 @@ copilot-api
 .history
 CODEBUDDY.md
 mainWindow.js
+
+# codegraph index cache
+.codegraph/

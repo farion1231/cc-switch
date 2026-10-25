@@ -472,3 +472,14 @@ export function formatRelativeTime(
   if (hours < 24) return t("usage.hoursAgo", { count: hours });
   return t("usage.daysAgo", { count: Math.floor(hours / 24) });
 }
+
+/** An incomplete amount is a known subtotal, never a free-usage claim. */
+export function usageCostLabel(
+  amount: unknown,
+  incomplete: boolean | undefined,
+  formatted: string,
+  unknownLabel: string,
+): string {
+  if (!incomplete) return formatted;
+  return (parseFiniteNumber(amount) ?? 0) > 0 ? `≥ ${formatted}` : unknownLabel;
+}

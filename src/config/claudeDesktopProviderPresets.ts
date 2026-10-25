@@ -13,10 +13,7 @@ import type { PresetTheme } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 
 export type ClaudeDesktopApiFormat =
-  | "anthropic"
-  | "openai_chat"
-  | "openai_responses"
-  | "gemini_native";
+  "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
 
 export interface ClaudeDesktopRoutePreset {
   routeId: string;
@@ -57,7 +54,8 @@ export interface ClaudeDesktopProviderPreset extends PresetFamilyFields {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  providerType?: string;
+  appTarget?: "claude" | "claude_desktop";
   requiresOAuth?: boolean;
   // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
   hidden?: boolean;

@@ -85,6 +85,8 @@ impl Database {
             log::warn!("Pre-prune cost backfill failed, pruning anyway: {e}");
         }
 
+        Self::resolve_pending_usage_costs(&conn)?;
+
         // Use a savepoint for atomicity
         conn.execute("SAVEPOINT rollup_prune;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -127,7 +129,7 @@ impl Database {
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
-                 input_token_semantics, total_cost_usd, avg_latency_ms)
+                 input_token_semantics, total_cost_usd, avg_latency_ms, cost_incomplete)
             SELECT
                 d, a, p, m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
@@ -142,7 +144,8 @@ impl Database {
                     THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.request_count, 0)
                           + new_lat * new_req)
                          / (COALESCE(old.request_count, 0) + new_req)
-                    ELSE 0 END
+                    ELSE 0 END,
+                MAX(COALESCE(old.cost_incomplete, 0), new_incomplete)
             FROM (
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
@@ -156,7 +159,8 @@ impl Database {
                     COALESCE(SUM(l.cache_read_tokens), 0) as new_cr,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as new_cc,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost,
-                    COALESCE(AVG(l.latency_ms), 0) as new_lat
+                    COALESCE(AVG(l.latency_ms), 0) as new_lat,
+                    COALESCE(MAX(1 - COALESCE(l.cost_known, 0)), 0) as new_incomplete
                 FROM proxy_request_logs l
                 WHERE l.created_at < ?1 AND {effective_filter}
                 GROUP BY d, a, p, m, rm, pm

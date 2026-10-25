@@ -1,3 +1,4 @@
+import { usageCostLabel } from "@/components/usage/format";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
@@ -289,7 +290,12 @@ export function UsageTab({
           <div className="grid grid-cols-2 gap-1.5">
             <Stat
               label={t("usage.totalCost")}
-              value={money(summary.totalCost, 2)}
+              value={usageCostLabel(
+                summary.totalCost,
+                summary.costIncomplete,
+                money(summary.totalCost, 2),
+                t("usage.unpriced"),
+              )}
             />
             <Stat
               label={t("usage.totalRequests")}

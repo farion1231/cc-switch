@@ -211,7 +211,7 @@ impl Database {
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
-            total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
+            total_cost_usd TEXT NOT NULL DEFAULT '0', cost_known INTEGER, latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
             duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
             cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
@@ -297,6 +297,7 @@ impl Database {
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
                 input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
+                cost_incomplete INTEGER NOT NULL DEFAULT 1,
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
             )",
@@ -548,7 +549,9 @@ impl Database {
                         Self::set_user_version(conn, 16)?;
                     }
                     16 => {
-                        log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
+                        log::info!(
+                            "迁移数据库从 v16 到 v17（添加会话用量持久去重账本 + huawei 重命名）"
+                        );
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
                     }
@@ -558,6 +561,10 @@ impl Database {
                         Self::set_user_version(conn, 18)?;
                     }
                     18 => {
+                        log::info!(
+                            "迁移数据库从 v18 到 v19（CodeAgent 2.0 升级 app-id 和上游地址；mcp_servers/skills 新增 enabled_mcode 列）"
+                        );
+                        Self::migrate_v18_to_v19(conn)?;
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
@@ -628,6 +635,10 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+            // Local compatibility fields must not consume upstream's version numbers.
+            // Run even when user_version already matches main, including import paths.
+            Self::ensure_compatibility_columns(conn)?;
+            Self::create_request_logs_usage_indexes_if_supported(conn)?;
             Ok(())
         })();
 
@@ -1632,8 +1643,10 @@ impl Database {
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
     }
 
-    /// v16 -> v17: preserve session request identities after detail rollup.
+    /// v16 -> v17: preserve session request identities after detail rollup
+    /// AND rename huawei provider types.
     fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        // Main: Create session_usage_dedup table
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS session_usage_dedup (
                 data_source TEXT NOT NULL,
@@ -1667,6 +1680,193 @@ impl Database {
                 "INTEGER",
             )?;
         }
+
+        if !Self::table_exists(conn, "providers")?
+            || !Self::has_column(conn, "providers", "provider_type")?
+        {
+            return Ok(());
+        }
+        // Stash: Rename huawei provider types
+        conn.execute(
+            "UPDATE providers SET provider_type = 'huawei_codeagent_2'
+             WHERE provider_type IN ('huawei_w3', 'huawei_idea', 'huawei-w3', 'huawei-idea')",
+            [],
+        )?;
+        let rows: Vec<(String,)> = conn
+            .prepare("SELECT meta FROM providers WHERE provider_type = 'huawei_codeagent_2'")
+            .map_err(|e| AppError::Database(format!("查询 providers 失败: {e}")))?
+            .query_map([], |row| Ok((row.get::<_, String>(0)?,)))
+            .map_err(|e| AppError::Database(format!("查询 providers 失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(format!("收集 providers 失败: {e}")))?;
+        for (meta_str,) in rows {
+            if meta_str.is_empty() {
+                continue;
+            }
+            let mut meta: serde_json::Value = match serde_json::from_str(&meta_str) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let mut changed = false;
+            if let Some(pt) = meta.pointer("/provider_type").and_then(|v| v.as_str()) {
+                if matches!(
+                    pt,
+                    "huawei_w3" | "huawei_idea" | "huawei-w3" | "huawei-idea"
+                ) {
+                    if let Some(obj) = meta.as_object_mut() {
+                        obj.insert(
+                            "provider_type".to_string(),
+                            serde_json::Value::String("huawei_codeagent_2".to_string()),
+                        );
+                        changed = true;
+                    }
+                }
+            }
+            if let Some(headers) = meta
+                .pointer_mut("/extra/extraAuthHeaders")
+                .and_then(|v| v.as_array_mut())
+            {
+                for header in headers.iter_mut() {
+                    if let Some(ts) = header.get("tokenSource").and_then(|v| v.as_str()) {
+                        if ts == "huawei_w3" {
+                            header["tokenSource"] =
+                                serde_json::Value::String("huawei_codeagent_2".to_string());
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if changed {
+                let new_meta = serde_json::to_string(&meta).unwrap_or(meta_str.clone());
+                conn.execute(
+                    "UPDATE providers SET meta = ?1 WHERE provider_type = 'huawei_codeagent_2' AND meta = ?2",
+                    rusqlite::params![new_meta, meta_str],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// v18 -> v19: CodeAgent 2.0 升级 app-id 和上游地址
+    ///
+    /// 华为上游已废弃 `app-id: CodeAgent2.0` 和旧地址 `codeagentcli.rnd.huawei.com`，
+    /// 返回 403 "当前版本暂不支持使用"。此迁移将已有 2.0 供应商的配置更新为与 3.0 一致：
+    /// - `settings_config.env.ANTHROPIC_BASE_URL` → snapengine 地址
+    /// - `meta.extra.extraAuthHeaders` → 8 个新认证头（与 3.0 相同）
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "providers")?
+            || !Self::has_column(conn, "providers", "provider_type")?
+        {
+            return Ok(());
+        }
+        let new_base_url = "https://snapengine.cida.cce.prod-szv-g.dragon.tools.huawei.com/api/v2";
+        let new_auth_headers = serde_json::json!([
+            {"name":"x-auth-token","tokenSource":"huawei_codeagent_2"},
+            {"name":"Authorization","tokenSource":"huawei_codeagent_2","valuePrefix":"Bearer "},
+            {"name":"X-snap-traceid","tokenSource":"uuid"},
+            {"name":"Agent-Type","value":"AgentCenter"},
+            {"name":"app-id","value":"com.huawei.devmind.codebot.apibot"},
+            {"name":"x-innercc-request-kind","value":"chat"},
+            {"name":"x-error-propagation","value":"true"},
+            {"name":"Model-Id","tokenSource":"request_model"}
+        ]);
+
+        let rows: Vec<(String, String)> = conn
+            .prepare("SELECT id, meta FROM providers WHERE provider_type = 'huawei_codeagent_2'")
+            .map_err(|e| {
+                AppError::Database(format!("查询 huawei_codeagent_2 providers 失败: {e}"))
+            })?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| {
+                AppError::Database(format!("查询 huawei_codeagent_2 providers 失败: {e}"))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                AppError::Database(format!("收集 huawei_codeagent_2 providers 失败: {e}"))
+            })?;
+
+        for (provider_id, meta_str) in rows {
+            if meta_str.is_empty() {
+                continue;
+            }
+            let mut meta: serde_json::Value = match serde_json::from_str(&meta_str) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let mut changed = false;
+
+            // 更新 extraAuthHeaders。
+            // `ProviderMeta.extra` 使用 `#[serde(flatten)]`，所以 `extraAuthHeaders`
+            // 是 `meta` 的顶层字段，而不是嵌套在 `extra` 子对象里。直接从 `meta`
+            // 顶层读取，否则迁移会变成空操作，存量 2.0 行继续带着失效的
+            // `app-id=CodeAgent2.0` 头，升级后上游 403。
+            if let Some(obj) = meta.as_object_mut() {
+                let old_headers = obj.get("extraAuthHeaders").cloned();
+                if let Some(old) = &old_headers {
+                    let is_old_2_0 = old.as_array().is_some_and(|arr| {
+                        arr.iter().any(|h| {
+                            h.get("name").and_then(|v| v.as_str()) == Some("app-id")
+                                && h.get("value").and_then(|v| v.as_str()) == Some("CodeAgent2.0")
+                        })
+                    });
+                    if is_old_2_0 {
+                        obj.insert("extraAuthHeaders".to_string(), new_auth_headers.clone());
+                        changed = true;
+                    }
+                }
+            }
+
+            if changed {
+                let new_meta = serde_json::to_string(&meta).unwrap_or(meta_str.clone());
+                conn.execute(
+                    "UPDATE providers SET meta = ?1 WHERE id = ?2",
+                    rusqlite::params![new_meta, provider_id],
+                )?;
+                log::info!("已更新 provider {provider_id} 的 extraAuthHeaders");
+            }
+        }
+
+        // 更新 settings_config 中的 ANTHROPIC_BASE_URL
+        let setting_rows: Vec<(String, String)> = conn
+            .prepare("SELECT id, settings_config FROM providers WHERE provider_type = 'huawei_codeagent_2'")
+            .map_err(|e| AppError::Database(format!("查询 settings_config 失败: {e}")))?
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| AppError::Database(format!("查询 settings_config 失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(format!("收集 settings_config 失败: {e}")))?;
+
+        for (provider_id, settings_str) in setting_rows {
+            if settings_str.is_empty() {
+                continue;
+            }
+            let mut settings: serde_json::Value = match serde_json::from_str(&settings_str) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let mut changed = false;
+            if let Some(env) = settings.get_mut("env").and_then(|v| v.as_object_mut()) {
+                if let Some(base_url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
+                    if base_url.contains("codeagentcli.rnd.huawei.com") {
+                        env.insert(
+                            "ANTHROPIC_BASE_URL".to_string(),
+                            serde_json::Value::String(new_base_url.to_string()),
+                        );
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                let new_settings = serde_json::to_string(&settings).unwrap_or(settings_str);
+                conn.execute(
+                    "UPDATE providers SET settings_config = ?1 WHERE id = ?2",
+                    rusqlite::params![new_settings, provider_id],
+                )?;
+                log::info!("已更新 provider {provider_id} 的 ANTHROPIC_BASE_URL");
+            }
+        }
+
         Ok(())
     }
 
@@ -3764,6 +3964,10 @@ impl Database {
             return Ok(());
         }
 
+        if Self::has_column(conn, "proxy_request_logs", "cost_known")? {
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_cost_pending ON proxy_request_logs(cost_known) WHERE cost_known IS NULL", [])?;
+        }
+
         let has_app_type = Self::has_column(conn, "proxy_request_logs", "app_type")?;
         let has_created_at = Self::has_column(conn, "proxy_request_logs", "created_at")?;
         if has_app_type && has_created_at {
@@ -3865,7 +4069,7 @@ impl Database {
         Ok(false)
     }
 
-    fn add_column_if_missing(
+    pub(super) fn add_column_if_missing(
         conn: &Connection,
         table: &str,
         column: &str,
@@ -4212,6 +4416,36 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+    #[test]
+    fn main_version_repairs_missing_cursors_without_resetting_progress() -> Result<(), AppError> {
+        for has_byte_offset in [false, true] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch(
+                "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY, last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL, last_synced_at INTEGER NOT NULL);
+                INSERT INTO session_log_sync VALUES ('old.jsonl', 10, 42, 20);",
+            )?;
+            if has_byte_offset {
+                conn.execute_batch(
+                    "ALTER TABLE session_log_sync ADD COLUMN last_byte_offset INTEGER;
+                    UPDATE session_log_sync SET last_byte_offset = 123;",
+                )?;
+            }
+            Database::set_user_version(&conn, 22)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            let row: (i64, Option<i64>, Option<i64>) = conn.query_row(
+                "SELECT last_line_offset, last_byte_offset, last_tail_fingerprint FROM session_log_sync",
+                [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            assert_eq!(
+                row,
+                (42, if has_byte_offset { Some(123) } else { None }, None)
+            );
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        }
         Ok(())
     }
 }

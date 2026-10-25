@@ -129,6 +129,9 @@ pub enum AuthStrategy {
     /// 使用动态获取的 OpenAI access_token（通过 Device Code 流程获取）
     CodexOAuth,
 
+    /// Authentication is supplied by the matching provider hook for each request.
+    ManagedExtension,
+
     /// xAI OAuth（Grok API）
     ///
     /// - Header: `Authorization: Bearer <access_token>`
@@ -252,6 +255,7 @@ mod tests {
             AuthStrategy::GoogleOAuth,
             AuthStrategy::GitHubCopilot,
             AuthStrategy::CodexOAuth,
+            AuthStrategy::ManagedExtension,
         ];
 
         for (i, s1) in strategies.iter().enumerate() {

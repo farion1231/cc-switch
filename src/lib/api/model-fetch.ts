@@ -49,6 +49,7 @@ export async function fetchModelsForConfig(
   modelsUrl?: string,
   customUserAgent?: string,
   options?: ModelFetchOptions,
+  extraAuthHeaders?: Array<{ name: string; value?: string; tokenSource?: string }>,
 ): Promise<FetchedModel[]> {
   return invoke("fetch_models_for_config", {
     baseUrl,
@@ -58,6 +59,9 @@ export async function fetchModelsForConfig(
     customUserAgent,
     apiFormat: options?.apiFormat,
     requestHeaders: options?.requestHeaders,
+    extraAuthHeaders: extraAuthHeaders
+      ? JSON.stringify(extraAuthHeaders)
+      : undefined,
   });
 }
 

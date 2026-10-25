@@ -1497,6 +1497,7 @@ export const setCodexModelName = (
 // ========== Codex [agents] subagent defaults ==========
 
 // 子代理的默认模型和推理强度（Codex 的 `[agents]` 表）。后端把这两个键当关键字段，随供应商
+// 子代理的默认模型和推理强度（Codex 的 `[agents]` 表）。后端把这两个键当关键字段，随供应商
 // 切换；聚合模式下不写行里的，改用聚合页签「聚合设置」里的设备级设置。
 export type CodexAgentsStringKey =
   | "default_subagent_model"

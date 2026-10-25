@@ -238,6 +238,10 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // 通用扩展字段：非核心供应商扩展通过 Rust 端 #[serde(flatten)] 自动收入 extra HashMap。
+  // 扩展字段包括：fingerprintReplacements, extraAuthHeaders, skipTlsVerify,
+  // stripPathPrefix, headerMode, allowedHeaders, errorFormat 等。
+  [key: string]: unknown;
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
 }

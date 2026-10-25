@@ -25,7 +25,7 @@ export default defineConfig(({ command }) => ({
     },
   },
   server: {
-    port: 3000,
+    port: 5180,
     strictPort: true,
   },
   resolve: {

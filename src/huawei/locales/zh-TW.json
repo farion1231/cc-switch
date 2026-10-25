@@ -1,0 +1,38 @@
+{
+  "huaweiCodeAgent2": {
+    "title": "華為 CodeAgent 認證",
+    "authCenterTitle": "華為 CodeAgent",
+    "authCenterDescription": "管理華為 CodeAgent 帳號",
+    "loggedIn": "已登入",
+    "notLoggedIn": "未認證",
+    "login": "登入",
+    "logout": "登出",
+    "username": "使用者名稱",
+    "password": "密碼",
+    "loginSuccess": "華為 CodeAgent 登入成功",
+    "loginFailed": "華為 CodeAgent 登入失敗: {{error}}",
+    "emptyCredentials": "請輸入使用者名稱和密碼",
+    "tokenValid": "Token 有效（剩餘 {{minutes}} 分鐘）",
+    "tokenExpired": "Token 已過期",
+    "description": "使用華為 CodeAgent 帳號認證存取內部 LLM 服務",
+    "loginRequired": "請先登入華為 CodeAgent",
+    "accountCount": "{{count}} 個可用帳號",
+    "selectAccount": "選擇帳號",
+    "selectAccountPlaceholder": "選擇華為 CodeAgent 帳號",
+    "useDefaultAccount": "使用預設帳號",
+    "accounts": "華為 CodeAgent 帳號",
+    "defaultAccount": "預設",
+    "expired": "憑證已失效",
+    "reauthRequired": "需要重新登入",
+    "setAsDefault": "設為預設",
+    "removeAccount": "移除帳號",
+    "addOrReauth": "新增帳號或重新登入",
+    "logoutAll": "移除所有帳號"
+  },
+  "providerForm": {
+    "presets": {
+      "huaweiCodeAgent2": "華為 CodeAgent 2.0",
+      "huaweiCodeAgent3": "華為 CodeAgent 3.0"
+    }
+  }
+}

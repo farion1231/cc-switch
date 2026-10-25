@@ -1,3 +1,4 @@
+import { usageCostLabel } from "@/components/usage/format";
 import { Fragment, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Loader2 } from "lucide-react";
@@ -39,6 +40,7 @@ interface DayCell {
   tokens: number;
   requests: number;
   cost: number;
+  costIncomplete: boolean;
   future: boolean;
 }
 
@@ -49,7 +51,12 @@ interface SpanGrid {
   end: Date;
   weeks: DayCell[][];
   monthLabels: (number | null)[];
-  totals: { tokens: number; requests: number; cost: number };
+  totals: {
+    tokens: number;
+    requests: number;
+    cost: number;
+    costIncomplete: boolean;
+  };
 }
 
 interface HoverState {
@@ -210,7 +217,7 @@ function buildSpan(
   const start = spanStart(today, index);
   const end = index === 0 ? today : addDays(spanStart(today, index - 1), -1);
   const weeks: DayCell[][] = [];
-  const totals = { tokens: 0, requests: 0, cost: 0 };
+  const totals = { tokens: 0, requests: 0, cost: 0, costIncomplete: false };
   for (let w = 0; w < WEEKS; w++) {
     const column: DayCell[] = [];
     for (let d = 0; d < 7; d++) {
@@ -224,11 +231,13 @@ function buildSpan(
         tokens: stat ? metricValue(stat, "tokens") : 0,
         requests: stat?.requestCount ?? 0,
         cost: stat ? metricValue(stat, "cost") : 0,
+        costIncomplete: stat?.costIncomplete ?? false,
         future: date.getTime() > today.getTime(),
       };
       totals.tokens += cell.tokens;
       totals.requests += cell.requests;
       totals.cost += cell.cost;
+      totals.costIncomplete ||= cell.costIncomplete;
       column.push(cell);
     }
     weeks.push(column);
@@ -332,6 +341,9 @@ export function UsageHeatmap({
         </p>
       </div>
 
+      {metric === "cost" && trends?.some((stat) => stat.costIncomplete) && (
+        <p className="text-caption text-fg-3">{t("usage.costIncomplete")}</p>
+      )}
       {isLoading ? (
         <div className="flex h-[150px] items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-fg-3" />
@@ -350,7 +362,12 @@ export function UsageHeatmap({
                 {t("usage.heatmap.spanSummary", {
                   tokens: formatTokensShort(span.totals.tokens, language),
                   requests: formatTokensShort(span.totals.requests, language),
-                  cost: money(span.totals.cost, 2),
+                  cost: usageCostLabel(
+                    span.totals.cost,
+                    span.totals.costIncomplete,
+                    money(span.totals.cost, 2),
+                    t("usage.unpriced"),
+                  ),
                 })}
               </span>
             </div>
@@ -434,6 +451,7 @@ export function UsageHeatmap({
             tokens={hover.cell.tokens}
             requests={hover.cell.requests}
             cost={hover.cell.cost}
+            costIncomplete={hover.cell.costIncomplete}
             hitRate={metric === "hitRate" ? hover.cell.hitRate : undefined}
           />
         </div>

@@ -1,3 +1,4 @@
+import { usageCostLabel } from "@/components/usage/format";
 import { useTranslation } from "react-i18next";
 import { formatHitRatePercent, formatTokensShort } from "./format";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
@@ -8,6 +9,7 @@ interface UsageTooltipCardProps {
   requests: number;
   /** 美元；null 表示没有可计价的数据 */
   cost: number | null;
+  costIncomplete?: boolean;
   /** 传了才多显示一行缓存命中率（0–1）；null 表示没有输入、无从算起 */
   hitRate?: number | null;
 }
@@ -18,6 +20,7 @@ export function UsageTooltipCard({
   tokens,
   requests,
   cost,
+  costIncomplete,
   hitRate,
 }: UsageTooltipCardProps) {
   const { t, i18n } = useTranslation();
@@ -34,7 +37,12 @@ export function UsageTooltipCard({
     },
     {
       label: t("usage.trend.cost"),
-      value: cost == null ? "—" : money(cost, 2),
+      value: usageCostLabel(
+        cost,
+        costIncomplete,
+        cost == null ? "—" : money(cost, 2),
+        t("usage.unpriced"),
+      ),
     },
     ...(hitRate === undefined
       ? []

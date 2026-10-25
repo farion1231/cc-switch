@@ -53,15 +53,13 @@ export interface ProviderPreset extends PresetFamilyFields {
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
   // - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
   apiFormat?:
-    | "anthropic"
-    | "openai_chat"
-    | "openai_responses"
-    | "gemini_native";
+    "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  providerType?: string;
+  appTarget?: "claude" | "claude_desktop";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -72,6 +70,7 @@ export interface ProviderPreset extends PresetFamilyFields {
   // 获取模型列表使用的完整 URL（覆写自动候选逻辑）
   // 缺省时后端基于 baseURL 自动尝试 /v1/models、/models 以及剥离已知兼容子路径后的变体。
   modelsUrl?: string;
+  fingerprintReplacements?: Array<{ from: string; to: string }>;
 }
 
 export const providerPresets: ProviderPreset[] = [

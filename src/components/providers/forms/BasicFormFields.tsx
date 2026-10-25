@@ -120,6 +120,13 @@ export function BasicFormFields({
                 color={effectiveIconColor}
                 defaultName={form.watch("name") ?? ""}
               />
+              <div className="flex justify-end gap-2">
+                <DialogClose asChild>
+                  <Button type="button" variant="outline">
+                    {t("common.done", { defaultValue: "完成" })}
+                  </Button>
+                </DialogClose>
+              </div>
             </div>
           </div>
         </div>

@@ -5,7 +5,6 @@
   "identifier": "com.ccswitch.desktop",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:3000",
     "beforeDevCommand": "pnpm run dev:renderer",
     "beforeBuildCommand": "pnpm run build:renderer"
   },
@@ -46,6 +45,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "WebView2Loader.dll"
+    ],
     "windows": {
       "wix": {
         "template": "wix/per-user-main.wxs"
@@ -58,7 +60,9 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ccswitch"]
+        "schemes": [
+          "ccswitch"
+        ]
       }
     },
     "updater": {
