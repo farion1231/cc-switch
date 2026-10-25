@@ -272,17 +272,32 @@ fn decode(index: i64, kind: i64, status: i64, format: i64, bytes: &[u8]) -> Resu
     Ok(value)
 }
 
-/// Read a single prompt for unindexed sessions; empty databases are not new conversations.
-pub(super) fn preview(path: &Path) -> Option<(String, Option<i64>)> {
-    let conn = crate::agy_conversation::open(path).ok()?;
-    let row=conn.query_row("SELECT idx,step_type,status,step_format,step_payload FROM steps WHERE step_type IN (14,15) ORDER BY idx LIMIT 1",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,Vec<u8>>(4)?))).optional().ok()??;
+/// Read the first prompt and activity metadata in one snapshot. Empty databases are skipped.
+pub(super) fn preview(path: &Path) -> Option<(String, Option<i64>, Option<i64>)> {
+    let mut conn = crate::agy_conversation::open(path).ok()?;
+    let tx = conn.transaction().ok()?;
+    let row=tx.query_row("SELECT idx,step_type,status,step_format,step_payload FROM steps WHERE step_type IN (14,15) ORDER BY idx LIMIT 1",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,Vec<u8>>(4)?))).optional().ok()??;
     let value = decode(row.0, row.1, row.2, row.3, &row.4).ok()?;
     let text = if row.1 == 14 {
         extract_antigravity_content(&value).trim().to_string()
     } else {
         String::new()
     };
-    Some((text, reader_timestamp(&value)))
+    let created_at = reader_timestamp(&value);
+    // Metadata is small; avoid decoding every tool output just to sort the list.
+    let mut query = tx.prepare("SELECT metadata FROM steps").ok()?;
+    let rows = query
+        .query_map([], |r| r.get::<_, Option<Vec<u8>>>(0))
+        .ok()?;
+    let last_active_at = rows
+        .filter_map(Result::ok)
+        .flatten()
+        .filter_map(|bytes| Metadata::decode(bytes.as_slice()).ok()?.created)
+        .filter_map(|stamp| chrono::DateTime::from_timestamp(stamp.seconds, stamp.nanos as u32))
+        .map(|time| time.timestamp_millis())
+        .chain(created_at)
+        .max();
+    Some((text, created_at, last_active_at))
 }
 
 pub(super) fn load(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -371,13 +386,18 @@ mod tests {
 
     fn database(path: &Path) -> rusqlite::Connection {
         let conn = rusqlite::Connection::open(path).unwrap();
-        conn.execute_batch("CREATE TABLE steps(idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB);").unwrap();
+        conn.execute_batch("CREATE TABLE steps(idx INTEGER PRIMARY KEY,step_type INTEGER,status INTEGER,step_format INTEGER,step_payload BLOB,metadata BLOB);").unwrap();
         conn
     }
     fn insert(conn: &rusqlite::Connection, index: i64, kind: i64, step: Step) {
         conn.execute(
-            "INSERT INTO steps VALUES (?1,?2,3,0,?3)",
-            rusqlite::params![index, kind, step.encode_to_vec()],
+            "INSERT INTO steps VALUES (?1,?2,3,0,?3,?4)",
+            rusqlite::params![
+                index,
+                kind,
+                step.encode_to_vec(),
+                step.metadata.as_ref().map(Message::encode_to_vec)
+            ],
         )
         .unwrap();
     }
@@ -518,6 +538,68 @@ mod tests {
         );
     }
     #[test]
+    fn unindexed_activity_uses_latest_valid_metadata_not_first_or_last_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("conversations/old.db");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let conn = database(&path);
+        for (index, seconds) in [(0, Some(100)), (1, Some(200)), (2, Some(150)), (3, None)] {
+            insert(
+                &conn,
+                index,
+                if index == 0 { 14 } else { 101 },
+                Step {
+                    user: (index == 0).then(|| User {
+                        text: "request".into(),
+                        ..Default::default()
+                    }),
+                    metadata: seconds.map(|seconds| Metadata {
+                        created: Some(Stamp { seconds, nanos: 0 }),
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+        let sessions = scan_root(&dir.path().join("brain"), None);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].created_at, Some(100_000));
+        assert_eq!(sessions[0].last_active_at, Some(200_000));
+    }
+
+    #[test]
+    fn native_search_quotes_survive_outer_json_decoding_and_full_expansion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        let conn = database(&path);
+        let query = format!("\"{}\"", "exact phrase ".repeat(1000));
+        insert(
+            &conn,
+            0,
+            15,
+            Step {
+                planner: Some(Planner {
+                    calls: vec![Call {
+                        name: "search_web".into(),
+                        args: json!({"query":query}).to_string(),
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        let messages = load(&path).unwrap();
+        let SessionBlock::ToolCall {
+            input_full: Some(ContentRef::Sqlite { id, pointer, .. }),
+            ..
+        } = &messages[0].blocks[0]
+        else {
+            panic!("long query must retain a full-content reference");
+        };
+        let input: Value = serde_json::from_str(&resolve(&path, id, pointer).unwrap()).unwrap();
+        assert_eq!(input["query"], query);
+    }
+
+    #[test]
     fn native_scan_and_empty_transcript_fallback() {
         let dir = tempfile::tempdir().unwrap();
         let conversations = dir.path().join("conversations");
@@ -587,10 +669,8 @@ mod tests {
         let mut tools = 0;
         let mut references = 0;
         for profile in fs::read_dir(&root).unwrap().flatten() {
-            listed += scan_root(&profile.path().join("brain"), None)
-                .iter()
-                .filter(|s| s.source_path.is_some())
-                .count();
+            let scanned = scan_root(&profile.path().join("brain"), None);
+            listed += scanned.iter().filter(|s| s.source_path.is_some()).count();
             let Ok(entries) = fs::read_dir(profile.path().join("conversations")) else {
                 continue;
             };
@@ -600,6 +680,19 @@ mod tests {
             {
                 let path = entry.path();
                 let parsed = load(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                if let Some(meta) = scanned.iter().find(|s| {
+                    Some(s.session_id.as_str()) == path.file_stem().and_then(|s| s.to_str())
+                        && s.source_path
+                            .as_deref()
+                            .is_some_and(|s| s.starts_with("sqlite:"))
+                        && s.created_at.is_some()
+                }) {
+                    // Compare the list's metadata-only scan with decoded message timestamps.
+                    assert_eq!(
+                        meta.last_active_at,
+                        parsed.iter().filter_map(|m| m.ts).max()
+                    );
+                }
                 databases += 1;
                 messages += parsed.len();
                 let transcript = profile
