@@ -6,6 +6,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+type PendingCall = (u64, tokio::task::JoinHandle<()>);
+
 pub fn run_stdio() -> Result<(), String> {
     let encoded =
         std::env::var(CONFIG_ENV).map_err(|_| "Missing API profile environment variable")?;
@@ -25,8 +27,7 @@ pub fn run_stdio() -> Result<(), String> {
         .build()
         .map_err(|_| "Cannot initialize API runtime")?;
     let mut session = Session::new(runtime.clone());
-    let calls: Arc<Mutex<HashMap<String, (u64, tokio::task::AbortHandle)>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let calls: Arc<Mutex<HashMap<String, PendingCall>>> = Arc::new(Mutex::new(HashMap::new()));
     let mut generation = 0u64;
     let permits = Arc::new(tokio::sync::Semaphore::new(8));
     let mut reader = BufReader::new(std::io::stdin());
@@ -61,6 +62,9 @@ pub fn run_stdio() -> Result<(), String> {
                         .remove(&id.to_string());
                     if let Some((_, handle)) = handle {
                         handle.abort();
+                        // Aborting only schedules cleanup. Wait for the future to
+                        // drop its permit before acknowledging cancellation.
+                        let _ = executor.block_on(handle);
                         write_message(&rpc_error(id, -32800, "Request cancelled"))?;
                     }
                 }
@@ -92,8 +96,10 @@ pub fn run_stdio() -> Result<(), String> {
                     generation = generation.wrapping_add(1);
                     let token = generation;
                     let task = executor.spawn(async move {
-                        let _permit = permit;
                         let reply = call_response(&runtime, id, &name, arguments).await;
+                        // A completed response must also leave capacity for the
+                        // client's next call before it becomes visible on stdout.
+                        drop(permit);
                         // A cancelled task is removed first and can never emit success.
                         let completed = registry.lock().is_ok_and(|mut map| {
                             if map.get(&task_key).is_some_and(|(saved, _)| *saved == token) {
@@ -107,7 +113,7 @@ pub fn run_stdio() -> Result<(), String> {
                             std::process::exit(1);
                         }
                     });
-                    pending.insert(key, (token, task.abort_handle()));
+                    pending.insert(key, (token, task));
                 }
             }
         }

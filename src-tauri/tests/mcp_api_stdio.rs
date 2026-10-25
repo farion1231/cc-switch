@@ -176,18 +176,23 @@ async fn stdio_process_bounds_concurrency_keeps_ping_responsive_and_cancels() {
     for _ in 0..8 {
         assert_eq!(process.receive()["error"]["code"], -32800);
     }
-    let mut completed = false;
-    for id in 200..220 {
+    // Cancellation replies must mean all eight slots are available again.
+    // Retrying overload errors here would hide an acknowledgement/cleanup race.
+    for id in 200..208 {
         process.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"ok"}}));
-        let response = process.receive();
-        if response.get("result").is_some() {
-            assert_eq!(response["result"]["isError"], false);
-            completed = true;
-            break;
-        }
-        assert_eq!(response["error"]["code"], -32000);
     }
-    assert!(completed, "Cancellation must release call slots");
+    let mut completed = std::collections::HashSet::new();
+    for _ in 0..8 {
+        let response = process.receive();
+        assert_eq!(
+            response["result"]["isError"], false,
+            "Cancellation must release call slots before replying: {response}"
+        );
+        let id = response["id"].as_u64().unwrap();
+        assert!((200..208).contains(&id));
+        assert!(completed.insert(id));
+    }
+    assert_eq!(completed.len(), 8);
     process.eof();
     server.abort();
 }
