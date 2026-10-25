@@ -178,6 +178,10 @@ fn decode(index: i64, kind: i64, status: i64, format: i64, bytes: &[u8]) -> Resu
         14 => {
             value["type"] = json!("USER_INPUT");
             value["source"] = json!("USER");
+            // TODO: Reconcile native/export text provenance before normalizing across sources.
+            // Local snapshots contain user text that differs between SQLite and JSONL,
+            // and native steps can omit plaintext retained by the export. Preserve the
+            // stored text here until those differences can be resolved without data loss.
             step.user
                 .map(|u| {
                     let text = if u.text.is_empty() {
