@@ -676,4 +676,20 @@ describe("UnifiedMcpPanel", () => {
 
     openExternal.mockRestore();
   });
+
+  it("prefers name over id in row title and falls back to id when name is absent", () => {
+    mocks.serversMap = {
+      "custom-id": makeServer("custom-id", {
+        name: "PostgreSQL Database",
+      }),
+      "only-id": makeServer("only-id", {
+        name: "",
+      }),
+    };
+    renderPanel();
+
+    expect(screen.getByText("PostgreSQL Database")).toBeInTheDocument();
+    expect(screen.queryByText("custom-id")).not.toBeInTheDocument();
+    expect(screen.getByText("only-id")).toBeInTheDocument();
+  });
 });

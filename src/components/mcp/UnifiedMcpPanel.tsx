@@ -863,9 +863,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                           ? server.tags
                           : [];
                         const displayName = server.name?.trim() || id;
-                        const hasCustomName = Boolean(
-                          server.name?.trim() && server.name.trim() !== id,
-                        );
                         return (
                           <li
                             key={id}
@@ -891,14 +888,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                 >
                                   {displayName}
                                 </span>
-                                {hasCustomName && (
-                                  <span
-                                    title={id}
-                                    className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
-                                  >
-                                    {id}
-                                  </span>
-                                )}
                                 <NeutralBadge mono>
                                   {transportOf(server.server)}
                                 </NeutralBadge>
