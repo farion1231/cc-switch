@@ -51,6 +51,28 @@ async fn account_without_credentials_needs_reauth() {
 }
 
 #[tokio::test]
+async fn backup_login_counts_and_expiry_is_listed_and_removed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manager = ClaudeAccountManager::new(tmp.path().to_path_buf());
+    let dir = manager.insert_for_test("acc:", "me@example.com").await;
+    let backup = snapshot::backup_dir(&dir);
+    std::fs::create_dir_all(&backup).unwrap();
+    std::fs::write(backup.join(".credentials.json"), "{}").unwrap();
+    snapshot::update_state(tmp.path(), |state| {
+        state.login_expiry.insert("acc:".to_string(), 42);
+    })
+    .unwrap();
+
+    let listed = &manager.list().await[0];
+    assert!(!listed.requires_reauth);
+    assert_eq!(listed.login_expires_at, Some(42));
+
+    manager.remove("acc:").await.unwrap();
+    assert!(!backup.exists());
+    assert!(snapshot::load_state(tmp.path()).login_expiry.is_empty());
+}
+
+#[tokio::test]
 async fn missing_dir_resolves_to_none() {
     let tmp = tempfile::tempdir().unwrap();
     let manager = ClaudeAccountManager::new(tmp.path().to_path_buf());
@@ -97,6 +119,8 @@ async fn corrupt_local_id_never_resolves() {
                 added_at: 0,
             },
         );
+        // 账号表以磁盘为准（切换时可能收录账号）
+        manager.persist(&store).unwrap();
     }
     assert_eq!(manager.config_dir_of("acc:").await, None);
     assert!(manager.all_config_dirs().await.is_empty());

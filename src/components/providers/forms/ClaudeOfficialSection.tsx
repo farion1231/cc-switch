@@ -1,14 +1,14 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { authApi } from "@/lib/api";
-import { isMac } from "@/lib/platform";
-import { useSettingsQuery } from "@/lib/query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   Select,
   SelectContent,
@@ -28,15 +28,111 @@ import {
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
 
+/** 不在默认登录里的账号，过期前多久开始提示 */
+const EXPIRY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
+
 const SERVICE_NAME = "Claude";
 
+const LOGIN_SWITCH_KEY = ["claude-login-switch"] as const;
+
+function useClaudeLoginSwitch() {
+  return useQuery({
+    queryKey: LOGIN_SWITCH_KEY,
+    queryFn: () => authApi.getClaudeLoginSwitch(),
+    staleTime: 30000,
+  });
+}
+
 /**
- * 切卡不会全局换号、只能从卡片「打开终端」用选中账号的情况，和后端
- * `claude_official::global_switch_available` 一致：macOS，或设了 Claude 配置目录覆盖。
+ * 切卡不会换 Claude Code 的登录、只能从卡片「打开终端」用选中账号：「切卡时切换 Claude Code
+ * 的登录」没打开时。
  */
 function useClaudeAccountTerminalOnly(): boolean {
-  const { data: settings } = useSettingsQuery();
-  return isMac() || Boolean(settings?.claudeConfigDir?.trim());
+  const { data } = useClaudeLoginSwitch();
+  return !data?.active;
+}
+
+/** 授权中心 Claude 组里的「切卡时切换 Claude Code 的登录」开关；第一次打开先说明风险。 */
+function ClaudeLoginSwitchToggle() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data } = useClaudeLoginSwitch();
+  const [confirming, setConfirming] = React.useState(false);
+  const mutation = useMutation({
+    mutationFn: (enabled: boolean) => authApi.setClaudeLoginSwitch(enabled),
+    onSuccess: (status) => {
+      queryClient.setQueryData(LOGIN_SWITCH_KEY, status);
+      // 第一次切换可能把原来的登录收录成了新账号
+      void queryClient.invalidateQueries({
+        queryKey: ["managed-auth-status", "claude_official"],
+      });
+    },
+    onError: (error) =>
+      toast.error(
+        t("authCenter.claude.loginSwitch.failed", {
+          defaultValue: "设置失败：{{error}}",
+          error: String(error),
+        }),
+      ),
+  });
+  if (!data) return null;
+  const blocked = data.blocked !== null;
+  const onChange = (enabled: boolean) => {
+    if (enabled && !data.riskAcknowledged) {
+      setConfirming(true);
+      return;
+    }
+    mutation.mutate(enabled);
+  };
+  return (
+    <>
+      <div className="mt-2 flex items-start justify-between gap-4 rounded-panel border border-border bg-surface py-3 pe-3 ps-4">
+        <div className="min-w-0 space-y-1">
+          <Label htmlFor="claude-login-switch" className="text-body text-fg-1">
+            {t("authCenter.claude.loginSwitch.label", {
+              defaultValue: "切卡时切换 Claude Code 的登录",
+            })}
+          </Label>
+          <p className="text-caption text-fg-2">
+            {blocked
+              ? t("authCenter.claude.loginSwitch.blocked", {
+                  defaultValue: "设置里覆盖了 Claude 配置目录，不能使用。",
+                })
+              : t("authCenter.claude.loginSwitch.description", {
+                  defaultValue:
+                    "打开后，切到绑了账号的 Claude 官方卡，会把这个账号的登录换进 Claude Code（~/.claude），终端、IDE 插件、脚本里新启动的 claude 都是这个号。正在运行的会话会在下一次请求或刷新登录时跟着换号。",
+                })}
+          </p>
+        </div>
+        <Switch
+          id="claude-login-switch"
+          checked={data.enabled}
+          // 被挡住时还能关掉，不能打开
+          disabled={(blocked && !data.enabled) || mutation.isPending}
+          onCheckedChange={onChange}
+        />
+      </div>
+      <ConfirmDialog
+        isOpen={confirming}
+        variant="info"
+        title={t("authCenter.claude.loginSwitch.riskTitle", {
+          defaultValue: "打开前请了解",
+        })}
+        message={t("authCenter.claude.loginSwitch.riskMessage", {
+          defaultValue:
+            "切卡时，CC Switch 会在 Claude Code 自己的几个登录位置之间搬动登录令牌。",
+        })}
+        confirmText={t("authCenter.claude.loginSwitch.confirm", {
+          defaultValue: "打开",
+        })}
+        onConfirm={() => {
+          setConfirming(false);
+          mutation.mutate(true);
+        }}
+        onCancel={() => setConfirming(false)}
+      />
+    </>
+  );
 }
 
 /**
@@ -173,28 +269,55 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
     else removeAccount(target.accountId);
   };
 
+  const now = Date.now();
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
+    const expiresAt = account.login_expires_at ?? null;
+    // 记下的过期时间可能偏早（账号在自己的目录里被 Claude Code 刷新过），所以只写「可能」
+    const expired = expiresAt !== null && expiresAt <= now;
+    const expiresSoon =
+      expiresAt !== null && !expired && expiresAt - now <= EXPIRY_NOTICE_MS;
+    const expiryDate = expiresSoon
+      ? signedInDate(Math.floor(expiresAt / 1000), i18n.language)
+      : null;
+    const details: React.ReactNode[] = [];
+    if (account.requires_reauth) {
+      details.push(
+        t("authCenter.claude.reauthNote", {
+          defaultValue: "登录已失效，请重新登录",
+        }),
+      );
+    } else if (expired) {
+      details.push(
+        t("authCenter.claude.loginMaybeExpired", {
+          defaultValue: "登录可能已过期，切换前请重新登录",
+        }),
+      );
+    } else {
+      if (date) {
+        details.push(
+          t("authCenter.claude.addedOn", {
+            defaultValue: "{{date}}添加",
+            date,
+          }),
+        );
+      }
+      if (expiryDate) {
+        details.push(
+          t("authCenter.claude.loginExpiresOn", {
+            defaultValue: "登录约在{{date}}过期，之后要重新登录",
+            date: expiryDate,
+          }),
+        );
+      }
+    }
     return {
       id: account.id,
       login: account.login,
       avatarUrl: account.avatar_url,
-      details: account.requires_reauth
-        ? [
-            t("authCenter.claude.reauthNote", {
-              defaultValue: "登录已失效，请重新登录",
-            }),
-          ]
-        : date
-          ? [
-              t("authCenter.claude.addedOn", {
-                defaultValue: "{{date}}添加",
-                date,
-              }),
-            ]
-          : [],
+      details,
       isDefault: false,
-      needsReauth: account.requires_reauth,
+      needsReauth: account.requires_reauth || expired,
       users: accountUsers([account.id]),
     };
   });
@@ -208,11 +331,11 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         terminalOnly
           ? t("authCenter.group.claudeHelpTerminal", {
               defaultValue:
-                "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，再从卡片「打开终端」，终端里的 claude 就用这个号。~/.claude 里原来的登录是「默认登录」，不受影响。",
+                "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，再从卡片「打开终端」，终端里的 claude 就用这个号。想切卡就换号，打开下面的「切卡时切换 Claude Code 的登录」。",
             })
           : t("authCenter.group.claudeHelp", {
               defaultValue:
-                "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，切到这张卡后新开的 claude 都用这个号。~/.claude 里原来的登录是「默认登录」，不受影响。",
+                "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，切到这张卡时 Claude Code 的登录会换成这个号，之后终端、IDE 插件里新启动的 claude 都用它。",
             })
       }
       helpSide={helpSide}
@@ -261,6 +384,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         ) : undefined,
       }}
     >
+      <ClaudeLoginSwitchToggle />
       <ManagedAccountRemoveDialog
         target={removeTarget}
         serviceName={SERVICE_NAME}
@@ -276,7 +400,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         othersRemain={accounts.length > 1}
         note={t("authCenter.claude.removeNote", {
           defaultValue:
-            "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；默认登录（~/.claude）不受影响。绑定它的卡片会改用默认登录。",
+            "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。",
         })}
         pending={isRemovingAccount}
         onConfirm={confirmRemove}
@@ -456,11 +580,11 @@ export function ClaudeAccountSelect({
         {terminalOnly
           ? t("provider.form.claudeAccount.helpTerminal", {
               defaultValue:
-                "请从卡片「打开终端」使用选中的账号：直接切换这张卡不会改变其他终端里 claude 用的号。",
+                "请从卡片「打开终端」使用选中的账号。想切到这张卡就换号，请在授权中心的 Claude 组里打开「切卡时切换 Claude Code 的登录」。",
             })
           : t("provider.form.claudeAccount.help", {
               defaultValue:
-                "切到这张卡后，新开的 claude 都用选中的账号；已经开着的会话不受影响。",
+                "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它；正在运行的会话会在下一次请求时跟着换。",
             })}
       </p>
     </div>

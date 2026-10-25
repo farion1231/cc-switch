@@ -4921,12 +4921,18 @@ pub async fn open_provider_terminal(
             agy_terminal_launch(provider)?
         }
         AppType::Claude => {
-            match crate::services::provider::claude_official::terminal_config_dir(provider)
-                .map_err(|e| e.to_string())?
-            {
-                Some(config_dir) => {
+            use crate::services::provider::claude_official::{terminal_account, AccountTerminal};
+            match terminal_account(provider).map_err(|e| e.to_string())? {
+                Some(AccountTerminal::Dir(config_dir)) => {
                     crate::services::claude_account::sync_shared(&config_dir);
-                    claude_account_terminal_launch(config_dir)
+                    claude_account_terminal_launch(Some(config_dir))
+                }
+                Some(AccountTerminal::Default) => {
+                    crate::services::provider::claude_official::ensure_default_terminal_is_official(
+                        &state.db,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    claude_account_terminal_launch(None)
                 }
                 None => {
                     let env_vars =
@@ -5082,7 +5088,9 @@ fn claude_terminal_launch(
 /// Claude 官方卡绑了账号：`CLAUDE_CONFIG_DIR` 放在启动环境里（不用 `--settings`）。
 /// 变量在进程启动前就设好，Claude Code 一开始预取钥匙串读的就是这个账号的条目
 /// （写在 settings 里的话 macOS 上前 30 秒会用默认登录的令牌）。会把它指向别处的变量一并清掉。
-fn claude_account_terminal_launch(config_dir: PathBuf) -> ProviderLaunch {
+/// 绑号卡的终端：清掉会改走别家服务或别的登录的变量，再指定账号目录；`None` 是账号正在默认
+/// 槽位里，去掉 `CLAUDE_CONFIG_DIR` 用默认目录。
+fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> ProviderLaunch {
     let mut env: Vec<(&'static str, Option<String>)> =
         crate::services::claude_account::login::CLAUDE_ACCOUNT_UNSET
             .iter()
@@ -5090,11 +5098,17 @@ fn claude_account_terminal_launch(config_dir: PathBuf) -> ProviderLaunch {
             .collect();
     env.push((
         "CLAUDE_CONFIG_DIR",
-        Some(config_dir.to_string_lossy().into_owned()),
+        config_dir
+            .as_ref()
+            .map(|dir| dir.to_string_lossy().into_owned()),
     ));
     ProviderLaunch {
-        title: "Using this Claude account's config directory:",
-        detail: Some(config_dir),
+        title: if config_dir.is_some() {
+            "Using this Claude account's config directory:"
+        } else {
+            "Using this Claude account via Claude Code's current sign-in."
+        },
+        detail: config_dir,
         program: "claude",
         args: Vec::new(),
         batch_command: "claude".to_string(),

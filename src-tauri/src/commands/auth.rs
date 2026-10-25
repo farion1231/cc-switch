@@ -34,6 +34,9 @@ pub struct ManagedAuthAccount {
     pub reauth_required: bool,
     /// xAI 专用：refresh token 已失效，账号不可再用于请求。
     pub requires_reauth: bool,
+    /// Claude 官方专用：不在 Claude Code 默认登录里的账号，登录约什么时候过期（毫秒）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_expires_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -78,6 +81,7 @@ fn map_account(
         is_default: default_account_id == Some(account.id.as_str()),
         reauth_required: account.reauth_required,
         requires_reauth: false,
+        login_expires_at: None,
         id: account.id,
         provider: provider.to_string(),
         login: account.login,
@@ -101,6 +105,7 @@ fn map_xai_account(
         github_domain: account.github_domain,
         reauth_required: false,
         requires_reauth: account.requires_reauth,
+        login_expires_at: None,
     }
 }
 
@@ -113,6 +118,7 @@ fn map_agy_account(account: AgyAccount, current_account_id: Option<&str>) -> Man
         github_domain: "google.com".to_string(),
         reauth_required: false,
         requires_reauth: account.requires_reauth,
+        login_expires_at: None,
         provider: AUTH_PROVIDER_AGY_OAUTH.to_string(),
         id: account.id,
     }
@@ -128,6 +134,7 @@ fn map_claude_account(account: ClaudeAccount) -> ManagedAuthAccount {
         github_domain: "claude.ai".to_string(),
         reauth_required: false,
         requires_reauth: account.requires_reauth,
+        login_expires_at: account.login_expires_at,
         provider: AUTH_PROVIDER_CLAUDE_OFFICIAL.to_string(),
         id: account.id,
     }

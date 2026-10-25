@@ -1324,8 +1324,11 @@ pub fn run() {
                 let data_dir = crate::config::get_app_config_dir();
                 let manager = ClaudeAccountManager::new(data_dir.clone());
                 app.manage(commands::ClaudeAccountState(Arc::new(manager)));
-                // 默认目录的设置、MCP 可能在 CC Switch 没运行时改过
+                let db = app.state::<AppState>().db.clone();
                 std::thread::spawn(move || {
+                    // 上次切换登录时崩溃、断电：先补完（配置操作在前面已补完，指针已落定）
+                    crate::services::provider::claude_official::recover_login_switch(&db);
+                    // 默认目录的设置、MCP 可能在 CC Switch 没运行时改过
                     crate::services::claude_account::sync_all_shared(&data_dir)
                 });
             }
@@ -1898,6 +1901,8 @@ pub fn run() {
             commands::agy_account_is_running,
             commands::agy_account_quota,
             commands::claude_account_submit_paste,
+            commands::get_claude_login_switch,
+            commands::set_claude_login_switch,
             commands::kimi_oauth_status,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,

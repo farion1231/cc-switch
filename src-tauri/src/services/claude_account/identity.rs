@@ -42,7 +42,7 @@ pub fn read_identity(config_dir: &Path) -> Option<Identity> {
     identity_from_profile(&doc)
 }
 
-fn identity_from_profile(doc: &Value) -> Option<Identity> {
+pub fn identity_from_profile(doc: &Value) -> Option<Identity> {
     let account = doc.get("oauthAccount")?;
     let text = |key: &str| {
         account

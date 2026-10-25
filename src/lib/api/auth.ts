@@ -25,6 +25,8 @@ export interface ManagedAuthAccount {
   reauth_required?: boolean;
   /** xAI-only: the refresh credential is invalid and the account is unusable. */
   requires_reauth: boolean;
+  /** Claude official only: when the sign-in of an account not in Claude Code's default slot expires (ms, as last recorded). */
+  login_expires_at?: number | null;
 }
 
 export interface ManagedAuthStatus {
@@ -139,6 +141,31 @@ export async function claudeAccountSubmitPaste(
   return invoke("claude_account_submit_paste", { flowId, pasted });
 }
 
+/** 「切卡时切换 Claude Code 的登录」的状态。 */
+export interface ClaudeLoginSwitchStatus {
+  enabled: boolean;
+  /** 开着、没被挡住：切卡时真的会切换登录 */
+  active: boolean;
+  /** 第一次打开时确认过风险说明 */
+  riskAcknowledged: boolean;
+  /** 不能打开的原因：设了 Claude 配置目录覆盖 */
+  blocked: "overrideDir" | null;
+  /** Claude Code 现在登录的账号 key */
+  live: string | null;
+}
+
+export async function getClaudeLoginSwitch(): Promise<ClaudeLoginSwitchStatus> {
+  return invoke<ClaudeLoginSwitchStatus>("get_claude_login_switch");
+}
+
+export async function setClaudeLoginSwitch(
+  enabled: boolean,
+): Promise<ClaudeLoginSwitchStatus> {
+  return invoke<ClaudeLoginSwitchStatus>("set_claude_login_switch", {
+    enabled,
+  });
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -150,4 +177,6 @@ export const authApi = {
   authLogout,
   agyAccountIsRunning,
   claudeAccountSubmitPaste,
+  getClaudeLoginSwitch,
+  setClaudeLoginSwitch,
 };

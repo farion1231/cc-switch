@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -11,12 +11,8 @@ const mocks = vi.hoisted(() => ({
   useManagedAuth: vi.fn(),
   openExternal: vi.fn(),
   submitPaste: vi.fn(),
-  settings: {} as { claudeConfigDir?: string },
-}));
-
-vi.mock("@/lib/platform", () => ({ isMac: () => false }));
-vi.mock("@/lib/query", () => ({
-  useSettingsQuery: () => ({ data: mocks.settings }),
+  getLoginSwitch: vi.fn(),
+  setLoginSwitch: vi.fn(),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -31,7 +27,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     settingsApi: { ...actual.settingsApi, openExternal: mocks.openExternal },
-    authApi: { ...actual.authApi, claudeAccountSubmitPaste: mocks.submitPaste },
+    authApi: {
+      ...actual.authApi,
+      claudeAccountSubmitPaste: mocks.submitPaste,
+      getClaudeLoginSwitch: mocks.getLoginSwitch,
+      setClaudeLoginSwitch: mocks.setLoginSwitch,
+    },
   };
 });
 
@@ -63,27 +64,50 @@ const account = (id: string, login: string) => ({
   requires_reauth: false,
 });
 
-// 账号下拉还会读 React Query 里的别的数据，给一个空的 client
-const renderSelect = () =>
+const loginSwitch = (overrides: Record<string, unknown> = {}) => {
+  const status = {
+    enabled: false,
+    riskAcknowledged: false,
+    blocked: null,
+    live: null,
+    ...overrides,
+  };
+  // 和后端一样：开着、没被挡住
+  return {
+    active: status.enabled === true && status.blocked === null,
+    ...status,
+  };
+};
+
+// 组件读 React Query（开关状态、账号列表），每个用例一个新的 client
+const withQuery = (node: React.ReactNode) =>
   render(
-    <QueryClientProvider client={new QueryClient()}>
-      <ClaudeAccountSelect value={null} onChange={vi.fn()} />
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      {node}
     </QueryClientProvider>,
   );
+const renderSection = () => withQuery(<ClaudeOfficialSection />);
+const renderSelect = () =>
+  withQuery(<ClaudeAccountSelect value={null} onChange={vi.fn()} />);
 
 describe("ClaudeOfficialSection", () => {
   beforeEach(() => {
     mocks.useManagedAuth.mockReset();
     mocks.openExternal.mockReset();
     mocks.submitPaste.mockReset();
-    mocks.settings = {};
+    mocks.getLoginSwitch.mockReset().mockResolvedValue(loginSwitch());
+    mocks.setLoginSwitch.mockReset();
   });
 
   it("has no default account and no re-login while the login is valid", async () => {
     const auth = baseAuth();
     auth.accounts = [account("acc:org", "me@example.com · Acme")];
     mocks.useManagedAuth.mockReturnValue(auth);
-    render(<ClaudeOfficialSection />);
+    renderSection();
 
     expect(mocks.useManagedAuth).toHaveBeenCalledWith("claude_official");
     expect(screen.queryByText("默认")).not.toBeInTheDocument();
@@ -108,8 +132,50 @@ describe("ClaudeOfficialSection", () => {
       { ...account("acc:org", "me@example.com · Acme"), requires_reauth: true },
     ];
     mocks.useManagedAuth.mockReturnValue(auth);
-    render(<ClaudeOfficialSection />);
+    renderSection();
 
+    await userEvent.click(screen.getByRole("button", { name: "重新登录" }));
+    expect(auth.addAccount).toHaveBeenCalled();
+  });
+
+  it("warns a week before a parked account's sign-in expires", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const auth = baseAuth();
+    auth.accounts = [
+      {
+        ...account("soon:org", "soon@example.com"),
+        login_expires_at: Date.now() + 2 * day,
+      },
+      {
+        ...account("later:org", "later@example.com"),
+        login_expires_at: Date.now() + 20 * day,
+      },
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    renderSection();
+
+    expect(
+      screen.getAllByText(/过期，之后要重新登录|loginExpiresOn/),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "重新登录" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers re-login when a parked account's sign-in may have expired", async () => {
+    const auth = baseAuth();
+    auth.accounts = [
+      {
+        ...account("old:org", "old@example.com"),
+        login_expires_at: Date.now() - 1000,
+      },
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    renderSection();
+
+    expect(
+      screen.getByText(/登录可能已过期|loginMaybeExpired/),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "重新登录" }));
     expect(auth.addAccount).toHaveBeenCalled();
   });
@@ -131,7 +197,7 @@ describe("ClaudeOfficialSection", () => {
     });
     mocks.useManagedAuth.mockReturnValue(auth);
     mocks.submitPaste.mockResolvedValue(undefined);
-    render(<ClaudeOfficialSection />);
+    renderSection();
 
     expect(
       screen.getByText(/已在浏览器打开 Claude 的登录页/),
@@ -151,20 +217,100 @@ describe("ClaudeOfficialSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("says switching changes the account when the pointer can be written", () => {
+  it("points to Open Terminal until switching cards switches the sign-in", async () => {
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     renderSelect();
     expect(
-      screen.getByText(/切到这张卡后，新开的 claude 都用选中的账号/),
+      await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
     ).toBeInTheDocument();
   });
 
-  it("points to Open Terminal when a Claude config dir override is set", () => {
-    mocks.settings = { claudeConfigDir: "/work/claude" };
+  it("says switching changes the sign-in once the toggle is on", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ enabled: true }));
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     renderSelect();
     expect(
-      screen.getByText(/请从卡片「打开终端」使用选中的账号/),
+      await screen.findByText(/Claude Code 的登录会换成选中的账号/),
+    ).toBeInTheDocument();
+  });
+
+  it("explains the risk before turning the sign-in switch on the first time", async () => {
+    mocks.setLoginSwitch.mockResolvedValue(
+      loginSwitch({ enabled: true, riskAcknowledged: true }),
+    );
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSection();
+
+    const toggle = await screen.findByRole("switch", {
+      name: "切卡时切换 Claude Code 的登录",
+    });
+    await userEvent.click(toggle);
+    expect(mocks.setLoginSwitch).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByRole("button", { name: "打开" }));
+    expect(mocks.setLoginSwitch).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
+  it("turns the switch back on without asking again", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(
+      loginSwitch({ riskAcknowledged: true }),
+    );
+    mocks.setLoginSwitch.mockResolvedValue(
+      loginSwitch({ enabled: true, riskAcknowledged: true }),
+    );
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSection();
+
+    await userEvent.click(
+      await screen.findByRole("switch", {
+        name: "切卡时切换 Claude Code 的登录",
+      }),
+    );
+    expect(mocks.setLoginSwitch).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole("button", { name: "打开" })).toBeNull();
+  });
+
+  it("treats a toggle blocked by a config dir override as off", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(
+      loginSwitch({ enabled: true, blocked: "overrideDir" }),
+    );
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSelect();
+    expect(
+      await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows why an enabled toggle is blocked and keeps it switchable off", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(
+      loginSwitch({ enabled: true, blocked: "overrideDir" }),
+    );
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSection();
+
+    const toggle = await screen.findByRole("switch", {
+      name: "切卡时切换 Claude Code 的登录",
+    });
+    expect(toggle).toBeEnabled();
+    expect(
+      screen.getByText("设置里覆盖了 Claude 配置目录，不能使用。"),
+    ).toBeInTheDocument();
+  });
+
+  it("can't be turned on with a Claude config dir override", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(
+      loginSwitch({ blocked: "overrideDir" }),
+    );
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSection();
+
+    expect(
+      await screen.findByRole("switch", {
+        name: "切卡时切换 Claude Code 的登录",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("设置里覆盖了 Claude 配置目录，不能使用。"),
     ).toBeInTheDocument();
   });
 });

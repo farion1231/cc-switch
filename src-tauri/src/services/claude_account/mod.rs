@@ -1,20 +1,22 @@
 //! Claude Code 的官方订阅账号：每个账号一个独立的 `CLAUDE_CONFIG_DIR`（官方推荐的多账号用法）。
 //!
-//! CC Switch 不读、不存、不刷新任何 Claude 令牌：
 //! - 加号：在新账号目录里运行官方的 `claude auth login`（见 `login`），令牌由 Claude Code
 //!   存进它自己的地方（macOS 钥匙串里按目录区分的条目，其他平台是目录里的 `.credentials.json`）；
 //! - 认人：只读 `.claude.json` 的 `oauthAccount` 这类非机密字段（见 `identity`）；
-//! - 用号：启动 `claude` 时设 `CLAUDE_CONFIG_DIR=<账号目录>`；
+//! - 用号：从卡片打开终端时设 `CLAUDE_CONFIG_DIR=<账号目录>`；打开「切卡时切换登录」后，切卡
+//!   会把账号的登录移进默认槽位（见 `snapshot`，这是唯一经手令牌的地方，不另存、不刷新）；
 //! - 删号：删目录，并按 Claude Code 的命名删掉钥匙串里对应的条目（只删除，不吊销、不登出）。
 //!
 //! 用户原来的 `~/.claude` 是「默认登录」，不在这里管理，也永远不会被当作账号目录。
 //! 账号表 `claude_accounts.json` 只在本机（目录是本机路径），不随云同步；卡片上的绑定存的是
 //! 账号 key（`accountUuid:organizationUuid`），同步到别的设备后按 key 在那台电脑上找账号。
 
+pub mod cc_lock;
 pub mod identity;
 pub mod layout;
 pub mod login;
 pub mod shared;
+pub mod snapshot;
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
@@ -68,6 +70,8 @@ pub struct ClaudeAccount {
     pub authenticated_at: i64,
     /// 目录没了或里面的登录没了，只能重新登录
     pub requires_reauth: bool,
+    /// 不在默认槽位时，登录约什么时候过期（毫秒，上次记下的）
+    pub login_expires_at: Option<i64>,
 }
 
 impl ClaudeAccount {
@@ -112,6 +116,26 @@ pub struct ClaudeAccountManager {
     /// 登录进程已经结束的流程。前端每 1.5 秒轮询一次、不等上一次返回：收录期间来的轮询
     /// 回「还没好」，收录完的回同一个账号，都不能报「登录已结束」。下次加号时清空。
     ended: std::sync::Mutex<HashMap<String, FlowEnd>>,
+}
+
+/// 账号表文件的进程内互斥：管理器和切换（收录默认槽位里原来的登录）都会改它。
+/// 改之前先从磁盘重读，改完立刻落盘，中间不跨 await。
+static STORE_FILE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn store_file_guard() -> std::sync::MutexGuard<'static, ()> {
+    STORE_FILE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn persist_store(data_dir: &Path, store: &StoreFile) -> Result<(), AppError> {
+    let snapshot = StoreFile {
+        version: 1,
+        accounts: store.accounts.clone(),
+    };
+    let content = serde_json::to_vec_pretty(&snapshot)
+        .map_err(|source| AppError::JsonSerialize { source })?;
+    crate::config::atomic_write_private(&data_dir.join(STORE_FILENAME), &content)
 }
 
 fn load_store(data_dir: &Path) -> StoreFile {
@@ -306,6 +330,8 @@ impl ClaudeAccountManager {
         }
 
         let mut store = self.store.lock().await;
+        let file = store_file_guard();
+        *store = load_store(&self.data_dir);
         let data = AccountData {
             local_id: local_id.clone(),
             email: found
@@ -321,13 +347,30 @@ impl ClaudeAccountManager {
         };
         let replaced = store.accounts.insert(found.key.clone(), data);
         self.persist(&store)?;
+        drop(file);
         let account = to_account(&found.key, &store.accounts[&found.key], &self.data_dir);
         drop(store);
+        {
+            let data_dir = self.data_dir.clone();
+            let key = found.key.clone();
+            let config_dir = config_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                snapshot::note_login_expiry(&data_dir, &key, &config_dir)
+            })
+            .await;
+        }
         if let Some(old) = replaced {
             if old.local_id != local_id {
                 log::info!("[ClaudeAccount] 同一账号重新登录，替换旧目录");
                 self.discard_dir(&old.local_id).await;
             }
+            // 它正在默认槽位里时，默认槽位里还是旧登录：换成这次的
+            let key = found.key.clone();
+            let config_dir = config_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::services::provider::claude_official::replace_live_login(&key, &config_dir)
+            })
+            .await;
         }
         log::info!("[ClaudeAccount] 已添加账号");
         Ok(Some(account))
@@ -373,19 +416,29 @@ impl ClaudeAccountManager {
     // ---------- 列表、删除、解析 ----------
 
     pub async fn list(&self) -> Vec<ClaudeAccount> {
-        let accounts: Vec<(String, AccountData)> = self
-            .store
-            .lock()
-            .await
-            .accounts
-            .iter()
-            .map(|(key, data)| (key.clone(), data.clone()))
-            .collect();
+        let accounts: Vec<(String, AccountData)> = {
+            let mut store = self.store.lock().await;
+            // 切换时可能收录了新账号（默认槽位里原来的登录）
+            *store = load_store(&self.data_dir);
+            store
+                .accounts
+                .iter()
+                .map(|(key, data)| (key.clone(), data.clone()))
+                .collect()
+        };
         let data_dir = self.data_dir.clone();
         tokio::task::spawn_blocking(move || {
+            let expiry = snapshot::load_state(&data_dir).login_expiry;
             let mut list: Vec<ClaudeAccount> = accounts
                 .iter()
-                .map(|(key, data)| to_account(key, data, &data_dir))
+                .map(|(key, data)| {
+                    let mut account = to_account(key, data, &data_dir);
+                    account.login_expires_at = expiry
+                        .get(key)
+                        .copied()
+                        .filter(|_| !account.requires_reauth);
+                    account
+                })
                 .collect();
             list.sort_by_key(|account| account.label().to_lowercase());
             list
@@ -397,10 +450,16 @@ impl ClaudeAccountManager {
     /// 从 CC Switch 删掉这个账号：删目录和钥匙串里的条目。不吊销、不登出，服务端的令牌到期自然失效。
     pub async fn remove(&self, account_id: &str) -> Result<(), AppError> {
         let mut store = self.store.lock().await;
+        let file = store_file_guard();
+        *store = load_store(&self.data_dir);
         let Some(data) = store.accounts.remove(account_id) else {
             return Err(account_not_found());
         };
         self.persist(&store)?;
+        let _ = snapshot::update_state(&self.data_dir, |state| {
+            state.login_expiry.remove(account_id);
+        });
+        drop(file);
         drop(store);
         self.discard_dir(&data.local_id).await;
         Ok(())
@@ -408,9 +467,13 @@ impl ClaudeAccountManager {
 
     pub async fn remove_all(&self) -> Result<Vec<String>, AppError> {
         let mut store = self.store.lock().await;
+        let file = store_file_guard();
+        *store = load_store(&self.data_dir);
         let removed: Vec<(String, AccountData)> =
             std::mem::take(&mut store.accounts).into_iter().collect();
         self.persist(&store)?;
+        let _ = snapshot::update_state(&self.data_dir, |state| state.login_expiry.clear());
+        drop(file);
         drop(store);
         for (_, data) in &removed {
             self.discard_dir(&data.local_id).await;
@@ -427,9 +490,7 @@ impl ClaudeAccountManager {
 
     /// 本机全部账号目录（不管存不存在）：判断 live 里的 `CLAUDE_CONFIG_DIR` 是不是 CC Switch 写的。
     pub async fn all_config_dirs(&self) -> Vec<PathBuf> {
-        self.store
-            .lock()
-            .await
+        load_store(&self.data_dir)
             .accounts
             .values()
             .filter(|data| layout::valid_local_id(&data.local_id))
@@ -451,13 +512,7 @@ impl ClaudeAccountManager {
     }
 
     fn persist(&self, store: &StoreFile) -> Result<(), AppError> {
-        let snapshot = StoreFile {
-            version: 1,
-            accounts: store.accounts.clone(),
-        };
-        let content = serde_json::to_vec_pretty(&snapshot)
-            .map_err(|source| AppError::JsonSerialize { source })?;
-        crate::config::atomic_write_private(&self.data_dir.join(STORE_FILENAME), &content)
+        persist_store(&self.data_dir, store)
     }
 }
 
@@ -477,7 +532,12 @@ fn to_account(key: &str, data: &AccountData, data_dir: &Path) -> ClaudeAccount {
         org_name: data.org_name.clone(),
         plan: data.plan.clone(),
         authenticated_at: data.added_at,
-        requires_reauth: !layout::valid_local_id(&data.local_id) || !has_credentials(&config_dir),
+        // 被移进默认槽位的账号，自己的槽位是空的；槽位空了但有收回时留的备份，切换会用备份
+        requires_reauth: !layout::valid_local_id(&data.local_id)
+            || (!has_credentials(&config_dir)
+                && !has_credentials(&snapshot::backup_dir(&config_dir))
+                && !snapshot::is_live(key)),
+        login_expires_at: None,
     }
 }
 
@@ -494,10 +554,66 @@ fn create_private_dir(dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 按磁盘上的账号表找账号目录、收录新账号：切换路径上用（拿不到 Tauri 状态）。
+pub struct DiskAccounts {
+    pub data_dir: PathBuf,
+}
+
+impl snapshot::Accounts for DiskAccounts {
+    fn dir_of(&self, account: &str) -> Option<PathBuf> {
+        config_dir_on_disk(&self.data_dir, account)
+    }
+}
+
+impl snapshot::Adopter for DiskAccounts {
+    /// 给默认槽位里原来的登录建一个账号目录：只写资料（`oauthAccount`），凭据由切换随后放进去。
+    fn adopt(
+        &self,
+        found: &identity::Identity,
+        profile: &serde_json::Value,
+    ) -> Result<PathBuf, AppError> {
+        let local_id = layout::new_local_id();
+        let config_dir = layout::config_dir(&self.data_dir, &local_id);
+        layout::assert_config_dir(&self.data_dir, &config_dir)?;
+        create_private_dir(&config_dir)?;
+        let doc = serde_json::json!({
+            "oauthAccount": profile,
+            "hasCompletedOnboarding": true,
+        });
+        let bytes =
+            serde_json::to_vec_pretty(&doc).map_err(|source| AppError::JsonSerialize { source })?;
+        crate::config::atomic_write_private(&config_dir.join(".claude.json"), &bytes)?;
+        sync_shared(&config_dir);
+
+        let _file = store_file_guard();
+        let mut store = load_store(&self.data_dir);
+        store.accounts.insert(
+            found.key.clone(),
+            AccountData {
+                local_id,
+                email: found.email.clone(),
+                org_name: found.org_name.clone(),
+                plan: None,
+                added_at: chrono::Utc::now().timestamp(),
+            },
+        );
+        persist_store(&self.data_dir, &store)?;
+        log::info!("[ClaudeAccount] 已把默认登录收录为账号");
+        Ok(config_dir)
+    }
+}
+
 /// 删掉一个账号的目录和它在钥匙串里的条目。`remove_dir_all` 不跟随符号链接（共享层链到
 /// 默认目录的那些只删链接本身）。
 fn remove_account_files(home: &Path, config_dir: &Path) {
     delete_keychain_entry(config_dir);
+    let backup = snapshot::backup_dir(config_dir);
+    delete_keychain_entry(&backup);
+    if let Err(error) = std::fs::remove_dir_all(&backup) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            log::warn!("[ClaudeAccount] 删除账号备份目录失败: {error}");
+        }
+    }
     if let Err(error) = std::fs::remove_dir_all(home) {
         if error.kind() != std::io::ErrorKind::NotFound {
             log::warn!("[ClaudeAccount] 删除账号目录失败: {error}");
