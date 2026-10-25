@@ -887,7 +887,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "grok" => Some("npm i -g @xai-official/grok@latest"),
-        "opencode" => Some("npm i -g opencode-ai@latest"),
+        "opencode" => Some(
+            "npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
+        ),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
@@ -901,8 +903,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// `npm i -g` 时须追加的参数（前导空格已含），与 `npm_install_command_for` 的静态命令
 /// 保持一致，供锚定到某处 npm 的升级命令复用。
 ///
-/// Claude Code 的 postinstall 把平台 optional dependency 中的原生程序放到 bin/claude.exe。
-/// npm 12 拦截该脚本时会留下文本占位文件，Windows 执行后报“与 Windows 版本不兼容”。
+/// Claude Code / OpenCode 的 postinstall 把平台 optional dependency 中的原生程序放到
+/// bin/claude.exe / bin/opencode.exe。npm 12 拦截该脚本时会留下文本占位文件，
+/// Windows 执行后报“与 Windows 版本不兼容”。
 /// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
 /// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
 /// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
@@ -913,6 +916,7 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
         "claude" => {
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
         }
+        "opencode" => " --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
         "mcode" => {
             " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
         }
@@ -3943,18 +3947,25 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
         let mut update = anchored_official_update_command(tool, bin_path)?;
-        // npm-installed Claude delegates updates to npm. Keep the npm 12
+        // npm-installed Claude / OpenCode delegate updates to npm. Keep the npm 12
         // postinstall and optional dependency settings scoped to this process
         // tree; other installation sources retain their own update policy.
         // Gate on the real target rather than the launcher's source so npm
         // prefixes classified as `system` (Intel Homebrew node, nodejs.org pkg,
         // ~/.npm-global, distro node) are covered too: they have no sibling-npm
         // fallback, so a false-success update there could never self-heal.
-        if tool == "claude" && real_lower.contains("/node_modules/@anthropic-ai/claude-code/") {
-            update = format!(
-                "npm_config_allow_scripts={} npm_config_ignore_scripts=false npm_config_include=optional {update}",
-                npm_package_for(tool)?
-            );
+        // Bun-installed OpenCode upgrades through bun, not npm.
+        let npm_scripts_package = match tool {
+            "claude" => Some("@anthropic-ai/claude-code"),
+            "opencode" if !real_lower.contains("/.bun/") => Some("opencode-ai"),
+            _ => None,
+        };
+        if let Some(pkg) = npm_scripts_package {
+            if real_lower.contains(&format!("/node_modules/{pkg}/")) {
+                update = format!(
+                    "npm_config_allow_scripts={pkg} npm_config_ignore_scripts=false npm_config_include=optional {update}"
+                );
+            }
         }
         return Some(match package_command {
             Some(fallback) => chain_update_commands(update, fallback, LifecycleCommandShell::Posix),
@@ -8007,7 +8018,7 @@ mod tests {
         #[test]
         fn opencode_windows_static_fallback_skips_official_upgrade() {
             let cmd = static_fallback_command("opencode");
-            assert_eq!(cmd, "npm i -g opencode-ai@latest");
+            assert_eq!(cmd, npm_install_command_for("opencode").unwrap());
             assert!(!cmd.contains("opencode upgrade"));
         }
 
@@ -8854,6 +8865,43 @@ mod tests {
                     )
                 );
             }
+        }
+
+        #[test]
+        fn opencode_npm_sources_scope_postinstall_settings_to_primary_and_fallback() {
+            // opencode-ai's postinstall lays the platform binary over the text
+            // placeholder at bin/opencode.exe; npm 12 blocks it by default (#8863).
+            let dir = "/Users/me/.nvm/versions/node/v22/bin";
+            let path = format!("{dir}/opencode");
+            let mut install = inst(&path, true);
+            install.real = PathBuf::from(
+                "/Users/me/.nvm/versions/node/v22/lib/node_modules/opencode-ai/bin/opencode.exe",
+            );
+            let command = installs_anchored_command("opencode", &[install]).unwrap();
+            let (primary, fallback) = command.split_once(" || ").unwrap();
+            assert_eq!(
+                primary,
+                format!(
+                    "npm_config_allow_scripts=opencode-ai npm_config_ignore_scripts=false npm_config_include=optional {path} upgrade"
+                )
+            );
+            assert_eq!(
+                fallback,
+                format!(
+                    "PATH='{dir}':\"$PATH\" {dir}/npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"
+                )
+            );
+            assert_eq!(
+                anchored_command_from_paths(
+                    "opencode",
+                    "/usr/local/bin/opencode",
+                    "/usr/local/lib/node_modules/opencode-ai/bin/opencode.exe",
+                ),
+                Some(
+                    "npm_config_allow_scripts=opencode-ai npm_config_ignore_scripts=false npm_config_include=optional /usr/local/bin/opencode upgrade"
+                        .to_string()
+                )
+            );
         }
 
         #[test]
@@ -9847,7 +9895,7 @@ mod tests {
             assert!(!static_fallback_command("grok").contains("grok update"));
             assert_eq!(
                 static_fallback_command("opencode"),
-                "opencode upgrade || npm i -g opencode-ai@latest"
+                "opencode upgrade || npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"
             );
             assert_eq!(
                 static_fallback_command("openclaw"),
