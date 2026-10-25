@@ -1,0 +1,33 @@
+{
+  "version": "4.0.14",
+  "items": [
+    {
+      "type": "new",
+      "zh": "用量统计新增大量自定义：显示币种、侧栏「今日」、请求日志的列",
+      "zh-TW": "使用統計新增大量自訂：顯示幣別、側欄「今日」、請求日誌的欄位",
+      "en": "Usage Statistics gets lots of options: display currency, the sidebar \"Today\" label, log columns",
+      "ja": "利用統計のカスタマイズを拡充：表示通貨、サイドバーの「今日」、リクエストログの列"
+    },
+    {
+      "type": "improve",
+      "zh": "「打开终端」先说明目录用途，并记住最近用过的目录",
+      "zh-TW": "「開啟終端機」先說明目錄用途，並記住最近用過的目錄",
+      "en": "\"Open Terminal\" now explains what the folder is for and remembers recent folders",
+      "ja": "「ターミナルを開く」でフォルダの用途を説明し、最近使ったフォルダを記憶するように"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 经路由连 Gemini 工具调用报 400、路由下重试次数失效",
+      "zh-TW": "修正 Codex 經路由連 Gemini 工具呼叫報 400、路由下重試次數失效",
+      "en": "Fixed Codex tool calls to Gemini failing through routing, and retry settings lost in routing",
+      "ja": "ルーティング経由の Codex→Gemini ツール呼び出しの 400 と再試行設定の消失を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "超过 128 MiB 的 Skills 仓库可以安装，大写模型名的自定义定价生效",
+      "zh-TW": "超過 128 MiB 的 Skills 倉庫可以安裝，大寫模型名的自訂定價生效",
+      "en": "Skills repos over 128 MiB install, and custom pricing works for model names with capitals",
+      "ja": "128 MiB 超の Skills リポジトリを導入可能に、大文字モデル名の独自価格も有効に"
+    }
+  ]
+}

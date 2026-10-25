@@ -30,7 +30,7 @@ use crate::live::project::codex::{
 };
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
-use crate::provider::Provider;
+use crate::provider::{Provider, ProviderMeta};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::store::AppState;
 
@@ -105,6 +105,7 @@ pub fn view(
     state: &AppState,
     settings_config: &Value,
     category: Option<&str>,
+    meta: Option<&ProviderMeta>,
 ) -> Result<EditorView, AppError> {
     let path = get_codex_config_path();
     let pre = read_current(&path)?;
@@ -113,6 +114,7 @@ pub fn view(
     let mut provider =
         Provider::with_id(String::new(), String::new(), settings_config.clone(), None);
     provider.category = category.map(str::to_string);
+    provider.meta = meta.cloned();
     let live_owner = LiveOwner::read(state)?;
     let planned = plan_for_view(&state.db, &live_owner.owner(), &provider)?;
     planned.config().apply_to(&path, &mut doc)?;
@@ -142,6 +144,24 @@ pub fn view(
         .cloned()
         .unwrap_or_else(Map::new);
     settings.insert("config".to_string(), Value::String(display.clone()));
+    // 没绑托管账号的官方卡：auth.json 框和 TOML 一样显示切过去之后盘上的样子。行里存的
+    // 登录是旧版回填的快照，Codex 轮换 token 后就对不上了；切换也不拿它覆盖同一个人的
+    // 登录（见 `codex_login::official`）。用户没改就不存回行，见 [`plan_save`]。
+    if codex_direct::is_official(&provider)
+        && super::ProviderService::managed_codex_oauth_account_id(&provider).is_none()
+    {
+        let on_disk = codex_direct::predicted_auth_file(
+            &state.db,
+            &live_owner.owner(),
+            &Target::Direct(Some(&provider)),
+        )?;
+        settings.insert(
+            "auth".to_string(),
+            on_disk
+                .filter(Value::is_object)
+                .unwrap_or_else(|| Value::Object(Map::new())),
+        );
+    }
     settings
         .entry("auth".to_string())
         .or_insert_with(|| Value::Object(Map::new()));
@@ -367,8 +387,22 @@ pub(crate) fn plan_save(
         .collect();
     let mut base_entries = entries(&base_doc, &routes);
     base_entries.extend(removed_from_live);
+    let mut row_settings = store_into_row(stored_row, edited, &projection)?;
+    // 官方卡的 auth.json 框显示的是盘上的登录（见 [`view`]）：用户没改就保留行里原来的，
+    // 否则打开再保存会把「跟随当前登录」的卡绑死到这个人、把一份马上又会过期的 token 存进行。
+    if official && edited.get("auth") == base.get("auth") {
+        if let Some(row) = row_settings.as_object_mut() {
+            row.insert(
+                "auth".to_string(),
+                stored_row
+                    .and_then(|stored| stored.get("auth"))
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Map::new())),
+            );
+        }
+    }
     Ok(CodexEditorPlan {
-        row_settings: store_into_row(stored_row, edited, &projection)?,
+        row_settings,
         edits: TomlEdits::between(&base_entries, &entries(&edited_doc, &routes), on_conflict),
     })
 }
@@ -608,6 +642,40 @@ mod tests {
         assert!(
             !text.contains("approval_policy"),
             "global settings go to live, not the row: {text}"
+        );
+    }
+
+    /// #8039：顶层 base_url 的旧形态行原样保存，地址不能丢，归一成 custom 表。
+    #[test]
+    fn saving_a_top_level_base_url_row_keeps_the_address() {
+        let stored = json!({
+            "auth": { "OPENAI_API_KEY": "sk-relay" },
+            "config": "base_url = \"https://relay.example.com/v1\"\nmodel = \"gpt-a\"\nwire_api = \"responses\"\n"
+        });
+        let plan = plan_save(
+            Some(&stored),
+            &stored,
+            &stored,
+            &Origin::row(&stored).unwrap(),
+            false,
+            false,
+            ConflictPolicy::Refuse,
+        )
+        .unwrap();
+        let text = plan.row_settings["config"].as_str().unwrap();
+        let parsed: toml::Table = toml::from_str(text).unwrap();
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://relay.example.com/v1")
+        );
+        assert!(parsed.get("base_url").is_none(), "{text}");
+        assert!(parsed.get("wire_api").is_none(), "{text}");
+        assert_eq!(parsed["model"].as_str(), Some("gpt-a"));
+        assert_eq!(
+            crate::codex_config::extract_codex_base_url(text).as_deref(),
+            Some("https://relay.example.com/v1"),
+            "the proxy still finds the address"
         );
     }
 }

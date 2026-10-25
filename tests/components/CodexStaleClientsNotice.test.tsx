@@ -18,6 +18,7 @@ vi.mock("sonner", () => ({
 
 const TAURI_ENDPOINT = "http://tauri.local";
 const RESTART = `${TAURI_ENDPOINT}/restart_codex_app_server_daemon`;
+const ACKNOWLEDGE = `${TAURI_ENDPOINT}/acknowledge_codex_stale_clients`;
 
 function renderNotice(staleClients: CodexStaleClients) {
   const queryClient = new QueryClient({
@@ -44,6 +45,64 @@ function clickRestartAndConfirm() {
 describe("CodexStaleClientsNotice", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("explains a potentially cached account without claiming models are missing", () => {
+    renderNotice({ daemon: true, others: false, auth: true });
+    expect(
+      screen.getByText("proxy.stackMode.codexStale.authTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.title"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says Codex may be stale when its processes cannot be seen and records the dismissal", async () => {
+    let acknowledged = 0;
+    server.use(
+      http.post(ACKNOWLEDGE, () => {
+        acknowledged += 1;
+        return HttpResponse.json(null);
+      }),
+    );
+    const { invalidate } = renderNotice({
+      daemon: false,
+      others: true,
+      auth: true,
+      unverified: true,
+    });
+    expect(
+      screen.getByText("proxy.stackMode.codexStale.unverifiedTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.authTitle"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("proxy.stackMode.codexStale.unverifiedHint"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "proxy.stackMode.codexStale.restart" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
+    await waitFor(() => expect(acknowledged).toBe(1));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["providers", "codex"] });
+  });
+
+  it("does not record a dismissal for a notice backed by the process table", () => {
+    let acknowledged = 0;
+    server.use(
+      http.post(ACKNOWLEDGE, () => {
+        acknowledged += 1;
+        return HttpResponse.json(null);
+      }),
+    );
+    renderNotice({ daemon: false, others: true });
+    // 没有 onDismiss 也不是「可能」：不给关闭按钮，也不记确认。
+    expect(
+      screen.queryByRole("button", { name: "common.close" }),
+    ).not.toBeInTheDocument();
+    expect(acknowledged).toBe(0);
   });
 
   it("restarts the daemon only after the user confirms", async () => {

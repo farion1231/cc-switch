@@ -189,7 +189,7 @@ impl Provider {
                 (base_url, api_key)
             }
             // Gemini uses Google-specific env keys (with a legacy GOOGLE_API_KEY fallback).
-            AppType::Gemini => {
+            AppType::Gemini | AppType::Agy => {
                 let env = settings.get("env");
                 let base_url = str_at(env.and_then(|e| e.get("GOOGLE_GEMINI_BASE_URL")));
                 let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
@@ -213,6 +213,10 @@ impl Provider {
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
+            AppType::Kimi => (
+                str_at(settings.pointer("/provider/base_url")),
+                str_at(settings.pointer("/provider/api_key")),
+            ),
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
@@ -222,10 +226,11 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
-            // Pi custom providers use the native models.json field names.
+            // Pi custom providers use the native models.json field names. Pi expands
+            // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
             AppType::Pi => (
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
-                str_at(settings.get("apiKey")),
+                crate::pi_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
@@ -252,6 +257,12 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
+            // Oh My Pi custom providers use the models.yml field names. omp reads `apiKey` as
+            // an environment variable name first, so resolve it before sending.
+            AppType::Omp => (
+                crate::omp_config::provider_base_url(settings).unwrap_or_default(),
+                crate::omp_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a
@@ -403,6 +414,29 @@ pub struct ClaudeDesktopModelRoute {
     pub supports_1m: Option<bool>,
 }
 
+/// Codex Copilot protocol selection; independent of legacy `apiFormat` metadata.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexCopilotApiFormat {
+    #[default]
+    Auto,
+    OpenaiResponses,
+    OpenaiChat,
+}
+
+impl CodexCopilotApiFormat {
+    /// Read the stored selection. The meta field stays a plain string so a value
+    /// written by a newer version survives sync round-trips here instead of
+    /// failing the whole `ProviderMeta` parse; unknown values fall back to auto.
+    pub fn from_meta(meta: Option<&ProviderMeta>) -> Self {
+        match meta.and_then(|meta| meta.codex_copilot_api_format.as_deref()) {
+            Some("openai_responses") => Self::OpenaiResponses,
+            Some("openai_chat") => Self::OpenaiChat,
+            _ => Self::Auto,
+        }
+    }
+}
+
 /// Codex Responses -> Chat Completions 的 reasoning 能力描述。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct CodexChatReasoningConfig {
@@ -500,6 +534,13 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Codex Copilot only: absent or auto prefers advertised Responses, then Chat.
+    /// Legacy `apiFormat` does not imply an explicit Copilot protocol override.
+    #[serde(
+        rename = "codexCopilotApiFormat",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_copilot_api_format: Option<String>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
@@ -1061,8 +1102,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, LocalProxyRequestOverrides,
-        OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
+        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
+        ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1139,6 +1181,65 @@ mod tests {
     fn provider_meta_omits_max_output_tokens_when_none() {
         let value = serde_json::to_value(ProviderMeta::default()).expect("serialize ProviderMeta");
         assert!(value.get("maxOutputTokens").is_none());
+    }
+
+    #[test]
+    fn codex_copilot_api_format_roundtrips_supported_values() {
+        for (wire, expected) in [
+            ("auto", CodexCopilotApiFormat::Auto),
+            ("openai_responses", CodexCopilotApiFormat::OpenaiResponses),
+            ("openai_chat", CodexCopilotApiFormat::OpenaiChat),
+        ] {
+            let value = json!({
+                "apiFormat": "openai_chat",
+                "codexCopilotApiFormat": wire
+            });
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(CodexCopilotApiFormat::from_meta(Some(&meta)), expected);
+            assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn codex_copilot_api_format_preserves_legacy_absence() {
+        for value in [
+            json!({}),
+            json!({"apiFormat": "openai_chat"}),
+            json!({"apiFormat": "openai_responses"}),
+        ] {
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(meta.codex_copilot_api_format, None);
+            assert_eq!(
+                CodexCopilotApiFormat::from_meta(Some(&meta)),
+                CodexCopilotApiFormat::Auto
+            );
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
+        assert_eq!(
+            CodexCopilotApiFormat::from_meta(None),
+            CodexCopilotApiFormat::Auto
+        );
+    }
+
+    /// A value from a newer version must not fail the whole meta parse (the DAO
+    /// would fall back to an empty meta and drop the account binding); it is read
+    /// as auto and written back unchanged.
+    #[test]
+    fn codex_copilot_api_format_keeps_unknown_values_without_losing_meta() {
+        for wire in ["anthropic", "messages", "openai", "unknown", ""] {
+            let value = json!({
+                "providerType": "github_copilot",
+                "codexCopilotApiFormat": wire
+            });
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(meta.provider_type.as_deref(), Some("github_copilot"));
+            assert_eq!(
+                CodexCopilotApiFormat::from_meta(Some(&meta)),
+                CodexCopilotApiFormat::Auto
+            );
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
     }
 
     #[test]
@@ -1636,6 +1737,17 @@ mod tests {
                 "sk-pi".to_string()
             )
         );
+    }
+
+    #[test]
+    fn resolve_credentials_pi_never_sends_key_references_literally() {
+        for reference in ["$CC_SWITCH_TEST_UNSET_8822", "!echo sk-from-command"] {
+            let p = provider_with(json!({
+                "baseUrl": "https://api.example.com/v1",
+                "apiKey": reference,
+            }));
+            assert_eq!(p.resolve_usage_credentials(&AppType::Pi).1, "");
+        }
     }
 
     #[test]

@@ -12,6 +12,7 @@ import {
 } from "vitest";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
+import type { QuotaDisplay } from "@/components/quota/quotaRules";
 import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import en from "@/i18n/locales/en.json";
@@ -50,6 +51,7 @@ function renderQuota(
   inline = true,
   overrides: Partial<SubscriptionQuota> = {},
   refetch: () => unknown = vi.fn(),
+  display: QuotaDisplay = "left",
 ) {
   const quota: SubscriptionQuota = {
     tool: "claude",
@@ -70,10 +72,16 @@ function renderQuota(
         refetch={refetch}
         appIdForExpiredHint="claude"
         inline={inline}
+        display={display}
       />
     </I18nextProvider>,
   );
 }
+
+/** 额度句子里数值单独包了一层 span（只给数值上色），按整句文字找最内层的元素 */
+const sentence = (text: string) => (_: string, node: Element | null) =>
+  node?.textContent === text &&
+  !Array.from(node.children).some((child) => child.textContent === text);
 
 describe("Claude Fable subscription quota", () => {
   it("pins the shortest window first and merges the rest into one line", () => {
@@ -85,15 +93,15 @@ describe("Claude Fable subscription quota", () => {
         resetsAt: "2026-09-12T00:00:00Z",
       },
     ]);
-    // 第一行固定是 5 小时，哪怕它剩得最多；其余两档并成一行，快用完的那段单独加深
+    // 第一行固定是 5 小时，哪怕它剩得最多；其余两档并成一行，快用完的那段单独标橙
     const lines = screen.getByRole("button").children;
     expect(lines[0]).toHaveTextContent("5 小时剩余 88%");
     expect(lines[1]).toHaveTextContent("每周 75% · Fable 5%");
-    expect(screen.getByText("每周 75%")).toHaveClass("text-fg-2");
-    expect(screen.getByText("Fable 5%")).toHaveClass(
-      "font-medium",
-      "text-fg-1",
-    );
+    // 只有数值上色，档名跟着外层灰字
+    expect(screen.getByText("75%")).toHaveClass("text-green-600");
+    expect(screen.getByText("5%")).toHaveClass("text-orange-500");
+    expect(screen.getByText("88%")).toHaveClass("text-green-600");
+    expect(screen.getByText("88%").parentElement).toHaveClass("text-fg-2");
     // 重置倒计时直接写在每行后面：5 小时那行没有重置时间，留空占位；合并行写最近的那次
     expect(screen.getByText("2d12h")).toBeInTheDocument();
     expect(
@@ -137,20 +145,41 @@ describe("Claude Fable subscription quota", () => {
     expect(
       screen.getByRole("meter", { name: "5 小时: 剩余 88%" }),
     ).toHaveAttribute("aria-valuenow", "88");
-    expect(screen.getByText("已用完")).toHaveClass("text-danger-text");
+    expect(screen.getByText("已用完")).toHaveClass("text-red-500");
     // 展开时重置时间直接写在数值后面
     expect(screen.getByText("2d12h后重置")).toBeInTheDocument();
   });
 
-  it("shows an unused Fable limit in the quiet color", () => {
+  it("writes what is used when chosen, on the card and in the bars", () => {
+    const tiers: QuotaTier[] = [
+      ...baseTiers,
+      { name: "seven_day_fable", utilization: 95, resetsAt: null },
+    ];
+    renderQuota(tiers, true, {}, vi.fn(), "used");
+    const lines = screen.getByRole("button").children;
+    expect(lines[0]).toHaveTextContent("5 小时已用 12%");
+    expect(lines[1]).toHaveTextContent("每周 25% · Fable 95%");
+    // 颜色仍按剩余：Fable 已用 95% = 剩余 5%
+    expect(screen.getByText("95%")).toHaveClass("text-orange-500");
+    expect(screen.getByText("12%")).toHaveClass("text-green-600");
+  });
+
+  it("draws the expanded bar as used when chosen", () => {
+    renderQuota(baseTiers, false, {}, vi.fn(), "used");
+    expect(
+      screen.getByRole("meter", { name: "5 小时: 已用 12%" }),
+    ).toHaveAttribute("aria-valuenow", "12");
+  });
+
+  it("shows an unused Fable limit in the normal color", () => {
     renderQuota([{ name: "seven_day_fable", utilization: 0, resetsAt: null }]);
-    expect(screen.getByText("Fable 剩余 100%")).toHaveClass("text-fg-2");
+    expect(screen.getByText("100%")).toHaveClass("text-green-600");
   });
 
   it("keeps legacy quotas visible without inventing a Fable limit", () => {
     renderQuota(baseTiers);
-    expect(screen.getByText("5 小时剩余 88%")).toBeInTheDocument();
-    expect(screen.getByText("每周剩余 75%")).toBeInTheDocument();
+    expect(screen.getByText(sentence("5 小时剩余 88%"))).toBeInTheDocument();
+    expect(screen.getByText(sentence("每周剩余 75%"))).toBeInTheDocument();
     expect(screen.queryByText(/Fable/)).not.toBeInTheDocument();
   });
 
@@ -161,7 +190,70 @@ describe("Claude Fable subscription quota", () => {
   ])("localizes the Fable line in %s", async (language, text) => {
     await i18n.changeLanguage(language);
     renderQuota([{ name: "seven_day_fable", utilization: 37, resetsAt: null }]);
-    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.getByText(sentence(text))).toBeInTheDocument();
+  });
+});
+
+describe("Antigravity quota groups", () => {
+  const agyTiers: QuotaTier[] = [
+    { name: "agy_gemini_five_hour", utilization: 10, resetsAt: null },
+    {
+      name: "agy_gemini_weekly",
+      utilization: 40,
+      resetsAt: "2026-09-12T00:00:00Z",
+    },
+    { name: "agy_third_party_five_hour", utilization: 95, resetsAt: null },
+    { name: "agy_third_party_weekly", utilization: 20, resetsAt: null },
+  ];
+
+  it("keeps one line per group on the card: the window with the least left", () => {
+    renderQuota(agyTiers);
+    const lines = screen.getByRole("button", { name: "查看各档额度" }).children;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toHaveTextContent("Gemini 剩余 60%");
+    expect(lines[1]).toHaveTextContent("Claude/GPT 剩余 5%");
+    // 倒计时跟着留下的那档（Gemini 每周）
+    expect(screen.getByText("2d12h")).toBeInTheDocument();
+  });
+
+  it("opens one dropdown listing all four windows; ↻ still refreshes", async () => {
+    const refetch = vi.fn();
+    renderQuota(agyTiers, true, {}, refetch);
+    fireEvent.click(screen.getByRole("button", { name: "查看各档额度" }));
+    expect(refetch).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "各档额度" });
+    expect(
+      within(dialog)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "Gemini 5 小时剩余 90%",
+      "Gemini 每周2d12h后重置剩余 60%",
+      "Claude/GPT 5 小时剩余 5%",
+      "Claude/GPT 每周剩余 80%",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "点击重新查询" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps other cards' quota column clickable to refresh", () => {
+    renderQuota([{ name: "five_hour", utilization: 10, resetsAt: null }]);
+    expect(
+      screen.queryByRole("button", { name: "查看各档额度" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lists every group and window when expanded", () => {
+    renderQuota(agyTiers, false);
+    for (const name of [
+      "Gemini 5 小时: 剩余 90%",
+      "Gemini 每周: 剩余 60%",
+      "Claude/GPT 5 小时: 剩余 5%",
+      "Claude/GPT 每周: 剩余 80%",
+    ]) {
+      expect(screen.getByRole("meter", { name })).toBeInTheDocument();
+    }
   });
 });
 
@@ -175,7 +267,7 @@ describe("credential failures", () => {
 
   it("says the token is waiting for a refresh, not that the login expired", () => {
     failed("refresh_pending");
-    expect(screen.getByText("额度没查到")).toBeInTheDocument();
+    expect(screen.getByText("额度查询失败")).toBeInTheDocument();
     expect(screen.getByText("令牌待刷新")).toBeInTheDocument();
     expect(screen.queryByText("登录已过期")).not.toBeInTheDocument();
     expect(screen.queryByText("raw backend message")).not.toBeInTheDocument();
@@ -203,8 +295,8 @@ describe("ChatGPT saved limit resets", () => {
 
   it("rides along with the weekly tier on the card", () => {
     codex(true);
-    expect(screen.getByText("5 小时剩余 88%")).toBeInTheDocument();
-    expect(screen.getByText("重置 2 次")).toBeInTheDocument();
+    expect(screen.getByText(sentence("5 小时剩余 88%"))).toBeInTheDocument();
+    expect(screen.getByText(sentence("重置 2 次"))).toBeInTheDocument();
     expect(
       screen
         .getByRole("button", { name: /点击重新查询/ })
@@ -271,15 +363,15 @@ describe("ChatGPT Credits balance", () => {
   it("stays off the card while no tier is used up", () => {
     renderQuota(baseTiers, true, credits);
     expect(screen.queryByText(/\$2500/)).not.toBeInTheDocument();
-    expect(screen.getByText("重置 2 次")).toBeInTheDocument();
+    expect(screen.getByText(sentence("重置 2 次"))).toBeInTheDocument();
   });
 
   it("shows up on the card in dollars once a tier is used up, ahead of the resets", () => {
     renderQuota(usedUp, true, credits);
     expect(screen.getByText("$2500")).toBeInTheDocument();
-    expect(screen.getByText("每周 75%")).toBeInTheDocument();
+    expect(screen.getByText(sentence("每周 75%"))).toBeInTheDocument();
     // 合并行只放得下两段：余额排在重置次数前面
-    expect(screen.queryByText("重置 2 次")).not.toBeInTheDocument();
+    expect(screen.queryByText(sentence("重置 2 次"))).not.toBeInTheDocument();
     // 没有下拉段时整列是一个按钮，悬停说明里写全余额
     expect(
       screen.getByRole("button", { name: /\$2500/ }).getAttribute("title"),
@@ -293,7 +385,7 @@ describe("ChatGPT Credits balance", () => {
       credits,
     );
     expect(screen.getByText("$2500")).toBeInTheDocument();
-    expect(screen.getByText("重置 2 次")).toBeInTheDocument();
+    expect(screen.getByText(sentence("重置 2 次"))).toBeInTheDocument();
   });
 
   it("is listed under the resets when they drop down on the card", () => {
