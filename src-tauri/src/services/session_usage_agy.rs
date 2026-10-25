@@ -12,7 +12,7 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use std::path::Path;
 
-mod native_models;
+use crate::agy_conversation::models as native_models;
 
 #[cfg(test)]
 mod local_retest;
@@ -23,6 +23,10 @@ pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         let Some(path) = session.source_path else {
             continue;
         };
+        // Native-only sources are readable sessions, not exported usage records.
+        if path.starts_with("sqlite:") {
+            continue;
+        }
         result.files_scanned += 1;
         match agy::records(std::path::Path::new(&path)) {
             Ok(rows) => {

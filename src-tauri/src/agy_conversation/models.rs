@@ -1,7 +1,11 @@
 //! Read per-generation model names from Antigravity's native conversation database.
 use prost::Message;
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use std::{collections::HashMap, path::Path, time::Duration};
+#[cfg(test)]
+use rusqlite::Connection;
+use rusqlite::OptionalExtension;
+#[cfg(test)]
+use std::time::Duration;
+use std::{collections::HashMap, path::Path};
 
 // Only the fields needed for the step -> generation -> model association are decoded.
 #[derive(Clone, PartialEq, Message)]
@@ -44,44 +48,26 @@ struct ResponseModelId {
     model_id: String,
 }
 
-pub(super) fn models_for_transcript(
+pub(crate) fn models_for_transcript(
     transcript: &Path,
     steps: &[u64],
 ) -> Result<HashMap<u64, String>, String> {
-    // brain/<id>/.system_generated/logs/transcript_full.jsonl and conversations/<id>.db
-    // share the same CLI/IDE/private-profile root.
-    let session = transcript
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .ok_or("Missing transcript session directory")?;
-    let root = session
-        .parent()
-        .filter(|brain| brain.file_name().is_some_and(|name| name == "brain"))
-        .and_then(Path::parent)
-        .ok_or("Missing Antigravity root")?;
-    let id = session.file_name().ok_or("Missing session id")?;
-    let path = root.join("conversations").join(id).with_extension("db");
-    if !path.is_file() {
+    let Some(path) = crate::agy_conversation::for_transcript(transcript)? else {
         return Ok(HashMap::new());
-    }
-    let root = root.canonicalize().map_err(|error| error.to_string())?;
-    let path = path.canonicalize().map_err(|error| error.to_string())?;
-    if !path.starts_with(root) {
-        return Err("Conversation database is outside the Antigravity root".into());
-    }
+    };
     read_models(&path, steps).map_err(|error| error.to_string())
 }
 
 fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
-    let mut conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    // A busy native writer must not hold up the usage refresh. Normal SQLite reads
-    // include the WAL; immutable mode would miss live generations.
-    conn.busy_timeout(Duration::ZERO)?;
+    let mut conn = crate::agy_conversation::open(path)?;
     let tx = conn.transaction()?;
+    models_in(&tx, steps)
+}
+
+pub(crate) fn models_in(
+    tx: &rusqlite::Transaction<'_>,
+    steps: &[u64],
+) -> rusqlite::Result<HashMap<u64, String>> {
     let mut step_query = tx.prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")?;
     let mut generation_query = tx.prepare("SELECT data FROM gen_metadata WHERE idx=?1")?;
     let mut models = HashMap::new();
@@ -129,7 +115,7 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
 }
 
 #[cfg(test)]
-pub(super) fn write_test_database(path: &Path, entries: &[(i64, u64, &str)]) -> Connection {
+pub(crate) fn write_test_database(path: &Path, entries: &[(i64, u64, &str)]) -> Connection {
     let conn = Connection::open(path).unwrap();
     conn.execute_batch(
         "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, metadata BLOB);
@@ -161,7 +147,7 @@ pub(super) fn write_test_database(path: &Path, entries: &[(i64, u64, &str)]) -> 
 
 /// Rewrites a generation with field 19 and an optional raw field 21 (any wire type).
 #[cfg(test)]
-pub(super) fn set_test_generation(conn: &Connection, generation: i64, base: &str, field21: &[u8]) {
+pub(crate) fn set_test_generation(conn: &Connection, generation: i64, base: &str, field21: &[u8]) {
     let mut response = ResponseMetadata { model: base.into() }.encode_to_vec();
     response.extend_from_slice(field21);
     let mut data = Vec::new();
@@ -175,7 +161,7 @@ pub(super) fn set_test_generation(conn: &Connection, generation: i64, base: &str
 
 /// Field 21 encoded as a string.
 #[cfg(test)]
-pub(super) fn test_model_id(id: &str) -> Vec<u8> {
+pub(crate) fn test_model_id(id: &str) -> Vec<u8> {
     let mut field = Vec::new();
     prost::encoding::string::encode(21, &id.to_string(), &mut field);
     field
