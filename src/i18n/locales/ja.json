@@ -4375,7 +4375,8 @@
       "edit": "{{name}} を編集",
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
-      "moveDown": "{{name}} を下へ"
+      "moveDown": "{{name}} を下へ",
+      "openTerminal": "{{name}} でターミナルを開く"
     },
     "chip": {
       "official": "公式",

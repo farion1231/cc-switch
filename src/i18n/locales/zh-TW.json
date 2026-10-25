@@ -4376,7 +4376,8 @@
       "edit": "編輯 {{name}}",
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
-      "moveDown": "{{name}} 下移一位"
+      "moveDown": "{{name}} 下移一位",
+      "openTerminal": "用 {{name}} 開啟終端機"
     },
     "chip": {
       "official": "官方",

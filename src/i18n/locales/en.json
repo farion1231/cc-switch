@@ -4375,7 +4375,8 @@
       "edit": "Edit {{name}}",
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
-      "moveDown": "Move {{name}} down"
+      "moveDown": "Move {{name}} down",
+      "openTerminal": "Open a terminal with {{name}}"
     },
     "chip": {
       "official": "Official",
