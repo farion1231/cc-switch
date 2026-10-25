@@ -1,6 +1,6 @@
 import type { PiThinkingProfileId } from "./piThinkingProfiles";
 
-export type PiModelInput = "text" | "image";
+export type PiModelInput = "text" | "image" | "video";
 
 export interface PiModelCapabilities {
   name: string;
@@ -259,7 +259,7 @@ export const piModelCatalog = {
     capabilities: {
       name: "MiniMax-M3",
       reasoning: true,
-      input: ["text", "image"],
+      input: ["text", "image", "video"],
       contextWindow: 1_000_000,
       maxTokens: 128_000,
     },
@@ -268,7 +268,7 @@ export const piModelCatalog = {
     capabilities: {
       name: "MiniMax-M3.1-Flash",
       reasoning: true,
-      input: ["text", "image"],
+      input: ["text", "image", "video"],
       contextWindow: 1_000_000,
       maxTokens: 128_000,
     },

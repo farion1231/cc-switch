@@ -1856,7 +1856,7 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.minimax.cn/anthropic",
+        ANTHROPIC_BASE_URL: "https://api.minimaxi.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
         ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1M]",

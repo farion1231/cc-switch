@@ -2629,7 +2629,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     providerKey: "cc-switch-minimax",
     settingsConfig: {
       name: "cc-switch-minimax",
-      base_url: "https://api.minimax.cn/v1",
+      base_url: "https://api.minimaxi.com/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [

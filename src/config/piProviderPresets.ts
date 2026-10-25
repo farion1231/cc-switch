@@ -1766,7 +1766,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       name: "MiniMax",
-      baseUrl: "https://api.minimax.cn/v1",
+      baseUrl: "https://api.minimaxi.com/v1",
       api: "openai-completions",
       apiKey: "",
       models: [

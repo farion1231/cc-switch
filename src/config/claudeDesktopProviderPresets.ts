@@ -1705,7 +1705,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     category: "cn_official",
-    baseUrl: "https://api.minimax.cn/anthropic",
+    baseUrl: "https://api.minimaxi.com/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: [
