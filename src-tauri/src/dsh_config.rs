@@ -42,6 +42,7 @@ pub(crate) fn entries(text: &str) -> Result<Vec<Yaml>, AppError> {
 }
 
 /// Replace one plugin override, retaining every other entry byte for byte (including !!js).
+/// The replaced entry itself is reserialized and must not use tags, anchors or aliases.
 fn replace_entry(text: &str, id: &str, entry: Option<Yaml>) -> Result<String, AppError> {
     let parsed = entries(text)?;
     let matching: Vec<_> = parsed
@@ -71,6 +72,7 @@ fn replace_patch(
     } else {
         ""
     };
+    let reserialized = entry.is_some();
     let replacement = entry
         .map(|entry| serde_yaml::to_string(&vec![entry]))
         .transpose()
@@ -104,6 +106,17 @@ fn replace_patch(
     }
     if let Some(index) = index {
         let end = starts.get(index + 1).copied().unwrap_or(text.len());
+        // serde_yaml drops `!!js` tags and expands anchors, so rewriting an entry
+        // that uses them would silently change what DSH evaluates.
+        if reserialized
+            && text[starts[index]..end]
+                .lines()
+                .any(crate::omp_config::has_yaml_reference_tokens)
+        {
+            return Err(AppError::Config(
+                "This DeepSeek Harness profile entry uses YAML tags (such as !!js), anchors or aliases; edit it in cordis.patch.yml directly".into(),
+            ));
+        }
         Ok(format!(
             "{}{}{}",
             &text[..starts[index]],
@@ -964,7 +977,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("cordis.patch.yml");
         let untouched = "# keep\n- id: other\n  config: {dynamic: !!js process.env.VALUE}\n";
-        let group = "- insert:\n  - id: github\n    name: '@deepseek-ai/dsh-mcp-client'\n    disabled: true\n    config: {serverName: github, transport: stdio, command: node, toolCallTimeoutMs: 12345}\n  - id: sibling\n    name: custom-plugin\n    config: {dynamic: !!js process.env.OTHER}\n";
+        let group = "- insert:\n  - id: github\n    name: '@deepseek-ai/dsh-mcp-client'\n    disabled: true\n    config: {serverName: github, transport: stdio, command: node, toolCallTimeoutMs: 12345}\n  - id: sibling\n    name: custom-plugin\n    config: {dynamic: other}\n";
         fs::write(&path, format!("{untouched}{group}")).unwrap();
         let sibling = entries(group).unwrap()[0]["insert"][1].clone();
         assert_eq!(mcp_entries_from(group).unwrap().len(), 1);
@@ -990,6 +1003,27 @@ mod tests {
             entries(&text).unwrap()[1]["insert"],
             Yaml::Sequence(vec![sibling])
         );
+    }
+
+    #[test]
+    fn mcp_edits_refuse_to_drop_tags_from_rewritten_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        let spec = json!({"type":"stdio","command":"node"});
+        // Editing or removing one plugin rewrites its whole insert group.
+        let group = "- insert:\n  - id: github\n    name: '@deepseek-ai/dsh-mcp-client'\n    config: {serverName: github, transport: stdio, command: node}\n  - id: sibling\n    name: custom-plugin\n    config: {dynamic: !!js process.env.OTHER}\n";
+        fs::write(&path, group).unwrap();
+        for next in [Some(&spec), None] {
+            assert!(sync_mcp_file_and_commit(&path, "github", next, || Ok(())).is_err());
+            assert_eq!(read_text(&path).unwrap(), group);
+        }
+        // A tagged top-level entry can't be edited, but removing it rewrites nothing else.
+        let own = "- id: cc-switch-mcp-github\n  name: '@deepseek-ai/dsh-mcp-client'\n  config: {serverName: github, transport: stdio, command: node, env: {TOKEN: !!js process.env.TOKEN}}\n";
+        fs::write(&path, own).unwrap();
+        assert!(sync_mcp_file_and_commit(&path, "github", Some(&spec), || Ok(())).is_err());
+        assert_eq!(read_text(&path).unwrap(), own);
+        sync_mcp_file_and_commit(&path, "github", None, || Ok(())).unwrap();
+        assert_eq!(read_text(&path).unwrap(), "[]\n");
     }
 
     #[test]
@@ -1035,6 +1069,32 @@ mod tests {
         assert!(provider_entry(&removed).unwrap()["config"]["providers"]
             .get("new-provider")
             .is_none());
+    }
+
+    #[test]
+    fn provider_edits_refuse_to_reserialize_tags_and_anchors() {
+        for native in [
+            "      native: {apiKey: !!js process.env.NATIVE_KEY}\n",
+            "      native: &shared {apiKeyEnv: NATIVE_KEY}\n      copy: *shared\n",
+        ] {
+            let original = format!("- id: llm-pi-ai\n  config:\n    providers:\n{native}");
+            let error = update_provider(
+                &original,
+                "new-provider",
+                Some(json!({"api":"openai-responses","models":[{"id":"model"}]})),
+                true,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("YAML tags"));
+        }
+        // Tag-like text inside quotes and comments is plain data.
+        let quoted = "- id: llm-pi-ai\n  config:\n    providers:\n      native: {name: '!!js not a tag', apiKeyEnv: KEY} # !!js note\n";
+        let next =
+            update_provider(quoted, "new-provider", Some(json!({"models":[]})), true).unwrap();
+        assert_eq!(
+            provider_entry(&next).unwrap()["config"]["providers"]["native"]["name"],
+            "!!js not a tag"
+        );
     }
 
     #[test]
