@@ -1488,3 +1488,216 @@ fn migration_v22_to_v23_adds_enabled_omp_to_mcp_servers_only() {
         .expect("read mcp row");
     assert_eq!((pi, omp), (1, 0));
 }
+// The companion case is genuinely new installation: no existing DB means
+// there is no user data to protect, even when backups/ is obstructed.
+#[test]
+#[serial_test::serial]
+fn pre_migration_backup_gate_allows_brand_new_database() -> Result<(), AppError> {
+    struct RestoreTestHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreTestHome {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+    let temp = tempfile::tempdir().expect("synthetic new-install home");
+    let _restore = RestoreTestHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+    std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+    let config_dir = crate::config::get_app_config_dir();
+    assert!(config_dir.starts_with(temp.path()));
+    std::fs::create_dir_all(&config_dir).expect("make synthetic config");
+    let backup_dir = config_dir.join("backups");
+    std::fs::write(&backup_dir, b"synthetic directory obstruction").expect("block backups");
+    let db_path = config_dir.join("cc-switch.db");
+    assert!(
+        !db_path.exists(),
+        "fixture must represent a new installation"
+    );
+    let db = Database::init()?;
+    drop(db);
+    let conn = Connection::open(&db_path)?;
+    assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+    assert_eq!(
+        std::fs::read(&backup_dir).expect("unchanged obstruction"),
+        b"synthetic directory obstruction"
+    );
+    Ok(())
+}
+
+// An existing unversioned SQLite file can contain real legacy records.
+// Treat it differently from a genuinely new install when deciding whether
+// a failed pre-migration backup may block startup.
+#[test]
+#[serial_test::serial]
+fn pre_migration_backup_failure_guards_existing_unversioned_database() -> Result<(), AppError> {
+    struct RestoreTestHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreTestHome {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+    let temp = tempfile::tempdir().expect("synthetic pre-migration home");
+    let _restore = RestoreTestHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+    std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+    let config_dir = crate::config::get_app_config_dir();
+    assert!(config_dir.starts_with(temp.path()));
+    std::fs::create_dir_all(&config_dir).expect("make synthetic config");
+    let db_path = config_dir.join("cc-switch.db");
+    let conn = Connection::open(&db_path)?;
+    Database::create_tables_on_conn(&conn)?;
+    conn.execute(
+        "INSERT INTO mcp_servers (id, name, server_config) VALUES (?1, ?2, ?3)",
+        params!["legacy-v0-sentinel", "unversioned", "{}"],
+    )?;
+    // SQLite defaults user_version to 0: no explicit PRAGMA write.
+    assert_eq!(Database::get_user_version(&conn)?, 0);
+    drop(conn);
+
+    let backup_dir = config_dir.join("backups");
+    std::fs::write(&backup_dir, b"synthetic directory obstruction").expect("block backup");
+    let attempted = Database::init();
+    assert!(
+        attempted.is_err(),
+        "existing unversioned DB must not upgrade without a backup"
+    );
+    let conn = Connection::open(&db_path)?;
+    assert_eq!(Database::get_user_version(&conn)?, 0);
+    let unchanged: String = conn.query_row(
+        "SELECT name FROM mcp_servers WHERE id = 'legacy-v0-sentinel'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(unchanged, "unversioned");
+    drop(conn);
+
+    std::fs::remove_file(&backup_dir).expect("clear synthetic obstruction");
+    let upgraded = Database::init()?;
+    drop(upgraded);
+    let conn = Connection::open(&db_path)?;
+    assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+    let preserved: String = conn.query_row(
+        "SELECT name FROM mcp_servers WHERE id = 'legacy-v0-sentinel'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(preserved, "unversioned");
+    drop(conn);
+    let mut saw_v0_snapshot = false;
+    for entry in std::fs::read_dir(&backup_dir).expect("backups after successful upgrade") {
+        let path = entry.expect("backup entry").path();
+        if path.extension().is_some_and(|ext| ext == "db") {
+            let backup = Connection::open(path)?;
+            if Database::get_user_version(&backup)? == 0 {
+                saw_v0_snapshot = true;
+            }
+        }
+    }
+    assert!(
+        saw_v0_snapshot,
+        "recoverable v0 snapshot must exist before migration"
+    );
+    Ok(())
+}
+
+// An installed v22 database must not be upgraded to v23 unless a readable
+// pre-migration backup is secured. Both phases use only synthetic data.
+#[test]
+#[serial_test::serial]
+fn pre_migration_backup_failure_preserves_database_until_safe_retry() -> Result<(), AppError> {
+    struct RestoreTestHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreTestHome {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    let temp = tempfile::tempdir().expect("isolated test home");
+    let _restore = RestoreTestHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+    std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+    let config_dir = crate::config::get_app_config_dir();
+    assert!(
+        config_dir.starts_with(temp.path()),
+        "must never use real user home"
+    );
+    std::fs::create_dir_all(&config_dir).expect("create synthetic config dir");
+    let db_path = config_dir.join("cc-switch.db");
+
+    // Published v22 fixture: the v23 OMP column has not been created.
+    let conn = Connection::open(&db_path)?;
+    Database::create_tables_on_conn(&conn)?;
+    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")?;
+    conn.execute(
+        "INSERT INTO mcp_servers (id, name, server_config) VALUES (?1, ?2, ?3)",
+        params!["synthetic-provider", "synthetic", "{}"],
+    )?;
+    Database::set_user_version(&conn, 22)?;
+    drop(conn);
+
+    // A regular file at the backup path deterministically makes mkdir fail.
+    let backup_dir = config_dir.join("backups");
+    std::fs::write(&backup_dir, b"synthetic directory obstruction").expect("set up backup failure");
+    let attempted = Database::init();
+    assert!(
+        attempted.is_err(),
+        "upgrading without a recoverable pre-migration backup must fail closed"
+    );
+
+    let conn = Connection::open(&db_path)?;
+    assert_eq!(
+        Database::get_user_version(&conn)?,
+        22,
+        "failed backup must leave schema version unchanged"
+    );
+    assert!(!Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+    let sentinel: String = conn.query_row(
+        "SELECT name FROM mcp_servers WHERE id = 'synthetic-provider'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(sentinel, "synthetic");
+    drop(conn);
+
+    // Remove only the synthetic obstruction. A verified backup must then
+    // allow the migration, preserving user rows and the pre-upgrade snapshot.
+    std::fs::remove_file(&backup_dir).expect("clear synthetic obstruction");
+    let upgraded = Database::init()?;
+    drop(upgraded);
+    let conn = Connection::open(&db_path)?;
+    assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+    assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+    let preserved: String = conn.query_row(
+        "SELECT name FROM mcp_servers WHERE id = 'synthetic-provider'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(preserved, "synthetic");
+
+    // The startup auto-vacuum path may create a later post-upgrade backup
+    // too. Require at least one original v22 snapshot, not that an arbitrary
+    // directory iteration entry is necessarily the pre-migration snapshot.
+    let mut found_pre_migration = false;
+    for entry in std::fs::read_dir(&backup_dir).expect("verified backup directory") {
+        let path = entry.expect("backup directory entry").path();
+        if !path.extension().is_some_and(|ext| ext == "db") {
+            continue;
+        }
+        let saved = Connection::open(&path)?;
+        if Database::get_user_version(&saved)? == 22 {
+            assert!(!Database::has_column(&saved, "mcp_servers", "enabled_omp")?);
+            found_pre_migration = true;
+        }
+    }
+    assert!(
+        found_pre_migration,
+        "at least one readable pre-upgrade v22 database backup must remain"
+    );
+    Ok(())
+}

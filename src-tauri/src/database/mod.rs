@@ -123,23 +123,33 @@ impl Database {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
         };
-        db.create_tables()?;
 
+        // Read the existing schema version before any table creation or
+        // compatibility changes: the original file must remain recoverable
+        // if the mandatory pre-migration backup cannot be created.
         // Pre-migration backup: only when upgrading from an existing database
         {
             let conn = lock_conn!(db.conn);
             let version = Self::get_user_version(&conn)?;
             drop(conn);
-            if version > 0 && version < SCHEMA_VERSION {
+            // An existing SQLite file may contain legacy user data even when
+            // PRAGMA user_version is 0. Back it up before any schema writes;
+            // only genuinely new installs may skip this safety gate.
+            if db_exists && version < SCHEMA_VERSION {
                 log::info!(
                     "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
                 );
-                if let Err(e) = db.backup_database_file() {
-                    log::warn!("Pre-migration backup failed, continuing migration: {e}");
-                }
+                db.backup_database_file().map_err(|error| {
+                    AppError::Database(format!(
+                        "Pre-migration backup failed; refusing schema changes: {error}"
+                    ))
+                })?;
             }
         }
 
+        // A backup of the original bytes must exist before create_tables can
+        // mutate a legacy schema or migrations advance PRAGMA user_version.
+        db.create_tables()?;
         db.apply_schema_migrations()?;
         if let Err(e) = db.ensure_incremental_auto_vacuum() {
             log::warn!("Failed to ensure incremental auto-vacuum: {e}");
