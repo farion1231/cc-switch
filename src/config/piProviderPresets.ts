@@ -126,6 +126,22 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
+        // 官方文档：K3.1 Pro 同 K3 用顶层 reasoning_effort（low/high/max），
+        // HighSpeed 与之能力相同
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro", {
+            id: "kimi-k3.1-pro",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro-highspeed", {
+            id: "kimi-k3.1-pro-highspeed",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
           thinkingProfile: "offUnsupported",
@@ -162,6 +178,22 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         {
           ...piModel("moonshotai/kimi-k3", {
             id: "kimi-k3",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        // 官方文档：K3.1 Pro 同 K3 用顶层 reasoning_effort（low/high/max），
+        // HighSpeed 与之能力相同
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro", {
+            id: "kimi-k3.1-pro",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro-highspeed", {
+            id: "kimi-k3.1-pro-highspeed",
             thinkingProfile: "kimi3",
           }),
           compat: { ...KIMI_K3_COMPAT },
