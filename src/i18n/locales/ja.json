@@ -390,6 +390,11 @@
       "restoreBackup": "オンにした際に移行した公式セッションを公式履歴へ復元する（バックアップから正確に復元）",
       "confirm": "オフにする"
     },
+    "codexUnifyHistoryRetag": {
+      "title": "履歴を再統合",
+      "message": "セッション索引 {{threads}} 行、セッションファイル {{files}} 件を統一履歴に統合します。実行前に自動でバックアップし、同じセッションを二重に書き換えることはなく、オフにしたときはバックアップから復元できます。",
+      "confirm": "再統合する"
+    },
     "usage": {
       "title": "使用量クエリの設定",
       "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
@@ -856,7 +861,7 @@
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
-    "unifyCodexSessionHistoryDescription": "Codex CLI にのみ影響します：CLI の resume 一覧には現在のプロバイダーのセッションしか表示されません。オンにすると公式サブスクリプションも共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じ一覧に表示されます。Codex デスクトップ版はアップデートで全セッションを表示できるようになったため、デスクトップ版だけなら不要です。既存の公式セッションの移行も選択できます（移行前に自動バックアップ）。オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
+    "unifyCodexSessionHistoryDescription": "Codex CLI にのみ影響します：CLI の resume 一覧には現在のプロバイダーのセッションしか表示されません。オンにすると公式サブスクリプションも共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じ一覧に表示されます。Codex デスクトップ版はアップデートで全セッションを表示できるようになったため、デスクトップ版だけなら不要です。既存の公式セッションの移行も選択できます（移行前に自動バックアップ）。オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。オンにした後に Codex クライアントが作成したセッションは公式バケットに残ることがあり、その場合は下の「履歴を再統合」で後から統合できます。スマートフォンの Remote のセッション一覧は現在のプロバイダーで絞り込まれるため、再統合したセッションだけが表示されます。",
     "codexStackClassicSubagents": "集約モードでサブエージェントにクラシックツールを使う",
     "codexStackClassicSubagentsDescription": "メインとサブのエージェントが別のプロバイダーを使う場合は必ずオンにしてください。オフだとサブエージェントにタスクが届きません。",
     "codexStackClassicSubagentsForcedV2": "Codex の config.toml で [features] multi_agent_v2 がオンになっています。こちらが優先されるため、この設定は効きません。",
@@ -868,6 +873,14 @@
     "unifyCodexHistoryRestoreFailed": "公式セッション履歴の復元に失敗しました。もう一度お試しください",
     "unifyCodexHistoryRestoreNothing": "現在の Codex ディレクトリに復元可能な移行バックアップはありません",
     "unifyCodexHistoryRestoreSkippedToggleOn": "統一セッション履歴が再度有効化されたため、復元をスキップしました",
+    "codexUnifyHistoryRetag": "履歴を再統合",
+    "codexUnifyHistoryRetagDescription": "統一セッション履歴がオンの間に Codex クライアントが作成したセッションは、公式バケットに残ることがあります。スマートフォンの Remote のセッション一覧は現在のプロバイダーで絞り込まれるため、それらは表示されません。再統合すると統一履歴にまとめられます。実行前に自動でバックアップし、繰り返し実行しても二重に書き換えず、オフにしたときはバックアップから復元できます。",
+    "codexUnifyHistoryRetagAction": "今すぐ再統合",
+    "codexUnifyHistoryRetagCompleted": "セッション索引 {{threads}} 行、セッションファイル {{files}} 件を再統合しました",
+    "codexUnifyHistoryRetagNothing": "再統合が必要なセッションはありません",
+    "codexUnifyHistoryRetagLiveNotUnified": "現在の Codex 設定が統合プロバイダー ID にルーティングされていません。公式の Codex プロバイダーへ一度切り替えてから再試行してください",
+    "codexUnifyHistoryRetagToggleOff": "Codex セッション履歴の統合がオンになっていません",
+    "codexUnifyHistoryRetagFailed": "公式セッション履歴の再統合に失敗しました。もう一度お試しください",
     "appVisibility": {
       "title": "ホームページ表示",
       "description": "ホームページに表示するアプリを選択",

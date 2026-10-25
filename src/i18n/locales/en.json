@@ -390,6 +390,11 @@
       "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
       "confirm": "Turn off"
     },
+    "codexUnifyHistoryRetag": {
+      "title": "Retag official history",
+      "message": "This merges {{threads}} session index rows and {{files}} session files into the unified history. It backs up first, never rewrites the same session twice, and they can still be restored from backup when you turn the toggle off.",
+      "confirm": "Retag"
+    },
     "usage": {
       "title": "Configure Usage Query",
       "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
@@ -856,7 +861,7 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it. Sessions created by the Codex client while this is on may still land in the official bucket; use \"Retag official history\" below to merge them later. The phone Remote session list filters by the current provider, so retagged sessions are the ones that show up there.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
@@ -868,6 +873,14 @@
     "unifyCodexHistoryRestoreFailed": "Failed to restore official session history, please try again",
     "unifyCodexHistoryRestoreNothing": "No restorable migration backup for the current Codex directory",
     "unifyCodexHistoryRestoreSkippedToggleOn": "Unified session history was re-enabled; restore skipped",
+    "codexUnifyHistoryRetag": "Retag official history",
+    "codexUnifyHistoryRetagDescription": "Sessions created by the Codex client while unified history is on can still land in the official bucket, and the phone Remote session list filters by the current provider, so they stay hidden. Retagging merges them into the unified history: it backs up first, is safe to repeat, and they can still be restored from backup when you turn the toggle off.",
+    "codexUnifyHistoryRetagAction": "Retag now",
+    "codexUnifyHistoryRetagCompleted": "Retagged {{threads}} session index rows and {{files}} session files",
+    "codexUnifyHistoryRetagNothing": "No sessions need retagging",
+    "codexUnifyHistoryRetagLiveNotUnified": "The current Codex config is not routed to the unified provider id; switch to an official Codex provider once, then try again",
+    "codexUnifyHistoryRetagToggleOff": "Unified Codex session history is turned off",
+    "codexUnifyHistoryRetagFailed": "Failed to retag official session history, please try again",
     "appVisibility": {
       "title": "Homepage Display",
       "description": "Choose which apps to show on the homepage",

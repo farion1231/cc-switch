@@ -173,6 +173,34 @@ pub struct CodexUnifyHistoryRestoreResult {
     pub skipped_reason: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexUnifyHistoryRetagResult {
+    /// 预览与执行都会填：还留在 openai 桶的 state DB 行数与 rollout 文件数
+    pub pending_thread_rows: usize,
+    pub pending_jsonl_files: usize,
+    /// 只有真正执行后才会非 0
+    pub retagged_state_rows: usize,
+    pub retagged_jsonl_files: usize,
+    /// 补标被跳过的原因（重复点击时是 nothing_pending），前端据此提示而非报"成功 0 项"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped_reason: Option<String>,
+}
+
+impl From<crate::codex_history_migration::CodexOfficialHistoryRetagOutcome>
+    for CodexUnifyHistoryRetagResult
+{
+    fn from(outcome: crate::codex_history_migration::CodexOfficialHistoryRetagOutcome) -> Self {
+        Self {
+            pending_thread_rows: outcome.pending_thread_rows,
+            pending_jsonl_files: outcome.pending_jsonl_files,
+            retagged_state_rows: outcome.retagged_state_rows,
+            retagged_jsonl_files: outcome.retagged_jsonl_files,
+            skipped_reason: outcome.skipped_reason,
+        }
+    }
+}
+
 /// 是否存在统一会话开关的迁移备份（决定关闭弹窗里是否显示"恢复备份"勾选）。
 #[tauri::command]
 pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
@@ -246,6 +274,46 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
         restored_state_rows: outcome.restored_state_rows,
         skipped_reason: outcome.skipped_reason,
     })
+}
+
+/// 统一会话历史的只读预览：还有多少官方会话留在 openai 桶（不写盘、不建备份）。
+/// 用户点「重新统一历史」时先跑它，拿到确切数量再弹确认框。
+#[tauri::command]
+pub async fn preview_codex_unify_history_retag() -> Result<CodexUnifyHistoryRetagResult, String> {
+    let outcome = tauri::async_runtime::spawn_blocking(|| {
+        crate::codex_history_migration::preview_codex_official_history_retag()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    if let Some(reason) = &outcome.skipped_reason {
+        log::debug!("○ Codex official history retag skipped: {reason}");
+    }
+    Ok(outcome.into())
+}
+
+/// 把一次性迁移之后新增的官方会话补标进共享 custom 桶（#7466）。
+/// 幂等：pending 为 0 时直接早退，不产生新的备份代际。
+#[tauri::command]
+pub async fn retag_codex_unify_history() -> Result<CodexUnifyHistoryRetagResult, String> {
+    let outcome = tauri::async_runtime::spawn_blocking(|| {
+        crate::codex_history_migration::retag_codex_official_history(false)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    if let Some(reason) = &outcome.skipped_reason {
+        log::debug!("○ Codex official history retag skipped: {reason}");
+    } else {
+        log::info!(
+            "✓ Codex official history retag completed: jsonl_files={}, state_rows={}",
+            outcome.retagged_jsonl_files,
+            outcome.retagged_state_rows
+        );
+    }
+    Ok(outcome.into())
 }
 
 /// 重启应用程序（当 app_config_dir 变更后使用）
