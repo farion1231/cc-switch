@@ -2,7 +2,7 @@
 
 2026-10-25，cc-switch 4.0.20，分支 `codex/mcp-api-pr`，基线为上游 `de0a235ad6389ce4afa333b472cdee615a3f3987`。本次范围仅含 API 转 MCP，不含多维用量或缓存下钻功能。
 
-本次代码与测试 SHA-256：`ed6d349f399d84a2c78aa838299da9a70c1a938b7a9f1c95de0adeab52374cbe`。取相对基线变化的 `src/`、`src-tauri/`、`tests/`、`scripts/` 文件，按相对路径排序，依次拼接路径、NUL、文件内容、NUL 计算。文档不纳入该指纹。
+本次代码与测试 SHA-256：`ecc706ae958f23d7edbf1d1b6b3293fb583f85806b5562e39dc83e8684357611`。取相对基线变化的 `src/`、`src-tauri/`、`tests/`、`scripts/` 文件，按相对路径排序，依次拼接路径、NUL、文件内容、NUL 计算。文档不纳入该指纹。
 
 ## 验证结果
 
@@ -32,7 +32,7 @@
 
 ## 原生保存与调用联调
 
-macOS / arm64 的 release 安装包通过以下检查。原生测试使用本地汇总构建，其中 API 表单、MCP 面板、API 调用封装及 Rust API 运行时共 9 个文件与本分支逐字节一致。
+macOS / arm64 的 release 安装包通过以下检查。原生测试使用本地汇总构建，其中 API 表单、MCP 面板、API 调用封装及 Rust API 运行时共 9 个文件与取消修正前的实现逐字节一致，对应代码指纹 `ed6d349f399d84a2c78aa838299da9a70c1a938b7a9f1c95de0adeab52374cbe`。本轮仅调整 stdio 的任务清理与响应顺序，原生 UI 未重测；运行时由下述真实子进程回归验证。
 
 1. 在原生 Tauri 窗口填写合成 REST 查询接口，预览后仅选择 Codex，保存成功；界面列表、数据库和客户端配置均出现该临时服务。
 2. 直接使用保存到客户端配置的 command、args 和 env 启动安装包内的 MCP 子进程，完成 initialize、tools/list 和 tools/call。Schema 未出现多余 Header 节点，查询参数及合成静态请求头均正确到达回环接口。
@@ -55,9 +55,17 @@ macOS / arm64 的 release 安装包通过以下检查。原生测试使用本地
 
 首批四项 Rust 回归及路径编码 UI 回归先失败，修复后通过；错误焦点 UI 回归同样先失败、后通过。最终全量结果见上表。
 
+## CI 取消竞态跟进
+
+[上游 CI 第 7361 次运行](https://github.com/farion1231/cc-switch/actions/runs/40179479474) 中，前端和 Linux 后端通过；macOS 与 Windows 后端均在 `stdio_process_bounds_concurrency_keeps_ping_responsive_and_cancels` 失败。两者都在取消响应之后仍收到并发超限错误。
+
+原因是 `abort()` 仅安排异步任务清理，原实现立即回复取消成功，持有的并发许可可能尚未析构；正常完成路径也在响应之后才释放许可。本次保留任务 JoinHandle，取消后等待清理完成再回复；正常完成则先释放许可再输出结果。
+
+回归不再依靠重试绕过并发拒绝，而是在收到八个取消响应后，立即提交八个新调用并逐个核对成功响应。该严格回归在修正前本地实际失败，修正后连续 20 次真实子进程运行通过。全量 `cargo test` 再次通过 4285 项、忽略 12 项；`cargo fmt --check` 和 `cargo clippy -- -D warnings` 通过。最后的类型别名调整后，两个 stdio 集成测试再次通过。远端重跑结果以 PR Checks 为准。
+
 ## 本机运行样本
 
-macOS 26.6 / arm64，Rust debug 二进制；HTTP/1.1 回环服务返回一条合成搜索结果。运行 `python3 scripts/bench-mcp-api.py --binary <本次二进制> --samples 20`，进程启动 10 次，其余各 20 次。
+以下样本来自取消修正前的代码指纹 `ed6d349f399d84a2c78aa838299da9a70c1a938b7a9f1c95de0adeab52374cbe`。macOS 26.6 / arm64，Rust debug 二进制；HTTP/1.1 回环服务返回一条合成搜索结果。运行 `python3 scripts/bench-mcp-api.py --binary <本次二进制> --samples 20`，进程启动 10 次，其余各 20 次。
 
 | 指标 | 中位数 | P95 |
 | --- | ---: | ---: |
