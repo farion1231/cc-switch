@@ -72,7 +72,8 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -437,7 +438,7 @@ impl Database {
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
 
-        // 端点引用化（v25）：全局端点表 + 条目引用列（幂等；数据迁移见 migrate_v24_to_v25）
+        // 端点引用化（v26）：全局端点表 + 条目引用列（幂等；数据迁移见 migrate_v25_to_v26）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS endpoints (
                 id TEXT PRIMARY KEY,
@@ -645,19 +646,31 @@ impl Database {
                         Self::set_user_version(conn, 22)?;
                     }
                     22 => {
-                        log::info!("迁移数据库从 v22 到 v23（负载均衡模式列）");
-                        Self::migrate_v22_to_v23(conn)?;
+                        // Oh My Pi（上游 v23）：只有 MCP 存开关；Skills 启用状态按原生目录现算
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
                         Self::set_user_version(conn, 23)?;
                     }
                     23 => {
-                        log::info!("迁移数据库从 v23 到 v24（Hermes 按 profile 独立代理配置行）");
+                        log::info!("迁移数据库从 v23 到 v24（负载均衡模式列）");
                         Self::migrate_v23_to_v24(conn)?;
                         Self::set_user_version(conn, 24)?;
                     }
                     24 => {
-                        log::info!("迁移数据库从 v24 到 v25（端点引用化：Universal 并入 + 存量条目保守归并）");
+                        log::info!("迁移数据库从 v24 到 v25（Hermes 按 profile 独立代理配置行）");
                         Self::migrate_v24_to_v25(conn)?;
                         Self::set_user_version(conn, 25)?;
+                    }
+                    25 => {
+                        log::info!("迁移数据库从 v25 到 v26（端点引用化：Universal 并入 + 存量条目保守归并）");
+                        Self::migrate_v25_to_v26(conn)?;
+                        Self::set_user_version(conn, 26)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1716,7 +1729,7 @@ impl Database {
     /// - `load_balance_mode`：`add_column_if_missing`（新 DDL 库 no-op）
     /// - `enabled_agy` / `enabled_kimi`：本地链越过官方 v20/v21 迁移时补列
     /// - hermes 代理配置行：本地链在 v21=>v22 未执行时补行
-    fn migrate_v22_to_v23(conn: &Connection) -> Result<(), AppError> {
+    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
         if Self::table_exists(conn, "proxy_config")? {
             Self::add_column_if_missing(
                 conn,
@@ -1874,7 +1887,7 @@ impl Database {
 
     /// v23 -> v24：`proxy_config` 的 `app_type` CHECK 放行 `hermes:<profile>`（按 profile
     /// 独立路由的伪应用行）。整表重建拷贝（幂等：约束已是新的也照走，内容不变）。
-    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+    fn migrate_v24_to_v25(conn: &Connection) -> Result<(), AppError> {
         if !Self::table_exists(conn, "proxy_config")? {
             return Ok(());
         }
@@ -1974,7 +1987,7 @@ impl Database {
     /// 2. universal 子条目按 id 约定（universal-{app}-{uid}）直接指回该端点
     /// 3. 其余存量条目按 (base_url, api_key) 完全一致保守归并（保守线：全等才并，
     ///    同站不同账号不并；识别不到凭据形态的条目 endpoint_ref 留 NULL，行为不变）
-    fn migrate_v24_to_v25(conn: &Connection) -> Result<(), AppError> {
+    fn migrate_v25_to_v26(conn: &Connection) -> Result<(), AppError> {
         use crate::provider::{extract_connection, UniversalProvider};
 
         // 自建依赖（迁移路径独立于 ensure 段调用；幂等）
@@ -3025,6 +3038,34 @@ impl Database {
             ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
             // Kimi For Coding 套餐里 K3 的裸名（无 kimi- 前缀），同标准 list 价
             ("k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
+            // 2026-10-24 官方价页：K3.1 Pro 缓存写入取默认 5 分钟档（1 小时档为 2 倍）。
+            // HighSpeed 只有输入/输出/缓存写翻倍，缓存读仍是 $0.20，别按 K2.7 的 2 倍规律改
+            (
+                "kimi-k3.1-pro",
+                "Kimi K3.1 Pro",
+                "2.00",
+                "10.00",
+                "0.20",
+                "2.00",
+            ),
+            (
+                "kimi-k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
+            // Kimi Code 套餐里的裸名（无 kimi- 前缀），同标准 list 价
+            ("k3.1-pro", "Kimi K3.1 Pro", "2.00", "10.00", "0.20", "2.00"),
+            (
+                "k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
             // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
             ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),

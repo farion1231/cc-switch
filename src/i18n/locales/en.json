@@ -1084,7 +1084,9 @@
     "data": {
       "location": "Location"
     },
-    "serving": "Serving · {{count}}"
+    "serving": "Serving · {{count}}",
+    "ompConfigDir": "Oh My Pi Configuration Directory",
+    "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent"
   },
   "apps": {
     "claude": "Claude",
@@ -1099,7 +1101,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1843,7 +1846,9 @@
     "deploymentType": "GitHub Deployment Type",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "e.g. company.ghe.com"
+    "enterpriseDomainPlaceholder": "e.g. company.ghe.com",
+    "automaticFormat": "Selected automatically by routing",
+    "automaticFormatHint": "Routing selects the Copilot upstream format per model; manual format settings are ignored."
   },
   "codexOauth": {
     "authStatus": "Auth status",
@@ -1883,7 +1888,12 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
-    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate.",
+    "loginMethod": "Login method",
+    "browserLogin": "Browser login",
+    "deviceCodeLogin": "Device-code login",
+    "openBrowserLogin": "Open browser login",
+    "loginExpired": "Login expired. Please try again."
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth authentication",
@@ -4286,8 +4296,12 @@
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
-      "agy": "Installs with the official script"
-    }
+      "agy": "Installs with the official script",
+      "omp": "Installs with the official script"
+    },
+    "sectionInstalled": "Installed · {{count}}",
+    "sectionNotInstalled": "Not installed · {{count}}",
+    "dragHandle": "Drag to reorder {{name}}"
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",
@@ -4586,6 +4600,11 @@
       "on": "{{name}} · {{app}}: enabled",
       "off": "{{name}} · {{app}}: off",
       "fail": "{{name}} · {{app}}: write failed, click to retry"
+    },
+    "ompDiscovery": {
+      "title": "What Oh My Pi actually loads",
+      "help": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
+      "docsLink": "How to stop Oh My Pi from loading other agents' config"
     }
   },
   "mcpPage": {
@@ -5029,7 +5048,9 @@
       "current": "In use by Kimi",
       "primaryShort": "Kimi Code's own login",
       "empty": "No Kimi accounts yet. The account signed in to Kimi Code shows up here automatically.",
-      "help": "Add several Kimi coding plan accounts; each gets its own provider and models in Kimi Code. \"Use this account\" switches Kimi Code's default model to that account, and new sessions use it from then on. The account Kimi Code itself is signed in with shows up here automatically and is always used for web search and fetch; removing it here only hides it from the list and never signs Kimi Code out."
+      "help": "Add several Kimi coding plan accounts; each gets its own provider and models in Kimi Code. \"Use this account\" switches Kimi Code's default model to that account, and new sessions use it from then on. The account Kimi Code itself is signed in with shows up here automatically and is always used for web search and fetch; removing it here only hides it from the list and never signs Kimi Code out.",
+      "noSubscription": "No subscription",
+      "connectionManaged": "The connection and login are managed in the Authorization Center; edit only the models here. Fetching models reads the official models currently available to this account."
     },
     "modelSelectionHint": "Use the switch button on a provider card to select it. To choose another model, use /model in Kimi Code.",
     "contextSize": "Context size",
@@ -5080,5 +5101,47 @@
     "loadError": "Failed to load endpoints",
     "deleteConfirmTitle": "Cannot delete: endpoint is referenced",
     "deleteConfirmDescription": "\"{{name}}\" is still referenced by {{count}} provider entries ({{apps}}). Switch those entries to another endpoint or standalone config first."
+  },
+  "omp": {
+    "empty": {
+      "title": "No API key providers yet",
+      "description": "Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "provider": {
+      "enabled": "Enabled in Oh My Pi",
+      "enableFailed": "Could not enable this provider in Oh My Pi",
+      "removed": "Removed from Oh My Pi"
+    },
+    "current": {
+      "readFailed": "Could not read Oh My Pi's provider configuration",
+      "stateUnavailableHint": "Provider changes are disabled until CC Switch can read Oh My Pi's provider configuration."
+    },
+    "form": {
+      "discoveryType": "Model discovery",
+      "discoveryOff": "Off",
+      "discoveryHint": "When on, Oh My Pi asks the endpoint which models it offers, so you don't have to list them by hand and new models show up on their own. Most online services use “OpenAI model list”; for models running on your machine, pick the matching app. Anthropic-format endpoints usually have no model list, so leave this off. Manually added models still apply.",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI model list (most online services)",
+        "proxy": "Proxy (each model sets its own format)",
+        "ollama": "Ollama (local)",
+        "llamaCpp": "llama.cpp (local)",
+        "lmStudio": "LM Studio (local)",
+        "litellm": "LiteLLM gateway",
+        "appleFoundationModels": "Apple on-device models (macOS)"
+      }
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi configuration exceeds the 1 MiB limit.",
+      "externalChange": "Oh My Pi configuration changed outside CC Switch. Refresh and try again.",
+      "rollbackConflict": "The database save failed and Oh My Pi configuration changed externally. Restore it by hand.",
+      "invalidMcp": "Invalid Oh My Pi MCP JSON. The root and mcpServers must be objects.",
+      "invalidYaml": "Invalid Oh My Pi YAML. The root and providers must be mappings.",
+      "invalidProvider": "Invalid Oh My Pi provider. Check required fields, API format and field types.",
+      "manualEdit": "This YAML uses a layout or construct CC Switch cannot safely edit. Edit models.yml by hand.",
+      "duplicateProvider": "This Oh My Pi provider key already exists.",
+      "renameProvider": "Oh My Pi provider keys cannot be renamed.",
+      "providerMissing": "This Oh My Pi provider is no longer saved.",
+      "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
+    }
   }
 }

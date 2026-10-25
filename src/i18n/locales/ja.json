@@ -1084,7 +1084,9 @@
     "data": {
       "location": "保存場所"
     },
-    "serving": "サービス中 · {{count}}"
+    "serving": "サービス中 · {{count}}",
+    "ompConfigDir": "Oh My Pi 設定ディレクトリ",
+    "browsePlaceholderOmp": "例: /home/<your-username>/.omp/agent"
   },
   "apps": {
     "claude": "Claude",
@@ -1099,7 +1101,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1843,7 +1846,9 @@
     "deploymentType": "GitHub デプロイメントタイプ",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "例: company.ghe.com"
+    "enterpriseDomainPlaceholder": "例: company.ghe.com",
+    "automaticFormat": "モデルに応じてルーティングが自動選択",
+    "automaticFormatHint": "Copilot の上流形式はモデルに応じてルーティングが自動選択し、手動設定は適用されません。"
   },
   "codexOauth": {
     "authStatus": "認証状態",
@@ -1883,7 +1888,12 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
-    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。",
+    "loginMethod": "ログイン方法",
+    "browserLogin": "ブラウザでログイン",
+    "deviceCodeLogin": "デバイスコードでログイン",
+    "openBrowserLogin": "ブラウザのログイン画面を開く",
+    "loginExpired": "ログインの有効期限が切れました。もう一度お試しください。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 認証",
@@ -4286,8 +4296,12 @@
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
       "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
-      "agy": "公式インストールスクリプトでインストール"
-    }
+      "agy": "公式インストールスクリプトでインストール",
+      "omp": "公式インストールスクリプトでインストール"
+    },
+    "sectionInstalled": "インストール済み · {{count}}",
+    "sectionNotInstalled": "未インストール · {{count}}",
+    "dragHandle": "ドラッグして {{name}} の順序を変更"
   },
   "appPage": {
     "moreActions": "{{name}} のその他の操作",
@@ -4586,6 +4600,11 @@
       "on": "{{name}} · {{app}}：有効",
       "off": "{{name}} · {{app}}：無効",
       "fail": "{{name}} · {{app}}：書き込み失敗、クリックで再試行"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi が実際に読み込む範囲",
+      "help": "Oh My Pi は ~/.omp/agent 自身の設定に加え、他の Agent のディレクトリ（Claude の ~/.claude、Codex の ~/.codex など）からも MCP サーバー、スキル、コマンド、フック、ルール、設定を発見します。Oh My Pi の実際の読み込み内容を CC Switch の表示と一致させるには、~/.omp/agent/config.yml の disabledProviders で不要な発行元を無効化してください（id はドキュメント準拠：claude、codex、gemini、opencode、github、agents など）。",
+      "docsLink": "Oh My Pi に他の Agent の設定を読み込ませない方法"
     }
   },
   "mcpPage": {
@@ -5029,7 +5048,9 @@
       "current": "Kimi で使用中",
       "primaryShort": "Kimi Code 自身のログイン",
       "empty": "Kimi アカウントはまだありません。Kimi Code でログイン中のアカウントは自動的にここに表示されます。",
-      "help": "Kimi コーディングプランのアカウントを複数追加でき、それぞれ Kimi Code 内に専用のプロバイダーとモデルを持ちます。「このアカウントを使用」で Kimi Code の既定モデルをそのアカウントに切り替え、以降の新しいセッションで使われます。Kimi Code 自身がログインしているアカウントは自動的にここに表示され、Web 検索と取得には常にこれが使われます。ここで削除してもリストから外すだけで、Kimi Code はログアウトしません。"
+      "help": "Kimi コーディングプランのアカウントを複数追加でき、それぞれ Kimi Code 内に専用のプロバイダーとモデルを持ちます。「このアカウントを使用」で Kimi Code の既定モデルをそのアカウントに切り替え、以降の新しいセッションで使われます。Kimi Code 自身がログインしているアカウントは自動的にここに表示され、Web 検索と取得には常にこれが使われます。ここで削除してもリストから外すだけで、Kimi Code はログアウトしません。",
+      "noSubscription": "未契約",
+      "connectionManaged": "接続とログインは認証センターで管理されます。ここではモデルのみ編集できます。モデルを取得すると、このアカウントで現在使える公式モデルを読み込みます。"
     },
     "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
     "contextSize": "コンテキスト長",
@@ -5080,5 +5101,47 @@
     "loadError": "エンドポイントの読み込みに失敗",
     "deleteConfirmTitle": "削除できません：エンドポイントが参照されています",
     "deleteConfirmDescription": "「{{name}}」は {{count}} 件のプロバイダー項目から参照されています（{{apps}}）。先にそれらの項目で別のエンドポイントへ変更するか独立設定にしてください。"
+  },
+  "omp": {
+    "empty": {
+      "title": "API キープロバイダーはまだありません",
+      "description": "右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    },
+    "provider": {
+      "enabled": "Oh My Pi で有効にしました",
+      "enableFailed": "Oh My Pi でこのプロバイダーを有効にできませんでした",
+      "removed": "Oh My Pi から削除しました"
+    },
+    "current": {
+      "readFailed": "Oh My Pi のプロバイダー設定を読み込めません",
+      "stateUnavailableHint": "CC Switch が Oh My Pi のプロバイダー設定を読み込むまで、プロバイダーの変更は無効です。"
+    },
+    "form": {
+      "discoveryType": "モデルの自動検出",
+      "discoveryOff": "使用しない",
+      "discoveryHint": "オンにすると、Oh My Pi がエンドポイントに利用できるモデルを問い合わせるので、モデルを一つずつ入力する必要がなく、新しいモデルも自動で表示されます。オンラインサービスの多くは「OpenAI モデル一覧」を、ローカルで動かすモデルは対応するアプリを選んでください。Anthropic 形式のエンドポイントは通常モデル一覧がないので、「使用しない」のままにします。手動で追加したモデルも有効です。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI モデル一覧（多くのオンラインサービス）",
+        "proxy": "プロキシ（モデルごとに形式を指定）",
+        "ollama": "Ollama（ローカル）",
+        "llamaCpp": "llama.cpp（ローカル）",
+        "lmStudio": "LM Studio（ローカル）",
+        "litellm": "LiteLLM ゲートウェイ",
+        "appleFoundationModels": "Apple オンデバイスモデル（macOS）"
+      }
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi の設定が 1 MiB の上限を超えています。",
+      "externalChange": "Oh My Pi の設定が外部で変更されました。更新して再試行してください。",
+      "rollbackConflict": "データベース保存に失敗し、Oh My Pi の設定も外部で変更されました。手動で復元してください。",
+      "invalidMcp": "Oh My Pi の MCP JSON が無効です。ルートと mcpServers はオブジェクトである必要があります。",
+      "invalidYaml": "Oh My Pi の YAML が無効です。ルートと providers はマッピングにしてください。",
+      "invalidProvider": "Oh My Pi のプロバイダ設定が無効です。必須項目、API 形式、値の型を確認してください。",
+      "manualEdit": "この YAML の構造は CC Switch で安全に編集できません。models.yml を手動で編集してください。",
+      "duplicateProvider": "この Oh My Pi プロバイダキーは既に存在します。",
+      "renameProvider": "Oh My Pi プロバイダキーは変更できません。",
+      "providerMissing": "この Oh My Pi プロバイダは保存済みリストにありません。",
+      "legacyModelsJson": "Oh My Pi にはまだ旧形式の models.json があり、omp は次回起動時にこれを models.yml へ移行します。omp を一度起動してから、もう一度プロバイダを追加してください。"
+    }
   }
 }

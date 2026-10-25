@@ -29,7 +29,7 @@ import { EndpointRefSection } from "@/components/endpoints";
 import { endpointsApi } from "@/lib/api";
 import type { Endpoint, TierMappings } from "@/types";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { usesEditorView } from "@/config/appConfig";
+import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -129,12 +129,12 @@ export function EditProviderDialog({
   currentFormReadyToken.current = formReadyToken;
   const [formReadyState, setFormReadyState] = useState({
     token: formReadyToken,
-    ready: appId !== "pi",
+    ready: !isPiFamilyApp(appId),
   });
   const isFormReady =
     formReadyState.token === formReadyToken
       ? formReadyState.ready
-      : appId !== "pi";
+      : !isPiFamilyApp(appId);
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
       if (currentFormReadyToken.current === formReadyToken) {
@@ -225,14 +225,15 @@ export function EditProviderDialog({
         return;
       }
 
-      // OpenCode uses additive mode, while Pi's shared models.json is owned by
-      // the catalog coordinator. Neither has a per-provider generic live
-      // snapshot that may replace the DB aggregate in this form.
+      // OpenCode uses additive mode, while Pi's (and Oh My Pi's) native models
+      // file is owned by its provider service. Neither has a per-provider generic
+      // live snapshot that may replace the DB aggregate in this form.
       if (
         appId === "opencode" ||
         appId === "pi" ||
         appId === "mcode" ||
-        appId === "kimi"
+        appId === "kimi" ||
+        appId === "omp"
       ) {
         if (!cancelled) {
           setLiveSettings(null);

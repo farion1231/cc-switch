@@ -1084,7 +1084,9 @@
     "data": {
       "location": "存储位置"
     },
-    "serving": "服务中 · {{count}}"
+    "serving": "服务中 · {{count}}",
+    "ompConfigDir": "Oh My Pi 配置目录",
+    "browsePlaceholderOmp": "例如：/home/<你的用户名>/.omp/agent"
   },
   "apps": {
     "claude": "Claude",
@@ -1099,7 +1101,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1843,7 +1846,9 @@
     "deploymentType": "GitHub 部署类型",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "例如：company.ghe.com"
+    "enterpriseDomainPlaceholder": "例如：company.ghe.com",
+    "automaticFormat": "由路由按模型自动选择",
+    "automaticFormatHint": "Copilot 的上游格式由路由按模型自动选择，手选格式不生效。"
   },
   "codexOauth": {
     "authStatus": "认证状态",
@@ -1883,7 +1888,12 @@
     "retry": "重试",
     "copyCode": "复制代码",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。"
+    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。",
+    "loginMethod": "登录方式",
+    "browserLogin": "浏览器登录",
+    "deviceCodeLogin": "设备代码登录",
+    "openBrowserLogin": "打开浏览器登录",
+    "loginExpired": "登录已过期，请重试。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 认证",
@@ -4286,8 +4296,12 @@
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
       "mcode": "安装时运行官方安装脚本，失败时改用 npm",
-      "agy": "安装时运行官方安装脚本"
-    }
+      "agy": "安装时运行官方安装脚本",
+      "omp": "安装时运行官方安装脚本"
+    },
+    "sectionInstalled": "已安装 · {{count}}",
+    "sectionNotInstalled": "未安装 · {{count}}",
+    "dragHandle": "拖动调整 {{name}} 的顺序"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4586,6 +4600,11 @@
       "on": "{{name}} · {{app}}：已启用",
       "off": "{{name}} · {{app}}：未启用",
       "fail": "{{name}} · {{app}}：写入失败，点按重试"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi 的实际加载范围",
+      "help": "Oh My Pi 除了 ~/.omp/agent 自己的配置，还会从其他 Agent 的目录发现 MCP 服务器、技能、命令、钩子、规则和设置（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要让 Oh My Pi 的实际生效内容与 CC Switch 界面一致，请在 ~/.omp/agent/config.yml 用 disabledProviders 关闭不需要的发现来源（id 与文档一致，如 claude、codex、gemini、opencode、github、agents）。",
+      "docsLink": "怎样让 Oh My Pi 不读取其他 Agent 的配置"
     }
   },
   "mcpPage": {
@@ -5029,7 +5048,9 @@
       "current": "Kimi 在用",
       "primaryShort": "Kimi Code 自己的登录",
       "empty": "还没有 Kimi 账号。Kimi Code 里已登录的号会自动出现在这里。",
-      "help": "可添加多个 Kimi 编程套餐账号，每个号在 Kimi Code 里有自己的供应商和模型。「使用此账号」会把 Kimi Code 的默认模型换成这个号的，之后新开的会话都用它。Kimi Code 自己登着的号会自动出现在这里，联网搜索和网页抓取始终用它；在这里删掉它只会移出列表，不会让 Kimi Code 退出登录。"
+      "help": "可添加多个 Kimi 编程套餐账号，每个号在 Kimi Code 里有自己的供应商和模型。「使用此账号」会把 Kimi Code 的默认模型换成这个号的，之后新开的会话都用它。Kimi Code 自己登着的号会自动出现在这里，联网搜索和网页抓取始终用它；在这里删掉它只会移出列表，不会让 Kimi Code 退出登录。",
+      "noSubscription": "未订阅",
+      "connectionManaged": "连接和登录由授权中心管理，这里只编辑模型。拉取模型会读取这个账号当前可用的官方模型。"
     },
     "modelSelectionHint": "点击供应商卡片的切换按钮选择默认供应商；需要指定其他模型时，在 Kimi Code 中使用 /model。",
     "contextSize": "上下文长度",
@@ -5080,5 +5101,47 @@
     "loadError": "加载端点失败",
     "deleteConfirmTitle": "无法删除：端点正在被引用",
     "deleteConfirmDescription": "「{{name}}」仍被 {{count}} 个供应商条目引用（{{apps}}）。请先在这些条目里改用其他端点或改为独立配置。"
+  },
+  "omp": {
+    "empty": {
+      "title": "还没有添加 API Key 供应商",
+      "description": "点击右上角 +，从预设或自定义配置添加供应商。"
+    },
+    "provider": {
+      "enabled": "已在 Oh My Pi 中启用",
+      "enableFailed": "无法在 Oh My Pi 中启用此供应商",
+      "removed": "已从 Oh My Pi 移除"
+    },
+    "current": {
+      "readFailed": "无法读取 Oh My Pi 供应商配置",
+      "stateUnavailableHint": "CC Switch 读取到 Oh My Pi 供应商配置前，供应商变更已暂时禁用。"
+    },
+    "form": {
+      "discoveryType": "模型自动发现",
+      "discoveryOff": "不自动发现",
+      "discoveryHint": "开启后，Oh My Pi 会自己去接口查有哪些模型，不用逐个手填，新上的模型也会自动出现。在线服务大多选「OpenAI 模型列表」，本机运行的模型选对应的软件；Anthropic 格式的接口通常查不到列表，保持「不自动发现」即可。手动添加的模型仍然生效。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI 模型列表（大多数在线服务）",
+        "proxy": "代理（每个模型自带格式）",
+        "ollama": "Ollama（本机）",
+        "llamaCpp": "llama.cpp（本机）",
+        "lmStudio": "LM Studio（本机）",
+        "litellm": "LiteLLM 网关",
+        "appleFoundationModels": "Apple 端侧模型（macOS）"
+      }
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi 配置超过 1 MiB 大小限制。",
+      "externalChange": "Oh My Pi 配置已被其他程序修改，请刷新后重试。",
+      "rollbackConflict": "数据库保存失败，且 Oh My Pi 配置已被其他程序修改，请手动恢复。",
+      "invalidMcp": "Oh My Pi MCP JSON 格式无效，根节点和 mcpServers 必须为对象。",
+      "invalidYaml": "Oh My Pi YAML 无效，根节点和 providers 必须是映射。",
+      "invalidProvider": "Oh My Pi 供应商配置无效，请检查必填字段、API 格式和字段类型。",
+      "manualEdit": "此 YAML 使用了 CC Switch 无法安全编辑的格式或语法，请手动编辑 models.yml。",
+      "duplicateProvider": "此 Oh My Pi 供应商标识已存在。",
+      "renameProvider": "Oh My Pi 供应商标识不能重命名。",
+      "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。",
+      "legacyModelsJson": "Oh My Pi 目录里还是旧的 models.json，omp 会在下次启动时把它迁移成 models.yml。请先运行一次 omp，再回来添加供应商。"
+    }
   }
 }
