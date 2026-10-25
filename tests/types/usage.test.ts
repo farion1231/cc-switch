@@ -9,4 +9,9 @@ describe("getCacheWriteAvailability", () => {
     expect(getCacheWriteAvailability(["claude", "codex"])).toBe("partial");
     expect(getCacheWriteAvailability([])).toBe("ok");
   });
+
+  it("treats zcode like other cache-inclusive app types", () => {
+    expect(getCacheWriteAvailability(["zcode"])).toBe("na");
+    expect(getCacheWriteAvailability(["claude", "zcode"])).toBe("partial");
+  });
 });

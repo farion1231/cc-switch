@@ -230,7 +230,8 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
-  | "agy";
+  | "agy"
+  | "zcode";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -244,6 +245,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "mcode",
   "kimi",
   "agy",
+  "zcode",
 ];
 
 /**
@@ -262,6 +264,7 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
   "grokbuild",
+  "zcode",
 ]);
 
 // Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates

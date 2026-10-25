@@ -318,6 +318,8 @@ export interface VisibleApps {
   kimi: boolean;
   agy: boolean;
   omp: boolean;
+  // ZCode 仅参与用量统计（无配置切换能力），不出现在应用页/侧栏
+  zcode: boolean;
 }
 
 // WebDAV 同步状态

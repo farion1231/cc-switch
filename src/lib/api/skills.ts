@@ -32,6 +32,8 @@ export interface SkillApps {
   kimi?: boolean;
   agy?: boolean;
   omp?: boolean;
+  // ZCode 只参与用量统计，不作为 Skill 目标；保留键位让 AppId 维度的索引可用
+  zcode?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

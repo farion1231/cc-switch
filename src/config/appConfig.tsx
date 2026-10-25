@@ -47,6 +47,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   kimi: true,
   agy: true,
   omp: true,
+  zcode: true,
 };
 
 /**
@@ -173,8 +174,8 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
+/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`）；ZCode 无 MCP 管理 */
+export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "zcode">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -329,6 +330,16 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
     badgeClass:
       "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
+  },
+  zcode: {
+    label: "ZCode",
+    icon: (
+      <ProviderIcon icon="zcode" name="ZCode" size={14} showFallback={false} />
+    ),
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
 };
 
