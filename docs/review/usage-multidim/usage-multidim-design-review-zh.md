@@ -1,6 +1,24 @@
 # CC Switch 用量多维度 详细设计评审记录
 
-## 最新复核：Oh My Pi 与数据库版本冲突（2026-10-24）
+## 最新复核：全部页签计数与 Kimi 参数兼容（2026-10-25）
+
+合并上游 `main` `de0a235a`，解决 `UsageDashboard.tsx` 的计数逻辑冲突，保留 4.0.20 及上游更新。
+
+- 日志、项目、供应商、模型四个页签均提前查询计数；筛选期间保留旧数字，待新结果返回后原位更新。供应商 ID、应用、项目及模型范围不丢失，项目计数沿用项目表的范围。
+- 两项交互回归及上游已有的整页计数回归先实际失败；修复后，用量面板、整页烟测和下钻范围共 37 项通过。覆盖未打开项目页签即显示计数、等待新筛选结果时四个计数保持可见，以及返回后的数字更新。
+- 上游 Kimi 的 `sync_file` 新增 `agent` 参数，自动合并后本 PR 两处归属测试仍用旧签名。完整 Rust 编译实际复现两处 `E0061`；两处明确传入 `main`，保留原会话及游标参数，避免误走子代理路径。
+- 复核确认 Antigravity 原生模型回填及 Kimi 子代理路径保留未识别归属标记与扩展统计参数。独立复核发现的上述参数遗漏已修正，限定范围内未发现其他明确问题。
+
+验证结果：
+
+- `pnpm test:unit --maxWorkers=2 --minWorkers=1`：260 个文件、3335 项通过。
+- `pnpm typecheck`、`pnpm format:check`、`pnpm build:renderer`：通过。
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check`、`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：通过。
+- 完整 `cargo test --manifest-path src-tauri/Cargo.toml`：4284 项通过，含 4076 项库测试和 208 项集成测试；12 项忽略，0 失败。测试目录隔离、`umask 022`、回环地址直连及测试子进程的 GUI PATH 条件与上一轮一致。
+
+后续合并 Kimi 同步接口变更时，除主干原有测试，还需检查本功能新增的归属测试；编译检查必须覆盖测试目标。
+
+## 上一轮复核：Oh My Pi 与数据库版本冲突（2026-10-24）
 
 合并上游 `main` `cae7c375`，解决 `database/schema.rs` 和 `database/tests.rs` 的冲突。上游新增 Oh My Pi，使用 v22→v23 增加 MCP 的 `enabled_omp`；本功能此前也使用 v23。仅消除文本冲突会使上游 v23 用户跳过多维迁移，也会使早期 PR v23 用户缺少 MCP 开关。
 

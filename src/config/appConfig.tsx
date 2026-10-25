@@ -49,6 +49,29 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   omp: true,
 };
 
+/**
+ * 应用页和侧栏的应用顺序：先按用户拖出来的顺序（`settings.appOrder`，不认识的 ID 忽略），
+ * 没在里面的应用（比如新版本加的）插回默认顺序里它前一个应用的后面。
+ */
+export function orderAppIds(saved: readonly string[] | undefined): AppId[] {
+  if (!saved?.length) return [...APP_IDS];
+  const known = new Set<string>(APP_IDS);
+  const ordered: AppId[] = [];
+  for (const id of saved) {
+    if (known.has(id) && !ordered.includes(id as AppId)) {
+      ordered.push(id as AppId);
+    }
+  }
+  APP_IDS.forEach((app, index) => {
+    if (ordered.includes(app)) return;
+    const previous = APP_IDS.slice(0, index)
+      .reverse()
+      .find((id) => ordered.includes(id));
+    ordered.splice(previous ? ordered.indexOf(previous) + 1 : 0, 0, app);
+  });
+  return ordered;
+}
+
 /** App IDs shown in Skills panels. */
 export const SKILLS_APP_IDS: AppId[] = [
   "claude",

@@ -403,6 +403,9 @@ const FILE_ENTRY_BUDGET_COST: u64 = DIRECTORY_BUDGET_COST;
 /// 上限对齐解压预算：压缩体超过解压后能容纳的总量，解压那一步也必然失败。
 const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
 
+/// 技能归档下载请求的 User-Agent。
+const SKILL_DOWNLOAD_USER_AGENT: &str = concat!("CC-Switch/", env!("CARGO_PKG_VERSION"));
+
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillMetadata {
@@ -3784,7 +3787,12 @@ impl SkillService {
     /// 下载并解压 ZIP
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
         let client = crate::proxy::http_client::get();
-        let response = client.get(url).send().await?;
+        // 共享客户端不带默认 User-Agent；GitHub 归档下载对无 UA 请求更容易被限流成 429（#8813）
+        let response = client
+            .get(url)
+            .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT)
+            .send()
+            .await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(

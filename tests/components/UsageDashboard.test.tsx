@@ -540,17 +540,63 @@ describe("UsageDashboard", () => {
     );
   });
 
-  it("loads project counts only when the project tab is opened", async () => {
+  it("shows the project count before opening the project tab", async () => {
+    renderDashboard();
+    expect(
+      await screen.findByRole("tab", { name: "usage.tabs.projects 0" }),
+    ).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("keeps tab counts visible until the new filter results arrive", async () => {
     const user = userEvent.setup();
     renderDashboard();
-    await screen.findByTestId("usage-hero");
-    expect(usageApiMock.getProjectStats).not.toHaveBeenCalled();
-    await user.click(
-      screen.getByRole("tab", { name: /^usage\.tabs\.projects/ }),
+    await screen.findByRole("tab", { name: "usage.requestLogs 5" });
+    await screen.findByRole("tab", { name: "usage.tabs.projects 0" });
+
+    let resolveLogs!: (result: { total: number; data: never[] }) => void;
+    let resolveProjects!: (result: []) => void;
+    usageApiMock.getRequestLogs.mockReturnValue(
+      new Promise((resolve) => {
+        resolveLogs = resolve;
+      }),
     );
-    await waitFor(() =>
-      expect(usageApiMock.getProjectStats).toHaveBeenCalled(),
+    usageApiMock.getProjectStats.mockReturnValue(
+      new Promise((resolve) => {
+        resolveProjects = resolve;
+      }),
     );
+    useProviderStatsMock.mockReturnValue({
+      ...useProviderStatsMock.mock.results.at(-1)?.value,
+      isPlaceholderData: true,
+    });
+    useModelStatsMock.mockReturnValue({
+      data: [],
+      isPlaceholderData: true,
+    });
+    await user.click(screen.getByRole("button", { name: "pick-custom" }));
+    expect(
+      screen.getByRole("tab", { name: "usage.requestLogs 5" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.projects 0" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.providers 1" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.models 0" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveLogs({ total: 8, data: [] });
+      resolveProjects([]);
+    });
+    expect(
+      await screen.findByRole("tab", { name: "usage.requestLogs 8" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "usage.requestLogs 5" }),
+    ).not.toBeInTheDocument();
   });
 
   it("persists refresh interval changes", async () => {

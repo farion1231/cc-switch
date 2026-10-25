@@ -15,6 +15,12 @@ const usageApiMock = vi.hoisted(() => ({
   getUsageTrends: vi.fn(),
   getProviderStats: vi.fn(),
   getModelStats: vi.fn(),
+  getProjectStats: vi.fn().mockResolvedValue([]),
+  getUsageProjects: vi.fn().mockResolvedValue([]),
+  getUsageDataQuality: vi.fn().mockResolvedValue({
+    unknownProviderRequests: 0,
+    unknownProjectRequests: 0,
+  }),
   getRequestLogs: vi.fn(),
   getRequestDetail: vi.fn(),
   getModelPricing: vi.fn(),
@@ -187,12 +193,13 @@ describe("UsageDashboard (smoke)", () => {
       usageApiMock.getUsageSummaryByApp,
       usageApiMock.getUsageTrends,
       usageApiMock.getProviderStats,
+      usageApiMock.getModelStats,
+      usageApiMock.getProjectStats,
       usageApiMock.getRequestLogs,
     ];
     const counts = queries.map((query) => query.mock.calls.length);
+    // 四个页签的计数都查，没打开的页签也有数字
     expect(counts.every((count) => count > 0)).toBe(true);
-    // 模型页签没打开：它的计数不查
-    expect(usageApiMock.getModelStats).not.toHaveBeenCalled();
     // 没有新用量：扫描不触发重查，只有「今天」这类范围每分钟重算一次
     await act(() => vi.advanceTimersByTimeAsync(59000));
     expect(queries.map((query) => query.mock.calls.length)).toEqual(counts);

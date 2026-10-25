@@ -851,22 +851,17 @@ export function UsageDashboard({
   };
 
   // 页签上的计数：和各表格同样的查询参数，react-query 会合并成一次请求。
-  // 只查当前页签：其余页签显示上次查到的数（缓存），筛选变了、还没查过的就不显示
+  // 四个页签都查（只查当前页签时，没点过的页签一直没有数字）；换筛选时沿用上一份
+  // 数据直到新数到达，数字原地更新，不会先整体消失再冒出来把页签栏挤得抖一下
   const logCount = useRequestLogs({
     filters: { ...scopeFilters, appType: scopedAppType, statusCode },
     range,
     page: 0,
     pageSize: logPageSize,
-    options: { ...refetch, enabled: tab === "logs" },
+    options: refetch,
   });
-  const providerCount = useProviderStats(range, scopeFilters, {
-    ...refetch,
-    enabled: tab === "providers",
-  });
-  const modelCount = useModelStats(range, scopeFilters, {
-    ...refetch,
-    enabled: tab === "models",
-  });
+  const providerCount = useProviderStats(range, scopeFilters, refetch);
+  const modelCount = useModelStats(range, scopeFilters, refetch);
   const projectCount = useProjectStats(
     range,
     {
@@ -876,17 +871,13 @@ export function UsageDashboard({
       providerName: providerSelection?.name,
       model,
     },
-    { ...refetch, enabled: tab === "projects" },
+    refetch,
   );
   const tabCount: Record<UsageTab, number | undefined> = {
-    logs: logCount.isPlaceholderData ? undefined : logCount.data?.total,
-    projects: projectCount.isPlaceholderData
-      ? undefined
-      : projectCount.data?.length,
-    providers: providerCount.isPlaceholderData
-      ? undefined
-      : providerCount.data?.length,
-    models: modelCount.isPlaceholderData ? undefined : modelCount.data?.length,
+    logs: logCount.data?.total,
+    projects: projectCount.data?.length,
+    providers: providerCount.data?.length,
+    models: modelCount.data?.length,
   };
   const tabLabel: Record<UsageTab, string> = {
     logs: t("usage.requestLogs"),
