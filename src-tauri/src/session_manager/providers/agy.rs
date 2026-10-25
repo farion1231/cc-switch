@@ -1,4 +1,5 @@
-//! Read Antigravity's exported transcript; never open its binary conversation store for writing.
+//! Read exported and native Antigravity conversations without modifying their sources.
+mod native;
 use super::{
     blocks::{
         assign_turn_ids, normalize_tool, parse_antigravity_args, thinking_block, tool_call_block,
@@ -157,7 +158,51 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
             sessions.push(meta);
         }
     }
-    // A binary-only conversation can still be found and resumed, but has no readable transcript.
+    let conversations = root.parent().unwrap_or(root).join("conversations");
+    if let Ok(entries) = fs::read_dir(&conversations) {
+        let canonical = conversations.canonicalize().ok();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(id) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .filter(|s| valid_session_id(s))
+            else {
+                continue;
+            };
+            if path.extension().and_then(|s| s.to_str()) != Some("db")
+                || !path.is_file()
+                || !path
+                    .canonicalize()
+                    .ok()
+                    .zip(canonical.as_ref())
+                    .is_some_and(|(p, r)| p.starts_with(r))
+                || sessions.iter().any(|s| s.session_id == id)
+            {
+                continue;
+            }
+            let mut meta = if let Some(meta) = summaries.remove(id) {
+                meta
+            } else {
+                let Some((text, created_at)) = native::preview(&path) else {
+                    continue;
+                };
+                SessionMeta {
+                    provider_id: "agy".into(),
+                    session_id: id.into(),
+                    title: (!text.is_empty()).then(|| truncate_summary(&text, 80)),
+                    summary: (!text.is_empty()).then(|| truncate_summary(&text, 160)),
+                    project_dir: None,
+                    created_at,
+                    last_active_at: created_at,
+                    source_path: None,
+                    resume_command: Some(crate::agy_config::resume_command(gemini_dir, id)),
+                }
+            };
+            meta.source_path = Some(format!("sqlite:{}#{id}", path.display()));
+            sessions.push(meta);
+        }
+    }
     sessions.extend(summaries.into_values());
     sessions
 }
@@ -242,10 +287,19 @@ fn reader_timestamp(value: &Value) -> Option<i64> {
 struct ReaderStep {
     value: Value,
     fields: HashMap<String, (u64, u32)>,
+    native_index: Option<i64>,
 }
 
 impl ReaderStep {
     fn content_ref(&self, pointer: String) -> Option<ContentRef> {
+        if let Some(index) = self.native_index {
+            return Some(ContentRef::Sqlite {
+                table: "steps".into(),
+                id: index.to_string(),
+                column: "step_payload".into(),
+                pointer,
+            });
+        }
         let field = if pointer.starts_with(ANTIGRAVITY_READER_REF_PREFIX) {
             "tool_calls"
         } else {
@@ -332,15 +386,66 @@ fn reader_steps(data: &str) -> Vec<ReaderStep> {
         steps.push(ReaderStep {
             value,
             fields: refs,
+            native_index: None,
         });
     }
     steps
+}
+
+pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
+    let (path, id) = source.strip_prefix("sqlite:")?.rsplit_once('#')?;
+    valid_session_id(id).then(|| (PathBuf::from(path), id.into()))
+}
+
+pub(crate) fn validate_sqlite_source(source: &str) -> Result<(PathBuf, String), String> {
+    validate_sqlite_in(source, &session_sources())
+}
+
+fn validate_sqlite_in(
+    source: &str,
+    sources: &[(PathBuf, Option<PathBuf>)],
+) -> Result<(PathBuf, String), String> {
+    let (path, id) = parse_sqlite_source(source).ok_or("Invalid Antigravity SQLite source")?;
+    let path = path.canonicalize().map_err(|e| e.to_string())?;
+    for (brain, _) in sources {
+        let conversations = brain.parent().unwrap_or(&brain).join("conversations");
+        let Ok(root) = conversations.canonicalize() else {
+            continue;
+        };
+        let expected = root.join(format!("{id}.db"));
+        if path == expected && path.is_file() {
+            return Ok((path, id));
+        }
+    }
+    Err("Conversation database is outside the Antigravity roots".into())
+}
+
+pub(crate) fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
+    let (path, _) = validate_sqlite_source(source)?;
+    native::load(&path)
+}
+
+pub(crate) fn resolve_native_content(
+    path: &Path,
+    id: &str,
+    pointer: &str,
+) -> Result<String, String> {
+    native::resolve(path, id, pointer)
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let data =
         fs::read_to_string(path).map_err(|e| format!("Cannot read Antigravity transcript: {e}"))?;
     let steps = reader_steps(&data);
+    if steps.is_empty() {
+        if let Some(db) = crate::agy_conversation::for_transcript(path)? {
+            return native::load(&db);
+        }
+    }
+    messages_from_steps(steps)
+}
+
+fn messages_from_steps(steps: Vec<ReaderStep>) -> Result<Vec<SessionMessage>, String> {
     let mut step_counts = HashMap::new();
     for record in &steps {
         let step = &record.value;
@@ -420,7 +525,13 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                 vec![antigravity_tool_result(value, call_id, name, &full)],
             )
         } else if value.get("type").and_then(Value::as_str) == Some("USER_INPUT") {
-            let content = user_request(&extract_antigravity_content(value)).to_string();
+            let content = extract_antigravity_content(value);
+            // Native user fields are already the request; only exported logs add CLI wrappers.
+            let content = if record.native_index.is_some() {
+                content
+            } else {
+                user_request(&content).to_string()
+            };
             let content = if content.is_empty() {
                 serde_json::to_string_pretty(value).unwrap_or_default()
             } else {

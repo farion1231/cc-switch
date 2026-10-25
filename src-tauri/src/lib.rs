@@ -1,4 +1,5 @@
 mod agy_config;
+mod agy_conversation;
 #[cfg(all(test, unix))]
 mod agy_smoke_tests;
 mod app_config;

@@ -106,6 +106,9 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
+    if provider_id == "agy" && source_path.starts_with("sqlite:") {
+        return agy::load_messages_sqlite(source_path);
+    }
     if provider_id == "mcode" {
         return mcode::load_messages(source_path);
     }
