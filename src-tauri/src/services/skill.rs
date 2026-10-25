@@ -6162,7 +6162,7 @@ mod tests {
         // SSOT 落盘且登记成功后删除源目录，而不是留下同名幽灵副本。
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -6205,7 +6205,7 @@ mod tests {
         // 必须保守保留源副本，维持既有行为。
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -6248,7 +6248,7 @@ mod tests {
         // 共享目录，否则等于删除托管副本。
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -6282,7 +6282,7 @@ mod tests {
         // 只复制内容，绝不删除链接或其目标。
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -6327,7 +6327,7 @@ mod tests {
         // 导入意外禁用现有技能。Claude 等支持目录覆盖的应用同理。
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
         let db = Arc::new(Database::memory().unwrap());
