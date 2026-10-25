@@ -19,6 +19,27 @@
 
 评审结论：可以实现；已明确外部客户端配置缓存、跨后端加密内容和过长 provider ID 的能力边界。此评审是多维度自审，不是外部独立验收。
 
+## 同类 issue 核对与补修
+
+检索覆盖 `codex`、会话/历史、`history`/`session`、`model_provider not found`、`thread_settings_applied` 和 `sqlite_home`，并回读相关报告及维护者回复。相似症状需要按实际失效位置区分，不能由 issue 已关闭推导当前代码全部覆盖，也不能由 provider 字段一致推导跨后端协议兼容。
+
+| 关联报告 | 核对与处理 |
+|---|---|
+| [#5922](https://github.com/farion1231/cc-switch/issues/5922) | 设置事件保存旧 provider，恢复会话或索引提取会重新覆盖头部/索引。补齐已知事件字段的等长迁移、归属恢复和索引核验；重复字段即使最后一个值已为目标值，也不能作为索引更新的证据 |
+| [#4289](https://github.com/farion1231/cc-switch/issues/4289) | 未显式配置时，当前定位器仍漏掉默认 SQLite 子目录。补齐已存在的子目录库、覆盖路径去重和布局预检；还原时按索引备份路径分别授权，避免相同会话 ID 跨库误用 |
+| [#8535](https://github.com/farion1231/cc-switch/issues/8535)、[#8793](https://github.com/farion1231/cc-switch/issues/8793)、[#8365](https://github.com/farion1231/cc-switch/issues/8365) | 旧自定义 ID 仍依赖兼容定义或明确迁入；维护者已将 #8793 归入 #8678/#8679。本 PR 保留共享 `custom` 身份方案，补齐设置事件；任意 ID 编辑与自动别名指向当前供应商属于另一种产品设计 |
+| [#5398](https://github.com/farion1231/cc-switch/issues/5398)、[#6658](https://github.com/farion1231/cc-switch/issues/6658)、[#7362](https://github.com/farion1231/cc-switch/issues/7362)、[#6860](https://github.com/farion1231/cc-switch/issues/6860) | 维护者已说明 v4 的休眠表、旧官方别名迁移和关键字段投影修复；沿用这些行为及现有回归，保留未受管理的旁支表 |
+| [#4710](https://github.com/farion1231/cc-switch/issues/4710)、[#5974](https://github.com/farion1231/cc-switch/issues/5974)、[#6340](https://github.com/farion1231/cc-switch/issues/6340) | 官方投影、完成标记和活跃索引不一致的历史报告；沿用现有官方直连/路由及按目录标记回归，本次补齐设置事件和遗漏索引的同一操作链 |
+| [#4349](https://github.com/farion1231/cc-switch/issues/4349) | 独立的桌面可见性修复提案，涉及工作区、侧栏索引与来源筛选；本次只修能由 provider 元数据和索引证据确认的缺口 |
+| [#7257](https://github.com/farion1231/cc-switch/issues/7257)、[#6503](https://github.com/farion1231/cc-switch/issues/6503)、[#8708](https://github.com/farion1231/cc-switch/issues/8708) | 涉及响应 ID、加密推理和远端压缩协议。保留既有消息/模型/加密内容边界，不将这些报告标作已由 provider 迁移解决 |
+| [#8735](https://github.com/farion1231/cc-switch/issues/8735)、[#8851](https://github.com/farion1231/cc-switch/issues/8851) | 官方内建身份与桌面功能的权衡。中英文指南补充说明；客户端能力门禁和完整的界面提示需求仍独立跟踪 |
+
+本轮新增 12 项回归：10 项先观察到实现缺口导致的失败，再验证修正；另 2 项约束短 ID 的安全跳过和完成标记后的显式重试。覆盖普通/压缩日志、头部已迁但设置未迁、多个逻辑会话的归属、仅事件来源的恢复授权、字段歧义、活跃子目录索引、跨库同 ID 恢复隔离以及不合规索引在文件写入前拒绝。
+
+聚焦命令 `cargo test --manifest-path src-tauri/Cargo.toml --lib codex_history_migration::tests:: -- --test-threads=1`：63 项通过、0 失败。以上是合成数据和真实文件/SQLite 回归；真实 Codex 客户端续聊及其索引重建端到端操作：NOT_RUN。
+
+最终复验：Rust 全量 4309 项通过、0 失败、11 项按仓库配置忽略；前端 255 个文件、3316 项通过。类型、格式、Clippy、渲染器构建和文档本地链接检查通过。执行平台为 macOS，沿用隔离的测试目录、`umask 022` 及子进程 PATH 排除 Bun 项的既有条件。Windows/WSL/Linux、真实供应商往返及跨后端加密内容兼容：NOT_RUN。
+
 ## v4.0.20 同步验证（de0a235a）
 
 合入上游 main 在 `cae7c375` 之后的 26 个提交，包含 v4.0.20、Codex 按所选 provider 表提取请求地址、官方账号浏览器登录、应用排序和语言更新。实际合并无文本冲突，设置、界面、语言和集成测试文件自动合并成功；原有历史迁移与恢复核心文件保持不变。

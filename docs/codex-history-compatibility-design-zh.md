@@ -10,6 +10,16 @@
 
 ## 等长补丁
 
+### 设置事件与默认索引目录
+
+同类报告 [#5922](https://github.com/farion1231/cc-switch/issues/5922)、[#8535](https://github.com/farion1231/cc-switch/issues/8535)、[#8793](https://github.com/farion1231/cc-switch/issues/8793) 指出旧 ID 可同时存于会话头和设置事件；[#4289](https://github.com/farion1231/cc-switch/issues/4289) 报告无 `sqlite_home` 时遗漏默认 SQLite 子目录。Codex 的 [事件契约](https://github.com/openai/codex/blob/970111f6cb62cc02fe36a82ea7d71b37a2889c97/codex-rs/protocol/src/protocol.rs) 在 `thread_settings_applied.thread_settings` 保存 `model_provider_id`，并通过可选 `thread_id` 标明逻辑所属会话；[索引提取](https://github.com/openai/codex/blob/970111f6cb62cc02fe36a82ea7d71b37a2889c97/codex-rs/state/src/extract.rs) 会用这个值更新 provider，因此仅修会话头不足以抵抗重建。
+
+复用现有等长字段补丁，按严格的外层记录类型选择两个已知 JSON 路径；普通消息即使出现同名键或文字也不进入迁移。索引更新前同时验证对应会话的设置事件。还原按显式 `thread_id` 或前一会话头归属识别，备份账本区分头部与设置事件的官方来源，避免仅有事件证据便改动原本第三方的头部。索引账本另外按原始备份路径归组，根库、默认子目录库和显式覆盖库即使有相同会话 ID，也分别核验自己的官方备份证据。
+
+共享索引定位器在发现默认子目录库实际存在时将其加入候选，保留根目录、显式配置优先于环境变量的既有规则并去重。迁移命令复用现有的库布局预检及备份机制，不新增设置或后台扫描任务。已完成过的第三方迁移可在原手动入口再次确认；官方存量迁移通过关闭统一历史后重新开启并再次勾选迁入来补迁，关闭时是否按账本还原仍由用户选择。
+
+实施顺序：先用真实 JSONL/zstd 和 SQLite 夹具复现事件漏迁、错误恢复和子目录漏检；再扩展元数据补丁、事件归属账本与索引核验；随后补齐定位器并验证目录去重及预检；最后复验确认/完成标记边界、全量检查和发布前敏感信息检查。需求和恢复范围沿用原有机制，不引入另一套历史同步器。
+
 先解析元数据确认语义，再定位唯一的 provider JSON 字符串值。替换后使用 JSON 空白补齐字节数，并再次核对只改变目标字段。目标值过长、重复字段或未知布局不能安全修改时，保留该文件并计入跳过数，不重新序列化整行；继续处理其他文件。
 
 普通日志保存变更区间，备份后用同一个文件句柄逐段比较旧字节再原位写入。保持 inode，不截断文件；目标元数据范围内变化、路径替换或截断时跳过该文件。Unix 比较句柄的设备号和 inode，Windows 使用 `GetFileInformationByHandleEx(FileIdInfo)` 比较卷序列号和 128 位文件 ID；无法查询身份时不放行，不能用创建时间代替文件身份。校验和写入之间仍不能锁住不协作的外部写入者，因此要求用户先退出 Codex，不承诺跨进程原子性。文件尾部追加可以保留。压缩日志在校验文件未变且没有普通兄弟文件后，按既有压缩写回路径保存，保留 mtime。
