@@ -1,14 +1,12 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { authApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   Select,
   SelectContent,
@@ -44,95 +42,11 @@ function useClaudeLoginSwitch() {
 }
 
 /**
- * 切卡不会换 Claude Code 的登录、只能从卡片「打开终端」用选中账号：「切卡时切换 Claude Code
- * 的登录」没打开时。
+ * 切卡不会换 Claude Code 的登录、只能从卡片「打开终端」用选中账号：设了 Claude 配置目录覆盖时。
  */
 function useClaudeAccountTerminalOnly(): boolean {
   const { data } = useClaudeLoginSwitch();
-  return !data?.active;
-}
-
-/** 授权中心 Claude 组里的「切卡时切换 Claude Code 的登录」开关；第一次打开先说明风险。 */
-function ClaudeLoginSwitchToggle() {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { data } = useClaudeLoginSwitch();
-  const [confirming, setConfirming] = React.useState(false);
-  const mutation = useMutation({
-    mutationFn: (enabled: boolean) => authApi.setClaudeLoginSwitch(enabled),
-    onSuccess: (status) => {
-      queryClient.setQueryData(LOGIN_SWITCH_KEY, status);
-      // 第一次切换可能把原来的登录收录成了新账号
-      void queryClient.invalidateQueries({
-        queryKey: ["managed-auth-status", "claude_official"],
-      });
-    },
-    onError: (error) =>
-      toast.error(
-        t("authCenter.claude.loginSwitch.failed", {
-          defaultValue: "设置失败：{{error}}",
-          error: String(error),
-        }),
-      ),
-  });
-  if (!data) return null;
-  const blocked = data.blocked !== null;
-  const onChange = (enabled: boolean) => {
-    if (enabled && !data.riskAcknowledged) {
-      setConfirming(true);
-      return;
-    }
-    mutation.mutate(enabled);
-  };
-  return (
-    <>
-      <div className="mt-2 flex items-start justify-between gap-4 rounded-panel border border-border bg-surface py-3 pe-3 ps-4">
-        <div className="min-w-0 space-y-1">
-          <Label htmlFor="claude-login-switch" className="text-body text-fg-1">
-            {t("authCenter.claude.loginSwitch.label", {
-              defaultValue: "切卡时切换 Claude Code 的登录",
-            })}
-          </Label>
-          <p className="text-caption text-fg-2">
-            {blocked
-              ? t("authCenter.claude.loginSwitch.blocked", {
-                  defaultValue: "设置里覆盖了 Claude 配置目录，不能使用。",
-                })
-              : t("authCenter.claude.loginSwitch.description", {
-                  defaultValue:
-                    "打开后，切到绑了账号的 Claude 官方卡，会把这个账号的登录换进 Claude Code（~/.claude），终端、IDE 插件、脚本里新启动的 claude 都是这个号。正在运行的会话会在下一次请求或刷新登录时跟着换号。",
-                })}
-          </p>
-        </div>
-        <Switch
-          id="claude-login-switch"
-          checked={data.enabled}
-          // 被挡住时还能关掉，不能打开
-          disabled={(blocked && !data.enabled) || mutation.isPending}
-          onCheckedChange={onChange}
-        />
-      </div>
-      <ConfirmDialog
-        isOpen={confirming}
-        variant="info"
-        title={t("authCenter.claude.loginSwitch.riskTitle", {
-          defaultValue: "打开前请了解",
-        })}
-        message={t("authCenter.claude.loginSwitch.riskMessage", {
-          defaultValue:
-            "切卡时，CC Switch 会在 Claude Code 自己的几个登录位置之间搬动登录令牌。",
-        })}
-        confirmText={t("authCenter.claude.loginSwitch.confirm", {
-          defaultValue: "打开",
-        })}
-        onConfirm={() => {
-          setConfirming(false);
-          mutation.mutate(true);
-        }}
-        onCancel={() => setConfirming(false)}
-      />
-    </>
-  );
+  return data?.active === false;
 }
 
 /**
@@ -331,11 +245,11 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         terminalOnly
           ? t("authCenter.group.claudeHelpTerminal", {
               defaultValue:
-                "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，再从卡片「打开终端」，终端里的 claude 就用这个号。想切卡就换号，打开下面的「切卡时切换 Claude Code 的登录」。",
+                "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录（例如指向 WSL），切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
             })
           : t("authCenter.group.claudeHelp", {
               defaultValue:
-                "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，切到这张卡时 Claude Code 的登录会换成这个号，之后终端、IDE 插件里新启动的 claude 都用它。",
+                "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡时 Claude Code 的登录就换成这个号，之后终端、IDE 插件里新启动的 claude 都用它；想同时用几个号，从卡片「打开终端」。切换时会在 Claude Code 自己的登录位置之间搬动登录令牌：令牌只留在本机，不上传、不刷新、不登出。Anthropic 的条款不允许第三方工具存储会话令牌，这种用法处在灰色地带，请自行判断；不想切换，把卡片上的账号改回「默认登录」。第一次切换会把 Claude Code 现在登录的号自动收进来；切号后正在用的 Remote Control 会断开，第一条消息要重建提示缓存。",
             })
       }
       helpSide={helpSide}
@@ -384,7 +298,6 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         ) : undefined,
       }}
     >
-      <ClaudeLoginSwitchToggle />
       <ManagedAccountRemoveDialog
         target={removeTarget}
         serviceName={SERVICE_NAME}
@@ -580,11 +493,11 @@ export function ClaudeAccountSelect({
         {terminalOnly
           ? t("provider.form.claudeAccount.helpTerminal", {
               defaultValue:
-                "请从卡片「打开终端」使用选中的账号。想切到这张卡就换号，请在授权中心的 Claude 组里打开「切卡时切换 Claude Code 的登录」。",
+                "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
             })
           : t("provider.form.claudeAccount.help", {
               defaultValue:
-                "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它；正在运行的会话会在下一次请求时跟着换。",
+                "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它。想同时用几个号，从卡片「打开终端」。",
             })}
       </p>
     </div>
@@ -593,7 +506,7 @@ export function ClaudeAccountSelect({
 
 /**
  * 绑了账号的 Claude 官方卡底部：写出用的是哪个号（额度查的是默认登录，对不上，先不显示）。
- * 切卡不会全局换号时（macOS、设了配置目录覆盖），提示从卡片打开终端。
+ * 切卡不会换号时（设了配置目录覆盖），提示从卡片打开终端。
  */
 export function ClaudeBoundAccountFooter({ accountId }: { accountId: string }) {
   const { t } = useTranslation();

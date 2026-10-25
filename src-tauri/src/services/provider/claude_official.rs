@@ -4,8 +4,8 @@
 //! `accountId` 是账号 key）。没绑账号的官方卡用 Claude Code 现在的登录（`~/.claude`）。
 //!
 //! - 从卡片「打开终端」：绑了账号就把它的目录放进那个终端的启动环境（所有平台）。
-//! - 打开「切卡时切换 Claude Code 的登录」后：切到绑号卡时把账号的登录移进默认槽位
-//!   （见 `claude_account::snapshot`），之后任何地方新启动的 `claude` 都是这个号。
+//! - 切到绑号卡时把账号的登录移进默认槽位（见 `claude_account::snapshot`），之后任何地方
+//!   新启动的 `claude` 都是这个号。设了 Claude 配置目录覆盖时不切，只能从卡片打开终端。
 //!
 //! 以前的开发版把 `CLAUDE_CONFIG_DIR` 写进过 `~/.claude/settings.json`（Claude Code 只在启动
 //! 环境里完整认它，写在 settings 里登录状态仍从默认目录读）。切换时照样删掉 CC Switch 写的值
@@ -90,17 +90,17 @@ enum PreviousLogin {
     },
 }
 
-/// 切到（或重新应用）`target` 之前：开关开着、`target` 绑了本机账号时，把这个账号的登录移进
+/// 切到（或重新应用）`target` 之前：`target` 绑了本机账号时，把这个账号的登录移进
 /// 默认槽位。账号不在这台电脑上（别的设备同步来的卡）时不动登录，只记日志。
 /// 真的换了号时返回原来的号。
 fn switch_login(target: &Provider) -> Result<Option<PreviousLogin>, AppError> {
-    let data_dir = crate::config::get_app_config_dir();
-    if !snapshot::active(&data_dir) {
+    if !snapshot::active() {
         return Ok(None);
     }
     let Some(account) = bound_account(target) else {
         return Ok(None);
     };
+    let data_dir = crate::config::get_app_config_dir();
     let Some(dir) = claude_account::config_dir_on_disk(&data_dir, &account) else {
         log::warn!("[ClaudeAccount] 卡片绑定的账号不在这台电脑上，不切换登录");
         return Ok(None);
@@ -204,14 +204,14 @@ pub fn recover_login_switch(db: &Database) {
     }
 }
 
-/// 账号 `account` 刚在授权中心重新登录（新登录在 `dir`）：开关开着、它又正在默认槽位里时，
+/// 账号 `account` 刚在授权中心重新登录（新登录在 `dir`）：它正在默认槽位里时，
 /// 用新登录换掉默认槽位里的旧登录（旧的可能已过期或被吊销，否则重新登录了 `claude` 还是用
 /// 不了）。登录成功本身不受影响，这里失败只记日志。
 pub fn replace_live_login(account: &str, dir: &std::path::Path) {
-    let data_dir = crate::config::get_app_config_dir();
-    if !snapshot::active(&data_dir) {
+    if !snapshot::active() {
         return;
     }
+    let data_dir = crate::config::get_app_config_dir();
     match with_snapshot_ctx(&data_dir, |ctx| snapshot::replace_live(ctx, account, dir)) {
         Ok(true) => {
             // 同一个号换了一份登录，卡片不用动
@@ -327,7 +327,7 @@ pub fn terminal_account(provider: &Provider) -> Result<Option<AccountTerminal>, 
     };
     let dir = claude_account::config_dir_on_disk(&crate::config::get_app_config_dir(), &account);
     // 账号目录里有自己的登录就用它；没有、而这个号在默认槽位里（切卡时移进去的）才用默认目录。
-    // 只看身份不够：没开开关时，默认目录和账号目录可能各登着同一个号
+    // 只看身份不够：默认目录和账号目录可能各登着同一个号（用户自己在 Claude Code 里登的）
     if let Some(dir) = dir.as_ref().filter(|dir| snapshot::dir_has_login(dir)) {
         return Ok(Some(AccountTerminal::Dir(dir.clone())));
     }

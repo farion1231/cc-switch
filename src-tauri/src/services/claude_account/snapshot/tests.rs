@@ -464,7 +464,6 @@ fn recovery_finishes_a_committed_switch() {
     save_state(
         &fx.data,
         &State {
-            enabled: true,
             journal: Some(Journal {
                 target: work.clone(),
                 target_dir: work_dir.clone(),
@@ -680,14 +679,17 @@ fn failure_after_the_commit_still_counts_as_switched() {
 }
 
 #[test]
-fn switching_keeps_the_toggle_set_meanwhile() {
-    // 开关和切换各改各的字段
+fn switching_keeps_fields_written_meanwhile() {
+    // 登录完成和切换各改各的字段
     let fx = Fixture::new();
     fx.sign_in_default("me", "org-me", "rt-me");
     let (work, work_dir) = fx.account("work", "org-work", "rt-work");
-    update_state(&fx.data, |state| state.enabled = false).unwrap();
+    update_state(&fx.data, |state| {
+        state.login_expiry.insert("other".into(), 1);
+    })
+    .unwrap();
     check_out(&fx.ctx(), &work, &work_dir).unwrap();
-    assert!(!load_state(&fx.data).enabled);
+    assert_eq!(load_state(&fx.data).login_expiry.get("other"), Some(&1));
     assert_eq!(done(&fx.data).map(|journal| journal.target), Some(work));
 }
 

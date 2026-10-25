@@ -238,8 +238,8 @@
         "missing": "Account not on this computer",
         "add": "Sign in to a new account",
         "pending": "Claude's sign-in page is open in your browser. After you sign in and authorize, the account is selected automatically.",
-        "helpTerminal": "Use Open Terminal on the card to use the selected account. To switch accounts by switching to this card, turn on \"Switch Claude Code's sign-in with the card\" in the Auth Center's Claude group.",
-        "help": "Switching to this card signs Claude Code in to the selected account, and claude started anywhere afterwards uses it; running sessions follow on their next request.",
+        "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
+        "help": "Switching to this card signs Claude Code in to the selected account, and claude started anywhere afterwards uses it. To use several accounts at once, use Open Terminal on the card.",
         "card": "Account: {{label}}",
         "cardTerminal": "Account: {{label}} · use via Open Terminal"
       }
@@ -4888,8 +4888,8 @@
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
-      "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card, then use Open Terminal on the card: claude in that terminal uses this account. To switch accounts by switching cards, turn on \"Switch Claude Code's sign-in with the card\" below.",
-      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: switching to the card signs Claude Code in to that account, and claude started afterwards in any terminal or IDE extension uses it."
+      "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings (for example, to WSL), so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: switching to the card signs Claude Code in to that account, and claude started afterwards in any terminal or IDE extension uses it. To use several accounts at once, use Open Terminal on the card. Switching moves sign-in tokens between Claude Code's own sign-in locations; they stay on this computer and are never uploaded, refreshed or signed out. Anthropic's terms don't allow third-party tools to store session tokens, so this is a gray area; decide for yourself. To keep a card from switching, set its account back to \"Default sign-in\". The first switch saves the account Claude Code is signed in to now; a switch ends an open Remote Control session, and the first message afterwards rebuilds the prompt cache."
     },
     "addAccount": "Add account",
     "accountMenu": "More actions for {{login}}",
@@ -4955,16 +4955,7 @@
       "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
       "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
       "login": "Sign in to Claude",
-      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
-      "loginSwitch": {
-        "label": "Switch Claude Code's sign-in with the card",
-        "description": "When on, switching to a Claude official card with an account moves that account's sign-in into Claude Code (~/.claude), so claude started afterwards in terminals, IDE extensions or scripts uses it. Running sessions follow on their next request or sign-in refresh.",
-        "blocked": "Unavailable while a Claude config directory override is set.",
-        "failed": "Couldn't change the setting: {{error}}",
-        "riskTitle": "Before turning this on",
-        "riskMessage": "• When you switch cards, CC Switch moves sign-in tokens between Claude Code's own sign-in locations. Tokens stay on this computer: they're never uploaded or refreshed, and no account is signed out. If an account's folder already holds a different sign-in, that one is kept as a backup and deleted along with the account.\n• Anthropic's terms don't allow third-party tools to collect or store Claude session tokens, so this is a gray area; decide for yourself whether to use it. The officially recommended way to use several accounts is one CLAUDE_CONFIG_DIR per account, which is what Open Terminal on the card does.\n• On the first switch, the account Claude Code is signed in to now is saved here automatically.\n• A running claude session may move to the new account on its next request; use Open Terminal on the card for sessions that must stay on one account.\n• Remote Control and Artifacts belong to the signed-in account, so a switch ends an open Remote Control session and you'll need to start it again. The first message after a switch rebuilds the prompt cache and uses a bit more of your quota.\n• You can turn this off at any time; turning it off doesn't change the current sign-in.",
-        "confirm": "Turn on"
-      }
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in."
     }
   },
   "kimi": {

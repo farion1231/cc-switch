@@ -238,8 +238,8 @@
         "missing": "不在这台电脑上的账号",
         "add": "登录新账号",
         "pending": "已在浏览器打开 Claude 的登录页，登录并授权后会自动选上这个账号。",
-        "helpTerminal": "请从卡片「打开终端」使用选中的账号。想切到这张卡就换号，请在授权中心的 Claude 组里打开「切卡时切换 Claude Code 的登录」。",
-        "help": "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它；正在运行的会话会在下一次请求时跟着换。",
+        "helpTerminal": "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+        "help": "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它。想同时用几个号，从卡片「打开终端」。",
         "card": "账号：{{label}}",
         "cardTerminal": "账号：{{label}} · 从卡片打开终端使用"
       }
@@ -4888,8 +4888,8 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
-      "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，再从卡片「打开终端」，终端里的 claude 就用这个号。想切卡就换号，打开下面的「切卡时切换 Claude Code 的登录」。",
-      "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，切到这张卡时 Claude Code 的登录会换成这个号，之后终端、IDE 插件里新启动的 claude 都用它。"
+      "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录（例如指向 WSL），切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
+      "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡时 Claude Code 的登录就换成这个号，之后终端、IDE 插件里新启动的 claude 都用它；想同时用几个号，从卡片「打开终端」。切换时会在 Claude Code 自己的登录位置之间搬动登录令牌：令牌只留在本机，不上传、不刷新、不登出。Anthropic 的条款不允许第三方工具存储会话令牌，这种用法处在灰色地带，请自行判断；不想切换，把卡片上的账号改回「默认登录」。第一次切换会把 Claude Code 现在登录的号自动收进来；切号后正在用的 Remote Control 会断开，第一条消息要重建提示缓存。"
     },
     "addAccount": "添加账号",
     "accountMenu": "{{login}} 的更多操作",
@@ -4955,16 +4955,7 @@
       "statusLoadFailed": "无法读取 Claude 账号，请重试。",
       "empty": "还没有添加 Claude 账号。要在多个订阅账号之间切换时在这里登录。",
       "login": "登录 Claude 账号",
-      "removeNote": "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。",
-      "loginSwitch": {
-        "label": "切卡时切换 Claude Code 的登录",
-        "description": "打开后，切到绑了账号的 Claude 官方卡，会把这个账号的登录换进 Claude Code（~/.claude），终端、IDE 插件、脚本里新启动的 claude 都是这个号。正在运行的会话会在下一次请求或刷新登录时跟着换号。",
-        "blocked": "设置里覆盖了 Claude 配置目录，不能使用。",
-        "failed": "设置失败：{{error}}",
-        "riskTitle": "打开前请了解",
-        "riskMessage": "• 切卡时，CC Switch 会在 Claude Code 自己的几个登录位置之间搬动登录令牌。令牌只留在这台电脑上，不上传、不刷新，也不会让任何账号退出登录；账号目录里原有的另一份登录会留一份备份，删除账号时一起删掉。\n• Anthropic 的条款不允许第三方工具收集或存储 Claude 的会话令牌，这种用法处在灰色地带，是否使用请自行判断。官方推荐的多账号做法是每个账号一个 CLAUDE_CONFIG_DIR，也就是卡片上的「打开终端」。\n• 第一次切换时，Claude Code 现在登着的账号会自动保存到这里。\n• 正在运行的 claude 会话可能在下一次请求时换成新账号；需要固定账号的会话，请从卡片「打开终端」。\n• Remote Control 和 Artifacts 跟着当前登录的账号走，切号后正在用的 Remote Control 会断开，需要重新开启；切号后的第一条消息要重建提示缓存，会多用一些额度。\n• 可以随时关闭，关闭不会改动现在的登录。",
-        "confirm": "打开"
-      }
+      "removeNote": "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。"
     }
   },
   "kimi": {

@@ -543,9 +543,7 @@ export const handlers = [
   ),
   http.post(`${TAURI_ENDPOINT}/get_claude_login_switch`, () =>
     success({
-      enabled: false,
-      active: false,
-      riskAcknowledged: false,
+      active: true,
       blocked: null,
       live: null,
     }),

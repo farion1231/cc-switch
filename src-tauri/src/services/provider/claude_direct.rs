@@ -58,7 +58,7 @@ fn write(
     );
     // 删掉以前开发版写进去的账号目录（见 claude_official）
     super::claude_official::strip_from_patch(&mut patch);
-    // 先换登录（打开了「切卡时切换登录」、卡绑了账号时）：失败就整个不切，指针和
+    // 先换登录（卡绑了本机账号、没设配置目录覆盖时）：失败就整个不切，指针和
     // settings.json 都不动；登录换了、后面写失败时再换回去
     super::claude_official::with_login_switch(Some(target), || {
         run(

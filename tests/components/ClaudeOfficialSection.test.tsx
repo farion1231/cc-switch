@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
   openExternal: vi.fn(),
   submitPaste: vi.fn(),
   getLoginSwitch: vi.fn(),
-  setLoginSwitch: vi.fn(),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -31,7 +30,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
       ...actual.authApi,
       claudeAccountSubmitPaste: mocks.submitPaste,
       getClaudeLoginSwitch: mocks.getLoginSwitch,
-      setClaudeLoginSwitch: mocks.setLoginSwitch,
     },
   };
 });
@@ -66,20 +64,15 @@ const account = (id: string, login: string) => ({
 
 const loginSwitch = (overrides: Record<string, unknown> = {}) => {
   const status = {
-    enabled: false,
-    riskAcknowledged: false,
     blocked: null,
     live: null,
     ...overrides,
   };
-  // 和后端一样：开着、没被挡住
-  return {
-    active: status.enabled === true && status.blocked === null,
-    ...status,
-  };
+  // 和后端一样：没被挡住就会切换
+  return { active: status.blocked === null, ...status };
 };
 
-// 组件读 React Query（开关状态、账号列表），每个用例一个新的 client
+// 组件读 React Query（切换状态、账号列表），每个用例一个新的 client
 const withQuery = (node: React.ReactNode) =>
   render(
     <QueryClientProvider
@@ -100,7 +93,6 @@ describe("ClaudeOfficialSection", () => {
     mocks.openExternal.mockReset();
     mocks.submitPaste.mockReset();
     mocks.getLoginSwitch.mockReset().mockResolvedValue(loginSwitch());
-    mocks.setLoginSwitch.mockReset();
   });
 
   it("has no default account and no re-login while the login is valid", async () => {
@@ -217,16 +209,7 @@ describe("ClaudeOfficialSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("points to Open Terminal until switching cards switches the sign-in", async () => {
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
-    renderSelect();
-    expect(
-      await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
-    ).toBeInTheDocument();
-  });
-
-  it("says switching changes the sign-in once the toggle is on", async () => {
-    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ enabled: true }));
+  it("says switching to the card changes the sign-in", async () => {
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     renderSelect();
     expect(
@@ -234,83 +217,14 @@ describe("ClaudeOfficialSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("explains the risk before turning the sign-in switch on the first time", async () => {
-    mocks.setLoginSwitch.mockResolvedValue(
-      loginSwitch({ enabled: true, riskAcknowledged: true }),
-    );
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
-    renderSection();
-
-    const toggle = await screen.findByRole("switch", {
-      name: "切卡时切换 Claude Code 的登录",
-    });
-    await userEvent.click(toggle);
-    expect(mocks.setLoginSwitch).not.toHaveBeenCalled();
-    await userEvent.click(await screen.findByRole("button", { name: "打开" }));
-    expect(mocks.setLoginSwitch).toHaveBeenCalledWith(true);
-    await waitFor(() => expect(toggle).toBeChecked());
-  });
-
-  it("turns the switch back on without asking again", async () => {
+  it("points to Open Terminal when a config dir override blocks switching", async () => {
     mocks.getLoginSwitch.mockResolvedValue(
-      loginSwitch({ riskAcknowledged: true }),
-    );
-    mocks.setLoginSwitch.mockResolvedValue(
-      loginSwitch({ enabled: true, riskAcknowledged: true }),
-    );
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
-    renderSection();
-
-    await userEvent.click(
-      await screen.findByRole("switch", {
-        name: "切卡时切换 Claude Code 的登录",
-      }),
-    );
-    expect(mocks.setLoginSwitch).toHaveBeenCalledWith(true);
-    expect(screen.queryByRole("button", { name: "打开" })).toBeNull();
-  });
-
-  it("treats a toggle blocked by a config dir override as off", async () => {
-    mocks.getLoginSwitch.mockResolvedValue(
-      loginSwitch({ enabled: true, blocked: "overrideDir" }),
+      loginSwitch({ blocked: "overrideDir" }),
     );
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     renderSelect();
     expect(
       await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
-    ).toBeInTheDocument();
-  });
-
-  it("shows why an enabled toggle is blocked and keeps it switchable off", async () => {
-    mocks.getLoginSwitch.mockResolvedValue(
-      loginSwitch({ enabled: true, blocked: "overrideDir" }),
-    );
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
-    renderSection();
-
-    const toggle = await screen.findByRole("switch", {
-      name: "切卡时切换 Claude Code 的登录",
-    });
-    expect(toggle).toBeEnabled();
-    expect(
-      screen.getByText("设置里覆盖了 Claude 配置目录，不能使用。"),
-    ).toBeInTheDocument();
-  });
-
-  it("can't be turned on with a Claude config dir override", async () => {
-    mocks.getLoginSwitch.mockResolvedValue(
-      loginSwitch({ blocked: "overrideDir" }),
-    );
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
-    renderSection();
-
-    expect(
-      await screen.findByRole("switch", {
-        name: "切卡时切换 Claude Code 的登录",
-      }),
-    ).toBeDisabled();
-    expect(
-      screen.getByText("设置里覆盖了 Claude 配置目录，不能使用。"),
     ).toBeInTheDocument();
   });
 });

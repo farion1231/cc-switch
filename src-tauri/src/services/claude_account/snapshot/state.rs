@@ -13,11 +13,6 @@ const STATE_FILENAME: &str = "claude-account-snapshot.json";
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
-    #[serde(default)]
-    pub enabled: bool,
-    /// 第一次打开时确认过风险说明的时间
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub risk_ack_at: Option<i64>,
     /// 最近一次切换的日志：没做完、或做完了还没确认卡片写成
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journal: Option<Journal>,
@@ -77,7 +72,7 @@ pub(super) fn save_state(data_dir: &Path, state: &State) -> Result<(), AppError>
     crate::config::atomic_write(&state_path(data_dir), &bytes)
 }
 
-/// 状态文件的读改写互斥：开关和切换各改各的字段，不能拿旧的整份覆盖对方。
+/// 状态文件的读改写互斥：切换、恢复和登录完成各改各的字段，不能拿旧的整份覆盖对方。
 static STATE: Mutex<()> = Mutex::new(());
 
 /// 在锁里重读状态、改、落盘，返回改后的状态。

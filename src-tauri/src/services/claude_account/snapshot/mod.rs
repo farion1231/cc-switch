@@ -1,7 +1,7 @@
-//! 切卡时切换 Claude Code 的登录（设置里的开关，默认关）。
+//! 切卡时切换 Claude Code 的登录。
 //!
-//! 每个账号仍有自己的 `CLAUDE_CONFIG_DIR`（登录、「打开终端」都照旧）。打开开关后，切到绑了
-//! 账号 T 的官方卡时，把 T 的登录「移」进默认槽位：之后任何地方新启动的 `claude`（终端、
+//! 每个账号仍有自己的 `CLAUDE_CONFIG_DIR`（登录、「打开终端」都照旧）。切到绑了账号 T 的
+//! 官方卡时，把 T 的登录「移」进默认槽位：之后任何地方新启动的 `claude`（终端、
 //! IDE 插件、脚本）都是 T，不用设环境变量。
 //!
 //! 一次切换（[`check_out`]）：
@@ -94,14 +94,15 @@ const COMMIT_DEADLINE: Duration = Duration::from_secs(30);
 /// 同一进程里的切换串行。
 static SWITCH: Mutex<()> = Mutex::new(());
 
-/// 开关能不能打开：设了 Claude 配置目录覆盖时不能（默认槽位不在 `~/.claude`）。
+/// 切卡时为什么不能切换登录：设了 Claude 配置目录覆盖（默认槽位不在 `~/.claude`，例如指向
+/// WSL）。这时绑号卡只能从卡片「打开终端」使用。
 pub fn blocked_reason() -> Option<&'static str> {
     crate::settings::get_claude_override_dir().map(|_| "overrideDir")
 }
 
-/// 开关开着、没被挡住。
-pub fn active(data_dir: &Path) -> bool {
-    blocked_reason().is_none() && load_state(data_dir).enabled
+/// 切卡时会不会切换登录。
+pub fn active() -> bool {
+    blocked_reason().is_none()
 }
 
 /// 默认槽位现在登的是不是账号 `account`（被移进去以后它的账号目录是空的，用它要走默认目录）。

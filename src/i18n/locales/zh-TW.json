@@ -238,8 +238,8 @@
         "missing": "不在這台電腦上的帳號",
         "add": "登入新帳號",
         "pending": "已在瀏覽器開啟 Claude 的登入頁，登入並授權後會自動選上這個帳號。",
-        "helpTerminal": "請從卡片「開啟終端機」使用選取的帳號。想切到這張卡就換帳號，請在授權中心的 Claude 群組裡開啟「切卡時切換 Claude Code 的登入」。",
-        "help": "切到這張卡後，Claude Code 的登入會換成選取的帳號，任何地方新啟動的 claude 都用它；正在執行的工作階段會在下一次請求時跟著換。",
+        "helpTerminal": "設定裡覆寫了 Claude 設定目錄，切到這張卡不會切換 Claude Code 的登入，請從卡片「開啟終端機」使用選取的帳號。",
+        "help": "切到這張卡後，Claude Code 的登入會換成選取的帳號，任何地方新啟動的 claude 都用它。想同時用幾個帳號，從卡片「開啟終端機」。",
         "card": "帳號：{{label}}",
         "cardTerminal": "帳號：{{label}} · 從卡片開啟終端機使用"
       }
@@ -4889,8 +4889,8 @@
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
-      "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 的官方卡上選一個帳號，再從卡片「開啟終端機」，終端機裡的 claude 就用這個帳號。想切卡就換帳號，請開啟下面的「切卡時切換 Claude Code 的登入」。",
-      "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 的官方卡上選一個帳號，切到這張卡時 Claude Code 的登入會換成這個帳號，之後終端機、IDE 擴充套件裡新啟動的 claude 都用它。"
+      "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄（例如指向 WSL），切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
+      "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡時 Claude Code 的登入就換成這個帳號，之後終端機、IDE 擴充套件裡新啟動的 claude 都用它；想同時用幾個帳號，從卡片「開啟終端機」。切換時會在 Claude Code 自己的登入位置之間搬移登入權杖：權杖只留在本機，不上傳、不重新整理、不登出。Anthropic 的條款不允許第三方工具儲存工作階段權杖，這種用法處在灰色地帶，請自行判斷；不想切換，把卡片上的帳號改回「預設登入」。第一次切換會把 Claude Code 目前登入的帳號自動收進來；切換帳號後正在使用的 Remote Control 會中斷，第一則訊息要重建提示快取。"
     },
     "addAccount": "新增帳號",
     "accountMenu": "{{login}} 的更多操作",
@@ -4956,16 +4956,7 @@
       "statusLoadFailed": "無法讀取 Claude 帳號，請重試。",
       "empty": "還沒有新增 Claude 帳號。要在多個訂閱帳號之間切換時在這裡登入。",
       "login": "登入 Claude 帳號",
-      "removeNote": "只刪除 CC Switch 為這個帳號儲存的登入，不會讓它在其他地方登出；Claude Code 目前的登入（~/.claude）不受影響。綁定它的卡片會改用 Claude Code 目前的登入。",
-      "loginSwitch": {
-        "label": "切卡時切換 Claude Code 的登入",
-        "description": "開啟後，切到綁了帳號的 Claude 官方卡，會把這個帳號的登入換進 Claude Code（~/.claude），終端機、IDE 擴充套件、腳本裡新啟動的 claude 都是這個帳號。正在執行的工作階段會在下一次請求或重新整理登入時跟著換帳號。",
-        "blocked": "設定裡覆寫了 Claude 設定目錄，無法使用。",
-        "failed": "設定失敗：{{error}}",
-        "riskTitle": "開啟前請了解",
-        "riskMessage": "• 切卡時，CC Switch 會在 Claude Code 自己的幾個登入位置之間搬移登入權杖。權杖只留在這台電腦上，不上傳、不重新整理，也不會讓任何帳號登出；帳號資料夾裡原有的另一份登入會留一份備份，刪除帳號時一併刪除。\n• Anthropic 的條款不允許第三方工具收集或儲存 Claude 的工作階段權杖，這種用法處在灰色地帶，是否使用請自行判斷。官方建議的多帳號做法是每個帳號一個 CLAUDE_CONFIG_DIR，也就是卡片上的「開啟終端機」。\n• 第一次切換時，Claude Code 目前登入的帳號會自動儲存到這裡。\n• 正在執行的 claude 工作階段可能在下一次請求時換成新帳號；需要固定帳號的工作階段，請從卡片「開啟終端機」。\n• Remote Control 和 Artifacts 跟著目前登入的帳號走，切換帳號後正在使用的 Remote Control 會中斷，需要重新開啟；切換後的第一則訊息要重建提示快取，會多用一些額度。\n• 可以隨時關閉，關閉不會改動目前的登入。",
-        "confirm": "開啟"
-      }
+      "removeNote": "只刪除 CC Switch 為這個帳號儲存的登入，不會讓它在其他地方登出；Claude Code 目前的登入（~/.claude）不受影響。綁定它的卡片會改用 Claude Code 目前的登入。"
     }
   },
   "kimi": {

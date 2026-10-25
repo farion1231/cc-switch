@@ -141,14 +141,11 @@ export async function claudeAccountSubmitPaste(
   return invoke("claude_account_submit_paste", { flowId, pasted });
 }
 
-/** 「切卡时切换 Claude Code 的登录」的状态。 */
+/** 切卡时切换 Claude Code 登录的状态。 */
 export interface ClaudeLoginSwitchStatus {
-  enabled: boolean;
-  /** 开着、没被挡住：切卡时真的会切换登录 */
+  /** 切到选了账号的官方卡时会切换登录（没被挡住） */
   active: boolean;
-  /** 第一次打开时确认过风险说明 */
-  riskAcknowledged: boolean;
-  /** 不能打开的原因：设了 Claude 配置目录覆盖 */
+  /** 不切换登录的原因：设了 Claude 配置目录覆盖 */
   blocked: "overrideDir" | null;
   /** Claude Code 现在登录的账号 key */
   live: string | null;
@@ -156,14 +153,6 @@ export interface ClaudeLoginSwitchStatus {
 
 export async function getClaudeLoginSwitch(): Promise<ClaudeLoginSwitchStatus> {
   return invoke<ClaudeLoginSwitchStatus>("get_claude_login_switch");
-}
-
-export async function setClaudeLoginSwitch(
-  enabled: boolean,
-): Promise<ClaudeLoginSwitchStatus> {
-  return invoke<ClaudeLoginSwitchStatus>("set_claude_login_switch", {
-    enabled,
-  });
 }
 
 export const authApi = {
@@ -178,5 +167,4 @@ export const authApi = {
   agyAccountIsRunning,
   claudeAccountSubmitPaste,
   getClaudeLoginSwitch,
-  setClaudeLoginSwitch,
 };
