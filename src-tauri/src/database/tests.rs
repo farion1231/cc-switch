@@ -11,6 +11,101 @@ use serde_json::json;
 use std::collections::HashMap;
 use tempfile::NamedTempFile;
 
+// An upgrade safety backup must capture committed rows still living in the
+// source database's WAL, not merely the checkpointed main .db image.
+#[test]
+#[serial_test::serial]
+fn pre_migration_backup_wal_rows_remain_recoverable() -> Result<(), AppError> {
+    struct RestoreTestHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreTestHome {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    let temp = tempfile::tempdir().expect("synthetic WAL database home");
+    let _restore = RestoreTestHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+    std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+    let config_dir = crate::config::get_app_config_dir();
+    assert!(config_dir.starts_with(temp.path()));
+    std::fs::create_dir_all(&config_dir).expect("create synthetic config");
+    let db_path = config_dir.join("cc-switch.db");
+
+    // Keep this writer connection open: its committed sentinel must still be
+    // available in the WAL when Database::init takes the safety snapshot.
+    let conn = Connection::open(&db_path)?;
+    let journal_mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
+    assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+    Database::create_tables_on_conn(&conn)?;
+    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")?;
+    conn.execute(
+        "INSERT INTO mcp_servers (id, name, server_config) VALUES (?1, ?2, ?3)",
+        params!["wal-safety-sentinel", "committed-in-wal", "{}"],
+    )?;
+    Database::set_user_version(&conn, 22)?;
+    assert!(
+        db_path.with_file_name("cc-switch.db-wal").exists(),
+        "fixture should retain WAL while writer connection is open"
+    );
+
+    // Block backup creation without touching a real profile or live DB.
+    let backup_dir = config_dir.join("backups");
+    std::fs::write(&backup_dir, b"synthetic blocked backups directory").expect("block backup");
+    let refused = Database::init();
+    assert!(
+        refused.is_err(),
+        "migration must refuse an existing WAL database when backup fails"
+    );
+    assert_eq!(Database::get_user_version(&conn)?, 22);
+    assert!(!Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+    let before: String = conn.query_row(
+        "SELECT name FROM mcp_servers WHERE id = 'wal-safety-sentinel'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(before, "committed-in-wal");
+
+    std::fs::remove_file(&backup_dir).expect("clear synthetic obstruction");
+    let upgraded = Database::init()?;
+    drop(upgraded);
+    let after = Connection::open(&db_path)?;
+    assert_eq!(Database::get_user_version(&after)?, SCHEMA_VERSION);
+    let marker: String = after.query_row(
+        "SELECT name FROM mcp_servers WHERE id = 'wal-safety-sentinel'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(marker, "committed-in-wal");
+
+    let mut found_recoverable_snapshot = false;
+    for entry in std::fs::read_dir(&backup_dir).expect("list synthetic backups") {
+        let path = entry.expect("backup entry").path();
+        if !path.extension().is_some_and(|ext| ext == "db") {
+            continue;
+        }
+        let saved = Connection::open(&path)?;
+        if Database::get_user_version(&saved)? != 22 {
+            continue;
+        }
+        let preserved: String = saved.query_row(
+            "SELECT name FROM mcp_servers WHERE id = 'wal-safety-sentinel'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(preserved, "committed-in-wal");
+        assert!(!Database::has_column(&saved, "mcp_servers", "enabled_omp")?);
+        found_recoverable_snapshot = true;
+    }
+    assert!(
+        found_recoverable_snapshot,
+        "pre-migration v22 safety backup must include committed WAL rows"
+    );
+    Ok(())
+}
+
 const LEGACY_SCHEMA_SQL: &str = r#"
     CREATE TABLE providers (
         id TEXT NOT NULL,
