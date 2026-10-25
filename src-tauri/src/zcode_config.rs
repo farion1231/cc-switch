@@ -46,12 +46,12 @@ use crate::settings::get_zcode_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// 进程级写锁：provider 写入与 MCP 同步都是"读-改-写"整个文件，
 /// 并发交错会互相覆盖（OpenCode 用同样的锁模式）。
@@ -60,54 +60,93 @@ fn zcode_config_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-const LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-const STALE_LOCK_AGE: Duration = Duration::from_secs(30);
+const LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(8);
+/// 与 ZCode `acquireFileLock` 调用方的轮询节奏一致。
+const LOCK_POLL_INTERVAL_MS: u64 = 25;
+/// ownerless 锁（元数据没有可用 pid）超过该宽限期即可回收，对齐 ZCode
+/// atomicFileLock.ts 调用方传入的 ownerlessGraceMs（100ms）。
+const OWNERLESS_LOCK_GRACE_MS: u64 = 100;
+/// 旧版 cc-switch 的单文件锁只在持有期间存在，存留超过该时长必是崩溃残留。
+const LEGACY_STALE_LOCK_AGE_MS: u64 = 30_000;
+/// 锁元数据来自另一进程的时钟，未来值超出该偏移视为无效
+/// （对齐 ZCode 的 MAX_LOCK_METADATA_CLOCK_SKEW_MS）。
+const CLOCK_SKEW_ALLOWANCE_MS: u64 = 5 * 60_000;
 
 struct ZCodeFileLock {
-    path: PathBuf,
-    _file: File,
+    dir: PathBuf,
+    owner_file: PathBuf,
 }
 
 impl ZCodeFileLock {
     fn acquire(target: &Path) -> Result<Self, AppError> {
         let mut lock_name = target.as_os_str().to_os_string();
         lock_name.push(".lock");
-        let path = PathBuf::from(lock_name);
-        let deadline = Instant::now() + LOCK_WAIT_TIMEOUT;
+        let dir = PathBuf::from(lock_name);
+        Self::acquire_deadline(&dir, Instant::now() + LOCK_WAIT_TIMEOUT)
+    }
+
+    /// 镜像 ZCode `acquireFileLock` 的目录协议（packages/shared/src/node/
+    /// atomicFileLock.ts）：`mkdir` 抢 `<target>.lock` 目录 → 在目录里写入
+    /// `owner-<token>.json` → 复核自己是唯一 owner。目录被占时先按 ZCode 的
+    /// 规则回收废弃锁（owner 进程已死，或 ownerless 超过宽限期），否则轮询等待。
+    /// 协议必须逐字对齐：两边都是"能解析对方锁、能判断对方死活"才算互斥成立。
+    fn acquire_deadline(dir: &Path, deadline: Instant) -> Result<Self, AppError> {
+        let pid = std::process::id();
+        let created_at_ms = unix_epoch_ms();
+        // token 对应 ZCode 的 `${pid}-${Date.now()}-${Math.random()...}`。
+        // 同进程的调用被进程级互斥串行化，pid + 毫秒 + 纳秒足以保证唯一。
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.subsec_nanos())
+            .unwrap_or(0);
+        let token = format!("{pid}-{created_at_ms}-{nanos}");
+        let owner_file = dir.join(format!("owner-{token}.json"));
+        // payload 与 ZCode 的 owner 文件完全同形：JSON.stringify({pid, createdAt, token})
+        // + 换行。有效 pid 是 ZCode 判定"持锁进程存活"的依据，不能省略。
+        let payload =
+            format!("{{\"pid\":{pid},\"createdAt\":{created_at_ms},\"token\":\"{token}\"}}\n");
 
         loop {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => {
-                    if let Err(error) = writeln!(file, "{}", std::process::id()) {
-                        let _ = std::fs::remove_file(&path);
-                        return Err(AppError::io(&path, error));
-                    }
-                    return Ok(Self { path, _file: file });
+            match try_acquire_once(dir, &owner_file, &payload) {
+                AcquireStep::Acquired => {
+                    return Ok(Self {
+                        dir: dir.to_path_buf(),
+                        owner_file,
+                    });
                 }
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                    let stale = std::fs::metadata(&path)
-                        .and_then(|metadata| metadata.modified())
-                        .ok()
-                        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-                        .is_some_and(|age| age >= STALE_LOCK_AGE);
-                    if stale {
-                        match std::fs::remove_file(&path) {
-                            Ok(()) => continue,
-                            Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => {
-                                continue;
-                            }
-                            Err(_) => {}
-                        }
-                    }
-                    if Instant::now() >= deadline {
-                        return Err(AppError::Config(format!(
-                            "Timed out waiting for ZCode config lock: {}",
-                            path.display()
-                        )));
-                    }
-                    thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => return Err(AppError::io(&path, error)),
+                AcquireStep::Busy => {}
+                AcquireStep::Io(error) => return Err(AppError::io(dir, error)),
+            }
+            if Instant::now() >= deadline {
+                return Err(AppError::Config(format!(
+                    "Timed out waiting for ZCode config lock: {}",
+                    dir.display()
+                )));
+            }
+            thread::sleep(Duration::from_millis(LOCK_POLL_INTERVAL_MS));
+        }
+    }
+
+    fn release(owner_file: &Path, dir: &Path) {
+        // 只删除自己的 owner 文件；锁已被接管时不会碰到后来 writer 的 token。
+        if let Err(error) = std::fs::remove_file(owner_file) {
+            if error.kind() != ErrorKind::NotFound {
+                log::warn!(
+                    "Failed to remove ZCode lock owner file '{}': {error}",
+                    owner_file.display()
+                );
+            }
+        }
+        // 目录非空说明有后来 writer 已进入，rmdir 失败是预期内的 best-effort。
+        if let Err(error) = std::fs::remove_dir(dir) {
+            if !matches!(
+                error.kind(),
+                ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty
+            ) {
+                log::warn!(
+                    "Failed to remove ZCode config lock dir '{}': {error}",
+                    dir.display()
+                );
             }
         }
     }
@@ -115,15 +154,260 @@ impl ZCodeFileLock {
 
 impl Drop for ZCodeFileLock {
     fn drop(&mut self) {
-        if let Err(error) = std::fs::remove_file(&self.path) {
-            if error.kind() != ErrorKind::NotFound {
-                log::warn!(
-                    "Failed to remove ZCode config lock '{}': {error}",
-                    self.path.display()
-                );
+        Self::release(&self.owner_file, &self.dir);
+    }
+}
+
+enum AcquireStep {
+    Acquired,
+    Busy,
+    Io(std::io::Error),
+}
+
+fn try_acquire_once(dir: &Path, owner_file: &Path, payload: &str) -> AcquireStep {
+    match std::fs::create_dir(dir) {
+        Ok(()) => match claim_ownership(dir, owner_file, payload) {
+            Ok(true) => AcquireStep::Acquired,
+            Ok(false) => {
+                // 写入期间目录被并发替换/接管，退避重试。
+                ZCodeFileLock::release(owner_file, dir);
+                AcquireStep::Busy
+            }
+            Err(error) => {
+                ZCodeFileLock::release(owner_file, dir);
+                // mkdir 成功后目录被并发清走（NotFound）按竞争处理；其余是真实 IO 错误。
+                if error.kind() == ErrorKind::NotFound {
+                    AcquireStep::Busy
+                } else {
+                    AcquireStep::Io(error)
+                }
+            }
+        },
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            reclaim_abandoned_lock(dir);
+            AcquireStep::Busy
+        }
+        Err(error) => AcquireStep::Io(error),
+    }
+}
+
+/// 写入 owner 文件并复核所有权，返回 false 表示目录在写入期间被并发接管。
+/// ZCode 用 dev/ino 复核目录身份；这里用"唯一 owner 且名字是自己"等价判定——
+/// 目录被替换时我们的 owner 文件必然随之消失，而 token 含 pid + 时间，不可能撞名。
+fn claim_ownership(dir: &Path, owner_file: &Path, payload: &str) -> std::io::Result<bool> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(owner_file)?;
+    file.write_all(payload.as_bytes())?;
+
+    let own_name = owner_file
+        .file_name()
+        .expect("owner file is joined onto the lock dir");
+    Ok(owner_entry_names(dir)?.as_slice() == [own_name.to_os_string()])
+}
+
+/// 锁目录里形如 `owner-*.json` 的条目名（与 ZCode 的过滤规则一致）。
+fn owner_entry_names(dir: &Path) -> std::io::Result<Vec<std::ffi::OsString>> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let name = entry?.file_name();
+        if is_owner_entry_name(&name) {
+            names.push(name);
+        }
+    }
+    Ok(names)
+}
+
+fn is_owner_entry_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|name| name.starts_with("owner-") && name.ends_with(".json"))
+}
+
+/// 回收废弃锁（镜像 ZCode removeAbandonedLock）：唯一 owner 的进程已退出，
+/// 或元数据无效（ownerless）超过宽限期。存活的锁一律不碰。
+fn reclaim_abandoned_lock(dir: &Path) {
+    let Ok(metadata) = std::fs::metadata(dir) else {
+        return; // 锁刚消失，直接重试
+    };
+    if !metadata.is_dir() {
+        // 新协议下存活锁一定是目录；单文件锁只能来自旧版 cc-switch，其仅在
+        // 持有期间存在，存留超时必是崩溃残留。
+        remove_stale_legacy_lock(dir, &metadata);
+        return;
+    }
+
+    let Ok(owners) = owner_entry_names(dir) else {
+        return;
+    };
+    if owners.len() == 1 {
+        let owner_file = dir.join(&owners[0]);
+        if !owner_file_reclaimable(&owner_file) {
+            return;
+        }
+        // 按唯一 owner 文件删除相当于所有权校验：目录已被替换时新 owner 的
+        // 文件名不同，remove 不会命中；随后 rmdir 也会因目录非空而拒绝。
+        if std::fs::remove_file(&owner_file).is_err() {
+            return;
+        }
+        let _ = std::fs::remove_dir(dir);
+        return;
+    }
+
+    // 0 个（mkdir 后 owner 落盘前崩溃）或多个 owner：目录时间超过宽限期且
+    // 所有 owner 均可回收才清理；后来者新增 owner 会让 rmdir 失败。
+    if !timestamp_exceeds_grace(metadata.modified().ok()) {
+        return;
+    }
+    for owner in &owners {
+        if !owner_file_reclaimable(&dir.join(owner)) {
+            return;
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+}
+
+/// 镜像 ZCode isOwnerFileReclaimable：pid 有效且进程已退出，或无 pid 且
+/// 创建时间超过 ownerless 宽限期。
+fn owner_file_reclaimable(owner_file: &Path) -> bool {
+    let Ok(raw) = std::fs::read_to_string(owner_file) else {
+        return false;
+    };
+    let observed_at_ms = unix_epoch_ms();
+    let metadata = parse_lock_metadata(&raw, observed_at_ms);
+    match metadata.pid {
+        Some(pid) => !is_process_alive(pid),
+        None => {
+            let created_at = metadata.created_at.or_else(|| {
+                validated_timestamp_ms(std::fs::metadata(owner_file).ok()?.modified().ok())
+            });
+            match created_at {
+                Some(created_at) => {
+                    observed_at_ms.saturating_sub(created_at) >= OWNERLESS_LOCK_GRACE_MS
+                }
+                None => false,
             }
         }
     }
+}
+
+struct LockMetadata {
+    pid: Option<u64>,
+    created_at: Option<u64>,
+}
+
+/// 镜像 ZCode parseLockMetadata：只有 `{"pid", "createdAt"}` 对象才有 owner
+/// 语义；裸数字（旧版单文件锁）、空串等一律视为 ownerless，交给宽限期回收。
+fn parse_lock_metadata(raw: &str, observed_at_ms: u64) -> LockMetadata {
+    let parsed = match serde_json::from_str::<Value>(raw) {
+        Ok(Value::Object(object)) => object,
+        _ => {
+            return LockMetadata {
+                pid: None,
+                created_at: None,
+            };
+        }
+    };
+    let created_at = parsed
+        .get("createdAt")
+        .and_then(Value::as_f64)
+        .filter(|created_at| {
+            created_at.is_finite()
+                && *created_at >= 0.0
+                && *created_at <= observed_at_ms as f64 + CLOCK_SKEW_ALLOWANCE_MS as f64
+        })
+        // 已过滤为非负有限值，f64 → u64 的 saturating 转换不会失真。
+        .map(|created_at| created_at as u64);
+    let pid = parsed
+        .get("pid")
+        .and_then(Value::as_u64)
+        .filter(|pid| *pid > 0);
+    LockMetadata { pid, created_at }
+}
+
+/// 与 ZCode `process.kill(pid, 0)` 的判定一致：只有"进程不存在"才算已退出；
+/// 无权限（跨用户/受保护进程）等其它错误按存活处理，宁可等待也不误删活锁。
+#[cfg(windows)]
+fn is_process_alive(pid: u64) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // 超出 OS pid 范围按存活处理，避免把无法探测的锁误判为废弃。
+    let Ok(pid) = u32::try_from(pid) else {
+        return true;
+    };
+    // SAFETY: 只查询进程状态；句柄在下面关掉。
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        // ERROR_ACCESS_DENIED 说明进程存在但受保护；其余（含参数无效，
+        // 即进程不存在）视为已退出。
+        return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
+    }
+    let mut exit_code = 0u32;
+    // SAFETY: 句柄有效，输出参数指向本地变量。
+    let alive = unsafe { GetExitCodeProcess(handle, &mut exit_code) != 0 }
+        && exit_code == STILL_ACTIVE as u32;
+    // SAFETY: OpenProcess 返回的句柄只关这一次。
+    unsafe { CloseHandle(handle) };
+    alive
+}
+
+#[cfg(unix)]
+fn is_process_alive(pid: u64) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return true;
+    };
+    // SAFETY: 信号 0 只做存在性探测，无副作用。
+    let result = unsafe { libc::kill(pid, 0) };
+    if result == 0 {
+        return true;
+    }
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    errno != libc::ESRCH
+}
+
+#[cfg(not(any(windows, unix)))]
+fn is_process_alive(_pid: u64) -> bool {
+    true
+}
+
+fn unix_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 镜像 ZCode parseLockTimestamp：未来时间超出时钟偏移容忍视为无效。
+fn validated_timestamp_ms(time: Option<SystemTime>) -> Option<u64> {
+    let ms = u64::try_from(time?.duration_since(UNIX_EPOCH).ok()?.as_millis()).ok()?;
+    (ms <= unix_epoch_ms().saturating_add(CLOCK_SKEW_ALLOWANCE_MS)).then_some(ms)
+}
+
+fn timestamp_exceeds_grace(time: Option<SystemTime>) -> bool {
+    match validated_timestamp_ms(time) {
+        Some(ms) => unix_epoch_ms().saturating_sub(ms) >= OWNERLESS_LOCK_GRACE_MS,
+        None => false,
+    }
+}
+
+fn remove_stale_legacy_lock(lock_path: &Path, metadata: &std::fs::Metadata) {
+    let Some(modified_ms) = validated_timestamp_ms(metadata.modified().ok()) else {
+        return;
+    };
+    if unix_epoch_ms().saturating_sub(modified_ms) < LEGACY_STALE_LOCK_AGE_MS {
+        return;
+    }
+    let _ = std::fs::remove_file(lock_path);
 }
 
 fn with_zcode_file_lock<T>(
@@ -393,7 +677,7 @@ fn write_zcode_provider_config_unlocked(path: &Path, config: &Value) -> Result<(
     }
     let json =
         serde_json::to_string_pretty(config).map_err(|e| AppError::JsonSerialize { source: e })?;
-    atomic_write_private(&path, json.as_bytes())?;
+    atomic_write_private(path, json.as_bytes())?;
 
     log::debug!("ZCode provider config written to {path:?}");
     Ok(())
@@ -809,7 +1093,7 @@ fn write_zcode_cli_config_unlocked(path: &Path, config: &Value) -> Result<(), Ap
     }
     let json =
         serde_json::to_string_pretty(config).map_err(|e| AppError::JsonSerialize { source: e })?;
-    atomic_write_private(&path, json.as_bytes())?;
+    atomic_write_private(path, json.as_bytes())?;
 
     log::debug!("ZCode CLI config written to {path:?}");
     Ok(())
@@ -892,6 +1176,115 @@ mod tests {
         .unwrap();
 
         assert!(!lock_path.exists());
+    }
+
+    #[test]
+    fn lock_dir_contains_zcode_shaped_owner_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("provider_config.json");
+        let lock_dir = temp.path().join("provider_config.json.lock");
+
+        with_zcode_file_lock(&target, || {
+            // ZCode 读取我们的锁靠目录 + owner-*.json 这两个形状特征。
+            assert!(lock_dir.is_dir());
+            let owners = owner_entry_names(&lock_dir).unwrap();
+            assert_eq!(owners.len(), 1);
+            let raw = std::fs::read_to_string(lock_dir.join(&owners[0])).unwrap();
+            assert!(raw.ends_with('\n'));
+            let metadata = parse_lock_metadata(&raw, unix_epoch_ms());
+            assert_eq!(metadata.pid, Some(u64::from(std::process::id())));
+            assert!(metadata.created_at.is_some());
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(!lock_dir.exists());
+    }
+
+    /// 起一个立即退出的子进程，取其 pid：保证探测时进程已不存在。
+    fn dead_process_pid() -> u32 {
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit 0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    fn write_abandoned_lock(lock_dir: &Path, owner_name: &str, payload: &str) {
+        std::fs::create_dir_all(lock_dir).unwrap();
+        std::fs::write(lock_dir.join(owner_name), payload).unwrap();
+    }
+
+    #[test]
+    fn lock_with_dead_owner_process_is_reclaimed() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("provider_config.json");
+        let lock_dir = temp.path().join("provider_config.json.lock");
+        let pid = dead_process_pid();
+        let token = format!("{pid}-{}-1", unix_epoch_ms());
+        write_abandoned_lock(
+            &lock_dir,
+            &format!("owner-{token}.json"),
+            &format!(
+                "{{\"pid\":{pid},\"createdAt\":{},\"token\":\"{token}\"}}\n",
+                unix_epoch_ms()
+            ),
+        );
+
+        ZCodeFileLock::acquire(&target).unwrap();
+    }
+
+    #[test]
+    fn ownerless_lock_is_reclaimed_after_grace() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("provider_config.json");
+        let lock_dir = temp.path().join("provider_config.json.lock");
+        // 无 pid 的元数据交给 ownerless 宽限期回收（与 ZCode 读到损坏 owner 时的路径一致）。
+        write_abandoned_lock(&lock_dir, "owner-1-1-broken.json", "{}\n");
+        thread::sleep(Duration::from_millis(OWNERLESS_LOCK_GRACE_MS + 50));
+
+        ZCodeFileLock::acquire(&target).unwrap();
+    }
+
+    #[test]
+    fn lock_with_live_owner_process_times_out_without_reclaim() {
+        let temp = tempfile::tempdir().unwrap();
+        let lock_dir = temp.path().join("provider_config.json.lock");
+        let token = format!("{}-{}-1", std::process::id(), unix_epoch_ms());
+        write_abandoned_lock(
+            &lock_dir,
+            &format!("owner-{token}.json"),
+            &format!(
+                "{{\"pid\":{},\"createdAt\":{},\"token\":\"{token}\"}}\n",
+                std::process::id(),
+                unix_epoch_ms()
+            ),
+        );
+
+        let result =
+            ZCodeFileLock::acquire_deadline(&lock_dir, Instant::now() + Duration::from_millis(60));
+        assert!(result.is_err());
+        // 存活 owner 的锁不得被回收，也不得被写入方破坏。
+        assert!(lock_dir.is_dir());
+        assert_eq!(owner_entry_names(&lock_dir).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn legacy_file_lock_is_left_alone_until_stale() {
+        let temp = tempfile::tempdir().unwrap();
+        let lock_path = temp.path().join("provider_config.json.lock");
+        // 旧版单文件锁（裸 pid）且 mtime 很新：视为可能仍被旧版本持有，等待而不清理。
+        std::fs::write(&lock_path, format!("{}\n", std::process::id())).unwrap();
+
+        let result =
+            ZCodeFileLock::acquire_deadline(&lock_path, Instant::now() + Duration::from_millis(60));
+        assert!(result.is_err());
+        assert!(lock_path.is_file());
     }
 
     fn provider(
