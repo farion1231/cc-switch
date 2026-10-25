@@ -103,6 +103,19 @@ export const usageApi = {
     });
   },
 
+  /** 最早有用量记录的本地日期 `YYYY-MM-DD`，没有记录时为 null */
+  getUsageFirstDate: async (
+    appType?: string,
+    providerName?: string,
+    model?: string,
+  ): Promise<string | null> => {
+    return invoke("get_usage_first_date", {
+      appType,
+      providerName,
+      model,
+    });
+  },
+
   getProviderStats: async (
     startDate?: number,
     endDate?: number,

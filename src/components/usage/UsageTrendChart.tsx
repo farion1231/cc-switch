@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -9,21 +11,25 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useUsageTrends } from "@/lib/query/usage";
 import { Loader2 } from "lucide-react";
 import {
   fmtInt,
-  fmtUsd,
+  formatHitRatePercent,
   getLocaleFromLanguage,
   parseFiniteNumber,
+  resolveTrendChartType,
 } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type { UsageRangeSelection } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useSettingsQuery } from "@/lib/query";
+import type { UsageMetric } from "./rememberedChoice";
 
 interface UsageTrendChartProps {
   range: UsageRangeSelection;
-  rangeLabel: string;
+  /** 画哪个指标：由上方指标条选 */
+  metric: UsageMetric;
   appType?: string;
   providerName?: string;
   model?: string;
@@ -53,11 +59,38 @@ export interface UsageTrendChartPoint {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
-  /** 请求数（「请求」指标的柱） */
+  /** 请求数（「请求」指标） */
   requests: number;
   /** 真实消耗 Tokens = 新增输入 + 输出 + 缓存写入 + 缓存命中（和指标卡同口径） */
   tokens: number;
   cost: number | null;
+  /** 缓存命中率（0–1）= 缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中），和指标条同口径；没有输入时为 null */
+  hitRate: number | null;
+}
+
+/** 缓存命中率（0–1）；分母（新增输入 + 缓存写入 + 缓存命中）为 0 时没有意义，返回 null */
+export function hitRateOf(stat: UsageTrendStatLike): number | null {
+  const cacheable =
+    stat.totalInputTokens +
+    stat.totalCacheCreationTokens +
+    stat.totalCacheReadTokens;
+  return cacheable > 0 ? stat.totalCacheReadTokens / cacheable : null;
+}
+
+/**
+ * 命中率 Y 轴的下限：命中率通常都在 90% 以上，从 0 画起柱子几乎一样高。
+ * 取这批数据的最低值，往下再留半个「最低值到 100%」的距离（至少 2 个百分点）当余量，
+ * 再向下取整到 5% 的整数档；上限固定 100%。没有数据、或算出来低于 50% 时从 0 画。Exported for unit tests.
+ */
+export function hitRateAxisFloor(rates: (number | null)[]): number {
+  const known = rates.filter((rate): rate is number => rate != null);
+  if (known.length === 0) return 0;
+  const min = Math.min(...known);
+  const padded = min - Math.max((1 - min) / 2, 0.02);
+  // 加一点容差：0.95 * 20 在浮点下是 18.999…，直接取整会多掉一档
+  const floor = Math.floor(padded * 20 + 1e-9) / 20;
+  // 数据本身跨度很大（最低值远低于 50%）时截断已无意义，照常从 0 画
+  return floor < 0.5 ? 0 : floor;
 }
 
 /** Build chart rows from backend trend stats. Exported for unit tests. */
@@ -75,6 +108,10 @@ export function buildUsageTrendChartData(
   const startYear = new Date(startDate * 1000).getFullYear();
   const endYear = new Date(endDate * 1000).getFullYear();
   const spansMultipleYears = startYear !== endYear;
+  // 按小时时刻度只写钟点（日期在标题和时间范围里已经有）；跨天的范围在 0 点那格写日期，标出换日
+  const spansMultipleDays =
+    new Date(startDate * 1000).toDateString() !==
+    new Date(endDate * 1000).toDateString();
 
   return (
     trends?.map((stat) => {
@@ -98,12 +135,16 @@ export function buildUsageTrendChartData(
             day: "2-digit",
           });
       const label = isHourly
-        ? pointDate.toLocaleString(dateLocale, {
-            month: "2-digit",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
+        ? spansMultipleDays && pointDate.getHours() === 0
+          ? pointDate.toLocaleDateString(dateLocale, {
+              month: "2-digit",
+              day: "2-digit",
+            })
+          : pointDate.toLocaleTimeString(dateLocale, {
+              hour: "2-digit",
+              minute: "2-digit",
+              hourCycle: "h23",
+            })
         : spansMultipleYears
           ? pointDate.toLocaleDateString(dateLocale, {
               year: "2-digit",
@@ -132,6 +173,7 @@ export function buildUsageTrendChartData(
           stat.totalCacheCreationTokens +
           stat.totalCacheReadTokens,
         cost: cost ?? null,
+        hitRate: hitRateOf(stat),
       };
     }) || []
   );
@@ -146,19 +188,64 @@ export function formatUsageTrendTickLabel(
   return point?.label ?? xKey;
 }
 
+export interface UsageTrendTokenTickFormatter {
+  format(value: number): string;
+}
+
+/**
+ * 中日文的「万」「亿」各管四位数，5000万、2000亿 比英文的 50M、200B 宽一截，
+ * 会把纵轴撑宽；这两段改写成 5千万、2千亿。
+ */
+function cjkThousandUnits(locale: string): Array<[number, string]> | null {
+  if (locale === "zh-TW") {
+    return [
+      [1e11, "千億"],
+      [1e7, "千萬"],
+    ];
+  }
+  if (locale.startsWith("zh")) {
+    return [
+      [1e11, "千亿"],
+      [1e7, "千万"],
+    ];
+  }
+  if (locale.startsWith("ja")) {
+    return [
+      [1e11, "千億"],
+      [1e7, "千万"],
+    ];
+  }
+  return null;
+}
+
 export function createUsageTrendTokenTickFormatter(
   locale: string,
-): Intl.NumberFormat {
-  return new Intl.NumberFormat(locale, {
+): UsageTrendTokenTickFormatter {
+  const compact = new Intl.NumberFormat(locale, {
     notation: "compact",
     compactDisplay: "short",
     maximumFractionDigits: 1,
   });
+  const units = cjkThousandUnits(locale);
+  if (!units) return compact;
+  const plain = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+  return {
+    format(value) {
+      const abs = Math.abs(value);
+      for (const [size, unit] of units) {
+        if (abs < size || abs >= size * 10) continue;
+        const scaled = Number((value / size).toFixed(1));
+        // 9.96 千万这类进位到 10 的，交回原格式（9960万）
+        if (Math.abs(scaled) < 10) return `${plain.format(scaled)}${unit}`;
+      }
+      return compact.format(value);
+    },
+  };
 }
 
 export function formatUsageTrendTokenTickLabel(
   value: unknown,
-  formatter: Intl.NumberFormat,
+  formatter: UsageTrendTokenTickFormatter,
 ): string {
   const num = parseFiniteNumber(value);
   if (num == null) return "--";
@@ -166,20 +253,21 @@ export function formatUsageTrendTokenTickLabel(
   return formatter.format(num);
 }
 
-type TrendMetric = "requests" | "tokens" | "cost";
-
 const AXIS_TICK = { fill: "var(--text-3)", fontSize: 11 };
 
 export function UsageTrendChart({
   range,
-  rangeLabel,
+  metric,
   appType,
   providerName,
   model,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
-  const [metric, setMetric] = useState<TrendMetric>("tokens");
+  const { money, moneyTick, rate } = useMoneyFormat();
+  // 柱形图 / 曲线面积图在用量「设置」里选
+  const { data: settings } = useSettingsQuery();
+  const chartType = resolveTrendChartType(settings?.usageDisplay);
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
@@ -209,20 +297,42 @@ export function UsageTrendChart({
     [trends, isHourly, dateLocale, startDate, endDate],
   );
 
-  // 单指标：图只画切换选中的那一个指标，单 Y 轴，图例和 tooltip 跟着走。
-  const metricLabel =
-    metric === "requests"
-      ? t("usage.trend.requestsLegend")
-      : metric === "tokens"
-        ? t("usage.trend.tokens")
-        : t("usage.trend.cost");
+  // 单指标：图只画指标条选中的那一个，单 Y 轴，标题和 tooltip 跟着走。
+  const metricLabel = {
+    cost: t("usage.trend.cost"),
+    requests: t("usage.trend.requestsLegend"),
+    tokens: t("usage.trend.tokens"),
+    hitRate: t("usage.cacheHitRate"),
+  }[metric];
 
-  const formatMetric = (value: unknown) =>
-    metric === "cost" ? fmtUsd(value, 4) : fmtInt(value, dateLocale);
-  const formatYTick = (value: unknown) =>
+  const formatMetric = (value: unknown) => {
+    if (metric === "cost") return money(value, 4);
+    if (metric === "hitRate") {
+      const rate = parseFiniteNumber(value);
+      return rate == null ? "—" : formatHitRatePercent(rate);
+    }
+    return fmtInt(value, dateLocale);
+  };
+  const formatYTick = (value: unknown) => {
+    if (metric === "cost") return moneyTick(value);
+    // 下限常是 95% 这类，中间刻度会落在 97.5%，留一位小数
+    if (metric === "hitRate")
+      return `${+((Number(value) || 0) * 100).toFixed(1)}%`;
+    return formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
+  };
+
+  const hitRateFloor = useMemo(
+    () => hitRateAxisFloor(chartData.map((point) => point.hitRate)),
+    [chartData],
+  );
+
+  const Chart = chartType === "bar" ? BarChart : AreaChart;
+  // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度。
+  const dataKey =
     metric === "cost"
-      ? `$${parseFiniteNumber(value) ?? 0}`
-      : formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
+      ? (point: UsageTrendChartPoint) =>
+          point.cost == null ? null : point.cost * rate
+      : metric;
 
   const renderTooltip = ({ active, payload }: any) => {
     if (!active || !payload || payload.length === 0) return null;
@@ -234,7 +344,7 @@ export function UsageTrendChart({
         <div className="flex items-center gap-2 tabular-nums">
           <span
             aria-hidden="true"
-            className="h-2 w-2 rounded-[2px] bg-chart-1"
+            className="h-2 w-2 rounded-[2px] bg-chart-usage"
           />
           <span className="text-fg-2">{metricLabel}</span>
           <span className="ms-auto ps-3">
@@ -246,40 +356,18 @@ export function UsageTrendChart({
   };
 
   return (
-    <section
-      aria-labelledby="usage-trend-title"
-      className="shrink-0 rounded-panel border border-border bg-surface px-4 py-2.5"
-    >
-      <div className="flex min-h-7 flex-wrap items-center gap-x-3.5 gap-y-1">
-        <h2
-          id="usage-trend-title"
-          className="m-0 whitespace-nowrap text-caption font-semibold text-fg-2"
-        >
-          {t("usage.trend.title", { range: rangeLabel })}
-        </h2>
-        <span
-          data-testid="usage-trend-legend"
-          className="inline-flex items-center gap-1.5 whitespace-nowrap text-caption text-fg-2"
-        >
-          <span
-            aria-hidden="true"
-            className="h-2.5 w-2.5 rounded-[2px] bg-chart-1"
-          />
-          {metricLabel}
-        </span>
-        <div className="flex-1" />
-        <SegmentedControl<TrendMetric>
-          size="sm"
-          aria-label={t("usage.trend.metricLabel")}
-          value={metric}
-          onValueChange={setMetric}
-          items={[
-            { value: "tokens", label: t("usage.trend.tokens") },
-            { value: "requests", label: t("usage.trend.requests") },
-            { value: "cost", label: t("usage.trend.cost") },
-          ]}
-        />
-      </div>
+    <section aria-labelledby="usage-trend-title" className="px-4 pb-2.5 pt-5">
+      <h2
+        id="usage-trend-title"
+        className="m-0 min-h-7 whitespace-nowrap text-caption font-semibold leading-7 text-fg-2"
+      >
+        {t("usage.trend.titleMetric", {
+          metric: metricLabel,
+          granularity: isHourly
+            ? t("usage.trend.hourly")
+            : t("usage.trend.daily"),
+        })}
+      </h2>
 
       <div className="mt-1 h-[132px] w-full">
         {isLoading ? (
@@ -288,7 +376,7 @@ export function UsageTrendChart({
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart
+            <Chart
               data={chartData}
               margin={{ top: 6, right: 0, left: 0, bottom: 0 }}
             >
@@ -311,26 +399,46 @@ export function UsageTrendChart({
                 allowDuplicatedCategory={false}
               />
               <YAxis
-                width={44}
+                width="auto"
                 axisLine={false}
                 tickLine={false}
                 tick={AXIS_TICK}
                 tickCount={3}
+                domain={metric === "hitRate" ? [hitRateFloor, 1] : undefined}
                 tickFormatter={formatYTick}
               />
               <Tooltip
                 content={renderTooltip}
-                cursor={{ fill: "var(--bg-subtle)" }}
+                cursor={
+                  chartType === "bar"
+                    ? { fill: "var(--bg-subtle)" }
+                    : { stroke: "var(--text-3)", strokeDasharray: "3 3" }
+                }
               />
-              <Bar
-                dataKey={metric}
-                name={metricLabel}
-                fill="var(--chart-1)"
-                radius={[3, 3, 0, 0]}
-                maxBarSize={36}
-                isAnimationActive={false}
-              />
-            </BarChart>
+              {chartType === "bar" ? (
+                <Bar
+                  dataKey={dataKey}
+                  name={metricLabel}
+                  fill="var(--chart-usage)"
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={36}
+                  isAnimationActive={false}
+                />
+              ) : (
+                <Area
+                  type="monotone"
+                  dataKey={dataKey}
+                  name={metricLabel}
+                  stroke="var(--chart-usage)"
+                  strokeWidth={2}
+                  fill="var(--chart-usage)"
+                  fillOpacity={0.16}
+                  dot={chartData.length === 1 ? { r: 3 } : false}
+                  activeDot={{ r: 4 }}
+                  isAnimationActive={false}
+                />
+              )}
+            </Chart>
           </ResponsiveContainer>
         )}
       </div>

@@ -161,6 +161,7 @@ command = "say"
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -168,7 +169,9 @@ command = "say"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1571,6 +1574,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -1578,7 +1582,9 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1634,6 +1640,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -1641,7 +1648,9 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -3600,4 +3609,136 @@ fn claude_editor_never_leaves_the_row_and_live_apart() {
         claude_live()["env"]["ANTHROPIC_AUTH_TOKEN"],
         json!("sk-old")
     );
+}
+
+/// Codex 官方卡的编辑器：auth.json 框显示盘上真实的登录（Codex 轮换过 token，行里旧版
+/// 回填的快照早就对不上了）；不改直接保存，行里原来的 auth 不变、盘上的登录也不动。
+#[test]
+fn codex_editor_official_auth_shows_disk_login_and_keeps_row_auth() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let login = |access: &str| {
+        json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "access_token": access,
+                "refresh_token": format!("{access}-refresh"),
+                "account_id": "acct-official"
+            }
+        })
+    };
+    write_codex_live_atomic(&login("fresh"), Some("")).expect("seed live login");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "codex-official".to_string();
+        for (id, auth) in [("codex-official", login("stale")), ("follow", json!({}))] {
+            let mut provider = Provider::with_id(
+                id.to_string(),
+                id.to_string(),
+                json!({ "auth": auth, "config": "" }),
+                None,
+            );
+            provider.category = Some("official".to_string());
+            manager.providers.insert(id.to_string(), provider);
+        }
+    }
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    for (id, stored_auth) in [("codex-official", login("stale")), ("follow", json!({}))] {
+        let row = state
+            .db
+            .get_provider_by_id(id, AppType::Codex.as_str())
+            .expect("read provider")
+            .expect("provider exists");
+        let view = ProviderService::editor_view(
+            &state,
+            AppType::Codex,
+            &row.settings_config,
+            Some("official"),
+        )
+        .expect("editor view");
+        assert_eq!(
+            view.settings.pointer("/auth/tokens/access_token"),
+            Some(&json!("fresh")),
+            "{id}: the auth.json box shows the login on disk, not the row snapshot"
+        );
+
+        let mut provider = row.clone();
+        provider.settings_config = view.settings.clone();
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            None,
+            provider,
+            Some(editor_save(&view.settings, "refuse")),
+        )
+        .expect("save unchanged editor");
+
+        let saved = state
+            .db
+            .get_provider_by_id(id, AppType::Codex.as_str())
+            .expect("read provider")
+            .expect("provider exists");
+        assert_eq!(
+            saved.settings_config.get("auth"),
+            Some(&stored_auth),
+            "{id}: an untouched auth box must not capture the disk login into the row"
+        );
+        let on_disk: serde_json::Value =
+            read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+        assert_eq!(
+            on_disk,
+            login("fresh"),
+            "{id}: saving leaves auth.json alone"
+        );
+    }
+}
+
+#[test]
+fn omp_edit_save_keeps_every_byte_outside_the_edited_entry() {
+    use cc_switch_lib::update_settings;
+    use std::fs;
+
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let agent_dir = home.join(".omp/agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    let models_path = agent_dir.join("models.yml");
+    let sibling = "  # hand-written sibling\n  other:\n    baseUrl: https://other.test/v1 # keep\n";
+    fs::write(
+        &models_path,
+        format!("# managed by me\nproviders:\n  duolalab:\n    baseUrl: https://api.duolalab.test/v1\n    api: openai-completions\n    apiKey: sk-live\n    models:\n    - id: glm-4.7\n{sibling}"),
+    )
+    .unwrap();
+    update_settings(cc_switch_lib::AppSettings {
+        omp_config_dir: Some(agent_dir.to_string_lossy().into_owned()),
+        ..Default::default()
+    })
+    .unwrap();
+    let state = create_test_state().expect("create test state");
+
+    let mut edited = ProviderService::list(&state, AppType::Omp)
+        .expect("list")
+        .get("duolalab")
+        .cloned()
+        .expect("provider imported from models.yml");
+    edited.settings_config["name"] = json!("Duolalab");
+    ProviderService::update(&state, AppType::Omp, Some("duolalab"), edited)
+        .expect("edit save must not conflict");
+
+    let after = fs::read_to_string(&models_path).unwrap();
+    assert!(
+        after.starts_with("# managed by me\nproviders:\n  duolalab:\n"),
+        "{after}"
+    );
+    assert!(after.contains("name: Duolalab"), "{after}");
+    assert!(after.ends_with(sibling), "{after}");
 }

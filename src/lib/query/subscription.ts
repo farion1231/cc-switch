@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { subscriptionApi } from "@/lib/api/subscription";
+import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
 import type { AppId } from "@/lib/api/types";
 import type { ProviderMeta } from "@/types";
 import type { SubscriptionQuota } from "@/types/subscription";
@@ -91,7 +92,8 @@ export function useSubscriptionQuota(
     queryKey: subscriptionKeys.quota(appId),
     queryFn: () => subscriptionApi.getQuota(appId),
     enabled:
-      enabled && ["claude", "codex", "gemini", "grokbuild"].includes(appId),
+      enabled &&
+      ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId),
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),
     refetchOnWindowFocus: Boolean(refetchInterval),
@@ -201,4 +203,66 @@ export function useXaiOauthQuotaByAccountId(
   });
 
   return useQuotaKeepLastGood(query, accountId ?? "default");
+}
+
+/**
+ * Antigravity 账号的剩余额度（按账号 ID，用该账号自己的令牌直接查，不用先切号）。
+ * 授权中心逐个账号、以及绑了这个账号的官方卡共用同一份缓存。
+ */
+export function useAgyAccountQuota(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
+  const refetchInterval =
+    autoQuery && autoQueryIntervalMinutes > 0
+      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+      : false;
+  const query = useQuery({
+    queryKey: ["agy_oauth", "quota", accountId],
+    queryFn: () => subscriptionApi.getAgyAccountQuota(accountId),
+    enabled,
+    refetchInterval,
+    refetchIntervalInBackground: Boolean(refetchInterval),
+    refetchOnWindowFocus: Boolean(refetchInterval),
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId);
+}
+
+/**
+ * Kimi 官方账号的剩余额度（按授权中心账号 ID，也就是它的供应商 ID）。
+ * 令牌快过期时后端会拿 Kimi 同款文件锁续期；授权中心那一行和官方卡共用同一份缓存。
+ */
+export function useKimiAccountQuota(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
+  const refetchInterval =
+    autoQuery && autoQueryIntervalMinutes > 0
+      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+      : false;
+  const query = useQuery({
+    queryKey: ["kimi_oauth", "quota", accountId],
+    queryFn: () => kimiOAuthApi.quota(accountId),
+    enabled,
+    refetchInterval,
+    refetchIntervalInBackground: Boolean(refetchInterval),
+    refetchOnWindowFocus: Boolean(refetchInterval),
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId);
 }

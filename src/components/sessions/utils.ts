@@ -5,7 +5,7 @@ import type { SessionMeta } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
 
-/** 会话来源：9 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
+/** 会话来源：10 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
 export const SESSION_APP_IDS = [
   "claude",
   "codex",
@@ -13,9 +13,12 @@ export const SESSION_APP_IDS = [
   "hermes",
   "gemini",
   "pi",
+  "omp",
   "grokbuild",
   "openclaw",
   "mcode",
+  "kimi",
+  "agy",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -33,12 +36,18 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   openclaw: ["~/.openclaw/agents/<agent>/sessions"],
   hermes: ["~/.hermes/state.db", "~/.hermes/sessions"],
   pi: ["~/.pi/agent/sessions"],
+  omp: ["~/.omp/agent/sessions"],
   mcode: ["~/.minimax"],
+  kimi: ["~/.kimi-code/sessions"],
+  agy: [
+    "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
+  ],
 };
 
 /** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) && session.providerId !== "mcode";
+  Boolean(session.sourcePath) &&
+  !["mcode", "agy", "kimi"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;
@@ -157,6 +166,19 @@ export const getSessionLastText = (session: SessionMeta) => {
 };
 
 /**
+ * 分组用的目录 key：去掉末尾分隔符；Windows 路径（盘符或 UNC 开头）不分大小写、
+ * `/` 统一成 `\`，`D:\demo` 和 `d:/demo/` 归为同一组。只用来比较，显示仍用原路径。
+ */
+const getProjectDirKey = (projectDir: string) => {
+  const isWindowsPath = /^(?:[A-Za-z]:[\\/]|\\\\[^\\])/.test(projectDir);
+  if (!isWindowsPath) return projectDir.replace(/(.)\/+$/, "$1");
+  return projectDir
+    .replace(/\//g, "\\")
+    .replace(/(.)\\+$/, "$1")
+    .toLowerCase();
+};
+
+/**
  * 按项目目录分组（选了「全部应用」时跨应用合并）。组按组内最近一条排序，未知目录排最后；
  * 组内保持传入顺序。
  */
@@ -168,7 +190,9 @@ export const groupSessionsByProject = (
 
   sessions.forEach((session) => {
     const projectDir = session.projectDir?.trim() || null;
-    const key = projectDir ?? UNKNOWN_PROJECT_DIR_KEY;
+    const key = projectDir
+      ? getProjectDirKey(projectDir)
+      : UNKNOWN_PROJECT_DIR_KEY;
     let group = groups.get(key);
     if (!group) {
       group = {
