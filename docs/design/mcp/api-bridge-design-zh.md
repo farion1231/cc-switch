@@ -39,9 +39,9 @@ MCP 页新增“从 API 创建”。文档入口接受 URL 或粘贴的 JSON/YAM
 
 允许用户明确指定公网、内网和本机 API；拒绝非 HTTP(S)、URL 内凭据、云元数据地址，禁用重定向，防止静态 Header 被带到另一个地址。URL 参数只进入预定路径或查询，不能修改目标 origin。API 的静态 Header 优先于模型参数，Host、Content-Length、Connection 等传输 Header 不允许自定义。
 
-静态 Header 按大小写不敏感匹配，可满足文档中对应的必填 Header；工具定义中不回显其值。请求体 Schema 投影时排除 `readOnly` 字段及其必填要求。AppImage 启动命令使用持久的原文件路径，Flatpak 首版明确不支持创建 API MCP。
+静态 Header 按大小写不敏感匹配，可满足文档中对应的必填 Header；工具定义中不回显其值，也不会创建原本不存在的 Header Schema。请求体 Schema 投影时排除 `readOnly` 字段及其必填要求。Swagger 缺省 host / schemes 时取文档 URL 的主机、端口和协议；粘贴文档且无法推导时要求提供基础 URL。已支持的参数约束保留并规范化，不能支持的验证关键字明确跳过。AppImage 启动命令使用持久的原文件路径，Flatpak 首版明确不支持创建 API MCP。
 
-导入只对文档做 GET，不探测业务接口。不从文档执行代码，不拉取外部引用。不自动完成 OAuth2、签名认证、浏览器登录、分页遍历、上传或业务 SSE。认证不足由上游错误显式呈现。调用参数错误返回 JSON-RPC 参数错误；网络和 HTTP 错误返回 `isError: true` 的工具结果，网络错误不回显带查询参数的完整 URL。
+导入只对文档做 GET，不探测业务接口。不从文档执行代码，不拉取外部引用。不自动完成 OAuth2、签名认证、浏览器登录、分页遍历、上传或业务 SSE。认证不足由上游错误显式呈现。未知工具和请求结构错误返回 JSON-RPC 参数错误；已知工具的输入校验、网络和 HTTP 错误返回 `isError: true` 的工具结果，便于模型获得错误后修正参数。网络错误不回显带查询参数的完整 URL。错误分类遵循 [MCP 工具规范](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling)。
 
 ## 性能与验收
 
