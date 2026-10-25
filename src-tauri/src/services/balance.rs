@@ -111,11 +111,9 @@ async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
     Ok(parse_deepseek_balance(&body))
 }
 
+// `is_available` 只表示余额够不够调用，不代表 Key 失效（失效是 401/403，上面已处理），
+// 所以不拿它判 is_valid，否则零余额 / 欠费会被显示成「套餐已过期」；交给 UI 按余额红字显示（#8812）。
 fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
-    let is_available = body
-        .get("is_available")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
     let mut data = Vec::new();
 
     if let Some(infos) = body.get("balance_infos").and_then(|v| v.as_array()) {
@@ -132,19 +130,15 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
                 total: None,
                 used: None,
                 unit: Some(currency.to_string()),
-                is_valid: Some(is_available),
-                invalid_message: if !is_available {
-                    Some("Insufficient balance".to_string())
-                } else {
-                    None
-                },
+                is_valid: Some(true),
+                invalid_message: None,
                 extra: None,
             });
         }
     }
 
     // 同一账号会列出 CNY / USD 两个币种钱包，扣费走有钱的那个。只要还有币种有余额，
-    // 就不再列出空钱包：否则空的那一行会显示「余额已用完」，两行还会让卡片自动展开（#8170）。
+    // 就不再列出空钱包：否则空的那一行会显示一条红字余额，两行还会让卡片自动展开（#8170）。
     if data.iter().any(|d| d.remaining.is_some_and(|v| v > 0.0)) {
         data.retain(|d| d.remaining.is_none_or(|v| v > 0.0));
     }
@@ -428,7 +422,7 @@ fn parse_novita_balance(body: &serde_json::Value) -> UsageResult {
             total: None,
             used: None,
             unit: Some("USD".to_string()),
-            // 余额为 0 或负数不代表 key 失效：交给 UI 显示「余额已用完」，
+            // 余额为 0 或负数不代表 key 失效：交给 UI 按余额红字显示，
             // 而不是标成套餐已过期（同 OpenRouter，#8175）
             is_valid: Some(true),
             invalid_message: None,
@@ -525,7 +519,7 @@ fn parse_zhipu_balance(body: &serde_json::Value, is_cn: bool) -> UsageResult {
             total: None,
             used: None,
             unit: Some(if is_cn { "CNY" } else { "USD" }.to_string()),
-            // 余额为 0 不代表 Key 失效，交给 UI 显示「余额已用完」（同 OpenRouter，#8175）
+            // 余额为 0 不代表 Key 失效，交给 UI 按余额红字显示（同 OpenRouter，#8175）
             is_valid: Some(true),
             invalid_message: None,
             extra: None,
@@ -677,6 +671,21 @@ mod tests {
             "balance_infos": [{ "currency": "CNY", "total_balance": "0.00" }]
         }));
         assert_eq!(result.data.unwrap()[0].remaining, Some(0.0));
+    }
+
+    #[test]
+    fn deepseek_unavailable_balance_does_not_determine_key_validity() {
+        for (raw, expected) in [("-24.96", -24.96), ("-0.00", 0.0)] {
+            let result = parse_deepseek_balance(&json!({
+                "is_available": false,
+                "balance_infos": [{ "currency": "CNY", "total_balance": raw }]
+            }));
+            assert!(result.success);
+            let balance = result.data.unwrap().remove(0);
+            assert_eq!(balance.remaining, Some(expected));
+            assert_eq!(balance.is_valid, Some(true));
+            assert!(balance.invalid_message.is_none());
+        }
     }
 
     #[test]

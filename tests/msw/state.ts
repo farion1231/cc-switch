@@ -75,6 +75,9 @@ const createDefaultProviders = (): ProvidersByApp => ({
   hermes: {},
   pi: {},
   mcode: {},
+  kimi: {},
+  agy: {},
+  omp: {},
   zcode: {},
 });
 
@@ -89,6 +92,9 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   hermes: "",
   pi: "",
   mcode: "",
+  kimi: "",
+  agy: "",
+  omp: "",
   zcode: "",
 });
 
@@ -208,6 +214,9 @@ let mcpConfigs: McpConfigState = {
   hermes: {},
   pi: {},
   mcode: {},
+  kimi: {},
+  agy: {},
+  omp: {},
   zcode: {},
 };
 
@@ -337,6 +346,9 @@ export const resetProviderState = () => {
     hermes: {},
     pi: {},
     mcode: {},
+    kimi: {},
+    agy: {},
+    omp: {},
     zcode: {},
   };
 };

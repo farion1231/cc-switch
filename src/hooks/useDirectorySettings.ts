@@ -5,7 +5,10 @@ import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
-export type DirectoryAppId = Exclude<AppId, "claude-desktop" | "mcode">;
+export type DirectoryAppId = Exclude<
+  AppId,
+  "claude-desktop" | "mcode" | "agy" | "kimi"
+>;
 type AppDirectoryKey =
   | "claude"
   | "codex"
@@ -15,6 +18,7 @@ type AppDirectoryKey =
   | "openclaw"
   | "hermes"
   | "pi"
+  | "omp"
   | "zcode";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
@@ -28,6 +32,7 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   pi: string;
+  omp: string;
   zcode: string;
 }
 
@@ -44,6 +49,7 @@ const APP_DIRECTORY_META: Record<
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   pi: { key: "pi", defaultFolder: ".pi/agent" },
+  omp: { key: "omp", defaultFolder: ".omp/agent" },
   zcode: { key: "zcode", defaultFolder: ".zcode" },
 };
 
@@ -59,6 +65,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+  omp: "ompConfigDir",
   zcode: "zcodeConfigDir",
 };
 
@@ -149,6 +156,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    omp: "",
     zcode: "",
   });
   const [isLoading, setIsLoading] = useState(true);
@@ -163,6 +171,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    omp: "",
     zcode: "",
   });
   // 已保存的数据目录（保存按钮和「需要重启」都和它比）。ref 给回调用，state 让比较它的
@@ -193,6 +202,7 @@ export function useDirectorySettings({
           openclawDir,
           hermesDir,
           piDir,
+          ompDir,
           zcodeDir,
           defaultAppConfig,
           defaultClaudeDir,
@@ -203,6 +213,7 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultPiDir,
+          defaultOmpDir,
           defaultZcodeDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
@@ -214,6 +225,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
           settingsApi.getConfigDir("pi"),
+          settingsApi.getConfigDir("omp"),
           settingsApi.getConfigDir("zcode"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
@@ -224,6 +236,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("pi"),
+          computeDefaultConfigDir("omp"),
           computeDefaultConfigDir("zcode"),
         ]);
 
@@ -241,6 +254,7 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           pi: defaultPiDir ?? "",
+          omp: defaultOmpDir ?? "",
           zcode: defaultZcodeDir ?? "",
         };
 
@@ -257,6 +271,7 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           pi: piDir || defaultsRef.current.pi,
+          omp: ompDir || defaultsRef.current.omp,
           zcode: zcodeDir || defaultsRef.current.zcode,
         });
       } catch (error) {
@@ -470,6 +485,7 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         pi: overrides?.pi ?? defaultsRef.current.pi,
+        omp: overrides?.omp ?? defaultsRef.current.omp,
         zcode: overrides?.zcode ?? defaultsRef.current.zcode,
       });
     },

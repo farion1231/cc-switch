@@ -139,6 +139,7 @@ export function useApiKeyLink({
       appId === "claude-desktop" ||
       appId === "codex" ||
       appId === "gemini" ||
+      appId === "agy" ||
       appId === "opencode" ||
       appId === "openclaw" ||
       appId === "hermes" ||

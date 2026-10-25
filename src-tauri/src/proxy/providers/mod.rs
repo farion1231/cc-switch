@@ -216,7 +216,12 @@ impl ProviderType {
             AppType::GrokBuild => ProviderType::Codex,
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
             // ZCode 不走本地路由，与 Pi/Mcode 一样没有代理适配器
-            AppType::Pi | AppType::Mcode | AppType::ZCode => return None,
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Agy
+            | AppType::Omp
+            | AppType::ZCode => return None,
         };
         Some(provider_type)
     }
@@ -273,7 +278,12 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
         // ZCode 不走本地路由，与 Pi/Mcode 一样没有代理适配器
-        AppType::Pi | AppType::Mcode | AppType::ZCode => return None,
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Agy
+        | AppType::Omp
+        | AppType::ZCode => return None,
     })
 }
 

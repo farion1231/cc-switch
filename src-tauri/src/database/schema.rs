@@ -68,8 +68,11 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
             enabled_zcode BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
@@ -100,6 +103,8 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_zcode BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
@@ -580,9 +585,49 @@ impl Database {
                         Self::set_user_version(conn, 20)?;
                     }
                     20 => {
-                        log::info!("迁移数据库从 v20 到 v21（MCP/Skills 添加 ZCode 支持）");
-                        Self::migrate_v20_to_v21(conn)?;
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_agy",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
                         Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_kimi",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        // Oh My Pi：只有 MCP 存开关；Skills 的启用状态按原生目录现算（同 Pi）。
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        log::info!("迁移数据库从 v23 到 v24（MCP/Skills 添加 ZCode 支持）");
+                        // add_column_if_missing 全部幂等：从 v4.0.16 合流期带 zcode 的
+                        // 中间版本升上来的库可能缺 agy/kimi/omp 列，这里一并兜底补齐。
+                        Self::migrate_v23_to_v24(conn)?;
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1634,24 +1679,41 @@ impl Database {
         Ok(())
     }
 
-    /// v20 -> v21: persist ZCode enablement for unified Skills and MCP.
+    /// v23 -> v24: persist ZCode enablement for unified Skills and MCP.
     /// Both columns must be added here: databases already at v15+ ran
     /// migrate_v14_to_v15 before ZCode existed, so only this migration
-    /// can add `enabled_zcode` for existing users.
-    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
-        if Self::table_exists(conn, "skills")? {
-            Self::add_column_if_missing(
-                conn,
-                "skills",
-                "enabled_zcode",
-                "BOOLEAN NOT NULL DEFAULT 0",
-            )?;
+    /// can add `enabled_zcode` for existing users. The agy/kimi/omp adds
+    /// are idempotent backfills for databases that skipped the arms that
+    /// introduced those columns (e.g. forks that carried an earlier
+    /// zcode-only schema bump).
+    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_agy",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_kimi",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_zcode",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
         }
         if Self::table_exists(conn, "mcp_servers")? {
             Self::add_column_if_missing(
                 conn,
                 "mcp_servers",
-                "enabled_zcode",
+                "enabled_omp",
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }
@@ -2409,6 +2471,17 @@ impl Database {
                 "0.006",
                 "0",
             ),
+            // 第三方上游（OpenCode Go、OpenRouter 的 deepseek/ 命名空间、Hermes 预设等）用带版本号的
+            // deepseek-v4.1-flash。点号版本既剥不成 deepseek-flash，前缀兜底也只命中更长的行，
+            // 不单列会显示「未定价」并按 0 计费
+            (
+                "deepseek-v4.1-flash",
+                "DeepSeek V4.1 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
             (
                 "deepseek-v4-flash",
                 "DeepSeek V4 Flash",
@@ -2492,6 +2565,34 @@ impl Database {
             ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
             // Kimi For Coding 套餐里 K3 的裸名（无 kimi- 前缀），同标准 list 价
             ("k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
+            // 2026-10-24 官方价页：K3.1 Pro 缓存写入取默认 5 分钟档（1 小时档为 2 倍）。
+            // HighSpeed 只有输入/输出/缓存写翻倍，缓存读仍是 $0.20，别按 K2.7 的 2 倍规律改
+            (
+                "kimi-k3.1-pro",
+                "Kimi K3.1 Pro",
+                "2.00",
+                "10.00",
+                "0.20",
+                "2.00",
+            ),
+            (
+                "kimi-k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
+            // Kimi Code 套餐里的裸名（无 kimi- 前缀），同标准 list 价
+            ("k3.1-pro", "Kimi K3.1 Pro", "2.00", "10.00", "0.20", "2.00"),
+            (
+                "k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
             // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
             ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
@@ -3912,6 +4013,87 @@ mod tests {
     }
 
     #[test]
+    fn kimi_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 21)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_codex"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_kimi FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn kimi_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"kimi":true,"codex":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Kimi, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.kimi);
+        assert!(saved["m"].apps.codex);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"kimi":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.kimi && saved.apps.claude);
+        assert!(db.get_all_installed_skills()?["s"].apps.kimi);
+        Ok(())
+    }
+
+    #[test]
+    fn agy_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_gemini BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_gemini"),
+            ("skills", "enabled_codex"),
+        ] {
+            let row = conn.query_row(
+                &format!("SELECT {flag}, enabled_agy FROM {table}"),
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(row, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn agy_clean_database_persists_independent_mcp_and_skill_flags() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"gemini":true,"agy":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        server.apps.agy = false;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Agy, false)?;
+        assert_eq!(db.get_all_mcp_servers()?["m"].apps, server.apps);
+        let skill: crate::app_config::InstalledSkill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "installedAt":0, "apps":{"agy":true,"gemini":true}})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.agy);
+        let mut apps = skill.apps;
+        apps.agy = false;
+        db.update_skill_apps("s", &apps)?;
+        let read = db.get_all_installed_skills()?;
+        assert!(!read["s"].apps.agy);
+        assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v19_to_v20_adds_pi_mcp_flag_and_keeps_existing_flags() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(
@@ -3985,7 +4167,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v20_to_v21_adds_enabled_zcode_to_skills_and_mcp() -> Result<(), AppError> {
+    fn migrate_v23_to_v24_adds_enabled_zcode_to_skills_and_mcp() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(
             "CREATE TABLE skills (
@@ -4005,13 +4187,19 @@ mod tests {
             "INSERT INTO mcp_servers (id, enabled_codex) VALUES ('mcp-1', 1)",
             [],
         )?;
-        Database::set_user_version(&conn, 20)?;
+        Database::set_user_version(&conn, 23)?;
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         assert!(Database::has_column(&conn, "skills", "enabled_zcode")?);
         assert!(Database::has_column(&conn, "mcp_servers", "enabled_zcode")?);
+        // 兜底补齐：从早前 zcode-only 中间版本升上来的库在这里补回 agy/kimi/omp 列。
+        assert!(Database::has_column(&conn, "skills", "enabled_agy")?);
+        assert!(Database::has_column(&conn, "skills", "enabled_kimi")?);
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_agy")?);
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_kimi")?);
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
         let values: (i64, i64) = conn.query_row(
             "SELECT enabled_codex, enabled_zcode FROM skills WHERE id = 'skill-1'",
             [],

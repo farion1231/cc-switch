@@ -200,7 +200,8 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
 }
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
-  if (!["claude", "codex", "gemini", "grokbuild"].includes(appId)) return false;
+  if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
+    return false;
   if (provider.category === "official") return true;
 
   const config = provider.settingsConfig as Record<string, any>;
@@ -219,7 +220,7 @@ function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
       (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
     );
   }
-  if (appId === "gemini") {
+  if (appId === "gemini" || appId === "agy") {
     const env = config?.env || {};
     const apiKey = env.GEMINI_API_KEY;
     const baseUrl = env.GOOGLE_GEMINI_BASE_URL;
@@ -301,7 +302,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey,
             baseUrl: extractCodexBaseUrl(configToml),
           };
-        } else if (appId === "gemini") {
+        } else if (appId === "gemini" || appId === "agy") {
           // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
           // Key fallback mirrors the backend resolver (Provider::resolve_usage_credentials).
           const env = (config as any).env || {};
@@ -324,8 +325,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: (config as any).api_key,
             baseUrl: (config as any).base_url,
           };
-        } else if (appId === "pi") {
-          // Pi: provider values are camelCase; a model may override baseUrl.
+        } else if (appId === "pi" || appId === "omp") {
+          // Pi / Oh My Pi: provider values are camelCase; a model may override baseUrl.
           const root = config as any;
           const firstModel = Array.isArray(root.models)
             ? root.models[0]
@@ -1090,7 +1091,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <p className="text-sm text-fg-2">
-                  {t("usageScript.officialSubscriptionHint")}
+                  {appId === "agy"
+                    ? t("usageScript.officialSubscriptionHintAgy")
+                    : t("usageScript.officialSubscriptionHint")}
                 </p>
               </div>
             )}

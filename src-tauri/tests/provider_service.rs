@@ -161,6 +161,7 @@ command = "say"
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -168,7 +169,9 @@ command = "say"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
+                omp: false,
                 zcode: false,
             },
             description: None,
@@ -1572,6 +1575,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -1579,7 +1583,9 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
+                omp: false,
                 zcode: false,
             },
             description: None,
@@ -1636,6 +1642,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -1643,7 +1650,9 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
+                omp: false,
                 zcode: false,
             },
             description: None,
@@ -3693,4 +3702,46 @@ fn codex_editor_official_auth_shows_disk_login_and_keeps_row_auth() {
             "{id}: saving leaves auth.json alone"
         );
     }
+}
+
+#[test]
+fn omp_edit_save_keeps_every_byte_outside_the_edited_entry() {
+    use cc_switch_lib::update_settings;
+    use std::fs;
+
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let agent_dir = home.join(".omp/agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    let models_path = agent_dir.join("models.yml");
+    let sibling = "  # hand-written sibling\n  other:\n    baseUrl: https://other.test/v1 # keep\n";
+    fs::write(
+        &models_path,
+        format!("# managed by me\nproviders:\n  duolalab:\n    baseUrl: https://api.duolalab.test/v1\n    api: openai-completions\n    apiKey: sk-live\n    models:\n    - id: glm-4.7\n{sibling}"),
+    )
+    .unwrap();
+    update_settings(cc_switch_lib::AppSettings {
+        omp_config_dir: Some(agent_dir.to_string_lossy().into_owned()),
+        ..Default::default()
+    })
+    .unwrap();
+    let state = create_test_state().expect("create test state");
+
+    let mut edited = ProviderService::list(&state, AppType::Omp)
+        .expect("list")
+        .get("duolalab")
+        .cloned()
+        .expect("provider imported from models.yml");
+    edited.settings_config["name"] = json!("Duolalab");
+    ProviderService::update(&state, AppType::Omp, Some("duolalab"), edited)
+        .expect("edit save must not conflict");
+
+    let after = fs::read_to_string(&models_path).unwrap();
+    assert!(
+        after.starts_with("# managed by me\nproviders:\n  duolalab:\n"),
+        "{after}"
+    );
+    assert!(after.contains("name: Duolalab"), "{after}");
+    assert!(after.ends_with(sibling), "{after}");
 }

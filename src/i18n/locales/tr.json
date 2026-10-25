@@ -180,8 +180,25 @@
     "managedByHermes": "Hermes Yönetilen",
     "managedByHermesHint": "Hermes' sağlayıcılarında tanımlanmıştır: dict. Hermes Web kullanıcı arayüzü aracılığıyla düzenleyin veya kaldırın.",
     "openTerminal": "Terminali Aç",
+    "openTerminalWithProvider": "Bu sağlayıcıyla terminal aç",
     "terminalOpened": "Terminal açıldı",
     "terminalOpenFailed": "Terminal açılamadı",
+    "openTerminalDialog": {
+      "title": "Terminal hangi klasörde açılsın?",
+      "description": "Seçtiğiniz klasörde bir terminal açılır ve {{app}}, \"{{name}}\" ayarlarıyla başlatılır. Genellikle proje klasörünüzü seçebilirsiniz.",
+      "isolationTitle": "Bu terminal yalıtılmıştır",
+      "isolationBody": "Bu terminal \"{{name}}\" sağlayıcısında kalır: CC Switch'te daha sonra sağlayıcı değiştirmeniz bu terminali etkilemez ve CC Switch'in o anda kullandığı sağlayıcıyı değiştirmez.",
+      "isolationBodyAgy": "\"{{name}}\" anahtarı ve uç noktası yalnızca bu terminalde agy tarafından kullanılır ve hiçbir dosyaya yazılmaz. agy'yi başka bir terminalde doğrudan çalıştırırsanız Google hesabınızdaki oturum kullanılır.",
+      "noDir": "Klasör seçilmedi",
+      "choose": "Klasör Seç…",
+      "change": "Değiştir…",
+      "recent": "Son kullanılanlar",
+      "forget": "Son kullanılanlardan kaldır",
+      "confirm": "Terminali Aç",
+      "agySwitchTitle": "Bu işlem agy'nin oturum açma hesabını değiştirir",
+      "agySwitchBody": "Terminal açılmadan önce agy'nin oturumu {{account}} hesabına geçirilir; bundan sonra başlatılan agy oturumları bu hesabı kullanır.",
+      "agySwitchRunning": "agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. Mümkünse önce agy oturumlarını kapatın."
+    },
     "name": "İsim",
     "namePlaceholder": "ör. Claude Resmi",
     "websiteUrl": "Web sitesi URL'si",
@@ -196,6 +213,19 @@
     "geminiConfig": "Gemini Yapılandırması",
     "geminiConfigHint": "Gemini'yi yapılandırmak için .env biçimini kullanın",
     "form": {
+      "agy": {
+        "endpointHelp": "Google'ın varsayılan API'sini kullanmak için boş bırakın. Üçüncü taraf uç noktalar Gemini API'sini ve agy'nin yerleşik Gemini modellerini desteklemelidir.",
+        "modelHelp": "Model listesindeki görünen adı kullanın (Modelleri Getir). Yalnızca bu oturum için geçerlidir.",
+        "keyFieldsHint": "Model, anahtar ve uç nokta yalnızca \"Terminal Aç\" tarafından kullanılır ve Antigravity’nin kendi ayarlarına hiçbir zaman yazılmaz.",
+        "envFile": "Başlatıcı ortam değişkenleri",
+        "envFileHint": "agy, sağlayıcı kartındaki \"Terminal Aç\" seçeneğiyle başlatıldığında CC Switch API anahtarını ve uç noktasını yalnızca o agy sürecine iletir; hiçbir dosyaya yazmaz. Diğer ortam değişkenleri uygulanmaz.",
+        "configJson": "Model yapılandırması (CC Switch biçimi)",
+        "configJsonHint": "Burada yalnızca model ayarları desteklenir. Diğer Antigravity seçeneklerini agy'de değiştirin; MCP'yi MCP panelinden yönetin.",
+        "account": "Hesap",
+        "accountFollow": "agy'nin mevcut oturum açma hesabını kullan",
+        "accountMissing": "Bu bilgisayarda bulunmayan hesap",
+        "accountHelp": "Bir hesap seçildiğinde Terminal Aç, önce agy'nin oturumunu bu hesaba geçirir (bu değişiklik genel olarak geçerlidir: bundan sonra başlatılan agy oturumları bu hesabı kullanır). Hesapları Kimlik Doğrulama Merkezi'ne ekleyin."
+      },
       "gemini": {
         "model": "Model",
         "oauthTitle": "OAuth Kimlik Doğrulama Modu",
@@ -289,7 +319,6 @@
     "geminiRestartRequired": "Başarıyla değiştirildi. Değişiklikleri uygulamak için Gemini CLI'yi yeniden başlatın.",
     "grokBuildRestartRequired": "Başarıyla değiştirildi. Değişiklikleri uygulamak için Grok Build'yi yeniden başlatın.",
     "claudeDesktopRestartRequired": "Başarıyla değiştirildi. Değişiklikleri uygulamak için Claude Desktop'yi yeniden başlatın.",
-    "claudeDesktopProxyRestartRequired": "Başarıyla değiştirildi. CC Switch'yi çalışır durumda tutun ve değişiklikleri uygulamak için Claude Desktop'yi yeniden başlatın.",
     "addToConfigSuccess": "Yapılandırmaya eklendi",
     "removeFromConfigSuccess": "Yapılandırmadan kaldırıldı",
     "removeFromConfigFailed": "Sağlayıcı kaldırılamadı",
@@ -316,6 +345,7 @@
     "proxyReasonOpenAIResponses": "OpenAI Yanıtları API biçimini kullanır",
     "proxyReasonAnthropicMessages": "Anthropic Mesajları API formatını kullanır",
     "proxyReasonFullUrl": "tam URL bağlantı modu etkin",
+    "proxyReasonDesktopMapping": "model eşlemesi kullanıyor (Claude Desktop yalnızca Claude model adlarını kabul eder)",
     "proxyReasonManagedOAuth": "yönetilen OAuth oturum açma bilgilerini kullanır (yerel yönlendirme tarafından enjekte edilen token)",
     "proxyReasonRoutingRequired": "istekleri işlemek için yerel yönlendirme gerektirir",
     "openAIFormatHint": "Bu sağlayıcı OpenAI uyumlu format kullanıyor ve yönlendirme hizmetinin etkinleştirilmesini gerektiriyor",
@@ -386,6 +416,10 @@
       "checkToolUpdates": "Açılışta uygulama güncellemelerini kontrol et",
       "checkToolUpdatesHelp": "CC Switch açıkken, her başlatıldığında yüklü komut satırı uygulamalarınızı yeni sürümler için kontrol eder ve bulursa kenar çubuğunda Uygulamalar üzerinde bir nokta gösterir. Hiçbir şey otomatik olarak yükseltilmez.",
       "windowAndTerminal": "Pencere ve terminal",
+      "trayStyle": "Tepsi simgesi tıklama davranışı",
+      "trayStylePanel": "Panel",
+      "trayStyleMenu": "Menü",
+      "trayStyleHelp": "Tepsi simgesine tıkladığınızda ne açılacağını belirler (Windows'ta sol tıklama her zaman ana pencereyi, sağ tıklama ise seçilen görünümü açar). Panel: her uygulamanın etkin sağlayıcısını, kotasını ve kullanımını arama ve geçiş seçenekleriyle gösterir. Menü: sistemin yerel menüsünü açar. Değişiklik hemen uygulanır.",
       "minimizeToTrayHelp": "Açık olduğunda, kapat düğmesi yalnızca pencereyi gizler ve CC Switch sistem tepsisinde çalışmaya devam eder (hafif mod tepsi menüsündedir). Kapatıldığında kapatma düğmesi kapanır.",
       "terminalHelp": "Sağlayıcı kartlarındaki “Açık terminal”in kullandığı terminal. Mevcut değilse sistemin varsayılan terminali kullanılır."
     },
@@ -394,7 +428,7 @@
     "tabAdvanced": "Gelişmiş",
     "tabProxy": "Yönlendirme",
     "authCenter": {
-      "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT ve xAI aboneliklerini kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'nin resmi oturum açma bağlaması hariç).",
+      "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT ve xAI aboneliklerini kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'in resmî oturum açma entegrasyonu hariç). Antigravity hesapları agy'nin resmî oturum açma hesabını değiştirir.",
       "beta": "beta",
       "copilotDescription": "GitHub Copilot hesaplarını yönetin",
       "codexOauthDescription": "ChatGPT hesaplarını yönetin",
@@ -445,7 +479,6 @@
         "title": "Uyumluluk düzeltici",
         "description": "API isteği uyumluluk sorunlarını otomatik olarak düzeltin",
         "enabled": "Uyumluluk düzelticiyi etkinleştir",
-        "enabledDescription": "Ana anahtar, kapatıldığında tüm düzeltme özellikleri devre dışı bırakılacaktır",
         "requestGroup": "İstek düzeltme",
         "responseGroup": "Yanıt düzeltme",
         "thinkingSignature": "Düşünme imzası düzeltme",
@@ -482,7 +515,6 @@
           "debug": "Hata ayıklama",
           "trace": "İz"
         },
-        "levelHint": "Günlük düzeyi açıklamaları:",
         "levelDesc": {
           "error": "Yalnızca kritik hatalar",
           "warn": "Hatalar + uyarılar",
@@ -623,7 +655,6 @@
     },
     "webdavSync": {
       "title": "WebDAV bulut eşitleme",
-      "description": "WebDAV aracılığıyla veritabanı ve beceri yapılandırmalarını cihazlar arasında eşitle edin.",
       "baseUrl": "WebDAV Sunucu URL'si",
       "baseUrlPlaceholder": "https://dav.example.com/dav/",
       "username": "WebDAV Hesabı",
@@ -664,8 +695,6 @@
         "synologyHint": "Önce Synology Paket Merkezi'nde WebDAV Sunucu paketini kurun ve etkinleştirin.",
         "custom": "Özel"
       },
-      "remoteRootDefault": "Varsayılan: cc-switch-sync",
-      "profileDefault": "Varsayılan: varsayılan",
       "saveAndTestSuccess": "Yapılandırma kaydedildi, bağlantı tamam",
       "saveAndTestFailed": "Yapılandırma kaydedildi ancak bağlantı testi başarısız oldu: {{error}}",
       "noRemoteData": "Uzak sunucuda eşitleme verisi bulunamadı",
@@ -738,9 +767,7 @@
       "endpointHint": "Çoğu S3 uyumlu hizmet için gereklidir",
       "endpointPlaceholder": "örneğin https://s3-compatible.example.com",
       "remoteRoot": "Uzak Kök Dizini",
-      "remoteRootDefault": "Varsayılan: cc-switch-sync",
       "profile": "Eşitleme profili adı",
-      "profileDefault": "Varsayılan: varsayılan",
       "autoSync": "Otomatik eşitleme",
       "autoSyncHint": "Etkinleştirildiğinde, her veritabanı değişikliği otomatik bir S3 yüklemesini tetikler.",
       "enabled": "S3 Eşitlemeunu Etkinleştir",
@@ -905,6 +932,7 @@
     "hermesConfigDirDescription": "Hermes yapılandırma dizinini (config.yaml) geçersiz kılın.",
     "piConfigDir": "Pi Yapılandırma Dizini",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
+    "ompConfigDir": "Oh My Pi Yapılandırma Dizini",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -913,6 +941,7 @@
     "browsePlaceholderOpenclaw": "ör. /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "ör. /home/<your-username>/.hermes",
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
+    "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",
     "checkForUpdates": "Güncellemeleri Kontrol Et",
@@ -922,6 +951,7 @@
     "upToDate": "Güncel",
     "aboutHint": "Sürüm bilgilerini ve güncelleme durumunu görüntüleyin.",
     "portableMode": "Taşınabilir mod: Güncellemeler manuel olarak indirilmeyi gerektirir.",
+    "portableUpdateHint": "Taşınabilir modda yukarıdaki düğme yeni ZIP dosyasını indirir. ZIP'i açıp mevcut cc-switch.exe dosyasını yenisiyle değiştirin. Ayarlarınız ve verileriniz kullanıcı klasörünüzdeki .cc-switch dizininde bulunur ve etkilenmez.",
     "updateAvailable": "Yeni sürüm mevcut: {{version}}",
     "updateBadge": "Güncelleme mevcut",
     "updateFailed": "Güncelleme yüklemesi başarısız oldu, indirme sayfası açılmaya çalışıldı.",
@@ -1069,7 +1099,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1132,9 +1164,9 @@
       "contextWindow": "Bağlam penceresi",
       "maxTokens": "Maksimum çıkış tokenları",
       "compatibility": "Uyumluluk",
-      "compatibilityHint": "Uyumlu veya yerel uç noktalar için istek davranışını ayarlayın.",
+      "compatibilityHint": "Yalnızca OpenAI uyumlu olduğunu söyleyen bir uç nokta bazı istekleri reddettiğinde gerekir. Her seçenek uç noktanın bir farkını belirtir: örneğin supportsDeveloperRole = false, developer rolünü kabul etmediği; maxTokensField = max_tokens, yalnızca eski alan adını kabul ettiği anlamına gelir. Hazır ayarlar gerekenleri kendisi doldurur; boş bırakılırsa varsayılanlar kullanılır.",
       "addCompatibilityOption": "Ekle",
-      "noCompatibilityOptions": "Hiçbir uyumluluk seçeneği yapılandırılmadı",
+      "noCompatibilityOptions": "Ayarlanmadı — varsayılanlar kullanılır",
       "optionKey": "Seçenek",
       "optionValue": "Değer",
       "removeCompatibilityOption": "Uyumluluk seçeneğini kaldır",
@@ -1308,6 +1340,7 @@
     "deleteSessionEllipsis": "Oturumları sil",
     "deleteEllipsis": "Sil",
     "selectSessionLabel": "{{title}}'yi seçin",
+    "agyDeleteHint": "Çalışma zamanı durumunu da kaldırmak için bu oturumu Antigravity'de silin.",
     "mcodeDeleteHint": "MiniMax Code'de silin",
     "groupMeta": "{{count}} oturumları · {{time}}",
     "bucketToday": "Bugün",
@@ -1590,15 +1623,23 @@
       "ccsub": "CCSub, istikrarlı, uygun fiyatlı bir AI API aktarıcısıdır; Claude.ai ve OpenAI abonelikleri için doğrudan API maliyetinin ~%30'u karşılığında tüm modeller için tek bir anahtarla değiştirilebilen bir alternatiftir.",
       "subrouter": "SubRouter, bir anahtarın birden fazla modele ve sağlayıcıya erişmesine olanak tanıyan bir AI aktarma toplayıcıdır.",
       "qiniu": "Qiniu Cloud, çok protokollü bir yapay zeka aktarımıdır: yerel Claude, GPT ve Gemini modelleri için tek bir anahtar; Anthropic, OpenAI ve Gemini API'lerinin tümü desteklenir.",
+      "haoai": "hao.ai; geliştiriciler ve ekipler için hızlı ve kararlı, birleşik bir LLM API ağ geçididir. Tek bir anahtarla, OpenAI ve Anthropic uyumlu API'ler üzerinden GPT, Claude, Grok ve diğer önde gelen modellere; model yönlendirme, otomatik yedek geçiş ve tüm isteklerin günlükleriyle erişebilirsiniz. Fiyatlar resmî referans ücretlerinin %15'i kadar düşük olabilir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ilk siparişlerinde %5 bonus bakiye kazanır!",
       "fenno": "Fenno.ai, geniş bir ana akım model yelpazesine erişmenizi sağlayan istikrarlı, verimli bir API rölesidir. Özel CC Switch teklifi: Bu bağlantı aracılığıyla 7 gün geçerli, 50$ kredi değerindeki 1,99$ Deneme Planına abone olun!",
-      "zetaapi": "ZetaAPI gerçek, bozulmamış modelleri resmi fiyatlandırmanın %35'i kadar düşük bir fiyatla sunar. Özel CC Switch teklifi: bu bağlantı aracılığıyla kaydolun ve ilk yüklemenizde %10 indirim için CC-SWITCH promosyon kodunu kullanın!",
       "teamorouter": "TeamoRouter, %90'a varan indirimlerle kurumsal düzeyde bir Agentic LLM ağ geçididir. CC Switch kullanıcılarına özel avantajlar sunar: ilk yüklemenizde %10 indirim için bu bağlantı aracılığıyla yeni bir kullanıcı olarak kaydolun!",
       "ppio": "PPIO, Çin'in önde gelen bağımsız Aracı Bulut sağlayıcısıdır ve her amiral gemisi açık kaynak modeline tek bir API anahtarı aracılığıyla hizmet verir. 10 ¥ değerinde kredi kuponu almak için bu bağlantı aracılığıyla kaydolun ve kimlik doğrulamayı tamamlayın.",
       "xycai": "XycAi kurumsal düzeyde bir token fabrikasıdır: 200'den fazla global modele tek tıklamayla erişim, otomatik SLA telafisi ve anormal önbellek ücretleri için %100 geri ödeme!",
       "9527code": "9527 CODE, Claude Code, Codex ve diğer ana akım modeller için hızlı, kararlı aktarma sağlayan kurumsal düzeyde, tam özellikli bir yapay zeka aktarma platformudur. Bir yıllık sürekli çalışma, %99,9 hizmet istikrarı ve 7×24 insan teknik desteği. Yeni kullanıcılar sınırsız yönlendirme para iadesiyle deneme kredisi için destekle iletişime geçebilir!",
       "soleapi": "SoleAPI, geliştiriciler ve kuruluşlar için bir yapay zeka modeli ağ geçididir: bir API anahtarı, gerçek zamanlı akıllı yönlendirme, milisaniyelik yedek sağlayıcıya geçiş, %99,99 kullanılabilirlik ve 7/24 destek ile OpenAI ve Anthropic protokolleriyle yerel olarak uyumlu, Claude, GPT ve Gemini dahil 30'dan fazla lider modele ulaşır. Ücretsiz deneme kredileri ve yükleme yapan arkadaşlarınızı davet ederek devam eden para iadesi için yönlendirme bağlantısı aracılığıyla kaydolun!",
       "fluxa": "FluxA ve Baidu AI Cloud, AI ajanlerinin modelleri, API'leri ve araçları kendi başlarına satın almasına, yönetmesine ve kullanmasına olanak tanıyan AgenticPlan'ı ortaklaşa başlattı. DeepSeek V4, GLM 5.2 ve Kimi gibi amiral gemisi modellerinde %40'a varan indirim sağlayan Baidu Qianfan TokenPlan'ın yanı sıra arama, veri kazıma, sosyal medya, finans, kripto, görüntü oluşturma ve video için 13.000'den fazla ücretli API'nin kilidini açan bonus FluxA AgentMarket API kredilerini içerir.",
-      "88api": "88API, bir Hong Kong şirketi tarafından işletilen ve metin, görüntü, konuşma ve video modellerine birleşik erişim sağlayan tek noktadan çok modelli bir API platformudur. Başlıca uluslararası ödeme yöntemlerini kabul eder, fatura düzenleyebilir ve kurumsal düzeyde istikrarlı hizmet sağlar. Bonus kredileri almak için özel bağlantı üzerinden kaydolun!"
+      "88api": "88API, bir Hong Kong şirketi tarafından işletilen ve metin, görüntü, konuşma ve video modellerine birleşik erişim sağlayan tek noktadan çok modelli bir API platformudur. Başlıca uluslararası ödeme yöntemlerini kabul eder, fatura düzenleyebilir ve kurumsal düzeyde istikrarlı hizmet sağlar. Bonus kredileri almak için özel bağlantı üzerinden kaydolun!",
+      "modelflare": "Modelflare, tek anahtarla GPT, Claude, Gemini, Grok ve diğer önde gelen modellere erişim sağlayan, istikrarlı ve daha düşük maliyetli bir yapay zekâ model ağ geçididir. CC Switch kullanıcılarına özel: ilk yüklemenizde %10 indirim için \"CCSWITCH\" kodunu kullanın!",
+      "alltokens": "AllTokens; güvenilir hizmet, şeffaf ücretlendirme ve GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi ve diğer önde gelen modellere erişim sağlayan kullandıkça öde platformuyla her yapay zekâ isteğini istikrarlı ve güvenilir kılmayı hedefler. Kaydolduğunuzda $1 deneme bakiyesi kazanın!",
+      "alltokens_si": "AllTokens SI, istikrar ve güvenilirliği temel alan kurumsal bir yapay zekâ token aktarım ve ekip iş birliği platformudur. Üyeler, anahtarlar, kullanım ve bakiye tek bir şirket konsolunda yönetilir; açık izinler ve harcama sınırları ekip kullanımının izlenebilir ve denetimli olmasını sağlar.",
+      "openmodel": "OpenModel, desteklenen modellerde Codex için %90'a, Claude Code için %60'a varan uygulamaya özel indirimler sunar. Bu bağlantıyla kaydolup \"cc-switch\" promosyon kodunu kullanan CC Switch kullanıcıları ilk yüklemelerinde %10 indirim kazanır!",
+      "grooroute": "GrooRoute Pro; kullandıkça öde ve abonelik planlarıyla OpenAI, Claude, DeepSeek ve diğer yaygın modellere erişim sağlayan güvenilir bir yapay zekâ API aktarım hizmetidir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ¥5 deneme bakiyesi kazanır!",
+      "dit": "DIT.ai, birden fazla sağlayıcıya daha düşük maliyetle yönlendirme yapan bir yapay zekâ token borsasıdır. OpenAI uyumlu tek bir API üzerinden GPT, Claude, Gemini, DeepSeek, Grok ve Llama dahil 50'den fazla önde gelen modele erişilir; 160'tan fazla rotada sağlayıcılar rekabet eder ve fiyatlar genellikle resmî ücretlerden %30–70 daha düşüktür. CC Switch kullanıcıları bu bağlantıdan kaydolup \"ccswitch\" promosyon koduyla 5 ABD doları değerinde hoş geldin kuponu alabilir!",
+      "buytoken": "BuyToken; Claude Code, Codex, DeepSeek ve daha fazlası için kurumsal düzeyde eşzamanlılık ve hızlı faturalandırma sunan, uzun süreli ve istikrarlı kullanım için tasarlanmış bir yönlendirme hizmetidir. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 3 ¥ deneme kredisi ve ilk yüklemelerinde %10 indirim kazanır.",
+      "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için istikrarlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşme ve e-fatura (temel veya ticari) sağlar. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır."
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1610,7 +1651,8 @@
       "deepseek": "DeepSeek",
       "together": "Birlikte Yapay Zeka",
       "tuzi": "Tu-zi",
-      "yylx": "YYLX"
+      "yylx": "YYLX",
+      "tokenfactory": "TokenFactory"
     },
     "parameterConfig": "Parametre Yapılandırması - {{name}} *",
     "mainModel": "Ana Model (isteğe bağlı)",
@@ -1716,6 +1758,7 @@
     "fetchModelsSuccess": "Bulunan {{count}} modelleri",
     "modelMetadataFilled": "{{model}} için bağlam penceresi ve diğer parametrelerle doldurulmuştur (kaynak: {{source}}). Lütfen tekrar kontrol edin.",
     "modelMetadataFilledMany": "{{count}} modelleri için bağlam penceresi ve diğer parametrelerle doldurulmuştur (kaynak: {{source}}). Lütfen tekrar kontrol edin.",
+    "gptContextWindowHint": "Aktarım hizmetlerindeki GPT genellikle bağlam penceresi yalnızca 272K olan ChatGPT aboneliklerini kullanır. Daha büyük bir pencere, üst hizmet isteği reddedip tur başarısız olana kadar sıkıştırmayı geciktirir; bunu yalnızca sağlayıcınız destekliyorsa kullanın.",
     "modelMetadataSourcePreset": "önceden ayarlanmış",
     "modelMetadataSourceBoth": "ön ayar ve models.dev",
     "modelPicker": {
@@ -1943,6 +1986,11 @@
     "subagentReasoningEffortDefault": "Varsayılan efor",
     "subagentModelHint": "Codex alt ajanlarının varsayılan olarak kullandığı model ve akıl yürütme çabası. Boş ana ajanyı takip eder; bir model tek başına kendi varsayılan eforunu kullanır. Birleştirme modunda yoksayılır; orada Birleştirme sekmesinin ayarlarındaki alt ajan modeli kullanılır.",
     "subagentModelNotInCatalog": "Bu model model listesinde yok: Codex bağlam penceresini alamıyor ve yönlendirme istekleri Chat / Anthropic'ye dönüştürdüğünde bunun yerini varsayılan model alıyor.",
+    "autoReviewModelLabel": "Otomatik inceleme modeli",
+    "autoReviewModelHint": "Otomatik onay (Benim yerime onayla) açıkken bir işlemin devam edip edemeyeceğine karar veren Codex modeli. Onay istekleri konuşmayla aynı sağlayıcıya gönderilir; bu nedenle yalnızca bu kartın model listesindeki modeller seçilebilir. Birleştirme modunda bu ayar yok sayılır ve Birleştirme sekmesindeki Otomatik inceleme modeli kullanılır. Değişikliklerden sonra Codex'i yeniden başlatın.",
+    "autoReviewModelCodexDefault": "Codex varsayılanı (codex-auto-review)",
+    "autoReviewModelMainDefault": "Ana model kendini inceler (varsayılan)",
+    "autoReviewModelNoList": "Bu kartta model listesi yok: Codex onayları yalnızca ChatGPT hesaplarına yönlendirme yapan bazı aktarım hizmetlerinin kabul ettiği resmî codex-auto-review modeliyle inceler; diğerleri 404 döndürür. Bir model seçmek için yukarıdaki listeye model ekleyin.",
     "modelListHint": "Değişikliklerden sonra Codex uygulamasını yeniden başlatın.",
     "modelListDefaultHelp": "Bu modeller Codex'nin /model menüsünde görünür; ilk satır varsayılan modeldir. Adını resmi bir GPT modelinden alan satırlar resmi girişi kullanır, dolayısıyla görünen adları, pencereleri ve akıl yürütme düzeyleri göz ardı edilir.",
     "addCatalogModel": "Manuel olarak ekle",
@@ -1988,16 +2036,13 @@
     "npmPackage": "API Biçimi",
     "nativeConfigHint": "Yerel OpenCode V2 yapılandırmasını aşağıdaki JSON olarak düzenleyin. Kaydederken sağlayıcı ve model alanları korunur.",
     "selectPackage": "API biçimini seçin",
-    "npmPackageHint": "AI hizmeti için API formatını seçin",
     "builtinDefaults": "OpenCode yerleşik sağlayıcı varsayılanlarını kullanın",
     "customProviderRequired": "Yeni bir sağlayıcı kimliği, bir npm paketi ve en az bir model gerektirir. Yalnızca canlı yapılandırmadaki mevcut bir kimlik varsayılanları devralabilir.",
     "duplicateRequiresDefinition": "Bu sağlayıcıda bir npm paketi veya model tanımı eksik ve doğrudan kopyalanamıyor. Özel sağlayıcı olarak kopyalamadan önce bir npm paketi ve en az bir model belirtin.",
     "duplicateRequiresNativeDefinition": "Bu yerel V2 sağlayıcısında paket veya model tanımları eksik ve doğrudan kopyalanamıyor. Yeni bir kimlik altına kopyalamadan önce bir paket ve en az bir model ekleyin.",
     "nativeCustomProviderRequired": "Yeni sağlayıcı kimliği bir paket ve en az bir model gerektirir. Yalnızca canlı yapılandırmadaki mevcut bir kimlik varsayılanları devralabilir.",
     "baseUrl": "Temel URL",
-    "baseUrlHint": "Özel API uç nokta URL'si",
     "models": "Modeller",
-    "modelsHint": "Mevcut modelleri ve görünen adlarını yapılandırın",
     "addModel": "Manuel olarak ekle",
     "modelId": "Model Kimliği",
     "modelName": "Görünen Ad",
@@ -2059,6 +2104,7 @@
       "vendor": "Model satıcıları",
       "thirdparty": "Üçüncü taraf platformlar",
       "cloud": "Bulut sağlayıcıları",
+      "local": "Yerel",
       "plugin": "Eklenti yapılandırmaları",
       "universal": "Evrensel sağlayıcılar"
     },
@@ -2068,6 +2114,7 @@
       "vendor": "Satıcıların kendi API'leri ve kodlama planları. Satıcının Çin sitesi, global sitesi ve planları aynı satırı paylaşıyor; Bir sonraki adımda sürümü seçin.",
       "thirdparty": "Birçok modeli bir araya getiren veya resmi modellerin yeniden satışını yapan platformlar.",
       "cloud": "Bulut sağlayıcı hesabına sahip modelleri arayın.",
+      "local": "Bu bilgisayarda çalışan çıkarım sunucuları. Önce sunucuyu başlatıp bir model indirin; anahtar yalnızca yer tutucudur.",
       "plugin": "OpenCode eklentileri için model atama yapılandırmaları.",
       "universal": "Bir kez yapılandırın, Claude Code, Codex ve Gemini CLI ile eşitle edin."
     },
@@ -2085,7 +2132,8 @@
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",
       "xai": "Bir xAI hesabıyla oturum açın",
-      "google": "Google hesabıyla oturum açın"
+      "google": "Google hesabıyla oturum açın",
+      "kimi": "Kimi hesabıyla oturum aç"
     },
     "versionCount": "{{domain}} · {{n}} versiyonları",
     "matchedVersion": "{{name}} ile eşleşir",
@@ -2338,18 +2386,39 @@
     "cacheReadCostPerMillion": "Önbellek Okuma Maliyeti (milyon token başına, USD)",
     "cacheCreationCostPerMillion": "Önbellek Yazma Maliyeti (milyon token başına, USD)",
     "syncStatus": {
-      "auto": "Oturum günlükleri · otomatik tarama",
       "justNow": "Oturum günlükleri · az önce eşitle edildi",
       "minutesAgo": "Oturum günlükleri · {{count}} dakika önce eşitle edildi",
-      "off": "Oturum günlükleri · otomatik tarama kapalı",
-      "tipAuto": "Arka planda her 10 dakikada bir taranır; bu sayfa açıkken sağdaki aralıkla taranır",
-      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır"
+      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır",
+      "syncing": "Eşitleniyor…",
+      "tip": "Şimdi eşitlemek için tıklayın"
     },
     "refreshMenu": {
-      "label": "Her {{seconds}} saniyede tara",
-      "seconds": "{{seconds}}'ler"
+      "label": "Her {{seconds}} saniyede tara"
     },
     "dataSources": "Veri kaynakları",
+    "display": {
+      "title": "Görüntüleme",
+      "currency": "Para birimi",
+      "rate": "Döviz kuru",
+      "rateHint": "Elle girilir ve yalnızca görüntüleme amacıyla kullanılır; maliyetler USD olarak kaydedilmeye devam eder.",
+      "rateInvalid": "0'dan büyük bir sayı girin",
+      "approxNote": "Dönüştürülmüş tutarın üzerine gelerek USD karşılığını görün.",
+      "sidebarToday": "Kenar çubuğu \"Bugün\"",
+      "sidebarTodayItems": {
+        "cost": "Maliyet",
+        "tokens": "Tokenlar",
+        "requests": "İstekler",
+        "hitRate": "Önbellek isabet oranı",
+        "none": "Gizli"
+      },
+      "sidebarTodayLimit": "En fazla {{count}} öğe seçin",
+      "logColumns": "İstek günlüğü sütunları",
+      "trendChartType": "Trend grafiği",
+      "trendChartTypes": {
+        "bar": "Çubuk",
+        "area": "Alan"
+      }
+    },
     "providerFilter": {
       "label": "Sağlayıcı",
       "all": "Tüm sağlayıcılar",
@@ -2382,16 +2451,17 @@
       "requests": "İstekler",
       "tokens": "Tokenlar",
       "cost": "Maliyet",
-      "requestsLegend": "İstekler"
+      "requestsLegend": "İstekler",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "Saatlik",
+      "daily": "Günlük"
     },
     "tabs": {
       "label": "Ayrıntılar",
       "providers": "Sağlayıcılar",
       "models": "Modeller",
-      "pricing": "Fiyatlandırma",
-      "settings": "Ayarlar"
+      "pricing": "Fiyatlandırma"
     },
-    "sortedByRequests": "İsteklere göre sıralandı",
     "app": "Uygulama",
     "speed": "Hız",
     "speedValue": "{{value}} tok/sn",
@@ -2400,9 +2470,22 @@
     "speedHelp": "İlk token’dan yanıtın sonuna kadar saniyede üretilen çıktı token’ı sayısı. Yalnızca yönlendirme hizmetinden geçen ve en az 100 çıktı token’ı içeren istekler hesaba katılır; akıl yürütme verilerini gizleyen modellerde bu bir yaklaşımdır. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından tahmin edilir: ilk token’ı bekleme süresi de dahil olduğundan daha düşük görünür. Yalnızca en az 200 çıktı token’ı içeren istekler için tahmin yapılır.",
     "speedSumHelpTitle": "Genel hız nasıl hesaplanır?",
     "speedSumHelp": "Toplam çıktı tokenlarının istek başına ortalama hızlara değil, toplam üretim süresine bölünmesiyle kısa istekler çarpıklık yaratmaz. Yalnızca yönlendirme hizmeti aracılığıyla yapılan ve en az 100 çıkış tokenu içeren istekler sayılır. ≈ içeren bir değer, oturum günlüklerinden tahmin edilir (ilk token için beklemeyi içerir ve yalnızca en az 200 çıkış tokenu sayımına sahip istekler içerir) ve yalnızca satırda yönlendirilmiş veri bulunmadığında gösterilir.",
+    "firstToken": "İlk token",
+    "firstTokenHelpTitle": "İlk token süresi",
+    "firstTokenHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
+    "firstTokenSumHelpTitle": "İlk token süresi nasıl hesaplanır?",
+    "firstTokenSumHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca yönlendirme hizmetinden geçen başarılı akış istekleri hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda yönlendirilmiş istek verisi yoksa gösterilir.",
     "timingTip": "Süre {{duration}} · ilk token {{ttft}}",
     "estimatedTimingTip": "{{duration}}'ler hakkında (ilk tokenun beklenmesi de dahil olmak üzere oturum günlüğü zaman damgalarından tahmin edilir)",
+    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)",
     "cacheTip": "Önbellek {{read}}'ye ulaşıyor · önbellek {{write}} yazıyor",
+    "logColumns": {
+      "reset": "Varsayılana sıfırla",
+      "cacheWrite": "Önbelleğe yazma",
+      "hitRate": "İsabet oranı",
+      "hitRateTip": "Önbelleğe alınabilir girdilerin {{total}} tanesinden {{read}} tanesi önbellekten okundu",
+      "duration": "Toplam süre"
+    },
     "openRequestDetail": "İstek ayrıntılarını görüntüle: {{time}} {{provider}}",
     "prevPage": "Önceki sayfa",
     "nextPage": "Sonraki sayfa",
@@ -2415,17 +2498,16 @@
       "performance": "Performans",
       "source": "Kaynak",
       "sourceProxy": "Yönlendirme hizmeti · durumu {{code}}",
-      "sourceSession": "Oturum günlüğü",
       "total": "Toplam",
       "firstToken": "İlk token",
+      "firstTokenEstimated": "İlk token (tahmini)",
       "duration": "Süre",
       "durationEstimated": "Süre (tahmini)",
       "speedTooFew": "100 çıkış tokenunun altında, yani hız yok",
       "speedEstimateTooFew": "Çıkış tokenu 200'ün altında olduğundan tahmin yok",
       "noTimingSession": "Oturum günlüklerinde zamanlama verisi yok",
       "noFirstToken": "İlk token zamanlaması yok, dolayısıyla hız yok",
-      "providerId": "Sağlayıcı kimliği",
-      "firstTokenEstimated": "İlk token (tahmini)"
+      "providerId": "Sağlayıcı kimliği"
     },
     "sources": {
       "scanTitle": "Oturum günlüklerini otomatik olarak tara",
@@ -2470,12 +2552,13 @@
     },
     "prevMonth": "Önceki ay",
     "nextMonth": "Gelecek ay",
-    "firstToken": "İlk token",
-    "firstTokenHelpTitle": "İlk token süresi",
-    "firstTokenHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
-    "firstTokenSumHelpTitle": "İlk token süresi nasıl hesaplanır?",
-    "firstTokenSumHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca yönlendirme hizmetinden geçen başarılı akış istekleri hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda yönlendirilmiş istek verisi yoksa gösterilir.",
-    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)"
+    "pageSize": "Sayfa başına {{count}} satır",
+    "pageSizeLabel": "Sayfa başına satır",
+    "settings": {
+      "title": "Kullanım ayarları",
+      "pricingSummary": "Milyon token başına model fiyatlarını belirleyin veya models.dev üzerinden eşitleyin.",
+      "managePricing": "Fiyatlandırmayı yönet…"
+    }
   },
   "usageScript": {
     "title": "Kullanım Sorgusunu Yapılandır",
@@ -2487,6 +2570,7 @@
     "templateCustom": "Özel",
     "templateGeneral": "Genel",
     "templateNewAPI": "YeniAPI",
+    "templateSub2API": "Sub2API",
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Planı",
     "templateBalance": "Resmi",
@@ -2495,6 +2579,7 @@
     "tokenPlanHint": "Token Planı kotasını sorgulamak için sağlayıcının API Anahtarını ve Temel URL'sini otomatik olarak kullanır",
     "balanceHint": "Hesap bakiyesini sorgulamak için sağlayıcının API Anahtarını otomatik olarak kullanır",
     "officialSubscriptionHint": "Yerel CLI OAuth kimlik bilgilerini okur ve abonelik kotasını sorgulamak için resmi API'yi çağırır. Varsayılan olarak devre dışıdır ve yalnızca siz etkinleştirdikten sonra istekte bulunur.",
+    "officialSubscriptionHintAgy": "agy'nin yerleşik /usage komutu, oturumu açık hesabın kotasını kontrol eder. Oturum açma bilgileri okunmaz; her kontrol yaklaşık 10 saniye sürer. Varsayılan olarak kapalıdır ve yalnızca etkinleştirdiğinizde çalışır.",
     "resetDate": "Tarihi sıfırla",
     "premiumRequests": "Prim Talepleri",
     "credentialsConfig": "Kimlik bilgileri",
@@ -2563,8 +2648,7 @@
     "fieldExtra": "• extra: Dize, özel ekran metni",
     "tip1": "• {{apiKey}} ve {{baseUrl}} değişkenleri otomatik olarak değiştirilir",
     "tip2": "• Çıkarıcı işlevi korumalı alan ortamında çalışır, ES2020+ sözdizimini destekler",
-    "tip3": "• Nesne değişmez ifadesini oluşturmak için tüm yapılandırmanın () içine sarılması gerekir",
-    "templateSub2API": "Sub2API"
+    "tip3": "• Nesne değişmez ifadesini oluşturmak için tüm yapılandırmanın () içine sarılması gerekir"
   },
   "dbUpgrade": {
     "title": "Veritabanı sürümü çok yeni",
@@ -2940,7 +3024,6 @@
       "title": "Günlük Hafıza",
       "sectionTitle": "Günlük Hafıza",
       "cardTitle": "Günlük Bellek Dosyaları",
-      "cardDescription": "Günlük anılara göz atın ve yönetin",
       "createToday": "Bellek Ekle",
       "empty": "Henüz günlük hafıza dosyası yok",
       "loadFailed": "Günlük bellek dosyaları yüklenemedi",
@@ -2971,7 +3054,6 @@
     "selectProtocol": "API Protokolünü seçin",
     "apiProtocolHint": "Sağlayıcının API'si ile uyumlu protokol türünü seçin. Çoğu sağlayıcı OpenAI Tamamlamalar biçimini kullanır.",
     "baseUrl": "API Uç Nokta",
-    "baseUrlHint": "Sağlayıcının API uç nokta adresi.",
     "models": "Model Yapılandırması",
     "addModel": "Model Ekle",
     "selectDefaultModel": "Varsayılan Modeli Seçin",
@@ -2995,7 +3077,6 @@
     "userAgentHint": "Bazı sağlayıcılar, düzgün çalışması için bir tarayıcı Kullanıcı Aracısı başlığına ihtiyaç duyar.",
     "env": {
       "title": "Ortam Değişkenleri",
-      "description": "openclaw.json'daki ortam değişkenlerini yönetin (API anahtarları, özel değişkenler vb.)",
       "editorHint": "Env bölümünün tamamını JSON olarak düzenleyin. env.vars ve env.shellEnv gibi iç içe geçmiş nesneler desteklenir.",
       "objectRequired": "OpenClaw env bir JSON nesnesi olmalıdır.",
       "invalidJson": "OpenClaw ortamı geçerli JSON olmalıdır.",
@@ -3010,7 +3091,6 @@
     },
     "tools": {
       "title": "Araç İzinleri",
-      "description": "openclaw.json'daki araç izinlerini yönetin (izin ver/reddet listeleri)",
       "profile": "İzin Profili",
       "profileMinimal": "Asgari",
       "profileCoding": "Kodlama",
@@ -3064,7 +3144,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API Uç Nokta",
-      "baseUrlHint": "Bu sağlayıcının API uç nokta URL'si.",
       "providerKey": "Sağlayıcı Anahtarı",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "Yalnızca küçük harfler, sayılar ve kısa çizgiler. config.yaml dosyasında sağlayıcı adı olarak kullanılır.",
@@ -3072,8 +3151,9 @@
       "providerKeyRequired": "Sağlayıcı anahtarı gerekli",
       "providerKeyInvalid": "Sağlayıcı anahtarı yalnızca küçük harfler, sayılar ve kısa çizgiler içerebilir",
       "providerKeyDuplicate": "Bu sağlayıcı anahtarı zaten mevcut",
+      "providerKeyBuiltin": "\"{{key}}\", Hermes'in yerleşik sağlayıcılarından birinin kimliğidir. Hermes yerleşik sağlayıcıyı kullanır (bunun için kendi API anahtarı ortam değişkeni gerekir) ve bu kartın uç noktasıyla anahtarını yok sayar. Örneğin cc-switch-{{key}} gibi farklı bir anahtar kullanın.",
+      "providerKeyBuiltinLocked": "\"{{key}}\", Hermes'in yerleşik sağlayıcılarından birinin kimliğidir. Hermes yerleşik sağlayıcıyı kullanır ve bu kartın uç noktasıyla anahtarını yok sayar. Anahtar kilitlidir: bu sağlayıcıyı cc-switch-{{key}} gibi başka bir anahtarla yeniden ekleyip bu kartı silin.",
       "apiMode": "API Modu",
-      "apiModeHint": "Sağlayıcı API protokolü. Uç noktanızla eşleşen formatı seçin.",
       "apiModeChatCompletions": "OpenAI Sohbet Tamamlamaları",
       "apiModeAnthropicMessages": "Anthropic Mesajları",
       "apiModeCodexResponses": "OpenAI Yanıtları",
@@ -3221,6 +3301,7 @@
       "emptyArchive": "İndirilen arşiv boş",
       "invalidRepoRef": "Geçersiz depo referansı: {{owner}}/{{name}}",
       "archiveTooLarge": "Arşiv, {{limit_mb}} MB çıkarma sınırını aşıyor; iptal edildi",
+      "archiveDownloadTooLarge": "Depo arşivi {{limit_mb}} MB sınırını aşıyor; indirme durduruldu.",
       "archiveTooManyEntries": "Arşivde çok fazla giriş var ({{count}}); sınır {{limit}}'dir",
       "downloadFailed": "İndirme başarısız oldu: HTTP {{status}}",
       "allBranchesFailed": "Tüm dallar başarısız oldu, denendi: {{branches}}",
@@ -3410,11 +3491,18 @@
     "import": "İçe aktar",
     "importing": "İçe aktarılıyor...",
     "warning": "Lütfen içe aktarmadan önce yukarıdaki bilgilerin doğru olduğunu onaylayın. Daha sonra sağlayıcı listesinde düzenleyebilir veya silebilirsiniz.",
+    "providerEnabledWarning": "İçe aktarıldıktan sonra CC Switch hemen bu sağlayıcıya geçer; istemci istekleri yukarıdaki uç noktaya gönderilir",
+    "apiFormat": "API biçimi",
+    "switchAfterImport": "İçe aktardıktan sonra bu sağlayıcıya geç",
+    "addToAppAfterImport": "İçe aktardıktan sonra {{app}} yapılandırmasına ekle",
+    "enableInPiAfterImport": "İçe aktardıktan sonra Pi içinde etkinleştir",
     "parseError": "Derin bağlantı ayrıştırılamadı",
     "importSuccess": "İçe aktarma başarılı",
     "importSuccessDescription": "Sağlayıcı \"{{name}}\" başarıyla içe aktarıldı",
     "importError": "İçe aktarma başarısız oldu",
     "configSource": "Yapılandırma Kaynağı",
+    "codexConfigScopeHint": "Yalnızca bu sağlayıcıya ait ayarlar (uç nokta, kimlik doğrulama, model, akıl yürütme düzeyi vb.) içe aktarılır; [features], MCP ve izinler gibi genel ayarlar atlanır.",
+    "grokConfigScopeHint": "Yalnızca [models] default tarafından belirtilen model tablosu (görünen ad, açıklama, API arka ucu, bağlam penceresi vb.) içe aktarılır; uç nokta ve anahtar bağlantı parametrelerinden alınır, diğer model tabloları atlanır.",
     "configEmbedded": "Gömülü Yapılandırma",
     "configRemote": "Uzaktan Yapılandırma",
     "configDetails": "Yapılandırma Ayrıntıları",
@@ -3465,25 +3553,12 @@
       "envHijack": "Bu yapılandırma, yükleme kodunun işlenme biçimini değiştiren ortam değişkenlerini ayarlar (örneğin, kitaplıkları enjekte etme veya CA sertifikalarını değiştirme). Yalnızca güvendiğiniz bir kaynaktan içe aktarın.",
       "privateEndpoint": "Bu adres localhost'a veya özel bir ağa işaret eder. Kendi yerel hizmetiniz olmadığı sürece ithalat yapmayın.",
       "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin."
-    },
-    "providerEnabledWarning": "İçe aktarıldıktan sonra CC Switch hemen bu sağlayıcıya geçer; istemci istekleri yukarıdaki uç noktaya gönderilir",
-    "apiFormat": "API biçimi",
-    "switchAfterImport": "İçe aktardıktan sonra bu sağlayıcıya geç",
-    "addToAppAfterImport": "İçe aktardıktan sonra {{app}} yapılandırmasına ekle",
-    "enableInPiAfterImport": "İçe aktardıktan sonra Pi içinde etkinleştir",
-    "codexConfigScopeHint": "Yalnızca bu sağlayıcıya ait ayarlar (uç nokta, kimlik doğrulama, model, akıl yürütme düzeyi vb.) içe aktarılır; [features], MCP ve izinler gibi genel ayarlar atlanır.",
-    "grokConfigScopeHint": "Yalnızca [models] default tarafından belirtilen model tablosu (görünen ad, açıklama, API arka ucu, bağlam penceresi vb.) içe aktarılır; uç nokta ve anahtar bağlantı parametrelerinden alınır, diğer model tabloları atlanır."
+    }
   },
   "iconPicker": {
     "search": "Arama Simgeleri",
     "searchPlaceholder": "Simge adını girin...",
     "noResults": "Eşleşen simge bulunamadı",
-    "category": {
-      "aiProvider": "Yapay Zeka Sağlayıcıları",
-      "cloud": "Bulut Platformları",
-      "tool": "Geliştirici Araçları",
-      "other": "Diğer"
-    },
     "clear": "Simgeyi temizle",
     "myIcons": "Simgelerim",
     "builtinIcons": "Yerleşik simgeler",
@@ -3509,6 +3584,12 @@
       "tooLarge": "Görsel 2 MB’den büyük",
       "decodeFailed": "Bu görsel okunamadı; lütfen başka bir görsel deneyin",
       "dimensions": "Görsel çok büyük (genişlik ve yükseklik 4096 pikseli aşmamalıdır)"
+    },
+    "category": {
+      "aiProvider": "Yapay Zeka Sağlayıcıları",
+      "cloud": "Bulut Platformları",
+      "tool": "Geliştirici Araçları",
+      "other": "Diğer"
     }
   },
   "providerIcon": {
@@ -4027,6 +4108,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5 sa.",
+      "agyGeminiWeekly": "Gemini haftalık",
+      "agyThirdPartyFiveHour": "Claude 5 sa.",
+      "agyThirdPartyWeekly": "Claude haftalık",
       "monthly": "Ay",
       "credits": "Kredi",
       "copilotPremium": "Premium"
@@ -4040,6 +4125,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5 saatlik",
+    "agyGeminiWeekly": "Gemini haftalık",
+    "agyThirdPartyFiveHour": "Claude/GPT 5 saatlik",
+    "agyThirdPartyWeekly": "Claude/GPT haftalık",
     "weeklyLimit": "Haftalık",
     "monthly": "Aylık",
     "credits": "Kredi",
@@ -4059,6 +4150,8 @@
     "collapseSidebar": "Kenar çubuğunu daralt",
     "appsGroup": "Uygulamalar",
     "today": "Bugün {{value}}",
+    "todayRequests": "{{value}} istek",
+    "todayHitRate": "İsabet {{value}}",
     "usage": "Kullanım",
     "auth": "Hesaplar",
     "authNeedsReauth": "Bir hesapta tekrar oturum açılması gerekiyor",
@@ -4071,9 +4164,7 @@
     "settingsHasUpdate": "Ayarlar · yeni bir CC Switch sürümü mevcut",
     "mode": {
       "route": "Yönlendirme",
-      "stack": "Birleştirme",
-      "mapping": "Eşleme",
-      "mappingFull": "Model eşleme"
+      "stack": "Birleştirme"
     },
     "needsAttention": "Dikkat edilmesi gerekiyor",
     "back": "Geri"
@@ -4098,6 +4189,7 @@
     "desktopNotConnected": "Bağlı değil",
     "newVersion": "{{version}} mevcut",
     "notRunnable": "Çalıştırılamıyor",
+    "updateNeedsNode": "{{version}} sürümü Node {{required}} gerektiriyor; bu kurulumda Node {{current}} çalışıyor. Önce Node'u yükseltin.",
     "otherInstalls": "{{count}} daha fazla yükleme",
     "installsFound": "{{count}} kurulum bulundu",
     "wslFlag": "Bayrak",
@@ -4110,7 +4202,9 @@
       "openclaw": "Npm ile yüklenir",
       "hermes": "Resmi komut dosyasıyla yüklenir",
       "pi": "Npm ile yüklenir",
-      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner"
+      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
+      "agy": "Resmî kurulum betiğiyle yüklenir",
+      "omp": "Resmi komut dosyasıyla yüklenir"
     }
   },
   "appPage": {
@@ -4135,11 +4229,30 @@
     },
     "active": "aktif",
     "activeTitle": "{{mode}} aktif",
-    "noProvider": "(yok)",
+    "noProvider": "Yok",
     "failover": "Yedek sağlayıcıya geçiş",
     "routeSettings": "Yönlendirme ayarları",
     "routeSettingsTitle": "Yönlendirme ayarları",
     "moreRouteSettings": "Daha fazla yönlendirme ayarı",
+    "stackSettings": {
+      "title": "Birleştirme ayarları",
+      "subagentDescription": "Alt aracılar varsayılan olarak ana modeli izler. Birleştirilmiş bir model seçerseniz ana aracının başlattığı alt aracılar da varsayılan olarak onu kullanır (ana aracı başlatırken model belirtirse bu geçerli olur). Codex'i yeniden başlatmanız gerekmez: yeni konuşmalar bu ayarı kullanır, açık konuşmalar önceki ayarla devam eder.",
+      "subagentModel": "Alt aracı modeli",
+      "followMain": "Ana modeli izle",
+      "subagentEffort": "Alt aracı akıl yürütme çabası",
+      "effortModelDefault": "Model varsayılanı",
+      "effortModelDefaultNamed": "Model varsayılanı ({{effort}})",
+      "unavailableOption": "{{model}} (artık birleştirmede değil)",
+      "unavailable": "Seçilen model artık birleştirmede bulunmuyor (sağlayıcı kaldırıldı veya modeli yayımlamayı durdurdu); bu nedenle alt aracılar şimdilik ana modeli izliyor. Modeli yeniden eklediğinizde tekrar kullanılabilir.",
+      "noModels": "Henüz birleştirilmiş model yayımlanmamış. Önce birleştirmeye sağlayıcı ekleyin.",
+      "classicOff": "Alt aracı ana araçtan farklı bir sağlayıcı kullanıyor; bu yüzden Codex'in yeni alt aracı araçları görevi yalnızca ana aracının sağlayıcısının okuyabileceği şekilde şifreler ve alt aracı hiçbir içerik alamaz. Aşağıdaki \"Birleştirmede klasik alt aracı araçları\" seçeneğini açmanız gerekir.",
+      "autoReviewModel": "Otomatik inceleme modeli",
+      "autoReviewDescription": "Otomatik onay (Benim yerime onayla) açıkken bir işlemin devam edip edemeyeceğine karar veren Codex modeli. Başka bir sağlayıcının birleştirilmiş modeli olabilir. Değişikliklerden sonra Codex'i yeniden başlatın.",
+      "autoReviewDefaultOfficial": "Resmî Otomatik İnceleme (varsayılan)",
+      "autoReviewDefaultMain": "Ana model kendini inceler (varsayılan)",
+      "autoReviewUnavailable": "Seçilen model artık birleştirmede bulunmuyor (sağlayıcı kaldırıldı veya modeli yayımlamayı durdurdu); bu nedenle onaylarda şimdilik varsayılan inceleyici kullanılıyor. Modeli yeniden eklediğinizde tekrar kullanılabilir.",
+      "saveFailed": "Kaydetme başarısız: {{error}}"
+    },
     "queueMoved": "{{name}}, {{position}} konumuna taşındı.",
     "status": {
       "directLead": "Doğrudan etkin · şuraya bağlı:",
@@ -4164,6 +4277,7 @@
       "enteredRoute": "{{app}} artık yönlendirme yapıyor → {{provider}}.",
       "enteredStack": "{{app}}, Birleştirme moduna geçti. Birleştirilen modelleri /model içinde görmek için {{app}} uygulamasını yeniden başlatın.",
       "enteredStackLive": "{{app}}, Birleştirme moduna geçti. Birleştirilen modeller artık /model içinde.",
+      "enteredStackDesktop": "{{app}} Birleştirme moduna geçti. Birleştirilmiş modelleri model listesinde görmek için {{app}} uygulamasını yeniden başlatın.",
       "exited": "Direkt olarak geri dön: {{app}} artık doğrudan {{provider}}'ye bağlanıyor.",
       "routeRemembered": "{{provider}} sağlayıcısı, istemci Yönlendirme veya Birleştirme üzerinden bağlandığında kullanılmak üzere kaydedildi.",
       "routeTargetChanged": "Yönlendirme hedefi {{provider}} olarak ayarlandı.",
@@ -4187,11 +4301,23 @@
       "routeNoteFile": "{{file}}'deki adresi ve anahtarı yeniden yazar. Gerçek anahtar CC Switch’te kalır; diğer ayarlara dokunulmaz.",
       "routeNoteSwitch": "Sağlayıcıları daha sonra Yönlendirme sekmesinde değiştirmek, yapılandırma dosyasını yeniden yazmaz.",
       "routeNoteKeepRunning": "CC Switch'yi çalışır durumda tutun. Çıkmak doğrudan yapılandırmayı geri yazar; bir sonraki başlangıçta yeniden bağlanır.",
+      "desktopRouteNoteModels": "Claude Desktop'ın model listesinde yönlendirilen sağlayıcının modelleri gösterilir; yönlendirilen sağlayıcıyı değiştirmek yapılandırma dosyasını yeniden yazar.",
+      "desktopRouteNoteRestart": "{{app}} yapılandırmasını yalnızca başlatılırken okur: onayladıktan sonra {{app}} uygulamasını yeniden başlatın.",
+      "desktopRouteNoteKeepRunning": "{{app}} isteklerinin gönderilebilmesi için CC Switch'i açık tutun.",
       "stackNoteMembers": "{{names}}, /model içinde ccs- önekiyle gösterilen {{count}} modellerini ekler.",
+      "desktopStackNoteMembers": "{{names}}, Claude Desktop'ın model listesine \"Sağlayıcı / model\" biçiminde {{count}} model ekler.",
       "stackNoteEmpty": "Henüz başka sağlayıcı eklenmediğinden yalnızca varsayılan kullanılabilir. Daha sonra Birleştirme sekmesine daha fazlasını ekleyebilirsiniz.",
       "stackNoteNoFailover": "Birleştirmenın yedek sağlayıcıya geçiş özelliği yoktur. Kuyruk ve ayarları tutulur ve yönlendirme ile geri gelir.",
       "stackNoteRestartCodex": "Toplu modelleri görmek için {{app}}'yi yeniden başlatın; masaüstü uygulamasından tamamen çıkın ve yeniden açın.",
+      "stackSubagentLead": "Alt aracılar varsayılan olarak ana modeli izler; isterseniz birleştirilmiş bir model seçebilirsiniz (bunu daha sonra Birleştirme ayarlarından değiştirebilirsiniz).",
       "leaveStackNote": "ccs- ile başlayan birleştirme modelleri /model'den kaybolur. Birleştirme listesi korunur ve birleştirmeye geri döndüğünüzde geri gelir. Bunlardan birini kullanıyorsanız /model'de normal bir model seçin.",
+      "desktopLeaveStackNote": "Yeniden başlatmanın ardından birleştirilmiş modeller Claude Desktop'ın model listesinden kaldırılır. Birleştirme listesi korunur ve Birleştirme moduna yeniden geçtiğinizde modeller geri gelir. Bu modellerden birini kullanıyorsanız normal bir model seçin.",
+      "exitTitle": "{{app}} doğrudan bağlantıya geri dönsün mü? ({{from}})",
+      "exitLead": "{{app}} doğrudan {{provider}} sağlayıcısına bağlanacak; istekler artık CC Switch üzerinden geçmeyecek.",
+      "exitNoteFile": "{{file}} dosyasındaki adres ve anahtar yeniden {{provider}} sağlayıcısınınkilerle değiştirilir; diğer ayarlara dokunulmaz.",
+      "exitNoteRouteKept": "Yönlendirme hedefi, yedek sırası ve ayarlar korunur; yönlendirmeyi bir sonraki başlatışınızda yeniden etkinleşir.",
+      "desktopExitNoteRouteKept": "Yönlendirme hedefi korunur; yönlendirmeyi bir sonraki başlatışınızda yeniden etkinleşir.",
+      "confirmDirect": "Doğrudan bağlantıya dön",
       "confirmRoute": "Yönlendirmeyi başlat",
       "confirmStack": "Birleştirme moduna geç",
       "needsRouteTitle": "{{provider}}'nin yönlendirmeye ihtiyacı var",
@@ -4238,7 +4364,6 @@
       "default": "Varsayılan",
       "models": "{{count}} model",
       "noModels": "Model yok",
-      "mapping": "Model eşleme",
       "direct": "Doğrudan",
       "hermesManaged": "Hermes tarafından yönetilmektedir",
       "defaultModel": "Varsayılan model {{model}}"
@@ -4252,6 +4377,7 @@
       "defaultCannotRemove": "Varsayılan kaldırılamaz. Önce başka bir sağlayıcıyı varsayılan yapın.",
       "currentCannotRemove": "Kullanılan sağlayıcı kaldırılamaz. Önce başka birini etkinleştirin.",
       "inUseCannotDelete": "Kullanılan sağlayıcı silinemez. Önce diğerine geçin.",
+      "directDefaultCannotDelete": "Yönlendirmeden çıkıldığında bu sağlayıcıya dönülür; bu nedenle silinemez. Önce doğrudan bağlantı sayfasında başka bir sağlayıcı için \"Doğrudan bağlantıya dön ve kullan\" seçeneğini seçin.",
       "noFailover": "Resmi hesaplar yedek sağlayıcıya geçiş kuyruğuna katılamaz: İstemcinin kendi oturum açma bilgilerini kullanırlar ve diğer sağlayıcılarla dönüşümlü olarak çalışamazlar."
     },
     "section": {
@@ -4263,6 +4389,7 @@
       "stackDefault": "Varsayılan sağlayıcı",
       "stackDefaultAfterSwitch": "Birleştirme'ya geçtikten sonra varsayılan sağlayıcı",
       "stackDefaultHelp": "Ön eki olmayan istekler ona gider; eklenen diğer sağlayıcılar /modelde ccs- önekiyle görünür.",
+      "stackDefaultHelpDesktop": "Varsayılan model ve eşlenen modellerin istekleri bu sağlayıcıya gider; eklenen diğer sağlayıcılar model listesinde \"Sağlayıcı / model\" biçiminde görünür.",
       "stackEmpty": "Henüz başka sağlayıcı eklenmedi.",
       "added": "Eklendi · {{count}}",
       "addedHelpTitle": "Eklendi",
@@ -4271,17 +4398,6 @@
       "available": "Mevcut · {{count}}",
       "stackNoDefault": "Henüz varsayılan sağlayıcı yok. Birleştirme'ya geçerken birini seçersiniz."
     }
-  },
-  "desktopAccess": {
-    "current": "Güncel: {{name}} · {{mode}}",
-    "noCurrent": "Sağlayıcı seçilmedi",
-    "helpTitle": "Claude Desktop nasıl bağlanır?",
-    "help": "Claude Desktop bağlantısı her sağlayıcı için ayrı ayarlanır: doğrudan bağlantı kullanan sağlayıcılar Claude Desktop yapılandırmasına yazılır; model eşleme kullananlar yönlendirme hizmeti üzerinden bağlanır. Bu sağlayıcılardan biri kullanılırken hizmet otomatik olarak çalışır.",
-    "service": "Yönlendirme hizmeti",
-    "running": "Çalışıyor",
-    "notRunning": "Yönlendirme hizmeti başlatılamadı",
-    "changePort": "Bağlantı noktasını değiştir",
-    "notNeeded": "Yönlendirme hizmeti: mevcut sağlayıcı tarafından gerekli değildir"
   },
   "routingSettings": {
     "service": "Hizmet",
@@ -4312,8 +4428,6 @@
     "noApps": "Hiçbir uygulama yönlendirmeyi kullanmıyor. Bunu bir uygulamanın sayfasındaki Yönlendirme veya Birleştirme sekmesinden girin.",
     "routeDetail": "{{name}}'ye Yönlendirme",
     "stackDetail": "Varsayılan {{name}}",
-    "desktopMode": "Model eşleme · otomatik olarak çalışmaya devam etti",
-    "desktopDetail": "Mevcut sağlayıcı {{name}}",
     "goTo": "Aç",
     "exitAll": "Tümünü doğrudan bağlantıya döndür",
     "exitAllTitle": "Tüm uygulamalar doğrudan bağlantıya döndürülsün mü?",
@@ -4330,7 +4444,6 @@
     "used": "%{{value}} kullanıldı",
     "usedUp": "Tükendi",
     "balance": "Bakiye {{value}}",
-    "balanceUsedUp": "Bakiye tükendi",
     "planExpired": "Planın süresi doldu",
     "failed": "Kota bilgisi alınamıyor",
     "reason": {
@@ -4358,6 +4471,10 @@
       "text": "Kredi ≈ {{usd}}",
       "usd": "≈ {{usd}}",
       "detail": "Kredi bakiyesi {{balance}} · ≈ {{usd}}, API fiyatlarında · yalnızca limitleriniz dolduktan sonra kullanılır"
+    },
+    "windows": {
+      "title": "Tüm sınırlar",
+      "showAll": "Tüm sınırları göster"
     }
   },
   "appMatrix": {
@@ -4385,6 +4502,11 @@
       "on": "{{name}} · {{app}}: etkin",
       "off": "{{name}} · {{app}}: kapalı",
       "fail": "{{name}} · {{app}}: yazma başarısız oldu, yeniden denemek için tıklayın"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi'nin gerçekte yükledikleri",
+      "help": "Oh My Pi, kendi ~/.omp/agent yapılandırmasının yanı sıra diğer ajanların dizinlerinden (ör. Claude'un ~/.claude, Codex'in ~/.codex) MCP sunucularını, becerileri, komutları, kancaları, kuralları ve ayarları da keşfeder. Oh My Pi'nin gerçekte yüklediklerini CC Switch arayüzüyle uyumlu tutmak için ~/.omp/agent/config.yml içinde disabledProviders ile gereksiz keşif kaynaklarını kapatın (kimlikler belgelerle aynıdır, ör. claude, codex, gemini, opencode, github, agents).",
+      "docsLink": "Oh My Pi'nin diğer ajanların yapılandırmasını yüklemesi nasıl engellenir"
     }
   },
   "mcpPage": {
@@ -4743,7 +4865,8 @@
       "helpTitle": "{{service}} hesapları nasıl kullanılır?",
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır."
+      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
+      "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz."
     },
     "addAccount": "Hesap ekle",
     "groupMenu": "{{service}} için daha fazla eylem",
@@ -4774,7 +4897,9 @@
       "copy": "Kodu kopyala",
       "copied": "Kod kopyalandı.",
       "open": "Yetkilendirme sayfasını açın",
-      "note": "Tarayıcınızda yetkilendirme sayfası açık; bitirdiğinizde bu kendi kendine güncellenir. {{service}}'nin kullanım koşullarına dikkat edin."
+      "note": "Tarayıcınızda yetkilendirme sayfası açık; bitirdiğinizde bu kendi kendine güncellenir. {{service}}'nin kullanım koşullarına dikkat edin.",
+      "browserNote": "{{service}} oturum açma sayfası tarayıcınızda açık. Oturum açıp erişim izni verin; bu bilgi otomatik olarak güncellenir.",
+      "reopen": "Oturum açma sayfasını yeniden aç"
     },
     "toast": {
       "added": "{{service}} hesabı eklendi.",
@@ -4785,6 +4910,101 @@
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin"
+    },
+    "agy": {
+      "reauthNote": "Oturum süresi doldu, bu hesaba geçilemiyor",
+      "addedOn": "{{date}} tarihinde eklendi",
+      "statusLoadFailed": "Antigravity hesapları okunamadı. Yeniden deneyin.",
+      "empty": "Henüz Antigravity hesabı yok. agy'nin oturum açtığı hesap burada otomatik olarak görünür.",
+      "login": "Google ile oturum aç",
+      "current": "agy tarafından kullanılıyor",
+      "switchTo": "agy'yi bu hesaba geçir",
+      "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",
+      "switched": "Hesap değiştirildi. Yeni agy oturumları bu hesabı kullanacak.",
+      "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın."
+    }
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "Bu hesabı kullan",
+      "title": "Kimi Code resmî oturumu",
+      "description": "Her Kimi kodlama planı hesabı için ayrı kimlik bilgileri ve sağlayıcılar ekleyin. Oturum açma işlemlerini buradan yönetin; resmî modelleri kullanmak için bir hesap seçin.",
+      "region": "Oturum açma bölgesi",
+      "mainland-cn": "Çin ana karası",
+      "global": "Küresel",
+      "signIn": "Kimi'de oturum aç",
+      "signedOut": "Oturum kapatıldı",
+      "statusFailed": "Oturum açma durumu okunamıyor",
+      "expired": "Yetkilendirme kodunun süresi doldu. Yeniden oturum açın.",
+      "denied": "Yetkilendirme reddedildi. Yeniden oturum açın.",
+      "cancelled": "Bu oturum açma işlemi iptal edildi veya başka bir işlemle değiştirildi. Yeniden oturum açın.",
+      "success": "Kimi Code'da oturum açıldı ve resmî modeller eklendi.",
+      "manageAccounts": "Kimi hesaplarını yönet",
+      "managedHint": "Önce bu resmî hesabı kaldırın veya Yetkilendirme Merkezi'nde oturumuyla birlikte silin.",
+      "removeAccount": "Hesabı kaldır",
+      "dismissAccount": "Listeden gizle",
+      "removeConfirm": "{{name}} kaldırılsın mı? Bu hesabın sağlayıcısı ve modelleri, yerel kimlik bilgileri ve kartıyla birlikte Kimi Code'dan kaldırılır. Diğer hesaplar etkilenmez.",
+      "dismissConfirm": "{{name}} listeden gizlensin mi? Bu, Kimi Code'un kendi oturumudur; CC Switch oturumu kapatmaz ve kimlik bilgileriyle modelleri saklar. Oturumu kapatmak için Kimi Code'da /logout komutunu çalıştırın. Yeniden oturum açınca hesap listeye geri gelir.",
+      "primaryHidden": "Kimi Code'un kendi oturumu listeden kaldırıldı; yeniden görünmesi için aynı hesapla oturum açın",
+      "removeCurrentHint": "Bu hesap kullanımda. Kaldırmadan önce başka bir hesaba geçin.",
+      "current": "Kimi tarafından kullanılıyor",
+      "primaryShort": "Kimi Code'un kendi oturumu",
+      "empty": "Henüz Kimi hesabı yok. Kimi Code'da oturum açılmış hesap burada otomatik olarak görünür.",
+      "help": "Birden fazla Kimi kodlama planı hesabı ekleyin; her hesap için Kimi Code'da ayrı bir sağlayıcı ve model kümesi oluşturulur. “Bu hesabı kullan” seçeneği Kimi Code'un varsayılan modelini o hesaba geçirir ve bundan sonra açılan oturumlar bu hesabı kullanır. Kimi Code'un kendi oturum açtığı hesap burada otomatik olarak görünür ve web aramasıyla veri getirme işlemlerinde her zaman kullanılır. Bu hesabı buradan kaldırmak yalnızca listeden gizler; Kimi Code oturumunu kapatmaz."
+    },
+    "modelSelectionHint": "Bir sağlayıcıyı seçmek için kartındaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code'da /model komutunu kullanın.",
+    "contextSize": "Bağlam uzunluğu",
+    "capabilities": {
+      "image_in": "Görsel girdisi",
+      "thinking": "Akıl yürütme",
+      "always_thinking": "Sürekli akıl yürütme",
+      "tool_use": "Araç kullanımı",
+      "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
+    },
+    "empty": {
+      "title": "Kimi Code sağlayıcısı ekle",
+      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
+    },
+    "deleteSessionHint": "Dizini ve geçmişi birlikte güncellemek için bu oturumu Kimi Code'da silin.",
+    "capabilityHints": {
+      "always_thinking": "Modelin akıl yürütme özelliği kapatılamıyorsa işaretleyin: bu model seçildiğinde Kimi akıl yürütmeyi açar ve kapatma seçeneğini gizler.",
+      "dynamically_loaded_tools": "İstekleri kısa tutmak için modelin araç açıklamalarını gerektiğinde yüklemesini sağlar. Yalnızca Kimi'nin kendi modelleri destekler; üçüncü taraf modellerde kapalı bırakın. KIMI_CODE_EXPERIMENTAL_TOOL_SELECT ayarının da etkin olması gerekir."
+    },
+    "error": {
+      "defaultModelInUse": "Kimi Code bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /model komutuyla başka bir modele geçin.",
+      "secondaryModelInUse": "Kimi Code'un alt ajan modeli bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /secondary-model komutuyla değiştirin."
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "Henüz API anahtarı sağlayıcısı yok",
+      "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın."
+    },
+    "provider": {
+      "enabled": "Oh My Pi içinde etkinleştirildi",
+      "enableFailed": "Sağlayıcı Oh My Pi içinde etkinleştirilemedi",
+      "removed": "Oh My Pi içinden kaldırıldı"
+    },
+    "current": {
+      "readFailed": "Oh My Pi sağlayıcı yapılandırması okunamadı",
+      "stateUnavailableHint": "Oh My Pi yapılandırması okunana kadar sağlayıcı değişiklikleri devre dışıdır."
+    },
+    "form": {
+      "discoveryType": "Model keşfi",
+      "discoveryOff": "Kapalı",
+      "discoveryHint": "Açıkken Oh My Pi uç noktaya hangi modelleri sunduğunu sorar; modelleri tek tek yazmanız gerekmez ve yeni modeller kendiliğinden görünür. Çevrimiçi servislerin çoğunda “OpenAI model list”, kendi bilgisayarınızda çalışan modellerde ilgili uygulamayı seçin. Anthropic biçimli uç noktalarda genellikle model listesi yoktur, kapalı bırakın. Elle eklenen modeller geçerliliğini korur."
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi yapılandırması 1 MiB sınırını aşıyor.",
+      "externalChange": "Oh My Pi yapılandırması dışarıdan değiştirildi. Yenileyip tekrar deneyin.",
+      "rollbackConflict": "Veritabanı kaydı başarısız oldu ve Oh My Pi yapılandırması dışarıdan değiştirildi. Elle geri yükleyin.",
+      "invalidMcp": "Oh My Pi MCP JSON geçersiz. Kök ve mcpServers nesne olmalıdır.",
+      "invalidYaml": "Geçersiz Oh My Pi YAML. Kök ve providers birer eşleme olmalıdır.",
+      "invalidProvider": "Geçersiz Oh My Pi sağlayıcısı. Gerekli alanları, API biçimini ve alan türlerini kontrol edin.",
+      "manualEdit": "Bu YAML yapısını CC Switch güvenle düzenleyemiyor. models.yml dosyasını elle düzenleyin.",
+      "duplicateProvider": "Bu Oh My Pi sağlayıcı anahtarı zaten var.",
+      "renameProvider": "Oh My Pi sağlayıcı anahtarları yeniden adlandırılamaz.",
+      "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil."
     }
   }
 }

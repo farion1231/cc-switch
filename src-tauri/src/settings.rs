@@ -51,8 +51,14 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
+    #[serde(default)]
+    pub omp: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
+    #[serde(default = "default_true")]
+    pub kimi: bool,
+    #[serde(default = "default_true")]
+    pub agy: bool,
     #[serde(default)]
     pub zcode: bool,
 }
@@ -70,6 +76,9 @@ impl Default for VisibleApps {
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
+            kimi: true,
+            agy: true,
+            omp: true,
             zcode: false, // 默认不显示，需用户手动启用
         }
     }
@@ -89,6 +98,9 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::Kimi => self.kimi,
+            AppType::Agy => self.agy,
+            AppType::Omp => self.omp,
             AppType::ZCode => self.zcode,
         }
     }
@@ -516,6 +528,9 @@ pub struct AppSettings {
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
+    /// 应用页和侧栏的应用顺序（应用 ID）。缺的应用由前端按默认顺序插回，不认识的忽略
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_order: Option<Vec<String>>,
 
     // ===== 设备级目录覆盖 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -535,6 +550,7 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omp_config_dir: Option<String>,
     pub zcode_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
@@ -562,6 +578,9 @@ pub struct AppSettings {
     /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
+    /// 当前 Antigravity CLI 供应商 ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_agy: Option<String>,
     /// 当前 ZCode 供应商 ID（本地存储，对 ZCode 可能无意义，但保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_zcode: Option<String>,
@@ -663,6 +682,7 @@ impl Default for AppSettings {
             language: None,
             quota_display: None,
             visible_apps: None,
+            app_order: None,
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
@@ -671,6 +691,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
+            omp_config_dir: None,
             zcode_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
@@ -680,6 +701,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            current_provider_agy: None,
             current_provider_zcode: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
@@ -762,6 +784,13 @@ impl AppSettings {
 
         self.pi_config_dir = self
             .pi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.omp_config_dir = self
+            .omp_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1264,6 +1293,13 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .as_ref()
         .map(|path| resolve_override_path(path))
 }
+pub fn get_omp_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .omp_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
 
 pub fn get_zcode_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
@@ -1354,7 +1390,8 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
-        AppType::Pi | AppType::Mcode => None,
+        AppType::Agy => settings.current_provider_agy.clone(),
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => None,
         AppType::ZCode => settings.current_provider_zcode.clone(),
     }
 }
@@ -1374,7 +1411,8 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
-        AppType::Pi | AppType::Mcode => {}
+        AppType::Agy => settings.current_provider_agy = id_owned.clone(),
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => {}
         AppType::ZCode => settings.current_provider_zcode = id_owned.clone(),
     })
 }
@@ -1603,6 +1641,31 @@ mod tests {
             serde_json::to_value(&hidden).expect("serialize"),
             serde_json::json!({ "sidebarTodayItems": [] })
         );
+    }
+
+    #[test]
+    fn app_order_round_trips_as_camel_case() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "appOrder": ["codex", "claude", "future-app"]
+        }))
+        .expect("parse settings");
+        assert_eq!(
+            settings.app_order.as_deref(),
+            Some(
+                &[
+                    "codex".to_string(),
+                    "claude".to_string(),
+                    "future-app".to_string()
+                ][..]
+            )
+        );
+        let value = serde_json::to_value(&settings).expect("serialize settings");
+        assert_eq!(
+            value["appOrder"],
+            serde_json::json!(["codex", "claude", "future-app"])
+        );
+        let default = serde_json::to_value(AppSettings::default()).expect("serialize default");
+        assert!(default.get("appOrder").is_none());
     }
 
     #[test]
