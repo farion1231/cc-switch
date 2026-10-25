@@ -881,7 +881,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                 void settingsApi.openExternal(url)
                               }
                             >
-                              <div className="flex min-w-0 items-center gap-1.5">
+                              <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
                                 <span
                                   title={displayName}
                                   className="min-w-0 truncate text-body font-medium"
@@ -896,25 +896,8 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                     {t("mcpPage.notEnabled")}
                                   </NeutralBadge>
                                 )}
-                                {tags.length > 0 && (
-                                  <div className="hidden sm:flex items-center gap-1 min-w-0 shrink">
-                                    {tags.slice(0, 2).map((tag) => (
-                                      <NeutralBadge
-                                        key={tag}
-                                        className="max-w-[80px] truncate font-normal text-fg-3"
-                                      >
-                                        #{tag}
-                                      </NeutralBadge>
-                                    ))}
-                                    {tags.length > 2 && (
-                                      <NeutralBadge className="font-normal text-fg-3">
-                                        +{tags.length - 2}
-                                      </NeutralBadge>
-                                    )}
-                                  </div>
-                                )}
                                 {(homepageUrl || docsUrl) && (
-                                  <div className="ms-0.5 flex shrink-0 items-center gap-1">
+                                  <div className="flex shrink-0 items-center gap-0.5">
                                     {homepageUrl && (
                                       <HoverTip
                                         content={t("mcpPage.openHomepage")}
@@ -954,6 +937,23 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                           />
                                         </button>
                                       </HoverTip>
+                                    )}
+                                  </div>
+                                )}
+                                {tags.length > 0 && (
+                                  <div className="hidden sm:flex items-center gap-1 min-w-0 shrink overflow-hidden">
+                                    {tags.slice(0, 2).map((tag) => (
+                                      <NeutralBadge
+                                        key={tag}
+                                        className="max-w-[80px] truncate font-normal text-fg-3"
+                                      >
+                                        #{tag}
+                                      </NeutralBadge>
+                                    ))}
+                                    {tags.length > 2 && (
+                                      <NeutralBadge className="font-normal text-fg-3">
+                                        +{tags.length - 2}
+                                      </NeutralBadge>
                                     )}
                                   </div>
                                 )}

@@ -92,7 +92,7 @@ export function McpHoverCard({
       <PopoverPrimitive.Anchor asChild>
         <div
           data-testid={`mcp-hover-trigger-${id}`}
-          className="flex min-w-0 flex-1 flex-col pe-3"
+          className="flex min-w-0 flex-1 flex-col pe-3 overflow-hidden"
           onPointerEnter={handlePointerEnter}
           onPointerLeave={handlePointerLeave}
           onClick={() => {
