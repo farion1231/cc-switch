@@ -220,6 +220,7 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 "codex" => &[("/Caskroom/", "codex")],
                 "gemini" => &[("/Cellar/", "gemini-cli")],
                 "opencode" => &[("/Cellar/", "opencode")],
+                "agy" => &[("/Caskroom/", "antigravity-cli")],
                 _ => &[],
             };
             if !owners.contains(&(marker, token)) {
@@ -415,6 +416,13 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
             normalized.ends_with("/.opencode/bin/opencode")
                 || normalized.ends_with("/.opencode/bin/opencode.exe")
         }
+        // Official install.sh / install.ps1 targets. A cask binary the self-updater
+        // replaced in place sits in Homebrew's bin and stays a manual uninstall.
+        "agy" => {
+            normalized.ends_with("/.local/bin/agy") || normalized.ends_with("/agy/bin/agy.exe")
+        }
+        // Official install.sh (`~/.local/bin`) / install.ps1 (`%LOCALAPPDATA%\omp`) targets.
+        "omp" => normalized.ends_with("/.local/bin/omp") || normalized.ends_with("/omp/omp.exe"),
         _ => false,
     }
 }
@@ -972,6 +980,20 @@ mod tests {
     }
 
     #[test]
+    fn omp_installer_binary_is_a_known_native_install() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let binary = bin.join("omp");
+        std::fs::write(&binary, [0xcf, 0xfa, 0xed, 0xfe]).unwrap();
+        assert!(known_native_install("omp", &installation(&binary)));
+        // A same-named script elsewhere is never claimed.
+        let other = temp.path().join("omp");
+        std::fs::write(&other, "#!/usr/bin/env bun\n").unwrap();
+        assert!(!known_native_install("omp", &installation(&other)));
+    }
+
+    #[test]
     fn nearby_npm_package_does_not_claim_an_unrelated_executable() {
         let temp = tempfile::tempdir().unwrap();
         let package = temp.path().join("node_modules/@openai/codex");
@@ -1411,6 +1433,7 @@ mod tests {
             ("codex", "Caskroom", "codex", "--cask"),
             ("gemini", "Cellar", "gemini-cli", "--formula"),
             ("opencode", "Cellar", "opencode", "--formula"),
+            ("agy", "Caskroom", "antigravity-cli", "--cask"),
         ] {
             let real = format!("{prefix}/{location}/{token}/1/bin/{tool}");
             let command = brew_uninstall_command(tool, &real).unwrap().unwrap();
@@ -1527,6 +1550,8 @@ mod tests {
                 ".codex/packages/standalone/releases/0.150.0-linux/codex",
             ),
             ("opencode", ".opencode/bin/opencode"),
+            ("agy", ".local/bin/agy"),
+            ("agy", "AppData/Local/agy/bin/agy.exe"),
         ] {
             let path = temp.path().join(binary);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();

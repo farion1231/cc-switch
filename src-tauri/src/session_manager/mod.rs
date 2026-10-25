@@ -13,7 +13,9 @@ use std::time::Instant;
 
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
-use providers::{claude, codex, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi};
+use providers::{
+    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,7 +58,7 @@ pub struct DeleteSessionOutcome {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let (r1, r2, r3, r4, r5, r6, r7, r8) = std::thread::scope(|s| {
+    let (r1, r2, r3, r4, r5, r6, r7, r8, r9) = std::thread::scope(|s| {
         let h1 = s.spawn(codex::scan_sessions);
         let h2 = s.spawn(claude::scan_sessions);
         let h3 = s.spawn(opencode::scan_sessions);
@@ -65,6 +67,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         let h6 = s.spawn(hermes::scan_sessions);
         let h7 = s.spawn(grokbuild::scan_sessions);
         let h8 = s.spawn(pi::scan_sessions);
+        let h9 = s.spawn(omp::scan_sessions);
         (
             h1.join().unwrap_or_default(),
             h2.join().unwrap_or_default(),
@@ -74,6 +77,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             h6.join().unwrap_or_default(),
             h7.join().unwrap_or_default(),
             h8.join().unwrap_or_default(),
+            h9.join().unwrap_or_default(),
         )
     });
 
@@ -86,7 +90,10 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r6);
     sessions.extend(r7);
     sessions.extend(r8);
+    sessions.extend(r9);
     sessions.extend(mcode::scan_sessions());
+    sessions.extend(kimi::scan_sessions());
+    sessions.extend(agy::scan_sessions());
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
@@ -116,9 +123,12 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "opencode" => opencode::load_messages(path),
         "openclaw" => openclaw::load_messages(path),
         "gemini" => gemini::load_messages(path),
+        "agy" => agy::load_messages(path),
         "grokbuild" => grokbuild::load_messages(path),
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
+        "kimi" => kimi::load_messages(path),
+        "omp" => omp::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -166,6 +176,18 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    if provider_id == "kimi" {
+        return Err(
+            "Delete this session in Kimi Code to keep its session index and history consistent"
+                .into(),
+        );
+    }
+    if provider_id == "agy" {
+        return Err(
+            "Delete this session in Antigravity to keep its binary store and summaries consistent"
+                .into(),
+        );
+    }
     if provider_id == "mcode" {
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
@@ -212,6 +234,7 @@ fn delete_session_with_roots(
         "grokbuild" => grokbuild::delete_session(&validated_root, &validated_source, session_id),
         "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
+        "omp" => omp::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -226,6 +249,9 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "grokbuild" => grokbuild::session_roots(),
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
+        "kimi" => kimi::session_roots(),
+        "agy" => agy::session_roots(),
+        "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

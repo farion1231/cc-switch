@@ -19,6 +19,95 @@ fn settings_path(home: &Path) -> PathBuf {
     home.join(".cc-switch").join("settings.json")
 }
 
+#[test]
+fn agy_missing_native_config_is_not_imported_or_created_by_full_sync() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let shell_files = [
+        ".zshenv",
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".profile",
+    ];
+    for name in shell_files {
+        std::fs::write(home.join(name), "# existing user shell configuration\n").unwrap();
+    }
+    let state = create_test_state().unwrap();
+    let error = import_default_config_test_hook(&state, AppType::Agy).unwrap_err();
+    assert!(matches!(
+        error,
+        AppError::Localized {
+            key: "agy.config.missing",
+            ..
+        }
+    ));
+    assert!(state.db.get_all_providers("agy").unwrap().is_empty());
+    assert!(cc_switch_lib::mode::current::provider_for(
+        &state.db,
+        &AppType::Agy,
+        cc_switch_lib::mode::current::Purpose::Direct
+    )
+    .unwrap()
+    .is_none());
+    ProviderService::sync_current_to_live(&state).unwrap();
+    assert!(!home.join(".gemini/antigravity-cli").exists());
+    for name in shell_files {
+        assert_eq!(
+            std::fs::read_to_string(home.join(name)).unwrap(),
+            "# existing user shell configuration\n"
+        );
+    }
+}
+
+#[test]
+fn agy_import_skips_empty_settings_but_keeps_model_configs() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    // Keys never live in agy's files; an `env` file from an earlier test build
+    // is not an import source.
+    for (file, content, should_import, has_key) in [
+        ("settings.json", "{}", false, false),
+        ("settings.json", r#"{"model":"Gemini Test"}"#, true, false),
+        ("env", "GEMINI_API_KEY='fixture'\n", false, false),
+    ] {
+        reset_test_fs();
+        let root = ensure_test_home().join(".gemini/antigravity-cli");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(file), content).unwrap();
+        let state = create_test_state().unwrap();
+        let imported = match import_default_config_test_hook(&state, AppType::Agy) {
+            Ok(imported) => imported,
+            // Without settings.json there is nothing to import.
+            Err(AppError::Localized {
+                key: "agy.config.missing",
+                ..
+            }) if file == "env" => false,
+            Err(error) => panic!("{error}"),
+        };
+        assert_eq!(imported, should_import);
+        let provider = state.db.get_provider_by_id("default", "agy").unwrap();
+        assert_eq!(provider.is_some(), should_import);
+        if let Some(provider) = provider {
+            assert_eq!(
+                provider.settings_config["env"]["GEMINI_API_KEY"].is_string(),
+                has_key
+            );
+            assert_eq!(provider.category.as_deref(), Some("official"));
+        } else {
+            assert!(cc_switch_lib::mode::current::provider_for(
+                &state.db,
+                &AppType::Agy,
+                cc_switch_lib::mode::current::Purpose::Direct
+            )
+            .unwrap()
+            .is_none());
+        }
+        assert_eq!(std::fs::read_to_string(root.join(file)).unwrap(), content);
+        assert!(!root.join("bin").exists());
+    }
+}
+
 fn grokbuild_config(name: &str, endpoint: &str, api_key: &str) -> String {
     format!(
         r#"[models]
@@ -447,6 +536,7 @@ command = "say"
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true, // 启用 Codex
                 gemini: false,
@@ -454,7 +544,9 @@ command = "say"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,

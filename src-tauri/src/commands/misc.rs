@@ -170,8 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 9] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
+const VALID_TOOLS: [&str; 12] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
+    "agy", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -394,7 +395,7 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
     // GUI App 继承的是 launchd 的窄 PATH，而锚定探测用的是登录 shell —— 见
     // `login_shell_path` doc。命令自身用绝对路径不受影响，但工具**内部** spawn 的
     // npm/node 等子进程、以及 install 链里裸的 npm fallback 都需要真实 PATH。
-    if let Some(login_path) = login_shell_path() {
+    if let Some(login_path) = login_shell_path(None) {
         let inherited = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", merge_path_segments(&login_path, &inherited));
     }
@@ -625,7 +626,10 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "omp" => "Oh My Pi",
         "mcode" => "MiniMax Code",
+        "kimi" => "Kimi Code",
+        "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
 }
@@ -663,6 +667,26 @@ const HERMES_INSTALL_UNIX: &str =
 const HERMES_UPDATE_UNIX: &str =
     "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
+// The npm distribution needs Node >=22.19. The native installer bundles its runtime.
+const KIMI_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
+
+// Oh My Pi 的 npm 包只能由 bun 运行（入口是 `#!/usr/bin/env bun` 的 TypeScript）。官方
+// installer 有匹配架构的 bun 时走 bun，否则下载并校验预编译二进制到 `~/.local/bin`，
+// 所以新装不要求本机先有 bun。
+const OMP_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://omp.sh/install -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const OMP_INSTALL_WINDOWS_SCRIPT: &str = "irm https://omp.sh/install.ps1 | iex";
+
+/// Antigravity CLI 官方 installer：把原生二进制放进 `~/.local/bin`，再跑 `agy install`
+/// 把该目录加进 shell 配置。目标处已有 `agy` 时它只提示已安装、exit 0，所以只用于新装；
+/// 升级一律走 `agy update`（实测非 TTY 下照常检查并安装）。
+const AGY_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://antigravity.google/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+
 #[cfg(target_os = "windows")]
 const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
@@ -671,6 +695,8 @@ const GROK_INSTALL_WINDOWS_SCRIPT: &str = "irm https://x.ai/cli/install.ps1 | ie
 #[cfg(target_os = "windows")]
 const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://filecdn.minimax.chat/public/install.ps1 | iex";
+#[cfg(target_os = "windows")]
+const AGY_INSTALL_WINDOWS_SCRIPT: &str = "irm https://antigravity.google/cli/install.ps1 | iex";
 #[cfg(target_os = "windows")]
 const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
 
@@ -702,10 +728,34 @@ fn grok_install_windows_command() -> String {
 }
 
 #[cfg(target_os = "windows")]
+fn agy_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(AGY_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
 fn mcode_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn kimi_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(KIMI_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn omp_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(OMP_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -840,6 +890,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
+        "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -869,14 +920,18 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
     }
 }
 
+// `omp update` 自己识别 brew / mise / nix / bun / npm / 预编译二进制并照原渠道升级，
+// 非 TTY 下不询问，失败退出码非 0；Nix 安装它只打印提示就 exit 0，见
+// `anchored_command_from_paths` 的 Nix 门控。
 // MiniMax Code 虽有 `mcode update`，却刻意不列在这里：它在 stdin/stdout 非 TTY 时只打印
 // "No interactive confirmation is available" 就 exit 0、并不安装。静默 lifecycle 的
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "grok" | "hermes" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" | "agy" | "omp" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
+        "kimi" => Some("upgrade --yes"),
         _ => None,
     }
 }
@@ -906,6 +961,24 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
+    if matches!(tool, "kimi" | "omp") {
+        let install = match shell {
+            LifecycleCommandShell::Posix if tool == "kimi" => KIMI_INSTALL_UNIX.to_string(),
+            LifecycleCommandShell::Posix => OMP_INSTALL_UNIX.to_string(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch if tool == "kimi" => kimi_install_windows_command(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch => omp_install_windows_command(),
+            #[cfg(not(target_os = "windows"))]
+            LifecycleCommandShell::WindowsBatch => return None,
+        };
+        return Some(match action {
+            ToolLifecycleAction::Install => install,
+            ToolLifecycleAction::Update => {
+                chain_update_commands(bare_official_update_command(tool)?, install, shell)
+            }
+        });
+    }
     // xAI's and MiniMax's primary Windows distribution is the official PowerShell
     // installer. Keep npm as the network/policy fallback, matching the POSIX installer chain.
     #[cfg(target_os = "windows")]
@@ -924,6 +997,22 @@ fn tool_action_shell_command_for_shell(
                 shell,
             ));
         }
+    }
+
+    // 没有 npm 包。重跑 installer 不会升级（已安装就直接退出），升级失败也不拿它兜底。
+    if tool == "agy" {
+        return Some(match (action, shell) {
+            (ToolLifecycleAction::Install, LifecycleCommandShell::Posix) => {
+                AGY_INSTALL_UNIX.to_string()
+            }
+            #[cfg(target_os = "windows")]
+            (ToolLifecycleAction::Install, LifecycleCommandShell::WindowsBatch) => {
+                agy_install_windows_command()
+            }
+            #[cfg(not(target_os = "windows"))]
+            (ToolLifecycleAction::Install, LifecycleCommandShell::WindowsBatch) => return None,
+            (ToolLifecycleAction::Update, _) => "agy update".to_string(),
+        });
     }
 
     if tool == "hermes" {
@@ -1184,6 +1273,9 @@ async fn get_single_tool_version_impl(
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),
+        // 纯粹没装不带 error：版本列已显示「未安装」，再显示一行英文原因是重复的。
+        // WSL 的 shell 参数非法、执行失败等其它原因仍照常上报。
+        ShellProbe::NotFound(e) if e.ends_with(NOT_INSTALLED) => (None, None, false),
         ShellProbe::NotFound(e) => (None, Some(e), false),
     };
 
@@ -1212,6 +1304,9 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
+        "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
+        "agy" => fetch_agy_latest_version(&client).await,
+        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
     };
 
@@ -1416,6 +1511,36 @@ async fn fetch_npm_latest_for_tool(
 const LATEST_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Helper function to fetch latest version from GitHub releases
+/// Antigravity CLI 的 installer 和自升级共用的发布清单：`manifests/<平台>.json` 的 `version`。
+async fn fetch_agy_latest_version(client: &reqwest::Client) -> Option<String> {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        "linux" => "linux",
+        "windows" => "windows",
+        _ => return None,
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => return None,
+    };
+    let url = format!(
+        "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/{os}_{arch}.json"
+    );
+    let resp = client
+        .get(&url)
+        .timeout(LATEST_PROBE_TIMEOUT)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let json = resp.json::<serde_json::Value>().await.ok()?;
+    json.get("version")
+        .and_then(|v| v.as_str())
+        .and_then(release_display_version)
+}
+
 async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Option<String> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let resp = client
@@ -1605,7 +1730,7 @@ enum ShellProbe {
 /// 只执行已定位到的真实可执行文件。
 #[cfg(not(target_os = "windows"))]
 fn try_get_version(tool: &str) -> ShellProbe {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
     let output = {
         let shell = std::env::var("SHELL")
@@ -1613,10 +1738,21 @@ fn try_get_version(tool: &str) -> ShellProbe {
             .filter(|s| is_valid_shell(s))
             .unwrap_or_else(|| "sh".to_string());
         let flag = default_flag_for_shell(&shell);
-        Command::new(shell)
-            .arg(flag)
+        let mut cmd = Command::new(shell);
+        cmd.arg(flag)
             .arg(format!("{tool} --version"))
-            .output()
+            // 与 `resolve_path_default` 相同：交互式 shell（-lic）不能读到继承来的
+            // stdin，也不能因持有控制终端被 SIGTTIN 停住（从终端启动时整个应用卡死）。
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_child_process_group(&mut cmd);
+        cmd.spawn().map_err(|e| e.to_string()).and_then(|child| {
+            wait_child_output(
+                child,
+                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+            )
+        })
     };
 
     match output {
@@ -1749,17 +1885,16 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
 #[cfg_attr(windows, allow(dead_code))]
-fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
-    let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
+fn build_provider_command_line(shell: &str, launch_command: &str, cwd: Option<&Path>) -> String {
     let command = cwd
         .map(|dir| {
             format!(
                 "cd {} && {}",
                 shell_single_quote(&dir.to_string_lossy()),
-                claude_command
+                launch_command
             )
         })
-        .unwrap_or(claude_command);
+        .unwrap_or_else(|| launch_command.to_string());
 
     format!(
         "{} {} {}",
@@ -2376,6 +2511,13 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     // 常见的安装路径（原生安装优先）
     // Preserve search priority without scanning all previous paths for every insertion.
     let mut search_paths = IndexSet::new();
+    if tool == "kimi" {
+        let install_dir = std::env::var_os("KIMI_INSTALL_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".kimi-code"));
+        push_unique_path(&mut search_paths, install_dir.join("bin"));
+    }
     if tool == "grok" {
         let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
         for path in extra_paths {
@@ -2386,6 +2528,15 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         let extra_paths = mcode_extra_search_paths(&home, std::env::var_os("MCODE_INSTALL_DIR"));
         for path in extra_paths {
             push_unique_path(&mut search_paths, path);
+        }
+    }
+    if tool == "omp" {
+        // A Bun global install (`bun install -g @oh-my-pi/pi-coding-agent`) puts
+        // the launcher in Bun's global bin, which is not on the PATH a GUI process
+        // inherits — same reason OpenCode scans it. The official installer's
+        // prebuilt binary (`~/.local/bin`) and Homebrew are covered below.
+        if !home.as_os_str().is_empty() {
+            push_unique_path(&mut search_paths, home.join(".bun").join("bin"));
         }
     }
     if !home.as_os_str().is_empty() {
@@ -2459,6 +2610,10 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
                     &mut search_paths,
                     local_data.join("Programs").join("claude"),
                 );
+            }
+            if tool == "agy" {
+                // Antigravity CLI official install.ps1 location.
+                push_unique_path(&mut search_paths, local_data.join("agy").join("bin"));
             }
         }
         if let Some(appdata) = dirs::data_dir() {
@@ -2867,7 +3022,8 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 }
 
 /// 用与 `resolve_path_default` 相同的登录 shell 解析用户的真实 PATH，
-/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本。
+/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本，也供
+/// `run_detected_tool_command_with_timeout` 注入给运行时调用的 CLI。
 ///
 /// **要解决的不对称**：探测阶段（`try_get_version` / `resolve_path_default`）跑的是
 /// `$SHELL -lic`，会读 `.zshrc`/`.zprofile`，看得到 nvm / homebrew / volta；而执行阶段
@@ -2887,20 +3043,27 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 /// 任何 shell 下格式都正确。写绝对路径又绕过了 alias / function / PATH 三重不确定性
 /// （交互式 shell 会加载用户 alias）。
 ///
-/// 解析不到时返回 `None`，调用方保持原有行为（不注入），不引入新的失败模式。
+/// 解析不到（含超过 `deadline`）时返回 `None`，调用方保持原有行为（不注入），
+/// 不引入新的失败模式。
 #[cfg(not(target_os = "windows"))]
-fn login_shell_path() -> Option<String> {
-    use std::process::Command;
+fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
+    use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let out = Command::new(shell)
-        .arg(flag)
+    let mut cmd = Command::new(shell);
+    cmd.arg(flag)
         .arg("/usr/bin/env")
-        .output()
-        .ok()?;
+        // 与 `resolve_path_default` 相同：交互式 rc 不能读到继承来的 stdin，
+        // 也不能因持有控制终端被作业控制停住。
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_child_process_group(&mut cmd);
+    let child = cmd.spawn().ok()?;
+    let out = wait_child_output(child, deadline).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -3165,6 +3328,8 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
+        "kimi" => Some("@moonshot-ai/kimi-code"),
+        "omp" => Some("@oh-my-pi/pi-coding-agent"),
         _ => None,
     }
 }
@@ -3539,7 +3704,7 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw")
+            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi" | "omp")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -3548,7 +3713,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw"
+                "claude" | "openclaw" | "kimi" | "omp"
             )
         }
     }
@@ -3629,7 +3794,12 @@ fn package_manager_anchored_command_from_paths(
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
     let pkg = npm_package_for(tool)?;
-    match infer_install_source(Path::new(bin_path)) {
+    let source = infer_install_source(Path::new(bin_path));
+    // omp 的 npm 包只能由 bun 运行：除 bun 外的 node 管理器装不出能跑的 omp。
+    if tool == "omp" && source != "bun" {
+        return None;
+    }
+    match source {
         "volta" => {
             let volta = sibling_bin(bin_path, "volta")?;
             return Some(format!("{} install {pkg}", quote_path_if_spaced(&volta)));
@@ -3690,7 +3860,8 @@ fn package_manager_anchored_command_from_paths(
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
     let real_lower = real_target.to_ascii_lowercase();
 
-    if tool == "hermes" {
+    // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
+    if tool == "hermes" || tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
     }
     if tool == "claude"
@@ -3713,6 +3884,10 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         if let Some(install) = codex_standalone_install(bin_path, real_target) {
             return Some(codex_installer_update_command(&install));
         }
+    }
+    // Nix 安装 `omp update` 只提示去改 flake 就 exit 0，执行它会报假成功。
+    if tool == "omp" && real_lower.starts_with("/nix/store/") {
+        return None;
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path, real_target);
     if is_brew_managed_path(real_target) {
@@ -3743,6 +3918,10 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
 
 #[cfg(target_os = "windows")]
 fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Option<String> {
+    // omp 的 npm 包只能由 bun 运行，这里的 npm / Volta / pnpm 都装不出能跑的 omp。
+    if tool == "omp" {
+        return None;
+    }
     let pkg = npm_package_for(tool)?;
 
     match infer_install_source(Path::new(bin_path)) {
@@ -3803,7 +3982,8 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 /// 才返 None 让上游兜回静态命令、`anchored=false`。
 #[cfg(target_os = "windows")]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
-    if tool == "hermes" {
+    // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
+    if tool == "hermes" || tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
     }
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
@@ -4093,10 +4273,20 @@ pub(crate) fn run_detected_tool_command_with_timeout(
         .ok_or_else(|| format!("Invalid {tool} executable path"))?;
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
+    // GUI 启动时继承的是 launchd 的窄 PATH（/usr/bin:/bin:/usr/sbin:/sbin）。npm 装的 CLI
+    // 是 `#!/usr/bin/env node` 脚本，node 常不在工具自己的目录里（如 codex 在
+    // /opt/homebrew/bin、node 在 /usr/local/bin），只补工具目录会 exit 127（#8653）。
+    // 与安装/升级同样补上登录 shell 的 PATH。
     #[cfg(not(target_os = "windows"))]
-    let current_path = std::env::var_os("PATH")
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let current_path = {
+        let inherited = std::env::var_os("PATH")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match login_shell_path(deadline) {
+            Some(login_path) => merge_path_segments(&login_path, &inherited),
+            None => inherited,
+        }
+    };
 
     #[cfg(target_os = "windows")]
     {
@@ -4459,6 +4649,9 @@ fn posix_install_command_for(tool: &str) -> String {
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        "kimi" => KIMI_INSTALL_UNIX.to_string(),
+        "omp" => OMP_INSTALL_UNIX.to_string(),
+        "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }
@@ -4588,10 +4781,41 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
         "pi" => crate::settings::get_pi_override_dir(),
+        "omp" => crate::settings::get_omp_override_dir(),
         _ => None,
     }?;
 
     wsl_distro_from_path(&override_dir)
+}
+
+/// `hermes dashboard` 的启动命令行（交给 `launch_terminal_running`）。
+///
+/// Windows 上 Hermes 配置目录指向 WSL（UNC 路径）时，要进对应发行版里启动，
+/// 否则跑起来的是 Windows 本机的 hermes（或报找不到命令），#8689。
+/// Web UI 探测的 `127.0.0.1` 端口由 WSL2 的 localhost 转发到发行版里，不用改。
+pub(crate) fn hermes_dashboard_command_line() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(distro) = wsl_distro_for_tool("hermes") {
+            return wsl_hermes_dashboard_line(&distro);
+        }
+    }
+    Ok("hermes dashboard".to_string())
+}
+
+/// 用发行版里用户自己的登录交互 shell（`$SHELL -lic`）跑，PATH 才带得上
+/// `~/.local/bin` 这类在 `.bashrc` / `.profile` 里加的目录。只用一个 flag、
+/// 不像版本探测那样失败后换 flag 重试：dashboard 被 Ctrl+C 结束也是非零退出，
+/// 重试会把它再拉起来。
+#[cfg(target_os = "windows")]
+fn wsl_hermes_dashboard_line(distro: &str) -> Result<String, String> {
+    if !is_valid_wsl_distro_name(distro) {
+        return Err(format!("Invalid WSL distro name: {distro}"));
+    }
+    Ok(format!(
+        "wsl.exe -d {distro} -- sh -c {}",
+        windows_cmd_double_quote_arg(&wsl_auto_shell_command("hermes dashboard", Some("-lic")))
+    ))
 }
 
 /// 从 UNC 路径中提取 WSL 发行版名称
@@ -4627,6 +4851,7 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
 #[tauri::command]
 pub async fn open_provider_terminal(
     state: State<'_, crate::store::AppState>,
+    agy_accounts: State<'_, crate::commands::AgyAccountState>,
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
@@ -4642,12 +4867,18 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
-    // 从提供商配置中提取环境变量
-    let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
+    let launch = match app_type {
+        AppType::Agy => {
+            switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
+            agy_terminal_launch(provider)?
+        }
+        _ => {
+            let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
+            claude_terminal_launch(&env_vars, &providerId)?
+        }
+    };
 
-    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+    launch_provider_terminal(&launch, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
@@ -4728,46 +4959,369 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     Ok(Some(resolved))
 }
 
-/// 创建临时配置文件并启动 claude 终端
-/// 使用 --settings 参数传入提供商特定的 API 配置
-fn launch_terminal_with_env(
-    env_vars: Vec<(String, String)>,
+/// 在终端里启动的一次供应商会话：跑什么命令、只给它哪些环境变量、退出后删哪些临时
+/// 文件。打开终端那一层（各家终端的 AppleScript、Linux 候选列表、Windows start）对所有
+/// 应用共用，只有这里按应用不同。
+struct ProviderLaunch {
+    /// 启动前打印的说明
+    title: &'static str,
+    /// 说明下面打印的路径（只在 macOS / Linux 打印）
+    #[cfg_attr(windows, allow(dead_code))]
+    detail: Option<PathBuf>,
+    program: &'static str,
+    /// macOS / Linux 的参数，交给用户 shell 执行前逐个加引号
+    #[cfg_attr(windows, allow(dead_code))]
+    args: Vec<String>,
+    /// Windows .bat 里执行的命令
+    #[cfg_attr(not(windows), allow(dead_code))]
+    batch_command: String,
+    /// 只给这一个进程的环境变量；`None` 表示要清掉（用户 rc 里可能 export 过同名变量）。
+    /// macOS / Linux 写进 0600 的临时文件、读完立即删除；Windows 写进 .bat 的 `setlocal` 段。
+    env: Vec<(&'static str, Option<String>)>,
+    /// 只在 .bat 里设置、给 `batch_command` 引用的变量（比如可能含非 ASCII 的路径）
+    #[cfg_attr(not(windows), allow(dead_code))]
+    batch_vars: Vec<(&'static str, String)>,
+    /// 退出时删除的临时文件，都在系统临时目录里
+    cleanup: Vec<PathBuf>,
+}
+
+/// Claude Code：把卡上的 env 写进临时 settings 文件，`claude --settings <文件>` 启动。
+fn claude_terminal_launch(
+    env_vars: &[(String, String)],
     provider_id: &str,
-    cwd: Option<&Path>,
+) -> Result<ProviderLaunch, String> {
+    let config_file = unique_temp_path(&format!("claude_{provider_id}"), "json");
+    write_claude_config(&config_file, env_vars)?;
+    let config_name = config_file
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(ProviderLaunch {
+        title: "Using provider-specific claude config:",
+        detail: Some(config_file.clone()),
+        program: "claude",
+        args: vec![
+            "--settings".to_string(),
+            config_file.to_string_lossy().into_owned(),
+        ],
+        // 配置文件和 .bat 同在 temp_dir（%TEMP% 含用户名），用 %~dp0 引用：目录由 cmd
+        // 运行时展开，不进 .bat 字节，非 ASCII 用户名下也不会乱码（#8034）。
+        batch_command: format!(
+            "claude --settings \"%~dp0{}\"",
+            escape_windows_batch_value(&config_name)
+        ),
+        env: Vec::new(),
+        batch_vars: Vec::new(),
+        cleanup: vec![config_file],
+    })
+}
+
+/// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着
+/// agy 当前的登录走。不能切号的平台（目前除 macOS 外）忽略绑定，照常打开。
+async fn switch_agy_to_bound_account(
+    accounts: &crate::services::agy_account::AgyAccountManager,
+    provider: &crate::provider::Provider,
 ) -> Result<(), String> {
-    let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
-
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
-
-    #[cfg(target_os = "macos")]
-    {
-        launch_macos_terminal(&config_file, cwd)?;
-        Ok(())
+    if !crate::services::provider::agy_direct::is_official(provider) {
+        return Ok(());
     }
-
-    #[cfg(target_os = "linux")]
+    let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("agy_oauth"))
+        .filter(|id| !id.trim().is_empty())
+    else {
+        return Ok(());
+    };
+    if !crate::services::agy_account::keychain::supported() {
+        log::info!("[AgyAccount] 这个平台不能切号，忽略卡片绑定的账号");
+        return Ok(());
+    }
+    if !accounts
+        .list()
+        .await
+        .iter()
+        .any(|account| account.id == account_id)
     {
-        launch_linux_terminal(&config_file, cwd)?;
-        Ok(())
+        return Err(crate::error::AppError::localized(
+            "agy.account.bound_missing",
+            format!(
+                "「{}」绑定的 Antigravity 账号不在这台电脑的授权中心里：请先在授权中心添加它，或编辑这张卡改选账号",
+                provider.name
+            ),
+            format!(
+                "The Antigravity account bound to \"{}\" is not in this computer's Auth Center. Add it there, or edit the card to choose another account.",
+                provider.name
+            ),
+        )
+        .to_string());
+    }
+    accounts
+        .switch_to(&account_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Antigravity CLI：官方登录卡跑 `agy`，卡上设了模型就加 `--model`（只对这次会话生效）；
+/// Key 卡用它的私有 `--gemini_dir`，Key 和地址只经环境变量传给这一个进程。
+fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderLaunch, String> {
+    let launch = crate::services::provider::agy_direct::terminal_launch(provider)
+        .map_err(|e| e.to_string())?;
+    let Some(dir) = launch.gemini_dir else {
+        let (args, batch_command, batch_vars) = match launch.model {
+            Some(model) => (
+                vec![format!("--model={model}")],
+                format!("agy \"--model=%{AGY_MODEL_BATCH_VAR}%\""),
+                vec![(AGY_MODEL_BATCH_VAR, model)],
+            ),
+            None => (Vec::new(), "agy".to_string(), Vec::new()),
+        };
+        return Ok(ProviderLaunch {
+            title: "Starting Antigravity CLI with your signed-in account",
+            detail: None,
+            program: "agy",
+            args,
+            batch_command,
+            env: launch.env,
+            batch_vars,
+            cleanup: Vec::new(),
+        });
+    };
+    Ok(ProviderLaunch {
+        title: "Using a private Antigravity profile for this provider:",
+        detail: Some(dir.clone()),
+        program: "agy",
+        args: vec![format!("--gemini_dir={}", dir.to_string_lossy())],
+        batch_command: format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\""),
+        env: launch.env,
+        batch_vars: vec![(AGY_DIR_BATCH_VAR, dir.to_string_lossy().into_owned())],
+        cleanup: Vec::new(),
+    })
+}
+
+/// 恢复 Antigravity 第三方 Key 模式的会话：和「打开终端」同样带私有目录和 Key，再接上
+/// `--conversation`。卡上已经没有 Key 时私有目录对不上，直接报错，不退回官方登录。
+pub(crate) fn open_agy_resume_terminal(
+    provider: &crate::provider::Provider,
+    conversation: &str,
+    cwd: Option<String>,
+) -> Result<(), String> {
+    let mut launch = agy_terminal_launch(provider)?;
+    // 只有 Key 卡有私有目录（启动前打印的那行路径）；官方卡的参数可能只有 `--model`。
+    if launch.detail.is_none() {
+        return Err(format!(
+            "「{}」已不再带 API Key，无法恢复它在私有目录里的会话",
+            provider.name
+        ));
+    }
+    let resume = format!("--conversation={conversation}");
+    launch.args.push(resume.clone());
+    launch.batch_command = format!("{} {resume}", launch.batch_command);
+    let cwd = resolve_launch_cwd(cwd)?;
+    launch_provider_terminal(&launch, cwd.as_deref()).map_err(|e| format!("启动终端失败: {e}"))
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const AGY_DIR_BATCH_VAR: &str = "CC_SWITCH_AGY_DIR";
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const AGY_MODEL_BATCH_VAR: &str = "CC_SWITCH_AGY_MODEL";
+
+/// macOS / Linux 的启动脚本里，环境变量先以这个前缀的名字读进来，再由 `env` 改名交给
+/// 程序：用户 shell 的 rc 文件在中间执行，直接用原名会被 rc 里的 export 覆盖。
+#[cfg_attr(windows, allow(dead_code))]
+const LAUNCH_ENV_PREFIX: &str = "CC_SWITCH_LAUNCH_ENV_";
+
+/// 同一进程里连开几个终端也不会撞名。
+fn unique_temp_path(stem: &str, ext: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or_default();
+    std::env::temp_dir().join(format!(
+        "{stem}_{}_{nanos:x}{}.{ext}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// 根据平台打开终端运行 `launch`。
+fn launch_provider_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Result<(), String> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let (script_file, env_file) = write_unix_launcher(launch, cwd)?;
+        #[cfg(target_os = "macos")]
+        let result = launch_macos_terminal(&script_file);
+        #[cfg(target_os = "linux")]
+        let result = launch_linux_terminal(&script_file);
+        if result.is_err() {
+            for file in launch.cleanup.iter().chain([&script_file, &env_file]) {
+                let _ = std::fs::remove_file(file);
+            }
+        }
+        result
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        Ok(())
+        let result = launch_windows_terminal(launch, cwd);
+        if result.is_err() {
+            for file in &launch.cleanup {
+                let _ = std::fs::remove_file(file);
+            }
+        }
+        result
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    Err("不支持的操作系统".to_string())
+    {
+        let _ = (launch, cwd);
+        Err("不支持的操作系统".to_string())
+    }
 }
 
-/// 写入 claude 配置文件
+/// shell 里的一个词：只含安全字符时原样写，否则加单引号。
+#[cfg_attr(windows, allow(dead_code))]
+fn shell_word(value: &str) -> String {
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '='));
+    if plain {
+        value.to_string()
+    } else {
+        shell_single_quote(value)
+    }
+}
+
+/// 交给用户 shell 执行的启动命令。有环境变量时经 `env` 设置或清除，值从启动脚本读进来的
+/// `CC_SWITCH_LAUNCH_ENV_<n>` 取，不出现在命令行里。
+#[cfg_attr(windows, allow(dead_code))]
+fn unix_launch_command(launch: &ProviderLaunch) -> String {
+    let mut words = Vec::new();
+    if !launch.env.is_empty() {
+        words.push("env".to_string());
+        for (index, (name, value)) in launch.env.iter().enumerate() {
+            // 中转用的变量也不留给程序。
+            words.push(format!("-u {LAUNCH_ENV_PREFIX}{index}"));
+            if value.is_none() {
+                words.push(format!("-u {name}"));
+            }
+        }
+        for (index, (name, value)) in launch.env.iter().enumerate() {
+            if value.is_some() {
+                words.push(format!("{name}=\"${LAUNCH_ENV_PREFIX}{index}\""));
+            }
+        }
+    }
+    words.push(launch.program.to_string());
+    words.extend(launch.args.iter().map(|arg| shell_word(arg)));
+    words.join(" ")
+}
+
+/// 0600 环境变量文件的内容，启动脚本 `.` 进来后立即删除。
+#[cfg_attr(windows, allow(dead_code))]
+fn unix_launch_env_file(launch: &ProviderLaunch) -> String {
+    launch
+        .env
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, value))| {
+            value
+                .as_ref()
+                .map(|value| format!("{LAUNCH_ENV_PREFIX}{index}={}\n", shell_single_quote(value)))
+        })
+        .collect()
+}
+
+/// 启动脚本：读进环境变量文件并删掉它，跑启动命令，删掉临时文件，最后换成用户的交互 shell。
+#[cfg_attr(windows, allow(dead_code))]
+fn build_unix_launcher_script(
+    launch: &ProviderLaunch,
+    shell: &str,
+    cwd: Option<&Path>,
+    script_file: &Path,
+    env_file: Option<&Path>,
+) -> String {
+    let mut temp_files: Vec<String> = launch
+        .cleanup
+        .iter()
+        .map(PathBuf::as_path)
+        .chain(env_file)
+        .map(|file| shell_single_quote(&file.to_string_lossy()))
+        .collect();
+    temp_files.push(shell_single_quote(&script_file.to_string_lossy()));
+    let remove_temp_files = format!("rm -f -- {}", temp_files.join(" "));
+
+    let mut script = String::from("#!/usr/bin/env sh\n");
+    script.push_str(&format!(
+        "trap {} EXIT\n",
+        shell_single_quote(&remove_temp_files)
+    ));
+    if let Some(env_file) = env_file {
+        let quoted = shell_single_quote(&env_file.to_string_lossy());
+        script.push_str(&format!("set -a\n. {quoted}\nset +a\nrm -f -- {quoted}\n"));
+    }
+    script.push_str(&format!("echo {}\n", shell_single_quote(launch.title)));
+    if let Some(detail) = &launch.detail {
+        script.push_str(&format!(
+            "echo {}\n",
+            shell_single_quote(&detail.to_string_lossy())
+        ));
+    }
+    script.push_str(&build_provider_command_line(
+        shell,
+        &unix_launch_command(launch),
+        cwd,
+    ));
+    script.push('\n');
+    // exec 不会触发 EXIT trap，所以在换成交互 shell 之前自己删。
+    script.push_str(&remove_temp_files);
+    script.push('\n');
+    let launch_vars: Vec<String> = (0..launch.env.len())
+        .map(|index| format!("{LAUNCH_ENV_PREFIX}{index}"))
+        .collect();
+    if !launch_vars.is_empty() {
+        script.push_str(&format!("unset {}\n", launch_vars.join(" ")));
+    }
+    script.push_str(&build_final_shell_cd_command(shell, cwd));
+    script.push_str(&build_exec_line(shell, cwd));
+    script.push('\n');
+    script
+}
+
+/// 写好启动脚本（和需要时的 0600 环境变量文件），返回两者路径。
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn write_unix_launcher(
+    launch: &ProviderLaunch,
+    cwd: Option<&Path>,
+) -> Result<(PathBuf, PathBuf), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let shell = get_user_shell();
+    let script_file = unique_temp_path("cc_switch_launcher", "sh");
+    let env_file = unique_temp_path("cc_switch_launch_env", "sh");
+    let env_content = unix_launch_env_file(launch);
+    let has_env = !env_content.is_empty();
+    if has_env {
+        crate::config::atomic_write_private(&env_file, env_content.as_bytes())
+            .map_err(|e| format!("写入启动环境失败: {e}"))?;
+    }
+    let script_content = build_unix_launcher_script(
+        launch,
+        &shell,
+        cwd,
+        &script_file,
+        has_env.then_some(env_file.as_path()),
+    );
+    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
+    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    Ok((script_file, env_file))
+}
+
+/// 写入 claude 配置文件（含凭据，0600）
 fn write_claude_config(
     config_file: &std::path::Path,
     env_vars: &[(String, String)],
@@ -4784,49 +5338,16 @@ fn write_claude_config(
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
 
-    std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
+    crate::config::atomic_write_private(config_file, config_json.as_bytes())
+        .map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
+fn launch_macos_terminal(script_file: &std::path::Path) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
-
-    let shell = get_user_shell();
-    let exec_line = build_exec_line(&shell, cwd);
-    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
-
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    // Write the shell script to a temp file
-    // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    // Make script executable
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    let script_file = script_file.to_path_buf();
 
     // Try the preferred terminal first, fall back to Terminal.app if it fails
     // Note: Kitty doesn't need the -e flag, others do
@@ -5181,15 +5702,10 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
+fn launch_linux_terminal(script_file: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
 
     let preferred = crate::settings::get_preferred_terminal();
-
-    let shell = get_user_shell();
-    let exec_line = build_exec_line(&shell, cwd);
-    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
 
     // Default terminal list with their arguments
     let default_terminals = [
@@ -5202,33 +5718,6 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
         ("kitty", vec!["-e"]),
         ("ghostty", vec!["-e"]),
     ];
-
-    // Create temp script file
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
     // Build terminal list: preferred terminal first (if specified), then defaults
     let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
@@ -5279,9 +5768,6 @@ echo "{config_path}"
         }
     }
 
-    // Clean up on failure
-    let _ = std::fs::remove_file(&script_file);
-    let _ = std::fs::remove_file(config_file);
     Err(last_error)
 }
 
@@ -5298,42 +5784,39 @@ fn which_command(cmd: &str) -> bool {
 
 /// Windows: 根据用户首选终端启动
 #[cfg(target_os = "windows")]
-fn launch_windows_terminal(
-    temp_dir: &std::path::Path,
-    config_file: &std::path::Path,
-    cwd: Option<&Path>,
-) -> Result<(), String> {
+fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
-    let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    // 配置文件和 .bat 同在 temp_dir（%TEMP% 含用户名），用 %~dp0 引用：目录由 cmd
-    // 运行时展开，不进 .bat 字节，非 ASCII 用户名下也不会乱码（#8034）。
-    let config_name = config_file
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let config_path_for_batch = format!("%~dp0{}", escape_windows_batch_value(&config_name));
+    let bat_file = unique_temp_path("cc_switch_launcher", "bat");
     let (cwd_command, cwd_env) = build_windows_cwd_command(cwd);
-    let launch_env: Vec<(&str, &str)> = cwd_env
-        .as_deref()
-        .map(|value| (WINDOWS_CWD_ENV, value))
+    let mut launch_env: Vec<(String, String)> = cwd_env
+        .map(|value| (WINDOWS_CWD_ENV.to_string(), value))
         .into_iter()
         .collect();
+    let (set_lines, extra_env) = build_windows_launch_env(launch);
+    launch_env.extend(extra_env);
+    let launch_env: Vec<(&str, &str)> = launch_env
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    let cleanup: String = launch
+        .cleanup
+        .iter()
+        .filter_map(|file| file.file_name())
+        .map(|name| {
+            format!(
+                "del \"%~dp0{}\" >nul 2>&1\r\n",
+                escape_windows_batch_value(&name.to_string_lossy())
+            )
+        })
+        .collect();
 
+    // setlocal 段里设的变量（含 Key）在程序退出后随 endlocal 撤掉，不留在这个 cmd 会话里。
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo \"{}\"
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
-        cwd_command = cwd_command,
+        "@echo off\r\n{cwd_command}setlocal\r\n{set_lines}echo {title}\r\n{command}\r\nendlocal\r\n{cleanup}del \"%~f0\" >nul 2>&1\r\n",
+        title = escape_windows_batch_value(launch.title),
+        command = launch.batch_command,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -5378,6 +5861,40 @@ fn shell_single_quote(value: &str) -> String {
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn is_windows_unc_path(path: &str) -> bool {
     path.starts_with(r"\\")
+}
+
+/// .bat 里 `setlocal` 段的 `set` 行，以及要经启动进程环境传入的变量。纯 ASCII 的值直接
+/// 写进文件（`%` 双写）；含非 ASCII 的按 #8034 的办法经环境变量转一手，免得按代码页乱码。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_launch_env(launch: &ProviderLaunch) -> (String, Vec<(String, String)>) {
+    let mut lines = String::new();
+    let mut carried = Vec::new();
+    let entries = launch
+        .env
+        .iter()
+        .map(|(name, value)| (*name, value.clone()))
+        .chain(
+            launch
+                .batch_vars
+                .iter()
+                .map(|(name, value)| (*name, Some(value.clone()))),
+        );
+    for (index, (name, value)) in entries.enumerate() {
+        match value {
+            None => lines.push_str(&format!("set \"{name}=\"\r\n")),
+            Some(value) if value.is_ascii() => {
+                lines.push_str(&format!("set \"{name}={}\"\r\n", value.replace('%', "%%")))
+            }
+            Some(value) => {
+                let carrier = format!("CC_SWITCH_INTERNAL_ENV_{index}");
+                lines.push_str(&format!(
+                    "set \"{name}=%{carrier}%\"\r\nset \"{carrier}=\"\r\n"
+                ));
+                carried.push((carrier, value));
+            }
+        }
+    }
+    (lines, carried)
 }
 
 /// 非 ASCII 的项目目录经这个环境变量传给 Claude 启动 .bat。
@@ -5457,23 +5974,30 @@ fn windows_start_command(
 }
 
 /// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
+///
+/// stdio 指向 NUL、只等 `cmd` 的退出码，不能用 `output()` 捕获：`start` 打开的终端会
+/// 继承这里的 stdout/stderr 管道句柄，管道要等那个窗口和里面的进程全部退出才到 EOF，
+/// 调用就一直挂到用户关掉终端，界面也一直转圈（#6712）。启动失败仍能从退出码看出来。
 #[cfg(target_os = "windows")]
 fn run_windows_start_command_with_env(
     args: &[&str],
     terminal_name: &str,
     envs: &[(&str, &str)],
 ) -> Result<(), String> {
-    let output = windows_start_command(args, envs, &effective_path_string())
-        .output()
+    use std::process::Stdio;
+
+    let status = windows_start_command(args, envs, &effective_path_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
+    if !status.success() {
         return Err(format!(
-            "{} 启动失败 (exit code: {:?}): {}",
+            "{} 启动失败 (exit code: {:?})",
             terminal_name,
-            output.status.code(),
-            stderr
+            status.code()
         ));
     }
 
@@ -6147,26 +6671,194 @@ mod tests {
 
     #[test]
     fn test_build_provider_command_line_uses_user_shell_environment() {
+        let claude = format!(
+            "claude --settings {}",
+            shell_word("/tmp/claude config.json")
+        );
         assert_eq!(
-            build_provider_command_line("/bin/zsh", "/tmp/claude config.json", None),
+            build_provider_command_line("/bin/zsh", &claude, None),
             "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
         );
         assert_eq!(
-            build_provider_command_line(
-                "/bin/bash",
-                "/tmp/claude config.json",
-                Some(Path::new("/tmp/project"))
-            ),
+            build_provider_command_line("/bin/bash", &claude, Some(Path::new("/tmp/project"))),
             r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
         assert_eq!(
             build_provider_command_line(
                 "/bin/sh",
-                "/tmp/claude config.json",
+                &claude,
                 Some(Path::new("/tmp/project O'Brien"))
             ),
             r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
+    }
+
+    fn agy_key_launch() -> ProviderLaunch {
+        ProviderLaunch {
+            title: "Using a private Antigravity profile for this provider:",
+            detail: Some(PathBuf::from("/home/me/.cc-switch/agy/relay")),
+            program: "agy",
+            args: vec!["--gemini_dir=/home/me/.cc-switch/agy/relay".to_string()],
+            batch_command: format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\""),
+            env: vec![
+                ("GEMINI_API_KEY", Some("k'$(echo no)`x`%PATH%".to_string())),
+                ("GOOGLE_GEMINI_BASE_URL", None),
+            ],
+            batch_vars: vec![(
+                AGY_DIR_BATCH_VAR,
+                r"C:\Users\张三\.cc-switch\agy\relay".to_string(),
+            )],
+            cleanup: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn launch_command_keeps_secrets_out_of_the_command_line() {
+        let launch = agy_key_launch();
+        assert_eq!(
+            unix_launch_command(&launch),
+            "env -u CC_SWITCH_LAUNCH_ENV_0 -u CC_SWITCH_LAUNCH_ENV_1 -u GOOGLE_GEMINI_BASE_URL GEMINI_API_KEY=\"$CC_SWITCH_LAUNCH_ENV_0\" agy --gemini_dir=/home/me/.cc-switch/agy/relay"
+        );
+        assert_eq!(
+            unix_launch_env_file(&launch),
+            "CC_SWITCH_LAUNCH_ENV_0='k'\"'\"'$(echo no)`x`%PATH%'\n"
+        );
+        let plain = ProviderLaunch {
+            env: Vec::new(),
+            ..agy_key_launch()
+        };
+        assert_eq!(
+            unix_launch_command(&plain),
+            "agy --gemini_dir=/home/me/.cc-switch/agy/relay"
+        );
+        assert_eq!(unix_launch_env_file(&plain), "");
+    }
+
+    #[test]
+    fn agy_login_launch_picks_the_model_for_this_session_only() {
+        let mut row = crate::provider::Provider::with_id(
+            "login".into(),
+            "Google".into(),
+            serde_json::json!({"env":{},"config":{"model":{"name":"Gemini 3.1 Pro (High)"}}}),
+            None,
+        );
+        row.category = Some("official".into());
+        let launch = agy_terminal_launch(&row).unwrap();
+        assert!(launch.env.is_empty());
+        assert_eq!(launch.detail, None);
+        assert_eq!(
+            unix_launch_command(&launch),
+            "agy '--model=Gemini 3.1 Pro (High)'"
+        );
+        assert_eq!(
+            launch.batch_command,
+            format!("agy \"--model=%{AGY_MODEL_BATCH_VAR}%\"")
+        );
+        assert_eq!(
+            launch.batch_vars,
+            vec![(AGY_MODEL_BATCH_VAR, "Gemini 3.1 Pro (High)".to_string())]
+        );
+        // 带了 `--model` 的官方卡也没有私有目录，会话恢复不会把它当成 Key 卡（在开终端前就报错）。
+        assert!(open_agy_resume_terminal(&row, "abc", None).is_err());
+
+        row.settings_config = serde_json::json!({"env":{},"config":{}});
+        let launch = agy_terminal_launch(&row).unwrap();
+        assert_eq!(unix_launch_command(&launch), "agy");
+        assert_eq!(launch.batch_command, "agy");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_script_passes_env_past_rc_files_and_cleans_up() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        // A user rc that exports its own Gemini variables must not win.
+        std::fs::write(
+            home.join(".bashrc"),
+            "export GEMINI_API_KEY=from-rc\nexport GOOGLE_GEMINI_BASE_URL=https://rc.test\n",
+        )
+        .unwrap();
+        let out = tmp.path().join("out");
+        std::fs::write(
+            bin.join("agy"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"${{GEMINI_API_KEY-unset}}\" \"${{GOOGLE_GEMINI_BASE_URL-unset}}\" \"${{CC_SWITCH_LAUNCH_ENV_0-unset}}\" \"$@\" > '{}'\n",
+                out.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(bin.join("agy"), std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let launch = agy_key_launch();
+        let script = tmp.path().join("launcher.sh");
+        let env_file = tmp.path().join("env.sh");
+        std::fs::write(&env_file, unix_launch_env_file(&launch)).unwrap();
+        // Replace the final interactive shell with a no-op so the test returns.
+        let content =
+            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file))
+                .replace("exec '/bin/bash'", "exit 0 #");
+        std::fs::write(&script, content).unwrap();
+        let status = std::process::Command::new("sh")
+            .arg(&script)
+            .env("HOME", &home)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("GEMINI_API_KEY", "from-gui")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap(),
+            "k'$(echo no)`x`%PATH%\nunset\nunset\n--gemini_dir=/home/me/.cc-switch/agy/relay\n"
+        );
+        assert!(
+            !env_file.exists(),
+            "env file is removed right after reading"
+        );
+        assert!(!script.exists());
+    }
+
+    #[test]
+    fn windows_launch_env_scopes_values_and_carries_non_ascii_paths() {
+        let (lines, carried) = build_windows_launch_env(&agy_key_launch());
+        assert_eq!(
+            lines,
+            "set \"GEMINI_API_KEY=k'$(echo no)`x`%%PATH%%\"\r\n\
+             set \"GOOGLE_GEMINI_BASE_URL=\"\r\n\
+             set \"CC_SWITCH_AGY_DIR=%CC_SWITCH_INTERNAL_ENV_2%\"\r\n\
+             set \"CC_SWITCH_INTERNAL_ENV_2=\"\r\n"
+        );
+        assert_eq!(
+            carried,
+            vec![(
+                "CC_SWITCH_INTERNAL_ENV_2".to_string(),
+                r"C:\Users\张三\.cc-switch\agy\relay".to_string()
+            )]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_terminal_config_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let launch =
+            claude_terminal_launch(&[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())], "p").unwrap();
+        let file = &launch.cleanup[0];
+        assert_eq!(
+            std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            launch.args,
+            vec![
+                "--settings".to_string(),
+                file.to_string_lossy().into_owned()
+            ]
+        );
+        std::fs::remove_file(file).unwrap();
     }
 
     #[test]
@@ -6426,6 +7118,57 @@ mod tests {
     }
 
     #[test]
+    fn kimi_install_uses_bundled_runtime_instead_of_system_node() {
+        let posix = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(posix, KIMI_INSTALL_UNIX);
+        assert_eq!(posix_install_command_for("kimi"), posix);
+        assert!(!posix.contains("npm"));
+        let update = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Update,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(update, format!("kimi upgrade --yes || {posix}"));
+        assert!(!update.contains("npm"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn kimi_windows_install_is_noninteractive_and_has_no_npm_fallback() {
+        use base64::Engine as _;
+        let command = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::WindowsBatch,
+        )
+        .unwrap();
+        assert!(command.starts_with("powershell -NoProfile -NonInteractive "));
+        let encoded = command.split("-EncodedCommand ").nth(1).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let script = String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(script, KIMI_INSTALL_WINDOWS_SCRIPT);
+        assert!(!command.contains("npm"));
+        assert_eq!(
+            wsl_tool_action_shell_command("kimi", ToolLifecycleAction::Install).as_deref(),
+            Some(KIMI_INSTALL_UNIX)
+        );
+    }
+
+    #[test]
     fn pi_lifecycle_metadata_matches_pinned_distribution() {
         let requested = vec!["unsupported".to_string(), "pi".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["pi"]);
@@ -6441,6 +7184,35 @@ mod tests {
         // The verified distribution exposes `pi --version`, but no updater
         // contract is assumed; upgrades stay on the package-manager path.
         assert_eq!(official_update_args("pi"), None);
+    }
+
+    #[test]
+    fn omp_lifecycle_metadata_names_the_tool_and_keeps_one_package() {
+        let requested = vec!["unsupported".to_string(), "omp".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["omp"]);
+        // Without this arm the user-facing strings read "Unknown at
+        // <path> was not installed by npm..." and the batch header prints
+        // `========== Unknown ==========`.
+        assert_eq!(tool_display_name("omp"), "Oh My Pi");
+        // The version check reads this package; npm cannot run it (the entry is
+        // a bun script), so there is no npm install command at all.
+        assert_eq!(npm_package_for("omp"), Some("@oh-my-pi/pi-coding-agent"));
+        assert_eq!(npm_install_command_for("omp"), None);
+        // `omp update` routes every install source itself and never prompts.
+        assert_eq!(official_update_args("omp"), Some("update"));
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(install_command_for("omp"), OMP_INSTALL_UNIX);
+            assert_eq!(
+                tool_action_shell_command_for_shell(
+                    "omp",
+                    ToolLifecycleAction::Update,
+                    LifecycleCommandShell::Posix
+                )
+                .as_deref(),
+                Some(format!("omp update || {OMP_INSTALL_UNIX}").as_str())
+            );
+        }
     }
 
     #[test]
@@ -7518,6 +8290,16 @@ mod tests {
         }
 
         #[test]
+        fn wsl_hermes_dashboard_runs_inside_the_distro_login_shell() {
+            let line = wsl_hermes_dashboard_line("Ubuntu-22.04").expect("valid WSL command line");
+            assert_eq!(
+                line,
+                r#"wsl.exe -d Ubuntu-22.04 -- sh -c "\"${SHELL:-sh}\" -lic 'hermes dashboard'""#
+            );
+            assert!(wsl_hermes_dashboard_line("Ubuntu & calc").is_err());
+        }
+
+        #[test]
         fn wsl_hermes_install_line_does_not_depend_on_outer_pipefail() {
             let line = build_wsl_tool_action_line("Ubuntu", HERMES_INSTALL_UNIX, None, None)
                 .expect("valid WSL command line");
@@ -8134,6 +8916,59 @@ mod tests {
         }
 
         #[test]
+        fn omp_updates_through_its_own_updater_with_source_specific_fallbacks() {
+            // Homebrew owns its formula even though `omp update` would also delegate.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/opt/homebrew/bin/omp",
+                    "/opt/homebrew/Cellar/omp/14.1.0/bin/omp",
+                )
+                .as_deref(),
+                Some("/opt/homebrew/bin/brew upgrade omp")
+            );
+            // A bun global keeps bun as the fallback.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/Users/me/.bun/bin/omp",
+                    "/Users/me/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/src/cli.ts",
+                )
+                .as_deref(),
+                Some("/Users/me/.bun/bin/omp update || /Users/me/.bun/bin/bun add -g @oh-my-pi/pi-coding-agent@latest")
+            );
+            // The installer's prebuilt binary updates itself; no npm fallback is invented.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/Users/me/.local/bin/omp",
+                    "/Users/me/.local/bin/omp",
+                )
+                .as_deref(),
+                Some("/Users/me/.local/bin/omp update")
+            );
+            // npm and other node managers cannot run omp, so they never become a fallback.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/Users/me/.nvm/versions/node/v22.0.0/bin/omp",
+                    "/Users/me/.nvm/versions/node/v22.0.0/lib/node_modules/@oh-my-pi/pi-coding-agent/src/cli.ts",
+                )
+                .as_deref(),
+                Some("/Users/me/.nvm/versions/node/v22.0.0/bin/omp update")
+            );
+            // `omp update` exits 0 on Nix without updating: leave it to the user.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/Users/me/.nix-profile/bin/omp",
+                    "/nix/store/abc-omp-14.1.0/bin/omp",
+                ),
+                None
+            );
+        }
+
+        #[test]
         fn volta_path_with_space_is_quoted() {
             // volta 分支用 `<dir>/volta`,目录含空格时同样要 POSIX 引号包裹。
             let cmd = anchored_command_from_paths(
@@ -8172,6 +9007,18 @@ mod tests {
                 "/usr/local/bin/hermes",
             );
             assert_eq!(cmd.as_deref(), Some("/usr/local/bin/hermes update"));
+        }
+
+        #[test]
+        fn agy_updates_itself_even_from_a_homebrew_cask() {
+            // The cask is auto_updates, so `brew upgrade` skips it; agy replaces its own binary.
+            for real in [
+                "/opt/homebrew/Caskroom/antigravity-cli/1.3.4,5524158944247808/antigravity",
+                "/opt/homebrew/bin/agy",
+            ] {
+                let cmd = anchored_command_from_paths("agy", "/opt/homebrew/bin/agy", real);
+                assert_eq!(cmd.as_deref(), Some("/opt/homebrew/bin/agy update"));
+            }
         }
 
         #[test]
@@ -8885,6 +9732,19 @@ mod tests {
         }
 
         #[test]
+        fn agy_installs_with_official_script_and_updates_without_reinstalling() {
+            let cmd = install_command_for("agy");
+            assert!(
+                cmd.contains("curl -fsSL https://antigravity.google/cli/install.sh -o $tmp")
+                    && !cmd.contains('|')
+                    && !cmd.contains("npm"),
+                "should use only the official installer: {cmd}"
+            );
+            // The installer exits 0 when agy already exists, so it must not back up `agy update`.
+            assert_eq!(static_fallback_command("agy"), "agy update");
+        }
+
+        #[test]
         fn hermes_update_fallback_uses_cli_update_then_installer() {
             // 锚定失败时也不回退 pip:先让 PATH 上的 hermes 自更新,找不到/失败再跑官方
             // installer。这样 pyenv 的 `python` shim 不会参与错误路径。
@@ -9335,6 +10195,17 @@ mod tests {
                 .join("Codex")
                 .join("bin")
         ));
+    }
+
+    #[test]
+    fn omp_search_paths_include_the_bun_global_bin() {
+        // A GUI process does not inherit `~/.bun/bin`: without it a Bun global
+        // omp is reported as not installed and updates lose their anchor.
+        let home = dirs::home_dir().expect("home should resolve");
+        let bun_bin = home.join(".bun").join("bin");
+        assert!(build_tool_search_paths("omp").contains(&bun_bin));
+        // Other Bun-installable tools keep their previous search set.
+        assert!(!build_tool_search_paths("gemini").contains(&bun_bin));
     }
 
     #[cfg(target_os = "windows")]
