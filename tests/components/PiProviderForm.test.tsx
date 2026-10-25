@@ -12,7 +12,6 @@ import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PiProviderForm } from "@/components/providers/forms/PiProviderForm";
-import { piKeys } from "@/lib/query/pi";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
@@ -38,15 +37,18 @@ async function fetchModelsAndClosePicker(user: User) {
 
 function render(
   ui: ReactElement,
-  { seedPiCurrentState = true }: { seedPiCurrentState?: boolean } = {},
+  { seedCurrentState = true }: { seedCurrentState?: boolean } = {},
 ) {
   const queryClient = createTestQueryClient();
-  queryClient.setQueryDefaults(piKeys.currentState, { staleTime: Infinity });
-  if (seedPiCurrentState) {
-    queryClient.setQueryData(piKeys.currentState, {
-      enabledProviderIds: [],
-      defaultProviderId: null,
-    });
+  for (const app of ["pi", "omp"]) {
+    const queryKey = [app, "currentState"];
+    queryClient.setQueryDefaults(queryKey, { staleTime: Infinity });
+    if (seedCurrentState) {
+      queryClient.setQueryData(queryKey, {
+        enabledProviderIds: [],
+        defaultProviderId: null,
+      });
+    }
   }
   return testingLibraryRender(
     <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
@@ -202,129 +204,125 @@ describe("PiProviderForm", () => {
     expect(screen.queryByText("pi.form.stepModel")).not.toBeInTheDocument();
   });
 
-  it("submits a renamed Pi key after removal from live config", async () => {
-    const onSubmit = vi.fn().mockResolvedValue(undefined);
-    render(
-      <PiProviderForm
-        appId="pi"
-        providerId="saved-provider"
-        submitLabel="Save renamed provider"
-        onSubmit={onSubmit}
-        onCancel={() => {}}
-        initialData={{ name: "Saved provider", settingsConfig: {} }}
-      />,
-    );
+  it.each(["pi", "omp"] as const)(
+    "submits a renamed %s key after removal from live config",
+    async (appId) => {
+      const onSubmit = vi.fn().mockResolvedValue(undefined);
+      render(
+        <PiProviderForm
+          appId={appId}
+          providerId="saved-provider"
+          submitLabel="Save renamed provider"
+          onSubmit={onSubmit}
+          onCancel={() => {}}
+          initialData={{ name: "Saved provider", settingsConfig: {} }}
+        />,
+      );
 
-    const providerKeyInput = screen.getByLabelText("pi.form.providerKey");
-    expect(providerKeyInput).toBeEnabled();
-    fireEvent.change(providerKeyInput, { target: { value: "renamed-provider" } });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Save renamed provider" }),
-    );
+      const providerKeyInput = screen.getByLabelText("pi.form.providerKey");
+      expect(providerKeyInput).toBeEnabled();
+      fireEvent.change(providerKeyInput, {
+        target: { value: "renamed-provider" },
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Save renamed provider" }),
+      );
 
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit.mock.calls[0][0].providerKey).toBe("renamed-provider");
-  });
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0].providerKey).toBe("renamed-provider");
+    },
+  );
 
-  it("blocks renaming a Pi provider to an existing key", async () => {
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_providers`, () =>
-        HttpResponse.json({
-          "taken-provider": { id: "taken-provider", name: "Taken provider" },
-        }),
-      ),
-    );
-    const onSubmit = vi.fn();
-    render(
-      <PiProviderForm
-        appId="pi"
-        providerId="saved-provider"
-        submitLabel="Save renamed provider"
-        onSubmit={onSubmit}
-        onCancel={() => {}}
-        initialData={{ name: "Saved provider", settingsConfig: {} }}
-      />,
-    );
+  it.each(["pi", "omp"] as const)(
+    "blocks renaming a %s provider to an existing key",
+    async (appId) => {
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_providers`, () =>
+          HttpResponse.json({
+            "taken-provider": { id: "taken-provider", name: "Taken provider" },
+          }),
+        ),
+      );
+      const onSubmit = vi.fn();
+      render(
+        <PiProviderForm
+          appId={appId}
+          providerId="saved-provider"
+          submitLabel="Save renamed provider"
+          onSubmit={onSubmit}
+          onCancel={() => {}}
+          initialData={{ name: "Saved provider", settingsConfig: {} }}
+        />,
+      );
 
-    fireEvent.change(screen.getByLabelText("pi.form.providerKey"), {
-      target: { value: "taken-provider" },
-    });
-    expect(
-      await screen.findByText("pi.form.providerKeyDuplicate"),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Save renamed provider" }),
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "pi.form.providerKeyDuplicate",
-    );
-    expect(onSubmit).not.toHaveBeenCalled();
-  });
-
-  it("keeps Oh My Pi provider keys locked even outside live config", () => {
-    render(
-      <PiProviderForm
-        appId="omp"
-        providerId="saved-provider"
-        submitLabel="Save omp provider"
-        onSubmit={() => {}}
-        onCancel={() => {}}
-        initialData={{ name: "Saved provider", settingsConfig: {} }}
-      />,
-    );
-
-    expect(screen.getByLabelText("pi.form.providerKey")).toBeDisabled();
-  });
-
-  it("keeps the provider key locked while the live state is unresolved", async () => {
-    let resolveCurrentState!: () => void;
-    const currentStateReady = new Promise<void>((resolve) => {
-      resolveCurrentState = resolve;
-    });
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, async () => {
-        await currentStateReady;
-        return HttpResponse.json({
-          enabledProviderIds: ["live-provider"],
-          defaultProviderId: "live-provider",
-        });
-      }),
-    );
-    const user = userEvent.setup();
-
-    render(
-      <PiProviderForm
-        appId="pi"
-        providerId="live-provider"
-        submitLabel="Save live provider"
-        onSubmit={() => {}}
-        onCancel={() => {}}
-        initialData={{
-          name: "Live provider",
-          settingsConfig: {
-            name: "Live provider",
-            baseUrl: "https://api.example.com/v1",
-          },
-        }}
-      />,
-      { seedPiCurrentState: false },
-    );
-
-    const providerKeyInput = screen.getByLabelText(/pi\.form\.providerKey/);
-    expect(providerKeyInput).toBeDisabled();
-    await user.type(providerKeyInput, "-renamed");
-    expect(providerKeyInput).toHaveValue("live-provider");
-
-    act(() => resolveCurrentState());
-
-    await waitFor(() =>
+      fireEvent.change(screen.getByLabelText("pi.form.providerKey"), {
+        target: { value: "taken-provider" },
+      });
       expect(
-        screen.getByText("该供应商已添加到应用配置中，供应商标识不可修改"),
-      ).toBeInTheDocument(),
-    );
-    expect(providerKeyInput).toBeDisabled();
-    expect(providerKeyInput).toHaveValue("live-provider");
-  });
+        await screen.findByText("pi.form.providerKeyDuplicate"),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Save renamed provider" }),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "pi.form.providerKeyDuplicate",
+      );
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["pi", "omp"] as const)(
+    "keeps the %s provider key locked while the live state is unresolved",
+    async (appId) => {
+      let resolveCurrentState!: () => void;
+      const currentStateReady = new Promise<void>((resolve) => {
+        resolveCurrentState = resolve;
+      });
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_${appId}_current_state`, async () => {
+          await currentStateReady;
+          return HttpResponse.json({
+            enabledProviderIds: ["live-provider"],
+            defaultProviderId: "live-provider",
+          });
+        }),
+      );
+      const user = userEvent.setup();
+
+      render(
+        <PiProviderForm
+          appId={appId}
+          providerId="live-provider"
+          submitLabel="Save live provider"
+          onSubmit={() => {}}
+          onCancel={() => {}}
+          initialData={{
+            name: "Live provider",
+            settingsConfig: {
+              name: "Live provider",
+              baseUrl: "https://api.example.com/v1",
+            },
+          }}
+        />,
+        { seedCurrentState: false },
+      );
+
+      const providerKeyInput = screen.getByLabelText(/pi\.form\.providerKey/);
+      expect(providerKeyInput).toBeDisabled();
+      await user.type(providerKeyInput, "-renamed");
+      expect(providerKeyInput).toHaveValue("live-provider");
+
+      act(() => resolveCurrentState());
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("该供应商已添加到应用配置中，供应商标识不可修改"),
+        ).toBeInTheDocument(),
+      );
+      expect(providerKeyInput).toBeDisabled();
+      expect(providerKeyInput).toHaveValue("live-provider");
+    },
+  );
 
   it("uses the OpenCode-style provider hierarchy without per-model endpoints", () => {
     render(

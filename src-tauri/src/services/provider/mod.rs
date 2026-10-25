@@ -23,6 +23,7 @@ mod omp;
 #[cfg(test)]
 mod opencode_tests;
 mod pi;
+mod pi_family;
 mod usage;
 
 use indexmap::IndexMap;

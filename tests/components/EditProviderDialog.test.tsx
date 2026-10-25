@@ -17,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
 }));
 let mockFormReady = true;
 let mockCodexManagedAccountSelected = false;
+let mockProviderKey: string | undefined;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/lib/api", () => ({
@@ -68,6 +69,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       iconColor?: string;
     };
     onSubmit: (values: {
+      providerKey?: string;
       name: string;
       websiteUrl: string;
       notes?: string;
@@ -93,6 +95,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
         onSubmit={(event) => {
           event.preventDefault();
           onSubmit({
+            providerKey: mockProviderKey,
             name: initialData.name ?? "",
             websiteUrl: initialData.websiteUrl ?? "",
             notes: initialData.notes,
@@ -141,6 +144,7 @@ describe("EditProviderDialog", () => {
   beforeEach(() => {
     mockFormReady = true;
     mockCodexManagedAccountSelected = false;
+    mockProviderKey = undefined;
     submitReadyCallbacks = [];
     apiMocks.getCurrent.mockReset();
     apiMocks.getEditorView.mockReset();
@@ -616,6 +620,35 @@ describe("EditProviderDialog", () => {
     act(() => staleCallback?.(true));
     expect(reopenedButton).toBeDisabled();
   });
+
+  it.each(["pi", "omp"] as const)(
+    "submits the renamed %s provider key with its original ID",
+    async (appId) => {
+      const provider: Provider = {
+        id: "saved-provider",
+        name: "Saved provider",
+        settingsConfig: { baseUrl: "https://api.example.com/v1" },
+      };
+      mockProviderKey = "renamed-provider";
+      const onSubmit = vi.fn().mockResolvedValue(undefined);
+      render(
+        <EditProviderDialog
+          open
+          provider={provider}
+          onOpenChange={vi.fn()}
+          onSubmit={onSubmit}
+          appId={appId}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0]).toMatchObject({
+        originalId: "saved-provider",
+        provider: { id: "renamed-provider" },
+      });
+    },
+  );
 
   it("Oh My Pi 编辑表单报告未就绪时禁用保存按钮", async () => {
     const provider: Provider = {

@@ -526,13 +526,12 @@ export function PiProviderForm({
   );
   const isEdit = Boolean(initialData);
   const { data: piCurrentState, isLoading: isPiCurrentStateLoading } =
-    usePiCurrentState(isEdit && !isOmp);
+    usePiCurrentState(isEdit, isOmp ? "omp" : "pi");
   const isProviderKeyLockStateLoading = isEdit && isPiCurrentStateLoading;
   const isProviderKeyLocked = useMemo(() => {
-    if (isOmp) return isEdit;
     if (!isEdit || !providerId) return false;
     return piCurrentState?.enabledProviderIds.includes(providerId) ?? false;
-  }, [isEdit, isOmp, providerId, piCurrentState]);
+  }, [isEdit, providerId, piCurrentState]);
   const initialNativeName = optionalText(initialConfig.name);
   const initialDisplayName = initialData?.name ?? initialNativeName;
   const initialConfigHasNativeName = hasOwn(initialConfig, "name");

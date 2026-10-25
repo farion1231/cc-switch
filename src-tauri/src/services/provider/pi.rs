@@ -129,48 +129,13 @@ pub(super) fn update(
         .get_provider_by_id(&original_id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{original_id}' not found")))?;
 
-    // Rename is only allowed once the provider is no longer present in
-    // models.json (i.e. the user removed it from live config). This mirrors
-    // the behavior of opencode and the other additive-mode apps: while the key
-    // is still in live config it stays locked; after removal it is editable.
-    if original_id != provider.id {
-        if crate::pi_config::pi_provider_exists(&original_id)? {
-            return Err(AppError::InvalidInput(
-                "Pi provider keys cannot be renamed while the provider is added to models.json"
-                    .to_string(),
-            ));
-        }
-        if state
-            .db
-            .get_provider_by_id(&provider.id, app_type.as_str())?
-            .is_some()
-            || crate::pi_config::pi_provider_exists(&provider.id)?
-        {
-            return Err(AppError::InvalidInput(format!(
-                "Pi provider '{}' already exists",
-                provider.id
-            )));
-        }
-        strip_unsupported_pi_metadata(&mut provider);
-        ProviderService::validate_provider_settings(&app_type, &provider)?;
-        ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
-
-        state.db.save_provider(app_type.as_str(), &provider)?;
-        if let Err(error) = state.db.delete_provider(app_type.as_str(), &original_id) {
-            // Roll back the rename to keep the catalog consistent.
-            if let Err(rollback) = state.db.delete_provider(app_type.as_str(), &provider.id) {
-                return Err(AppError::Config(format!(
-                    "failed to delete original Pi provider: {error}; rollback failed: {rollback}"
-                )));
-            }
-            return Err(error);
-        }
-        return Ok(true);
-    }
-
     strip_unsupported_pi_metadata(&mut provider);
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+
+    if original_id != provider.id {
+        return super::pi_family::rename(state, &app_type, &original_id, &provider);
+    }
 
     let previous_native =
         crate::pi_config::replace_pi_provider_if_present(&original_id, &provider.settings_config)?;
