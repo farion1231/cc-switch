@@ -4630,7 +4630,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v23_to_v24_allows_hermes_profile_proxy_rows() -> Result<(), AppError> {
+    fn migrate_v24_to_v25_allows_hermes_profile_proxy_rows() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         // v23 形状的 proxy_config：CHECK 不认 hermes:%
         conn.execute_batch(
@@ -4642,7 +4642,7 @@ mod tests {
             INSERT INTO proxy_config (app_type, load_balance_mode, auto_failover_enabled)
                 VALUES ('hermes', 'session', 1);",
         )?;
-        Database::set_user_version(&conn, 23)?;
+        Database::set_user_version(&conn, 24)?;
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
@@ -4663,7 +4663,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v24_to_v25_merges_universal_and_clusters_conservatively() -> Result<(), AppError> {
+    fn migrate_v25_to_v26_merges_universal_and_clusters_conservatively() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(
             "CREATE TABLE providers (
@@ -4725,7 +4725,7 @@ mod tests {
             rusqlite::params![r#"{"env":{"ANTHROPIC_BASE_URL":"https://uni.example","ANTHROPIC_AUTH_TOKEN":"sk-uni"}}"#],
         )?;
 
-        Database::set_user_version(&conn, 24)?;
+        Database::set_user_version(&conn, 25)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
 
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);

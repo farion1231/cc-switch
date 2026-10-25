@@ -8562,8 +8562,9 @@ impl ProviderService {
 
         // 同步到 Claude Desktop
         if let Some(mut desktop_provider) = provider.to_claude_desktop_provider() {
-            if let Some(existing) =
-                state.db.get_provider_by_id(&desktop_provider.id, "claude-desktop")?
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&desktop_provider.id, "claude-desktop")?
             {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &desktop_provider.settings_config);
@@ -8572,7 +8573,9 @@ impl ProviderService {
                 desktop_provider.created_at = existing.created_at;
                 desktop_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("claude-desktop", &desktop_provider)?;
+            state
+                .db
+                .save_provider("claude-desktop", &desktop_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::ClaudeDesktop,
@@ -8586,9 +8589,7 @@ impl ProviderService {
 
         // 同步到 Hermes（连接即条目，不做 live 投影——Hermes 接管由其独立流程处理）
         if let Some(mut hermes_provider) = provider.to_hermes_provider() {
-            if let Some(existing) =
-                state.db.get_provider_by_id(&hermes_provider.id, "hermes")?
-            {
+            if let Some(existing) = state.db.get_provider_by_id(&hermes_provider.id, "hermes")? {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &hermes_provider.settings_config);
                 hermes_provider.settings_config = merged;

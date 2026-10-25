@@ -1758,7 +1758,8 @@ fn seed_universal_from_app_group() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!("done: created={created} skipped={skipped} app={seed_app}");
     Ok(())
-=======
+}
+
 /// v22 已随 v4.0.19 发布：从它升级必须补上 `mcp_servers.enabled_omp`，否则读 MCP 列表报
 /// `no such column`。Skills 没有 omp 列（启用状态按原生目录现算）。
 #[test]

@@ -308,8 +308,7 @@ impl SessionLoadBalancer {
             return Vec::new();
         };
         let now = Instant::now();
-        let mut counts: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for entry in sessions.values() {
             if now.duration_since(entry.last_access) < self.ttl {
                 *counts.entry(entry.provider_id.clone()).or_insert(0) += 1;
