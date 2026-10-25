@@ -886,7 +886,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         ),
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
-        "grok" => Some("npm i -g @xai-official/grok@latest"),
+        "grok" => Some(
+            "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
+        ),
         "opencode" => Some(
             "npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
         ),
@@ -906,6 +908,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// Claude Code / OpenCode 的 postinstall 把平台 optional dependency 中的原生程序放到
 /// bin/claude.exe / bin/opencode.exe。npm 12 拦截该脚本时会留下文本占位文件，
 /// Windows 执行后报“与 Windows 版本不兼容”。
+/// Grok Build 的 bin/grok 是 node launcher，postinstall 才把 optional dependency 里的
+/// 平台二进制解到 `~/.grok/bin/grok-<version>` 并 relink `grok`；被拦后 launcher 只要见到
+/// `~/.grok/bin/grok` 就直接运行它、不比对版本，于是 npm 升级 exit 0 却仍跑旧版。
 /// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
 /// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
 /// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
@@ -916,6 +921,7 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
         "claude" => {
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
         }
+        "grok" => " --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
         "opencode" => " --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
         "mcode" => {
             " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
@@ -3676,6 +3682,13 @@ fn anchored_npm_command(bin_path: &str, args: &str) -> Option<String> {
     ))
 }
 
+/// POSIX 官方自升级内部再调 npm 时，用环境变量放行该包的 postinstall 与 optional
+/// dependency（含义同 `npm_install_extra_args`），只作用于紧随其后的那条命令。
+#[cfg(not(target_os = "windows"))]
+fn npm_scripts_env_prefix(pkg: &str) -> String {
+    format!("npm_config_allow_scripts={pkg} npm_config_ignore_scripts=false npm_config_include=optional ")
+}
+
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
@@ -3923,9 +3936,15 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return anchored_official_update_command(tool, bin_path);
     }
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
-        return Some(grok_native_update_command(
-            anchored_official_update_command(tool, bin_path)?,
-        ));
+        // `[cli] installer = "npm"`（npm 包的 postinstall 写入）下，`grok update` 会 spawn
+        // `npm i -g @xai-official/grok@<version>`，靠 postinstall relink `~/.grok/bin/grok`。
+        // npm 12 拦截后仍 exit 0，`||` 后的官方 installer 不会接手，用户继续跑旧版。
+        // 环境变量只作用于 `||` 左侧这一条；internal / gh-release 模式不经 npm，不受影响。
+        return Some(grok_native_update_command(format!(
+            "{}{}",
+            npm_scripts_env_prefix("@xai-official/grok"),
+            anchored_official_update_command(tool, bin_path)?
+        )));
     }
     if tool == "mcode" {
         if let Some(root) = mcode_script_install_root(bin_path, real_target, McodeLayout::Posix) {
@@ -3962,9 +3981,7 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         };
         if let Some(pkg) = npm_scripts_package {
             if real_lower.contains(&format!("/node_modules/{pkg}/")) {
-                update = format!(
-                    "npm_config_allow_scripts={pkg} npm_config_ignore_scripts=false npm_config_include=optional {update}"
-                );
+                update = format!("{}{update}", npm_scripts_env_prefix(pkg));
             }
         }
         return Some(match package_command {
@@ -7253,7 +7270,9 @@ mod tests {
         assert_eq!(npm_package_for("grok"), Some("@xai-official/grok"));
         assert_eq!(
             npm_install_command_for("grok"),
-            Some("npm i -g @xai-official/grok@latest")
+            Some(
+                "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
+            )
         );
         assert_eq!(official_update_args("grok"), Some("update"));
 
@@ -7261,7 +7280,7 @@ mod tests {
             assert_eq!(
                 tool_action_shell_command_for_shell("grok", action, LifecycleCommandShell::Posix)
                     .as_deref(),
-                Some("npm i -g @xai-official/grok@latest")
+                npm_install_command_for("grok")
             );
         }
 
@@ -7274,7 +7293,7 @@ mod tests {
                 LifecycleCommandShell::WindowsBatch,
             )
             .as_deref(),
-            Some("npm i -g @xai-official/grok@latest")
+            npm_install_command_for("grok")
         );
     }
 
@@ -8043,8 +8062,9 @@ mod tests {
             let cmd = anchored_command_from_paths("grok", &bin_path, &bin_path);
             let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
             let expected = format!(
-                "{} i -g @xai-official/grok@latest",
-                expect_quoted_path(&npm_full)
+                "{} i -g @xai-official/grok@latest{}",
+                expect_quoted_path(&npm_full),
+                npm_install_extra_args("grok")
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
@@ -8153,7 +8173,10 @@ mod tests {
                 "native installer first: {install}"
             );
             assert!(
-                install.ends_with("|| call npm i -g @xai-official/grok@latest"),
+                install.ends_with(&format!(
+                    "|| call {}",
+                    npm_install_command_for("grok").unwrap()
+                )),
                 "npm fallback should remain available: {install}"
             );
             let expected_encoded = powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT);
@@ -8500,7 +8523,7 @@ mod tests {
             assert!(
                 grok.starts_with(
                     "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh "
-                ) && grok.contains(" || npm i -g @xai-official/grok@latest"),
+                ) && grok.ends_with(&format!(" || {}", npm_install_command_for("grok").unwrap())),
                 "WSL grok install should prefer native POSIX installer with npm fallback: {grok}"
             );
             assert!(!grok.contains("| bash"));
@@ -8672,7 +8695,12 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some(format!("/Users/me/.grok/bin/grok update || {GROK_INSTALL_UNIX}").as_str())
+                Some(
+                    format!(
+                        "npm_config_allow_scripts=@xai-official/grok npm_config_ignore_scripts=false npm_config_include=optional /Users/me/.grok/bin/grok update || {GROK_INSTALL_UNIX}"
+                    )
+                    .as_str()
+                )
             );
         }
 
@@ -8687,8 +8715,12 @@ mod tests {
                 "/Users/me/.grok/downloads/grok-macos-aarch64",
             )
             .expect("native grok should anchor");
-            assert!(cmd.contains("x.ai/cli/install.sh"), "{cmd}");
-            assert!(!cmd.contains("npm"), "npm must not be the fallback: {cmd}");
+            let (_, fallback) = cmd.split_once(" || ").unwrap();
+            assert!(fallback.contains("x.ai/cli/install.sh"), "{cmd}");
+            assert!(
+                !fallback.contains("npm"),
+                "npm must not be the fallback: {cmd}"
+            );
         }
 
         #[test]
@@ -8700,7 +8732,12 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some(format!("/Users/me/bin/grok update || {GROK_INSTALL_UNIX}").as_str())
+                Some(
+                    format!(
+                        "npm_config_allow_scripts=@xai-official/grok npm_config_ignore_scripts=false npm_config_include=optional /Users/me/bin/grok update || {GROK_INSTALL_UNIX}"
+                    )
+                    .as_str()
+                )
             );
         }
 
@@ -8789,7 +8826,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
                 )
             );
         }
@@ -9839,7 +9876,12 @@ mod tests {
                 !parts[0].contains('|'),
                 "native installer should avoid pipe: {cmd}"
             );
-            assert!(parts[1].contains("npm i -g"), "npm second: {cmd}");
+            // npm 12 拦截 postinstall 时升级 exit 0 却留在旧版（#8863）。
+            assert_eq!(
+                parts[1].trim(),
+                npm_install_command_for("grok").unwrap(),
+                "npm second: {cmd}"
+            );
         }
 
         #[test]
@@ -9890,7 +9932,7 @@ mod tests {
             assert!(!static_fallback_command("gemini").contains("gemini update"));
             assert_eq!(
                 static_fallback_command("grok"),
-                "npm i -g @xai-official/grok@latest"
+                "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
             );
             assert!(!static_fallback_command("grok").contains("grok update"));
             assert_eq!(
