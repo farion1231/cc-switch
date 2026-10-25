@@ -398,7 +398,7 @@ fn validate_sqlite_in(
     let (path, id) = parse_sqlite_source(source).ok_or("Invalid Antigravity SQLite source")?;
     let path = path.canonicalize().map_err(|e| e.to_string())?;
     for (brain, _) in sources {
-        let conversations = brain.parent().unwrap_or(&brain).join("conversations");
+        let conversations = brain.parent().unwrap_or(brain).join("conversations");
         let Ok(root) = conversations.canonicalize() else {
             continue;
         };
