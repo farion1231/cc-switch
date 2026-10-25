@@ -157,10 +157,10 @@ describe("Pi provider presets", () => {
       supportsDeveloperRole: false,
       maxTokensField: "max_tokens",
     };
-    expect(model("OpenCode Go", "glm-5.2").compat).toEqual(openCodeBase);
-    expect(model("OpenCode Go", "kimi-k2.7-code").compat).toEqual(openCodeBase);
-    expect(model("OpenCode Go", "mimo-v2.5-pro").compat).toEqual(openCodeBase);
-    for (const id of ["deepseek-v4-pro", "deepseek-v4-flash"]) {
+    expect(model("OpenCode Go", "glm-5.3").compat).toEqual(openCodeBase);
+    expect(model("OpenCode Go", "kimi-k3.1-pro").compat).toEqual(openCodeBase);
+    expect(model("OpenCode Go", "mimo-v2.6-pro").compat).toEqual(openCodeBase);
+    for (const id of ["deepseek-v4-pro", "deepseek-v4.1-flash"]) {
       expect(model("OpenCode Go", id).compat).toEqual({
         ...openCodeBase,
         requiresReasoningContentOnAssistantMessages: true,
@@ -168,7 +168,7 @@ describe("Pi provider presets", () => {
       });
     }
 
-    for (const id of ["mimo-v2.5-pro", "mimo-v2.5"]) {
+    for (const id of ["mimo-v2.6-pro", "mimo-v2.6-flash"]) {
       expect(model("Xiaomi MiMo", id).compat).toEqual({
         requiresReasoningContentOnAssistantMessages: true,
         thinkingFormat: "deepseek",

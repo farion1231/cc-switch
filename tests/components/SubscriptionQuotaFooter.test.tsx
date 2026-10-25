@@ -194,6 +194,69 @@ describe("Claude Fable subscription quota", () => {
   });
 });
 
+describe("Antigravity quota groups", () => {
+  const agyTiers: QuotaTier[] = [
+    { name: "agy_gemini_five_hour", utilization: 10, resetsAt: null },
+    {
+      name: "agy_gemini_weekly",
+      utilization: 40,
+      resetsAt: "2026-09-12T00:00:00Z",
+    },
+    { name: "agy_third_party_five_hour", utilization: 95, resetsAt: null },
+    { name: "agy_third_party_weekly", utilization: 20, resetsAt: null },
+  ];
+
+  it("keeps one line per group on the card: the window with the least left", () => {
+    renderQuota(agyTiers);
+    const lines = screen.getByRole("button", { name: "查看各档额度" }).children;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toHaveTextContent("Gemini 剩余 60%");
+    expect(lines[1]).toHaveTextContent("Claude/GPT 剩余 5%");
+    // 倒计时跟着留下的那档（Gemini 每周）
+    expect(screen.getByText("2d12h")).toBeInTheDocument();
+  });
+
+  it("opens one dropdown listing all four windows; ↻ still refreshes", async () => {
+    const refetch = vi.fn();
+    renderQuota(agyTiers, true, {}, refetch);
+    fireEvent.click(screen.getByRole("button", { name: "查看各档额度" }));
+    expect(refetch).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "各档额度" });
+    expect(
+      within(dialog)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "Gemini 5 小时剩余 90%",
+      "Gemini 每周2d12h后重置剩余 60%",
+      "Claude/GPT 5 小时剩余 5%",
+      "Claude/GPT 每周剩余 80%",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "点击重新查询" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps other cards' quota column clickable to refresh", () => {
+    renderQuota([{ name: "five_hour", utilization: 10, resetsAt: null }]);
+    expect(
+      screen.queryByRole("button", { name: "查看各档额度" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lists every group and window when expanded", () => {
+    renderQuota(agyTiers, false);
+    for (const name of [
+      "Gemini 5 小时: 剩余 90%",
+      "Gemini 每周: 剩余 60%",
+      "Claude/GPT 5 小时: 剩余 5%",
+      "Claude/GPT 每周: 剩余 80%",
+    ]) {
+      expect(screen.getByRole("meter", { name })).toBeInTheDocument();
+    }
+  });
+});
+
 describe("credential failures", () => {
   const failed = (credentialStatus: SubscriptionQuota["credentialStatus"]) =>
     renderQuota([], true, {
@@ -204,7 +267,7 @@ describe("credential failures", () => {
 
   it("says the token is waiting for a refresh, not that the login expired", () => {
     failed("refresh_pending");
-    expect(screen.getByText("额度没查到")).toBeInTheDocument();
+    expect(screen.getByText("额度查询失败")).toBeInTheDocument();
     expect(screen.getByText("令牌待刷新")).toBeInTheDocument();
     expect(screen.queryByText("登录已过期")).not.toBeInTheDocument();
     expect(screen.queryByText("raw backend message")).not.toBeInTheDocument();

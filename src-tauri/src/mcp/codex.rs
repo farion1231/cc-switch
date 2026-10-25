@@ -248,6 +248,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         name: id.clone(),
                         server: spec_v,
                         apps: McpApps {
+                            agy: false,
                             claude: false,
                             codex: true,
                             gemini: false,
@@ -255,7 +256,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             opencode: false,
                             hermes: false,
                             mcode: false,
+                            kimi: false,
                             pi: false,
+                            omp: false,
                         },
                         description: None,
                         homepage: None,

@@ -31,7 +31,11 @@ import {
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
-import { useXaiOauthQuotaByAccountId } from "@/lib/query/subscription";
+import {
+  useAgyAccountQuota,
+  useKimiAccountQuota,
+  useXaiOauthQuotaByAccountId,
+} from "@/lib/query/subscription";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 export interface AccountQuotaRow {
@@ -39,10 +43,11 @@ export interface AccountQuotaRow {
   line: QuotaLine;
 }
 
-/** 额度列要画的东西：成功按档画条；查询失败写「额度没查到」+ 原因；null 表示不显示 */
+/** 额度列要画的东西：成功按档画条；查询失败写「额度查询失败」+ 原因；查成功但没有额度时写一句灰字；null 表示不显示 */
 export type AccountQuotaState =
   | { kind: "rows"; rows: AccountQuotaRow[] }
   | { kind: "failed"; reason: string }
+  | { kind: "note"; text: string }
   | { kind: "loading" }
   | null;
 
@@ -126,7 +131,7 @@ export function AccountQuotaColumn({
         {state.kind === "failed" && (
           <>
             <span className="h-[18px] text-caption font-medium text-danger-text">
-              {t("quota.failed", { defaultValue: "额度没查到" })}
+              {t("quota.failed", { defaultValue: "额度查询失败" })}
             </span>
             <span
               className="truncate text-caption text-fg-3"
@@ -135,6 +140,10 @@ export function AccountQuotaColumn({
               {state.reason}
             </span>
           </>
+        )}
+        {state.kind === "note" && (
+          // 写在额度行数值（「剩余 91%」）那一格：靠右，和别的号的数值对齐
+          <span className="self-end text-caption text-fg-3">{state.text}</span>
         )}
         {state.kind === "loading" && (
           <span className="text-caption text-fg-3">
@@ -326,6 +335,70 @@ export function XaiAccountQuota({
     enabled: true,
     autoQuery: false,
   });
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** Kimi 官方账号的剩余额度（kimi_oauth_quota(accountId)，不用先切号） */
+export function KimiAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useKimiAccountQuota(accountId, { enabled: true, autoQuery: false });
+  const state = subscriptionQuotaState(
+    t,
+    quota,
+    loading,
+    i18n.language,
+    display,
+  );
+  return (
+    <AccountQuotaColumn
+      login={login}
+      // 没订阅 Kimi Code 的号，额度接口返回空对象：查成功但一档都没有
+      state={
+        !state && quota?.success
+          ? { kind: "note", text: t("kimi.oauth.noSubscription") }
+          : state
+      }
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** Antigravity 账号的剩余额度（agy_account_quota(accountId)，不用先切号） */
+export function AgyAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
   return (
     <AccountQuotaColumn
       login={login}

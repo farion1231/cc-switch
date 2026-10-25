@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, Pi & MiniMax Code
+### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, Pi, MiniMax Code, Kimi Code & Oh My Pi
 
 **Switch API providers in one click and manage MCP, Skills, and Prompts in one place — no more hand-editing JSON / TOML / YAML config files.**
 
@@ -46,11 +46,6 @@ Try a **Kimi Code plan** ([中文站](https://www.kimi.com/code?aff=cc-switch) |
 </tr>
 
 <tr>
-<td width="180"><a href="https://zetaapi.ai/go/u117"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
-<td>Thanks to ZetaAPI for sponsoring this project! ZetaAPI focuses on real model fidelity, no watered-down responses, no quality degradation, and pricing as low as 35% of official rates. The platform does not mix traffic, secretly replace models with lower-quality alternatives, or use fake model routing. It supports Claude Code, Codex, Gemini, ChatGPT, and other mainstream AI models, helping users significantly reduce API costs while maintaining reliable model quality. At the same time, ZetaAPI provides enterprise-grade SLA-backed stability, standard API compatibility, one API key for multiple models, fast integration, and pay-as-you-go billing, making it suitable for AI products, coding agents, internal business tools, customer service systems, content generation, and automation workflows. If any model is verified to be inconsistent with its stated quality, ZetaAPI backs it with a 10x compensation guarantee, giving users a more stable, transparent, and trustworthy experience. Register via <a href="https://zetaapi.ai/go/u117">this link</a> and use the promo code CC-SWITCH during your first recharge to enjoy an exclusive 10% discount on your first top-up, just for CC Switch users!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://apinebula.ai/VjM74M"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
 <td>Thanks to APINEBULA for sponsoring this project! APINEBULA, an enterprise-grade AI aggregation platform under Galaxy Video Bureau, leverages extensive platform resources to provide developers, teams, and enterprises with stable, cost-effective access to large language model APIs. The platform integrates leading, full-powered models like Claude, GPT, and Gemini, allowing you to connect to the world's top AI models through a single API, with prices starting as low as 10% of the original cost. Designed for AI programming, Agent development, and business system integration, APINEBULA supports enterprise-grade high concurrency, formal contracts, corporate bank transfers, and invoicing services. APINEBULA provides special discounts for our software users: register using <a href="https://apinebula.ai/VjM74M">this link</a> and enter the <strong>"ccswitch"</strong> promo code during your first recharge to get <strong>10% off</strong>.</td>
 </tr>
@@ -66,6 +61,11 @@ Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original pric
 <td>Thanks to PatewayAI for sponsoring this project! PatewayAI is an API relay service provider built for heavy AI developers, focused on directly relaying official high-quality model APIs. It offers the full Claude lineup and the Codex series, 100% sourced from official channels — no dilution, no fakes, verification welcome. Billing is transparent and every token-level invoice can be audited line by line.
 It also supports enterprise-grade concurrency and provides a dedicated management platform for enterprise customers — formal contracts and invoicing are available; visit the official website for contact details.
 Register now via <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">this link</a> to receive $3 in trial credit. Top-ups go as low as 60% of the original price, with a two-way referral bonus of up to $150!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
+<td>Thanks to hao.ai for sponsoring this project! hao.ai is a fast, stable unified LLM API gateway for developers and teams. With one API key and a unified interface, you can access GPT, Claude, xAI Grok, and other leading models, compatible with common protocols and SDKs such as OpenAI and Anthropic. The platform offers model routing, failover, team management, and complete request logs, with model prices as low as 15% of official reference prices, making it simpler, more stable, and cheaper to build AI applications. hao.ai offers CC Switch users a special perk: register via <a href="https://hao.ai/invite/DTBZS3OR">this link</a> to get 5% bonus credit on your first order!</td>
 </tr>
 
 <tr>
@@ -89,8 +89,23 @@ Register now via <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">this lin
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
-<td>Thanks to Shengsuanyun for sponsoring this project! Shengsuanyun is a super factory serving AI Native Teams — an industrial-grade AI task parallel execution platform. Its model marketplace aggregates Claude, ChatGPT, Gemini, and other domestic and international LLM and multimedia model capabilities with direct supply. Absolutely no reverse engineering or dilution — platform-wide model SLA availability reaches 99.7%, with <a href="https://watch.shengsuanyun.com/status/shengsuanyun">monitoring dashboards</a> showing green across the board. It also offers enterprise-grade custom gateways for fine-grained team cost and permission management, smart routing, security protection, and BYOK (Bring Your Own Key) hosting. The platform charges on a pay-per-use and tokens plan (coming soon) basis, with invoicing available. Register via <a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">this link</a> as a new user to receive ¥10 in credits plus a 10% bonus on your first top-up.</td>
+<td width="180"><a href="https://dit.ai?utm_source=ccswitch"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
+<td>Thanks to DIT.ai for sponsoring this project! DIT.ai is an AI token exchange and marketplace for lower-cost multi-provider routing. It gives developers access to 50+ leading AI models — including GPT, Claude, Gemini, DeepSeek, Grok, Llama, and more across text, image, video, and audio — through one OpenAI-compatible API. Qualified providers compete for each request across 160+ routes, and DIT selects the best available price-to-quality option in real time, typically 30–70% below official list pricing. Built for developers, startups, and teams running agents or AI products at scale: change your base URL and API key, keep your existing stack, and start calling models with automatic routing and failover. CC Switch users can register via <a href="https://dit.ai?utm_source=ccswitch">this link</a> and use promo code <strong>ccswitch</strong> to claim a $5 welcome coupon!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://buytoken.work/sign-up?aff=cc-switch"><img src="assets/partners/logos/buytoken-banner.png" alt="BuyToken" width="150"></a></td>
+<td>Thanks to BuyToken for sponsoring this project! BuyToken offers relay services for Claude Code, Codex, DeepSeek, and more, with enterprise-grade concurrency and fast invoicing — built to be a stable, long-running service. BuyToken also offers CC Switch users a special deal: register via <a href="https://buytoken.work/sign-up?aff=cc-switch">this link</a> to get ¥3 in trial credit, plus 10% off your first top-up!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
+<td>Thanks to V-API for sponsoring this project! V-API is a three-year-old brand dedicated to providing individuals, developers, and businesses with a stable, fast, and secure platform for high-quality LLM API services, with support for formal contracts and official invoices (general / special VAT). V-API offers CC Switch users a special deal: register via <a href="https://gpt.ge/signup?aff=URNP">this link</a> to get ¥2 off plus 10% off your first order!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
+<td>Thanks to FluxA &amp; Baidu AI Cloud for sponsoring this project! FluxA and Baidu AI Cloud jointly launched AgenticPlan, which gives AI agents the ability to buy, manage and use models, APIs and tools on their own. It includes Baidu Qianfan TokenPlan at up to 40% off, with access to flagship models such as DeepSeek V4, GLM 5.2 and Kimi, plus bonus FluxA AgentMarket API credits that unlock 13,000+ paid APIs for search, data scraping, social media, finance, crypto, image generation, video and more.<br>With the user's authorization, an AI agent can also pay with the official Visa card to procure resources on its own, manage API keys, monitor usage and plan renewals — taking agents from "completing tasks autonomously" to genuinely "planning their own budget and completing tasks". Buy via <a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">this link</a>!</td>
 </tr>
 
 <tr>
@@ -109,8 +124,8 @@ Register now via <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">this lin
 </tr>
 
 <tr>
-<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
-<td>Thanks to FluxA &amp; Baidu AI Cloud for sponsoring this project! FluxA and Baidu AI Cloud jointly launched AgenticPlan, which gives AI agents the ability to buy, manage and use models, APIs and tools on their own. It includes Baidu Qianfan TokenPlan at up to 40% off, with access to flagship models such as DeepSeek V4, GLM 5.2 and Kimi, plus bonus FluxA AgentMarket API credits that unlock 13,000+ paid APIs for search, data scraping, social media, finance, crypto, image generation, video and more.<br>With the user's authorization, an AI agent can also pay with the official Visa card to procure resources on its own, manage API keys, monitor usage and plan renewals — taking agents from "completing tasks autonomously" to genuinely "planning their own budget and completing tasks". Buy via <a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">this link</a>!</td>
+<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
+<td>Thanks to Shengsuanyun for sponsoring this project! Shengsuanyun is a super factory serving AI Native Teams — an industrial-grade AI task parallel execution platform. Its model marketplace aggregates Claude, ChatGPT, Gemini, and other domestic and international LLM and multimedia model capabilities with direct supply. Absolutely no reverse engineering or dilution — platform-wide model SLA availability reaches 99.7%, with <a href="https://watch.shengsuanyun.com/status/shengsuanyun">monitoring dashboards</a> showing green across the board. It also offers enterprise-grade custom gateways for fine-grained team cost and permission management, smart routing, security protection, and BYOK (Bring Your Own Key) hosting. The platform charges on a pay-per-use and tokens plan (coming soon) basis, with invoicing available. Register via <a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">this link</a> as a new user to receive ¥10 in credits plus a 10% bonus on your first top-up.</td>
 </tr>
 
 <tr>
@@ -220,7 +235,7 @@ AI coding tools like Claude Code, Codex, and Gemini CLI each have their own conf
 
 **CC Switch** brings all of this into a single desktop app: pick a preset, enter your key, and switch in one click. Switching replaces only the connection details — endpoint, key, and model — so plugins, hooks, MCP, and comments you added yourself stay as they are.
 
-- **One App, Ten Tools** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, and MiniMax Code
+- **One App, Twelve Tools** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, Kimi Code, and Oh My Pi
 - **No More Manual Editing** — 90+ provider presets including AWS Bedrock, NVIDIA NIM, and community relays
 - **Direct, Routing, or Aggregation — Your Choice** — Direct connects the tool straight to the provider; Routing forwards requests through your machine, converting API formats and failing over automatically, so you can use GPT in Claude Code and Claude in Codex; Aggregation puts models from several providers into one model list in Claude Code or Codex, and each request goes to the provider of the model you pick
 - **Centralized MCP, Skills & Prompts** — Add MCP servers and Skills once, then choose which tools to sync them to; prompts are maintained separately for each tool
@@ -301,7 +316,7 @@ Download the latest Linux build from the [Releases](../../releases) page:
 
 1. **Add Provider**: Select the tool you want to manage in the sidebar, then click "+" (Add Provider) in the top-right corner of the page → Choose a preset or create a custom configuration
 2. **Switch Provider**:
-   - Main UI: Select provider → Click "Enable" (for OpenCode, OpenClaw, Hermes, and MiniMax Code the button is "Add", and for Pi it's "Enable" / "Remove"; these five are coexist-mode tools, so you can add several providers at once)
+   - Main UI: Select provider → Click "Enable" (for OpenCode, OpenClaw, Hermes, MiniMax Code, and Kimi Code the button is "Add", and for Pi and Oh My Pi it's "Enable" / "Remove"; these seven are coexist-mode tools, so you can add several providers at once)
    - System Tray: One row per tool showing "name · mode · provider · quota"; click a provider name in its submenu to switch (Claude Code, Claude Desktop, Codex, Gemini CLI, and Grok Build)
 3. **Takes Effect**: Claude Code needs no restart; for Codex, Gemini CLI, and Grok Build, restart your terminal or the CLI tool; for Claude Desktop, restart the app itself (see FAQ)
 4. **Back to Official Login**: Switch to the built-in official provider in the list (e.g. "Claude Official"), restart the tool, then follow its login/OAuth flow
@@ -315,7 +330,7 @@ Download the latest Linux build from the [Releases](../../releases) page:
 - **Skills**: Click "Skills" in the sidebar → "Discover Skills" → Search skills.sh or browse GitHub repos → One-click install to supported tools
 - **Projects**: First turn on "Show project switcher" in "Settings → General", then on the Claude Code, Claude Desktop, or Codex page, open the project switcher at the top → "New project" to save the current configuration; later, pick it from the switcher to switch the whole setup at once
 - **Sessions**: Click "Sessions" in the sidebar → Browse and search conversation history, open the reading view, or restore each tool's sessions
-- **Accounts**: Click "Accounts" in the sidebar to sign in to GitHub Copilot, ChatGPT, and xAI (Grok) accounts and use your subscriptions as providers
+- **Accounts**: Click "Accounts" in the sidebar to sign in to GitHub Copilot, ChatGPT, xAI (Grok), and Kimi Code accounts and use your subscriptions as providers. Kimi Code supports multiple official accounts, each with separate credentials and a native provider; the first login uses Kimi's native default credential slot. Manage sign-in, reauthentication and sign-out here. Official Kimi OAuth nodes still present in the native configuration are protected on the provider page; saved profiles can be deleted after their native nodes are removed.
 
 > **Note**: On first launch, CC Switch automatically imports your existing Claude Code, Codex, Gemini CLI, and Grok Build configuration as a provider named `default` and adds an official provider for each of these tools and Claude Desktop, so nothing you had configured is lost.
 
@@ -339,6 +354,8 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 | Hermes | Coexist | – | – | – | ✓ | ✓ | Memory | ✓ | – |
 | Pi | Coexist | – | – | – | ✓ | ✓ | AGENTS.md, SYSTEM.md, prompt templates | ✓ | ✓ |
 | MiniMax Code | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Kimi Code | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Oh My Pi | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
 
 - **Switch**: only one provider is active at a time; **Coexist**: multiple providers are written into the tool's own config at the same time, and you pick one inside the tool.
 - **Local Routing**: CC Switch forwards requests on your machine and converts API formats; see [Local Routing & Failover](#local-routing--failover) below. Claude Desktop providers can use "Direct" or "Model Mapping"; with "Model Mapping", requests go through local routing.
@@ -377,7 +394,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 ### MCP, Prompts & Skills
 
-- **Unified MCP panel** — Manage all MCP servers in one place, choose which tools to sync each one to (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code), import existing configs from each tool, and import via Deep Link
+- **Unified MCP panel** — Manage all MCP servers in one place, choose which tools to sync each one to (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), import existing configs from each tool, and import via Deep Link
 - **Prompts** — A per-tool prompt library with a Markdown editor; enabling a prompt writes it to that tool's prompt file (CLAUDE.md / AGENTS.md / GEMINI.md), and the file's existing content is saved back to the library first, so nothing is lost. Pi can also edit SYSTEM.md, APPEND_SYSTEM.md, and prompt templates
 - **Skills** — Search skills.sh, or install in one click from GitHub repos or ZIP files; check for updates and update all in one click; sync to each tool automatically, via symlinks only, or via copies only; you can optionally store them in `~/.agents/skills`
 - All three panels support search, and MCP and Skills can also be enabled or disabled all at once per tool; providers, MCP servers, and prompts are edited full-page in the content area, and you're warned before leaving with unsaved changes
@@ -408,7 +425,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 <details>
 <summary><strong>Which AI tools does CC Switch support?</strong></summary>
 
-CC Switch supports ten tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**. Each tool has dedicated provider presets and configuration management; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
+CC Switch supports twelve tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**, **Kimi Code**, **Oh My Pi**. Each tool has dedicated provider presets and configuration management; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
 
 </details>
 
@@ -421,7 +438,7 @@ It depends on the tool:
 - **Codex, Gemini CLI, Grok Build**: restart your terminal or the CLI tool for changes to take effect (CC Switch reminds you after switching). In Routing mode, requests go to the new provider immediately, but all three tools may still need a restart if the switch changes the model.
 - **Aggregation mode**: changes to Claude Code's aggregated models take effect immediately; for Codex, entering or leaving Aggregation and changing the aggregated model list all require a full restart — see the next entry.
 - **Claude Desktop**: fully quit and reopen Claude Desktop; when using "Model Mapping", also keep CC Switch running.
-- **OpenCode, OpenClaw, Hermes, Pi, MiniMax Code**: these are coexist-mode tools — clicking "Add" ("Enable" for Pi) writes the provider into the tool's own config alongside the others; you then pick the model you want inside the tool.
+- **OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi**: these are coexist-mode tools — clicking "Add" ("Enable" for Pi and Oh My Pi) writes the provider into the tool's own config alongside the others; you then pick the model you want inside the tool. Kimi Code also provides a "Switch" button to select a provider's model; models still referenced as primary or secondary models cannot be removed. See the [Kimi Code integration guide](docs/kimi-code-integration-zh.md) (Chinese) for configuration and account details.
 
 </details>
 
