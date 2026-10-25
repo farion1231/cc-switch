@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   ArrowDown,
   ArrowUp,
-  ChevronDown,
+  ChevronRight,
   CircleDot,
   ListMinus,
   ListPlus,
@@ -17,7 +17,7 @@ import {
   Power,
   PowerOff,
   Route,
-  Star,
+  SquareTerminal,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,17 +28,25 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuPortal,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { CardButton, CardPresentation, CardTone } from "./presentation";
+import type {
+  CardButton,
+  CardMenuItem,
+  CardPresentation,
+  CardTone,
+} from "./presentation";
 
 const DOT: Record<CardTone | "muted", string> = {
   direct: "bg-direct",
   route: "bg-route",
   stack: "bg-stack",
-  neutral: "bg-fg-2",
   muted: "bg-fg-3",
 };
 
@@ -49,12 +57,12 @@ const BUTTON_ICON: Record<string, LucideIcon> = {
   routeHere: Route,
   queueAdd: ListPlus,
   queueRemove: ListMinus,
-  setDefault: Star,
   add: Plus,
   remove: Minus,
   enable: Power,
   use: Power,
   disable: PowerOff,
+  openTerminal: SquareTerminal,
 };
 
 interface ProviderCardActionsProps {
@@ -71,7 +79,7 @@ interface ProviderCardActionsProps {
 
 /**
  * 卡片右侧（v7）：主操作位（状态文字或按钮）→ 上移 / 下移（故障转移队列）→ 编辑 → ⋯。
- * 次要操作都在 ⋯ 里：跟当前模式有关的（聚合页的「设为默认」）在最前，然后是复制、检测连通、
+ * 次要操作都在 ⋯ 里：跟当前模式有关的（聚合页、OpenClaw / OpenCode 的「设为默认」）在最前，然后是复制、检测连通、
  * 配置用量查询、打开终端、删除。
  * 按钮一律纯图标 + HoverTip；有禁用原因时改由 DisabledReason 的说明卡报原因。
  */
@@ -171,19 +179,7 @@ export function ProviderCardActions({
         </HoverTip>
         <DropdownMenuContent align="end" className="min-w-[180px]">
           {menuItems.map((item) => (
-            <DropdownMenuItem
-              key={item.key}
-              disabled={Boolean(item.disabledReason)}
-              onSelect={item.onSelect}
-              className="flex-col items-start gap-0.5"
-            >
-              {item.label}
-              {item.disabledReason && (
-                <span className="max-w-64 text-caption text-fg-3">
-                  {item.disabledReason}
-                </span>
-              )}
-            </DropdownMenuItem>
+            <ModeMenuItem key={item.key} item={item} />
           ))}
           {menuItems.length > 0 && <DropdownMenuSeparator />}
           {onDuplicate && (
@@ -248,48 +244,59 @@ function IconAction({
   return <HoverTip content={tip}>{children}</HoverTip>;
 }
 
+/** 「更多」菜单里跟模式有关的一项；带子菜单时（选默认模型）展开选，否则直接点。 */
+function ModeMenuItem({ item }: { item: CardMenuItem }) {
+  if (item.submenu && !item.disabledReason) {
+    return (
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          {item.label}
+          <ChevronRight
+            aria-hidden="true"
+            className="ml-auto h-3.5 w-3.5 text-fg-3"
+          />
+        </DropdownMenuSubTrigger>
+        <DropdownMenuPortal>
+          <DropdownMenuSubContent className="max-h-72 min-w-64 overflow-y-auto">
+            <DropdownMenuLabel>{item.submenu.title}</DropdownMenuLabel>
+            {item.submenu.options.map((option) => (
+              <DropdownMenuItem
+                key={option.key}
+                onSelect={option.onSelect}
+                className="flex min-w-0 flex-col items-start gap-0.5"
+              >
+                <span className="max-w-72 truncate">{option.label}</span>
+                {option.detail && (
+                  <span className="max-w-72 truncate font-mono text-caption text-fg-3">
+                    {option.detail}
+                  </span>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuPortal>
+      </DropdownMenuSub>
+    );
+  }
+  return (
+    <DropdownMenuItem
+      disabled={Boolean(item.disabledReason)}
+      onSelect={item.onSelect}
+      className="flex-col items-start gap-0.5"
+    >
+      {item.label}
+      {item.disabledReason && (
+        <span className="max-w-64 text-caption text-fg-3">
+          {item.disabledReason}
+        </span>
+      )}
+    </DropdownMenuItem>
+  );
+}
+
 function PrimaryButton({ button }: { button: CardButton }) {
   const Icon = BUTTON_ICON[button.key] ?? CircleDot;
   const icon = <Icon className="h-4 w-4" strokeWidth={1.5} />;
-  if (button.menu && !button.disabledReason) {
-    return (
-      <DropdownMenu>
-        <HoverTip content={button.label}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="quiet"
-              size="compact"
-              aria-label={button.label}
-              className="w-auto gap-0.5 px-1.5 text-fg-2 hover:text-fg-1"
-            >
-              {icon}
-              <ChevronDown className="h-3 w-3 opacity-70" />
-            </Button>
-          </DropdownMenuTrigger>
-        </HoverTip>
-        <DropdownMenuContent
-          align="end"
-          className="max-h-72 min-w-64 overflow-y-auto"
-        >
-          <DropdownMenuLabel>{button.menu.title}</DropdownMenuLabel>
-          {button.menu.options.map((option) => (
-            <DropdownMenuItem
-              key={option.key}
-              onSelect={option.onSelect}
-              className="flex min-w-0 flex-col items-start gap-0.5"
-            >
-              <span className="max-w-72 truncate">{option.label}</span>
-              {option.detail && (
-                <span className="max-w-72 truncate font-mono text-caption text-fg-3">
-                  {option.detail}
-                </span>
-              )}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
   return (
     <IconAction tip={button.label} disabledReason={button.disabledReason}>
       <Button

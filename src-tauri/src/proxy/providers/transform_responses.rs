@@ -1905,6 +1905,12 @@ pub fn anthropic_to_responses(
                 }
                 let mut response_tool = json!({
                     "type": "function",
+                    // Anthropic 工具 schema 允许可选参数（required 是任意子集），而
+                    // Responses 后端把省略的 `strict` 按 true 处理：可选属性会被
+                    // 严格化进 required，模型被迫输出它本应能省略的字段（#7713 中
+                    // Claude Code Agent 的可选 isolation 被强制输出即此形态）。
+                    // 显式 false 保留客户端 schema 的可选语义。
+                    "strict": false,
                     "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
                 });
                 // 同 transform.rs：缺失的 description 省略而非输出 null，
@@ -1926,15 +1932,10 @@ pub fn anthropic_to_responses(
 
     if let Some(max_uses) = hosted_web_search_max_uses {
         if is_codex_oauth {
-            if forced_hosted_web_search_name.is_none() {
-                // The ChatGPT Codex contract rejects max_tool_calls. Without a
-                // forced, isolated hosted tool, the proxy cannot safely bound
-                // which built-in calls consume Anthropic's per-tool budget.
-                return Err(ProxyError::InvalidRequest(
-                    "Anthropic WebSearch max_uses on the Codex OAuth backend requires forcing that hosted tool"
-                        .to_string(),
-                ));
-            }
+            // Codex rejects max_tool_calls. Add a soft instruction cap here;
+            // downstream converters count web_search_call items and cut off the
+            // response on excess calls, forced or not. This response-side bound
+            // cannot guarantee that excess searches have not executed upstream.
             let existing = result
                 .get("instructions")
                 .and_then(Value::as_str)
@@ -3341,6 +3342,8 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
+        // 省略 strict 会被 Responses 后端按 true 严格化，可选参数被强制输出（#7713）
+        assert_eq!(result["tools"][0]["strict"], json!(false));
         assert_eq!(result["tools"][0]["name"], "get_weather");
         assert!(result["tools"][0].get("parameters").is_some());
         assert_eq!(result["tools"][0]["parameters"]["type"], json!("object"));
@@ -3350,6 +3353,46 @@ mod tests {
         );
         // input_schema should not appear
         assert!(result["tools"][0].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_marks_function_tools_not_strict() {
+        // #7713：可选参数（required 是任意子集）必须保留可选语义。
+        // 省略 strict 时 Responses 后端按 true 严格化，模型被迫输出 isolation。
+        let input = json!({
+            "model": "gpt-5.6-luna",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Call the agent"}],
+            "tools": [{
+                "name": "Agent",
+                "description": "Launch a sub-agent",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "prompt": {"type": "string"},
+                        "isolation": {"type": "string", "enum": ["worktree", "remote"]}
+                    },
+                    "required": ["description", "prompt"]
+                }
+            }]
+        });
+
+        let plain = anthropic_to_responses(input.clone(), None, false, false).unwrap();
+        assert_eq!(plain["tools"][0]["strict"], json!(false));
+        // required 保持为原有子集，strict 语义交由后端保留
+        assert_eq!(
+            plain["tools"][0]["parameters"]["required"],
+            json!(["description", "prompt"])
+        );
+
+        // 同一转换分支也服务 Codex OAuth 后端
+        let oauth = anthropic_to_responses(input, None, true, false).unwrap();
+        assert_eq!(oauth["tools"][0]["strict"], json!(false));
+        assert_eq!(
+            oauth["tools"][0]["parameters"]["required"],
+            json!(["description", "prompt"])
+        );
     }
 
     #[test]
@@ -3470,19 +3513,40 @@ mod tests {
     }
 
     #[test]
-    fn test_codex_auto_hosted_web_search_max_uses_fails_closed() {
+    fn test_codex_auto_hosted_web_search_max_uses_enforced_via_instructions() {
         let input = json!({
             "model": "gpt-5.6",
             "messages": [{"role": "user", "content": "Search"}],
-            "tools": [{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 3
-            }]
+            "tools": [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 3
+                },
+                {
+                    "name": "get_weather",
+                    "description": "A client-side function",
+                    "input_schema": {"type": "object"}
+                }
+            ]
         });
 
-        let error = anthropic_to_responses(input, None, true, false).unwrap_err();
-        assert!(error.to_string().contains("requires forcing"));
+        // An unforced hosted search must coexist with client-side tools.
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+        assert!(result.get("max_tool_calls").is_none());
+        assert!(result["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("no more than 3 web search calls"));
+        // Unrelated tools are preserved when the hosted tool is not forced.
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools
+            .iter()
+            .any(|tool| tool["type"] == "web_search" && tool["external_web_access"] == true));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["type"] == "function" && tool["name"] == "get_weather"));
     }
 
     #[test]
@@ -4258,6 +4322,77 @@ mod tests {
             })
         );
         assert_eq!(result["usage"]["server_tool_use"]["web_search_requests"], 1);
+    }
+
+    #[test]
+    fn test_web_search_max_uses_cuts_off_later_function_calls() {
+        let input = json!({
+            "id": "resp_mixed_search_limit",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_first",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "first query"}
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_before",
+                    "name": "get_weather",
+                    "arguments": "{\"location\":\"Tokyo\"}"
+                },
+                {
+                    "type": "web_search_call",
+                    "id": "ws_second",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "second query"}
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_after",
+                    "name": "get_weather",
+                    "arguments": "{\"location\":\"Paris\"}"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Later answer."}]
+                }
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 3}
+        });
+
+        let within_limit = responses_to_anthropic_with_web_search_options(
+            input.clone(),
+            Some("web_search"),
+            Some(2),
+        )
+        .unwrap();
+        let content = within_limit["content"].as_array().unwrap();
+        assert_eq!(content.len(), 7);
+        assert_eq!(content[2]["id"], "call_before");
+        assert_eq!(content[5]["id"], "call_after");
+        assert_eq!(content[6]["text"], "Later answer.");
+        assert_eq!(within_limit["stop_reason"], "tool_use");
+
+        // Match stream cutoff: preserve completed calls before the excess
+        // search, but do not return anything produced after that search.
+        let over_limit =
+            responses_to_anthropic_with_web_search_options(input, Some("web_search"), Some(1))
+                .unwrap();
+        let content = over_limit["content"].as_array().unwrap();
+        assert_eq!(content.len(), 5);
+        assert_eq!(content[2]["id"], "call_before");
+        assert_eq!(content[2]["input"], json!({"location": "Tokyo"}));
+        assert_eq!(content[3]["id"], "ws_second");
+        assert_eq!(content[4]["content"]["error_code"], "max_uses_exceeded");
+        assert_eq!(over_limit["stop_reason"], "tool_use");
+        assert_eq!(
+            over_limit["usage"]["server_tool_use"]["web_search_requests"],
+            1
+        );
     }
 
     #[test]
