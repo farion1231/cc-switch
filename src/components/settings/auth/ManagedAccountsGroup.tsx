@@ -82,6 +82,7 @@ interface ManagedAccountsGroupProps {
   onAdd: () => void;
   /** Copilot 选部署类型的那块；有它时不显示空状态那行 */
   chooser?: React.ReactNode;
+  loginOptions?: React.ReactNode;
   /** 「默认」徽标和 ⋯ 里「设为默认」的文案（Antigravity 是「agy 在用」「切换 agy 到这个账号」） */
   defaultLabel?: string;
   setDefaultLabel?: string;
@@ -122,6 +123,7 @@ export function ManagedAccountsGroup({
   loginLabel,
   onAdd,
   chooser,
+  loginOptions,
   defaultLabel,
   setDefaultLabel,
   canReauth,
@@ -359,6 +361,7 @@ export function ManagedAccountsGroup({
       )}
 
       {chooser}
+      {loginOptions}
 
       <div role="status">
         {busy && (
