@@ -60,12 +60,14 @@ pub enum ModelTarget {
 pub type RoleMapping =
     std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>;
 
-/// 角色引用（`fallback_providers` / `auxiliary.*` / `moa.presets.*`）的目标。
+/// 角色引用（`fallback_providers` / `auxiliary.*` / `moa.presets.*` /
+/// `platforms.*.extra.model_routes`）的目标。
 #[derive(Debug, Clone, PartialEq)]
 pub enum RoleTarget {
     /// 进入代理：先把上一次改写过的点还原成原始引用，再按映射改写到路由条目。
     /// 不在映射里的引用保持直连；`custom:X` 悬空引用（文件里没有 X、映射里也没有）
-    /// 从 fallback / moa 名单里清掉。aux 块改写时清掉 `base_url` / `api_key`（它们
+    /// 从 fallback / moa / model_routes 名单里清掉。aux 块与 model_routes 改写时清掉
+    /// `base_url` / `api_key`（它们
     /// 会覆盖 provider，留着就绕过路由条目了），还原时写回。
     Route { mapping: RoleMapping },
     /// 退出代理：按进入时记录的改写清单逐点还原。
@@ -91,12 +93,13 @@ pub struct RoleRewrite {
     pub to_model: String,
 }
 
-/// 一个 home 里三段角色区的新值（`None` = 该段没有变化，不必写）与本轮改写清单。
+/// 一个 home 里四段角色区的新值（`None` = 该段没有变化，不必写）与本轮改写清单。
 #[derive(Debug, Default)]
 pub(crate) struct RoleOutcome {
     pub fallback: Option<serde_yaml::Value>,
     pub auxiliary: Option<serde_yaml::Value>,
     pub moa: Option<serde_yaml::Value>,
+    pub platforms: Option<serde_yaml::Value>,
     pub rewrites: Vec<RoleRewrite>,
 }
 
@@ -222,7 +225,7 @@ fn resolve_ref(
     }
 }
 
-/// 按目标处理一个 home 的三段角色区（纯函数：capture 与 patch.apply 共用，输入
+/// 按目标处理一个 home 的四段角色区（纯函数：capture 与 patch.apply 共用，输入
 /// 相同则输出相同）。`doc` 是该 home 解析后的整份配置；`recorded` 是这个 home 已
 /// 有的改写记录（第一轮为空）。
 pub(crate) fn apply_role_target(
@@ -620,6 +623,145 @@ pub(crate) fn apply_role_target(
         }
     }
 
+    // ---- platforms.<p>.extra.model_routes ----
+    // api_server 等平台的模型别名表（`alias -> {model, provider, ...}`）。引用走
+    // 与 fallback 同一套处置：被接管的供应商改写到路由条目，悬空的 custom 引用
+    // 删掉——别名留在表里，请求一进来就报 Unknown provider。
+    if let Some(platforms) = doc.get("platforms").and_then(Yaml::as_mapping) {
+        let mut new_platforms = platforms.clone();
+        let mut changed = false;
+        for (platform, block) in platforms.iter() {
+            let platform_name = platform.as_str().unwrap_or_default().to_string();
+            let Some(routes) = block
+                .get(Yaml::String("extra".into()))
+                .and_then(|extra| extra.get(Yaml::String("model_routes".into())))
+                .and_then(Yaml::as_mapping)
+            else {
+                continue;
+            };
+            let mut new_routes = serde_yaml::Mapping::new();
+            let mut routes_changed = false;
+            for (alias, route) in routes.iter() {
+                let mut new_route = route.clone();
+                let role = format!(
+                    "route:{platform_name}:{}",
+                    alias.as_str().unwrap_or_default()
+                );
+                let provider = text(&new_route, "provider");
+                let model = text(&new_route, "model");
+                let action = resolve_ref(
+                    RefSite {
+                        role: &role,
+                        provider: &provider,
+                        model: &model,
+                        has_base_url: has(&new_route, "base_url"),
+                        has_api_key: has(&new_route, "api_key"),
+                    },
+                    custom_names,
+                    target,
+                    recorded,
+                    true,
+                );
+                match action {
+                    // AutoReset 只对非 droppable（aux）返回；这里（droppable）不会出现
+                    Action::AutoReset | Action::Keep => {}
+                    Action::Rewrite { to_model, .. } if to_model.is_empty() => {
+                        changed = true;
+                        routes_changed = true;
+                        out.rewrites.push(RoleRewrite {
+                            role,
+                            from_provider: provider,
+                            from_model: model,
+                            from_base_url: None,
+                            from_api_key: None,
+                            from_api_mode: None,
+                            to_model: String::new(),
+                        });
+                        continue; // 悬空：删除，永久治愈
+                    }
+                    Action::Rewrite {
+                        to_model,
+                        clear_overrides,
+                    } => {
+                        let mapping = new_route.as_mapping_mut().expect("route 项是 mapping");
+                        mapping.insert(
+                            Yaml::String("provider".into()),
+                            Yaml::String(ROUTE_ENTRY_NAME.into()),
+                        );
+                        mapping
+                            .insert(Yaml::String("model".into()), Yaml::String(to_model.clone()));
+                        if clear_overrides {
+                            // 直连 base_url / api_key 会覆盖 provider，留着就绕过路由条目
+                            mapping.remove(Yaml::String("base_url".into()));
+                            mapping.remove(Yaml::String("api_key".into()));
+                        }
+                        out.rewrites.push(RoleRewrite {
+                            role,
+                            from_provider: provider,
+                            from_model: model,
+                            from_base_url: has(route, "base_url").then(|| text(route, "base_url")),
+                            from_api_key: has(route, "api_key").then(|| text(route, "api_key")),
+                            from_api_mode: None,
+                            to_model,
+                        });
+                        changed = true;
+                        routes_changed = true;
+                    }
+                    Action::Restore { rewrite } => {
+                        let mapping = new_route.as_mapping_mut().expect("route 项是 mapping");
+                        mapping.insert(
+                            Yaml::String("provider".into()),
+                            Yaml::String(rewrite.from_provider.clone()),
+                        );
+                        mapping.insert(
+                            Yaml::String("model".into()),
+                            Yaml::String(rewrite.from_model.clone()),
+                        );
+                        if let Some(value) = rewrite.from_base_url.as_deref() {
+                            mapping.insert(
+                                Yaml::String("base_url".into()),
+                                Yaml::String(value.to_string()),
+                            );
+                        }
+                        if let Some(value) = rewrite.from_api_key.as_deref() {
+                            mapping.insert(
+                                Yaml::String("api_key".into()),
+                                Yaml::String(value.to_string()),
+                            );
+                        }
+                        changed = true;
+                        routes_changed = true;
+                    }
+                }
+                new_routes.insert(alias.clone(), new_route);
+            }
+            if routes_changed {
+                let mut new_block = block.clone();
+                if new_routes.is_empty() {
+                    // 别名全删：连 model_routes 键一起移除，不留空表
+                    if let Some(extra) = new_block
+                        .get_mut(Yaml::String("extra".into()))
+                        .and_then(Yaml::as_mapping_mut)
+                    {
+                        extra.remove(Yaml::String("model_routes".into()));
+                    }
+                } else if let Some(extra) = new_block
+                    .get_mut(Yaml::String("extra".into()))
+                    .and_then(Yaml::as_mapping_mut)
+                {
+                    extra.insert(
+                        Yaml::String("model_routes".into()),
+                        Yaml::Mapping(new_routes),
+                    );
+                }
+                new_platforms.insert(platform.clone(), new_block);
+            }
+        }
+        if changed {
+            out.platforms = Some(Yaml::Mapping(new_platforms));
+        }
+    }
+
     out
 }
 
@@ -847,6 +989,14 @@ impl LivePatch for HermesConfigPatch<'_> {
         if providers.is_empty() && config.get("custom_providers").is_none() && !removing {
             // 原本没有这一段且要写条目：照常写。
         }
+        // 角色引用的悬空判定名单：取第 1 步之后的 providers（写盘的最终名单）。
+        // 取 config 的话，刚被清掉的旧接管条目还挂在名单里，指向它的引用就
+        // 逃过悬空判定，写出去仍是死链。
+        let custom_names: std::collections::BTreeSet<String> = providers
+            .iter()
+            .filter_map(|entry| entry.get("name").and_then(Yaml::as_str))
+            .map(String::from)
+            .collect();
         let mut raw = crate::hermes_config::replace_yaml_section(
             &raw,
             "custom_providers",
@@ -930,18 +1080,8 @@ impl LivePatch for HermesConfigPatch<'_> {
             }
         }
 
-        // 3) 角色引用（fallback_providers / auxiliary / moa）：按目标接管或还原。
-        let custom_names: std::collections::BTreeSet<String> = config
-            .get("custom_providers")
-            .and_then(|v| v.as_sequence())
-            .map(|entries| {
-                entries
-                    .iter()
-                    .filter_map(|entry| entry.get("name").and_then(Yaml::as_str))
-                    .map(String::from)
-                    .collect()
-            })
-            .unwrap_or_default();
+        // 3) 角色引用（fallback_providers / auxiliary / moa / platforms.*.extra.
+        //    model_routes）：按目标接管或还原。
         let outcome = apply_role_target(
             &config,
             &custom_names,
@@ -952,6 +1092,7 @@ impl LivePatch for HermesConfigPatch<'_> {
             ("fallback_providers", outcome.fallback),
             ("auxiliary", outcome.auxiliary),
             ("moa", outcome.moa),
+            ("platforms", outcome.platforms),
         ] {
             if let Some(value) = value {
                 raw = crate::hermes_config::replace_yaml_section(&raw, section, &value).map_err(
@@ -1233,7 +1374,7 @@ mod tests {
 
     fn role_raw() -> String {
         String::from(
-            "model:\n  default: kimi-k2\n  provider: cc-switch-route\ncustom_providers:\n  - name: kimi\n  - name: moa-mglm\nfallback_providers:\n  - provider: custom:kimi\n    model: kimi-k2\n  - provider: custom:moa-mglm\n    model: glm-5.3\n  - provider: custom:cc-switch\n    model: aim\nauxiliary:\n  vision:\n    provider: custom:kimi\n    model: kimi-k2\n    base_url: https://direct.example/v1\n    api_key: sk-direct\n  title_generation:\n    provider: auto\nmoa:\n  presets:\n    heavy:\n      reference_models:\n        - provider: custom:kimi\n          model: kimi-k2\n          enabled: true\n        - provider: custom:moa-mglm\n          model: glm-5.3\n      aggregator:\n        provider: custom:kimi\n        model: kimi-k2\n"
+            "model:\n  default: kimi-k2\n  provider: cc-switch-route\ncustom_providers:\n  - name: kimi\n  - name: moa-mglm\nfallback_providers:\n  - provider: custom:kimi\n    model: kimi-k2\n  - provider: custom:moa-mglm\n    model: glm-5.3\n  - provider: custom:cc-switch\n    model: aim\nauxiliary:\n  vision:\n    provider: custom:kimi\n    model: kimi-k2\n    base_url: https://direct.example/v1\n    api_key: sk-direct\n  title_generation:\n    provider: auto\nmoa:\n  presets:\n    heavy:\n      reference_models:\n        - provider: custom:kimi\n          model: kimi-k2\n          enabled: true\n        - provider: custom:moa-mglm\n          model: glm-5.3\n      aggregator:\n        provider: custom:kimi\n        model: kimi-k2\nplatforms:\n  api_server:\n    enabled: true\n    extra:\n      host: 127.0.0.1\n      port: 8650\n      model_routes:\n        glm-5.2:\n          model: kimi-k2\n          provider: custom:kimi\n        legacy:\n          model: aim\n          provider: custom:cc-switch\n        direct:\n          model: glm-5.3\n          provider: custom:moa-mglm\n"
         )
     }
 
@@ -1306,6 +1447,34 @@ mod tests {
             yaml["moa"]["presets"]["heavy"]["aggregator"]["model"].as_str(),
             Some("ccs-h-kimi/kimi-k2")
         );
+
+        // platforms.api_server.extra.model_routes：kimi 别名接管、悬空删除、直连保持
+        let routes = &yaml["platforms"]["api_server"]["extra"]["model_routes"];
+        assert_eq!(
+            (
+                routes["glm-5.2"]["provider"].as_str(),
+                routes["glm-5.2"]["model"].as_str()
+            ),
+            (Some(ROUTE_ENTRY_NAME), Some("ccs-h-kimi/kimi-k2")),
+            "映射内的别名接管"
+        );
+        assert!(
+            routes.get("legacy").is_none(),
+            "悬空的 custom:cc-switch 别名被删"
+        );
+        assert_eq!(
+            (
+                routes["direct"]["provider"].as_str(),
+                routes["direct"]["model"].as_str()
+            ),
+            (Some("custom:moa-mglm"), Some("glm-5.3")),
+            "未接管的别名保持直连"
+        );
+        assert_eq!(
+            yaml["platforms"]["api_server"]["extra"]["port"].as_i64(),
+            Some(8650),
+            "平台段其余键原样保留"
+        );
     }
 
     #[test]
@@ -1366,6 +1535,19 @@ mod tests {
             yaml["moa"]["presets"]["heavy"]["aggregator"]["model"].as_str(),
             Some("kimi-k2")
         );
+        let routes = &yaml["platforms"]["api_server"]["extra"]["model_routes"];
+        assert_eq!(
+            (
+                routes["glm-5.2"]["provider"].as_str(),
+                routes["glm-5.2"]["model"].as_str()
+            ),
+            (Some("custom:kimi"), Some("kimi-k2")),
+            "model_routes 别名还原"
+        );
+        assert!(
+            routes.get("legacy").is_none(),
+            "悬空删除是永久治愈，退出不补回"
+        );
     }
 
     #[test]
@@ -1417,6 +1599,86 @@ mod tests {
                 "{task} 治愈后保持 auto"
             );
         }
+    }
+
+    #[test]
+    fn model_routes_legacy_dangling_refs_are_dropped_and_overrides_cleared() {
+        // 实机现场形态：api_server 的模型别名表指着旧接管的 custom:cc-switch，
+        // 条目已被本轮接管清掉；另有一个带直连 base_url 的别名要走代理。
+        let raw = "custom_providers:\n  - name: kimi\nplatforms:\n  api_server:\n    enabled: true\n    extra:\n      host: 127.0.0.1\n      port: 8650\n      model_routes:\n        glm-5.2:\n          model: kimi-k2\n          provider: custom:kimi\n          base_url: https://direct.example/v1\n        stale:\n          model: aim\n          provider: custom:cc-switch\n  matrix:\n    enabled: true\n";
+        let enter = role_patch(
+            RoleTarget::Route {
+                mapping: role_mapping(),
+            },
+            &[],
+        );
+        let out = enter
+            .apply(Path::new("/tmp/config.yaml"), Some(raw.as_bytes()))
+            .expect("applies");
+        let yaml: serde_yaml::Value = serde_yaml::from_slice(&out).expect("parses");
+        let extra = &yaml["platforms"]["api_server"]["extra"];
+        let route = &extra["model_routes"]["glm-5.2"];
+        assert_eq!(
+            (route["provider"].as_str(), route["model"].as_str()),
+            (Some(ROUTE_ENTRY_NAME), Some("ccs-h-kimi/kimi-k2"))
+        );
+        assert!(
+            route.get("base_url").is_none(),
+            "直连 base_url 会绕过路由条目，改写时清掉"
+        );
+        assert!(extra["model_routes"].get("stale").is_none(), "悬空别名删除");
+        assert_eq!(extra["port"].as_i64(), Some(8650));
+        assert_eq!(
+            yaml["platforms"]["matrix"]["enabled"].as_bool(),
+            Some(true),
+            "同段其他平台不动"
+        );
+
+        // 全悬空：model_routes 键整个移除，不留空表
+        let only_stale = "custom_providers:\n  - name: kimi\nplatforms:\n  api_server:\n    extra:\n      host: 127.0.0.1\n      model_routes:\n        stale:\n          model: aim\n          provider: custom:cc-switch\n";
+        let out2 = enter
+            .apply(Path::new("/tmp/config.yaml"), Some(only_stale.as_bytes()))
+            .expect("applies");
+        let yaml2: serde_yaml::Value = serde_yaml::from_slice(&out2).expect("parses");
+        assert!(
+            yaml2["platforms"]["api_server"]["extra"]
+                .get("model_routes")
+                .is_none(),
+            "别名全删后连 model_routes 键一起移除"
+        );
+
+        // 记录 → 退出：kimi 别名还原（含 base_url），悬空的不补回
+        let doc: serde_yaml::Value = serde_yaml::from_str(raw).expect("parses");
+        let names = ["kimi"].into_iter().map(String::from).collect();
+        let outcome = apply_role_target(
+            &doc,
+            &names,
+            &RoleTarget::Route {
+                mapping: role_mapping(),
+            },
+            &[],
+        );
+        let restore = role_patch(RoleTarget::Restore, &outcome.rewrites);
+        let back = restore
+            .apply(Path::new("/tmp/config.yaml"), Some(&out))
+            .expect("restores");
+        let yaml3: serde_yaml::Value = serde_yaml::from_slice(&back).expect("parses");
+        let route = &yaml3["platforms"]["api_server"]["extra"]["model_routes"]["glm-5.2"];
+        assert_eq!(
+            (route["provider"].as_str(), route["model"].as_str()),
+            (Some("custom:kimi"), Some("kimi-k2"))
+        );
+        assert_eq!(
+            route["base_url"].as_str(),
+            Some("https://direct.example/v1"),
+            "退出时直连 base_url 写回"
+        );
+        assert!(
+            yaml3["platforms"]["api_server"]["extra"]["model_routes"]
+                .get("stale")
+                .is_none(),
+            "悬空删除永久治愈"
+        );
     }
 
     #[test]
