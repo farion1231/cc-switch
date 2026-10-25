@@ -32,14 +32,15 @@ describe("Baidu Qianfan Token Plan presets", () => {
 
     const env = (preset?.settingsConfig as { env: Record<string, string> }).env;
     expect(env.ANTHROPIC_BASE_URL).toBe(ANTHROPIC_BASE);
-    // 官方 Claude Code 接入页（2026-07-30 版）全角色 deepseek-v4-pro
+    // 官方 Claude Code 接入页（2026-07-30 版）全角色 deepseek-v4-pro；
+    // 各档预勾 1M（模型名带 [1M] 标记）
     for (const key of [
       "ANTHROPIC_MODEL",
       "ANTHROPIC_DEFAULT_HAIKU_MODEL",
       "ANTHROPIC_DEFAULT_SONNET_MODEL",
       "ANTHROPIC_DEFAULT_OPUS_MODEL",
     ]) {
-      expect(env[key], key).toBe("deepseek-v4-pro");
+      expect(env[key], key).toBe("deepseek-v4-pro[1M]");
     }
   });
 

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
+import { formatBytes } from "@/components/settings/BackupStorageSection";
 
 interface CodexAuthSettingsProps {
   settings: SettingsFormState;
@@ -12,16 +13,59 @@ interface CodexAuthSettingsProps {
   onChange: (
     updates: Partial<SettingsFormState>,
   ) => void | boolean | Promise<void | boolean>;
+  /** 已保存的 Codex 配置目录覆盖（不是输入框里的草稿）：变了就重读会话压缩状态 */
+  codexConfigDir?: string;
 }
 
 export function CodexAuthSettings({
   settings,
   onChange,
+  codexConfigDir,
 }: CodexAuthSettingsProps) {
   const { t } = useTranslation();
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
+  // 会话压缩开关以 config.toml 为准，不走设置表单的自动保存
+  const [sessionCompression, setSessionCompression] = useState(false);
+  const [sessionCompressionSaving, setSessionCompressionSaving] =
+    useState(false);
+  const [sessionsBytes, setSessionsBytes] = useState<number | null>(null);
+
+  // 后端按已保存的目录读写 config.toml，同页保存新目录后要跟着重读
+  useEffect(() => {
+    let cancelled = false;
+    setSessionsBytes(null);
+    void settingsApi
+      .getCodexSessionCompression()
+      .catch(() => false)
+      .then((enabled) => {
+        if (!cancelled) setSessionCompression(enabled);
+      });
+    void settingsApi
+      .getCodexSessionsDiskUsage()
+      .catch(() => null)
+      .then((bytes) => {
+        if (!cancelled) setSessionsBytes(bytes);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [codexConfigDir]);
+
+  const handleSessionCompressionChange = async (checked: boolean) => {
+    setSessionCompressionSaving(true);
+    try {
+      setSessionCompression(
+        await settingsApi.setCodexSessionCompression(checked),
+      );
+    } catch (error) {
+      console.error("Failed to toggle codex session compression:", error);
+      toast.error(t("settings.codexSessionCompressionFailed"));
+    } finally {
+      setSessionCompressionSaving(false);
+    }
+  };
 
   const handleUnifyHistoryChange = (checked: boolean) => {
     if (checked) {
@@ -87,7 +131,7 @@ export function CodexAuthSettings({
     }
   };
 
-  // 设置 → 应用配置 → Codex 卡片里的两行
+  // 设置 → 应用配置 → Codex 卡片里的三行（经典子 agent 开关在 Codex 聚合页签的「聚合设置」里）
   return (
     <>
       <SettingsSwitchRow
@@ -110,6 +154,24 @@ export function CodexAuthSettings({
         }}
         checked={settings.unifyCodexSessionHistory ?? false}
         onCheckedChange={handleUnifyHistoryChange}
+      />
+
+      <SettingsSwitchRow
+        label={t("settings.codexSessionCompression")}
+        help={{
+          title: t("settings.codexSessionCompression"),
+          body: t("settings.codexSessionCompressionDescription"),
+        }}
+        description={
+          sessionsBytes === null
+            ? undefined
+            : t("settings.codexSessionCompressionUsage", {
+                size: formatBytes(sessionsBytes),
+              })
+        }
+        checked={sessionCompression}
+        disabled={sessionCompressionSaving}
+        onCheckedChange={(value) => void handleSessionCompressionChange(value)}
       />
 
       <ConfirmDialog

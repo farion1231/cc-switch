@@ -755,14 +755,14 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     // input + cache_read + cache_creation == prompt_tokens（inclusive 上游）。
     // 与流式 build_anthropic_usage_json (#2774) 及 transform_gemini 的 saturating_sub 对称。
     // 最终 cache_read/cache_creation：直传字段优先于 OpenAI nested details。
-    let cached = usage
-        .get("cache_read_input_tokens")
-        .and_then(|v| v.as_u64())
-        .or_else(|| {
-            usage
-                .pointer("/prompt_tokens_details/cached_tokens")
-                .and_then(|v| v.as_u64())
-        })
+    // 每环要求「存在且非 0」：显式 0 按未上报处理继续向后找（#8041：部分中转把
+    // 靠前字段硬编码为桩 0，真值只在低顺位字段），DeepSeek 文档化命中字段末位兜底。
+    fn provided_nonzero(value: Option<&Value>) -> Option<u64> {
+        value.and_then(Value::as_u64).filter(|tokens| *tokens > 0)
+    }
+    let cached = provided_nonzero(usage.get("cache_read_input_tokens"))
+        .or_else(|| provided_nonzero(usage.pointer("/prompt_tokens_details/cached_tokens")))
+        .or_else(|| provided_nonzero(usage.get("prompt_cache_hit_tokens")))
         .unwrap_or(0);
     let cache_creation = usage
         .get("cache_creation_input_tokens")
@@ -1846,6 +1846,32 @@ mod tests {
         assert_eq!(result["usage"]["input_tokens"], 0);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 60);
         assert_eq!(result["usage"]["cache_creation_input_tokens"], 50);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_stub_zero_cache_read_falls_through_to_deepseek_hit_tokens() {
+        // #8041 报告者 payload：显式 0 的 cache_read_input_tokens 按「未上报」处理
+        // 继续向后找（与 usage/parser.rs、流式 extract_cache_read_tokens 同规则），
+        // 真值在末位兜底 prompt_cache_hit_tokens；fresh input = 6650 - 6400 = 250。
+        let input = json!({
+            "id": "chatcmpl-stub0",
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 6650,
+                "completion_tokens": 16,
+                "cache_read_input_tokens": 0,
+                "prompt_cache_hit_tokens": 6400
+            }
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["usage"]["cache_read_input_tokens"], 6400);
+        assert_eq!(result["usage"]["input_tokens"], 250);
     }
 
     #[test]

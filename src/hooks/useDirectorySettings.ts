@@ -5,7 +5,10 @@ import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
-export type DirectoryAppId = Exclude<AppId, "claude-desktop" | "mcode">;
+export type DirectoryAppId = Exclude<
+  AppId,
+  "claude-desktop" | "mcode" | "agy" | "kimi"
+>;
 type AppDirectoryKey =
   | "claude"
   | "codex"
@@ -14,7 +17,8 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes"
-  | "pi";
+  | "pi"
+  | "omp";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -27,6 +31,7 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   pi: string;
+  omp: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -42,6 +47,7 @@ const APP_DIRECTORY_META: Record<
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   pi: { key: "pi", defaultFolder: ".pi/agent" },
+  omp: { key: "omp", defaultFolder: ".omp/agent" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -56,6 +62,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+  omp: "ompConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -145,6 +152,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    omp: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -158,6 +166,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    omp: "",
   });
   // 已保存的数据目录（保存按钮和「需要重启」都和它比）。ref 给回调用，state 让比较它的
   // 组件在保存后重渲染：保存成功要把它更新成刚存的值，否则保存按钮一直在、改回去存不了
@@ -187,6 +196,7 @@ export function useDirectorySettings({
           openclawDir,
           hermesDir,
           piDir,
+          ompDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -196,6 +206,7 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultPiDir,
+          defaultOmpDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
@@ -206,6 +217,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
           settingsApi.getConfigDir("pi"),
+          settingsApi.getConfigDir("omp"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -215,6 +227,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("pi"),
+          computeDefaultConfigDir("omp"),
         ]);
 
         if (!active) return;
@@ -231,6 +244,7 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           pi: defaultPiDir ?? "",
+          omp: defaultOmpDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -246,6 +260,7 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           pi: piDir || defaultsRef.current.pi,
+          omp: ompDir || defaultsRef.current.omp,
         });
       } catch (error) {
         console.error(
@@ -265,15 +280,80 @@ export function useDirectorySettings({
     };
   }, []);
 
+  const previousSettingsRef = useRef(settings);
+  const localDirectoryUpdatesRef = useRef<ResolvedAppDirectoryOverrides>({});
+  const directoryRevisionsRef = useRef<
+    Partial<Record<AppDirectoryKey, number>>
+  >({});
+  useEffect(() => {
+    const previousSettings = previousSettingsRef.current;
+    previousSettingsRef.current = settings;
+    if (!previousSettings || !settings) return;
+
+    // Refetch can discard a draft. Resolve cleared overrides through the backend,
+    // whose defaults may depend on the platform or environment variables.
+    for (const { key } of Object.values(APP_DIRECTORY_META)) {
+      const field = DIRECTORY_KEY_TO_SETTINGS_FIELD[key];
+      const value = sanitizeDir(settings[field] as string | undefined);
+      if (
+        value === sanitizeDir(previousSettings[field] as string | undefined)
+      ) {
+        continue;
+      }
+      if (
+        key in localDirectoryUpdatesRef.current &&
+        localDirectoryUpdatesRef.current[key] === value
+      ) {
+        delete localDirectoryUpdatesRef.current[key];
+        continue;
+      }
+      delete localDirectoryUpdatesRef.current[key];
+      const revision = (directoryRevisionsRef.current[key] ?? 0) + 1;
+      directoryRevisionsRef.current[key] = revision;
+      setResolvedDirs((prev) => ({ ...prev, [key]: value ?? "" }));
+      if (value !== undefined) continue;
+
+      void settingsApi.getConfigDir(key).then(
+        (resolved) => {
+          setResolvedDirs((prev) =>
+            directoryRevisionsRef.current[key] === revision
+              ? { ...prev, [key]: resolved }
+              : prev,
+          );
+        },
+        (error) => {
+          console.error(
+            "[useDirectorySettings] Failed to resolve config dir",
+            error,
+          );
+        },
+      );
+    }
+  }, [settings]);
+
+  useEffect(
+    () => () => {
+      for (const { key } of Object.values(APP_DIRECTORY_META)) {
+        directoryRevisionsRef.current[key] =
+          (directoryRevisionsRef.current[key] ?? 0) + 1;
+      }
+    },
+    [],
+  );
+
   const updateDirectoryState = useCallback(
     (key: DirectoryKey, value?: string) => {
       const sanitized = sanitizeDir(value);
       if (key === "appConfig") {
         setAppConfigDir(sanitized);
       } else {
-        onUpdateSettings({
-          [DIRECTORY_KEY_TO_SETTINGS_FIELD[key]]: sanitized,
-        });
+        const field = DIRECTORY_KEY_TO_SETTINGS_FIELD[key];
+        // Local edits already update the display below. Do not resolve a local
+        // reset against the old persisted override, or let an older read win.
+        directoryRevisionsRef.current[key] =
+          (directoryRevisionsRef.current[key] ?? 0) + 1;
+        localDirectoryUpdatesRef.current[key] = sanitized;
+        onUpdateSettings({ [field]: sanitized });
       }
 
       setResolvedDirs((prev) => {
@@ -377,6 +457,10 @@ export function useDirectorySettings({
 
   const resetAllDirectories = useCallback(
     (overrides?: ResolvedAppDirectoryOverrides) => {
+      for (const { key } of Object.values(APP_DIRECTORY_META)) {
+        directoryRevisionsRef.current[key] =
+          (directoryRevisionsRef.current[key] ?? 0) + 1;
+      }
       setAppConfigDir(initialAppConfigDirRef.current);
       setResolvedDirs({
         appConfig:
@@ -389,6 +473,7 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         pi: overrides?.pi ?? defaultsRef.current.pi,
+        omp: overrides?.omp ?? defaultsRef.current.omp,
       });
     },
     [],

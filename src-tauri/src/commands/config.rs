@@ -24,6 +24,7 @@ fn invalid_json_format_error(error: serde_json::Error) -> String {
 
     match lang.as_str() {
         "en" => format!("Invalid JSON format: {error}"),
+        "tr" => format!("Geçersiz JSON biçimi: {error}"),
         "ja" => format!("JSON形式が無効です: {error}"),
         _ => format!("无效的 JSON 格式: {error}"),
     }
@@ -36,6 +37,7 @@ fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
 
     match lang.as_str() {
         "en" => format!("Invalid TOML format: {error}"),
+        "tr" => format!("Geçersiz TOML biçimi: {error}"),
         "ja" => format!("TOML形式が無効です: {error}"),
         _ => format!("无效的 TOML 格式: {error}"),
     }
@@ -136,6 +138,13 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Kimi => {
+            let file = crate::kimi_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
         AppType::Mcode => {
             let file = crate::mcode_config::config_path();
             Ok(ConfigStatus {
@@ -146,6 +155,25 @@ pub async fn get_config_status(
         AppType::Pi => {
             let config_path = crate::pi_config::get_pi_models_path().map_err(|e| e.to_string())?;
             let path = crate::pi_config::get_pi_agent_dir()
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            Ok(ConfigStatus {
+                exists: config_path.exists(),
+                path,
+            })
+        }
+        AppType::Agy => {
+            let dir = crate::agy_config::agy_dir();
+            Ok(ConfigStatus {
+                exists: crate::agy_config::settings_path().exists(),
+                path: dir.to_string_lossy().into_owned(),
+            })
+        }
+        AppType::Omp => {
+            let config_path =
+                crate::omp_config::get_omp_models_path().map_err(|e| e.to_string())?;
+            let path = crate::omp_config::get_omp_agent_dir()
                 .map_err(|e| e.to_string())?
                 .to_string_lossy()
                 .to_string();
@@ -176,10 +204,13 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::Agy => crate::agy_config::agy_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -199,10 +230,13 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::Agy => crate::agy_config::agy_dir(),
     };
 
     if !config_dir.exists() {
@@ -266,6 +300,24 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
         .opener()
         .open_path(config_dir.to_string_lossy().to_string(), None::<String>)
         .map_err(|e| format!("打开文件夹失败: {e}"))?;
+
+    Ok(true)
+}
+
+/// 在文件管理器中定位应用诊断日志 cc-switch.log；文件还没生成时打开日志目录
+#[tauri::command]
+pub async fn reveal_app_log_file() -> Result<bool, String> {
+    let log_dir = crate::panic_hook::get_log_dir();
+    let log_file = log_dir.join("cc-switch.log");
+
+    let target = if log_file.exists() {
+        log_file
+    } else {
+        std::fs::create_dir_all(&log_dir).map_err(|e| format!("创建目录失败: {e}"))?;
+        log_dir
+    };
+
+    tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|e| format!("打开文件夹失败: {e}"))?;
 
     Ok(true)
 }

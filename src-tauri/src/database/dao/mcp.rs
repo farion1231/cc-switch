@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -44,6 +44,9 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 hermes: enabled_hermes,
                 mcode: row.get(13)?,
                 pi: row.get(14)?,
+                agy: row.get(15)?,
+                kimi: row.get(16)?,
+                omp: row.get(17)?,
             },
             description,
             homepage,
@@ -94,8 +97,11 @@ impl Database {
             AppType::Hermes => Some("enabled_hermes"),
             // These applications intentionally have no MCP flag in the SSOT.
             AppType::Mcode => Some("enabled_mcode"),
+            AppType::Kimi => Some("enabled_kimi"),
             AppType::Pi => Some("enabled_pi"),
+            AppType::Omp => Some("enabled_omp"),
             AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            AppType::Agy => Some("enabled_agy"),
         };
 
         if let Some(column) = column {
@@ -124,8 +130,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 server.id,
                 server.name,
@@ -145,6 +151,9 @@ impl Database {
                 server.apps.hermes,
                 server.apps.mcode,
                 server.apps.pi,
+                server.apps.agy,
+                server.apps.kimi,
+                server.apps.omp,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
