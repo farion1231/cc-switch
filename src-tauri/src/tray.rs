@@ -57,6 +57,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Mcode => "MiniMax Code",
         AppType::Kimi => "Kimi Code",
         AppType::Agy => "Antigravity",
+        AppType::Omp => "Oh My Pi",
     }
 }
 
@@ -131,7 +132,6 @@ pub struct TrayTexts {
     pub tier_used: &'static str,
     pub tier_used_up: &'static str,
     pub balance: &'static str,
-    pub balance_used_up: &'static str,
     pub plan_expired: &'static str,
     pub used_amount: &'static str,
     pub quota_failed: &'static str,
@@ -232,7 +232,6 @@ impl TrayTexts {
                 tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
                 balance: "Balance {value}",
-                balance_used_up: "Balance used up",
                 plan_expired: "Plan expired",
                 used_amount: "Used {value}",
                 quota_failed: "Quota unavailable",
@@ -290,7 +289,6 @@ impl TrayTexts {
                 texts.tier_used = "{label} %{value} kullanıldı";
                 texts.tier_used_up = "{label} tükendi";
                 texts.balance = "Bakiye {value}";
-                texts.balance_used_up = "Bakiye tükendi";
                 texts.plan_expired = "Planın süresi doldu";
                 texts.used_amount = "Kullanılan: {value}";
                 texts.quota_failed = "Kota bilgisi alınamıyor";
@@ -347,7 +345,6 @@ impl TrayTexts {
                 tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
                 balance: "残高 {value}",
-                balance_used_up: "残高なし",
                 plan_expired: "プラン期限切れ",
                 used_amount: "使用 {value}",
                 quota_failed: "残量を取得できません",
@@ -402,12 +399,11 @@ impl TrayTexts {
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "餘額 {value}",
-                balance_used_up: "餘額已用完",
                 plan_expired: "方案已過期",
                 used_amount: "已使用 {value}",
-                quota_failed: "額度沒查到",
-                quota_failed_login_expired: "額度沒查到：登入已過期",
-                quota_failed_token_refresh_pending: "額度沒查到：權杖待重新整理",
+                quota_failed: "額度查詢失敗",
+                quota_failed_login_expired: "額度查詢失敗：登入已過期",
+                quota_failed_token_refresh_pending: "額度查詢失敗：權杖待重新整理",
                 reset_on_date: "{labelSp}額度 {when}重置",
                 reset_at_time: "{labelSp}額度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -457,12 +453,11 @@ impl TrayTexts {
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "余额 {value}",
-                balance_used_up: "余额已用完",
                 plan_expired: "套餐已过期",
                 used_amount: "已使用 {value}",
-                quota_failed: "额度没查到",
-                quota_failed_login_expired: "额度没查到：登录已过期",
-                quota_failed_token_refresh_pending: "额度没查到：令牌待刷新",
+                quota_failed: "额度查询失败",
+                quota_failed_login_expired: "额度查询失败：登录已过期",
+                quota_failed_token_refresh_pending: "额度查询失败：令牌待刷新",
                 reset_on_date: "{labelSp}额度 {when}重置",
                 reset_at_time: "{labelSp}额度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -718,6 +713,9 @@ fn resets_at_from_extra(extra: Option<&str>) -> Option<String> {
 }
 
 fn amount(value: f64, unit: Option<&str>) -> String {
+    // `{:.2}` 会把 -0.0 和舍入到 0 的小负数写成 -0.00（DeepSeek 欠费归零时就回 "-0.00"）
+    let rounded = (value * 100.0).round() / 100.0;
+    let value = if rounded == 0.0 { 0.0 } else { value };
     match unit.map(str::trim).filter(|unit| !unit.is_empty()) {
         Some(unit) => format!("{value:.2} {unit}"),
         None => format!("{value:.2}"),
@@ -746,14 +744,12 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         }
     }
     if let Some(remaining) = data.remaining {
-        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）
+        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
+        // 用完也照写金额（欠费就是负数，#8812），整行变色、金额不另上绿色
         let left = if remaining <= 0.0 { 0.0 } else { f64::INFINITY };
-        let (text, emphasis) = if remaining <= 0.0 {
-            (texts.balance_used_up.to_string(), None)
-        } else {
-            let value = amount(remaining, unit);
-            (fill(texts.balance, &[("value", &value)]), Some(value))
-        };
+        let value = amount(remaining, unit);
+        let text = fill(texts.balance, &[("value", &value)]);
+        let emphasis = (remaining > 0.0).then_some(value);
         return Some(QuotaLine {
             text,
             left,
@@ -3667,10 +3663,23 @@ mod tests {
         );
         assert_eq!(
             one(balance(0.0, Some(100.0))),
-            Some(("余额已用完".to_string(), false))
+            Some(("余额 0.00 CNY".to_string(), false))
+        );
+        // 欠费照写负数；-0.0 和舍入到 0 的小负数不写成 -0.00（#8812）
+        assert_eq!(
+            one(balance(-24.96, None)),
+            Some(("余额 -24.96 CNY".to_string(), false))
+        );
+        assert_eq!(
+            one(balance(-0.0, None)),
+            Some(("余额 0.00 CNY".to_string(), false))
+        );
+        assert_eq!(
+            one(balance(-0.004, None)),
+            Some(("余额 0.00 CNY".to_string(), false))
         );
 
-        // 面板只给还有的余额金额上绿色；用完的那句不带
+        // 面板只给还有的余额金额上绿色；用完的那行整行变色，金额不另上色
         let emphasis = |data| match format_script_result(&zh(), &usage_result(true, vec![data])) {
             Some(QuotaView::Lines(lines)) => lines[0].emphasis.clone(),
             _ => panic!("expected quota lines"),
@@ -3715,7 +3724,7 @@ mod tests {
         assert_eq!(title(failed.clone()), None);
         assert_eq!(
             quota_note(&zh(), &failed.unwrap(), now()).as_deref(),
-            Some("额度没查到")
+            Some("额度查询失败")
         );
 
         let login =
@@ -3723,7 +3732,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &login).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：登录已过期")
+            Some("额度查询失败：登录已过期")
         );
         let pending = SubscriptionQuota::error(
             "claude",
@@ -3733,7 +3742,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &pending).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：令牌待刷新")
+            Some("额度查询失败：令牌待刷新")
         );
         // 没有凭据时不说话。
         let missing =

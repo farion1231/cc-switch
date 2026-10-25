@@ -83,7 +83,7 @@ describe("Pi thinking profiles", () => {
         }),
         expect.objectContaining({
           preset: "OpenCode Go",
-          modelId: "glm-5.2",
+          modelId: "glm-5.3",
           profileId: "openCodeGoGlm52",
         }),
         expect.objectContaining({

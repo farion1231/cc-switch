@@ -61,6 +61,15 @@ pub async fn kimi_oauth_quota(
     state.quota(&account_id).await
 }
 
+/// The account's current official model catalog, for editing its card.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn kimi_oauth_models(
+    account_id: String,
+    state: State<'_, KimiOAuthManager>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    state.models(&account_id).await
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub async fn kimi_oauth_use_account(
     account_id: String,
