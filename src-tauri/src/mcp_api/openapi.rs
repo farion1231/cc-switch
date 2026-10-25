@@ -156,11 +156,18 @@ fn compile_operation(
                 "enum",
                 "default",
                 "description",
+                "format",
                 "minimum",
                 "maximum",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
                 "minLength",
                 "maxLength",
                 "pattern",
+                "minItems",
+                "maxItems",
+                "uniqueItems",
+                "multipleOf",
             ] {
                 if let Some(v) = p.get(key) {
                     s.insert(key.into(), v.clone());
@@ -285,13 +292,21 @@ fn base_url(
     let candidate = if let Some(base) = override_url {
         base.to_string()
     } else if swagger {
+        let source_url = source.map(validate_target).transpose()?;
         let host = doc["host"]
             .as_str()
-            .ok_or("Swagger host is missing; supply a base URL")?;
+            .map(str::to_string)
+            .or_else(|| {
+                source_url
+                    .as_ref()
+                    .map(|url| url[url::Position::BeforeHost..url::Position::AfterPort].to_string())
+            })
+            .ok_or("Swagger host is missing; supply a document URL or base URL")?;
         let scheme = op["schemes"][0]
             .as_str()
             .or_else(|| doc["schemes"][0].as_str())
-            .unwrap_or("https");
+            .or_else(|| source_url.as_ref().map(|url| url.scheme()))
+            .ok_or("Swagger schemes are missing; supply a document URL or base URL")?;
         format!(
             "{scheme}://{host}{}",
             doc["basePath"].as_str().unwrap_or("")

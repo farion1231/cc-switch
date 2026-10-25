@@ -42,6 +42,75 @@ fn mcp_api_supports_swagger_yaml_and_relative_server() {
 }
 
 #[test]
+fn mcp_api_review_swagger_uses_document_origin_defaults() {
+    let mut spec = json!({"swagger":"2.0","basePath":"/v1","paths":{"/items":{"get":{}}}});
+    let source = Some("http://[::1]:8123/docs/swagger.json");
+    let preview = compile_document(&spec.to_string(), source, None).unwrap();
+    assert!(preview.skipped.is_empty(), "{:?}", preview.skipped);
+    assert_eq!(preview.tools[0].url, "http://[::1]:8123/v1/items");
+    spec["host"] = json!("api.example.com:8080");
+    let preview = compile_document(&spec.to_string(), source, None).unwrap();
+    assert_eq!(preview.tools[0].url, "http://api.example.com:8080/v1/items");
+    assert!(compile_document(&spec.to_string(), None, None)
+        .unwrap()
+        .tools
+        .is_empty());
+    spec["schemes"] = json!(["https"]);
+    let preview = compile_document(&spec.to_string(), source, None).unwrap();
+    assert_eq!(
+        preview.tools[0].url,
+        "https://api.example.com:8080/v1/items"
+    );
+}
+
+#[test]
+fn mcp_api_review_swagger_preserves_parameter_constraints() {
+    let spec = json!({"swagger":"2.0","host":"api.example.com","schemes":["https"],"paths":{"/items":{"get":{"parameters":[
+        {"in":"query","name":"n","type":"integer","minimum":0,"exclusiveMinimum":true},
+        {"in":"query","name":"tag","type":"array","items":{"type":"string"},"collectionFormat":"multi","minItems":1,"maxItems":2,"uniqueItems":true}
+    ]}}}});
+    let preview = compile_document(&spec.to_string(), None, None).unwrap();
+    let schema = &preview.tools[0].input_schema;
+    assert_eq!(
+        schema["properties"]["query"]["properties"]["n"]["exclusiveMinimum"],
+        0
+    );
+    for invalid in [
+        json!({"n":0}),
+        json!({"tag":[]}),
+        json!({"tag":["a","a"]}),
+        json!({"tag":["a","b","c"]}),
+    ] {
+        assert!(super::schema::validate(schema, &json!({"query":invalid})).is_err());
+    }
+    assert!(super::schema::validate(schema, &json!({"query":{"n":1,"tag":["a","b"]}})).is_ok());
+    let mut unsupported = spec;
+    unsupported["paths"]["/items"]["get"]["parameters"][0]["multipleOf"] = json!(2);
+    let preview = compile_document(&unsupported.to_string(), None, None).unwrap();
+    assert!(preview.tools.is_empty());
+    assert!(preview.skipped[0].contains("multipleOf"));
+}
+
+#[test]
+fn mcp_api_review_runtime_does_not_add_absent_header_schema() {
+    let mut profile = ApiProfile {
+        version: 1,
+        tools: compile_document(&document(), None, None).unwrap().tools,
+    };
+    profile.tools.push(ApiTool {
+        name: "optional_headers".into(), description: "Optional headers".into(), method: "GET".into(),
+        url: "https://api.example.com/items".into(), read_only: None,
+        input_schema: json!({"type":"object","properties":{"headers":{"type":"object","properties":{"X-Optional":{"type":"string"}},"required":[]}}}),
+    });
+    let original = profile.tools.clone();
+    let runtime = ApiRuntime::new(profile, BTreeMap::new()).unwrap();
+    for (tool, expected) in runtime.profile.tools.iter().zip(original) {
+        assert_eq!(tool.input_schema, expected.input_schema);
+        super::schema::check_schema(&tool.input_schema, 0).unwrap();
+    }
+}
+
+#[test]
 fn mcp_api_config_roundtrip_and_target_guards() {
     let profile = ApiProfile {
         version: 1,
@@ -200,6 +269,9 @@ async fn mcp_api_stdio_lifecycle_tools_and_protocol_errors() {
         .unwrap();
     assert_eq!(result["error"]["code"], -32601);
     let result=session.handle(json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"weather","arguments":{}}})).await.unwrap();
+    assert_eq!(result["result"]["isError"], true);
+    assert!(result.get("error").is_none());
+    let result=session.handle(json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"missing","arguments":{}}})).await.unwrap();
     assert_eq!(result["error"]["code"], -32602);
 }
 

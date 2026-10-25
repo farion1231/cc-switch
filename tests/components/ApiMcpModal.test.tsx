@@ -127,6 +127,26 @@ describe("API MCP creation", () => {
     expect(screen.getByRole("button", { name: "common.save" })).toBeDisabled();
   });
 
+  it("focuses save errors so feedback stays visible in a scrolled form", async () => {
+    renderModal();
+    fireEvent.change(screen.getByLabelText("mcpApi.documentUrl"), {
+      target: { value: "https://api.example.com/openapi.json" },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpApi.preview" }),
+    );
+    await screen.findByText("GET https://api.example.com/weather");
+    fireEvent.change(screen.getByLabelText("mcpApi.headers"), {
+      target: { value: '{"Authorization":7}' },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveFocus();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    expect(error).toHaveFocus();
+  });
+
   it("preserves repeated query values when importing a manual URL", async () => {
     renderModal();
     await userEvent.click(
@@ -156,6 +176,31 @@ describe("API MCP creation", () => {
         },
       },
     ]);
+  });
+
+  it("preserves URL escapes while recognizing manual path placeholders", async () => {
+    renderModal();
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpApi.manual" }),
+    );
+    fireEvent.change(screen.getByLabelText("mcpApi.toolName"), {
+      target: { value: "item" },
+    });
+    fireEvent.change(screen.getByLabelText("mcpApi.endpoint"), {
+      target: { value: "https://api.example.com/files/a%252Fb/100%25/{id}" },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpApi.preview" }),
+    );
+    await screen.findByText("GET https://api.example.com/weather");
+    const paths = JSON.parse(mocks.preview.mock.calls[0][0].document).paths;
+    expect(Object.keys(paths)).toEqual(["/files/a%252Fb/100%25/{id}"]);
+    expect(paths["/files/a%252Fb/100%25/{id}"].get.parameters).toContainEqual({
+      in: "path",
+      name: "id",
+      required: true,
+      schema: { type: "string" },
+    });
   });
 
   it("rejects embedded URL credentials instead of silently dropping them", async () => {

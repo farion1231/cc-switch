@@ -69,7 +69,12 @@ export default function ApiMcpModal({
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState("");
+  const errorRef = useRef<HTMLParagraphElement>(null);
   const revision = useRef(0);
+
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
 
   useEffect(() => {
     if (!initialData) return;
@@ -148,7 +153,7 @@ export default function ApiMcpModal({
           )
         )
           throw new Error(t("mcpApi.invalidManual"));
-        const path = decodeURI(url.pathname);
+        const path = url.pathname.replace(/%7B/gi, "{").replace(/%7D/gi, "}");
         const names = new Set(
           params.map(
             (p: { in?: string; name?: string }) => `${p.in}:${p.name}`,
@@ -230,6 +235,7 @@ export default function ApiMcpModal({
         );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      errorRef.current?.focus();
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -242,6 +248,7 @@ export default function ApiMcpModal({
       (!/^[a-zA-Z0-9_.-]+$/.test(id) || existingServers[id])
     ) {
       setError(t("mcpApi.invalidId"));
+      errorRef.current?.focus();
       return;
     }
     busyRef.current = true;
@@ -271,6 +278,7 @@ export default function ApiMcpModal({
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      errorRef.current?.focus();
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -435,7 +443,9 @@ export default function ApiMcpModal({
           </details>
           {error && (
             <p
+              ref={errorRef}
               role="alert"
+              tabIndex={-1}
               className="text-body text-danger-text [overflow-wrap:anywhere]"
             >
               {error}

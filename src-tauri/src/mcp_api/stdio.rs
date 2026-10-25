@@ -138,7 +138,10 @@ fn rpc_result(id: Value, result: Value) -> Value {
 async fn call_response(runtime: &ApiRuntime, id: Value, name: &str, arguments: Value) -> Value {
     match runtime.call(name, arguments).await {
         Ok(result) => rpc_result(id, result),
-        Err(message) => rpc_error(id, -32602, &message),
+        Err(message) => rpc_result(
+            id,
+            json!({"content":[{"type":"text","text":message}],"isError":true}),
+        ),
     }
 }
 enum Dispatch {
@@ -230,6 +233,15 @@ impl Session {
                 let Some(name) = params["name"].as_str() else {
                     return Dispatch::Reply(rpc_error(id, -32602, "Tool name is required"));
                 };
+                if !self
+                    .runtime
+                    .profile
+                    .tools
+                    .iter()
+                    .any(|tool| tool.name == name)
+                {
+                    return Dispatch::Reply(rpc_error(id, -32602, "Unknown API tool"));
+                }
                 let arguments = params
                     .get("arguments")
                     .cloned()

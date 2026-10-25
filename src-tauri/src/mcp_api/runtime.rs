@@ -14,7 +14,12 @@ impl ApiRuntime {
         validate_headers(&headers)?;
         for tool in &mut profile.tools {
             let schema = &mut tool.input_schema;
-            if let Some(required) = schema["properties"]["headers"]["required"].as_array_mut() {
+            if let Some(required) = schema
+                .get_mut("properties")
+                .and_then(|properties| properties.get_mut("headers"))
+                .and_then(|headers| headers.get_mut("required"))
+                .and_then(Value::as_array_mut)
+            {
                 required.retain(|name| {
                     !headers.keys().any(|key| {
                         name.as_str()
@@ -22,7 +27,8 @@ impl ApiRuntime {
                     })
                 });
                 if required.is_empty() {
-                    if let Some(required) = schema["required"].as_array_mut() {
+                    if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut)
+                    {
                         required.retain(|name| name != "headers");
                     }
                 }
@@ -42,7 +48,7 @@ impl ApiRuntime {
         })
     }
 
-    /// Invalid arguments are JSON-RPC errors; upstream failures are tool results.
+    /// Reject invalid arguments before HTTP; stdio reports them as tool errors.
     pub async fn call(&self, name: &str, arguments: Value) -> Result<Value, String> {
         let tool = self
             .profile

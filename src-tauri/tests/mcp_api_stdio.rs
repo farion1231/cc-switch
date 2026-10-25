@@ -116,6 +116,10 @@ async fn stdio_process_initializes_lists_calls_and_exits_without_gui() {
     process.send(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}));
     let tools = process.receive();
     assert_eq!(tools["result"]["tools"][0]["name"], "echo");
+    assert_eq!(
+        tools["result"]["tools"][0]["inputSchema"],
+        json!({"type":"object","properties":{},"additionalProperties":false})
+    );
     assert!(!tools.to_string().contains("synthetic-test-key"));
     process.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{}}}));
     let response = process.receive();
