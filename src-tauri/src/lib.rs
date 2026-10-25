@@ -31,6 +31,7 @@ mod linux_fix;
 pub mod live;
 mod mcode_config;
 mod mcp;
+pub mod mcp_api;
 pub mod mode;
 mod model_capabilities;
 mod omp_config;
@@ -1613,6 +1614,9 @@ pub fn run() {
             commands::delete_mcp_server_in_config,
             commands::set_mcp_enabled,
             // Unified MCP management
+            commands::preview_mcp_api,
+            commands::build_mcp_api_spec,
+            commands::decode_mcp_api_spec,
             commands::get_mcp_servers,
             commands::upsert_mcp_server,
             commands::delete_mcp_server,
