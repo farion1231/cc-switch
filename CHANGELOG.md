@@ -5,6 +5,50 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.20] - 2026-10-24
+
+This release adds Oh My Pi as the thirteenth managed app: providers coexist in `models.yml` with enable/remove actions, MCP, Skills, prompts and sessions are supported, and the Apps page installs, updates and uninstalls `omp`. The Apps page is split into installed and not-installed sections, installed apps can be reordered by dragging and the sidebar follows that order. Official Kimi cards can be edited and removed from Kimi Code, and managed ChatGPT accounts can sign in through the browser. Other fixes cover an empty or negative DeepSeek balance shown as an expired plan, missing Kimi Code subagent usage, HTTP 429 on Skills updates, 401 on Pi usage queries with `$NAME` API keys, `<local-command-stdout>` as Claude Code session titles, and window dragging on Linux with app-level window controls.
+
+**Stats**: 37 commits | 198 files changed | +11737 insertions | -3046 deletions
+
+### Added
+
+- **Oh My Pi Support** (#6747, #8308; refs #6422, #6662, #8057): Oh My Pi (command `omp`) is a new additive app. The agent directory is `~/.omp/agent` (or `~/.omp/profiles/<name>/agent` for a named profile; `PI_CONFIG_DIR` and the XDG data dir are honored) and can be overridden in settings. Providers are edited in `models.yml` as text: only the one entry CC Switch writes is rewritten, entries with anchors, tags or flow style are refused instead of re-emitted, and the file is rolled back byte for byte when the database commit fails. Nodes are checked against omp 18.12's schema before writing (compat enums, `reasoningEffortMap` levels, `auth`, `authHeader`, discovery type, `injectV1`, `timeoutMs`), since one invalid node disables every custom provider; with only a legacy `models.json` present, adding a provider is refused until omp has migrated it. The Pi provider form, presets and fetched-model dialog are shared, with a discovery type selector under Advanced Options. Usage queries resolve an omp `apiKey` as an environment variable name (process env, then `.env` in the agent dir, config root and home) before falling back to the literal; `!command` values are never run. MCP goes to `mcp.json` (revision checked), Skills follow Pi (no DB column, state from `<agent>/skills`), the global prompt goes to `AGENTS.md`, and sessions are read through the Pi session reader with project images allowed in previews. The Apps page installs with the official installer (Bun when present, otherwise the verified binary), updates with `omp update` and recognizes the installer's binary for uninstall. The MCP and Skills matrices explain in the Oh My Pi column that omp also discovers servers and skills from other agents' directories. Local routing and usage import do not apply. Database schema 22 → 23 adds `enabled_omp` to `mcp_servers`.
+- **Browser Login for Managed ChatGPT Accounts** (#8288, fixes #8284): The Auth Center and the Codex provider form offer browser login (authorization code + PKCE with a loopback callback on port 1455) next to device-code login, including reauthentication, for workspaces that disable device codes.
+
+### Changed
+
+- **Apps Page Sections** (5bc562ce0, ba6a8a555): Rows are split into "Installed · N" and "Not installed · N"; empty sections are hidden and the page stays one table until the first detection finishes. A CLI counts as installed by the same check that offers Uninstall (`isToolPresent`). Claude Desktop is grouped by `installed` from `get_claude_desktop_status` (connected, Desktop's own `Claude` data directory, or a Claude.app bundle on macOS).
+- **Reorder Installed Apps** (b71141a86): Installed rows can be dragged; the single order is saved as `appOrder` in the device-level `settings.json` (not synced) and drives the sidebar and the default app. Apps missing from a saved order are inserted after their default predecessor.
+- **Official Kimi Cards Editable and Removable** (626529451): Editing keeps the connection managed by the Auth Center and fetches the account's own catalog through `kimi_oauth_models`, so picked models carry the official context window, capabilities and efforts. Official cards can be removed from `config.toml` like other Kimi providers (card and credential stay; "Add" restores it); deleting still requires removing first or the Auth Center.
+- **"No subscription" for Kimi Accounts Without a Plan** (c91aa7740): An empty `/usages` answer shows "No subscription" in the account row and the card's quota column.
+- **Balance Amount Always Shown** (72b056f6e, refs #8812): Balances at or below zero show "Balance <amount>" in red on the card and amber in the tray instead of "Balance used up"; a negative zero is written as 0.00.
+- **Chinese Failed-Quota Wording** (e68e69437): "额度没查到" / "額度沒查到" becomes "额度查询失败" / "額度查詢失敗" on cards, in the Auth Center and in the tray.
+- **Pi Fetched Models in a Dialog** (6c2fc74e3): "Fetch models" opens the shared picker for Pi and omp; checked models are added as rows and filled from presets or models.dev, unchecking removes the row.
+- **Pi Advanced Options** (5f6426400): Request headers, omp discovery and compat options move into a collapsed section; hints are rewritten in plain language.
+- **Copilot Upstream Format Shown as Automatic** (#8196, fixes #8195): Claude Code and Claude Desktop disable the format selector for Copilot and explain that routing picks the format per model.
+- **Usage Tab Counts** (28a2ebc0e): All three counts are queried at once and kept while new data loads.
+- **Pricing**: Seed Kimi K3.1 Pro and K3.1 Pro HighSpeed, including the bare `k3.1-pro` ids used by the Kimi Code plan.
+- **Turkish Catalog** (#8616): Turkish translations cover every English string again.
+- **Presets**: Model IDs refreshed to the latest vendor lineups across first-party, sponsor and relay presets; retired models dropped. EveryAPI sponsor and presets removed (the icon stays for existing providers).
+
+### Fixed
+
+- **Empty DeepSeek Balance Shown as an Expired Plan** (b9f317af5, refs #8812): `is_available` only says whether the balance covers calls; the balance is always reported valid and invalid keys go through the 401/403 path.
+- **Kimi Code Subagent Usage Missing** (f395cd6be, refs #8792): Every `agents/<agent>/wire.jsonl` is scanned; subagent `step.end` records with usage are imported, keyed by `messageId`, with a per-agent request index. The parent's `subagent.completed` summary is not counted.
+- **Antigravity Subagent Usage Imported as Unknown** (#8693): The model is recovered read-only from `conversations/<id>.db` (field 21, falling back to 19).
+- **Skills Downloads Throttled with HTTP 429** (442df1db7, refs #8813): Archive downloads send `CC-Switch/<version>` as the User-Agent.
+- **Pi `$NAME` API Keys Sent Verbatim to Usage Queries** (dcdcbcb47, refs #8822): `$NAME`, `${NAME}`, `$$` and `$!` are resolved with Pi's rules for Coding Plan, balance and usage-script requests; unset references and `!command` give an empty key; nothing is written back.
+- **`<local-command-stdout>` as Claude Code Session Titles** (#8799, fixes #8798): Title and summary skip injected local-command output and slash command records.
+- **Linux Window Dragging and Resize Cursors with App-Level Window Controls** (#8092, fixes #8091).
+- **Orphan Tool Result Media Placeholder** (#8157): The Codex Chat orphan path uses the "attached as native media" marker instead of pointing at a following user message.
+- **omp Duplicate Key Check Queried Pi** (6e040f4c8).
+
+### Upgrade notes
+
+- **Database schema 22 → 23** (adds `enabled_omp` to `mcp_servers`); the database is backed up before upgrading. Older versions refuse a version-23 database.
+- Oh My Pi is shown in the sidebar by default; turn it off on the Apps page.
+
 ## [4.0.19] - 2026-10-23
 
 This release adds Kimi Code as the twelfth managed app (the CLI and the desktop app share one configuration, so both are covered): providers coexist in `~/.kimi-code/config.toml` with add/remove/set-default actions, MCP, Skills, prompts, sessions and session-log usage are supported, and official Kimi subscriptions can be signed in to (several accounts in the Auth Center, each with its own credential slot, provider, nickname and quota). The usage page is reorganized around one scope bar, a selectable metric strip driving the trend chart and heatmap, and a tabbed detail panel with a rows-per-page choice. Other fixes cover Codex `unsupported call: exec` after switching between third-party GPT and direct models in aggregation, Settings → About freezing when launched from a terminal on Linux/WSL, Codex image input turned off by model-metadata fill, the "Unsupported content type: redacted_thinking" message in Claude Code's VS Code extension on Responses upstreams, macOS Claude subscription quota reading the wrong keychain item, Antigravity quota missing the Gemini group and Windows console windows, the Hermes dashboard on WSL, and Escape closing every stacked panel.

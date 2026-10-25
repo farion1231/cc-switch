@@ -35,34 +35,41 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
             continue;
         };
         for session in sessions.flatten() {
-            let path = session.path().join("agents/main/wire.jsonl");
-            if !path.is_file() {
+            // The main agent and every subagent (`agents/agent-N`) keep separate wires.
+            let Ok(agents) = fs::read_dir(session.path().join("agents")) else {
                 continue;
-            }
-            let modified = fs::metadata(&path)
-                .map(|meta| metadata_modified_nanos(&meta))
-                .unwrap_or(0);
-            let key = format!("kimi:{}", path.to_string_lossy());
-            if cursors.get(&key).is_some_and(|cursor| {
-                cursor.last_modified == modified
-                    && cursor.last_line_offset
-                        == fs::metadata(&path)
-                            .map(|meta| meta.len() as i64)
-                            .unwrap_or(-1)
-            }) {
-                continue;
-            }
-            match sync_file(
-                db,
-                &path,
-                &session.file_name().to_string_lossy(),
-                &key,
-                modified,
-            ) {
-                Ok(part) => result.merge(part),
-                Err(error) => result
-                    .errors
-                    .push(format!("Kimi Code session {}: {error}", path.display())),
+            };
+            for agent in agents.flatten() {
+                let path = agent.path().join("wire.jsonl");
+                if !path.is_file() {
+                    continue;
+                }
+                let modified = fs::metadata(&path)
+                    .map(|meta| metadata_modified_nanos(&meta))
+                    .unwrap_or(0);
+                let key = format!("kimi:{}", path.to_string_lossy());
+                if cursors.get(&key).is_some_and(|cursor| {
+                    cursor.last_modified == modified
+                        && cursor.last_line_offset
+                            == fs::metadata(&path)
+                                .map(|meta| meta.len() as i64)
+                                .unwrap_or(-1)
+                }) {
+                    continue;
+                }
+                match sync_file(
+                    db,
+                    &path,
+                    &agent.file_name().to_string_lossy(),
+                    &session.file_name().to_string_lossy(),
+                    &key,
+                    modified,
+                ) {
+                    Ok(part) => result.merge(part),
+                    Err(error) => result
+                        .errors
+                        .push(format!("Kimi Code session {}: {error}", path.display())),
+                }
             }
         }
     }
@@ -72,6 +79,7 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
 fn sync_file(
     db: &Database,
     path: &Path,
+    agent: &str,
     session: &str,
     key: &str,
     modified: i64,
@@ -80,7 +88,12 @@ fn sync_file(
     let mut reader = BufReader::new(file);
     let mut buffer = Vec::new();
     let mut bytes = 0i64;
-    let mut requests = RequestIndex::default();
+    let main = agent == "main";
+    let mut requests = if main {
+        RequestIndex::default()
+    } else {
+        RequestIndex::for_agent(agent)
+    };
     let mut pending = Vec::new();
     let mut result = SessionSyncResult {
         files_scanned: 1,
@@ -103,19 +116,40 @@ fn sync_file(
             continue;
         };
         requests.observe(&record);
-        if !matches!(
-            record["type"].as_str(),
-            Some("agent.message.appended" | "human.agent.message.appended")
-        ) || record
-            .pointer("/message/message/role")
-            .and_then(Value::as_str)
-            != Some("assistant")
-        {
-            continue;
-        }
-        let meta = &record["message"]["meta"];
-        let Some(usage) = meta.get("usage") else {
-            continue;
+        let (meta, usage) = if main {
+            if !matches!(
+                record["type"].as_str(),
+                Some("agent.message.appended" | "human.agent.message.appended")
+            ) || record
+                .pointer("/message/message/role")
+                .and_then(Value::as_str)
+                != Some("assistant")
+            {
+                continue;
+            }
+            let meta = record["message"]["meta"].clone();
+            let Some(usage) = meta.get("usage").cloned() else {
+                continue;
+            };
+            (meta, usage)
+        } else {
+            // Subagent replies never reach the human projection; each completed step
+            // carries its own usage, and the parent's subagent.completed summary is not
+            // imported, so nothing is counted twice.
+            let event = &record["event"];
+            if record["type"].as_str() != Some("context.append_loop_event")
+                || event["type"].as_str() != Some("step.end")
+            {
+                continue;
+            }
+            let Some(usage) = event.get("usage").cloned() else {
+                continue;
+            };
+            let meta = serde_json::json!({
+                "messageId": event["messageId"],
+                "model": {"provider": "subagent"},
+            });
+            (meta, usage)
         };
         let Some(created) = timestamp_ms(&record["time"]) else {
             continue;
@@ -150,7 +184,7 @@ fn sync_file(
         let request = format!("kimi:{provider}:{identity}");
         // Retain only metadata and usage. step.end may appear after the human projection
         // (and after tools); resolve its messageId before taking the database lock.
-        pending.push((request, meta.clone(), usage, created));
+        pending.push((request, meta, usage, created));
     }
     let mut conn = lock_conn!(db.conn);
     let tx = conn.transaction()?;
@@ -324,7 +358,7 @@ mod tests {
         ));
         write_records(&path, &records);
         assert_eq!(
-            sync_file(&db, &path, "session", "file", 1)
+            sync_file(&db, &path, "main", "session", "file", 1)
                 .unwrap()
                 .imported,
             2
@@ -385,7 +419,7 @@ mod tests {
         let records = request("live", "real-model", 1_700_000_000_000, 2_000, 8_000, 500);
         write_records(&path, &records[..4]);
         assert_eq!(
-            sync_file(&db, &path, "session", "file", 1)
+            sync_file(&db, &path, "main", "session", "file", 1)
                 .unwrap()
                 .imported,
             1
@@ -403,7 +437,7 @@ mod tests {
         }
         write_records(&path, &records);
         assert_eq!(
-            sync_file(&db, &path, "session", "file", 2)
+            sync_file(&db, &path, "main", "session", "file", 2)
                 .unwrap()
                 .imported,
             1
@@ -421,14 +455,16 @@ mod tests {
         // Identical scans and truncated copies must neither trigger refreshes nor erase
         // the native metadata that has already been resolved for this message.
         assert_eq!(
-            sync_file(&db, &path, "session", "file", 3)
+            sync_file(&db, &path, "main", "session", "file", 3)
                 .unwrap()
                 .imported,
             0
         );
         write_records(&path, &records[..4]);
         assert_eq!(
-            sync_file(&db, &path, "fork", "fork", 4).unwrap().imported,
+            sync_file(&db, &path, "main", "fork", "fork", 4)
+                .unwrap()
+                .imported,
             0
         );
         let conn = db.conn.lock().unwrap();
@@ -449,9 +485,16 @@ mod tests {
         let path = dir.path().join("wire.jsonl");
         let row = json!({"type":"agent.message.appended","time":1700000000000i64,"message":{"message":{"role":"assistant","content":[{"type":"text","text":"Done"}]},"meta":{"messageId":"request-1","model":{"provider":"custom","model":"vendor/model"},"usage":{"inputOther":10,"output":20,"inputCacheRead":30,"inputCacheCreation":40}}}});
         fs::write(&path, format!("{row}\n")).unwrap();
-        assert_eq!(sync_file(&db, &path, "s1", "first", 1).unwrap().imported, 1);
         assert_eq!(
-            sync_file(&db, &path, "fork", "forked", 2).unwrap().imported,
+            sync_file(&db, &path, "main", "s1", "first", 1)
+                .unwrap()
+                .imported,
+            1
+        );
+        assert_eq!(
+            sync_file(&db, &path, "main", "fork", "forked", 2)
+                .unwrap()
+                .imported,
             0
         );
         let conn = db.conn.lock().unwrap();
@@ -460,9 +503,102 @@ mod tests {
         conn.execute("DELETE FROM proxy_request_logs", []).unwrap();
         drop(conn);
         assert_eq!(
-            sync_file(&db, &path, "s1", "rewritten", 3)
+            sync_file(&db, &path, "main", "s1", "rewritten", 3)
                 .unwrap()
                 .imported,
+            0
+        );
+    }
+
+    fn subagent_step(agent: &str, id: &str, model: &str, start: i64, output: u64) -> Vec<Value> {
+        let usage =
+            json!({"inputOther":10,"output":output,"inputCacheRead":30,"inputCacheCreation":0});
+        vec![
+            json!({"type":"context.append_loop_event","time":start-10,"event":{"type":"step.begin","uuid":id,"turnId":"0","step":1}}),
+            json!({"type":"llm.request","time":start,"agentId":agent,"kind":"loop","turnStep":"0.1","provider":"openai","model":model}),
+            json!({"type":"usage.record","time":start+900,"agentId":agent,"model":format!("kimi-code/{model}"),"usage":usage,"usageScope":"turn"}),
+            json!({"type":"context.append_loop_event","time":start+1_000,"event":{"type":"step.end","uuid":id,"turnId":"0","step":1,"usage":usage,"messageId":id,"llmFirstTokenLatencyMs":200,"llmStreamDurationMs":800}}),
+        ]
+    }
+
+    #[test]
+    fn kimi_usage_imports_subagent_wires_once() {
+        let db = Database::memory().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let session = root.path().join("wd_project/session_one/agents");
+        write_records(
+            &session.join("main/wire.jsonl"),
+            &[
+                request("main-step", "main-model", 1_700_000_000_000, 1_000, 1_000, 50),
+                // The parent only records lifecycle events for its subagents.
+                vec![json!({"type":"subagent.spawned","subagentId":"agent-0","time":1_700_000_001_000i64})],
+            ]
+            .concat(),
+        );
+        let mut child = vec![
+            json!({"type":"agent.message.appended","time":1_700_000_001_000i64,"message":{"message":{"role":"user","content":[]},"meta":{}}}),
+        ];
+        child.extend(subagent_step(
+            "agent-0",
+            "child-1",
+            "child-model",
+            1_700_000_002_000,
+            70,
+        ));
+        child.extend(subagent_step(
+            "agent-0",
+            "child-2",
+            "child-model",
+            1_700_000_004_000,
+            90,
+        ));
+        // Requests attributed to another agent must not leak into this wire's models.
+        child.push(
+            json!({"type":"llm.request","agentId":"agent-1","kind":"loop","model":"other-model"}),
+        );
+        write_records(&session.join("agent-0/wire.jsonl"), &child);
+
+        let result = sync_sessions(&db, root.path()).unwrap();
+        assert_eq!((result.files_scanned, result.imported), (2, 3));
+        {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT model, output_tokens, latency_ms, session_id FROM proxy_request_logs ORDER BY created_at, output_tokens")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(
+                rows,
+                vec![
+                    ("main-model".into(), 50, 2_000, "session_one".into()),
+                    ("child-model".into(), 70, 1_000, "session_one".into()),
+                    ("child-model".into(), 90, 1_000, "session_one".into()),
+                ]
+            );
+        }
+        // Unchanged wires are skipped; a forced rescan finds every step already recorded.
+        assert_eq!(sync_sessions(&db, root.path()).unwrap().files_scanned, 0);
+        assert_eq!(
+            sync_file(
+                &db,
+                &session.join("agent-0/wire.jsonl"),
+                "agent-0",
+                "session_one",
+                "rescan",
+                9
+            )
+            .unwrap()
+            .imported,
             0
         );
     }
@@ -474,7 +610,9 @@ mod tests {
         let path = dir.path().join("wire.jsonl");
         fs::write(&path, "{\"type\":").unwrap();
         assert_eq!(
-            sync_file(&db, &path, "s", "partial", 1).unwrap().imported,
+            sync_file(&db, &path, "main", "s", "partial", 1)
+                .unwrap()
+                .imported,
             0
         );
         let cursor: i64 = db

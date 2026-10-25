@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 11] = [
+const VALID_TOOLS: [&str; 12] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "agy",
+    "agy", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -626,6 +626,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "omp" => "Oh My Pi",
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
         "agy" => "Antigravity CLI",
@@ -671,6 +672,14 @@ const KIMI_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 #[cfg(target_os = "windows")]
 const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
+
+// Oh My Pi 的 npm 包只能由 bun 运行（入口是 `#!/usr/bin/env bun` 的 TypeScript）。官方
+// installer 有匹配架构的 bun 时走 bun，否则下载并校验预编译二进制到 `~/.local/bin`，
+// 所以新装不要求本机先有 bun。
+const OMP_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://omp.sh/install -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const OMP_INSTALL_WINDOWS_SCRIPT: &str = "irm https://omp.sh/install.ps1 | iex";
 
 /// Antigravity CLI 官方 installer：把原生二进制放进 `~/.local/bin`，再跑 `agy install`
 /// 把该目录加进 shell 配置。目标处已有 `agy` 时它只提示已安装、exit 0，所以只用于新装；
@@ -739,6 +748,14 @@ fn kimi_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(KIMI_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn omp_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(OMP_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -903,12 +920,15 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
     }
 }
 
+// `omp update` 自己识别 brew / mise / nix / bun / npm / 预编译二进制并照原渠道升级，
+// 非 TTY 下不询问，失败退出码非 0；Nix 安装它只打印提示就 exit 0，见
+// `anchored_command_from_paths` 的 Nix 门控。
 // MiniMax Code 虽有 `mcode update`，却刻意不列在这里：它在 stdin/stdout 非 TTY 时只打印
 // "No interactive confirmation is available" 就 exit 0、并不安装。静默 lifecycle 的
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "grok" | "hermes" | "agy" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" | "agy" | "omp" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         "kimi" => Some("upgrade --yes"),
@@ -941,18 +961,21 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
-    if tool == "kimi" {
+    if matches!(tool, "kimi" | "omp") {
         let install = match shell {
-            LifecycleCommandShell::Posix => KIMI_INSTALL_UNIX.to_string(),
+            LifecycleCommandShell::Posix if tool == "kimi" => KIMI_INSTALL_UNIX.to_string(),
+            LifecycleCommandShell::Posix => OMP_INSTALL_UNIX.to_string(),
             #[cfg(target_os = "windows")]
-            LifecycleCommandShell::WindowsBatch => kimi_install_windows_command(),
+            LifecycleCommandShell::WindowsBatch if tool == "kimi" => kimi_install_windows_command(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch => omp_install_windows_command(),
             #[cfg(not(target_os = "windows"))]
             LifecycleCommandShell::WindowsBatch => return None,
         };
         return Some(match action {
             ToolLifecycleAction::Install => install,
             ToolLifecycleAction::Update => {
-                chain_update_commands("kimi upgrade --yes".into(), install, shell)
+                chain_update_commands(bare_official_update_command(tool)?, install, shell)
             }
         });
     }
@@ -1283,6 +1306,7 @@ async fn get_single_tool_version_impl(
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
+        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
     };
 
@@ -2506,6 +2530,15 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             push_unique_path(&mut search_paths, path);
         }
     }
+    if tool == "omp" {
+        // A Bun global install (`bun install -g @oh-my-pi/pi-coding-agent`) puts
+        // the launcher in Bun's global bin, which is not on the PATH a GUI process
+        // inherits — same reason OpenCode scans it. The official installer's
+        // prebuilt binary (`~/.local/bin`) and Homebrew are covered below.
+        if !home.as_os_str().is_empty() {
+            push_unique_path(&mut search_paths, home.join(".bun").join("bin"));
+        }
+    }
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
@@ -3296,6 +3329,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
+        "omp" => Some("@oh-my-pi/pi-coding-agent"),
         _ => None,
     }
 }
@@ -3670,7 +3704,7 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi")
+            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi" | "omp")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -3679,7 +3713,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi"
+                "claude" | "openclaw" | "kimi" | "omp"
             )
         }
     }
@@ -3760,7 +3794,12 @@ fn package_manager_anchored_command_from_paths(
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
     let pkg = npm_package_for(tool)?;
-    match infer_install_source(Path::new(bin_path)) {
+    let source = infer_install_source(Path::new(bin_path));
+    // omp 的 npm 包只能由 bun 运行：除 bun 外的 node 管理器装不出能跑的 omp。
+    if tool == "omp" && source != "bun" {
+        return None;
+    }
+    match source {
         "volta" => {
             let volta = sibling_bin(bin_path, "volta")?;
             return Some(format!("{} install {pkg}", quote_path_if_spaced(&volta)));
@@ -3846,6 +3885,10 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
             return Some(codex_installer_update_command(&install));
         }
     }
+    // Nix 安装 `omp update` 只提示去改 flake 就 exit 0，执行它会报假成功。
+    if tool == "omp" && real_lower.starts_with("/nix/store/") {
+        return None;
+    }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path, real_target);
     if is_brew_managed_path(real_target) {
         return package_command;
@@ -3875,6 +3918,10 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
 
 #[cfg(target_os = "windows")]
 fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Option<String> {
+    // omp 的 npm 包只能由 bun 运行，这里的 npm / Volta / pnpm 都装不出能跑的 omp。
+    if tool == "omp" {
+        return None;
+    }
     let pkg = npm_package_for(tool)?;
 
     match infer_install_source(Path::new(bin_path)) {
@@ -4603,6 +4650,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
+        "omp" => OMP_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
@@ -4733,6 +4781,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
         "pi" => crate::settings::get_pi_override_dir(),
+        "omp" => crate::settings::get_omp_override_dir(),
         _ => None,
     }?;
 
@@ -7138,6 +7187,35 @@ mod tests {
     }
 
     #[test]
+    fn omp_lifecycle_metadata_names_the_tool_and_keeps_one_package() {
+        let requested = vec!["unsupported".to_string(), "omp".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["omp"]);
+        // Without this arm the user-facing strings read "Unknown at
+        // <path> was not installed by npm..." and the batch header prints
+        // `========== Unknown ==========`.
+        assert_eq!(tool_display_name("omp"), "Oh My Pi");
+        // The version check reads this package; npm cannot run it (the entry is
+        // a bun script), so there is no npm install command at all.
+        assert_eq!(npm_package_for("omp"), Some("@oh-my-pi/pi-coding-agent"));
+        assert_eq!(npm_install_command_for("omp"), None);
+        // `omp update` routes every install source itself and never prompts.
+        assert_eq!(official_update_args("omp"), Some("update"));
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(install_command_for("omp"), OMP_INSTALL_UNIX);
+            assert_eq!(
+                tool_action_shell_command_for_shell(
+                    "omp",
+                    ToolLifecycleAction::Update,
+                    LifecycleCommandShell::Posix
+                )
+                .as_deref(),
+                Some(format!("omp update || {OMP_INSTALL_UNIX}").as_str())
+            );
+        }
+    }
+
+    #[test]
     fn mcode_lifecycle_metadata_skips_non_tty_self_update() {
         let requested = vec!["unsupported".to_string(), "mcode".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["mcode"]);
@@ -8838,6 +8916,59 @@ mod tests {
         }
 
         #[test]
+        fn omp_updates_through_its_own_updater_with_source_specific_fallbacks() {
+            // Homebrew owns its formula even though `omp update` would also delegate.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/opt/homebrew/bin/omp",
+                    "/opt/homebrew/Cellar/omp/14.1.0/bin/omp",
+                )
+                .as_deref(),
+                Some("/opt/homebrew/bin/brew upgrade omp")
+            );
+            // A bun global keeps bun as the fallback.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/Users/me/.bun/bin/omp",
+                    "/Users/me/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/src/cli.ts",
+                )
+                .as_deref(),
+                Some("/Users/me/.bun/bin/omp update || /Users/me/.bun/bin/bun add -g @oh-my-pi/pi-coding-agent@latest")
+            );
+            // The installer's prebuilt binary updates itself; no npm fallback is invented.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/Users/me/.local/bin/omp",
+                    "/Users/me/.local/bin/omp",
+                )
+                .as_deref(),
+                Some("/Users/me/.local/bin/omp update")
+            );
+            // npm and other node managers cannot run omp, so they never become a fallback.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/Users/me/.nvm/versions/node/v22.0.0/bin/omp",
+                    "/Users/me/.nvm/versions/node/v22.0.0/lib/node_modules/@oh-my-pi/pi-coding-agent/src/cli.ts",
+                )
+                .as_deref(),
+                Some("/Users/me/.nvm/versions/node/v22.0.0/bin/omp update")
+            );
+            // `omp update` exits 0 on Nix without updating: leave it to the user.
+            assert_eq!(
+                anchored_command_from_paths(
+                    "omp",
+                    "/Users/me/.nix-profile/bin/omp",
+                    "/nix/store/abc-omp-14.1.0/bin/omp",
+                ),
+                None
+            );
+        }
+
+        #[test]
         fn volta_path_with_space_is_quoted() {
             // volta 分支用 `<dir>/volta`,目录含空格时同样要 POSIX 引号包裹。
             let cmd = anchored_command_from_paths(
@@ -10064,6 +10195,17 @@ mod tests {
                 .join("Codex")
                 .join("bin")
         ));
+    }
+
+    #[test]
+    fn omp_search_paths_include_the_bun_global_bin() {
+        // A GUI process does not inherit `~/.bun/bin`: without it a Bun global
+        // omp is reported as not installed and updates lose their anchor.
+        let home = dirs::home_dir().expect("home should resolve");
+        let bun_bin = home.join(".bun").join("bin");
+        assert!(build_tool_search_paths("omp").contains(&bun_bin));
+        // Other Bun-installable tools keep their previous search set.
+        assert!(!build_tool_search_paths("gemini").contains(&bun_bin));
     }
 
     #[cfg(target_os = "windows")]
