@@ -28,6 +28,7 @@ const DIRECTORY_FIELD: Record<DirectoryAppId, keyof Settings> = {
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+  omp: "ompConfigDir",
 };
 
 const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
@@ -39,6 +40,7 @@ const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
   openclaw: "settings.browsePlaceholderOpenclaw",
   hermes: "settings.browsePlaceholderHermes",
   pi: "settings.browsePlaceholderPi",
+  omp: "settings.browsePlaceholderOmp",
 };
 
 const DIRECTORY_APPS: DirectoryAppId[] = [
@@ -50,6 +52,7 @@ const DIRECTORY_APPS: DirectoryAppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "omp",
 ];
 
 const normalizeDir = (value: unknown) =>
@@ -141,6 +144,8 @@ export function AppConfigSection({
       {DIRECTORY_APPS.map((app) => (
         <SettingsBlock
           key={app}
+          id={`app-config-${app}`}
+          className="rounded-panel"
           title={blockTitle(app)}
           actions={saveButton(app)}
         >
@@ -174,7 +179,11 @@ export function AppConfigSection({
               </>
             )}
             {app === "codex" && (
-              <CodexAuthSettings settings={settings} onChange={onAutoSave} />
+              <CodexAuthSettings
+                settings={settings}
+                onChange={onAutoSave}
+                codexConfigDir={savedSettings?.codexConfigDir}
+              />
             )}
             {directoryRow(app)}
           </SettingsCard>

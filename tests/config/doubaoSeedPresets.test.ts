@@ -6,7 +6,7 @@ import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 // contextWindow，二者必须一致。曾出现 OpenClaw 写成 128000、Codex 写成 262144 的
 // 漂移，导致 OpenClaw 用户拿到过小的上下文窗口、长上下文提前压缩/截断。
 describe("Volcengine Doubao preset consistency across apps", () => {
-  const DOUBAO_MODEL_ID = "doubao-seed-2-1-pro-260628";
+  const DOUBAO_MODEL_ID = "doubao-seed-2-1-pro-260915";
   const EXPECTED_CONTEXT_WINDOW = 262144;
 
   it("keeps the doubao context window in sync between OpenClaw and Codex", () => {

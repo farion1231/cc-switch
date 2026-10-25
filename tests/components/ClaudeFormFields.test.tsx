@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -136,6 +142,17 @@ describe("ClaudeFormFields", () => {
     expect(copilotApiMock.copilotGetModelsForAccount).not.toHaveBeenCalled();
   });
 
+  it.each(["classic", "stack"] as const)(
+    "Copilot %s 布局显示自动协议并禁用无效的手选格式",
+    (variant) => {
+      renderCopilotForm({ variant, apiFormat: "openai_responses" });
+      const control = screen.getByRole("combobox", { name: "上游格式" });
+      expect(control).toBeDisabled();
+      expect(control).toHaveTextContent("copilot.automaticFormat");
+      expect(screen.getByText(/copilot.automaticFormatHint/)).toBeVisible();
+    },
+  );
+
   it("点击获取模型列表后才请求当前 Copilot 账号的模型", async () => {
     renderCopilotForm();
 
@@ -193,6 +210,28 @@ describe("ClaudeFormFields", () => {
     expect(onModelChange).toHaveBeenCalledWith(
       "CLAUDE_CODE_SUBAGENT_MODEL",
       "shared-model[1M]",
+    );
+  });
+
+  it("Haiku 行也能勾 1M：勾选状态即模型名的 [1M] 后缀", () => {
+    const onModelChange = vi.fn();
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      defaultHaikuModel: "glm-5.3-flash[1M]",
+      defaultHaikuModelName: "",
+      onModelChange,
+    });
+
+    const haikuRow = screen.getByText("Haiku").parentElement!;
+    expect(within(haikuRow).getByDisplayValue("glm-5.3-flash")).toBeTruthy();
+    const checkbox = within(haikuRow).getByRole("checkbox");
+    expect(checkbox).toBeChecked();
+
+    fireEvent.click(checkbox);
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "glm-5.3-flash",
     );
   });
 });
