@@ -7555,8 +7555,8 @@ mod tests {
             request
         }
 
-    // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
-    #[allow(clippy::result_large_err)]
+        // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
+        #[allow(clippy::result_large_err)]
         async fn forward_codex(
             forwarder: &RequestForwarder,
             provider: Provider,
@@ -7843,8 +7843,8 @@ mod tests {
             json!({ "model": "listed", "input": input, "stream": true })
         }
 
-    // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
-    #[allow(clippy::result_large_err)]
+        // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
+        #[allow(clippy::result_large_err)]
         async fn forward_sub_agent(
             upstream: &Upstream,
             request: Value,
@@ -8105,8 +8105,8 @@ mod tests {
             forwarder
         }
 
-    // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
-    #[allow(clippy::result_large_err)]
+        // 错误携带 Provider（大结构）：错误为冷路径，Box 化需改全部消费点，不值
+        #[allow(clippy::result_large_err)]
         async fn send(
             forwarder: &RequestForwarder,
             providers: Vec<Provider>,

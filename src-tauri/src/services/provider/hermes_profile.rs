@@ -126,10 +126,7 @@ pub async fn enter(
     let guard = state.proxy_service.lock_switch_for_app(&key).await;
     super::hermes_profile::settle(&state.db, &key)?;
     let projection = hermes_direct::proxy_contract(&route, &base_url).map_err(|e| e.to_string())?;
-    let contract = crate::mode::contract::hermes(
-        &projection,
-        std::slice::from_ref(&home_name),
-    );
+    let contract = crate::mode::contract::hermes(&projection, std::slice::from_ref(&home_name));
     hermes_direct::run_enter_homes(
         &state.db,
         "enter",
@@ -206,10 +203,7 @@ pub async fn switch_route(state: &AppState, profile: &str, route_id: &str) -> Re
         return Err(format!("{profile} 不在独立代理模式"));
     }
     let projection = hermes_direct::proxy_contract(&route, &base_url).map_err(|e| e.to_string())?;
-    let contract = crate::mode::contract::hermes(
-        &projection,
-        std::slice::from_ref(&home_name),
-    );
+    let contract = crate::mode::contract::hermes(&projection, std::slice::from_ref(&home_name));
     let unchanged = mode
         .contract
         .as_ref()
