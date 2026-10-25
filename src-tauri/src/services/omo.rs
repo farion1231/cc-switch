@@ -860,6 +860,136 @@ impl OmoService {
         merged
     }
 
+    // Distinguish a wrapped agent map from a flat custom agent named `agents`.
+    // This is a syntax discriminator, not validation of the entire Slim config.
+    // Keep aligned with OMO Slim's AgentOverrideConfigSchema (schema.ts),
+    // currently a598a2621800c75ae444d8bdf9c9ec53aa2779e1.
+    fn is_preset_agent_override(value: &Value) -> bool {
+        let Some(agent) = value.as_object() else {
+            return false;
+        };
+        agent.iter().all(|(key, value)| match key.as_str() {
+            "model" => {
+                value.is_string()
+                    || value.as_array().is_some_and(|models| {
+                        !models.is_empty()
+                            && models.iter().all(|model| {
+                                model.is_string()
+                                    || model.as_object().is_some_and(|model| {
+                                        model.get("id").is_some_and(Value::is_string)
+                                            && model.get("variant").is_none_or(Value::is_string)
+                                    })
+                            })
+                    })
+            }
+            "inheritModelFrom" => matches!(value.as_str(), Some("session" | "orchestrator")),
+            "temperature" => value.as_f64().is_some_and(|n| (0.0..=2.0).contains(&n)),
+            // Slim catches invalid variants and discards them.
+            "variant" => true,
+            "skills" | "skills_add" | "skills_remove" | "mcps" => value
+                .as_array()
+                .is_some_and(|items| items.iter().all(Value::is_string)),
+            "skills_include_local" => value.is_boolean(),
+            "prompt" | "orchestratorPrompt" | "displayName" | "description" => {
+                value.as_str().is_some_and(|s| !s.is_empty())
+            }
+            "color" => value.as_str().is_some_and(|color| {
+                matches!(
+                    color,
+                    "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
+                ) || (color.len() == 7
+                    && color.starts_with('#')
+                    && color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit))
+            }),
+            "options" => value.is_object(),
+            "permission" => {
+                let action = |v: &Value| matches!(v.as_str(), Some("ask" | "allow" | "deny"));
+                action(value)
+                    || value.as_object().is_some_and(|rules| {
+                        rules.iter().all(|(key, rule)| {
+                            action(rule)
+                                || (!matches!(
+                                    key.as_str(),
+                                    "todowrite"
+                                        | "question"
+                                        | "webfetch"
+                                        | "websearch"
+                                        | "codesearch"
+                                        | "doom_loop"
+                                ) && rule
+                                    .as_object()
+                                    .is_some_and(|patterns| patterns.values().all(action)))
+                        })
+                    })
+            }
+            _ => false,
+        })
+    }
+
+    fn resolve_preset_agents(
+        presets: &Map<String, Value>,
+        name: &str,
+    ) -> Result<Map<String, Value>, AppError> {
+        // Walk first, then merge from parent to child. Do not partially import
+        // a broken chain, and avoid recursion on user-controlled inheritance.
+        let mut chain = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut current = name;
+        loop {
+            if !visited.insert(current) {
+                return Err(AppError::Config(format!(
+                    "OMO Slim preset inheritance cycle at \"{current}\""
+                )));
+            }
+            let preset = presets.get(current).ok_or_else(|| {
+                AppError::Config(format!(
+                    "OMO Slim parent preset \"{current}\" was not found"
+                ))
+            })?;
+            let preset = preset.as_object().ok_or_else(|| {
+                AppError::Config(format!("OMO Slim preset \"{current}\" must be an object"))
+            })?;
+            chain.push(preset);
+            match preset.get("extends").and_then(Value::as_str) {
+                Some(parent) if !parent.is_empty() => current = parent,
+                _ => break,
+            }
+        }
+
+        let mut resolved = Map::new();
+        for preset in chain.into_iter().rev() {
+            let wrapped = preset
+                .get("agents")
+                .and_then(Value::as_object)
+                .filter(|agents| agents.values().all(Self::is_preset_agent_override));
+            let mut agents = preset.clone();
+            if let Some(wrapped) = wrapped {
+                agents.remove("agents");
+                agents.remove("extends");
+                agents.remove("marketplace");
+                agents = Self::merge_objects(&agents, wrapped);
+            } else {
+                if preset.get("extends").is_some_and(Value::is_string) {
+                    agents.remove("extends");
+                }
+                // Flat presets may also contain a custom agent named marketplace.
+                if preset
+                    .get("marketplace")
+                    .and_then(Value::as_object)
+                    .is_some_and(|value| {
+                        ["agents", "agents_add", "agents_remove"]
+                            .iter()
+                            .any(|key| value.contains_key(*key))
+                    })
+                {
+                    agents.remove("marketplace");
+                }
+            }
+            resolved = Self::merge_objects(&resolved, &agents);
+        }
+        Ok(resolved)
+    }
+
     fn imported_agents(
         v: &OmoVariant,
         obj: &Map<String, Value>,
@@ -887,24 +1017,22 @@ impl OmoService {
             return Ok(root_agents.cloned().map(Value::Object));
         }
 
-        let presets = obj
-            .get("presets")
-            .and_then(Value::as_object)
-            .ok_or_else(|| {
-                AppError::Config(
-                    "OMO Slim presets must be an object when preset is set".to_string(),
-                )
-            })?;
-        let active = presets.get(preset).ok_or_else(|| {
-            AppError::Config(format!("OMO Slim preset \"{preset}\" was not found"))
-        })?;
-        let active = active.as_object().ok_or_else(|| {
-            AppError::Config(format!("OMO Slim preset \"{preset}\" must be an object"))
-        })?;
-
+        let presets = match obj.get("presets") {
+            Some(Value::Object(presets)) => presets,
+            None => return Ok(root_agents.cloned().map(Value::Object)),
+            Some(_) => {
+                return Err(AppError::Config(
+                    "OMO Slim presets must be an object".to_string(),
+                ));
+            }
+        };
+        if !presets.contains_key(preset) {
+            return Ok(root_agents.cloned().map(Value::Object));
+        }
+        let active = Self::resolve_preset_agents(presets, preset)?;
         let merged = root_agents
-            .map(|agents| Self::merge_objects(active, agents))
-            .unwrap_or_else(|| active.clone());
+            .map(|agents| Self::merge_objects(&active, agents))
+            .unwrap_or(active);
         Ok(Some(Value::Object(merged)))
     }
 
@@ -1843,11 +1971,135 @@ mod tests {
     }
 
     #[test]
+    fn test_slim_import_resolves_wrapped_preset_inheritance() {
+        let obj = serde_json::json!({
+            "preset": "design",
+            "presets": {
+                "base": {
+                    "oracle": {"model": "base/oracle"},
+                    "designer": {"model": "base/designer", "temperature": 0.2}
+                },
+                "middle": {
+                    "extends": "base",
+                    "designer": {"variant": "high"},
+                    "marketplace": {"agents_add": ["vendor/agent"]}
+                },
+                "design": {
+                    "extends": "middle",
+                    "designer": {"model": "inline/designer", "temperature": 0.4},
+                    "agents": {"designer": {"model": "anthropic/claude-sonnet-4-6"}},
+                    "marketplace": {"agents": ["vendor/agent"]}
+                },
+                "unused": {"extends": "unused"}
+            },
+            "agents": {"designer": {"variant": "max"}}
+        });
+        let data = OmoService::build_local_file_data(
+            &SLIM,
+            obj.as_object().unwrap(),
+            "/tmp/oh-my-opencode-slim.json".to_string(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            data.agents,
+            Some(serde_json::json!({
+                "oracle": {"model": "base/oracle"},
+                "designer": {
+                    "model": "anthropic/claude-sonnet-4-6",
+                    "temperature": 0.4,
+                    "variant": "max"
+                }
+            }))
+        );
+        let other = data.other_fields.as_ref().unwrap();
+        assert_eq!(other["preset"], obj["preset"]);
+        assert_eq!(other["presets"], obj["presets"]);
+        let written = OmoService::build_config(
+            &SLIM,
+            Some(&(data.agents.clone(), None, data.other_fields.clone())),
+        );
+        assert_eq!(written["agents"], data.agents.unwrap());
+        assert_eq!(written["presets"], obj["presets"]);
+    }
+
+    #[test]
+    fn test_slim_import_preserves_flat_agents_named_like_preset_metadata() {
+        let agents = serde_json::json!({
+            "agents": {"model": "custom/agents"},
+            "extends": {"model": "custom/extends"},
+            "marketplace": {"model": "custom/marketplace"}
+        });
+        let obj = serde_json::json!({"preset": "active", "presets": {"active": agents}});
+        assert_eq!(
+            OmoService::imported_agents(&SLIM, obj.as_object().unwrap()).unwrap(),
+            Some(agents)
+        );
+    }
+
+    #[test]
+    fn test_slim_import_preserves_object_only_custom_agent_named_agents() {
+        for override_ in [
+            serde_json::json!({"options": {"textVerbosity": "low"}}),
+            serde_json::json!({"permission": {"read": "allow"}}),
+            serde_json::json!({"options": {"temperature": 99}}),
+            serde_json::json!({"options": {"color": "not-a-color"}}),
+        ] {
+            let agents = serde_json::json!({"agents": override_});
+            let obj = serde_json::json!({"preset": "active", "presets": {"active": agents}});
+            assert_eq!(
+                OmoService::imported_agents(&SLIM, obj.as_object().unwrap()).unwrap(),
+                Some(agents)
+            );
+        }
+    }
+
+    #[test]
+    fn test_slim_import_missing_selected_preset_uses_only_root_agents() {
+        for presets in [
+            None,
+            Some(serde_json::json!({})),
+            Some(serde_json::json!({
+                "unselected": {"oracle": {"model": "wrong/model"}}
+            })),
+        ] {
+            for agents in [
+                None,
+                Some(serde_json::json!({"oracle": {"model": "root/model"}})),
+            ] {
+                let mut obj = serde_json::json!({"preset": "missing"});
+                if let Some(presets) = &presets {
+                    obj["presets"] = presets.clone();
+                }
+                if let Some(agents) = &agents {
+                    obj["agents"] = agents.clone();
+                }
+                assert_eq!(
+                    OmoService::imported_agents(&SLIM, obj.as_object().unwrap()).unwrap(),
+                    agents
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_slim_import_rejects_broken_inheritance_without_partial_agents() {
+        for presets in [
+            serde_json::json!({"active": {"extends": "active"}}),
+            serde_json::json!({"active": {"extends": "parent"}, "parent": {"extends": "active"}}),
+            serde_json::json!({"active": {"extends": "missing", "oracle": {"model": "partial/model"}}}),
+            serde_json::json!({"active": {"extends": "parent"}, "parent": []}),
+        ] {
+            let obj = serde_json::json!({"preset": "active", "presets": presets});
+            assert!(OmoService::imported_agents(&SLIM, obj.as_object().unwrap()).is_err());
+        }
+    }
+
+    #[test]
     fn test_slim_import_rejects_invalid_active_preset_shapes() {
         let cases = [
             serde_json::json!({"preset": 1}),
-            serde_json::json!({"preset": "active"}),
-            serde_json::json!({"preset": "missing", "presets": {}}),
+            serde_json::json!({"preset": "active", "presets": []}),
             serde_json::json!({"preset": "active", "presets": {"active": []}}),
             serde_json::json!({"agents": []}),
         ];
