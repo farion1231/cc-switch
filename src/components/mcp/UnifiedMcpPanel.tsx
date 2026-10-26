@@ -42,6 +42,7 @@ import {
   MatrixColumnHighlight,
   MatrixSearch,
   NeutralBadge,
+  ompDiscoveryColumnNote,
   resolveBulkScope,
   showUndoToast,
 } from "./AppMatrix";
@@ -799,6 +800,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             scopeKind={scope.kind}
                             noun={noun}
                             disabled={controlsDisabled}
+                            {...ompDiscoveryColumnNote(app, t)}
                             onEnableRest={() => void handleBulk(app, true)}
                             onDisableAll={() => void handleBulk(app, false)}
                           />

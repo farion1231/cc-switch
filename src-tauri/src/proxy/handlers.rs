@@ -775,6 +775,7 @@ async fn handle_claude_transform(
     // responses that still need conversion; cloning the direct message would
     // duplicate potentially large text and search-result content.
     let raw_usage_response = upstream_response.as_ref().map(|response| {
+        let response = transform::chat_completion_body(response);
         json!({
             "id": response.get("id").cloned().unwrap_or(Value::Null),
             "model": response.get("model").cloned().unwrap_or(Value::Null),

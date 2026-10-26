@@ -715,30 +715,29 @@ export function UsageDashboard({
   const scopedAppType = appType === "all" ? undefined : appType;
 
   // 页签上的计数：和各表格同样的查询参数，react-query 会合并成一次请求。
-  // 只查当前页签：其余页签显示上次查到的数（缓存），筛选变了、还没查过的就不显示
+  // 三个页签都查（只查当前页签时，没点过的页签一直没有数字）；换筛选时沿用上一份
+  // 数据直到新数到达，三个数字原地更新，不会先整体消失再冒出来把页签栏挤得抖一下
   const logCount = useRequestLogs({
     filters: { appType: scopedAppType, providerName, model, statusCode },
     range,
     page: 0,
     pageSize: logPageSize,
-    options: { ...refetch, enabled: tab === "logs" },
+    options: refetch,
   });
   const providerCount = useProviderStats(
     range,
     { appType, providerName, model },
-    { ...refetch, enabled: tab === "providers" },
+    refetch,
   );
   const modelCount = useModelStats(
     range,
     { appType, providerName, model },
-    { ...refetch, enabled: tab === "models" },
+    refetch,
   );
   const tabCount: Record<UsageTab, number | undefined> = {
-    logs: logCount.isPlaceholderData ? undefined : logCount.data?.total,
-    providers: providerCount.isPlaceholderData
-      ? undefined
-      : providerCount.data?.length,
-    models: modelCount.isPlaceholderData ? undefined : modelCount.data?.length,
+    logs: logCount.data?.total,
+    providers: providerCount.data?.length,
+    models: modelCount.data?.length,
   };
   const tabLabel: Record<UsageTab, string> = {
     logs: t("usage.requestLogs"),
