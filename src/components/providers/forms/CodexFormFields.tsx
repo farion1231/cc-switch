@@ -212,6 +212,8 @@ interface CodexFormFieldsProps {
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
   onCatalogModelsChange?: (models: CodexCatalogModel[]) => void;
+  /** 保存时发现重复实际模型后，父组件请求聚焦到第一条重复行。 */
+  focusCatalogDuplicate?: { model: string; nonce: number } | null;
   // Auto Review (approval reviewer) model: `modelCatalog.autoReviewModel`, one of
   // the catalog rows. Codex only; the Stack layout omits it (aggregation settings apply).
   autoReviewModel?: string;
@@ -262,6 +264,9 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
       : {}),
   };
 }
+
+const codexCatalogModelInputId = (rowId: string) =>
+  `codex-catalog-model-${rowId}`;
 
 // 有模型列表时第一行就是默认模型（`model`）。旧数据里默认模型可以是列表的任意一行，
 // 这样的行挪到最前面显示；不在列表里时不动。
@@ -594,6 +599,7 @@ export function CodexFormFields({
   promptCacheRouting,
   onPromptCacheRoutingChange,
   catalogModels = [],
+  focusCatalogDuplicate,
   autoReviewModel = "",
   onAutoReviewModelChange,
   onCatalogModelsChange,
@@ -948,6 +954,21 @@ export function CodexFormFields({
     catalogRows,
     setCatalogRows,
   );
+
+  // 保存被重复实际模型阻止后，父组件通过 nonce 请求聚焦第一条重复行。
+  useEffect(() => {
+    if (!focusCatalogDuplicate) return;
+    const row = catalogRowsRef.current.find(
+      (candidate) => candidate.model.trim() === focusCatalogDuplicate.model,
+    );
+    if (!row) return;
+    const input = document.getElementById(codexCatalogModelInputId(row.rowId));
+    if (!(input instanceof HTMLInputElement)) return;
+    input.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    input.focus({ preventScroll: true });
+    input.select();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusCatalogDuplicate]);
 
   // 按模型名补上这一行已知的窗口、档位和模态（只补空着的）。
   const fillCatalogRowMetadata = useCallback(
@@ -1612,6 +1633,7 @@ export function CodexFormFields({
           />
           <div className="flex gap-1">
             <Input
+              id={codexCatalogModelInputId(row.rowId)}
               value={row.model}
               onChange={(event) =>
                 handleUpdateCatalogRow(index, {
