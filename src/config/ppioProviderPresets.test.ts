@@ -19,8 +19,8 @@ const ppioPresetCollections = [
   ["Pi", piProviderPresets],
 ] as const;
 
-const ppioModelId = "deepseek/deepseek-v4-flash-0731";
-const ppioModelName = "Deepseek V4 Flash 0731";
+const ppioModelId = "deepseek/deepseek-v4.1-flash";
+const ppioModelName = "DeepSeek V4.1 Flash";
 const ppioAnthropicEndpoint = "https://api.ppio.com/anthropic";
 const ppioOpenAiEndpoint = "https://api.ppio.com/openai/v1";
 const ppioChatCompletionsEndpoint = `${ppioOpenAiEndpoint}/chat/completions`;
@@ -132,7 +132,12 @@ describe("PPIO provider presets", () => {
         apiKey: { label: "API Key", placeholder: "", editorValue: "" },
       },
     });
-    expect(Object.keys(opencode.settingsConfig.models)).toEqual([ppioModelId]);
+    expect(Object.keys(opencode.settingsConfig.models)).toEqual([
+      ppioModelId,
+      "moonshotai/kimi-k3.1-pro",
+      "zai-org/glm-5.3",
+      "deepseek/deepseek-v4-pro",
+    ]);
     expect(`${opencode.settingsConfig.options.baseURL}/chat/completions`).toBe(
       ppioChatCompletionsEndpoint,
     );
@@ -146,17 +151,6 @@ describe("PPIO provider presets", () => {
         baseUrl: ppioOpenAiEndpoint,
         apiKey: "",
         api: "openai-completions",
-        models: [
-          {
-            id: ppioModelId,
-            name: ppioModelName,
-            reasoning: true,
-            input: ["text"],
-            contextWindow: 1048576,
-            maxTokens: 393216,
-            cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
-          },
-        ],
       },
       templateValues: {
         apiKey: { label: "API Key", placeholder: "sk-...", editorValue: "" },
@@ -165,6 +159,27 @@ describe("PPIO provider presets", () => {
         model: { primary: `ppio/${ppioModelId}` },
         modelCatalog: { [`ppio/${ppioModelId}`]: { alias: ppioModelName } },
       },
+    });
+    expect(
+      (openclaw.settingsConfig.models ?? []).map((model) => model.id),
+    ).toEqual([
+      ppioModelId,
+      "moonshotai/kimi-k3.1-pro",
+      "zai-org/glm-5.3",
+      "deepseek/deepseek-v4-pro",
+      "xiaomimimo/mimo-v2.6-pro",
+      "qwen/qwen3.8-max",
+      "minimax/minimax-m3.1-flash",
+      "stepfun/step-5-preview",
+    ]);
+    expect(openclaw.settingsConfig.models?.[0]).toMatchObject({
+      id: ppioModelId,
+      name: ppioModelName,
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1048576,
+      maxTokens: 393216,
+      cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
     });
     expect(`${openclaw.settingsConfig.baseUrl}/chat/completions`).toBe(
       ppioChatCompletionsEndpoint,
@@ -185,6 +200,17 @@ describe("PPIO provider presets", () => {
             id: ppioModelId,
             name: ppioModelName,
             context_length: 1048576,
+          },
+          {
+            id: "moonshotai/kimi-k3.1-pro",
+            name: "Kimi K3.1 Pro",
+            context_length: 1048576,
+          },
+          { id: "zai-org/glm-5.3", name: "GLM-5.3", context_length: 1000000 },
+          {
+            id: "deepseek/deepseek-v4-pro",
+            name: "DeepSeek V4 Pro",
+            context_length: 1000000,
           },
         ],
       },
@@ -207,30 +233,33 @@ describe("PPIO provider presets", () => {
         baseUrl: ppioOpenAiEndpoint,
         api: "openai-completions",
         apiKey: "",
-        models: [
-          {
-            id: ppioModelId,
-            name: ppioModelName,
-            reasoning: true,
-            input: ["text"],
-            contextWindow: 1048576,
-            maxTokens: 393216,
-            thinkingLevelMap: {
-              minimal: null,
-              low: null,
-              medium: null,
-              high: "high",
-              max: "max",
-            },
-            compat: {
-              supportsStore: false,
-              supportsDeveloperRole: false,
-              maxTokensField: "max_tokens",
-              requiresReasoningContentOnAssistantMessages: true,
-              thinkingFormat: "deepseek",
-            },
-          },
-        ],
+      },
+    });
+    expect(pi.settingsConfig.models.map((model) => model.id)).toEqual([
+      ppioModelId,
+      "moonshotai/kimi-k3.1-pro",
+      "zai-org/glm-5.3",
+    ]);
+    expect(pi.settingsConfig.models[0]).toMatchObject({
+      id: ppioModelId,
+      name: ppioModelName,
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1048576,
+      maxTokens: 393216,
+      thinkingLevelMap: {
+        minimal: null,
+        low: null,
+        medium: null,
+        high: "high",
+        max: "max",
+      },
+      compat: {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        maxTokensField: "max_tokens",
+        requiresReasoningContentOnAssistantMessages: true,
+        thinkingFormat: "deepseek",
       },
     });
     expect(`${pi.settingsConfig.baseUrl}/chat/completions`).toBe(

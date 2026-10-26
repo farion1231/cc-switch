@@ -25,6 +25,8 @@ struct Step {
 /// Keep only metadata; never retain prompts, tool arguments, or response content here.
 #[derive(Default)]
 pub(crate) struct RequestIndex {
+    /// The agent whose wire is being read; `None` means the main agent.
+    agent: Option<String>,
     step: Option<Step>,
     messages: HashMap<String, RequestInfo>,
 }
@@ -49,9 +51,18 @@ fn duration_ms(value: &Value) -> Option<i64> {
 }
 
 impl RequestIndex {
+    /// Index a subagent's own wire (`agents/<agent>/wire.jsonl`).
+    pub fn for_agent(agent: &str) -> Self {
+        Self {
+            agent: Some(agent.into()),
+            ..Default::default()
+        }
+    }
+
     pub fn observe(&mut self, record: &Value) {
-        // Only the main agent's committed messages live in agents/main/wire.jsonl.
-        if record["agentId"].as_str().is_some_and(|id| id != "main") {
+        // Each agent writes its own wire; ignore requests attributed to any other agent.
+        let own = self.agent.as_deref().unwrap_or("main");
+        if record["agentId"].as_str().is_some_and(|id| id != own) {
             return;
         }
         match record["type"].as_str() {

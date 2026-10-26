@@ -125,17 +125,24 @@ fn map_device_code_response(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_start_login(
     auth_provider: String,
     github_domain: Option<String>,
     target_account_id: Option<String>,
+    login_method: Option<String>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
 ) -> Result<ManagedAuthDeviceCodeResponse, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
+    let browser_login = match login_method.as_deref().unwrap_or("device_code") {
+        "device_code" => false,
+        "browser" if auth_provider == AUTH_PROVIDER_CODEX_OAUTH => true,
+        _ => return Err("Unsupported login method for this auth provider".into()),
+    };
     match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             if target_account_id.is_some() {
@@ -150,10 +157,16 @@ pub async fn auth_start_login(
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
             let auth_manager = &codex_state.0;
-            let response = auth_manager
-                .start_device_flow(target_account_id.as_deref())
-                .await
-                .map_err(|e| e.to_string())?;
+            let response = if browser_login {
+                auth_manager
+                    .start_browser_flow(target_account_id.as_deref())
+                    .await
+            } else {
+                auth_manager
+                    .start_device_flow(target_account_id.as_deref())
+                    .await
+            }
+            .map_err(|e| e.to_string())?;
             Ok(map_device_code_response(auth_provider, response))
         }
         AUTH_PROVIDER_XAI_OAUTH => {

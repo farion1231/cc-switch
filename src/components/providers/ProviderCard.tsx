@@ -23,6 +23,7 @@ import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
+import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
@@ -66,12 +67,11 @@ interface ProviderCardProps {
   dragHandleProps?: DragHandleProps;
 }
 
-/** 当前那张：模式色边框 + 淡底；共存式「已添加」是中性的。 */
+/** 当前那张：模式色边框 + 淡底；共存式应用的默认那家同直连色。 */
 const TONE_CLASS: Record<CardTone, string> = {
   direct: "border-direct-border bg-direct-soft",
   route: "border-route-border bg-route-soft",
   stack: "border-stack-border bg-stack-soft",
-  neutral: "border-border-strong bg-subtle",
 };
 
 const CHIP_CLASS: Record<CardChip["tone"], string> = {
@@ -498,6 +498,14 @@ export function ProviderCard({
               ) : isXaiOauth ? (
                 <XaiOauthQuotaFooter
                   meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : appId === "kimi" && isOfficial ? (
+                // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
+                <KimiAccountQuotaFooter
+                  accountId={provider.id}
+                  name={provider.name}
                   inline={true}
                   isCurrent={isCurrent}
                 />

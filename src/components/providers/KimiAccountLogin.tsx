@@ -1,277 +1,201 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { ProviderIcon } from "@/components/ProviderIcon";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Notice } from "@/components/ui/notice";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { copyText } from "@/lib/clipboard";
-import { settingsApi } from "@/lib/api";
+  ManagedAccountsGroup,
+  type GroupAccountRow,
+} from "@/components/settings/auth/ManagedAccountsGroup";
 import type { KimiOAuthAccount, KimiRegion } from "@/lib/api/kimiOAuth";
-import { extractErrorMessage } from "@/utils/errorUtils";
-import { toast } from "@/lib/toast";
+import { KimiAccountQuota } from "@/components/settings/auth/AccountQuota";
 import { useKimiOAuth } from "./forms/hooks/useKimiOAuth";
-export function KimiAccountLogin() {
+
+interface KimiAccountLoginProps {
+  helpSide?: "top" | "bottom";
+}
+
+/**
+ * 授权中心的 Kimi Code 账号组（和其他服务同一套画法）。每个账号在 Kimi Code 里有自己的供应商
+ * 和模型，「在用」就是 default_model 指向的那个号；添加账号先选登录区域。Kimi Code 自己的
+ * 登录删除时只移出列表，不替它登出。
+ */
+export function KimiAccountLogin({ helpSide }: KimiAccountLoginProps) {
   const { t } = useTranslation();
   const auth = useKimiOAuth();
-  const [region, setRegion] = useState<KimiRegion | null>(null);
-  const [confirmLogout, setConfirmLogout] = useState<KimiOAuthAccount | null>(
+  const [choosing, setChoosing] = useState(false);
+  const [region, setRegion] = useState<KimiRegion>("mainland-cn");
+  // 失败后「重试」重新发起的那次登录（轮询中途出错时则在原流程上续）
+  const [lastStart, setLastStart] = useState<{
+    region: KimiRegion;
+    accountId?: string;
+  } | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<KimiOAuthAccount | null>(
     null,
   );
-  const selectedRegion = region ?? "mainland-cn";
   const accounts = auth.status.data?.accounts ?? [];
-  const busy =
-    auth.starting ||
-    Boolean(auth.flow) ||
-    auth.logout.isPending ||
-    auth.useAccount.isPending;
+  const currentId = auth.status.data?.currentAccountId ?? null;
 
   useEffect(() => {
-    if (auth.logout.isSuccess) setConfirmLogout(null);
-  }, [auth.logout.isSuccess]);
+    if (auth.remove.isSuccess) setConfirmRemove(null);
+  }, [auth.remove.isSuccess]);
 
-  const openPage = async (url: string) => {
-    try {
-      await settingsApi.openExternal(url);
-    } catch (e) {
-      toast.error(extractErrorMessage(e));
-    }
+  const start = (next: KimiRegion, accountId?: string) => {
+    setChoosing(false);
+    setLastStart({ region: next, accountId });
+    void auth.start(next, accountId);
   };
 
-  const loginButton = (
-    <Button
-      type="button"
-      variant="quiet"
-      size="compact"
-      disabled={busy || auth.status.isPending}
-      onClick={() => void auth.start(selectedRegion)}
-    >
-      {auth.starting && <Loader2 className="h-4 w-4 animate-spin" />}
-      {accounts.length ? t("kimi.oauth.addAccount") : t("kimi.oauth.signIn")}
-    </Button>
-  );
+  const rows: GroupAccountRow[] = accounts.map((account) => {
+    const current = account.id === currentId;
+    return {
+      id: account.id,
+      login: account.nickname ?? account.name,
+      avatarUrl: account.avatarUrl,
+      details: account.authenticated
+        ? [
+            t(`kimi.oauth.${account.region}`),
+            account.primary ? t("kimi.oauth.primaryShort") : null,
+          ].filter(Boolean)
+        : [account.error ?? t("kimi.oauth.signedOut")],
+      isDefault: current,
+      needsReauth: !account.authenticated,
+      users: [],
+      quota: account.authenticated ? (
+        <KimiAccountQuota accountId={account.id} login={account.name} />
+      ) : undefined,
+      removeLabel: account.primary
+        ? t("kimi.oauth.dismissAccount")
+        : t("kimi.oauth.removeAccount"),
+      // 正在用的分开账号要先切走才能删（后端也会拒）；Kimi 自己的登录随时可移出列表
+      removeDisabledReason:
+        current && !account.primary
+          ? t("kimi.oauth.removeCurrentHint")
+          : undefined,
+    };
+  });
 
-  return (
-    <section
-      aria-label={t("kimi.oauth.title")}
-      className="space-y-4 rounded-panel border border-border bg-surface p-4"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <ProviderIcon icon="kimi" name="Kimi Code" size={24} />
-          <h3 className="text-strong text-fg-1">Kimi Code</h3>
-        </div>
-        {loginButton}
-      </div>
-      <p className="text-body text-fg-2">{t("kimi.oauth.description")}</p>
+  const chooser = choosing && (
+    <div className="mx-3 mb-3 flex flex-col gap-2.5 rounded-[8px] border border-border px-3.5 py-3">
       <div className="flex flex-wrap items-center gap-3">
-        <Label htmlFor="kimi-oauth-region">{t("kimi.oauth.region")}</Label>
-        <Select
-          value={selectedRegion}
-          disabled={busy}
-          onValueChange={(value) => setRegion(value as KimiRegion)}
-        >
-          <SelectTrigger id="kimi-oauth-region" className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="mainland-cn">
-              {t("kimi.oauth.mainland-cn")}
-            </SelectItem>
-            <SelectItem value="global">{t("kimi.oauth.global")}</SelectItem>
-          </SelectContent>
-        </Select>
-        <span role="status" className="text-caption text-fg-2">
-          {auth.status.isPending
-            ? t("common.loading")
-            : auth.status.isError
-              ? t("kimi.oauth.statusFailed")
-              : accounts.length
-                ? t("kimi.oauth.accountCount", { count: accounts.length })
-                : t("kimi.oauth.signedOut")}
+        <span className="text-caption font-medium text-fg-2">
+          {t("kimi.oauth.region")}
         </span>
-        <Button
-          type="button"
-          variant="quiet"
-          size="icon-compact"
-          disabled={busy || auth.status.isFetching}
-          aria-label={t("kimi.oauth.refresh")}
-          onClick={() => void auth.status.refetch()}
-        >
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <SegmentedControl<KimiRegion>
+          size="sm"
+          aria-label={t("kimi.oauth.region")}
+          value={region}
+          onValueChange={setRegion}
+          items={[
+            { value: "mainland-cn", label: t("kimi.oauth.mainland-cn") },
+            { value: "global", label: t("kimi.oauth.global") },
+          ]}
+        />
       </div>
-      {accounts.length > 0 && (
-        <div role="list" className="space-y-2">
-          {accounts.map((account) => (
-            <div
-              key={account.id}
-              role="listitem"
-              className="flex items-center gap-3 rounded-panel border border-direct-border bg-direct-soft px-4 py-3"
-            >
-              <ProviderIcon icon="kimi" name={account.name} size={24} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-strong text-fg-1">{account.name}</span>
-                  {auth.status.data?.currentAccountId === account.id && (
-                    <span className="text-badge text-direct">
-                      {t("providerCard.status.current")}
-                    </span>
-                  )}
-                  <span className="rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
-                    {t("providerCard.chip.official")}
-                  </span>
-                </div>
-                <p className="text-caption text-fg-2">
-                  {account.authenticated
-                    ? t("kimi.oauth.signedIn", {
-                        region: t(`kimi.oauth.${account.region}`),
-                      })
-                    : t("kimi.oauth.signedOut")}
-                </p>
-                {account.error && (
-                  <p className="text-caption text-danger">{account.error}</p>
-                )}
-              </div>
-              <Button
-                type="button"
-                variant="neutral"
-                size="compact"
-                disabled={busy || !account.authenticated}
-                onClick={() => {
-                  void auth.useAccount.mutateAsync(account.id).catch(() => {});
-                }}
-              >
-                {t("kimi.oauth.useAccount")}
-              </Button>
-              <Button
-                type="button"
-                variant="quiet"
-                size="compact"
-                disabled={busy}
-                onClick={() => void auth.start(account.region, account.id)}
-              >
-                {t("kimi.oauth.signInAgain")}
-              </Button>
-              <Button
-                type="button"
-                variant="quiet"
-                size="compact"
-                disabled={busy || !account.authenticated}
-                onClick={() => setConfirmLogout(account)}
-              >
-                {t("kimi.oauth.signOut")}
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-      {auth.starting && (
+      <div className="flex justify-end gap-2">
         <Button
           type="button"
-          variant="quiet"
+          variant="neutral"
           size="compact"
-          onClick={auth.cancel}
+          onClick={() => setChoosing(false)}
         >
           {t("common.cancel")}
         </Button>
-      )}
-      {auth.flow && (
-        <div
-          className="flex flex-wrap items-center gap-3 rounded-panel border border-border bg-subtle px-4 py-3"
-          aria-live="polite"
+        <Button
+          type="button"
+          variant="solid"
+          size="compact"
+          onClick={() => start(region)}
         >
-          <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-          <span className="text-body">{t("kimi.oauth.waiting")}</span>
-          <code className="rounded-control border border-border bg-surface px-2.5 py-1 font-mono text-section tracking-widest">
-            {auth.flow.userCode}
-          </code>
-          <Button
-            type="button"
-            variant="quiet"
-            size="icon-compact"
-            aria-label={t("kimi.oauth.copyCode")}
-            onClick={() => {
-              void copyText(auth.flow!.userCode)
-                .then(() => toast.success(t("kimi.oauth.copied")))
-                .catch((e) => toast.error(extractErrorMessage(e)));
-            }}
-          >
-            <Copy className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="neutral"
-            size="compact"
-            onClick={() => void openPage(auth.flow!.verificationUri)}
-          >
-            <ExternalLink className="h-4 w-4" />
-            {t("kimi.oauth.openPage")}
-          </Button>
-          <Button
-            type="button"
-            variant="quiet"
-            size="compact"
-            onClick={auth.cancel}
-          >
-            {t("common.cancel")}
-          </Button>
-          <p className="basis-full text-caption text-fg-2">
-            {t("kimi.oauth.manualHint")}
-          </p>
-          <a
-            className="min-w-0 basis-full break-all text-caption text-fg-2 underline"
-            href={auth.flow.verificationUri}
-            onClick={(event) => {
-              event.preventDefault();
-              void openPage(auth.flow!.verificationUri);
-            }}
-          >
-            {auth.flow.verificationUri}
-          </a>
-        </div>
-      )}
-      {(auth.error || auth.status.isError) && (
-        <div role="alert">
-          <Notice
-            tone="danger"
-            title={t("kimi.oauth.error")}
-            actions={
-              auth.retryable ? (
-                <Button
-                  type="button"
-                  variant="neutral"
-                  size="compact"
-                  onClick={auth.retry}
-                >
-                  {t("common.retry")}
-                </Button>
-              ) : undefined
+          {t("kimi.oauth.signIn")}
+        </Button>
+      </div>
+    </div>
+  );
+
+  return (
+    <ManagedAccountsGroup
+      slug="kimi"
+      name="Kimi Code"
+      iconName="kimi"
+      help={t("kimi.oauth.help")}
+      helpSide={helpSide}
+      accounts={rows}
+      status={
+        auth.status.isError
+          ? "error"
+          : auth.status.isSuccess
+            ? "ready"
+            : "loading"
+      }
+      statusErrorText={t("kimi.oauth.statusFailed")}
+      onRetryStatus={() => void auth.status.refetch()}
+      emptyText={
+        auth.status.data?.primaryHidden
+          ? t("kimi.oauth.primaryHidden")
+          : t("kimi.oauth.empty")
+      }
+      loginLabel={t("kimi.oauth.signIn")}
+      onAdd={() => setChoosing(true)}
+      chooser={chooser || undefined}
+      defaultLabel={t("kimi.oauth.current")}
+      setDefaultLabel={t("kimi.oauth.useAccount")}
+      canReauth
+      onReauth={(accountId) => {
+        const account = accounts.find((a) => a.id === accountId);
+        if (account) start(account.region, account.id);
+      }}
+      onSetDefault={(accountId) => {
+        void auth.useAccount.mutateAsync(accountId).catch(() => {});
+      }}
+      settingDefault={auth.useAccount.isPending}
+      onRemove={(accountId) =>
+        setConfirmRemove(accounts.find((a) => a.id === accountId) ?? null)
+      }
+      removing={auth.remove.isPending}
+      login={{
+        starting: auth.starting,
+        // 轮询中途出错时流程还在，但要让出位置给错误提示和「重试」
+        polling: Boolean(auth.flow) && !auth.error,
+        pollingState: auth.error ? "error" : auth.flow ? "polling" : "idle",
+        deviceCode: auth.flow
+          ? {
+              user_code: auth.flow.userCode,
+              verification_uri: auth.flow.verificationUri,
             }
-          >
-            {auth.error || extractErrorMessage(auth.status.error)}
-          </Notice>
-        </div>
-      )}
+          : null,
+        error: auth.error,
+        onCancel: auth.cancel,
+        onRetry: () => {
+          if (auth.retryable) auth.retry();
+          else if (lastStart) start(lastStart.region, lastStart.accountId);
+        },
+      }}
+    >
       <ConfirmDialog
-        isOpen={confirmLogout !== null}
-        title={t("kimi.oauth.signOut")}
-        message={t("kimi.oauth.signOutConfirm", { name: confirmLogout?.name })}
-        pending={auth.logout.isPending}
-        confirmText={t("kimi.oauth.signOut")}
+        isOpen={confirmRemove !== null}
+        title={
+          confirmRemove?.primary
+            ? t("kimi.oauth.dismissAccount")
+            : t("kimi.oauth.removeAccount")
+        }
+        message={t(
+          confirmRemove?.primary
+            ? "kimi.oauth.dismissConfirm"
+            : "kimi.oauth.removeConfirm",
+          { name: confirmRemove?.nickname ?? confirmRemove?.name },
+        )}
+        pending={auth.remove.isPending}
+        confirmText={
+          confirmRemove?.primary
+            ? t("kimi.oauth.dismissAccount")
+            : t("kimi.oauth.removeAccount")
+        }
         onConfirm={() => {
-          if (confirmLogout) auth.logout.mutate(confirmLogout.id);
+          if (confirmRemove) auth.remove.mutate(confirmRemove.id);
         }}
-        onCancel={() => setConfirmLogout(null)}
+        onCancel={() => setConfirmRemove(null)}
       />
-    </section>
+    </ManagedAccountsGroup>
   );
 }

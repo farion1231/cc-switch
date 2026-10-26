@@ -10,7 +10,8 @@ import { settingsApi } from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { toast } from "@/lib/toast";
 
-const STATUS_KEY = ["kimi-oauth-status"];
+export const KIMI_OAUTH_STATUS_KEY = ["kimi-oauth-status"];
+const STATUS_KEY = KIMI_OAUTH_STATUS_KEY;
 
 export function useKimiOAuth() {
   const { t } = useTranslation();
@@ -101,6 +102,10 @@ export function useKimiOAuth() {
           setError(null);
           setRetryable(false);
           await invalidate();
+          // 重新登录可能落回已有账号，它的额度要换新凭据重查
+          void queryClient.invalidateQueries({
+            queryKey: ["kimi_oauth", "quota"],
+          });
           toast.success(t("kimi.oauth.success"));
         } else {
           timer.current = setTimeout(
@@ -116,7 +121,7 @@ export function useKimiOAuth() {
         setRetryable(true);
       }
     },
-    [cancelBackend, invalidate, t],
+    [cancelBackend, invalidate, queryClient, t],
   );
 
   const start = useCallback(
@@ -166,16 +171,23 @@ export function useKimiOAuth() {
     void poll(id, generation.current);
   };
 
-  const logout = useMutation({
-    mutationFn: (accountId: string) => kimiOAuthApi.logout(accountId),
-    onSuccess: invalidate,
-    onError: (e) => setError(extractErrorMessage(e)),
+  // 分开存的账号连同卡片、模型和本机凭据一起删；Kimi 自己的登录只移出列表，不替它登出
+  const remove = useMutation({
+    mutationFn: (accountId: string) => kimiOAuthApi.remove(accountId),
+    onSuccess: async (_, accountId) => {
+      queryClient.removeQueries({
+        queryKey: ["kimi_oauth", "quota", accountId],
+      });
+      await invalidate();
+    },
+    // 登录流程的错误才进 error（授权中心按「登录没有完成」显示），账号操作的失败弹 toast
+    onError: (e) => toast.error(extractErrorMessage(e)),
   });
 
   const useAccount = useMutation({
     mutationFn: (accountId: string) => kimiOAuthApi.useAccount(accountId),
     onSuccess: invalidate,
-    onError: (e) => setError(extractErrorMessage(e)),
+    onError: (e) => toast.error(extractErrorMessage(e)),
   });
 
   return {
@@ -187,7 +199,7 @@ export function useKimiOAuth() {
     start,
     cancel,
     retry,
-    logout,
+    remove,
     useAccount,
   };
 }

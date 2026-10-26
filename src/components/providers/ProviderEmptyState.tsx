@@ -20,11 +20,13 @@ export function ProviderEmptyState({
   onImport,
 }: ProviderEmptyStateProps) {
   const { t } = useTranslation();
-  // Pi / MiniMax Code 的"当前供应商"可以是原生应用自管的内置账号（不在可管理的
+  // Pi / MiniMax Code / Oh My Pi 的"当前供应商"可以是原生应用自管的内置账号（不在可管理的
   // live 节点里），没有可导入的内容，列表也不提供导入按钮，因此不能沿用
   // "请点击导入当前配置"的通用文案。
   const emptyCopyNs =
-    appId === "pi" || appId === "mcode" || appId === "kimi" ? appId : null;
+    appId === "pi" || appId === "mcode" || appId === "kimi" || appId === "omp"
+      ? appId
+      : null;
   // Antigravity 没有切换，这句「切换只替换关键字段」对它不成立
   const showKeyFieldsHint =
     appId === "claude" ||

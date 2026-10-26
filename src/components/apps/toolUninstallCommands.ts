@@ -44,6 +44,7 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
       environments: ["macos", "linux"],
     },
     { tool: "openclaw", command: "bun remove -g openclaw" },
+    { tool: "omp", command: "bun remove -g @oh-my-pi/pi-coding-agent" },
   ],
   "brew-formula": [
     {

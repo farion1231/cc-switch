@@ -142,6 +142,17 @@ describe("ClaudeFormFields", () => {
     expect(copilotApiMock.copilotGetModelsForAccount).not.toHaveBeenCalled();
   });
 
+  it.each(["classic", "stack"] as const)(
+    "Copilot %s 布局显示自动协议并禁用无效的手选格式",
+    (variant) => {
+      renderCopilotForm({ variant, apiFormat: "openai_responses" });
+      const control = screen.getByRole("combobox", { name: "上游格式" });
+      expect(control).toBeDisabled();
+      expect(control).toHaveTextContent("copilot.automaticFormat");
+      expect(screen.getByText(/copilot.automaticFormatHint/)).toBeVisible();
+    },
+  );
+
   it("点击获取模型列表后才请求当前 Copilot 账号的模型", async () => {
     renderCopilotForm();
 

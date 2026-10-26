@@ -399,7 +399,7 @@ describe("ProviderList Component", () => {
     },
   );
 
-  it("switches Kimi providers and marks only the native default-model owner as in use", () => {
+  it("adds, switches and removes Kimi providers and marks only the native default-model owner as in use", () => {
     const current = createProvider({
       id: "current",
       name: "Current",
@@ -416,6 +416,7 @@ describe("ProviderList Component", () => {
       meta: { liveConfigManaged: false },
     });
     const onSwitch = vi.fn();
+    const onSetAsDefault = vi.fn();
     const onRemoveFromConfig = vi.fn();
     useDragSortMock.mockReturnValue({
       sortedProviders: [current, other, saved],
@@ -427,6 +428,7 @@ describe("ProviderList Component", () => {
       appId: "kimi" as const,
       providers: { current, other, saved },
       onSwitch,
+      onSetAsDefault,
       onRemoveFromConfig,
     };
     const client = new QueryClient({
@@ -438,7 +440,7 @@ describe("ProviderList Component", () => {
       </QueryClientProvider>,
     );
     expect(screen.getByTestId("status-current")).toHaveTextContent(
-      "providerCard.status.inUse",
+      "providerCard.status.default",
     );
     expect(lastProps("current")?.presentation.tone).toBe("direct");
     expect(lastProps("current")?.isCurrent).toBe(true);
@@ -447,13 +449,22 @@ describe("ProviderList Component", () => {
       lastProps("current")?.presentation.deleteDisabledReason,
     ).toBeTruthy();
     expect(
-      lastProps("current")?.presentation.menuItems[0].disabledReason,
+      lastProps("current")?.presentation.buttons.find(
+        (button: { key: string }) => button.key === "remove",
+      )?.disabledReason,
     ).toBeTruthy();
-    fireEvent.click(screen.getByTestId("switch-other"));
-    expect(onSwitch).toHaveBeenLastCalledWith(other);
-    fireEvent.click(screen.getByTestId("switch-saved"));
+    // 已添加的卡在「更多」菜单里「设为默认」；未添加的卡「添加」只写进配置
+    expect(screen.queryByTestId("switch-other")).not.toBeInTheDocument();
+    lastProps("other")
+      ?.presentation.menuItems.find(
+        (action: { key: string }) => action.key === "setDefault",
+      )
+      .onSelect();
+    expect(onSetAsDefault).toHaveBeenLastCalledWith(other, undefined);
+    expect(screen.queryByTestId("switch-saved")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("add-saved"));
     expect(onSwitch).toHaveBeenLastCalledWith(saved);
-    lastProps("other")?.presentation.menuItems[0].onSelect();
+    fireEvent.click(screen.getByTestId("remove-other"));
     expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
     rerender(
       <QueryClientProvider client={client}>
@@ -462,9 +473,13 @@ describe("ProviderList Component", () => {
     );
     expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
     expect(screen.getByTestId("status-other")).toHaveTextContent(
-      "providerCard.status.inUse",
+      "providerCard.status.default",
     );
-    expect(screen.getByTestId("switch-current")).toBeInTheDocument();
+    expect(
+      lastProps("current")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
   });
 
   it("does not mark any Kimi provider as current when the native selection is missing", () => {
@@ -485,7 +500,11 @@ describe("ProviderList Component", () => {
       />,
     );
     expect(screen.queryByTestId("status-live")).not.toBeInTheDocument();
-    expect(screen.getByTestId("switch-live")).toBeInTheDocument();
+    expect(
+      lastProps("live")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
   });
 
   it("marks the native Kimi OAuth card as official without marking API-key presets", () => {
@@ -524,7 +543,7 @@ describe("ProviderList Component", () => {
       tone: "outline",
     });
     expect(lastProps(official.id)?.presentation.status.label).toBe(
-      "providerCard.status.inUse",
+      "providerCard.status.default",
     );
     expect(lastProps(apiKey.id)?.presentation.chips).toEqual([]);
   });

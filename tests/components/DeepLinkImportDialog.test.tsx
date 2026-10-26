@@ -32,8 +32,17 @@ const deliverDeepLink = (request: Record<string, unknown>) => {
 };
 
 vi.mock("@/components/ui/dialog", () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
+  // 内容始终渲染，开关状态记在属性上，供断言确认框是否仍打开
+  Dialog: ({
+    children,
+    open,
+  }: {
+    children: React.ReactNode;
+    open?: boolean;
+  }) => (
+    <div data-testid="deeplink-dialog" data-open={String(!!open)}>
+      {children}
+    </div>
   ),
   DialogContent: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
@@ -855,6 +864,62 @@ describe("DeepLinkImportDialog", () => {
       });
       await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
       expect(screen.queryByText("Merging Provider")).not.toBeInTheDocument();
+    });
+
+    it("keeps a newer link's confirmation open when an older import finishes", async () => {
+      // A 导入中（响应挂起）时 B 到达并显示、后端已清除 B；A 完成后不能把 B 的确认框关掉
+      const user = userEvent.setup();
+      const providerLink = (name: string) => ({
+        ...coldStartLink.request,
+        name,
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let markHit!: () => void;
+      const hit = new Promise<void>((resolve) => (markHit = resolve));
+      const imported: string[] = [];
+      server.use(
+        http.post(
+          "http://tauri.local/import_from_deeplink_unified",
+          async ({ request }) => {
+            const body = (await request.json()) as {
+              request: { name: string };
+            };
+            imported.push(body.request.name);
+            if (imported.length === 1) {
+              markHit();
+              await gate;
+            }
+            return HttpResponse.json({ type: "provider", id: "p1" });
+          },
+        ),
+      );
+
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(providerLink("First Provider")));
+      await user.click(
+        await screen.findByRole("button", { name: "deeplink.import" }),
+      );
+      await hit;
+
+      act(() => deliverDeepLink(providerLink("Second Provider")));
+      await screen.findByText("Second Provider");
+      await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
+
+      release();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "deeplink.import" }),
+        ).toBeEnabled(),
+      );
+      const dialog = screen.getByTestId("deeplink-dialog");
+      expect(dialog).toHaveAttribute("data-open", "true");
+      expect(screen.getByText("Second Provider")).toBeInTheDocument();
+
+      // B 自己导入完成后照常关闭
+      await user.click(screen.getByRole("button", { name: "deeplink.import" }));
+      await waitFor(() => expect(dialog).toHaveAttribute("data-open", "false"));
+      expect(imported).toEqual(["First Provider", "Second Provider"]);
     });
   });
 });

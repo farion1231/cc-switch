@@ -134,6 +134,18 @@ pub fn delete_provider(
 }
 
 #[tauri::command]
+pub fn add_provider_to_live_config(
+    state: tauri::State<'_, AppState>,
+    app: String,
+    id: String,
+) -> Result<bool, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ProviderService::add_to_live_config(state.inner(), app_type, &id)
+        .map(|_| true)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn remove_provider_from_live_config(
     state: tauri::State<'_, AppState>,
     app: String,

@@ -42,6 +42,9 @@ export const translatePiProviderMutationError = (
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string => {
   if (!message) return "";
+  // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
 
   if (
     message.includes("models.json changed") ||
@@ -60,6 +63,24 @@ export const translatePiProviderMutationError = (
 };
 
 /**
+ * Kimi 的默认模型可能在 Kimi Code 里被改过、页面上还是旧的，
+ * 后端按 config.toml 现读拒绝后，把这两条英文原因换成说明。
+ */
+export const translateKimiProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+  if (message.includes("Select another default model in Kimi Code")) {
+    return t("kimi.error.defaultModelInUse");
+  }
+  if (message.includes("Update the secondary model selection in Kimi Code")) {
+    return t("kimi.error.secondaryModelInUse");
+  }
+  return "";
+};
+
+/**
  * 将已知的 MCP 相关后端错误（通常为中文硬编码）映射为 i18n 文案
  * 采用包含式匹配，尽量稳健地覆盖不同上下文的相似消息。
  * 若无法识别，返回空字符串以便调用方回退到原始 detail 或默认 i18n。
@@ -69,6 +90,9 @@ export const translateMcpBackendError = (
   t: (key: string, opts?: any) => string,
 ): string => {
   if (!message) return "";
+  // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
   const msg = String(message).trim();
 
   // 基础字段与结构校验相关

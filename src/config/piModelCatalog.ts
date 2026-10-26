@@ -318,6 +318,15 @@ export const piModelCatalog = {
       maxTokens: 131_072,
     },
   },
+  "moonshotai/kimi-k3.1-pro": {
+    capabilities: {
+      name: "Kimi K3.1 Pro",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
   "openai/gpt-5": {
     capabilities: {
       name: "GPT-5",
@@ -797,6 +806,15 @@ export const piModelCatalog = {
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6.1-sol": {
+    capabilities: {
+      name: "GPT-6.1 Sol",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 272000,
       maxTokens: 128000,
     },
   },

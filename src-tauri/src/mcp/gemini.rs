@@ -94,6 +94,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
                         mcode: false,
                         kimi: false,
                         pi: false,
+                        omp: false,
                     },
                     description: None,
                     homepage: None,

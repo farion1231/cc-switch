@@ -6121,7 +6121,13 @@ mod tests {
         let continuation = json!({
             "input": [{"type": "function_call_output", "call_id": "call-1", "output": "done"}]
         });
-        for source in ["session_id", "x-session-id", "metadata"] {
+        for source in [
+            "session_id",
+            "x-session-id",
+            "session-id",
+            "thread-id",
+            "metadata",
+        ] {
             let mut headers = HeaderMap::new();
             let mut body = first.clone();
             let session_id = "12345678-1234-1234-1234-123456789abc";

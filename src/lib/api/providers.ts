@@ -30,6 +30,8 @@ export interface OpenTerminalOptions {
 
 export interface ClaudeDesktopStatus {
   supported: boolean;
+  /** 本机装了 Claude Desktop（按它的数据目录或 macOS 应用包推断；接入了也算） */
+  installed: boolean;
   configured: boolean;
   appliedId?: string | null;
   profilePath?: string | null;
@@ -131,6 +133,11 @@ export const providersApi = {
 
   async delete(id: string, appId: AppId): Promise<boolean> {
     return await invoke("delete_provider", { id, app: appId });
+  },
+
+  /** Kimi「添加」：写进 config.toml 但不改默认模型（「切换」才改） */
+  async addToLiveConfig(id: string, appId: AppId): Promise<boolean> {
+    return await invoke("add_provider_to_live_config", { id, app: appId });
   },
 
   /**

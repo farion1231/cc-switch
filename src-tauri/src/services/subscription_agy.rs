@@ -119,7 +119,7 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
     else {
         return Ok(SubscriptionQuota::not_found(TOOL));
     };
-    let mut command = tokio::process::Command::new(bin);
+    let mut command = crate::agy_config::background_command(&bin);
     command
         .args(["--print", "/usage", "--output-format", "json"])
         // 只问官方登录：GUI 进程里残留的 Key 会让 agy 改走 Key 模式。

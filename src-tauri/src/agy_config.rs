@@ -329,6 +329,19 @@ fn shell_word(value: &str) -> String {
     }
 }
 
+/// 在后台跑 agy（查额度、列模型）。Windows 正式版是 GUI 子系统，控制台程序作子进程时
+/// 不带 `CREATE_NO_WINDOW` 会另弹一个黑色控制台窗口。
+pub(crate) fn background_command(bin: &Path) -> tokio::process::Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut command = tokio::process::Command::new(bin);
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 /// 定位真实的 `agy`：先 PATH，再常见安装目录，最后问一次登录 shell。
 /// 从 Dock / Finder 启动时 PATH 只有系统目录，所以后两步不可省。
 /// 旧版测试装的包装脚本永远不会被返回。

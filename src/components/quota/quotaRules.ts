@@ -373,14 +373,15 @@ export function balanceLine(
   const hasTotal = typeof total === "number" && total > 0;
   const left =
     remaining <= 0 ? 0 : hasTotal ? (remaining / total) * 100 : Infinity;
-  const value = `${remaining.toFixed(2)}${unit ? ` ${unit}` : ""}`;
+  // 用完也照写金额（欠费就是负数，#8812），整行变红；`|| 0` 把 -0 归成 0，免得显示 -0.00
+  const amount = Number(remaining.toFixed(2)) || 0;
+  const value = `${amount.toFixed(2)}${unit ? ` ${unit}` : ""}`;
   return {
     key,
     left,
     tone: remaining <= 0 ? "danger" : "normal",
     emphasis: remaining <= 0 ? undefined : value,
-    text:
-      remaining <= 0 ? t("quota.balanceUsedUp") : t("quota.balance", { value }),
+    text: t("quota.balance", { value }),
     detail,
   };
 }

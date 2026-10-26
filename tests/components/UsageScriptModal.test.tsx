@@ -154,3 +154,56 @@ describe("UsageScriptModal official subscription hint", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Oh My Pi has its own `AppId` ("omp"), so it never matched the `pi` branch
+ * and both built-in tests reported "API key is empty" on an omp card. The
+ * provider key and base URL must reach the balance API like they do for Pi.
+ */
+describe("UsageScriptModal Oh My Pi credentials", () => {
+  it("passes the omp provider's key and base URL to the balance test", async () => {
+    const getBalance = vi.fn().mockResolvedValue({ success: true, data: [] });
+    vi.doMock("@/lib/api/subscription", () => ({
+      subscriptionApi: { getBalance },
+    }));
+    const { default: Modal } = await import("@/components/UsageScriptModal");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <Modal
+          provider={{
+            id: "cc-switch-demo",
+            name: "Demo",
+            // A base URL the balance template recognises, so the test reaches
+            // `getBalance` instead of stopping at the template picker.
+            settingsConfig: {
+              baseUrl: "https://api.deepseek.com/v1",
+              apiKey: "sk-omp",
+              api: "openai-completions",
+            },
+          }}
+          appId="omp"
+          isOpen
+          onClose={() => {}}
+          onSave={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+
+    // The usage query is off by default; enabling it asks for confirmation once.
+    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "confirm.usage.confirm" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.testScript" }),
+    );
+
+    expect(getBalance).toHaveBeenCalledWith(
+      "https://api.deepseek.com/v1",
+      "sk-omp",
+    );
+  });
+});

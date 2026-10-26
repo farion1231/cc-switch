@@ -267,7 +267,7 @@ describe("credential failures", () => {
 
   it("says the token is waiting for a refresh, not that the login expired", () => {
     failed("refresh_pending");
-    expect(screen.getByText("额度没查到")).toBeInTheDocument();
+    expect(screen.getByText("额度查询失败")).toBeInTheDocument();
     expect(screen.getByText("令牌待刷新")).toBeInTheDocument();
     expect(screen.queryByText("登录已过期")).not.toBeInTheDocument();
     expect(screen.queryByText("raw backend message")).not.toBeInTheDocument();

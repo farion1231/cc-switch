@@ -179,7 +179,7 @@ describe("TrayPanel window layout", () => {
                 emphasis: "82.10 CNY",
               },
               {
-                text: "Balance used up",
+                text: "Balance -24.96 CNY",
                 left: 0,
                 warn: true,
                 resetsAt: null,
@@ -199,7 +199,9 @@ describe("TrayPanel window layout", () => {
     expect(amount).toHaveClass("text-green-600");
     expect(amount.parentElement).toHaveTextContent("Balance 82.10 CNY");
     expect(amount.parentElement).not.toHaveClass("text-green-600");
-    expect(screen.getByText("Balance used up")).toHaveClass("text-amber-500");
+    expect(screen.getByText("Balance -24.96 CNY")).toHaveClass(
+      "text-amber-500",
+    );
   });
 
   it("clips the first Windows frame without waiting for animation frames in a hidden window", async () => {

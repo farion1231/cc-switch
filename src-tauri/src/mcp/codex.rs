@@ -258,6 +258,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             mcode: false,
                             kimi: false,
                             pi: false,
+                            omp: false,
                         },
                         description: None,
                         homepage: None,

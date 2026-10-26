@@ -166,7 +166,11 @@ describe("RequestDetailPanel", () => {
     expect(
       screen.getByText("usage.detail.noTimingSession"),
     ).toBeInTheDocument();
-    expect(screen.getByText("usage.detail.sourceSession")).toBeInTheDocument();
+    // 供应商已经叫「会话日志」：不再重复列来源和内部的供应商 ID
+    expect(screen.queryByText("usage.detail.source")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.detail.providerId"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the error and a retry button when loading fails", () => {

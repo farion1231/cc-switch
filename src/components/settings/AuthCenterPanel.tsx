@@ -76,10 +76,10 @@ export function AuthCenterPanel({
         <CodexOAuthSection showAccountQuota />
       </div>
       <div ref={xaiOauthSectionRef} className="scroll-mt-4">
-        <XaiOAuthSection mode="manage" helpSide={showAgy ? "bottom" : "top"} />
+        <XaiOAuthSection mode="manage" helpSide="bottom" />
       </div>
       <div ref={kimiOauthSectionRef} className="scroll-mt-4">
-        <KimiAccountLogin />
+        <KimiAccountLogin helpSide={showAgy ? "bottom" : "top"} />
       </div>
       {showAgy && (
         <div ref={agyOauthSectionRef} className="scroll-mt-4">

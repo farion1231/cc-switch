@@ -2008,7 +2008,7 @@ export function CodexFormFields({
                 type="button"
                 variant={null}
                 size="sm"
-                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
               >
                 {stackAdvancedExpanded ? (
                   <ChevronDown className="h-4 w-4" />
@@ -2255,7 +2255,7 @@ export function CodexFormFields({
               type="button"
               variant={null}
               size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
             >
               {advancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />

@@ -102,6 +102,8 @@ pub struct DirectGatewayCredentials {
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeDesktopStatus {
     pub supported: bool,
+    /// 本机装了 Claude Desktop（推断，见 `detect_installed`）；接入了也算
+    pub installed: bool,
     pub configured: bool,
     pub applied_id: Option<String>,
     pub profile_path: Option<String>,
@@ -214,6 +216,7 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
     if !is_supported_platform() {
         return Ok(ClaudeDesktopStatus {
             supported: false,
+            installed: false,
             configured: false,
             applied_id: None,
             profile_path: None,
@@ -280,6 +283,7 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
 
     Ok(ClaudeDesktopStatus {
         supported: true,
+        installed: configured || detect_installed(&paths, &macos_app_bundle_candidates()),
         configured,
         applied_id,
         profile_path: Some(paths.profile_path.display().to_string()),
@@ -1461,6 +1465,25 @@ fn meta_has_profile_entry(path: &Path) -> bool {
         })
 }
 
+/// Claude Desktop 没有可调的命令，只能推断装没装：它第一次启动就会建自己的数据目录
+/// （`claude_desktop_config.json` 所在的 `Claude`，不看 CC Switch 也会写的 `Claude-3p`），
+/// macOS 上另认应用包。
+fn detect_installed(paths: &ClaudeDesktopPaths, app_bundles: &[PathBuf]) -> bool {
+    paths.normal_config_path.parent().is_some_and(Path::is_dir)
+        || app_bundles.iter().any(|bundle| bundle.is_dir())
+}
+
+fn macos_app_bundle_candidates() -> Vec<PathBuf> {
+    if cfg!(target_os = "macos") {
+        vec![
+            PathBuf::from("/Applications/Claude.app"),
+            get_home_dir().join("Applications").join("Claude.app"),
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
 fn is_supported_platform() -> bool {
     cfg!(any(target_os = "macos", windows, target_os = "linux"))
 }
@@ -1848,6 +1871,24 @@ mod tests {
             ..Default::default()
         });
         provider
+    }
+
+    #[test]
+    fn detect_installed_reads_data_dir_or_app_bundle() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let bundle = temp.path().join("Claude.app");
+        assert!(!detect_installed(&paths, std::slice::from_ref(&bundle)));
+
+        // 只有 CC Switch 写的 Claude-3p 不算
+        fs::create_dir_all(paths.threep_config_path.parent().unwrap()).unwrap();
+        assert!(!detect_installed(&paths, std::slice::from_ref(&bundle)));
+
+        fs::create_dir_all(&bundle).unwrap();
+        assert!(detect_installed(&paths, std::slice::from_ref(&bundle)));
+
+        fs::create_dir_all(paths.normal_config_path.parent().unwrap()).unwrap();
+        assert!(detect_installed(&paths, &[]));
     }
 
     #[test]
