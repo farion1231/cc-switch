@@ -132,6 +132,13 @@ impl Database {
             let conn = lock_conn!(db.conn);
             let version = Self::get_user_version(&conn)?;
             drop(conn);
+            // Reject a DB produced by a newer app before create_tables performs
+            // any DDL. The UI preflight is not a substitute for this guard.
+            if version > SCHEMA_VERSION {
+                return Err(AppError::Database(format!(
+                    "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
+                )));
+            }
             // An existing SQLite file may contain legacy user data even when
             // PRAGMA user_version is 0. Back it up before any schema writes;
             // only genuinely new installs may skip this safety gate.

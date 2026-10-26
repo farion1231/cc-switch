@@ -11,6 +11,54 @@ use serde_json::json;
 use std::collections::HashMap;
 use tempfile::NamedTempFile;
 
+// Startup must reject a database created by a newer app before create_tables
+// changes even one schema object. Test only uses a synthetic SQLite file.
+#[test]
+#[serial_test::serial]
+fn database_init_rejects_future_version_before_any_schema_write() -> Result<(), AppError> {
+    struct RestoreTestHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreTestHome {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    let temp = tempfile::tempdir().expect("synthetic future-version home");
+    let _restore = RestoreTestHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+    std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+    let config_dir = crate::config::get_app_config_dir();
+    assert!(config_dir.starts_with(temp.path()));
+    std::fs::create_dir_all(&config_dir).expect("create synthetic config");
+    let db_path = config_dir.join("cc-switch.db");
+    let conn = Connection::open(&db_path)?;
+    conn.execute_batch(
+        "CREATE TABLE future_only_sentinel (marker TEXT NOT NULL);\
+         INSERT INTO future_only_sentinel VALUES ('preserve-newer-data');",
+    )?;
+    Database::set_user_version(&conn, SCHEMA_VERSION + 1)?;
+    drop(conn);
+
+    let rejected = Database::init();
+    assert!(
+        rejected.is_err(),
+        "unsupported future schema must be rejected"
+    );
+    let conn = Connection::open(&db_path)?;
+    assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION + 1);
+    assert!(
+        !Database::table_exists(&conn, "providers")?,
+        "future-version startup must not create even normal app tables"
+    );
+    let marker: String = conn.query_row("SELECT marker FROM future_only_sentinel", [], |row| {
+        row.get(0)
+    })?;
+    assert_eq!(marker, "preserve-newer-data");
+    Ok(())
+}
+
 // An upgrade safety backup must capture committed rows still living in the
 // source database's WAL, not merely the checkpointed main .db image.
 #[test]
