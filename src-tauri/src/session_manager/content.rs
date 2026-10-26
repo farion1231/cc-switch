@@ -91,6 +91,19 @@ pub fn validate_source(provider_id: &str, source_path: &str) -> Result<Validated
                 session_id: id.to_string(),
             }
         }
+        "zcode" => {
+            let id = source_path
+                .strip_prefix("zcode:")
+                .filter(|id| !id.is_empty())
+                .ok_or("Invalid ZCode session source")?;
+            SourceLocation::Sqlite {
+                db: canonicalize_existing_path(
+                    &super::providers::zcode::database_path(),
+                    "ZCode session database",
+                )?,
+                session_id: id.to_string(),
+            }
+        }
         "opencode" if source_path.starts_with("sqlite:") => validate_sqlite_source(
             source_path,
             opencode::parse_sqlite_source(source_path),
@@ -438,6 +451,8 @@ fn sqlite_allowed(provider_id: &str, table: &str, column: &str) -> bool {
         ),
         // Hermes：正文、推理全文、tool_calls JSON（参数按 pointer 取）
         "hermes" => (&["messages"], &["content", "reasoning", "tool_calls"]),
+        // ZCode 与 OpenCode 同构：part/message 的 data 列
+        "zcode" => (&["part", "message"], &["data"]),
         _ => (&[], &[]),
     };
     tables.contains(&table) && columns.contains(&column)

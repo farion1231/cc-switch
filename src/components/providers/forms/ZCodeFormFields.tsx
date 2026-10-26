@@ -23,11 +23,7 @@ import { cn } from "@/lib/utils";
 import { ZCODE_EXTRA_OPTION_DRAFT_PREFIX } from "./helpers/zcodeFormUtils";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import { fillZCodeModel, metadataFilledAnything } from "./modelMetadataFill";
-import type {
-  EndpointCandidate,
-  ProviderCategory,
-  ZCodeModel,
-} from "@/types";
+import type { EndpointCandidate, ProviderCategory, ZCodeModel } from "@/types";
 
 /**
  * Model ID input with local state to prevent focus loss on key change.

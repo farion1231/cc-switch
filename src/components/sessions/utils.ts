@@ -19,6 +19,7 @@ export const SESSION_APP_IDS = [
   "mcode",
   "kimi",
   "agy",
+  "zcode",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -42,6 +43,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
   ],
+  zcode: ["~/.zcode/cli/db/db.sqlite"],
 };
 
 /** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
