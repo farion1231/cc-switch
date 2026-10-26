@@ -99,7 +99,9 @@ export function ProviderCardActions({
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <div className="flex items-center justify-end gap-1">
+      {/* 主操作位定宽：图标按钮和「● 使用中」这类状态文字宽度不同，不定宽的话
+          切换后左边的用量会被推开、跟其他卡片对不齐。按最长的常见状态留宽，靠右对齐 */}
+      <div className="flex min-w-20 items-center justify-end gap-1">
         {status && (
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-1 text-body font-medium text-fg-1">
             <span
