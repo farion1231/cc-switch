@@ -482,8 +482,12 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let app_type_match =
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
-        "NOT (
+        "NOT ({data_source} = 'codex_session'
+              AND {log_alias}.codex_dedup_version = 1
+              AND {log_alias}.matched_proxy_request_id IS NOT NULL)
+         AND NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            AND ({data_source} <> 'codex_session' OR {log_alias}.codex_dedup_version = 0)
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -560,8 +564,13 @@ pub(crate) fn effective_usage_log_filter_for_range(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
+    let new_codex_filter = format!(
+        "NOT (COALESCE({log_alias}.data_source, 'proxy') = 'codex_session'
+               AND {log_alias}.codex_dedup_version = 1
+               AND {log_alias}.matched_proxy_request_id IS NOT NULL)"
+    );
     if proxy_count == 0 || session_count == 0 {
-        return Ok("1 = 1".to_string());
+        return Ok(new_codex_filter);
     }
     if proxy_count > session_count {
         return Ok(effective_usage_log_filter(log_alias));
@@ -570,7 +579,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
     let dp_source = data_source_expr("dedup_p");
     let ds_source = data_source_expr("dedup_s");
     Ok(format!(
-        "{log_alias}.rowid NOT IN (
+        "{new_codex_filter} AND {log_alias}.rowid NOT IN (
             SELECT dedup_s.rowid
             FROM proxy_request_logs dedup_p
             JOIN proxy_request_logs dedup_s
@@ -579,6 +588,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
                      CASE WHEN dedup_p.app_type = 'claude-desktop' THEN 'claude' ELSE dedup_p.app_type END
                  )
              AND {ds_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+             AND ({ds_source} <> 'codex_session' OR dedup_s.codex_dedup_version = 0)
              AND dedup_s.input_tokens = dedup_p.input_tokens
              AND dedup_s.output_tokens = dedup_p.output_tokens
              AND dedup_s.cache_read_tokens = dedup_p.cache_read_tokens
@@ -773,99 +783,149 @@ pub(crate) fn has_matching_proxy_usage_log(
         .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
 }
 
-/// Codex 会话的 model 用于展示和定价；跨来源关联只比较原始 request_model。
-fn codex_new_usage_match_sql(proxy: &str, session: &str) -> String {
+/// 分开生成响应 ID 和指纹查询，避免 OR 使批量会话导入退化为全表扫描。
+fn codex_new_usage_match_sql(proxy: &str, session: &str, by_response_id: bool) -> String {
+    let identity = if by_response_id {
+        format!(
+            "{proxy}.response_id IS NOT NULL AND {session}.response_id IS NOT NULL
+             AND {proxy}.response_id = {session}.response_id"
+        )
+    } else {
+        format!(
+            "({proxy}.response_id IS NULL OR {session}.response_id IS NULL)
+             AND TRIM({proxy}.request_model) = TRIM({session}.request_model)
+             AND TRIM({session}.request_model) <> ''
+             AND LOWER(TRIM({session}.request_model)) <> 'unknown'
+             AND {proxy}.input_tokens = {session}.input_tokens
+             AND {proxy}.output_tokens = {session}.output_tokens
+             AND {proxy}.cache_read_tokens = {session}.cache_read_tokens
+             AND {session}.cache_write_known = 1
+             AND ({proxy}.cache_creation_tokens = {session}.cache_creation_tokens
+                  OR ({proxy}.cache_creation_tokens = 0
+                      AND {proxy}.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}))
+             AND {proxy}.created_at BETWEEN
+                 {session}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+                 AND {session}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+             AND {session}.created_at BETWEEN
+                 {proxy}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+                 AND {proxy}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}"
+        )
+    };
     format!(
         "{proxy}.app_type = 'codex'
          AND COALESCE({proxy}.data_source, 'proxy') = 'proxy'
          AND {proxy}.status_code >= 200 AND {proxy}.status_code < 300
-         AND {session}.app_type = 'codex' AND {session}.data_source = 'codex_session'
-         AND TRIM({proxy}.request_model) = TRIM({session}.request_model)
-         AND TRIM({session}.request_model) <> ''
-         AND LOWER(TRIM({session}.request_model)) <> 'unknown'
-         AND {proxy}.input_tokens = {session}.input_tokens
-         AND {proxy}.output_tokens = {session}.output_tokens
-         AND {proxy}.cache_read_tokens = {session}.cache_read_tokens
-         AND ({proxy}.cache_creation_tokens = {session}.cache_creation_tokens
-              OR {session}.cache_creation_tokens = 0
-              OR ({proxy}.cache_creation_tokens = 0
-                  AND {proxy}.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}))
-         AND {proxy}.created_at BETWEEN
-             {session}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
-             AND {session}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}"
+         AND {session}.app_type = 'codex'
+         AND COALESCE({session}.data_source, 'proxy') = 'codex_session'
+         AND {session}.codex_dedup_version = 1
+         AND {identity}"
     )
 }
 
-/// Proxy 先到时，只跳过能唯一关联到成功 Proxy 的 Codex 会话行。
-pub(crate) fn should_skip_codex_session_insert(
+static MATCHING_CODEX_PROXY_SQL: LazyLock<String> = LazyLock::new(|| {
+    let unused = "NOT EXISTS (SELECT 1 FROM proxy_request_logs linked
+                  WHERE linked.matched_proxy_request_id = p.request_id)";
+    format!(
+        "WITH s AS (SELECT 'codex' AS app_type, 'codex_session' AS data_source,
+            1 AS codex_dedup_version, ?1 AS request_model, ?2 AS response_id,
+            ?3 AS input_tokens, ?4 AS output_tokens, ?5 AS cache_read_tokens,
+            ?6 AS cache_creation_tokens, ?7 AS created_at, ?8 AS cache_write_known)
+         SELECT p.request_id FROM s CROSS JOIN proxy_request_logs p
+         WHERE {} AND {unused}
+         UNION ALL
+         SELECT p.request_id FROM s CROSS JOIN proxy_request_logs p
+         WHERE {} AND {unused}
+         LIMIT 2",
+        codex_new_usage_match_sql("p", "s", true),
+        codex_new_usage_match_sql("p", "s", false)
+    )
+});
+
+/// Proxy 先到：返回唯一且尚未关联其它会话的代理主键。会话仍需入库用于阅读页。
+pub(crate) fn matching_codex_proxy_for_session(
     conn: &Connection,
-    request_id: &str,
-    key: &DedupKey<'_>,
     request_model: Option<&str>,
-) -> Result<bool, AppError> {
-    if proxy_request_id_exists(conn, request_id)? {
-        return Ok(true);
+    response_id: Option<&str>,
+    key: &DedupKey<'_>,
+    cache_write_known: bool,
+) -> Result<Option<String>, AppError> {
+    if response_id.is_none() && !cache_write_known {
+        return Ok(None);
     }
-    static SQL: LazyLock<String> = LazyLock::new(|| {
-        format!(
-            "WITH s AS (SELECT 'codex' AS app_type, 'codex_session' AS data_source,
-                ?1 AS request_model, ?2 AS input_tokens, ?3 AS output_tokens,
-                ?4 AS cache_read_tokens, ?5 AS cache_creation_tokens, ?6 AS created_at)
-             SELECT COUNT(*) FROM (SELECT p.rowid FROM proxy_request_logs p CROSS JOIN s
-                 WHERE {} LIMIT 2)",
-            codex_new_usage_match_sql("p", "s")
-        )
-    });
-    let count: i64 = conn.prepare_cached(&SQL)?.query_row(
-        params![
-            request_model,
-            key.input_tokens,
-            key.output_tokens,
-            key.cache_read_tokens,
-            key.cache_creation_tokens,
-            key.created_at,
-        ],
-        |row| row.get(0),
-    )?;
-    Ok(count == 1)
+    let candidates = conn
+        .prepare_cached(&MATCHING_CODEX_PROXY_SQL)?
+        .query_map(
+            params![
+                request_model,
+                response_id,
+                key.input_tokens,
+                key.output_tokens,
+                key.cache_read_tokens,
+                key.cache_creation_tokens,
+                key.created_at,
+                cache_write_known as i64,
+            ],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    let [proxy_id] = candidates.as_slice() else {
+        return Ok(None);
+    };
+    Ok(Some(proxy_id.clone()))
 }
 
-/// Session 先到时，成功 Proxy 写入后仅删除双方候选均唯一的会话行。
+static MATCHING_CODEX_SESSION_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "SELECT s.rowid FROM proxy_request_logs p JOIN proxy_request_logs s
+         WHERE p.request_id = ?1 AND s.matched_proxy_request_id IS NULL AND {}
+         UNION ALL
+         SELECT s.rowid FROM proxy_request_logs p JOIN proxy_request_logs s
+         WHERE p.request_id = ?1 AND s.matched_proxy_request_id IS NULL AND {}
+         LIMIT 2",
+        codex_new_usage_match_sql("p", "s", true),
+        codex_new_usage_match_sql("p", "s", false)
+    )
+});
+
+/// Session 先到：仅在双方候选均唯一时关联，不删除客户端会话明细。
 /// 调用方须在写入 Proxy 的同一事务内执行。
-pub(crate) fn remove_matching_codex_session_for_proxy(
+pub(crate) fn link_matching_codex_session_for_proxy(
     conn: &Connection,
     request_id: &str,
 ) -> Result<bool, AppError> {
-    static SESSION_SQL: LazyLock<String> = LazyLock::new(|| {
-        format!(
-            "SELECT s.rowid FROM proxy_request_logs p JOIN proxy_request_logs s
-             WHERE p.request_id = ?1 AND {} LIMIT 2",
-            codex_new_usage_match_sql("p", "s")
-        )
-    });
     let sessions = conn
-        .prepare_cached(&SESSION_SQL)?
+        .prepare_cached(&MATCHING_CODEX_SESSION_SQL)?
         .query_map([request_id], |row| row.get::<_, i64>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     let [session_rowid] = sessions.as_slice() else {
         return Ok(false);
     };
     static PROXY_SQL: LazyLock<String> = LazyLock::new(|| {
+        let unused = "NOT EXISTS (SELECT 1 FROM proxy_request_logs linked
+                      WHERE linked.matched_proxy_request_id = p.request_id)";
         format!(
-            "SELECT COUNT(*) FROM (SELECT p.rowid FROM proxy_request_logs s
-             JOIN proxy_request_logs p WHERE s.rowid = ?1 AND {} LIMIT 2)",
-            codex_new_usage_match_sql("p", "s")
+            "SELECT p.request_id FROM proxy_request_logs s JOIN proxy_request_logs p
+             WHERE s.rowid = ?1 AND {} AND {unused}
+             UNION ALL
+             SELECT p.request_id FROM proxy_request_logs s JOIN proxy_request_logs p
+             WHERE s.rowid = ?1 AND {} AND {unused}
+             LIMIT 2",
+            codex_new_usage_match_sql("p", "s", true),
+            codex_new_usage_match_sql("p", "s", false)
         )
     });
-    let proxy_count: i64 = conn
+    let proxies = conn
         .prepare_cached(&PROXY_SQL)?
-        .query_row([session_rowid], |row| row.get(0))?;
-    if proxy_count != 1 {
+        .query_map([session_rowid], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if proxies.as_slice() != [request_id] {
         return Ok(false);
     }
     Ok(conn.execute(
-        "DELETE FROM proxy_request_logs WHERE rowid = ?1",
-        [session_rowid],
+        "UPDATE proxy_request_logs SET matched_proxy_request_id = ?1,
+             matched_proxy_cost_usd = (SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = ?1)
+         WHERE rowid = ?2 AND matched_proxy_request_id IS NULL",
+        params![request_id, session_rowid],
     )? == 1)
 }
 
@@ -1178,13 +1238,14 @@ impl Database {
         let sql = format!(
             "SELECT
                 COUNT(*),
-                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0),
+                COALESCE(SUM(CAST(COALESCE(p.total_cost_usd, l.matched_proxy_cost_usd, l.total_cost_usd) AS REAL)), 0),
                 COALESCE(SUM({fresh_input}), 0),
                 COALESCE(SUM(l.output_tokens), 0),
                 COALESCE(SUM(l.cache_creation_tokens), 0),
                 COALESCE(SUM(l.cache_read_tokens), 0),
                 COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0)
              FROM proxy_request_logs l
+             LEFT JOIN proxy_request_logs p ON p.request_id = l.matched_proxy_request_id
              WHERE l.session_id = ?1 AND {app_type_expr} = ?2 AND {data_source} <> 'proxy'"
         );
 
@@ -3096,7 +3157,9 @@ mod tests {
                 status_code INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
                 data_source TEXT,
-                input_token_semantics INTEGER NOT NULL DEFAULT 0
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                codex_dedup_version INTEGER NOT NULL DEFAULT 0,
+                matched_proxy_request_id TEXT
             )",
             [],
         )?;
@@ -3395,6 +3458,35 @@ mod tests {
             vec!["p1", "p2", "p3", "p5", "p6", "s4", "s5", "s7", "s8", "s9"]
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn codex_match_queries_use_identity_and_fingerprint_indexes() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let plan = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<String, AppError> {
+            let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+            let details = stmt
+                .query_map(params, |row| row.get::<_, String>(3))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(details.join("\n"))
+        };
+        let args: [&dyn rusqlite::ToSql; 8] =
+            [&"alias", &"response-id", &100, &10, &0, &0, &1000, &1];
+        const FINGERPRINT_SEEK: &str = "idx_request_logs_dedup_lookup_expr (app_type=? AND <expr>=? AND input_tokens=? AND output_tokens=? AND cache_read_tokens=? AND created_at>?";
+        let proxy_plan = plan(&MATCHING_CODEX_PROXY_SQL, &args)?;
+        assert!(
+            proxy_plan.contains("idx_codex_usage_response (app_type=? AND response_id=?)"),
+            "{proxy_plan}"
+        );
+        assert!(proxy_plan.contains(FINGERPRINT_SEEK), "{proxy_plan}");
+        let session_plan = plan(&MATCHING_CODEX_SESSION_SQL, &[&"proxy-id"])?;
+        assert!(
+            session_plan.contains("idx_codex_usage_response (app_type=? AND response_id=?)"),
+            "{session_plan}"
+        );
+        assert!(session_plan.contains(FINGERPRINT_SEEK), "{session_plan}");
         Ok(())
     }
 

@@ -27,7 +27,7 @@ use crate::services::session_usage::{
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
-    find_model_pricing, has_suspected_codex_session_duplicate, should_skip_codex_session_insert,
+    find_model_pricing, has_suspected_codex_session_duplicate, matching_codex_proxy_for_session,
     DedupKey,
 };
 use chrono::{DateTime, Utc};
@@ -211,6 +211,8 @@ struct ParsedTokenEvent {
     /// 避免把后面每次请求的 `event_index` 都往后挤。
     request_suffix: Option<String>,
     request_model: Option<String>,
+    response_id: Option<String>,
+    cache_write_known: bool,
     model: String,
     timestamp: Option<String>,
     /// 按事件时间戳估出来的请求耗时（含首字等待）和首字时间；估不出来为 None。
@@ -959,6 +961,8 @@ struct PendingUsageRecord {
     line_offset: i64,
     timestamp: Option<String>,
     request_model: Option<String>,
+    response_id: Option<String>,
+    cache_write_known: bool,
     model: String,
 }
 
@@ -979,6 +983,8 @@ fn push_unmatched_usage(
         event_index: None,
         request_suffix: Some(format!("usage:{}", pending.key)),
         request_model: pending.request_model,
+        response_id: pending.response_id,
+        cache_write_known: pending.cache_write_known,
         model: pending.model,
         timestamp: pending.timestamp,
         timing: None,
@@ -1258,6 +1264,7 @@ fn parse_codex_file_with_index(
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
     let mut current_request_model = None;
+    let mut request_model_from_context = false;
     // `total_token_usage` is session-cumulative, including across model and
     // rate-limit bucket changes. Divergent snapshots are handled by preferring
     // exact `last_token_usage`, not by splitting the cumulative baseline.
@@ -1431,6 +1438,7 @@ fn parse_codex_file_with_index(
                     {
                         current_model = normalize_codex_model(model);
                         current_request_model = codex_raw_request_model(model);
+                        request_model_from_context = current_request_model.is_some();
                     }
                 }
             }
@@ -1453,6 +1461,7 @@ fn parse_codex_file_with_index(
                     {
                         current_model = normalize_codex_model(model);
                         current_request_model = codex_raw_request_model(model);
+                        request_model_from_context = current_request_model.is_some();
                     }
                     continue;
                 }
@@ -1473,7 +1482,9 @@ fn parse_codex_file_with_index(
                     .and_then(serde_json::Value::as_str)
                 {
                     current_model = normalize_codex_model(model);
-                    current_request_model = codex_raw_request_model(model);
+                    if !request_model_from_context {
+                        current_request_model = codex_raw_request_model(model);
+                    }
                 }
 
                 let snapshot_source = token_snapshot_source(payload);
@@ -1483,6 +1494,8 @@ fn parse_codex_file_with_index(
                 let last = info
                     .get("last_token_usage")
                     .and_then(parse_cumulative_tokens);
+                let mut matched_response_id = None;
+                let mut matched_cache_write_known = false;
                 if let Some(pending) = pending_usage.take() {
                     // 对得上的 last 已经由这条 token_count 入账。last 为 0 是远程压缩
                     // 把本次用量只写在 token_usage_record 里之后的空快照。其它对不上的
@@ -1490,6 +1503,10 @@ fn parse_codex_file_with_index(
                     let covered = last
                         .as_ref()
                         .is_some_and(|last| usage_matches(last, &pending.usage));
+                    if covered {
+                        matched_response_id = pending.response_id.clone();
+                        matched_cache_write_known = pending.cache_write_known;
+                    }
                     if !covered && last.as_ref().is_some_and(usage_is_zero) {
                         push_unmatched_usage(
                             &mut usage_record_events,
@@ -1510,6 +1527,20 @@ fn parse_codex_file_with_index(
                 }
                 previous_token_signature = Some(signature.clone());
 
+                let cache_write_known = if last.is_some() {
+                    info.get("last_token_usage")
+                        .and_then(|usage| usage.get("cache_write_input_tokens"))
+                        .and_then(serde_json::Value::as_u64)
+                        .is_some()
+                        || matched_cache_write_known
+                } else {
+                    total_high_water.is_none()
+                        && info
+                            .get("total_token_usage")
+                            .and_then(|usage| usage.get("cache_write_input_tokens"))
+                            .and_then(serde_json::Value::as_u64)
+                            .is_some()
+                };
                 let request_usage = last.clone();
                 let delta = if duplicate_snapshot {
                     DeltaTokens {
@@ -1604,6 +1635,8 @@ fn parse_codex_file_with_index(
                     event_index: nonzero_index,
                     request_suffix: None,
                     request_model: current_request_model.clone(),
+                    response_id: matched_response_id,
+                    cache_write_known,
                     model: current_model.clone(),
                     timestamp,
                     timing,
@@ -1631,6 +1664,12 @@ fn parse_codex_file_with_index(
                 };
                 pending_usage = Some(PendingUsageRecord {
                     key,
+                    cache_write_known: payload
+                        .get("usage")
+                        .and_then(|usage| usage.get("cache_write_input_tokens"))
+                        .and_then(serde_json::Value::as_u64)
+                        .is_some(),
+                    response_id: (!response_id.is_empty()).then(|| response_id.to_string()),
                     usage,
                     request_model: current_request_model.clone(),
                     line_offset,
@@ -2239,6 +2278,8 @@ fn sync_single_codex_file(
                 &event.delta,
                 &event.model,
                 event.request_model.as_deref(),
+                event.response_id.as_deref(),
+                event.cache_write_known,
                 Some(session_thread_id),
                 event.timestamp.as_deref(),
                 event.timing,
@@ -2291,6 +2332,8 @@ fn insert_codex_session_entry(
         delta,
         model,
         Some(model),
+        None,
+        true,
         session_id,
         timestamp,
         None,
@@ -2312,6 +2355,8 @@ fn insert_codex_session_entry_on_conn(
     delta: &DeltaTokens,
     model: &str,
     request_model: Option<&str>,
+    response_id: Option<&str>,
+    cache_write_known: bool,
     session_id: Option<&str>,
     timestamp: Option<&str>,
     timing: Option<EstimatedTiming>,
@@ -2340,9 +2385,23 @@ fn insert_codex_session_entry_on_conn(
         cache_creation_tokens: delta.cache_write_input,
         created_at,
     };
-    if should_skip_codex_session_insert(conn, request_id, &dedup_key, request_model)? {
-        return Ok(false);
-    }
+    let matched_proxy = matching_codex_proxy_for_session(
+        conn,
+        request_model,
+        response_id,
+        &dedup_key,
+        cache_write_known,
+    )?;
+    let matched_proxy_cost: Option<String> = matched_proxy
+        .as_deref()
+        .map(|id| {
+            conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+        })
+        .transpose()?;
     if has_suspected_codex_session_duplicate(conn, request_id, &dedup_key)? {
         *suspected_duplicates = suspected_duplicates.saturating_add(1);
         log::warn!(
@@ -2393,12 +2452,14 @@ fn insert_codex_session_entry_on_conn(
         .prepare_cached(
             "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
+            codex_dedup_version, matched_proxy_request_id, matched_proxy_cost_usd,
+            cache_write_known, response_id,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source,
             input_token_semantics
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
         )
         .and_then(|mut stmt| stmt.execute(rusqlite::params![
                 request_id,
@@ -2406,6 +2467,11 @@ fn insert_codex_session_entry_on_conn(
                 "codex",             // app_type
                 model,
                 request_model,       // 原始请求别名；model 为展示/定价用归一化值
+                1i64,
+                matched_proxy,
+                matched_proxy_cost,
+                cache_write_known as i64,
+                response_id,
                 delta.input,
                 delta.output,
                 delta.cached_input,
@@ -3861,6 +3927,56 @@ mod tests {
                 .map(|event| event.model.as_str())
                 .collect::<Vec<_>>(),
             vec!["gpt-6.1-sol", "gpt-6-astra", "custom-model"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn token_count_model_does_not_override_client_alias() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut count = token_count_at(100, 50, 10, "2026-07-10T03:00:03Z");
+        count["payload"]["info"]["model"] = serde_json::json!("glm-5.3");
+        count["payload"]["info"]["last_token_usage"] = serde_json::json!({
+            "input_tokens": 100, "cached_input_tokens": 50,
+            "cache_write_input_tokens": 0, "output_tokens": 10
+        });
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context_for_model_at("ccswitch-live-alpha", "2026-07-10T03:00:01Z"),
+                token_usage_record_at("resp-one", 100, 50, 10, "2026-07-10T03:00:02Z"),
+                count,
+            ],
+        );
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let event = parsed.token_events.last().unwrap();
+        assert_eq!(event.model, "glm-5.3");
+        assert_eq!(event.request_model.as_deref(), Some("ccswitch-live-alpha"));
+        assert_eq!(event.response_id.as_deref(), Some("resp-one"));
+        assert!(event.cache_write_known);
+        Ok(())
+    }
+
+    #[test]
+    fn token_count_only_model_switch_updates_fallback_alias() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut first = token_count_at(100, 50, 10, "2026-07-10T03:00:02Z");
+        first["payload"]["info"]["model"] = serde_json::json!("model-a");
+        let mut second = token_count_at(150, 75, 15, "2026-07-10T03:00:04Z");
+        second["payload"]["info"]["model"] = serde_json::json!("model-b");
+        write_jsonl(&file, &[session_meta(PARENT_ID), first, second]);
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let aliases = parsed
+            .token_events
+            .iter()
+            .map(|event| (event.model.as_str(), event.request_model.as_deref()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            aliases,
+            [("model-a", Some("model-a")), ("model-b", Some("model-b"))]
         );
         Ok(())
     }
@@ -5643,7 +5759,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_codex_session_skips_matching_proxy_log() -> Result<(), AppError> {
+    fn test_insert_codex_session_links_only_matching_cache_writes() -> Result<(), AppError> {
         let db = Database::memory()?;
         {
             let conn = lock_conn!(db.conn);
@@ -5672,8 +5788,7 @@ mod tests {
             )?;
         }
 
-        // Older rollouts carry no cache-write count; newer ones report the same
-        // count the proxy logged. Either way the session row is the proxied request.
+        // An explicit zero is not a wildcard for a modern proxy with seven writes.
         for (request_id, cache_write_input) in
             [("codex-session-dup", 0), ("codex-session-dup-write", 7)]
         {
@@ -5693,20 +5808,25 @@ mod tests {
                 Some("1970-01-01T00:16:45Z"),
                 &mut suspected_duplicates,
             )?;
-            assert!(!inserted, "cache_write_input={cache_write_input}");
+            assert!(inserted, "cache_write_input={cache_write_input}");
         }
 
         let conn = lock_conn!(db.conn);
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
             row.get(0)
         })?;
-        assert_eq!(count, 1);
+        assert_eq!(count, 3);
+        let linked: Option<String> = conn.query_row(
+            "SELECT matched_proxy_request_id FROM proxy_request_logs WHERE request_id = 'codex-session-dup-write'",
+            [], |row| row.get(0),
+        )?;
+        assert_eq!(linked.as_deref(), Some("codex-proxy"));
 
         Ok(())
     }
 
     #[test]
-    fn new_codex_session_skips_unique_proxy_by_raw_alias() -> Result<(), AppError> {
+    fn new_codex_session_links_unique_proxy_by_raw_alias() -> Result<(), AppError> {
         let db = Database::memory()?;
         let raw_alias = "OpenAI/Custom-Alias-2026-03-05";
         let conn = lock_conn!(db.conn);
@@ -5729,12 +5849,14 @@ mod tests {
         let model = normalize_codex_model(raw_alias);
         let mut suspected = 0;
         let mut pricing_cache = HashMap::new();
-        assert!(!insert_codex_session_entry_on_conn(
+        assert!(insert_codex_session_entry_on_conn(
             &conn,
             "matched-session",
             &delta,
             &model,
             Some(raw_alias),
+            None,
+            true,
             Some("thread"),
             Some("1970-01-01T00:16:41Z"),
             None,
@@ -5748,18 +5870,139 @@ mod tests {
             &delta,
             &model,
             Some(wrong_case),
+            None,
+            true,
             Some("thread"),
             Some("1970-01-01T00:16:41Z"),
             None,
             &mut suspected,
             &mut pricing_cache,
         )?);
+        let matched: Option<String> = conn.query_row(
+            "SELECT matched_proxy_request_id FROM proxy_request_logs WHERE request_id = 'matched-session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(matched.as_deref(), Some("proxy"));
         let actual: (String, String) = conn.query_row(
             "SELECT model, request_model FROM proxy_request_logs WHERE request_id = 'different-alias'",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         assert_eq!(actual, (model, wrong_case.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn one_proxy_cannot_consume_two_equal_session_requests() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_token_semantics, latency_ms, status_code, created_at
+             ) VALUES ('proxy', 'p', 'codex', 'mapped', 'alias',
+                 100, 10, 50, 0, ?1, 1, 200, 1000)",
+            [INPUT_TOKEN_SEMANTICS_TOTAL],
+        )?;
+        let delta = DeltaTokens {
+            input: 100,
+            cached_input: 50,
+            cache_write_input: 0,
+            output: 10,
+        };
+        let mut suspected = 0;
+        let mut pricing = HashMap::new();
+        for id in ["first", "second"] {
+            assert!(insert_codex_session_entry_on_conn(
+                &conn,
+                id,
+                &delta,
+                "alias",
+                Some("alias"),
+                None,
+                true,
+                Some("thread"),
+                Some("1970-01-01T00:16:41Z"),
+                None,
+                &mut suspected,
+                &mut pricing,
+            )?);
+        }
+        let links: Vec<Option<String>> = conn
+            .prepare(
+                "SELECT matched_proxy_request_id FROM proxy_request_logs
+             WHERE data_source = 'codex_session' ORDER BY request_id",
+            )?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        assert_eq!(links, [Some("proxy".to_string()), None]);
+        drop(conn);
+        assert_eq!(
+            db.get_usage_summary(None, None, Some("codex"), None, None)?
+                .total_requests,
+            2
+        );
+        assert_eq!(
+            db.get_session_usage_summary("codex", "thread")?
+                .total_requests,
+            2
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_cache_write_is_not_treated_as_explicit_zero() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_token_semantics, latency_ms, status_code, created_at
+             ) VALUES ('proxy', 'p', 'codex', 'mapped', 'alias',
+                 100, 10, 50, 7, ?1, 1, 200, 1000)",
+            [INPUT_TOKEN_SEMANTICS_TOTAL],
+        )?;
+        let mut key = DedupKey {
+            app_type: "codex",
+            model: "alias",
+            input_tokens: 100,
+            output_tokens: 10,
+            cache_read_tokens: 50,
+            cache_creation_tokens: 0,
+            created_at: 1001,
+        };
+        assert!(
+            matching_codex_proxy_for_session(&conn, Some("alias"), None, &key, true)?.is_none()
+        );
+        assert!(
+            matching_codex_proxy_for_session(&conn, Some("alias"), None, &key, false)?.is_none()
+        );
+        key.cache_creation_tokens = 7;
+        assert_eq!(
+            matching_codex_proxy_for_session(&conn, Some("alias"), None, &key, true)?.as_deref(),
+            Some("proxy")
+        );
+        conn.execute(
+            "UPDATE proxy_request_logs SET response_id = 'resp-1' WHERE request_id = 'proxy'",
+            [],
+        )?;
+        key.cache_creation_tokens = 0;
+        assert_eq!(
+            matching_codex_proxy_for_session(&conn, Some("alias"), Some("resp-1"), &key, false)?
+                .as_deref(),
+            Some("proxy")
+        );
+        assert!(matching_codex_proxy_for_session(
+            &conn,
+            Some("alias"),
+            Some("different-id"),
+            &key,
+            true
+        )?
+        .is_none());
         Ok(())
     }
 
@@ -5775,7 +6018,8 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 turn_context_for_model_at(raw_alias, "2026-07-10T03:00:01Z"),
-                token_count_at(100, 50, 10, timestamp),
+                token_usage_record_at("resp-one", 100, 50, 10, "2026-07-10T03:00:01Z"),
+                token_count_with_last_at(100, 50, 10, 100, 50, 10, "codex", timestamp),
             ],
         );
         {
@@ -5798,11 +6042,66 @@ mod tests {
             )?;
         }
         let result = sync_test_file(&db, &file, &[&file])?;
-        assert_eq!(result.imported, 0);
-        assert_eq!(result.skipped, 1);
+        assert_eq!(result.imported, 1);
+        assert_eq!(result.skipped, 0);
+        let conn = lock_conn!(db.conn);
+        let (known, linked): (i64, Option<String>) = conn.query_row(
+            "SELECT cache_write_known, matched_proxy_request_id FROM proxy_request_logs
+             WHERE data_source = 'codex_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(known, 1);
+        assert_eq!(linked.as_deref(), Some("proxy"));
+        drop(conn);
         let summary = db.get_usage_summary(None, None, Some("codex"), None, None)?;
         assert_eq!(summary.total_requests, 1);
         assert_eq!(summary.total_cost, "0.200000");
+        let session = db.get_session_usage_summary("codex", PARENT_ID)?;
+        assert_eq!(session.total_requests, 1);
+        assert_eq!(session.total_cost, "0.200000");
+        Ok(())
+    }
+
+    #[test]
+    fn different_aliases_with_same_normalized_model_remain_billable() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                latency_ms, status_code, created_at
+             ) VALUES ('proxy', 'p', 'codex', 'gpt-5', 'openai/gpt-5',
+                 100, 10, 50, 0, 1, 200, 1000)",
+            [],
+        )?;
+        let delta = DeltaTokens {
+            input: 100,
+            cached_input: 50,
+            cache_write_input: 0,
+            output: 10,
+        };
+        assert!(insert_codex_session_entry_on_conn(
+            &conn,
+            "other-alias",
+            &delta,
+            "gpt-5",
+            Some("azure/gpt-5"),
+            None,
+            true,
+            Some("thread"),
+            Some("1970-01-01T00:16:41Z"),
+            None,
+            &mut 0,
+            &mut HashMap::new(),
+        )?);
+        drop(conn);
+        assert_eq!(
+            db.get_usage_summary(None, None, Some("codex"), None, None)?
+                .total_requests,
+            2
+        );
         Ok(())
     }
 
@@ -5829,23 +6128,21 @@ mod tests {
             created_at: 1001,
         };
         let matches =
-            || should_skip_codex_session_insert(&conn, "session", &key, Some("raw-alias"));
-        assert!(!matches()?); // failed proxy
+            || matching_codex_proxy_for_session(&conn, Some("raw-alias"), None, &key, true);
+        assert!(matches()?.is_none()); // failed proxy
         conn.execute(
             "UPDATE proxy_request_logs SET status_code = 200, created_at = 2000",
             [],
         )?;
-        assert!(!matches()?); // outside the matching window
+        assert!(matches()?.is_none()); // outside the matching window
         conn.execute(
             "UPDATE proxy_request_logs SET created_at = 1000, input_tokens = 101",
             [],
         )?;
-        assert!(!matches()?); // different token count
+        assert!(matches()?.is_none()); // different token count
         conn.execute("UPDATE proxy_request_logs SET input_tokens = 100", [])?;
-        assert!(matches()?);
-        assert!(!should_skip_codex_session_insert(
-            &conn, "session", &key, None
-        )?);
+        assert_eq!(matches()?.as_deref(), Some("proxy"));
+        assert!(matching_codex_proxy_for_session(&conn, None, None, &key, true)?.is_none());
         conn.execute(
             "INSERT INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model,
@@ -5857,7 +6154,7 @@ mod tests {
              FROM proxy_request_logs WHERE request_id = 'proxy'",
             [],
         )?;
-        assert!(!matches()?); // two proxies cannot identify the one to charge
+        assert!(matches()?.is_none()); // two proxies cannot identify the one to charge
         Ok(())
     }
 
@@ -5905,7 +6202,14 @@ mod tests {
                 Some(timestamp),
                 &mut suspected_duplicates,
             )?;
-            assert_eq!(inserted, expect_inserted, "{request_id}");
+            assert!(inserted, "{request_id}");
+            let conn = lock_conn!(db.conn);
+            let linked: Option<String> = conn.query_row(
+                "SELECT matched_proxy_request_id FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(linked.is_some(), !expect_inserted, "{request_id}");
         }
 
         Ok(())

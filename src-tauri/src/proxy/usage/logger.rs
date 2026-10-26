@@ -6,7 +6,7 @@ use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE}
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
 use crate::services::usage_stats::{
-    find_model_pricing_row, is_placeholder_pricing_model, remove_matching_codex_session_for_proxy,
+    find_model_pricing_row, is_placeholder_pricing_model, link_matching_codex_session_for_proxy,
 };
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
@@ -176,13 +176,13 @@ impl<'a> UsageLogger<'a> {
         };
         let sql = format!(
             "{insert_verb} INTO proxy_request_logs (
-                request_id, provider_id, app_type, model, request_model, pricing_model,
+                request_id, provider_id, app_type, model, request_model, pricing_model, response_id,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
                 provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)"
         );
         let affected_rows = writer
             .execute(
@@ -194,6 +194,7 @@ impl<'a> UsageLogger<'a> {
                     log.model,
                     log.request_model,
                     log.pricing_model,
+                    log.usage.message_id,
                     log.usage.input_tokens,
                     log.usage.output_tokens,
                     log.usage.cache_read_tokens,
@@ -218,7 +219,7 @@ impl<'a> UsageLogger<'a> {
             .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
 
         if affected_rows > 0 && codex_success {
-            remove_matching_codex_session_for_proxy(writer, &request_id)?;
+            link_matching_codex_session_for_proxy(writer, &request_id)?;
         }
         if let Some(tx) = tx {
             tx.commit()?;
@@ -500,10 +501,10 @@ mod tests {
                 request_id, provider_id, app_type, model, request_model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_token_semantics, total_cost_usd, latency_ms, status_code,
-                created_at, data_source
+                created_at, data_source, session_id, codex_dedup_version, cache_write_known
              ) VALUES (?1, '_codex_session', 'codex', 'ccswitch-live-alpha',
-                'ccswitch-live-alpha', 19472, 165, 16704, 0, ?2, '0.20', 1, 200,
-                ?3, 'codex_session')",
+                'ccswitch-live-alpha', 19472, 165, 16704, 0, ?2, '0.10', 1, 200,
+                ?3, 'codex_session', 'thread', 1, 1)",
             rusqlite::params![
                 id,
                 INPUT_TOKEN_SEMANTICS_TOTAL,
@@ -514,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_session_first_is_replaced_by_one_proxy_charge() -> Result<(), AppError> {
+    fn codex_session_first_links_proxy_charge_and_keeps_session() -> Result<(), AppError> {
         let db = Database::memory()?;
         insert_codex_alias_session(&db, "codex-session")?;
         UsageLogger::new(&db).log_request(&codex_alias_log("codex-proxy"))?;
@@ -527,12 +528,69 @@ mod tests {
             .prepare("SELECT request_id FROM proxy_request_logs")?
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(ids, ["codex-proxy"]);
+        assert_eq!(ids, ["codex-proxy", "codex-session"]);
+        let linked: Option<String> = conn.query_row(
+            "SELECT matched_proxy_request_id FROM proxy_request_logs WHERE request_id = 'codex-session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(linked.as_deref(), Some("codex-proxy"));
+        drop(conn);
+        let session = db.get_session_usage_summary("codex", "thread")?;
+        assert_eq!(session.total_requests, 1);
+        assert_eq!(session.total_cost, "0.200000");
         Ok(())
     }
 
     #[test]
-    fn codex_ambiguous_session_or_failed_proxy_is_not_deleted() -> Result<(), AppError> {
+    fn codex_session_first_uses_response_identity_before_fingerprint() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        insert_codex_alias_session(&db, "session-id")?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_request_logs SET response_id = 'resp-1',
+                     request_model = 'different-alias', input_tokens = 1,
+                     cache_write_known = 0 WHERE request_id = 'session-id'",
+                [],
+            )?;
+        }
+        UsageLogger::new(&db).log_request(&codex_alias_log("proxy-id"))?;
+        let conn = crate::database::lock_conn!(db.conn);
+        let linked: Option<String> = conn.query_row(
+            "SELECT matched_proxy_request_id FROM proxy_request_logs WHERE request_id = 'session-id'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(linked.as_deref(), Some("proxy-id"));
+        drop(conn);
+        assert_eq!(
+            db.get_usage_summary(None, None, Some("codex"), None, None)?
+                .total_requests,
+            1
+        );
+
+        let db = Database::memory()?;
+        insert_codex_alias_session(&db, "other-session")?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_request_logs SET response_id = 'different-id'
+                 WHERE request_id = 'other-session'",
+                [],
+            )?;
+        }
+        UsageLogger::new(&db).log_request(&codex_alias_log("other-proxy"))?;
+        assert_eq!(
+            db.get_usage_summary(None, None, Some("codex"), None, None)?
+                .total_requests,
+            2
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn codex_ambiguous_session_or_failed_proxy_is_not_linked() -> Result<(), AppError> {
         let db = Database::memory()?;
         insert_codex_alias_session(&db, "session-one")?;
         insert_codex_alias_session(&db, "session-two")?;
@@ -559,15 +617,15 @@ mod tests {
     }
 
     #[test]
-    fn codex_session_cleanup_rolls_back_proxy_on_delete_error() -> Result<(), AppError> {
+    fn codex_session_link_failure_rolls_back_proxy() -> Result<(), AppError> {
         let db = Database::memory()?;
         insert_codex_alias_session(&db, "codex-session")?;
         {
             let conn = crate::database::lock_conn!(db.conn);
             conn.execute_batch(
-                "CREATE TRIGGER reject_codex_session_delete BEFORE DELETE ON proxy_request_logs
+                "CREATE TRIGGER reject_codex_session_link BEFORE UPDATE OF matched_proxy_request_id ON proxy_request_logs
                  WHEN OLD.data_source = 'codex_session'
-                 BEGIN SELECT RAISE(FAIL, 'session delete blocked'); END;",
+                 BEGIN SELECT RAISE(FAIL, 'session link blocked'); END;",
             )?;
         }
         assert!(UsageLogger::new(&db)
@@ -580,7 +638,7 @@ mod tests {
                 .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
             assert_eq!(ids, ["codex-session"]);
-            conn.execute_batch("DROP TRIGGER reject_codex_session_delete")?;
+            conn.execute_batch("DROP TRIGGER reject_codex_session_link")?;
         }
         UsageLogger::new(&db).log_request(&codex_alias_log("codex-proxy"))?;
         let summary = db.get_usage_summary(None, None, Some("codex"), None, None)?;
@@ -600,11 +658,11 @@ mod tests {
         {
             let conn = crate::database::lock_conn!(db.conn);
             conn.execute(
-                "UPDATE proxy_request_logs SET created_at = ?1 WHERE request_id = 'codex-proxy'",
+                "UPDATE proxy_request_logs SET created_at = ?1 WHERE request_id IN ('codex-proxy', 'codex-session')",
                 [chrono::Utc::now().timestamp() - 40 * 86400],
             )?;
         }
-        assert_eq!(db.rollup_and_prune(30)?, 1);
+        assert_eq!(db.rollup_and_prune(30)?, 2);
         let after = db.get_usage_summary(None, None, Some("codex"), None, None)?;
         assert_eq!(after.total_requests, 1);
         assert_eq!(after.total_cost, "0.200000");

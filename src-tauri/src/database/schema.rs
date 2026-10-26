@@ -206,6 +206,11 @@ impl Database {
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
             pricing_model TEXT,
+            codex_dedup_version INTEGER NOT NULL DEFAULT 0,
+            matched_proxy_request_id TEXT,
+            matched_proxy_cost_usd TEXT,
+            cache_write_known INTEGER NOT NULL DEFAULT 0,
+            response_id TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
@@ -238,6 +243,22 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Self::create_request_logs_usage_indexes_if_supported(conn)?;
+        if Self::has_column(conn, "proxy_request_logs", "matched_proxy_request_id")? {
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_codex_session_matched_proxy
+                 ON proxy_request_logs(matched_proxy_request_id)
+                 WHERE matched_proxy_request_id IS NOT NULL",
+                [],
+            )?;
+        }
+        if Self::has_column(conn, "proxy_request_logs", "response_id")? {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_codex_usage_response
+                 ON proxy_request_logs(app_type, response_id)
+                 WHERE response_id IS NOT NULL",
+                [],
+            )?;
+        }
 
         // 11. Model Pricing 表
         conn.execute(
@@ -619,6 +640,10 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        Self::migrate_v23_to_v24(conn)?;
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3759,6 +3784,36 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_request_logs")? {
+            return Ok(());
+        }
+        for (column, definition) in [
+            ("codex_dedup_version", "INTEGER NOT NULL DEFAULT 0"),
+            ("matched_proxy_request_id", "TEXT"),
+            ("matched_proxy_cost_usd", "TEXT"),
+            ("cache_write_known", "INTEGER NOT NULL DEFAULT 0"),
+            ("response_id", "TEXT"),
+        ] {
+            Self::add_column_if_missing(conn, "proxy_request_logs", column, definition)?;
+        }
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_codex_session_matched_proxy
+             ON proxy_request_logs(matched_proxy_request_id)
+             WHERE matched_proxy_request_id IS NOT NULL",
+            [],
+        )?;
+        if Self::has_column(conn, "proxy_request_logs", "app_type")? {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_codex_usage_response
+                 ON proxy_request_logs(app_type, response_id)
+                 WHERE response_id IS NOT NULL",
+                [],
+            )?;
+        }
+        Ok(())
+    }
+
     fn create_request_logs_usage_indexes_if_supported(conn: &Connection) -> Result<(), AppError> {
         if !Self::table_exists(conn, "proxy_request_logs")? {
             return Ok(());
@@ -3894,6 +3949,58 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrate_released_v23_usage_rows_to_v24_without_reclassifying_history() -> Result<(), AppError>
+    {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_request_logs (
+                request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL, model TEXT NOT NULL,
+                request_model TEXT, pricing_model TEXT,
+                input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL, data_source TEXT NOT NULL DEFAULT 'proxy'
+            );
+            INSERT INTO proxy_request_logs
+                (request_id, provider_id, app_type, model, request_model, created_at, data_source)
+            VALUES ('historical', '_codex_session', 'codex', 'gpt-5', 'gpt-5', 123, 'codex_session');",
+        )?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let legacy: (i64, Option<String>, Option<String>, i64, Option<String>) = conn.query_row(
+            "SELECT codex_dedup_version, matched_proxy_request_id, matched_proxy_cost_usd, cache_write_known, response_id
+             FROM proxy_request_logs WHERE request_id = 'historical'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )?;
+        assert_eq!(legacy, (0, None, None, 0, None));
+        let response_index_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index'
+                           AND name = 'idx_codex_usage_response')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(response_index_exists);
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs
+                (request_id, provider_id, app_type, model, created_at, matched_proxy_request_id)
+             VALUES ('first', '_codex_session', 'codex', 'gpt-5', 124, 'proxy');",
+        )?;
+        assert!(conn
+            .execute(
+                "INSERT INTO proxy_request_logs
+                (request_id, provider_id, app_type, model, created_at, matched_proxy_request_id)
+             VALUES ('second', '_codex_session', 'codex', 'gpt-5', 125, 'proxy')",
+                [],
+            )
+            .is_err());
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
 
     #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
