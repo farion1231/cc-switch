@@ -930,17 +930,32 @@ pub fn update_endpoint_last_used(
         .map_err(|e| e.to_string())
 }
 
+/// Run the complete sort operation, including mode locking and live writes.
+async fn run_sort_update(
+    update: impl FnOnce() -> Result<bool, String> + Send + 'static,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(update)
+        .await
+        .map_err(|error| format!("供应商排序任务执行失败: {error}"))?
+}
+
 /// 排序就是故障转移队列的优先级，托盘按它列队列：改完重建托盘。
 #[tauri::command]
-pub fn update_providers_sort_order(
+pub async fn update_providers_sort_order(
     app_handle: tauri::AppHandle,
-    state: State<'_, AppState>,
     app: String,
     updates: Vec<ProviderSortUpdate>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let changed = ProviderService::update_sort_order(state.inner(), app_type, updates)
-        .map_err(|e| e.to_string())?;
+    let worker_app = app_handle.clone();
+    let changed = run_sort_update(move || {
+        let state = worker_app
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        ProviderService::update_sort_order(state.inner(), app_type, updates)
+            .map_err(|e| e.to_string())
+    })
+    .await?;
     crate::tray::refresh_tray_menu(&app_handle);
     Ok(changed)
 }
@@ -1351,5 +1366,51 @@ mod native_query_credentials_tests {
 
         assert_eq!(base_url, "https://provider.zenmux.example/v1");
         assert_eq!(api_key, "sk-provider");
+    }
+}
+
+#[cfg(test)]
+mod sort_order_tests {
+    use super::run_sort_update;
+    use std::future::Future;
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    #[test]
+    fn sort_update_preserves_service_errors() {
+        let result = futures::executor::block_on(run_sort_update(|| {
+            Err("synthetic sort failure".to_string())
+        }));
+        assert_eq!(result.unwrap_err(), "synthetic sort failure");
+    }
+
+    #[test]
+    fn sort_update_yields_while_waiting_for_a_lock() {
+        let gate = Arc::new(Mutex::new(()));
+        let held_gate = gate.clone();
+        let (locked_tx, locked_rx) = mpsc::channel();
+        // Bound the lock wait so a synchronous regression fails without hanging.
+        let holder = std::thread::spawn(move || {
+            let _held = held_gate.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        locked_rx.recv().unwrap();
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let caller = std::thread::current().id();
+        let mut update = Box::pin(run_sort_update(move || {
+            started_tx.send(std::thread::current().id()).unwrap();
+            let _guard = worker_gate.lock().unwrap();
+            Ok(true)
+        }));
+        let waker = futures::task::noop_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+        let first_poll = update.as_mut().poll(&mut context);
+        let worker = started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        holder.join().unwrap();
+        assert_ne!(worker, caller);
+        assert!(first_poll.is_pending());
+        assert!(futures::executor::block_on(update).unwrap());
     }
 }
