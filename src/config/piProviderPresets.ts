@@ -2478,6 +2478,58 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "nebius",
   },
   {
+    name: "ClinePass",
+    // models.dev 已有 cline-pass 供应商，加前缀以免撞上可能的内置同名 ID
+    providerKey: "cc-switch-clinepass",
+    websiteUrl: "https://docs.cline.bot/getting-started/clinepass",
+    apiKeyUrl: "https://app.cline.bot",
+    settingsConfig: {
+      name: "ClinePass",
+      // 官方只有 OpenAI Chat 端点（docs.cline.bot/getting-started/clinepass）。
+      // 阵容取 2026-10-26 官方公开列表 api.cline.bot/api/v1/ai/cline/
+      // recommended-models 的 clinePass 段；同 Novita / Nebius，聚合式套餐不
+      // 假定厂商私有参数，不写 thinkingProfile / compat。窗口按 models.dev 的
+      // cline-pass 供应商覆盖
+      baseUrl: "https://api.cline.bot/api/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("moonshotai/kimi-k3.1-pro", { id: "cline-pass/kimi-k3.1-pro" }),
+        piModel("zai/glm-5.3", {
+          id: "cline-pass/glm-5.3",
+          contextWindow: 1_000_000,
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "cline-pass/glm-5.3-flash",
+          contextWindow: 1_000_000,
+        }),
+        piModel("moonshotai/kimi-k3", { id: "cline-pass/kimi-k3" }),
+        piModel("deepseek/deepseek-v4-pro", {
+          id: "cline-pass/deepseek-v4-pro",
+        }),
+        piModel("deepseek/deepseek-flash", {
+          id: "cline-pass/deepseek-v4.1-flash",
+        }),
+        piModel("qwen/qwen3.8-max", {
+          id: "cline-pass/qwen3.8-max",
+          contextWindow: 1_000_000,
+        }),
+        piModel("qwen/qwen3.7-plus", { id: "cline-pass/qwen3.7-plus" }),
+        piModel("minimax/minimax-m3", {
+          id: "cline-pass/minimax-m3",
+          contextWindow: 1_048_576,
+        }),
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "cline-pass/minimax-m3.1-flash",
+        }),
+        piModel("xiaomi/mimo-v2.6-pro", { id: "cline-pass/mimo-v2.6-pro" }),
+        piModel("xiaomi/mimo-v2.6-flash", { id: "cline-pass/mimo-v2.6-flash" }),
+      ],
+    },
+    category: "third_party",
+    icon: "cline",
+  },
+  {
     name: "Groq",
     // Pi 是否内置 groq provider 未证实，加前缀两种情况都不会遮蔽内置定义
     providerKey: "cc-switch-groq",

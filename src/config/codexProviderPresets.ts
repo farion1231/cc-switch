@@ -4060,6 +4060,123 @@ requires_openai_auth = true`,
     icon: "nebius",
   },
   {
+    name: "ClinePass",
+    websiteUrl: "https://docs.cline.bot/getting-started/clinepass",
+    apiKeyUrl: "https://app.cline.bot",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "clinepass",
+      "https://api.cline.bot/api/v1",
+      "cline-pass/kimi-k3.1-pro",
+    ),
+    endpointCandidates: ["https://api.cline.bot/api/v1"],
+    // 官方只有 OpenAI Chat 端点（docs.cline.bot/getting-started/clinepass），
+    // 非流式响应包在 {data:{choices}} 里（#5658），转换层已兼容
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 阵容取 2026-10-26 官方客户端用的公开列表 api.cline.bot/api/v1/ai/
+      // cline/recommended-models 的 clinePass 段（略去带日期快照与贡献者模型），
+      // 窗口与模态按 models.dev 的 cline-pass 供应商；其中还没有的 Kimi K3.1
+      // Pro 按 models.dev 原厂条目，MiniMax M3.1 Flash 按本仓 Pi 模型目录。
+      // 首行 = 默认模型，须与 config 的 model 一致
+      {
+        model: "cline-pass/kimi-k3.1-pro",
+        displayName: "Kimi K3.1 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/glm-5.3-flash",
+        displayName: "GLM-5.3 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/deepseek-v4.1-flash",
+        displayName: "DeepSeek V4.1 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/qwen3.7-plus",
+        displayName: "Qwen3.7 Plus",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/minimax-m3",
+        displayName: "MiniMax M3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/minimax-m3.1-flash",
+        displayName: "MiniMax M3.1 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/mimo-v2.6-pro",
+        displayName: "MiMo V2.6 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "cline-pass/mimo-v2.6-flash",
+        displayName: "MiMo V2.6 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+    ]),
+    // Cline API 只文档化了回传 delta.reasoning，没有文档化思考开关 / effort
+    // 参数；显式覆盖，阻止后端按 GLM / Kimi 等模型名注入原厂 thinking 字段
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: false,
+      thinkingParam: "none",
+      effortParam: "none",
+      outputFormat: "reasoning",
+    },
+    category: "third_party",
+    icon: "cline",
+  },
+  {
     name: "Groq",
     websiteUrl: "https://groq.com",
     apiKeyUrl: "https://console.groq.com/keys",
