@@ -886,8 +886,12 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         ),
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
-        "grok" => Some("npm i -g @xai-official/grok@latest"),
-        "opencode" => Some("npm i -g opencode-ai@latest"),
+        "grok" => Some(
+            "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
+        ),
+        "opencode" => Some(
+            "npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
+        ),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
@@ -901,8 +905,12 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// `npm i -g` 时须追加的参数（前导空格已含），与 `npm_install_command_for` 的静态命令
 /// 保持一致，供锚定到某处 npm 的升级命令复用。
 ///
-/// Claude Code 的 postinstall 把平台 optional dependency 中的原生程序放到 bin/claude.exe。
-/// npm 12 拦截该脚本时会留下文本占位文件，Windows 执行后报“与 Windows 版本不兼容”。
+/// Claude Code / OpenCode 的 postinstall 把平台 optional dependency 中的原生程序放到
+/// bin/claude.exe / bin/opencode.exe。npm 12 拦截该脚本时会留下文本占位文件，
+/// Windows 执行后报“与 Windows 版本不兼容”。
+/// Grok Build 的 bin/grok 是 node launcher，postinstall 才把 optional dependency 里的
+/// 平台二进制解到 `~/.grok/bin/grok-<version>` 并 relink `grok`；被拦后 launcher 只要见到
+/// `~/.grok/bin/grok` 就直接运行它、不比对版本，于是 npm 升级 exit 0 却仍跑旧版。
 /// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
 /// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
 /// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
@@ -913,6 +921,8 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
         "claude" => {
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
         }
+        "grok" => " --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
+        "opencode" => " --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
         "mcode" => {
             " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
         }
@@ -2242,6 +2252,45 @@ fn mcode_extra_search_paths(
     paths.into_iter().collect()
 }
 
+/// PATHEXT 里 `.CMD` 是否排在 `.EXE` 之前。未设置或两者都不在时按 Windows 默认
+/// （`.EXE` 在前）处理。
+#[cfg(any(target_os = "windows", test))]
+fn pathext_prefers_cmd_over_exe(pathext: Option<&str>) -> bool {
+    let Some(pathext) = pathext else {
+        return false;
+    };
+    let position = |ext: &str| {
+        pathext
+            .split(';')
+            .map(str::trim)
+            .position(|entry| entry.eq_ignore_ascii_case(ext))
+    };
+    match (position(".cmd"), position(".exe")) {
+        (Some(cmd), Some(exe)) => cmd < exe,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+/// 同一目录里 `<tool>.cmd` 和 `<tool>.exe` 并存时，命令行敲 `<tool>` 只会按 PATHEXT
+/// 顺序命中其中一个，另一个被遮住。调用方只对已知是同一处安装多出来的入口用它
+/// （Hermes 换成 `.exe` 启动器后留下的旧 `hermes.cmd`，#8839）。
+#[cfg(any(target_os = "windows", test))]
+fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    let cmd_first = pathext_prefers_cmd_over_exe(pathext);
+    let shadowing_ext = if ext.eq_ignore_ascii_case("cmd") && !cmd_first {
+        "exe"
+    } else if ext.eq_ignore_ascii_case("exe") && cmd_first {
+        "cmd"
+    } else {
+        return false;
+    };
+    path.with_extension(shadowing_ext).is_file()
+}
+
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -3250,6 +3299,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
+    #[cfg(target_os = "windows")]
+    let pathext = std::env::var("PATHEXT").ok();
 
     for dir in &search_paths {
         #[cfg(target_os = "windows")]
@@ -3259,6 +3310,13 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
         for tool_path in tool_executable_candidates(tool, dir) {
             if !tool_path.exists() {
+                continue;
+            }
+            // Hermes 发布启动器时换成 .exe 不会删掉旧的 .cmd，两者同在它自己的 bin 目录，
+            // 只算命令行实际命中的那个（#8839）。其他工具同目录并存可能是两处真实安装
+            // （如 npm prefix 与原生安装同目录），保持分开列出。
+            #[cfg(target_os = "windows")]
+            if tool == "hermes" && shadowed_by_pathext_sibling(&tool_path, pathext.as_deref()) {
                 continue;
             }
             // canonicalize 解析软链后去重：/opt/homebrew/bin/x → Cellar/...、nvm shim 等
@@ -3624,6 +3682,13 @@ fn anchored_npm_command(bin_path: &str, args: &str) -> Option<String> {
     ))
 }
 
+/// POSIX 官方自升级内部再调 npm 时，用环境变量放行该包的 postinstall 与 optional
+/// dependency（含义同 `npm_install_extra_args`），只作用于紧随其后的那条命令。
+#[cfg(not(target_os = "windows"))]
+fn npm_scripts_env_prefix(pkg: &str) -> String {
+    format!("npm_config_allow_scripts={pkg} npm_config_ignore_scripts=false npm_config_include=optional ")
+}
+
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
@@ -3871,9 +3936,15 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return anchored_official_update_command(tool, bin_path);
     }
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
-        return Some(grok_native_update_command(
-            anchored_official_update_command(tool, bin_path)?,
-        ));
+        // `[cli] installer = "npm"`（npm 包的 postinstall 写入）下，`grok update` 会 spawn
+        // `npm i -g @xai-official/grok@<version>`，靠 postinstall relink `~/.grok/bin/grok`。
+        // npm 12 拦截后仍 exit 0，`||` 后的官方 installer 不会接手，用户继续跑旧版。
+        // 环境变量只作用于 `||` 左侧这一条；internal / gh-release 模式不经 npm，不受影响。
+        return Some(grok_native_update_command(format!(
+            "{}{}",
+            npm_scripts_env_prefix("@xai-official/grok"),
+            anchored_official_update_command(tool, bin_path)?
+        )));
     }
     if tool == "mcode" {
         if let Some(root) = mcode_script_install_root(bin_path, real_target, McodeLayout::Posix) {
@@ -3895,18 +3966,23 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
         let mut update = anchored_official_update_command(tool, bin_path)?;
-        // npm-installed Claude delegates updates to npm. Keep the npm 12
+        // npm-installed Claude / OpenCode delegate updates to npm. Keep the npm 12
         // postinstall and optional dependency settings scoped to this process
         // tree; other installation sources retain their own update policy.
         // Gate on the real target rather than the launcher's source so npm
         // prefixes classified as `system` (Intel Homebrew node, nodejs.org pkg,
         // ~/.npm-global, distro node) are covered too: they have no sibling-npm
         // fallback, so a false-success update there could never self-heal.
-        if tool == "claude" && real_lower.contains("/node_modules/@anthropic-ai/claude-code/") {
-            update = format!(
-                "npm_config_allow_scripts={} npm_config_ignore_scripts=false npm_config_include=optional {update}",
-                npm_package_for(tool)?
-            );
+        // Bun-installed OpenCode upgrades through bun, not npm.
+        let npm_scripts_package = match tool {
+            "claude" => Some("@anthropic-ai/claude-code"),
+            "opencode" if !real_lower.contains("/.bun/") => Some("opencode-ai"),
+            _ => None,
+        };
+        if let Some(pkg) = npm_scripts_package {
+            if real_lower.contains(&format!("/node_modules/{pkg}/")) {
+                update = format!("{}{update}", npm_scripts_env_prefix(pkg));
+            }
         }
         return Some(match package_command {
             Some(fallback) => chain_update_commands(update, fallback, LifecycleCommandShell::Posix),
@@ -4092,7 +4168,7 @@ impl CommandDeadline {
 }
 
 #[cfg(target_os = "windows")]
-fn terminate_child_tree(child: &mut std::process::Child) -> bool {
+pub(crate) fn terminate_child_tree(child: &mut std::process::Child) -> bool {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
 
@@ -4106,7 +4182,7 @@ fn terminate_child_tree(child: &mut std::process::Child) -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn terminate_child_tree(child: &mut std::process::Child) -> bool {
+pub(crate) fn terminate_child_tree(child: &mut std::process::Child) -> bool {
     let process_group = -(child.id() as libc::pid_t);
     // SAFETY: runtime commands are placed in a dedicated process group before spawn.
     (unsafe { libc::kill(process_group, libc::SIGKILL) == 0 }) || child.kill().is_ok()
@@ -4316,6 +4392,54 @@ pub(crate) fn run_detected_tool_command_with_timeout(
             .spawn()
             .map_err(|e| format!("Failed to run {tool}: {e}"))?;
         wait_child_output(child, deadline)
+    }
+}
+
+/// 构造运行本机工具默认入口的命令（定位规则和 PATH 补全同 [`run_detected_tool_command_with_timeout`]），
+/// 不设 stdio、不等待：给要自己管子进程的调用方用（比如长时间运行、要往 stdin 写东西的登录）。
+/// `timeout` 只约束定位工具这一步。工具配置在 WSL 里时报错。
+pub(crate) fn detected_tool_command(
+    tool: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<std::process::Command, String> {
+    if !VALID_TOOLS.contains(&tool) {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    let deadline = CommandDeadline::from_timeout(Some(timeout));
+
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return Err(format!(
+            "{tool} runs in WSL; this action needs it on Windows"
+        ));
+    }
+
+    let tool_path = locate_default_tool(tool, deadline)?;
+    let dir = tool_path
+        .parent()
+        .ok_or_else(|| format!("Invalid {tool} executable path"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let new_path = format!("{};{}", dir.display(), effective_path_string());
+        Ok(build_windows_tool_command(&tool_path, args, &new_path))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let inherited = std::env::var_os("PATH")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let current_path = match login_shell_path(deadline) {
+            Some(login_path) => merge_path_segments(&login_path, &inherited),
+            None => inherited,
+        };
+        let mut cmd = std::process::Command::new(&tool_path);
+        cmd.args(args)
+            .env("PATH", format!("{}:{current_path}", dir.display()));
+        isolate_child_process_group(&mut cmd);
+        Ok(cmd)
     }
 }
 
@@ -4872,6 +4996,27 @@ pub async fn open_provider_terminal(
             switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
             agy_terminal_launch(provider)?
         }
+        AppType::Claude => {
+            use crate::services::provider::claude_official::{terminal_account, AccountTerminal};
+            match terminal_account(provider).map_err(|e| e.to_string())? {
+                Some(AccountTerminal::Dir(config_dir)) => {
+                    crate::services::claude_account::sync_shared(&config_dir);
+                    claude_account_terminal_launch(Some(config_dir))
+                }
+                Some(AccountTerminal::Default) => {
+                    crate::services::provider::claude_official::ensure_default_terminal_is_official(
+                        &state.db,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    claude_account_terminal_launch(None)
+                }
+                None => {
+                    let env_vars =
+                        extract_env_vars_from_config(&provider.settings_config, &app_type);
+                    claude_terminal_launch(&env_vars, &providerId)?
+                }
+            }
+        }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
             claude_terminal_launch(&env_vars, &providerId)?
@@ -5014,6 +5159,39 @@ fn claude_terminal_launch(
         batch_vars: Vec::new(),
         cleanup: vec![config_file],
     })
+}
+
+/// Claude 官方卡绑了账号：`CLAUDE_CONFIG_DIR` 放在启动环境里（不用 `--settings`）。
+/// 变量在进程启动前就设好，Claude Code 一开始预取钥匙串读的就是这个账号的条目
+/// （写在 settings 里的话 macOS 上前 30 秒会用默认登录的令牌）。会把它指向别处的变量一并清掉。
+/// 绑号卡的终端：清掉会改走别家服务或别的登录的变量，再指定账号目录；`None` 是账号正在默认
+/// 槽位里，去掉 `CLAUDE_CONFIG_DIR` 用默认目录。
+fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> ProviderLaunch {
+    let mut env: Vec<(&'static str, Option<String>)> =
+        crate::services::claude_account::login::CLAUDE_ACCOUNT_UNSET
+            .iter()
+            .map(|name| (*name, None))
+            .collect();
+    env.push((
+        "CLAUDE_CONFIG_DIR",
+        config_dir
+            .as_ref()
+            .map(|dir| dir.to_string_lossy().into_owned()),
+    ));
+    ProviderLaunch {
+        title: if config_dir.is_some() {
+            "Using this Claude account's config directory:"
+        } else {
+            "Using this Claude account via Claude Code's current sign-in."
+        },
+        detail: config_dir,
+        program: "claude",
+        args: Vec::new(),
+        batch_command: "claude".to_string(),
+        env,
+        batch_vars: Vec::new(),
+        cleanup: Vec::new(),
+    }
 }
 
 /// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着
@@ -7092,7 +7270,9 @@ mod tests {
         assert_eq!(npm_package_for("grok"), Some("@xai-official/grok"));
         assert_eq!(
             npm_install_command_for("grok"),
-            Some("npm i -g @xai-official/grok@latest")
+            Some(
+                "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
+            )
         );
         assert_eq!(official_update_args("grok"), Some("update"));
 
@@ -7100,7 +7280,7 @@ mod tests {
             assert_eq!(
                 tool_action_shell_command_for_shell("grok", action, LifecycleCommandShell::Posix)
                     .as_deref(),
-                Some("npm i -g @xai-official/grok@latest")
+                npm_install_command_for("grok")
             );
         }
 
@@ -7113,7 +7293,7 @@ mod tests {
                 LifecycleCommandShell::WindowsBatch,
             )
             .as_deref(),
-            Some("npm i -g @xai-official/grok@latest")
+            npm_install_command_for("grok")
         );
     }
 
@@ -7857,7 +8037,7 @@ mod tests {
         #[test]
         fn opencode_windows_static_fallback_skips_official_upgrade() {
             let cmd = static_fallback_command("opencode");
-            assert_eq!(cmd, "npm i -g opencode-ai@latest");
+            assert_eq!(cmd, npm_install_command_for("opencode").unwrap());
             assert!(!cmd.contains("opencode upgrade"));
         }
 
@@ -7882,8 +8062,9 @@ mod tests {
             let cmd = anchored_command_from_paths("grok", &bin_path, &bin_path);
             let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
             let expected = format!(
-                "{} i -g @xai-official/grok@latest",
-                expect_quoted_path(&npm_full)
+                "{} i -g @xai-official/grok@latest{}",
+                expect_quoted_path(&npm_full),
+                npm_install_extra_args("grok")
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
@@ -7992,7 +8173,10 @@ mod tests {
                 "native installer first: {install}"
             );
             assert!(
-                install.ends_with("|| call npm i -g @xai-official/grok@latest"),
+                install.ends_with(&format!(
+                    "|| call {}",
+                    npm_install_command_for("grok").unwrap()
+                )),
                 "npm fallback should remain available: {install}"
             );
             let expected_encoded = powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT);
@@ -8339,7 +8523,7 @@ mod tests {
             assert!(
                 grok.starts_with(
                     "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh "
-                ) && grok.contains(" || npm i -g @xai-official/grok@latest"),
+                ) && grok.ends_with(&format!(" || {}", npm_install_command_for("grok").unwrap())),
                 "WSL grok install should prefer native POSIX installer with npm fallback: {grok}"
             );
             assert!(!grok.contains("| bash"));
@@ -8511,7 +8695,12 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some(format!("/Users/me/.grok/bin/grok update || {GROK_INSTALL_UNIX}").as_str())
+                Some(
+                    format!(
+                        "npm_config_allow_scripts=@xai-official/grok npm_config_ignore_scripts=false npm_config_include=optional /Users/me/.grok/bin/grok update || {GROK_INSTALL_UNIX}"
+                    )
+                    .as_str()
+                )
             );
         }
 
@@ -8526,8 +8715,12 @@ mod tests {
                 "/Users/me/.grok/downloads/grok-macos-aarch64",
             )
             .expect("native grok should anchor");
-            assert!(cmd.contains("x.ai/cli/install.sh"), "{cmd}");
-            assert!(!cmd.contains("npm"), "npm must not be the fallback: {cmd}");
+            let (_, fallback) = cmd.split_once(" || ").unwrap();
+            assert!(fallback.contains("x.ai/cli/install.sh"), "{cmd}");
+            assert!(
+                !fallback.contains("npm"),
+                "npm must not be the fallback: {cmd}"
+            );
         }
 
         #[test]
@@ -8539,7 +8732,12 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some(format!("/Users/me/bin/grok update || {GROK_INSTALL_UNIX}").as_str())
+                Some(
+                    format!(
+                        "npm_config_allow_scripts=@xai-official/grok npm_config_ignore_scripts=false npm_config_include=optional /Users/me/bin/grok update || {GROK_INSTALL_UNIX}"
+                    )
+                    .as_str()
+                )
             );
         }
 
@@ -8628,7 +8826,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
                 )
             );
         }
@@ -8704,6 +8902,43 @@ mod tests {
                     )
                 );
             }
+        }
+
+        #[test]
+        fn opencode_npm_sources_scope_postinstall_settings_to_primary_and_fallback() {
+            // opencode-ai's postinstall lays the platform binary over the text
+            // placeholder at bin/opencode.exe; npm 12 blocks it by default (#8863).
+            let dir = "/Users/me/.nvm/versions/node/v22/bin";
+            let path = format!("{dir}/opencode");
+            let mut install = inst(&path, true);
+            install.real = PathBuf::from(
+                "/Users/me/.nvm/versions/node/v22/lib/node_modules/opencode-ai/bin/opencode.exe",
+            );
+            let command = installs_anchored_command("opencode", &[install]).unwrap();
+            let (primary, fallback) = command.split_once(" || ").unwrap();
+            assert_eq!(
+                primary,
+                format!(
+                    "npm_config_allow_scripts=opencode-ai npm_config_ignore_scripts=false npm_config_include=optional {path} upgrade"
+                )
+            );
+            assert_eq!(
+                fallback,
+                format!(
+                    "PATH='{dir}':\"$PATH\" {dir}/npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"
+                )
+            );
+            assert_eq!(
+                anchored_command_from_paths(
+                    "opencode",
+                    "/usr/local/bin/opencode",
+                    "/usr/local/lib/node_modules/opencode-ai/bin/opencode.exe",
+                ),
+                Some(
+                    "npm_config_allow_scripts=opencode-ai npm_config_ignore_scripts=false npm_config_include=optional /usr/local/bin/opencode upgrade"
+                        .to_string()
+                )
+            );
         }
 
         #[test]
@@ -9641,7 +9876,12 @@ mod tests {
                 !parts[0].contains('|'),
                 "native installer should avoid pipe: {cmd}"
             );
-            assert!(parts[1].contains("npm i -g"), "npm second: {cmd}");
+            // npm 12 拦截 postinstall 时升级 exit 0 却留在旧版（#8863）。
+            assert_eq!(
+                parts[1].trim(),
+                npm_install_command_for("grok").unwrap(),
+                "npm second: {cmd}"
+            );
         }
 
         #[test]
@@ -9692,12 +9932,12 @@ mod tests {
             assert!(!static_fallback_command("gemini").contains("gemini update"));
             assert_eq!(
                 static_fallback_command("grok"),
-                "npm i -g @xai-official/grok@latest"
+                "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
             );
             assert!(!static_fallback_command("grok").contains("grok update"));
             assert_eq!(
                 static_fallback_command("opencode"),
-                "opencode upgrade || npm i -g opencode-ai@latest"
+                "opencode upgrade || npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"
             );
             assert_eq!(
                 static_fallback_command("openclaw"),
@@ -10263,6 +10503,43 @@ mod tests {
         let candidates = tool_executable_candidates("opencode", &dir);
 
         assert_eq!(candidates, vec![PathBuf::from("/usr/local/bin/opencode")]);
+    }
+
+    #[test]
+    fn pathext_order_decides_whether_cmd_beats_exe() {
+        assert!(!pathext_prefers_cmd_over_exe(None));
+        assert!(!pathext_prefers_cmd_over_exe(Some(
+            ".COM;.EXE;.BAT;.CMD;.VBS;.JS"
+        )));
+        assert!(pathext_prefers_cmd_over_exe(Some(".com;.cmd;.exe")));
+        assert!(pathext_prefers_cmd_over_exe(Some(".COM;.CMD")));
+        assert!(!pathext_prefers_cmd_over_exe(Some(".COM;.BAT")));
+    }
+
+    #[test]
+    fn same_dir_cmd_is_shadowed_by_exe_sibling_issue_8839() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let cmd = dir.path().join("hermes.cmd");
+        let exe = dir.path().join("hermes.exe");
+        std::fs::write(&cmd, "").expect("cmd launcher should be created");
+
+        let default_pathext = Some(".COM;.EXE;.BAT;.CMD");
+        // A lone launcher is the install itself.
+        assert!(!shadowed_by_pathext_sibling(&cmd, default_pathext));
+
+        std::fs::write(&exe, "").expect("exe launcher should be created");
+        assert!(shadowed_by_pathext_sibling(&cmd, default_pathext));
+        assert!(!shadowed_by_pathext_sibling(&exe, default_pathext));
+
+        // A PATHEXT that lists .CMD first makes the .cmd the one that runs.
+        let cmd_first = Some(".COM;.CMD;.EXE");
+        assert!(!shadowed_by_pathext_sibling(&cmd, cmd_first));
+        assert!(shadowed_by_pathext_sibling(&exe, cmd_first));
+
+        // A different tool's launcher in the same directory never shadows.
+        let other = dir.path().join("codex.cmd");
+        std::fs::write(&other, "").expect("other launcher should be created");
+        assert!(!shadowed_by_pathext_sibling(&other, default_pathext));
     }
 
     #[cfg(target_os = "windows")]
