@@ -1154,6 +1154,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["vapi", "v-api", "gpt.ge", "relay", "aggregator"],
     defaultColor: "currentColor",
   },
+  cline: {
+    name: "cline",
+    displayName: "Cline",
+    category: "ai-provider",
+    keywords: ["cline", "clinepass", "cline pass"],
+    defaultColor: "currentColor",
+  },
   everyapi: {
     name: "everyapi",
     displayName: "EveryAPI",

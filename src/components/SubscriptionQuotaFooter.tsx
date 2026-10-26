@@ -200,7 +200,7 @@ export function quotaRows(
   ];
 }
 
-/** 额度没查到的原因：登录过期 / 令牌待刷新写固定文案，其余写后端给的错误 */
+/** 额度查询失败的原因：登录过期 / 令牌待刷新写固定文案，其余写后端给的错误 */
 export function quotaFailureReason(
   t: TFunction,
   quota: SubscriptionQuota,
@@ -216,7 +216,7 @@ export function quotaFailureReason(
 
 /**
  * 纯展示组件：渲染 SubscriptionQuota 的状态（not_found / parse_error 不显示；
- * 登录过期 / 令牌待刷新 / 查询失败写「额度没查到」+ 原因；成功按档写剩余或已用），支持卡片（inline）和展开两种布局。
+ * 登录过期 / 令牌待刷新 / 查询失败写「额度查询失败」+ 原因；成功按档写剩余或已用），支持卡片（inline）和展开两种布局。
  *
  * 数据源由调用方 hook 注入，方便不同的额度后端复用同一套渲染逻辑：
  * - `SubscriptionQuotaFooter`（CLI 凭据路径，by appId）
