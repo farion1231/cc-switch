@@ -149,15 +149,18 @@ impl CodexToolContext {
         self.add_chat_tool(chat_name, spec, chat_tool);
     }
 
-    fn add_custom_tool(&mut self, tool: &Value) {
+    fn add_custom_tool(&mut self, tool: &Value, namespace: Option<&str>) {
         let Some(name) = responses_tool_name(tool) else {
             return;
         };
+        let chat_name = namespace
+            .map(|namespace| flatten_namespace_tool_name(namespace, &name))
+            .unwrap_or_else(|| name.clone());
         let description = json!(responses_custom_tool_description(tool));
         let chat_tool = json!({
             "type": "function",
             "function": {
-                "name": name,
+                "name": chat_name,
                 "description": description,
                 "parameters": {
                     "type": "object",
@@ -172,11 +175,21 @@ impl CodexToolContext {
             }
         });
         let spec = CodexToolSpec {
-            kind: CodexToolKind::Custom,
-            name: name.clone(),
-            namespace: None,
+            // A `custom` child inside a namespace carrier (issue #7565) keeps
+            // the custom input encoding on the chat side, but is registered
+            // with namespace-function semantics: `custom_tool_call` carries no
+            // verified `namespace` field, while `function_call` + `namespace`
+            // is the shape the function children of the same carriers already
+            // round-trip through.
+            kind: if namespace.is_some() {
+                CodexToolKind::Namespace
+            } else {
+                CodexToolKind::Custom
+            },
+            name,
+            namespace: namespace.map(ToString::to_string),
         };
-        self.add_chat_tool(name, spec, chat_tool);
+        self.add_chat_tool(chat_name, spec, chat_tool);
     }
 
     fn add_tool_search_tool(&mut self) {
@@ -222,8 +235,10 @@ impl CodexToolContext {
         };
 
         for child in children {
-            if child.get("type").and_then(|v| v.as_str()) == Some("function") {
-                self.add_function_tool(child, Some(namespace));
+            match child.get("type").and_then(|v| v.as_str()) {
+                Some("function") => self.add_function_tool(child, Some(namespace)),
+                Some("custom") => self.add_custom_tool(child, Some(namespace)),
+                _ => {}
             }
         }
     }
@@ -231,14 +246,17 @@ impl CodexToolContext {
     fn add_response_tool(&mut self, tool: &Value) {
         match tool {
             Value::String(name) => {
-                self.add_custom_tool(&json!({
-                    "type": "custom",
-                    "name": name
-                }));
+                self.add_custom_tool(
+                    &json!({
+                        "type": "custom",
+                        "name": name
+                    }),
+                    None,
+                );
             }
             Value::Object(_) => match tool.get("type").and_then(|v| v.as_str()) {
                 Some("function") => self.add_function_tool(tool, None),
-                Some("custom") => self.add_custom_tool(tool),
+                Some("custom") => self.add_custom_tool(tool, None),
                 Some("tool_search") => self.add_tool_search_tool(),
                 Some("namespace") => self.add_namespace_tool(tool),
                 _ => {}
@@ -4173,6 +4191,78 @@ mod tests {
             "{tool_names:?}"
         );
         assert!(tool_names.contains(&"wait"), "{tool_names:?}");
+    }
+
+    #[test]
+    fn additional_tools_namespace_custom_child_is_lifted_and_round_trips_as_function() {
+        // No real capture of a `custom` child inside a namespace carrier is
+        // available (issue #7565), so the lift is deliberate: the chat side
+        // keeps the custom input encoding under the flattened namespace name,
+        // and the call comes back as `function_call` + `namespace` — the shape
+        // the function children of the same carriers already round-trip
+        // through — instead of `custom_tool_call` with an unverified
+        // `namespace` field.
+        let request = json!({
+            "model": "m",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "tools": [
+                                {
+                                    "type": "custom",
+                                    "name": "exec",
+                                    "description": "Run raw code."
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(request.clone()).unwrap();
+        let tools = result["tools"]
+            .as_array()
+            .expect("custom namespace child must be lifted into top-level tools");
+        assert_eq!(tools.len(), 1, "{tools:?}");
+        assert_eq!(tools[0]["function"]["name"], "functions__exec");
+        assert_eq!(
+            tools[0]["function"]["parameters"]["required"],
+            json!(["input"])
+        );
+
+        let context = build_codex_tool_context_from_request(&request);
+        let chat = json!({
+            "id": "chatcmpl_custom_ns",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "m",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_exec",
+                        "type": "function",
+                        "function": {
+                            "name": "functions__exec",
+                            "arguments": "{\"input\":\"print(1)\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let restored = chat_completion_to_response_with_context(chat, &context).unwrap();
+        assert_eq!(restored["output"][0]["type"], "function_call");
+        assert_eq!(restored["output"][0]["namespace"], "functions");
+        assert_eq!(restored["output"][0]["name"], "exec");
     }
 
     #[test]
