@@ -4374,7 +4374,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
           compat: {
             supportsReasoningEffort: true,
-            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+            supportedReasoningEfforts: [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+            ],
           },
         },
         {
@@ -4430,7 +4436,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
           compat: {
             supportsReasoningEffort: true,
-            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+            supportedReasoningEfforts: [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+            ],
           },
         },
         {
