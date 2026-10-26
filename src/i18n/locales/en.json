@@ -420,6 +420,13 @@
       "trayStylePanel": "Panel",
       "trayStyleMenu": "Menu",
       "trayStyleHelp": "What opens when you click the tray icon (on Windows, left-click always opens the main window and right-click opens the selected style). Panel: each app's in-use provider, quota and usage, with search and switching. Menu: the system's native menu. Takes effect right away.",
+      "trayUsageTitle": "Menu bar usage",
+      "trayUsageTitleHelp": "Show a usage figure to the left of the menu bar tray icon. Today counts session usage across all apps since local midnight; total covers all history. Cost follows the currency chosen for usage display. macOS only.",
+      "trayUsageTitleOff": "Icon only",
+      "trayUsageTitleTodayTokens": "Today's tokens",
+      "trayUsageTitleTodayCost": "Today's cost",
+      "trayUsageTitleTotalTokens": "Total tokens",
+      "trayUsageTitleTotalCost": "Total cost",
       "minimizeToTrayHelp": "When on, the close button only hides the window and CC Switch keeps running in the system tray (lightweight mode is in the tray menu). When off, the close button quits.",
       "terminalHelp": "The terminal used by “Open terminal” on provider cards. If it isn't available, the system default terminal is used."
     },

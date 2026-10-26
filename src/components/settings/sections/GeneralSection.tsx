@@ -11,8 +11,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isMac } from "@/lib/platform";
 import { TerminalSelect } from "@/components/settings/TerminalSettings";
+import { TrayUsageTitleRow } from "@/components/settings/TrayUsageTitleRow";
 import {
   SettingsBlock,
   SettingsCard,
@@ -245,6 +246,10 @@ export function GeneralSection({
                 />
               }
             />
+          )}
+          {/* 菜单栏图标左侧的数字只有 macOS 的 NSStatusItem 支持 */}
+          {isMac() && (
+            <TrayUsageTitleRow settings={settings} onAutoSave={onAutoSave} />
           )}
           {isLinux() && (
             <SettingsSwitchRow

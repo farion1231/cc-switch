@@ -420,6 +420,13 @@
       "trayStylePanel": "パネル",
       "trayStyleMenu": "メニュー",
       "trayStyleHelp": "トレイアイコンをクリックしたときに開くものです（Windows では左クリックで常にメイン画面を開き、右クリックで選択した表示を開きます）。パネル：各アプリの使用中のプロバイダー、クォータ、使用量を表示し、検索して切り替えられます。メニュー：システム標準のメニュー。すぐに反映されます。",
+      "trayUsageTitle": "メニューバーに使用量を表示",
+      "trayUsageTitleHelp": "メニューバーのトレイアイコンの左側に使用量の数字を表示します。「今日」はローカルの 0 時以降の全アプリのセッション使用量、「総」は全履歴が対象です。コストは使用量表示で選んだ通貨に換算します。macOS 専用です。",
+      "trayUsageTitleOff": "アイコンのみ",
+      "trayUsageTitleTodayTokens": "今日の Tokens",
+      "trayUsageTitleTodayCost": "今日のコスト",
+      "trayUsageTitleTotalTokens": "合計 Tokens",
+      "trayUsageTitleTotalCost": "合計コスト",
       "minimizeToTrayHelp": "オンのときは閉じるボタンでウィンドウを隠すだけで、CC Switch はシステムトレイで動き続けます（軽量モードはトレイメニューにあります）。オフのときは閉じるボタンで終了します。",
       "terminalHelp": "プロバイダーカードの「ターミナルを開く」で使うターミナルです。使えない場合はシステムの既定のターミナルを使います。"
     },
