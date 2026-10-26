@@ -2878,6 +2878,8 @@
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "Volcengine 사용 조회에는 계정 수준 AccessKey ID/Secret(추론 API 키와 다름)이 필요합니다. 오른쪽 상단 계정 메뉴 → 'API 액세스 키'를 통해 Volcengine 콘솔에서 생성하세요.",
     "volcengineKeyConsoleLink": "다음 위치에서 키를 생성하세요.",
+    "bailianAkSkHint": "Bailian Token Plan 사용량 조회에는 Alibaba Cloud 계정 수준의 AccessKey ID/Secret이 필요합니다(요금제의 sk-sp- 추론 키와 다름). AK/SK로 GenerateCLIAccessToken에 서명해 임시 콘솔 토큰을 발급받아 사용량 게이트웨이를 호출합니다. RAM 사용자는 Bailian 워크스페이스 권한도 필요합니다(bl workspace init 실행).",
+    "bailianKeyConsoleLink": "AccessKey 생성 위치:",
     "zhipuTeamHint": "Zhipu 팀 요금제의 사용량을 조회하려면 팀 API 키(이 공급자의 자격 증명 사용), 조직 ID 및 프로젝트 ID가 필요합니다. 조직 ID와 프로젝트 ID는 bigmodel-organization / bigmodel-project 요청 헤더로 전송됩니다. 두 ID는 팀 관리 콘솔의 사용량 페이지 URL에서 확인할 수 있습니다.",
     "zhipuTeamConsoleLink": "팀 사용량 페이지:",
     "organizationId": "조직 ID",

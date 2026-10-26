@@ -2877,6 +2877,8 @@
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "Для запроса статистики Volcengine нужны AccessKey ID / Secret уровня аккаунта (это не ключ inference API). Создайте их в консоли Volcengine через меню аккаунта в правом верхнем углу → «API Access Keys».",
     "volcengineKeyConsoleLink": "Создать ключи:",
+    "bailianAkSkHint": "Для запроса статистики Bailian Token Plan нужны AccessKey ID / Secret уровня аккаунта Alibaba Cloud (не ключ inference sk-sp- тарифа). AK/SK подписывает GenerateCLIAccessToken для получения временного console token, используемого шлюзом статистики. Пользователям RAM также нужен доступ к рабочему пространству Bailian (выполните bl workspace init).",
+    "bailianKeyConsoleLink": "Создать AccessKey:",
     "zhipuTeamHint": "Для запроса статистики командного плана Zhipu нужен API-ключ команды (используются учётные данные этого провайдера), а также organization ID и project ID; они отправляются как заголовки bigmodel-organization / bigmodel-project. ID организации и проекта можно найти в URL страницы статистики консоли администрирования команды.",
     "zhipuTeamConsoleLink": "Страница статистики команды:",
     "organizationId": "ID организации",

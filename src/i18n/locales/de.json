@@ -2878,6 +2878,8 @@
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "Die Nutzungsabfrage von Volcengine benötigt eine AccessKey ID / ein Secret auf Kontoebene (anders als der Inferenz-API-Schlüssel). Erstellen Sie diese in der Volcengine-Konsole über das Kontomenü oben rechts → „API Access Keys“.",
     "volcengineKeyConsoleLink": "Schlüssel erstellen unter:",
+    "bailianAkSkHint": "Die Nutzungsabfrage des Bailian Token Plan benötigt eine AccessKey ID / ein Secret auf Alibaba-Cloud-Kontoebene (nicht den sk-sp-Inferenzschlüssel des Tarifs). Mit AK/SK wird GenerateCLIAccessToken signiert, um ein temporäres Konsolen-Token für das Nutzungs-Gateway zu erhalten. RAM-Benutzer benötigen außerdem Zugriff auf den Bailian-Arbeitsbereich (bl workspace init ausführen).",
+    "bailianKeyConsoleLink": "AccessKey erstellen unter:",
     "zhipuTeamHint": "Die Nutzungsabfrage des Zhipu-Team-Tarifs benötigt den Team-API-Schlüssel (verwendet die Zugangsdaten dieses Anbieters erneut) + Organisations-ID + Projekt-ID (als Anfrage-Header bigmodel-organization / bigmodel-project gesendet). Die IDs von Organisation und Projekt finden Sie in der URL der Nutzungsseite der Team-Admin-Konsole.",
     "zhipuTeamConsoleLink": "Team-Nutzungsseite:",
     "organizationId": "Organisations-ID",
