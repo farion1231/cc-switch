@@ -7,6 +7,7 @@ import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import {
   extractErrorMessage,
+  translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 
@@ -35,6 +36,24 @@ describe("error utilities", () => {
         t,
       ),
     ).toBe("pi.form.providerKeyDuplicate");
+  });
+
+  it("explains Kimi removals refused because Kimi Code still uses the model", () => {
+    const t = vi.fn((key: string) => key);
+
+    expect(
+      translateKimiProviderMutationError(
+        "无效输入: Select another default model in Kimi Code before removing this model or provider",
+        t,
+      ),
+    ).toBe("kimi.error.defaultModelInUse");
+    expect(
+      translateKimiProviderMutationError(
+        "无效输入: Update the secondary model selection in Kimi Code before removing this model or provider",
+        t,
+      ),
+    ).toBe("kimi.error.secondaryModelInUse");
+    expect(translateKimiProviderMutationError("other failure", t)).toBe("");
   });
 });
 

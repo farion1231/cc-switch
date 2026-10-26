@@ -50,6 +50,7 @@ import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import {
   extractErrorMessage,
+  translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
@@ -132,7 +133,14 @@ import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel, {
   HermesMemorySaveButton,
 } from "@/components/hermes/HermesMemoryPanel";
-import { APP_IDS, DEFAULT_VISIBLE_APPS, isModeAppId } from "@/config/appConfig";
+import {
+  APP_IDS,
+  DEFAULT_VISIBLE_APPS,
+  isModeAppId,
+  isPiFamilyApp,
+  orderAppIds,
+} from "@/config/appConfig";
+import type { PiFamilyAppId } from "@/lib/api/pi";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -214,7 +222,10 @@ function App() {
   );
 
   const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
+    return (
+      orderAppIds(settingsData?.appOrder).find((app) => visibleApps[app]) ??
+      "claude"
+    );
   };
 
   useEffect(() => {
@@ -333,10 +344,13 @@ function App() {
     activeApp,
     isProxyRunning && isCurrentAppTakeoverActive,
   );
-  const handleEnablePiProvider = async (provider: Provider) => {
+  const handleEnablePiProvider = async (
+    provider: Provider,
+    app: PiFamilyAppId,
+  ) => {
     try {
-      await providersApi.switch(provider.id, "pi");
-      await invalidatePiProviderCaches(queryClient);
+      await providersApi.switch(provider.id, app);
+      await invalidatePiProviderCaches(queryClient, app);
       await providersApi.updateTrayMenu().catch((error) => {
         console.error(
           "Failed to update tray menu after enabling Pi provider",
@@ -344,7 +358,7 @@ function App() {
         );
       });
       toast.success(
-        t("pi.provider.enabled", {
+        t(`${app}.provider.enabled`, {
           defaultValue: "已在 Pi 中启用",
         }),
         { closeButton: true },
@@ -352,7 +366,7 @@ function App() {
     } catch (error) {
       const detail = extractErrorMessage(error);
       toast.error(
-        t("pi.provider.enableFailed", {
+        t(`${app}.provider.enableFailed`, {
           defaultValue: "无法在 Pi 中启用此供应商",
         }),
         {
@@ -362,6 +376,27 @@ function App() {
         },
       );
     }
+  };
+
+  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider
+  const handleAddKimiProvider = async (provider: Provider) => {
+    try {
+      await providersApi.addToLiveConfig(provider.id, "kimi");
+    } catch (error) {
+      toast.error(
+        t("notifications.addFailed", {
+          error: extractErrorMessage(error) || t("common.unknown"),
+        }),
+        { closeButton: true },
+      );
+      return;
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["providers", "kimi"] });
+    }
+    toast.success(
+      t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
+      { closeButton: true },
+    );
   };
 
   const disableOmoMutation = useDisableCurrentOmo();
@@ -516,6 +551,144 @@ function App() {
 
     void syncWindowDecorations();
   }, [useAppWindowControls, settingsData]);
+
+  useEffect(() => {
+    if (!isLinux() || !useAppWindowControls) return;
+
+    const win = getCurrentWindow();
+    let active = true;
+    let revision = 0;
+    let canResize = false;
+    let nativeScale = 1;
+    const unlisteners: (() => void)[] = [];
+    let cursor:
+      | {
+          target: HTMLElement | SVGElement;
+          value: string;
+          priority: string;
+          applied: string;
+        }
+      | undefined;
+    const restoreCursor = () => {
+      if (
+        cursor &&
+        cursor.target.style.cursor === cursor.applied &&
+        cursor.target.style.getPropertyPriority("cursor") === "important"
+      ) {
+        cursor.target.style.setProperty(
+          "cursor",
+          cursor.value,
+          cursor.priority,
+        );
+      }
+      cursor = undefined;
+    };
+    const refresh = async () => {
+      const current = ++revision;
+      canResize = false;
+      restoreCursor();
+      try {
+        const [maximized, fullscreen, resizable, scale] = await Promise.all([
+          win.isMaximized(),
+          win.isFullscreen(),
+          win.isResizable(),
+          win.scaleFactor(),
+        ]);
+        if (active && current === revision) {
+          canResize = resizable && !maximized && !fullscreen;
+          nativeScale = scale;
+        }
+      } catch (error) {
+        console.error("[App] Failed to read window resize state", error);
+      }
+    };
+    const edgeCursor = ({ clientX: x, clientY: y }: MouseEvent) => {
+      if (
+        !canResize ||
+        x < 0 ||
+        y < 0 ||
+        x >= window.innerWidth ||
+        y >= window.innerHeight
+      ) {
+        return "";
+      }
+      // 与 tauri-runtime-wry 的 GTK 边缘宽度（5 × scale，GDK 坐标）对齐，
+      // 再从 GDK 坐标转换为 CSS 像素，兼容显示缩放和 WebView 缩放。
+      const inset = (5 * nativeScale * nativeScale) / window.devicePixelRatio;
+      const horizontal =
+        x < inset ? -1 : x >= window.innerWidth - inset ? 1 : 0;
+      const vertical = y < inset ? -1 : y >= window.innerHeight - inset ? 1 : 0;
+      if (horizontal && vertical) {
+        return horizontal === vertical ? "nwse-resize" : "nesw-resize";
+      }
+      return horizontal ? "ew-resize" : vertical ? "ns-resize" : "";
+    };
+    const onMouseMove = (event: MouseEvent) => {
+      const value = edgeCursor(event);
+      const target = event.target;
+      if (
+        !value ||
+        !(target instanceof HTMLElement || target instanceof SVGElement)
+      ) {
+        restoreCursor();
+        return;
+      }
+      if (cursor?.target !== target) {
+        restoreCursor();
+        cursor = {
+          target,
+          value: target.style.cursor,
+          priority: target.style.getPropertyPriority("cursor"),
+          applied: "",
+        };
+      }
+      if (cursor.applied !== value) {
+        cursor.applied = value;
+        target.style.setProperty("cursor", value, "important");
+      }
+    };
+    const onMouseDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      const drag = event.target.getAttribute("data-tauri-drag-region");
+      if (
+        event.button === 0 &&
+        drag !== null &&
+        drag !== "false" &&
+        edgeCursor(event)
+      ) {
+        // 保留 GTK 原生缩放，阻止 Tauri 的 document 冒泡监听再发起窗口移动。
+        event.stopPropagation();
+      }
+    };
+
+    document.addEventListener("mousemove", onMouseMove, true);
+    document.addEventListener("mousedown", onMouseDown, true);
+    document.documentElement.addEventListener("mouseleave", restoreCursor);
+    window.addEventListener("blur", restoreCursor);
+    for (const listener of [
+      win.onResized(refresh),
+      win.onScaleChanged(refresh),
+    ]) {
+      void listener
+        .then((unlisten) => {
+          if (active) unlisteners.push(unlisten);
+          else unlisten();
+        })
+        .catch((error) =>
+          console.error("[App] Failed to listen for window resize", error),
+        );
+    }
+    void refresh();
+    return () => {
+      active = false;
+      unlisteners.forEach((unlisten) => unlisten());
+      document.removeEventListener("mousemove", onMouseMove, true);
+      document.removeEventListener("mousedown", onMouseDown, true);
+      document.documentElement.removeEventListener("mouseleave", restoreCursor);
+      window.removeEventListener("blur", restoreCursor);
+      restoreCursor();
+    };
+  }, [useAppWindowControls]);
 
   useEffect(() => {
     const checkEnvOnStartup = async () => {
@@ -798,6 +971,35 @@ function App() {
     setEditingProvider(null);
   };
 
+  // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
+  const refreshAdditiveLiveState = async (app: AppId) => {
+    if (isPiFamilyApp(app)) {
+      await invalidatePiProviderCaches(queryClient, app);
+    } else if (app === "opencode") {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["opencodeDefaultModel"] }),
+      ]);
+    } else if (app === "openclaw") {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        }),
+        queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel }),
+        queryClient.invalidateQueries({ queryKey: openclawKeys.health }),
+      ]);
+    } else if (app === "hermes") {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
+        queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
+      ]);
+    } else if (app === "mcode" || app === "kimi") {
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+    }
+  };
+
   const handleConfirmAction = async () => {
     if (!confirmAction) return;
     const { provider, action } = confirmAction;
@@ -810,45 +1012,23 @@ function App() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         const description =
-          activeApp === "pi"
-            ? translatePiProviderMutationError(detail, t) || detail
-            : detail;
-        if (activeApp === "pi") {
-          void invalidatePiProviderCaches(queryClient).catch(() => undefined);
-        }
+          (isPiFamilyApp(activeApp)
+            ? translatePiProviderMutationError(detail, t)
+            : activeApp === "kimi"
+              ? translateKimiProviderMutationError(detail, t)
+              : "") || detail;
+        // 默认模型可能在客户端里改过、页面还是旧的：失败了也重读，让「默认」和移除按钮跟上
+        void refreshAdditiveLiveState(activeApp).catch(() => undefined);
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
           closeButton: true,
         });
         return;
       }
-      if (activeApp === "pi") {
-        await invalidatePiProviderCaches(queryClient);
-      }
-      // Invalidate queries to refresh the isInConfig state
-      if (activeApp === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["opencodeLiveProviderIds"],
-        });
-      } else if (activeApp === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.liveProviderIds,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      } else if (activeApp === "hermes") {
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.liveProviderIds,
-        });
-      } else if (activeApp === "mcode" || activeApp === "kimi") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", activeApp],
-        });
-      }
+      await refreshAdditiveLiveState(activeApp);
       toast.success(
-        activeApp === "pi"
-          ? t("pi.provider.removed", {
+        isPiFamilyApp(activeApp)
+          ? t(`${activeApp}.provider.removed`, {
               defaultValue: "已从 Pi 移除",
             })
           : t("notifications.removeFromConfigSuccess", {
@@ -933,7 +1113,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "omp"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -955,8 +1136,11 @@ function App() {
                   })
                 : (
                     await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
+                      queryKey: [activeApp, "currentState"],
+                      queryFn: () =>
+                        piApi.getCurrentState(
+                          activeApp === "omp" ? "omp" : "pi",
+                        ),
                     })
                   ).enabledProviderIds;
       } catch (error) {
@@ -1338,9 +1522,11 @@ function App() {
             appId={activeApp}
             isLoading={isLoading}
             onSwitch={(provider) =>
-              void (activeApp === "pi"
-                ? handleEnablePiProvider(provider)
-                : switchProvider(provider))
+              void (isPiFamilyApp(activeApp)
+                ? handleEnablePiProvider(provider, activeApp)
+                : activeApp === "kimi"
+                  ? handleAddKimiProvider(provider)
+                  : switchProvider(provider))
             }
             onRemoveFromConfig={
               activeApp === "opencode" ||
@@ -1348,7 +1534,8 @@ function App() {
               activeApp === "hermes" ||
               activeApp === "pi" ||
               activeApp === "mcode" ||
-              activeApp === "kimi"
+              activeApp === "kimi" ||
+              activeApp === "omp"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }
@@ -1362,7 +1549,7 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes"
+                : activeApp === "hermes" || activeApp === "kimi"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }
