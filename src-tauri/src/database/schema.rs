@@ -311,6 +311,8 @@ impl Database {
         // last_tail_fingerprint：游标边界前尾部字节的指纹，用于识别文件被
         // 外部重写（同尺寸/更大的替换无法靠 size 检测）；NULL 表示无指纹
         // 可校验，按纯追加处理。
+        // model_hints：Claude 会话文件从头到游标出现过的模型（JSON 数组），用来
+        // 给 model 为空的行推断模型；NULL 表示线索不完整，不做推断。
         conn.execute(
             "CREATE TABLE IF NOT EXISTS session_log_sync (
                 file_path TEXT PRIMARY KEY,
@@ -318,7 +320,8 @@ impl Database {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
-                last_tail_fingerprint INTEGER
+                last_tail_fingerprint INTEGER,
+                model_hints TEXT
             )",
             [],
         )
@@ -619,6 +622,20 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        log::info!("迁移数据库从 v23 到 v24（会话日志模型线索列）");
+                        // 缺表的库（异常/测试夹具）跳过：create_tables 会以含列的新 DDL 建表。
+                        // 存量游标行保持 NULL：升级前读过的部分没留线索，按不完整处理。
+                        if Self::table_exists(conn, "session_log_sync")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "session_log_sync",
+                                "model_hints",
+                                "TEXT",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -4212,6 +4229,40 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v23_to_v24_adds_model_hints_to_existing_sync_table() -> Result<(), AppError> {
+        // 存量游标行的模型线索必须为 NULL：升级前读过的区间没留线索，
+        // 不能当成「完整但为空」去推断模型
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER,
+                last_tail_fingerprint INTEGER
+             );
+             INSERT INTO session_log_sync VALUES ('/tmp/a.jsonl', 5, 0, 1, 120, 7);",
+        )?;
+        Database::set_user_version(&conn, 23)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert!(Database::has_column(
+            &conn,
+            "session_log_sync",
+            "model_hints"
+        )?);
+        let hints: Option<String> = conn.query_row(
+            "SELECT model_hints FROM session_log_sync WHERE file_path = '/tmp/a.jsonl'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(hints, None);
         Ok(())
     }
 }
