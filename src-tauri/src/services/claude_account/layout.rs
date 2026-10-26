@@ -16,6 +16,8 @@ use crate::error::AppError;
 
 const ROOT_DIRNAME: &str = "claude-accounts";
 const CONFIG_DIRNAME: &str = "config";
+// `write_opener` 是 unix-only，Windows 编译时这个常量没有使用者。
+#[cfg(unix)]
 pub const OPENER_FILENAME: &str = ".open-url";
 pub const OPENED_URL_FILENAME: &str = ".opened-url";
 
