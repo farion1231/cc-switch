@@ -33,6 +33,7 @@ import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
 import {
   useAgyAccountQuota,
+  useClaudeAccountQuota,
   useKimiAccountQuota,
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
@@ -399,6 +400,32 @@ export function AgyAccountQuota({
     isFetching: loading,
     refetch,
   } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** Claude 官方账号的订阅额度（get_claude_account_quota(accountId)，不用先切号） */
+export function ClaudeAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useClaudeAccountQuota(accountId, { enabled: true, autoQuery: false });
   return (
     <AccountQuotaColumn
       login={login}

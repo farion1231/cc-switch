@@ -439,7 +439,9 @@ export const providerPresets: ProviderPreset[] = [
     // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
     // .../personal 是两套部署，勿合并。阵容与窗口按 FluxA 产品页模型表
     // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
-    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收
+    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
+    // 2026-10-25 DeepSeek Pro 贵且效果不如 Flash，全角色改用产品页已列的
+    // deepseek-v4.1-flash（未经 Key 实测）
     name: "FluxA Token Plan",
     websiteUrl: "https://agentmarket.fluxapay.xyz/",
     apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
@@ -448,10 +450,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-v4-pro[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-pro[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1M]",
       },
     },
     endpointCandidates: [
@@ -1254,10 +1256,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_MODEL: "deepseek-flash[1M]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-flash[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-flash[1M]",
       },
     },
     category: "cn_official",
@@ -1567,7 +1569,8 @@ export const providerPresets: ProviderPreset[] = [
   {
     // Token Plan 个人版：2026-07-13 起替代 Coding Plan 发售（存量 Coding
     // Plan 可用至到期，旧预设保留）。模型=官方 Claude Code 接入页
-    // （2026-07-30 版）全角色 deepseek-v4-pro；Key 是订阅页专属 Key
+    // （2026-07-30 版）全角色 deepseek-v4-pro，2026-10-25 起因 Pro 贵且效果
+    // 不如 Flash 改为全角色 deepseek-v4-flash；Key 是订阅页专属 Key
     name: "Baidu Qianfan Token Plan",
     family: "baidu-qianfan",
     planKey: "tokenPlan",
@@ -1578,10 +1581,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://qianfan.baidubce.com/anthropic/tokenplan/personal",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-v4-pro[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-pro[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_MODEL: "deepseek-v4-flash[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash[1M]",
       },
     },
     category: "cn_official",
@@ -2263,7 +2266,8 @@ export const providerPresets: ProviderPreset[] = [
     // 官方 Claude Code 接入文档（docs.deepinfra.com/integrations/anthropic.md，
     // 2026-10-14 核对）：base 为 /anthropic、不带 /v1，Bearer 与 x-api-key 都
     // 收，默认的 AUTH_TOKEN 即可。档位与 ANTHROPIC_MODEL 照抄官方表：opus
-    // V4 Pro 0813、sonnet/主循环 V4.1 Flash 1017（官方表仍写 V4 Flash 0731，已按站点现价目表上调）、haiku Ling-3.0-flash；不带日期
+    // V4 Pro 0813、sonnet/主循环 V4.1 Flash 1017（官方表仍写 V4 Flash 0731，已按站点现价目表上调）、haiku Ling-3.0-flash；
+    // opus 档 2026-10-25 起也改用 V4.1 Flash 1017（Pro 贵且效果不如 Flash）；不带日期
     // 的 V4 Pro/Flash 是已被取代的早期预览，不用。官方另写的 fable、子代理与
     // 最大输出变量照仓库惯例不加。/anthropic/v1/models 404，通用候选剥掉
     // /anthropic 后的 /v1/models 公开可读，不覆写 modelsUrl
@@ -2275,7 +2279,8 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "inclusionAI/Ling-3.0-flash",
         ANTHROPIC_DEFAULT_SONNET_MODEL:
           "deepseek-ai/DeepSeek-V4.1-Flash-1017[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-ai/DeepSeek-V4-Pro-0813[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL:
+          "deepseek-ai/DeepSeek-V4.1-Flash-1017[1M]",
       },
     },
     category: "aggregator",

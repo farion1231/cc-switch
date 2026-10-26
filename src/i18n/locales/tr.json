@@ -1832,7 +1832,6 @@
   "codexOauth": {
     "authStatus": "Kimlik doğrulama durumu",
     "notAuthenticated": "Kimliği doğrulanmadı",
-    "loginWithChatGPT": "ChatGPT ile oturum açın",
     "loginRequired": "Lütfen önce ChatGPT'de oturum açın",
     "statusLoading": "Hesap durumu yükleniyor...",
     "statusUnavailable": "Durum kullanılamıyor",
@@ -4869,9 +4868,7 @@
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz."
     },
     "addAccount": "Hesap ekle",
-    "groupMenu": "{{service}} için daha fazla eylem",
     "accountMenu": "{{login}} için daha fazla eylem",
-    "removeAll": "Tüm hesapları sil",
     "removeAccount": "Hesabı sil",
     "setDefault": "Varsayılan olarak ayarla",
     "reauth": "Tekrar oturum açın",
@@ -4891,7 +4888,6 @@
     "loginFailed": "Oturum açma işlemi tamamlanmadı",
     "pending": {
       "add": "{{service}} hesabı ekleniyor · Yetkilendirme bekleniyor…",
-      "login": "{{service}}'de oturum açılıyor · Yetkilendirme bekleniyor…",
       "reauth": "{{login}} olarak tekrar oturum açılıyor · Yetkilendirme bekleniyor…",
       "enterCode": "Bu kodu tarayıcıya girin:",
       "copy": "Kodu kopyala",
@@ -4916,7 +4912,6 @@
       "addedOn": "{{date}} tarihinde eklendi",
       "statusLoadFailed": "Antigravity hesapları okunamadı. Yeniden deneyin.",
       "empty": "Henüz Antigravity hesabı yok. agy'nin oturum açtığı hesap burada otomatik olarak görünür.",
-      "login": "Google ile oturum aç",
       "current": "agy tarafından kullanılıyor",
       "switchTo": "agy'yi bu hesaba geçir",
       "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",

@@ -3173,6 +3173,55 @@ fn claude_editor_global_settings_go_to_live() {
     assert!(live.get("hooks").is_some(), "the hook survives the switch");
 }
 
+/// 编辑器里改的全局设置也要到 Claude 官方账号的目录：账号目录里的 settings.json 是默认
+/// settings.json 的镜像，写入之后要再同步一次，不能等到下次切换。
+#[test]
+fn claude_editor_global_settings_reach_account_dirs() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } });
+    let state = seed_claude_switch_state(
+        &[("a", a.clone())],
+        "a",
+        &serde_json::to_string_pretty(&a).expect("serialize"),
+    );
+
+    // 本机账号表里有一个账号，目录已经建好
+    let app_dir = home.join(".cc-switch");
+    let local_id = "0123456789abcdef0123456789abcdef";
+    let config_dir = app_dir
+        .join("claude-accounts")
+        .join(local_id)
+        .join("config");
+    std::fs::create_dir_all(&config_dir).expect("account dir");
+    std::fs::write(
+        app_dir.join("claude_accounts.json"),
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "accounts": { "acc:org": { "localId": local_id, "addedAt": 1 } }
+        }))
+        .expect("serialize"),
+    )
+    .expect("write account store");
+
+    let (row, base) = open_claude_editor(&state, "a");
+    let mut edited = base.clone();
+    edited["hooks"] =
+        json!({ "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }] });
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("save");
+
+    let mirrored: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(config_dir.join("settings.json")).expect("account settings"),
+    )
+    .expect("parse account settings");
+    assert!(
+        mirrored.get("hooks").is_some(),
+        "the account dir sees the hook right after saving: {mirrored}"
+    );
+}
+
 /// 关键字段、独有字段存进供应商行：非当前供应商改地址、写窗口值，live 不变；
 /// 切过去之后才生效。当前供应商取消「禁用 Artifact」，live 里立刻删掉。
 #[test]

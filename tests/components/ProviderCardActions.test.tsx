@@ -116,3 +116,49 @@ describe("ProviderCardActions — mode items in the more menu", () => {
     ).toEqual(["provider.duplicate", "common.delete"]);
   });
 });
+
+describe("ProviderCardActions — open terminal", () => {
+  it("is a button on the card, not an item in the more menu", async () => {
+    const user = userEvent.setup();
+    const onOpenTerminal = vi.fn();
+    render(
+      <ProviderCardActions
+        providerName="Claude Official"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenTerminal={onOpenTerminal}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerCard.action.openTerminal" }),
+    );
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+
+    await user.click(
+      screen.getByRole("button", { name: "providerCard.action.more" }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu).queryByRole("menuitem", { name: "provider.openTerminal" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("isn't shown for apps without it", () => {
+    render(
+      <ProviderCardActions
+        providerName="Kimi"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "providerCard.action.openTerminal",
+      }),
+    ).not.toBeInTheDocument();
+  });
+});
