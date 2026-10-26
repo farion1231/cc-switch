@@ -63,6 +63,7 @@ const DIRECTORY_KEYS = [
   "piConfigDir",
   "ompConfigDir",
   "dshConfigDir",
+  "agyConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -137,6 +138,7 @@ export function useSettings(): UseSettingsResult {
       pi: sanitizeDir(data?.piConfigDir),
       omp: sanitizeDir(data?.ompConfigDir),
       dsh: sanitizeDir(data?.dshConfigDir),
+      agy: sanitizeDir(data?.agyConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -226,6 +228,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
+        const sanitizedAgyDir = sanitizeDir(mergedSettings.agyConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -243,6 +246,7 @@ export function useSettings(): UseSettingsResult {
           piConfigDir: sanitizedPiDir,
           ompConfigDir: sanitizedOmpDir,
           dshConfigDir: sanitizedDshDir,
+          agyConfigDir: sanitizedAgyDir,
           language: mergedSettings.language,
         };
 
@@ -365,6 +369,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
+        const sanitizedAgyDir = sanitizeDir(mergedSettings.agyConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -392,6 +397,7 @@ export function useSettings(): UseSettingsResult {
           piConfigDir: sanitizedPiDir,
           ompConfigDir: sanitizedOmpDir,
           dshConfigDir: sanitizedDshDir,
+          agyConfigDir: sanitizedAgyDir,
           language: mergedSettings.language,
         };
 
