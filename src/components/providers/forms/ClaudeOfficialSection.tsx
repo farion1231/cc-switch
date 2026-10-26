@@ -25,6 +25,7 @@ import {
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { ClaudeAccountQuota } from "@/components/settings/auth/AccountQuota";
 
 /** 不在默认登录里的账号，过期前多久开始提示 */
 const EXPIRY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -225,14 +226,18 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         );
       }
     }
+    const needsReauth = account.requires_reauth || expired;
     return {
       id: account.id,
       login: account.login,
       avatarUrl: account.avatar_url,
       details,
       isDefault: false,
-      needsReauth: account.requires_reauth || expired,
+      needsReauth,
       users: accountUsers([account.id]),
+      quota: needsReauth ? undefined : (
+        <ClaudeAccountQuota accountId={account.id} login={account.login} />
+      ),
     };
   });
 

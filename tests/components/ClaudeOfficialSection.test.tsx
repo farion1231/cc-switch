@@ -23,6 +23,12 @@ vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
 vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
   useManagedAccountUsers: () => () => [],
 }));
+// 额度列单独查询（React Query）；这里只看每个号有没有挂上
+vi.mock("@/components/settings/auth/AccountQuota", () => ({
+  ClaudeAccountQuota: ({ accountId }: { accountId: string }) => (
+    <span data-testid="claude-quota">{accountId}</span>
+  ),
+}));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
@@ -174,6 +180,24 @@ describe("ClaudeOfficialSection", () => {
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "重新登录" }));
     expect(auth.addAccount).toHaveBeenCalled();
+  });
+
+  it("shows quota for every account that can still sign in", () => {
+    const auth = baseAuth();
+    auth.accounts = [
+      account("ok:org", "ok@example.com"),
+      { ...account("bad:org", "bad@example.com"), requires_reauth: true },
+      {
+        ...account("old:org", "old@example.com"),
+        login_expires_at: Date.now() - 1000,
+      },
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    renderSection();
+
+    expect(
+      screen.getAllByTestId("claude-quota").map((el) => el.textContent),
+    ).toEqual(["ok:org"]);
   });
 
   it("lets the user paste the code when the browser can't come back", async () => {
