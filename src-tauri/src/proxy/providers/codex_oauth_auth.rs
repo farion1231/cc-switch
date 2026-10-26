@@ -767,17 +767,11 @@ impl CodexOAuthManager {
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
             let refresh_error_code = extract_refresh_error_code(&text);
-            if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN
-                || matches!(
-                    refresh_error_code.as_deref(),
-                    Some(
-                        "refresh_token_expired"
-                            | "refresh_token_reused"
-                            | "refresh_token_invalidated"
-                    )
-                )
-            {
+            if refresh_rejection_is_permanent(status, refresh_error_code.as_deref()) {
+                log::warn!(
+                    "[CodexOAuth] refresh token rejected: HTTP {status}, code={}",
+                    refresh_error_code.as_deref().unwrap_or("none")
+                );
                 return Err(CodexOAuthError::RefreshTokenInvalid);
             }
             return Err(CodexOAuthError::TokenFetchFailed(format!(
@@ -2137,6 +2131,19 @@ fn compute_expires_at_ms(expires_in: Option<i64>) -> i64 {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let secs = expires_in.unwrap_or(3600);
     now_ms + secs * 1000
+}
+
+/// Whether a failed refresh means the refresh token itself is dead.
+///
+/// Mirrors Codex CLI: only HTTP 401 or an explicit OpenAI refresh-token code is
+/// permanent. Anything else (a 403 from a CDN/WAF or proxy, 429, 5xx) is
+/// transient, so the same refresh token can succeed on a later attempt.
+fn refresh_rejection_is_permanent(status: reqwest::StatusCode, error_code: Option<&str>) -> bool {
+    status == reqwest::StatusCode::UNAUTHORIZED
+        || matches!(
+            error_code,
+            Some("refresh_token_expired" | "refresh_token_reused" | "refresh_token_invalidated")
+        )
 }
 
 fn extract_refresh_error_code(body: &str) -> Option<String> {
@@ -3523,5 +3530,32 @@ mod tests {
             Some("refresh_token_invalidated")
         );
         assert_eq!(extract_refresh_error_code("not json"), None);
+    }
+
+    #[test]
+    fn refresh_rejection_is_permanent_only_for_401_or_explicit_codes() {
+        use reqwest::StatusCode;
+        assert!(refresh_rejection_is_permanent(
+            StatusCode::UNAUTHORIZED,
+            None
+        ));
+        assert!(refresh_rejection_is_permanent(
+            StatusCode::BAD_REQUEST,
+            Some("refresh_token_reused")
+        ));
+        assert!(refresh_rejection_is_permanent(
+            StatusCode::FORBIDDEN,
+            Some("refresh_token_invalidated")
+        ));
+        // A bare 403 (CDN/WAF challenge, proxy) must stay retryable.
+        assert!(!refresh_rejection_is_permanent(StatusCode::FORBIDDEN, None));
+        assert!(!refresh_rejection_is_permanent(
+            StatusCode::TOO_MANY_REQUESTS,
+            None
+        ));
+        assert!(!refresh_rejection_is_permanent(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Some("server_error")
+        ));
     }
 }

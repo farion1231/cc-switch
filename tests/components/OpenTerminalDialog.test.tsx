@@ -197,6 +197,26 @@ describe("OpenTerminalDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  // 绑了授权中心账号的官方卡：终端用这个账号的 CLAUDE_CONFIG_DIR 启动，固定在这个号上
+  it("shows the isolation notice for an official card bound to a Claude account", () => {
+    renderDialog(vi.fn(), {
+      id: "official",
+      name: "Claude Official",
+      category: "official",
+      settingsConfig: { env: {} },
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "claude_official",
+          accountId: "acct-1",
+        },
+      },
+    } as Provider);
+    expect(
+      screen.getByText("provider.openTerminalDialog.isolationTitle"),
+    ).toBeInTheDocument();
+  });
+
   // agy 带 Key 的卡用自己的私有目录启动；官方登录卡跟着全局登录走
   it("treats only Antigravity key cards as isolated", () => {
     renderDialog(
