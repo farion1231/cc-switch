@@ -29,8 +29,10 @@ import {
 import { initializeWindowActivity } from "@/lib/windowActivity";
 import { initializeInputModality } from "@/lib/inputModality";
 import { initializeInterfacePrefs } from "@/lib/interfacePrefs";
+import { disableContextMenu } from "@/lib/disableContextMenu";
 
 installGlobalErrorHandlers();
+disableContextMenu();
 
 // 根据平台添加 body class，便于平台特定样式
 try {
