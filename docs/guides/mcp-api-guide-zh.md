@@ -6,7 +6,7 @@
 
 DeepSeek 官方提供独立的 [Search / Fetch API](https://api-docs.deepseek.com/guides/search/)，可供任何支持 MCP 工具的模型使用。
 
-1. 打开 [接口定义示例](deepseek-search-fetch.openapi.json)，将 JSON 正文粘贴到“或粘贴 JSON / YAML 文档”。
+1. 打开 [接口定义示例](mcp-api-deepseek-search-fetch.openapi.json)，将 JSON 正文粘贴到“或粘贴 JSON / YAML 文档”。
 2. 点击“预览工具”，主动勾选 `deepseek_search`、`deepseek_fetch`。两者使用 POST，因此不会默认勾选。
 3. 服务标识填写 `deepseek-web`，静态请求头填写下面的 JSON，将占位符替换为自己的 Key。
 4. 选择客户端并保存。请求头由适配器注入，Key 无需作为模型调用参数。
