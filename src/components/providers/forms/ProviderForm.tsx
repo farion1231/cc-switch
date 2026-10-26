@@ -3143,6 +3143,15 @@ function ProviderFormFull({
               partnerPromotionKey={zcodePartnerPromotionKey}
               baseUrl={zcodeForm.zcodeBaseUrl}
               onBaseUrlChange={zcodeForm.handleZcodeBaseUrlChange}
+              providerId={providerId}
+              speedTestEndpoints={speedTestEndpoints}
+              isEndpointModalOpen={isEndpointModalOpen}
+              onEndpointModalToggle={setIsEndpointModalOpen}
+              onCustomEndpointsChange={
+                isEditMode ? undefined : setDraftCustomEndpoints
+              }
+              autoSelect={endpointAutoSelect}
+              onAutoSelectChange={setEndpointAutoSelect}
               models={zcodeForm.zcodeModels}
               onModelsChange={zcodeForm.handleZcodeModelsChange}
               extraOptions={zcodeForm.zcodeExtraOptions}

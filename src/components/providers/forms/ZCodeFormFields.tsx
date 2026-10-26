@@ -16,13 +16,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Trash2, ChevronRight } from "lucide-react";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, EndpointField } from "./shared";
+import EndpointSpeedTest from "./EndpointSpeedTest";
 import { zcodeProviderKinds } from "@/config/zcodeProviderPresets";
 import { cn } from "@/lib/utils";
 import { ZCODE_EXTRA_OPTION_DRAFT_PREFIX } from "./helpers/zcodeFormUtils";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import { fillZCodeModel, metadataFilledAnything } from "./modelMetadataFill";
-import type { ProviderCategory, ZCodeModel } from "@/types";
+import type {
+  EndpointCandidate,
+  ProviderCategory,
+  ZCodeModel,
+} from "@/types";
 
 /**
  * Model ID input with local state to prevent focus loss on key change.
@@ -118,6 +123,15 @@ interface ZCodeFormFieldsProps {
   baseUrl: string;
   onBaseUrlChange: (value: string) => void;
 
+  // 端点测速
+  providerId?: string;
+  speedTestEndpoints: EndpointCandidate[];
+  isEndpointModalOpen: boolean;
+  onEndpointModalToggle: (open: boolean) => void;
+  onCustomEndpointsChange?: (urls: string[]) => void;
+  autoSelect: boolean;
+  onAutoSelectChange: (checked: boolean) => void;
+
   // Models
   models: Record<string, ZCodeModel>;
   onModelsChange: (models: Record<string, ZCodeModel>) => void;
@@ -141,6 +155,13 @@ export function ZCodeFormFields({
   partnerPromotionKey,
   baseUrl,
   onBaseUrlChange,
+  providerId,
+  speedTestEndpoints,
+  isEndpointModalOpen,
+  onEndpointModalToggle,
+  onCustomEndpointsChange,
+  autoSelect,
+  onAutoSelectChange,
   models,
   onModelsChange,
   extraOptions,
@@ -382,21 +403,34 @@ export function ZCodeFormFields({
 
       {/* Base URL */}
       <div className="space-y-2">
-        <FormLabel htmlFor="zcode-baseurl">
-          {t("zcode.baseUrl", { defaultValue: "Base URL" })}
-        </FormLabel>
-        <Input
+        <EndpointField
           id="zcode-baseurl"
+          label={t("zcode.baseUrl", { defaultValue: "Base URL" })}
           value={baseUrl}
-          onChange={(e) => onBaseUrlChange(e.target.value)}
+          onChange={onBaseUrlChange}
           placeholder="https://api.example.com/v1"
-        />
-        <p className="text-xs text-muted-foreground">
-          {t("zcode.baseUrlHint", {
+          help={t("zcode.baseUrlHint", {
             defaultValue: "The base URL for the API endpoint.",
           })}
-        </p>
+          onManageClick={() => onEndpointModalToggle(true)}
+        />
       </div>
+
+      {/* 端点测速弹窗 */}
+      {isEndpointModalOpen && (
+        <EndpointSpeedTest
+          appId="zcode"
+          providerId={providerId}
+          value={baseUrl}
+          onChange={onBaseUrlChange}
+          initialEndpoints={speedTestEndpoints}
+          visible={isEndpointModalOpen}
+          onClose={() => onEndpointModalToggle(false)}
+          autoSelect={autoSelect}
+          onAutoSelectChange={onAutoSelectChange}
+          onCustomEndpointsChange={onCustomEndpointsChange}
+        />
+      )}
 
       {/* Extra Options Editor */}
       <Collapsible
