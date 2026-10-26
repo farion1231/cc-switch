@@ -46,11 +46,6 @@ Arbeiten Sie hauptsächlich mit Programmierung? Probieren Sie einen **Kimi Code 
 </tr>
 
 <tr>
-<td width="180"><a href="https://zetaapi.ai/go/u117"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
-<td>Danke an ZetaAPI für die Unterstützung dieses Projekts! ZetaAPI legt den Fokus auf echte Modelltreue — keine verwässerten Antworten, keine Qualitätsminderung — und Preise von nur 35 % der offiziellen Tarife. Die Plattform mischt keinen Traffic, ersetzt Modelle nicht heimlich durch minderwertige Alternativen und nutzt kein gefälschtes Modell-Routing. Sie unterstützt Claude Code, Codex, Gemini, ChatGPT und weitere gängige KI-Modelle und hilft Nutzern, die API-Kosten deutlich zu senken und gleichzeitig eine zuverlässige Modellqualität zu gewährleisten. Gleichzeitig bietet ZetaAPI eine SLA-gestützte Stabilität auf Unternehmensniveau, Standard-API-Kompatibilität, einen API-Key für mehrere Modelle, schnelle Integration und nutzungsbasierte Abrechnung — geeignet für KI-Produkte, Coding-Agents, interne Unternehmenstools, Kundenservice-Systeme, Content-Erstellung und Automatisierungs-Workflows. Falls bei einem Modell nachgewiesen wird, dass es nicht der angegebenen Qualität entspricht, sichert ZetaAPI dies mit einer 10-fachen Entschädigungsgarantie ab und bietet Nutzern ein stabileres, transparenteres und vertrauenswürdigeres Erlebnis. Registrieren Sie sich über <a href="https://zetaapi.ai/go/u117">diesen Link</a> und verwenden Sie bei Ihrer ersten Aufladung den Promo-Code CC-SWITCH, um als CC-Switch-Nutzer einen exklusiven Rabatt von 10 % auf Ihre erste Aufladung zu erhalten!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://apinebula.ai/VjM74M"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
 <td>Danke an APINEBULA für die Unterstützung dieses Projekts! APINEBULA ist eine Enterprise-KI-Aggregationsplattform unter Galaxy Video Bureau und nutzt umfangreiche Plattformressourcen, um Entwicklern, Teams und Unternehmen stabilen und kosteneffizienten Zugang zu APIs großer Sprachmodelle zu bieten. Die Plattform bündelt führende vollwertige Modelle wie Claude, GPT und Gemini. Über eine einzige API erhalten Sie Zugriff auf weltweit führende KI-Modelle, mit Preisen ab 10 % des Originalpreises. APINEBULA ist für KI-Programmierung, Agent-Entwicklung und Integration in Geschäftssysteme ausgelegt und unterstützt enterprise-grade hohe Parallelität, formale Verträge, Firmenüberweisungen und Rechnungsstellung. APINEBULA bietet Nutzern dieser Software besondere Rabatte: Registrieren Sie sich über <a href="https://apinebula.ai/VjM74M">diesen Link</a> und geben Sie beim ersten Aufladen den Aktionscode <strong>"ccswitch"</strong> ein, um <strong>10 % Rabatt</strong> zu erhalten.</td>
 </tr>
@@ -69,6 +64,11 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
+<td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
+<td>Danke an hao.ai für die Unterstützung dieses Projekts! hao.ai ist ein schnelles, stabiles, einheitliches LLM-API-Gateway für Entwickler und Teams. Mit einem API-Key und einer einheitlichen Schnittstelle greifen Sie auf GPT, Claude, xAI Grok und weitere führende Modelle zu – kompatibel mit gängigen Protokollen und SDKs wie OpenAI und Anthropic. Die Plattform bietet Modell-Routing, Failover, Teamverwaltung und vollständige Aufrufprotokolle, mit Modellpreisen ab 15 % der offiziellen Referenzpreise – so lassen sich AI-Anwendungen einfacher, stabiler und günstiger bauen. hao.ai bietet CC Switch-Nutzern einen besonderen Vorteil: Wer sich über <a href="https://hao.ai/invite/DTBZS3OR">diesen Link</a> registriert, erhält bei der ersten Bestellung 5 % Bonusguthaben!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Danke an Fenno.ai für die Unterstützung dieses Projekts! Fenno.ai ist ein stabiler und effizienter API-Relay-Dienstleister, der sich derzeit hauptsächlich auf Codex-Relay konzentriert. Er ist mit den OpenAI- und Anthropic-Protokollen kompatibel und lässt sich flexibel mit Codex, Claude Code, OpenCode und anderen gängigen Coding-Tools nutzen. Er unterstützt zuverlässig Workloads auf Unternehmensniveau von Hunderten Milliarden Tokens pro Tag und bietet B2B-Abrechnung sowie Rechnungsstellung für Unternehmen im In- und Ausland. Fenno.ai bietet einen exklusiven Vorteil für CC-Switch-Nutzer: Abonnieren Sie über <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">diesen Link</a> den $1,99-Trial-Plan im Wert von $50 Guthaben (7 Tage gültig) und erhalten Sie bis zu 20% Empfehlungsprämien — je mehr Einladungen, desto mehr Belohnung!</td>
 </tr>
@@ -79,13 +79,33 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.openmodel.ai?ref=cc-switch"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
+<td>Danke an OpenModel für die Unterstützung dieses Projekts! OpenModel bietet clientspezifische Rabatte von bis zu 90 % für Codex und bis zu 60 % für Claude Code auf unterstützte Modelle und hilft Entwicklern, ihre API-Kosten zu senken, ohne ihre Arbeitsweise zu ändern. Verbinden Sie einfach Ihren OpenModel-API-Schlüssel und nutzen Sie Codex oder Claude Code wie gewohnt weiter — unterstützte Clients werden automatisch erkannt und rabattierte Routen ohne zusätzliche Parameter oder manuelles Routing angewendet. Außerdem können Sie das Fallback-Verhalten pro API-Schlüssel festlegen und wählen, ob bei vorübergehend nicht verfügbarer Rabattroute zum Standardpreis weitergearbeitet oder die Anfrage gestoppt werden soll. CC-Switch-Nutzer können sich über <a href="https://www.openmodel.ai?ref=cc-switch">diesen Link</a> registrieren und mit dem Promo-Code <strong>"cc-switch"</strong> 10 % Rabatt auf ihre erste Aufladung erhalten!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite"><img src="assets/partners/logos/everyapi-banner.jpg" alt="EveryAPI" width="150"></a></td>
+<td>Danke an EveryAPI für die Unterstützung dieses Projekts! EveryAPI hat sich zum Ziel gesetzt, Entwicklern einen stabilen, effizienten und preiswerten API-Relay-Dienst zu bieten, und unterstützt gängige AI-Coding-Tools wie Claude, Codex und Gemini sowie eine Vielzahl moderner Modelle. Ohne aufwendige Konfiguration ist die Anbindung schnell erledigt — so programmieren Sie effizienter und bauen AI-Anwendungen schneller. Ob alltägliche Entwicklung, Projekt-Debugging oder AI-gestütztes Programmieren: EveryAPI sorgt für ein bequemes, reibungsloses Nutzungserlebnis. EveryAPI macht AI-Entwicklung einfacher und jeden Aufruf wertvoller! Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite">diesen Link</a> und erhalten Sie 14 ¥ Startguthaben, mit dem Code <strong>ccswitch</strong> 20 % Rabatt auf die erste Aufladung und GPT-Modelle ab 15 % des offiziellen Preises!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
+<td>Danke an GrooRoute Pro für die Unterstützung dieses Projekts! GrooRoute Pro ist eine zuverlässige und reibungslose AI-API-Relay-Plattform mit Zugang zu OpenAI, Claude, DeepSeek und weiteren gängigen Modellen. Die Plattform läuft auf Servern im Ausland, lässt Sie die Preismultiplikator-Stufe selbst wählen und bietet sowohl nutzungsbasierte Abrechnung als auch Abo-Pakete — flexibel nutzbar, mit stabilen Verbindungen und schnellen Antwortzeiten, damit Sie KI-Funktionen aller Art bequem nutzen können. Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://grooroute.pro/sign-up?aff=qqm9">diesen Link</a> und erhalten Sie ein kostenloses Testguthaben von 5 ¥!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://dit.ai/register"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
+<td>Danke an DIT.ai für die Unterstützung dieses Projekts! DIT.ai ist eine AI-Token-Börse und ein Marktplatz für kostengünstiges Multi-Provider-Routing. Über eine einzige OpenAI-kompatible API erhalten Entwickler Zugriff auf mehr als 50 führende AI-Modelle — darunter GPT, Claude, Gemini, DeepSeek, Grok, Llama und weitere für Text, Bild, Video und Audio. Geprüfte Anbieter konkurrieren über mehr als 160 Routen um jede Anfrage, und DIT wählt in Echtzeit die beste verfügbare Preis-Leistungs-Option, typischerweise 30–70 % unter den offiziellen Listenpreisen. Gebaut für Entwickler, Startups und Teams, die Agenten oder AI-Produkte im großen Maßstab betreiben: Base-URL und API-Schlüssel austauschen, den bestehenden Stack behalten und Modelle mit automatischem Routing und Failover aufrufen. CC-Switch-Nutzer können sich über <a href="https://dit.ai/register">diesen Link</a> registrieren und mit dem Promo-Code <strong>ccswitch</strong> einen Willkommensgutschein über 5 $ erhalten!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>Danke an Shengsuanyun für die Unterstützung dieses Projekts! Shengsuanyun ist eine Superfabrik für KI-native Teams — eine Plattform zur parallelen Ausführung von KI-Aufgaben in industrieller Qualität. Ihr Modellmarktplatz bündelt die Fähigkeiten von Claude, ChatGPT, Gemini und weiteren in- und ausländischen LLM- und Multimedia-Modellen mit Direktbezug. Absolut kein Reverse Engineering und keine Verwässerung — die plattformweite Modell-SLA-Verfügbarkeit erreicht 99,7 %, und die <a href="https://watch.shengsuanyun.com/status/shengsuanyun">Monitoring-Dashboards</a> zeigen durchgehend grün an. Es bietet außerdem unternehmensgerechte, anpassbare Gateways für fein abgestufte Kosten- und Berechtigungsverwaltung im Team, intelligentes Routing, Sicherheitsschutz und BYOK-Hosting (Bring Your Own Key). Die Plattform rechnet nach Nutzung sowie über einen Token-Plan (in Kürze verfügbar) ab, und Rechnungsstellung ist möglich. Registrieren Sie sich über <a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">diesen Link</a> als Neukunde und erhalten Sie ein Guthaben von ¥10 sowie 10 % Bonus auf Ihre erste Aufladung.</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.app/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.app/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
+<td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.net/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
 </tr>
 
 <tr>
@@ -116,16 +136,6 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 <tr>
 <td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
 <td>Danke an 9527CODE für die Unterstützung dieses Projekts! 9527 CODE ist eine KI-Relay-Plattform auf Enterprise-Niveau mit vollem Funktionsumfang, die auf Stabilität und Servicequalität ausgerichtet ist und für Claude Code, Codex und andere gängige KI-Modelle schnelle, stabile und hochwertige Relay-Dienste bereitstellt. Besonderer Wert liegt auf langfristiger Stabilität, Leitungsqualität und dauerhafter Verfügbarkeit, um Unternehmen und intensiven KI-Nutzern eine stabile, effiziente All-in-one-Lösung für den Modellzugriff zu bieten. Seit einem Jahr im Dauerbetrieb, mit 99,9 % Servicestabilität und technischem Support rund um die Uhr (7×24) durch echte Mitarbeiter. Wer sich über den <a href="https://9527.codes/register?aff=e5zI">exklusiven Link</a> dieses Projekts registriert, erhält als Neukunde nach Kontaktaufnahme mit dem Kundenservice ein Testguthaben; die Empfehlungsprämie ist unbegrenzt!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
-<td>Dieses Projekt wird von <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">Claude API</a> gesponsert. Direkter Claude-API-Zugriff — verbinden Sie Claude Code und Agent-Apps in 3 Minuten. Neukunden können ein kostenloses Testguthaben einlösen. Betrieben mit offiziellen Anthropic-API-Schlüsseln + offiziellen AWS-Bedrock-Kanälen. Kein Reverse Engineering, keine Modellverschlechterung. Volle Unterstützung der Modellreihe Opus / Sonnet / Haiku, mit erhaltenen offiziellen Fähigkeiten einschließlich Tool Use, 1M-Kontextfenster und mehr. Entwickelt für Claude-Code-Power-User, Agent-Ingenieure und technische Unternehmensteams. Rechnungsstellung und dedizierter Team-Support verfügbar. Klicken Sie <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">hier</a>, um sich zu registrieren!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
-<td>Vielen Dank an <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai</a> für die Unterstützung dieses Projekts! code0.ai ist eine für Entwickler entwickelte AI-Coding-Service-Plattform, die Claude Code, Codex, Gemini und weitere gängige AI-Coding-Funktionen unterstützt. Sie hilft einzelnen Entwicklern und Teams, AI-Agents stabiler und effizienter für Programmierung, Debugging, Refactoring und Automatisierungs-Workflows zu nutzen. ccswitch-Nutzer können über die <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai-Website</a> den Kundensupport kontaktieren, um Testguthaben zu erhalten und einen zuverlässigen AI-Coding-Service zu erleben.</td>
 </tr>
 
 <tr>
@@ -370,9 +380,10 @@ Ausführliche Anleitungen zu allen Funktionen finden Sie im **[Benutzerhandbuch]
 ### Aggregationsmodus
 
 - **Eine Modellliste, mehrere Anbieter** — Wechseln Sie auf der Seite von Claude Code oder Codex zu „Aggregation“ und fügen Sie einige Anbieter hinzu; ihre Modelle erscheinen dann gemeinsam in der Modellauswahl des Clients. Welches Modell Sie wählen, entscheidet, an welchen Anbieter die Anfrage geht — ohne Umweg über CC Switch
-- **Jederzeit hinzufügen und entfernen** — Klicken Sie auf der Anbieterkarte auf „Add“ oder „Remove“ und bestimmen Sie einen Anbieter als Standard; er übernimmt alle Anfragen, die kein aggregiertes Modell angeben. Offizielle Konten können nur Standardanbieter sein und nicht in die Aggregation aufgenommen werden
+- **Jederzeit hinzufügen und entfernen** — Klicken Sie auf der Anbieterkarte auf „Add“ oder „Remove“ und bestimmen Sie einen Anbieter als Standard; er übernimmt alle Anfragen, die kein aggregiertes Modell angeben. OpenAI Official in Codex kann nur Standardanbieter sein; offizielle Claude-Abonnements werden im Aggregationsmodus derzeit nicht unterstützt
 - **Hinweise** — Aggregation bietet kein Failover; Claude Code wird ab Version 2.1.243 benötigt; Codex muss nach Änderungen an der aggregierten Liste neu gestartet werden, Claude Code nicht. Wechseln Sie innerhalb einer Session das Modell, muss das neue Modell den Prompt-Cache neu aufbauen, sodass die erste Runde etwas mehr kostet
 - Viele Designideen des Aggregationsmodus stammen von [opencodex](https://github.com/lidge-jun/opencodex) — danke an den Autor und alle Mitwirkenden
+- Dokumentation: [Handbuch zum Aggregationsmodus (Englisch)](docs/user-manual/en/4-proxy/4.6-aggregation.md) · [Illustrierte Anleitung (Chinesisch)](docs/guides/aggregation-mode-guide-zh.md)
 
 ### MCP, Prompts & Skills
 
@@ -398,9 +409,9 @@ Ausführliche Anleitungen zu allen Funktionen finden Sie im **[Benutzerhandbuch]
 
 - **Cloud-Synchronisierung** — Geräteübergreifende Synchronisierung über WebDAV (Jianguoyun, Nextcloud, Synology NAS usw.) oder S3-kompatiblen Speicher (AWS S3, Cloudflare R2, Alibaba Cloud OSS, Tencent Cloud COS usw.); alternativ können Sie das CC-Switch-Konfigurationsverzeichnis in einen Cloud-Speicher-Ordner wie Dropbox, OneDrive oder iCloud legen
 - **CLI-Werkzeugverwaltung** — Auf der Seite „Apps“ in der Seitenleiste sehen Sie die installierte und die neueste Version von Kommandozeilenwerkzeugen wie Claude Code und Codex, können sie mit einem Klick installieren, aktualisieren oder alle auf einmal aktualisieren und doppelte Installationen diagnostizieren; unter Windows lassen sich auch Werkzeuge in WSL verwalten (siehe FAQ)
-- **Deep Link** (`ccswitch://`) — Anbieter, MCP-Server und Prompts per Link mit einem Klick importieren oder Skill-Repositorys hinzufügen
+- **Deep Link** (`ccswitch://`) — Anbieter, MCP-Server und Prompts per Link mit einem Klick importieren oder Skill-Repositorys hinzufügen; Links lassen sich mit dem [Online-Generator](https://ccswitch.io/deplink.html) erstellen; Website-Betreiber, die einen Import-Button einbauen möchten, finden alles im [Integrationsleitfaden (Englisch)](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-en.md)
 - **Hilfsprogramme** — Überspringen der Erststart-Bestätigung von Claude Code, Ausblenden der KI-Attribution, Übernahme des in CC Switch gewählten Anbieters durch die Claude-Code-Erweiterung für VS Code und mehr
-- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups (unter „Settings → Data“ sehen Sie Speicherort und Platzbedarf aller Backups), i18n (zh/zh-TW/en/ja)
+- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups (unter „Settings → Data“ sehen Sie Speicherort und Platzbedarf aller Backups), i18n (zh/zh-TW/en/ja, dazu Türkisch als Community-Übersetzung)
 
 ## FAQ
 

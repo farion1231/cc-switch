@@ -89,6 +89,7 @@ pub fn import_from_kilo(config: &mut MultiAppConfig) -> Result<usize, AppError> 
                         opencode: false,
                         hermes: false,
                         mcode: false,
+                        agy: false,
                         pi: false,
                         kilo: true,
                     },

@@ -336,6 +336,7 @@ fn insert_kilo_message(
             output_tokens: output_with_reasoning,
             cache_read_tokens: msg.cache_read_tokens,
             cache_creation_tokens: msg.cache_write_tokens,
+            cache_creation_1h_tokens: 0,
             model: Some(msg.model_id.clone()),
             message_id: None,
         };

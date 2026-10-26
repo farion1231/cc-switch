@@ -11,6 +11,7 @@
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
 
+pub mod agy;
 mod claude;
 mod codex;
 mod gemini;

@@ -27,6 +27,7 @@ export const APP_IDS: AppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "agy",
   "kilo",
 ];
 
@@ -41,6 +42,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   hermes: true,
   pi: true,
   mcode: true,
+  agy: true,
   kilo: true,
 };
 
@@ -54,6 +56,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "agy",
   "kilo",
 ];
 
@@ -74,10 +77,29 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
   return (PROXY_APP_IDS as string[]).includes(appId);
 }
 
-/** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
-export type StackAppId = Extract<ProxyAppId, "claude" | "codex">;
+/**
+ * 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）：上面四个，加上 Claude Desktop。
+ * Desktop 经同一个路由服务转发，但没有故障转移和路由设置（不在 `PROXY_APP_IDS` 里）。
+ */
+export type ModeAppId = ProxyAppId | "claude-desktop";
 
-export const STACK_APP_IDS: StackAppId[] = ["claude", "codex"];
+export const MODE_APP_IDS: ModeAppId[] = [...PROXY_APP_IDS, "claude-desktop"];
+
+export function isModeAppId(appId: string): appId is ModeAppId {
+  return (MODE_APP_IDS as string[]).includes(appId);
+}
+
+/** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
+export type StackAppId = Extract<
+  ModeAppId,
+  "claude" | "codex" | "claude-desktop"
+>;
+
+export const STACK_APP_IDS: StackAppId[] = [
+  "claude",
+  "codex",
+  "claude-desktop",
+];
 
 export function isStackAppId(appId: string): appId is StackAppId {
   return (STACK_APP_IDS as string[]).includes(appId);
@@ -127,11 +149,16 @@ export const MCP_APP_IDS: McpAppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "agy",
   "kilo",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
   return (MCP_APP_IDS as string[]).includes(appId);
+}
+
+export function usesGeminiStyleForm(appId: string): boolean {
+  return appId === "gemini" || appId === "agy";
 }
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
@@ -244,6 +271,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
     badgeClass:
       "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
+  },
+  agy: {
+    label: "Antigravity",
+    icon: (
+      <ProviderIcon
+        icon="antigravity"
+        name="Antigravity"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
+    badgeClass:
+      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
   },
 };
 

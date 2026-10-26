@@ -230,6 +230,20 @@ jobs:
             $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if ($null -ne $msi) {
+            # #8534：旧版本的应用内更新器以 `msiexec /passive /promptrestart` 安装、不带任何 REBOOT
+            # 选项，文件被占用时会不经提示直接重启系统，所以 MSI 自身必须带 REBOOT=ReallySuppress。
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msi.FullName, 0))
+            $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @('SELECT `Value` FROM `Property` WHERE `Property`=''REBOOT'''))
+            $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+            $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            $reboot = if ($null -ne $record) { $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1) } else { $null }
+            $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
+            if ($reboot -ne 'ReallySuppress') {
+              throw "MSI Property table must set REBOOT=ReallySuppress (found: '$reboot') - see #8534"
+            }
+            Write-Host "MSI REBOOT property: $reboot"
+
             $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
@@ -307,34 +321,32 @@ jobs:
           echo "AppImage copied: $NEW_APPIMAGE"
           # 额外上传 .deb（用于 Debian/Ubuntu 自动更新）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
-          if [ -n "$DEB" ]; then
-            NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-            cp "$DEB" "release-assets/$NEW_DEB"
-            if [ -f "$DEB.sig" ]; then
-              cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
-            else
-              echo ".sig for deb not found" >&2
-              exit 1
-            fi
-            echo "Deb package copied: $NEW_DEB"
-          else
-            echo "No .deb found (optional)"
+          if [ -z "$DEB" ]; then
+            echo "❌ No .deb found under target/release/bundle" >&2
+            exit 1
           fi
+          if [ ! -f "$DEB.sig" ]; then
+            echo "❌ Updater signature not found: $DEB.sig" >&2
+            exit 1
+          fi
+          NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+          cp "$DEB" "release-assets/$NEW_DEB"
+          cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
+          echo "Deb package copied: $NEW_DEB"
           # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等自动更新）
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
-          if [ -n "$RPM" ]; then
-            NEW_RPM="CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-            cp "$RPM" "release-assets/$NEW_RPM"
-            if [ -f "$RPM.sig" ]; then
-              cp "$RPM.sig" "release-assets/$NEW_RPM.sig"
-            else
-              echo ".sig for RPM not found" >&2
-              exit 1
-            fi
-            echo "RPM package copied: $NEW_RPM"
-          else
-            echo "No .rpm found (optional)"
+          if [ -z "$RPM" ]; then
+            echo "❌ No .rpm found under target/release/bundle" >&2
+            exit 1
           fi
+          if [ ! -f "$RPM.sig" ]; then
+            echo "❌ Updater signature not found: $RPM.sig" >&2
+            exit 1
+          fi
+          NEW_RPM="CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+          cp "$RPM" "release-assets/$NEW_RPM"
+          cp "$RPM.sig" "release-assets/$NEW_RPM.sig"
+          echo "RPM package copied: $NEW_RPM"
 
       - name: List prepared assets
         shell: bash

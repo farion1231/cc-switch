@@ -8,6 +8,7 @@ use crate::config::{
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+#[cfg(not(test))]
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -25,14 +26,6 @@ pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalo
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-// Generating a ProxyChat catalog only needs one stable Codex model template per
-// process. Without this cache every provider switch/takeover can start the
-// Codex CLI again, which is especially expensive for npm-installed `codex.cmd`
-// on Windows. Tests deliberately bypass the global cache because they isolate
-// CODEX_HOME and seed different model templates.
-#[cfg(not(test))]
-static CODEX_MODEL_CATALOG_TEMPLATE_CACHE: OnceCell<Value> = OnceCell::new();
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
 pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
@@ -163,7 +156,6 @@ pub(crate) fn codex_model_rejects_web_search(model: &str) -> bool {
         .any(|prefix| model.starts_with(prefix))
 }
 
-const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -905,6 +897,27 @@ pub fn read_codex_config_text() -> Result<String, AppError> {
     }
 }
 
+/// `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具：写成 `true`，
+/// 或写成带 `enabled = true` 的表（codex-rs `features` 的 `FeatureToml`）。Codex 先看它再看
+/// 模型目录，打开了它，目录里写的 [`CODEX_CLASSIC_SUBAGENTS`] 就不生效。解析不了时按没有。
+pub(crate) fn codex_config_forces_multi_agent_v2(text: &str) -> bool {
+    codex_config_feature_enabled(text, "multi_agent_v2")
+}
+
+/// `config.toml` 的 `[features] <key>` 是否开启：写成 `true`，或写成带 `enabled = true`
+/// 的表（codex-rs `features` 的 `FeatureToml`）。解析不了时按没开。
+pub(crate) fn codex_config_feature_enabled(text: &str, key: &str) -> bool {
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(item) = doc.get("features").and_then(|features| features.get(key)) else {
+        return false;
+    };
+    item.as_bool()
+        .or_else(|| item.get("enabled").and_then(toml_edit::Item::as_bool))
+        .unwrap_or(false)
+}
+
 /// 对非空的 TOML 文本进行语法校验
 pub fn validate_config_toml(text: &str) -> Result<(), AppError> {
     if text.trim().is_empty() {
@@ -1346,7 +1359,7 @@ fn codex_catalog_model_entry(
         // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
         // emit a custom/freeform tool, and rely on shell_type="shell_command" for
         // edits. Defensive even though the native template is already clean
-        // (guards against template drift / an accidental gpt-5.5 clone).
+        // (guards against template drift / an accidental classic-template clone).
         //
         // NOTE: `base_instructions` is NOT stripped — Codex's catalog parser
         // treats it as a REQUIRED field and refuses to load the file without
@@ -1540,30 +1553,6 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
     specs
 }
 
-fn find_codex_model_template(catalog: &Value) -> Option<Value> {
-    catalog
-        .get("models")
-        .and_then(|models| models.as_array())
-        .and_then(|models| {
-            models.iter().find(|model| {
-                model.get("slug").and_then(|slug| slug.as_str())
-                    == Some(CODEX_MODEL_CATALOG_TEMPLATE_SLUG)
-            })
-        })
-        .cloned()
-}
-
-fn load_codex_model_template_from_cache() -> Result<Option<Value>, AppError> {
-    let path = get_codex_config_dir().join("models_cache.json");
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let text = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
-    let catalog: Value = serde_json::from_str(&text).map_err(|e| AppError::json(&path, e))?;
-    Ok(find_codex_model_template(&catalog))
-}
-
 /// Fixed candidates for locating the `codex` CLI when it is not on the process
 /// PATH (common in GUI apps launched outside a terminal).
 const CODEX_CLI_FIXED_CANDIDATES: &[&str] = &[
@@ -1571,6 +1560,18 @@ const CODEX_CLI_FIXED_CANDIDATES: &[&str] = &[
     "/opt/homebrew/bin/codex",              // macOS Apple Silicon Homebrew
     "/usr/local/bin/codex",                 // macOS Intel Homebrew / Linux
     "/home/linuxbrew/.linuxbrew/bin/codex", // Linux Homebrew
+];
+
+/// macOS 桌面版的 bundle 名，新的在前：改名前叫 Codex.app，改名迁移有时会两份都留着
+/// （openai/codex#48052），这时 ChatGPT.app 是新的那份。
+const CODEX_DESKTOP_APP_BUNDLES: &[&str] = &["ChatGPT.app", "Codex.app"];
+
+/// bundle 里自带的 Codex CLI，新结构在前：`codex-cli/bin/codex` 是指向同目录 `CodexCLI.app`
+/// 的垫片脚本，更早的版本直接放在 `Resources/codex`。只装了桌面版的人 PATH 上没有 `codex`，
+/// 取 Codex 自带的模型列表只能靠它（#8087）。
+const CODEX_DESKTOP_CLI_IN_BUNDLE: &[&str] = &[
+    "Contents/Resources/codex-cli/bin/codex",
+    "Contents/Resources/codex",
 ];
 
 fn push_codex_cli_candidate(
@@ -1718,10 +1719,78 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
         push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
     }
 
+    let home = get_home_dir();
     push_env_codex_cli_candidates(&mut candidates, &mut seen);
-    push_home_codex_cli_candidates(&mut candidates, &mut seen, &get_home_dir());
+    push_home_codex_cli_candidates(&mut candidates, &mut seen, &home);
+    push_desktop_codex_cli_candidates(&mut candidates, &mut seen, &home);
 
     candidates
+}
+
+/// 桌面版自带的 CLI。排在最后：装了独立 CLI 的人照旧先用独立的那个。
+///
+/// - macOS：`/Applications` 和 `~/Applications` 下的 ChatGPT.app、Codex.app，新 bundle
+///   排在前面，不管装在哪个目录（别的系统上不存在，自然跳过）；
+/// - Windows：`%LOCALAPPDATA%\OpenAI\Codex\bin\<版本>\codex.exe`，版本目录随桌面版更新而变。
+fn push_desktop_codex_cli_candidates(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    home: &Path,
+) {
+    for bundle in CODEX_DESKTOP_APP_BUNDLES {
+        for applications in [PathBuf::from("/Applications"), home.join("Applications")] {
+            for layout in CODEX_DESKTOP_CLI_IN_BUNDLE {
+                push_existing_codex_cli_candidate(
+                    candidates,
+                    seen,
+                    applications.join(bundle).join(layout),
+                );
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+            push_codex_cli_candidates_newest_first(
+                candidates,
+                seen,
+                &PathBuf::from(local_appdata)
+                    .join("OpenAI")
+                    .join("Codex")
+                    .join("bin"),
+                "codex.exe",
+            );
+        }
+    }
+}
+
+/// `versions_dir` 下各个版本目录里的 `exe`，按它的修改时间从新到旧（相同时按目录名）。
+/// 不按目录名排：版本号按字符串比，`0.99.0` 会排在 `0.153.4` 前面。
+#[cfg(any(windows, test))]
+fn push_codex_cli_candidates_newest_first(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    versions_dir: &Path,
+    exe: &str,
+) {
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return;
+    };
+
+    let mut discovered = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let candidate = entry.path().join(exe);
+            let modified = fs::metadata(&candidate).ok()?.modified().ok()?;
+            Some((modified, candidate))
+        })
+        .collect::<Vec<_>>();
+
+    discovered.sort_by(|(a_time, a), (b_time, b)| b_time.cmp(a_time).then_with(|| a.cmp(b)));
+    for (_, candidate) in discovered {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
 }
 
 fn codex_bundled_models_command(candidate: &Path) -> Command {
@@ -1742,14 +1811,29 @@ fn codex_bundled_models_command(candidate: &Path) -> Command {
     command
 }
 
-fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
-    Ok(first_bundled_catalog(find_codex_model_template))
+/// 没跑出 Codex 自带的模型列表。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CodexBundledModelsError {
+    /// 每个候选都启动不了：本机找不到 Codex 命令行。
+    NoCli,
+    /// 找到了命令行，但没跑出能用的列表（退出码非零、输出不是 JSON、列表为空）。带最后
+    /// 一个候选的情况，写日志用。
+    Failed(String),
+}
+
+impl std::fmt::Display for CodexBundledModelsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoCli => f.write_str("本机找不到 Codex 命令行"),
+            Self::Failed(detail) => f.write_str(detail),
+        }
+    }
 }
 
 /// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
 /// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
-pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
-    first_bundled_catalog(|catalog| {
+pub(crate) fn load_codex_bundled_models() -> Result<Vec<Value>, CodexBundledModelsError> {
+    first_bundled_catalog(codex_cli_candidates(), |catalog| {
         catalog
             .get("models")
             .and_then(Value::as_array)
@@ -1759,13 +1843,21 @@ pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
 }
 
 /// 依次跑各个候选的 `codex debug models --bundled`，返回第一份 `pick` 取得出东西的结果。
-fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
-    for candidate in codex_cli_candidates() {
+/// 候选里有不存在的路径（固定位置、PATH 上的裸名），启动不了不算失败；一个都启动不了才是
+/// 找不到命令行。
+fn first_bundled_catalog<T>(
+    candidates: Vec<PathBuf>,
+    pick: impl Fn(&Value) -> Option<T>,
+) -> Result<T, CodexBundledModelsError> {
+    let mut failure = None;
+    for candidate in candidates {
         let candidate_label = candidate.to_string_lossy();
         let output = match codex_bundled_models_command(&candidate).output() {
             Ok(output) => output,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => {
                 log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
+                failure = Some(format!("`{candidate_label}` 启动失败: {err}"));
                 continue;
             }
         };
@@ -1773,6 +1865,11 @@ fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::debug!("`{candidate_label} debug models --bundled` failed: {stderr}");
+            failure = Some(format!(
+                "`{candidate_label} debug models --bundled` 失败（{}）: {}",
+                output.status,
+                stderr.trim()
+            ));
             continue;
         }
 
@@ -1782,15 +1879,24 @@ fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
                 log::debug!(
                     "Failed to parse `{candidate_label} debug models --bundled` output: {e}"
                 );
+                failure = Some(format!(
+                    "`{candidate_label} debug models --bundled` 的输出不是 JSON: {e}"
+                ));
                 continue;
             }
         };
         if let Some(found) = pick(&catalog) {
-            return Some(found);
+            return Ok(found);
         }
+        failure = Some(format!(
+            "`{candidate_label} debug models --bundled` 的输出里没有模型"
+        ));
     }
 
-    None
+    Err(failure.map_or(
+        CodexBundledModelsError::NoCli,
+        CodexBundledModelsError::Failed,
+    ))
 }
 
 /// 官方原生行：逐行补 Codex 解析器必需的字段（不覆盖已有值）、补旧的指令字段，再校验。
@@ -1849,23 +1955,23 @@ fn codex_native_row_is_valid(row: &Value) -> bool {
     has_slug && has_required && has_instructions
 }
 
-fn load_codex_model_template_static() -> Option<Value> {
+/// 经典工具契约模板：ProxyChat / Copilot 给第三方模型生成目录条目时复制的骨架。取自 Codex
+/// 自带的 gpt-5.5 条目，借的是它那套工具形态（freeform apply_patch、unified_exec、没有
+/// `tool_mode` 和 v2 子代理），转换层就是照它写的；名字、窗口、可见性都会被改写，跟调用哪个
+/// 模型无关。只用仓库里这份，不读 `models_cache.json` 也不跑 `codex`：官方改了那边的条目
+/// （标隐藏、加新工具模式、下线）会悄悄带进第三方模型。Codex 新增解析必需字段时，补进这里和
+/// `CODEX_CATALOG_PARSER_REQUIRED_FIELDS`。也是没有 `codex` 时唯一的官方 gpt-5.5 条目。
+fn load_codex_classic_tool_template() -> Value {
     let text = include_str!("resources/gpt5_5_template.json");
-    match serde_json::from_str(text) {
-        Ok(template) => Some(template),
-        Err(e) => {
-            log::warn!("Failed to parse bundled gpt-5.5 template: {e}");
-            None
-        }
-    }
+    serde_json::from_str(text).expect("bundled classic tool template must be valid JSON")
 }
 
 /// Bundled clean template for native `/responses` providers. Unlike the
-/// gpt-5.5 template it carries NO freeform `apply_patch` / `web_search` tool
+/// classic tool template it carries NO freeform `apply_patch` / `web_search` tool
 /// declarations and no GPT-5 base_instructions, so Codex never emits a
 /// `type=="custom"` tool that native gateways (MiMo/MiniMax/…) reject. Edits
 /// flow through `shell_type="shell_command"` instead. We deliberately do NOT
-/// fall back to `models_cache.json` here (that would reintroduce gpt-5.5's
+/// fall back to the classic tool template here (that would reintroduce its
 /// freeform apply_patch).
 fn load_codex_native_responses_template() -> Value {
     let text = include_str!("resources/codex_native_responses_template.json");
@@ -1901,7 +2007,7 @@ fn load_codex_deepseek_official_catalog_models() -> Vec<Value> {
 
 /// Official vendor catalog entries for the provider in `config_text`, if its
 /// gateway ships one. Only the `NativeResponses` profile qualifies: ProxyChat
-/// runs through cc-switch's converter (gpt-5.5 template contract) and the
+/// runs through cc-switch's converter (classic tool template contract) and the
 /// Anthropic transform drops custom tools, so both must keep their existing
 /// templates. Host-driven like the web_search blacklist, so existing providers
 /// pick it up on their next switch without a re-save.
@@ -2017,24 +2123,21 @@ fn codex_vendor_catalog_model_entry(
 /// When Codex requires a new field, add it here AND to the static templates.
 const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &[
     "supports_reasoning_summaries",
-    // codex 0.148.0 rejects the catalog without it (#6661); a models_cache.json
-    // written by an older build can lack it.
+    // codex 0.148.0 rejects the catalog without it (#6661); official rows from
+    // `codex debug models --bundled` and vendor files can lack it.
     "supports_parallel_tool_calls",
 ];
 
-/// `models_cache.json` is shared by every Codex install on the machine (npm
-/// CLI, desktop-bundled binary, ...), and each version serializes its own
-/// `ModelInfo` shape — the cache's field set follows whichever process wrote
-/// it last, so it cannot be assumed to satisfy the current external-catalog
-/// schema (observed live: 0.144.5 requires `supports_reasoning_summaries`
-/// while a coexisting build kept rewriting the cache without it). Backfill
-/// ONLY parser-required fields from the bundled static template: optional
-/// capability fields keep their missing-means-default semantics, and existing
-/// values always win.
+/// Rows that come from outside this repo (official rows from whichever `codex`
+/// binary is on the machine, bundled vendor files) follow their writer's
+/// `ModelInfo` shape and cannot be assumed to satisfy the current
+/// external-catalog schema (observed live: 0.144.5 requires
+/// `supports_reasoning_summaries` while a coexisting build omitted it).
+/// Backfill ONLY parser-required fields from the classic tool template:
+/// optional capability fields keep their missing-means-default semantics, and
+/// existing values always win.
 fn fill_template_fields_from_static(template: &mut Value) {
-    let Some(static_template) = load_codex_model_template_static() else {
-        return;
-    };
+    let static_template = load_codex_classic_tool_template();
     let (Some(template_obj), Some(static_obj)) =
         (template.as_object_mut(), static_template.as_object())
     else {
@@ -2047,50 +2150,6 @@ fn fill_template_fields_from_static(template: &mut Value) {
             }
         }
     }
-}
-
-fn load_codex_model_catalog_template_uncached() -> Result<Value, AppError> {
-    // ① models_cache.json (created by Codex when it connects to OpenAI)
-    if let Some(mut template) = load_codex_model_template_from_cache()? {
-        fill_template_fields_from_static(&mut template);
-        return Ok(template);
-    }
-    // ② codex CLI (PATH + platform-specific common paths)
-    if let Some(mut template) = load_codex_model_template_from_bundled()? {
-        fill_template_fields_from_static(&mut template);
-        return Ok(template);
-    }
-    // ③ Static fallback bundled at compile time
-    if let Some(template) = load_codex_model_template_static() {
-        return Ok(template);
-    }
-
-    Err(AppError::Message(format!(
-        "Codex model catalog template `{CODEX_MODEL_CATALOG_TEMPLATE_SLUG}` not found. Please start Codex once so models_cache.json is available, or ensure the `codex` CLI is on PATH."
-    )))
-}
-
-fn get_or_load_codex_model_catalog_template<F>(
-    cache: &OnceCell<Value>,
-    loader: F,
-) -> Result<Value, AppError>
-where
-    F: FnOnce() -> Result<Value, AppError>,
-{
-    cache.get_or_try_init(loader).cloned()
-}
-
-#[cfg(not(test))]
-fn load_codex_model_catalog_template() -> Result<Value, AppError> {
-    get_or_load_codex_model_catalog_template(
-        &CODEX_MODEL_CATALOG_TEMPLATE_CACHE,
-        load_codex_model_catalog_template_uncached,
-    )
-}
-
-#[cfg(test)]
-fn load_codex_model_catalog_template() -> Result<Value, AppError> {
-    load_codex_model_catalog_template_uncached()
 }
 
 #[cfg(test)]
@@ -2120,7 +2179,48 @@ fn codex_model_catalog_from_settings(
     if specs.is_empty() {
         return Ok(None);
     }
-    codex_catalog_from_specs_for_row(&specs, config_text, profile).map(Some)
+    let mut catalog = codex_catalog_from_specs_for_row(&specs, config_text, profile)?;
+    if let Some(model) = codex_card_auto_review_model(settings) {
+        apply_codex_auto_review_model(&mut catalog, model);
+    }
+    Ok(Some(catalog))
+}
+
+/// 卡上选的自动审批模型（`modelCatalog.autoReviewModel`），空串当作没选。只在直连、路由
+/// 下生效：聚合下用聚合设置里的（`settings::codex_stack_auto_review_model`）。
+fn codex_card_auto_review_model(settings: &Value) -> Option<&str> {
+    settings
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("autoReviewModel"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+}
+
+/// Codex 自动审批（Auto Review）用的模型：写进目录每一行的 `auto_review_model_override`。
+/// Codex 按主模型那一行的这个字段选审批模型（codex-rs `ext/guardian-reviewer/src/model.rs`），
+/// 主模型可以是目录里任何一行，所以每行都写。审批请求和主对话走同一家：直连、路由下只能
+/// 选这一家目录里的模型，聚合下可以选别家发布的 `ccs-*` 模型。
+///
+/// 不写时 Codex 用供应商默认的 `codex-auto-review`，目录里没有它（第三方的目录）就由主模型
+/// 自己审批。`model` 不在目录里时不写：Codex 照样会拿这个名字发请求，上游多半不认。
+/// 返回是否写了。
+pub(crate) fn apply_codex_auto_review_model(catalog: &mut Value, model: &str) -> bool {
+    let Some(entries) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    if !entries
+        .iter()
+        .any(|entry| entry.get("slug").and_then(Value::as_str) == Some(model))
+    {
+        return false;
+    }
+    for entry in entries.iter_mut() {
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert("auto_review_model_override".to_string(), json!(model));
+        }
+    }
+    true
 }
 
 /// Codex 自带的 OpenAI 官方模型列表（`codex debug models --bundled`），给第三方的 GPT
@@ -2137,9 +2237,7 @@ thread_local! {
 
 /// 编译期内置的 gpt-5.5：本机没有可用的 `codex` 时唯一的官方条目。
 fn codex_static_official_models() -> Vec<Value> {
-    load_codex_model_template_static()
-        .and_then(|template| normalize_codex_native_rows(vec![template]))
-        .unwrap_or_default()
+    normalize_codex_native_rows(vec![load_codex_classic_tool_template()]).unwrap_or_default()
 }
 
 /// 和账号无关的 OpenAI 官方模型列表。不用 `models_cache.json`：它是哪个账号、哪个版本
@@ -2149,6 +2247,7 @@ fn codex_openai_official_models() -> Vec<Value> {
     CODEX_OPENAI_OFFICIAL_MODELS_CACHE
         .get_or_try_init(|| {
             load_codex_bundled_models()
+                .ok()
                 .and_then(normalize_codex_native_rows)
                 .ok_or(())
         })
@@ -2191,14 +2290,14 @@ fn find_codex_official_model<'a>(model: &str, candidates: &'a [Value]) -> Option
     })
 }
 
-/// 第三方供应商上命中官方的 GPT 行：官方条目整条照搬（提示词、工具、档位、窗口都以官方
-/// 为准，不接受行里的覆盖值；窗口不同时在 `config.toml` 里设 `model_context_window`），
-/// 只改掉属于官方账号或官方后端的字段。
+/// 第三方供应商上命中官方的 GPT 行：保留官方的提示词、工具和档位，窗口接受显式覆盖，
+/// 未配置时保持官方默认。其余只改掉属于官方账号或官方后端的字段。
 fn codex_official_model_entry(
     official: &Value,
     model: &str,
     priority: usize,
     profile: CodexCatalogToolProfile,
+    context_window: Option<u64>,
 ) -> Value {
     let mut entry = official.clone();
     let Some(obj) = entry.as_object_mut() else {
@@ -2210,6 +2309,12 @@ fn codex_official_model_entry(
     }
     obj.insert("slug".to_string(), json!(model));
     obj.insert("priority".to_string(), json!(1000 + priority));
+    if let Some(window) = context_window {
+        obj.insert("context_window".to_string(), json!(window));
+        // Codex clamps model_context_window to max_context_window. A stale
+        // official maximum would silently cap the user's explicit window.
+        obj.insert("max_context_window".to_string(), json!(window));
+    }
     // 官方隐藏的条目用户明确写了，也要出现在选择器里。
     obj.insert("visibility".to_string(), json!("list"));
     // 速度档、升级提示归官方账号。
@@ -2226,14 +2331,18 @@ fn codex_official_model_entry(
     entry
 }
 
-/// 目录里的一行是不是按 `official` 原样镜像出来的：反向解析会保留的几项（显示名、窗口、
-/// 模态、并行工具调用）都和重新镜像的结果相同，只还原模型名才不丢东西。
+/// 除窗口外，反向解析会保留的显示名、模态、并行工具调用是否和官方镜像一致。
+/// 镜像的官方能力不用存回表单，显式窗口另行还原。
 fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> bool {
-    let expected =
-        codex_official_model_entry(official, model, 0, CodexCatalogToolProfile::NativeResponses);
+    let expected = codex_official_model_entry(
+        official,
+        model,
+        0,
+        CodexCatalogToolProfile::NativeResponses,
+        None,
+    );
     [
         "display_name",
-        "context_window",
         "input_modalities",
         "supports_parallel_tool_calls",
     ]
@@ -2248,6 +2357,7 @@ fn codex_catalog_from_specs_for_row(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Value, AppError> {
+    let windows = RowWindows::of(config_text);
     // Vendors that publish an OFFICIAL Codex models.json for their native
     // `/responses` gateway get it mirrored verbatim instead of the neutral
     // template: its freeform apply_patch, vendor harness base_instructions and
@@ -2257,23 +2367,32 @@ fn codex_catalog_from_specs_for_row(
         let entries: Vec<Value> = specs
             .iter()
             .enumerate()
-            .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
+            .map(|(index, spec)| {
+                let mut entry = codex_vendor_catalog_model_entry(&vendor_models, spec, index);
+                if windows.window.is_some()
+                    || windows.limit.is_some()
+                    || spec.context_window.is_some()
+                {
+                    sink_row_windows(&mut entry, &windows, true);
+                }
+                entry
+            })
             .collect();
         return Ok(json!({ "models": entries }));
     }
 
-    let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    let configured_context_window = windows.window;
+    let default_context_window = configured_context_window.unwrap_or(128_000);
 
-    // Native providers use the bundled clean template (no freeform apply_patch,
-    // no cache dependency); ProxyChat and Copilot keep cloning Codex's gpt-5.5
-    // entry so their proxy paths retain custom<->function tool support.
+    // Native providers use the bundled clean template (no freeform apply_patch);
+    // ProxyChat and Copilot clone the bundled classic tool template so their
+    // proxy paths retain custom<->function tool support.
     let template = match profile {
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
             load_codex_native_responses_template()
         }
         CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot => {
-            load_codex_model_catalog_template()?
+            load_codex_classic_tool_template()
         }
     };
     // 命中 OpenAI 官方条目的行照搬官方（写了目录之后 Codex 只认文件里的条目，通用模板
@@ -2289,9 +2408,17 @@ fn codex_catalog_from_specs_for_row(
     let entries: Vec<Value> = specs
         .iter()
         .enumerate()
-        .map(
-            |(index, spec)| match find_codex_official_model(&spec.model, &official) {
-                Some(found) => codex_official_model_entry(found, &spec.model, index, profile),
+        .map(|(index, spec)| {
+            let mut entry = match find_codex_official_model(&spec.model, &official) {
+                Some(found) => codex_official_model_entry(
+                    found,
+                    &spec.model,
+                    index,
+                    profile,
+                    // Match Codex's global override and Stack's sink_row_windows:
+                    // a provider-wide window takes precedence over a model's.
+                    configured_context_window.or(spec.context_window),
+                ),
                 None => codex_catalog_model_entry(
                     &template,
                     spec,
@@ -2299,8 +2426,16 @@ fn codex_catalog_from_specs_for_row(
                     profile,
                     default_context_window,
                 ),
-            },
-        )
+            };
+            // A changed window needs a matching compaction threshold in single-provider
+            // catalogs too. Otherwise an official/template threshold can stay at 244800
+            // even after the user requests 1M. Keep untouched official defaults intact.
+            if windows.window.is_some() || windows.limit.is_some() || spec.context_window.is_some()
+            {
+                sink_row_windows(&mut entry, &windows, true);
+            }
+            entry
+        })
         .collect();
     Ok(json!({ "models": entries }))
 }
@@ -2395,10 +2530,15 @@ pub(crate) enum CodexStackRoute<'a> {
     },
 }
 
-/// 合并目录里 Stack 行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
-/// 模板带来的值会随来源漂移（DeepSeek 官方目录是 "3000"，从 Codex 缓存克隆的 gpt-5.5
-/// 跟着缓存变），固定值才稳定。路由那家的行不改：它的值要和名单为空时的目录一致，否则
-/// 加进第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
+/// 合并目录里 Stack 行统一的 `comp_hash`。Codex 在一个会话记下的值变了时，会先用**上一个
+/// 模型**压缩一次（codex-rs `maybe_run_previous_model_inline_compact`）；模板带来的值会随
+/// 来源漂移（DeepSeek 官方目录是 "3000"，镜像官方的 GPT 行也是），固定值才稳定。
+///
+/// 第三方路由那家的行也写这个值：否则在它和 Stack 行之间切换都要先用上一家压缩，上一家
+/// 不可用（额度用完）时压缩失败，而自定义供应商不会改用当前模型重试，会话从此每轮都卡在
+/// 上一家（#8485）。代价是加进第一家、移除最后一家时，路由上原本带值的会话会用路由那家
+/// 自己的模型压缩一次。官方路由的原生行不改：失败时 Codex 会改用当前模型重试，官方的
+/// 压缩语义也要保留。
 const CODEX_STACK_COMP_HASH: &str = "cc-switch";
 
 /// Stack 名单非空时的模型目录：路由那家的行在前，各 Stack 供应商的行按名单顺序在后，
@@ -2406,12 +2546,23 @@ const CODEX_STACK_COMP_HASH: &str = "cc-switch";
 ///
 /// 窗口类全局键（`model_context_window`、`model_auto_compact_token_limit`）这时不写进
 /// `config.toml`（Codex 会拿它覆盖所有行），改由各家写进自己的行，见 [`sink_row_windows`]。
+///
+/// `classic_subagents`：每一行都改用经典子 agent 工具，见 [`CODEX_CLASSIC_SUBAGENTS`]。
 pub(crate) fn plan_codex_stack_catalog(
     route: CodexStackRoute<'_>,
     stack: &[CodexStackCatalogMember<'_>],
+    classic_subagents: bool,
 ) -> Result<Value, AppError> {
     let mut entries = match route {
-        CodexStackRoute::ThirdParty(row) => codex_stack_third_party_rows(&row)?,
+        CodexStackRoute::ThirdParty(row) => {
+            let mut rows = codex_stack_third_party_rows(&row)?;
+            for entry in &mut rows {
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.insert("comp_hash".to_string(), json!(CODEX_STACK_COMP_HASH));
+                }
+            }
+            rows
+        }
         CodexStackRoute::Official {
             mut native,
             config_text,
@@ -2478,13 +2629,28 @@ pub(crate) fn plan_codex_stack_catalog(
     for (index, entry) in entries.iter_mut().enumerate() {
         if let Some(obj) = entry.as_object_mut() {
             obj.insert("priority".to_string(), json!(index + 1));
+            if classic_subagents {
+                obj.insert(
+                    "multi_agent_version".to_string(),
+                    json!(CODEX_CLASSIC_SUBAGENTS),
+                );
+            }
         }
     }
     Ok(json!({ "models": entries }))
 }
 
-/// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值）。
-fn codex_stack_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
+/// Codex 按目录行的 `multi_agent_version` 决定子 agent 用哪套工具（codex-rs
+/// `session/turn_context.rs`）。新版（`"v2"`）把派给子 agent 的任务交给主 agent 那家后端加密，
+/// 子 agent 换到别家就解不开；经典（`"v1"`）的任务是明文。聚合模式下主、子 agent 可以是不同
+/// 的供应商，用户打开设置后每一行都写经典（包括官方行：官方签发的密文第三方同样解不开）。
+/// `config.toml` 里 `[features] multi_agent_v2 = true` 比目录优先，这时写了也不生效。
+const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
+
+/// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值，由调用方统一改写）。
+pub(crate) fn codex_stack_third_party_rows(
+    row: &CodexCatalogRow<'_>,
+) -> Result<Vec<Value>, AppError> {
     let specs = codex_published_specs(row.settings, row.config_text);
     if specs.is_empty() {
         return Ok(Vec::new());
@@ -2536,7 +2702,7 @@ fn sink_row_windows(entry: &mut Value, windows: &RowWindows, third_party: bool) 
             .then(|| obj.get("context_window").and_then(Value::as_u64))
             .flatten()
             .filter(|window| *window > 0)
-            .map(|window| window * 9 / 10)
+            .map(|window| (u128::from(window) * 9 / 10) as u64)
     });
     if let Some(limit) = limit {
         obj.insert("auto_compact_token_limit".to_string(), json!(limit));
@@ -2721,7 +2887,7 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         ) {
             continue;
         }
-        // 照搬官方的行只还原模型名，不能把官方值当成用户填的存回库里。通用模板没有
+        // 官方镜像只还原模型名和显式窗口，不能把官方能力当成用户填的存回库里。通用模板没有
         // `model_messages`（走 Anthropic 的行不照搬）；旧版 ProxyChat 克隆的 gpt-5.5 模板
         // 有，但带着用户填的显示名、窗口，下面逐项比对不上，照旧还原。
         if entry
@@ -2730,10 +2896,21 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             .is_some()
         {
             let official = official.get_or_insert_with(codex_openai_official_models);
-            if find_codex_official_model(model, official)
-                .is_some_and(|found| is_codex_official_mirror(entry, model, found))
+            if let Some(found) = find_codex_official_model(model, official)
+                .filter(|found| is_codex_official_mirror(entry, model, found))
             {
-                entries.push(json!({ "model": model }));
+                let mut restored = json!({ "model": model });
+                let fallback_window =
+                    extract_codex_top_level_u64(config_text, "model_context_window")
+                        .or_else(|| found.get("context_window").and_then(Value::as_u64));
+                if let Some(window) = entry
+                    .get("context_window")
+                    .and_then(Value::as_u64)
+                    .filter(|window| *window > 0 && Some(*window) != fallback_window)
+                {
+                    restored["contextWindow"] = json!(window);
+                }
+                entries.push(restored);
                 continue;
             }
         }
@@ -2785,7 +2962,32 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         return None;
     }
 
-    Some(json!({ "models": entries }))
+    // 卡上选的自动审批模型写在每一行上（见 `apply_codex_auto_review_model`）：这张卡的行都写着
+    // 同一个、而且是这张卡自己的模型时才还原。聚合设置写的 `ccs-*` 不属于这张卡。
+    let mut overrides = models.iter().filter_map(|entry| {
+        let slug = entry.get("slug").and_then(Value::as_str)?.trim();
+        matches!(
+            crate::mode::stack::decode(&crate::app_config::AppType::Codex, slug),
+            crate::mode::stack::Decoded::Plain
+        )
+        .then(|| {
+            entry
+                .get("auto_review_model_override")
+                .and_then(Value::as_str)
+        })
+    });
+    let auto_review = overrides.next().flatten().filter(|model| {
+        overrides.all(|other| other == Some(*model))
+            && entries
+                .iter()
+                .any(|entry| entry.get("model").and_then(Value::as_str) == Some(*model))
+    });
+
+    let mut simplified = json!({ "models": entries });
+    if let Some(model) = auto_review {
+        simplified["autoReviewModel"] = json!(model);
+    }
+    Some(simplified)
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -3602,8 +3804,7 @@ experimental_bearer_token = "stale-table-key"
 
     #[test]
     fn dynamic_template_backfills_parser_required_fields_from_static() {
-        // Simulate a template cloned from a models_cache.json written by a
-        // Codex build whose ModelInfo lacks parser-side required fields such
+        // Simulate an official row from a Codex build whose ModelInfo lacks parser-side required fields such
         // as `supports_reasoning_summaries` (codex >= 0.144.5 rejects the
         // whole catalog file without it).
         let mut template = json!({
@@ -4599,7 +4800,7 @@ wire_api = "responses"
                 ]
             }
         });
-        let template = load_codex_model_template_static().unwrap();
+        let template = load_codex_classic_tool_template();
         assert_eq!(template["supports_parallel_tool_calls"], json!(true));
         let catalog = codex_model_catalog_from_specs(
             &codex_catalog_model_specs(&settings),
@@ -4802,6 +5003,89 @@ wire_api = "responses"
         );
     }
 
+    fn auto_review_overrides(catalog: &Value) -> Vec<Option<&str>> {
+        catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                row.get("auto_review_model_override")
+                    .and_then(Value::as_str)
+            })
+            .collect()
+    }
+
+    /// 卡上选的自动审批模型写进这张卡目录的每一行（主模型可以是任何一行）；不在模型列表里
+    /// 就不写，用 Codex 的默认。
+    #[test]
+    fn card_auto_review_model_is_written_to_every_catalog_row() {
+        let config = "model = \"deepseek-v4-pro\"\n";
+        let settings = |auto_review: &str| {
+            json!({
+                "modelCatalog": {
+                    "models": [
+                        { "model": "deepseek-v4-pro" },
+                        { "model": "deepseek-v4-flash" }
+                    ],
+                    "autoReviewModel": auto_review
+                }
+            })
+        };
+        let profile = CodexCatalogToolProfile::NativeResponses;
+
+        let catalog =
+            codex_model_catalog_from_settings(&settings(" deepseek-v4-flash "), config, profile)
+                .unwrap()
+                .expect("catalog");
+        assert_eq!(
+            auto_review_overrides(&catalog),
+            vec![Some("deepseek-v4-flash"); 2]
+        );
+
+        for not_written in ["", "codex-auto-review"] {
+            let catalog =
+                codex_model_catalog_from_settings(&settings(not_written), config, profile)
+                    .unwrap()
+                    .expect("catalog");
+            assert_eq!(
+                auto_review_overrides(&catalog),
+                vec![None; 2],
+                "{not_written:?}"
+            );
+        }
+    }
+
+    /// 读回 live 目录时还原卡上选的审批模型；聚合设置写的 `ccs-*`、各行不一致的都不还原。
+    #[test]
+    fn simplified_catalog_restores_the_card_auto_review_model() {
+        let catalog = |overrides: [&str; 2]| {
+            json!({ "models": [
+                { "slug": "deepseek-v4-pro", "auto_review_model_override": overrides[0] },
+                { "slug": "deepseek-v4-flash", "auto_review_model_override": overrides[1] }
+            ]})
+            .to_string()
+        };
+        let restored = |overrides| {
+            build_simplified_catalog_from_texts("", &catalog(overrides))
+                .expect("entries")
+                .get("autoReviewModel")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        assert_eq!(
+            restored(["deepseek-v4-flash", "deepseek-v4-flash"]).as_deref(),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(restored(["ccs-kimi/k3", "ccs-kimi/k3"]), None);
+        assert_eq!(restored(["deepseek-v4-flash", "deepseek-v4-pro"]), None);
+
+        let plain = r#"{ "models": [{ "slug": "deepseek-v4-pro" }] }"#;
+        assert!(build_simplified_catalog_from_texts("", plain)
+            .expect("entries")
+            .get("autoReviewModel")
+            .is_none());
+    }
+
     /// 在官方列表换成 `rows` 的情况下跑 `f`（本线程）。
     fn with_official_models<T>(rows: Vec<Value>, f: impl FnOnce() -> T) -> T {
         CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(rows));
@@ -4827,6 +5111,8 @@ wire_api = "responses"
                 "upgrade": { "model": "gpt-next" },
                 "context_window": 272_000,
                 "max_context_window": 872_000,
+                "auto_compact_token_limit": 244_800,
+                "effective_context_window_percent": 95,
                 "supports_image_detail_original": true,
                 "supported_reasoning_levels": [
                     { "effort": "low", "description": "l" },
@@ -4885,8 +5171,8 @@ wire_api = "responses"
         let models = with_official_models(official_gpt_rows(), || {
             catalog_for(
                 json!([
-                    // 行里的覆盖值对官方行不生效。
-                    { "model": "gpt-6-sol", "contextWindow": 128_000, "reasoningLevels": ["none"] },
+                    // 提示词、工具和思考档位保持官方值；未填窗口时也保留官方默认。
+                    { "model": "gpt-6-sol", "reasoningLevels": ["none"] },
                     { "model": "glm-5" }
                 ]),
                 "",
@@ -4906,6 +5192,7 @@ wire_api = "responses"
         assert_eq!(gpt["tool_mode"], "code_mode_only");
         assert_eq!(gpt["context_window"], 272_000);
         assert_eq!(gpt["max_context_window"], 872_000);
+        assert_eq!(gpt["auto_compact_token_limit"], 244_800);
         assert_eq!(gpt["default_reasoning_level"], "low");
         assert_eq!(gpt["supported_reasoning_levels"][1]["effort"], "xhigh");
         assert_eq!(gpt["supports_image_detail_original"], true);
@@ -4924,6 +5211,209 @@ wire_api = "responses"
         assert!(glm.get("model_messages").is_none());
         assert!(glm.get("apply_patch_tool_type").is_none());
         assert_eq!(glm["shell_type"], "shell_command");
+    }
+
+    #[test]
+    fn official_gpt_rows_honor_explicit_context_windows() {
+        with_official_models(official_gpt_rows(), || {
+            for profile in [
+                CodexCatalogToolProfile::NativeResponses,
+                CodexCatalogToolProfile::ProxyChat,
+            ] {
+                let models = catalog_for(
+                    json!([
+                        { "model": "gpt-6-sol", "contextWindow": 1_050_000 },
+                        { "model": "openai/gpt-5.5", "contextWindow": "512000" },
+                        { "model": "gpt-6-sol-high", "contextWindow": 128_000 },
+                        { "model": "gpt-6", "contextWindow": "" }
+                    ]),
+                    "",
+                    profile,
+                );
+                for (model, window) in models.iter().zip([1_050_000, 512_000, 128_000]) {
+                    assert_eq!(model["context_window"], window);
+                    assert_eq!(model["max_context_window"], window);
+                    assert_eq!(model["auto_compact_token_limit"], window * 9 / 10);
+                    assert_eq!(model["effective_context_window_percent"], 95);
+                    assert_eq!(model["apply_patch_tool_type"], "freeform");
+                }
+                assert_eq!(
+                    models[0]["model_messages"]["instructions_template"],
+                    "GPT-6 Sol prompt"
+                );
+                assert_eq!(models[3]["context_window"], 272_000);
+                assert_eq!(models[3]["max_context_window"], 872_000);
+                assert_eq!(models[3]["auto_compact_token_limit"], 244_800);
+            }
+        });
+    }
+
+    #[test]
+    fn official_gpt_rows_honor_global_context_window_overrides() {
+        with_official_models(official_gpt_rows(), || {
+            let models = catalog_for(
+                json!([
+                    { "model": "gpt-6-sol" },
+                    { "model": "gpt-5.5", "contextWindow": 512_000 }
+                ]),
+                "model_context_window = 1000000\nmodel_auto_compact_token_limit = 900000\n",
+                CodexCatalogToolProfile::NativeResponses,
+            );
+            for model in models {
+                // Codex clamps config overrides to max_context_window, so both must match.
+                assert_eq!(model["context_window"], 1_000_000);
+                assert_eq!(model["max_context_window"], 1_000_000);
+                assert_eq!(model["auto_compact_token_limit"], 900_000);
+            }
+        });
+    }
+
+    #[test]
+    fn gemini_context_windows_and_compaction_limits_agree_in_every_catalog_mode() {
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::ProxyChat,
+        ] {
+            for window in [272_000_u64, 1_000_000] {
+                let settings = json!({ "modelCatalog": { "models": [
+                    { "model": "gemini-3.8-flash-high", "contextWindow": window },
+                    { "model": "gemini-3.8-pro" }
+                ] } });
+                let single = codex_model_catalog_from_settings(&settings, "", profile)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(single["models"][0]["context_window"], window);
+                assert_eq!(single["models"][0]["max_context_window"], window);
+                assert_eq!(
+                    single["models"][0]["auto_compact_token_limit"],
+                    window * 9 / 10
+                );
+                assert_eq!(single["models"][1]["context_window"], 128_000);
+
+                let stacked = plan_codex_stack_catalog(
+                    CodexStackRoute::ThirdParty(CodexCatalogRow {
+                        settings: &json!({}),
+                        config_text: "",
+                        profile,
+                    }),
+                    &[CodexStackCatalogMember {
+                        key: "gemini",
+                        provider_name: "Gemini",
+                        row: CodexCatalogRow {
+                            settings: &settings,
+                            config_text: "",
+                            profile,
+                        },
+                    }],
+                    false,
+                )
+                .unwrap();
+                let model = &stacked["models"][0];
+                assert_eq!(model["slug"], "ccs-gemini/gemini-3.8-flash-high");
+                assert_eq!(model["context_window"], window);
+                assert_eq!(model["auto_compact_token_limit"], window * 9 / 10);
+
+                let global = codex_model_catalog_from_settings(
+                    &settings,
+                    "model_context_window = 512000\nmodel_auto_compact_token_limit = 400000\n",
+                    profile,
+                )
+                .unwrap()
+                .unwrap();
+                for model in global["models"].as_array().unwrap() {
+                    assert_eq!(model["context_window"], 512_000);
+                    assert_eq!(model["max_context_window"], 512_000);
+                    assert_eq!(model["auto_compact_token_limit"], 400_000);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn official_gpt_context_windows_survive_catalog_round_trip() {
+        with_official_models(official_gpt_rows(), || {
+            for window in [128_000, 512_000, 1_050_000] {
+                let input = json!([{ "model": "gpt-6-sol", "contextWindow": window }]);
+                let catalog = json!({ "models": catalog_for(
+                    input.clone(), "", CodexCatalogToolProfile::NativeResponses,
+                ) });
+                let simplified =
+                    build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+                // Only the user's window is restored, without sticky official capabilities.
+                assert_eq!(simplified["models"], input);
+                let regenerated = codex_model_catalog_from_settings(
+                    &json!({ "modelCatalog": simplified }),
+                    "",
+                    CodexCatalogToolProfile::NativeResponses,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(regenerated, catalog);
+            }
+        });
+    }
+
+    #[test]
+    fn official_gpt_global_context_windows_do_not_become_per_model_overrides() {
+        with_official_models(official_gpt_rows(), || {
+            let config = "model_context_window = 1000000\n";
+            let catalog = json!({ "models": catalog_for(
+                json!([{ "model": "gpt-6-sol" }]),
+                config,
+                CodexCatalogToolProfile::NativeResponses,
+            ) });
+            let simplified =
+                build_simplified_catalog_from_texts(config, &catalog.to_string()).unwrap();
+            assert_eq!(simplified["models"], json!([{ "model": "gpt-6-sol" }]));
+            let regenerated = codex_model_catalog_from_settings(
+                &json!({ "modelCatalog": simplified }),
+                config,
+                CodexCatalogToolProfile::NativeResponses,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(regenerated, catalog);
+        });
+    }
+
+    #[test]
+    fn stacked_official_gpt_rows_keep_each_providers_context_window() {
+        with_official_models(official_gpt_rows(), || {
+            let route = json!({ "modelCatalog": { "models": [
+                { "model": "gpt-6-sol", "contextWindow": 1_050_000 }
+            ] } });
+            let member = json!({ "modelCatalog": { "models": [
+                { "model": "gpt-6-sol", "contextWindow": 512_000 }
+            ] } });
+            let catalog = plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &route,
+                    config_text: "",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[CodexStackCatalogMember {
+                    key: "relay",
+                    provider_name: "Relay",
+                    row: CodexCatalogRow {
+                        settings: &member,
+                        config_text: "",
+                        profile: CodexCatalogToolProfile::ProxyChat,
+                    },
+                }],
+                false,
+            )
+            .unwrap();
+            let models = catalog["models"].as_array().unwrap();
+            for (model, window) in models.iter().zip([1_050_000, 512_000]) {
+                assert_eq!(model["context_window"], window);
+                assert_eq!(model["max_context_window"], window);
+                assert_eq!(model["auto_compact_token_limit"], window * 9 / 10);
+                assert_eq!(
+                    model["model_messages"]["instructions_template"],
+                    "GPT-6 Sol prompt"
+                );
+            }
+        });
     }
 
     #[test]
@@ -5013,6 +5503,7 @@ wire_api = "responses"
                         profile: CodexCatalogToolProfile::ProxyChat,
                     },
                 }],
+                false,
             )
             .unwrap()["models"]
                 .as_array()
@@ -5190,6 +5681,7 @@ wire_api = "responses"
                     profile: CodexCatalogToolProfile::NativeResponses,
                 },
             }],
+            false,
         )
         .unwrap();
         let models = catalog["models"].as_array().unwrap();
@@ -5214,6 +5706,75 @@ wire_api = "responses"
         assert_eq!(models[3]["comp_hash"], "cc-switch");
     }
 
+    /// 打开「经典子 agent」后每一行都写 v1（官方行、Stack 行都写）；关着时官方行保持原值，
+    /// Stack 行沿用模板的值。
+    #[test]
+    fn multi_agent_v2_override_is_read_in_both_shapes() {
+        assert!(codex_config_forces_multi_agent_v2(
+            "[features]\nmulti_agent_v2 = true\n"
+        ));
+        assert!(codex_config_forces_multi_agent_v2(
+            "[features.multi_agent_v2]\nenabled = true\nmax_threads = 4\n"
+        ));
+        assert!(codex_config_forces_multi_agent_v2(
+            "features = { multi_agent_v2 = { enabled = true } }\n"
+        ));
+        for text in [
+            "",
+            "[features]\nmulti_agent_v2 = false\n",
+            "[features.multi_agent_v2]\nmax_threads = 4\n",
+            "[features]\nmulti_agent = true\n",
+            "not toml = [",
+        ] {
+            assert!(!codex_config_forces_multi_agent_v2(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn classic_subagents_stamp_every_stacked_catalog_row() {
+        let plan = |classic: bool| {
+            let native = normalize_codex_native_rows(vec![
+                native_row(
+                    "gpt-6-sol",
+                    json!({ "base_instructions": "x", "multi_agent_version": "v2" }),
+                ),
+                native_row("gpt-5.5", json!({ "base_instructions": "x" })),
+            ])
+            .unwrap();
+            let stacked_settings = json!({});
+            plan_codex_stack_catalog(
+                CodexStackRoute::Official {
+                    native,
+                    config_text: "",
+                },
+                &[CodexStackCatalogMember {
+                    key: "ds",
+                    provider_name: "DS",
+                    row: CodexCatalogRow {
+                        settings: &stacked_settings,
+                        config_text: "model = \"deepseek-v4-pro\"\n",
+                        profile: CodexCatalogToolProfile::NativeResponses,
+                    },
+                }],
+                classic,
+            )
+            .unwrap()
+        };
+
+        let classic = plan(true);
+        let models = classic["models"].as_array().unwrap();
+        assert_eq!(models.len(), 3);
+        for model in models {
+            assert_eq!(model["multi_agent_version"], "v1", "{}", model["slug"]);
+        }
+
+        let native = plan(false);
+        let models = native["models"].as_array().unwrap();
+        assert_eq!(models[0]["slug"], "gpt-6-sol");
+        assert_eq!(models[0]["multi_agent_version"], "v2");
+        assert!(models[1].get("multi_agent_version").is_none());
+    }
+
     #[test]
     fn build_simplified_catalog_leaves_stack_models_out_of_the_route_row() {
         let catalog = r#"{
@@ -5233,8 +5794,11 @@ wire_api = "responses"
         assert_eq!(models, vec!["deepseek/deepseek-v4"]);
     }
 
+    /// #8485：第三方路由那家的行和 Stack 行同一个 `comp_hash`，两者之间切换时 Codex 不会先
+    /// 用上一家压缩（上一家额度用完时压缩失败，会话每轮都卡在上一家）。名单为空时的目录
+    /// 仍是模板的值。
     #[test]
-    fn the_route_rows_keep_the_comp_hash_they_have_without_stack_models() {
+    fn third_party_route_rows_share_the_stack_comp_hash() {
         let route_settings =
             json!({ "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] } });
         let route_text = "model_provider = \"deepseek\"\nmodel = \"deepseek-v4-pro\"\n\
@@ -5261,13 +5825,15 @@ wire_api = "responses"
                     profile,
                 },
             }],
+            false,
         )
         .unwrap();
         let models = stacked["models"].as_array().unwrap();
         assert_eq!(models[0]["slug"], "deepseek-v4-pro");
-        assert_eq!(models[0]["comp_hash"], plain["models"][0]["comp_hash"]);
         assert_eq!(models[1]["slug"], "ccs-ds/deepseek-v4-pro");
-        assert_eq!(models[1]["comp_hash"], "cc-switch");
+        for model in models {
+            assert_eq!(model["comp_hash"], "cc-switch", "{}", model["slug"]);
+        }
     }
 
     #[test]
@@ -5291,6 +5857,7 @@ wire_api = "responses"
                     profile: CodexCatalogToolProfile::Anthropic,
                 },
             }],
+            false,
         )
         .expect("catalog");
         let models = catalog["models"].as_array().unwrap();
@@ -5411,6 +5978,42 @@ wire_api = "responses"
     }
 
     #[test]
+    fn bundled_models_tell_a_missing_cli_apart_from_a_failing_one() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("missing-codex");
+        let pick = |catalog: &Value| catalog.get("models").cloned();
+        assert_eq!(
+            first_bundled_catalog(vec![missing.clone()], pick).err(),
+            Some(CodexBundledModelsError::NoCli)
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let script = |name: &str, body: &str| {
+                let path = dir.path().join(name);
+                fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                    .expect("chmod script");
+                path
+            };
+            let failing = script("failing-codex", "echo boom >&2; exit 1");
+            let working = script("working-codex", r#"echo '{"models":[{"slug":"x"}]}'"#);
+
+            // 找到了命令行但跑失败：不能报成找不到。
+            assert!(matches!(
+                first_bundled_catalog(vec![missing.clone(), failing.clone()], pick),
+                Err(CodexBundledModelsError::Failed(detail)) if detail.contains("boom")
+            ));
+            // 前面的失败不影响后面能用的候选。
+            assert_eq!(
+                first_bundled_catalog(vec![missing, failing, working], pick).ok(),
+                Some(json!([{ "slug": "x" }]))
+            );
+        }
+    }
+
+    #[test]
     fn codex_bundled_models_command_uses_expected_program_and_args() {
         let command = codex_bundled_models_command(Path::new("codex"));
         assert_eq!(command.get_program(), "codex");
@@ -5421,50 +6024,6 @@ wire_api = "responses"
                 .collect::<Vec<_>>(),
             ["debug", "models", "--bundled"]
         );
-    }
-
-    #[test]
-    fn successful_model_catalog_template_load_is_cached() {
-        use std::cell::Cell;
-
-        let cache = OnceCell::new();
-        let calls = Cell::new(0);
-        let first = get_or_load_codex_model_catalog_template(&cache, || {
-            calls.set(calls.get() + 1);
-            Ok(json!({ "slug": "first" }))
-        })
-        .expect("first template load");
-        let second = get_or_load_codex_model_catalog_template(&cache, || {
-            calls.set(calls.get() + 1);
-            Ok(json!({ "slug": "second" }))
-        })
-        .expect("cached template load");
-
-        assert_eq!(first, json!({ "slug": "first" }));
-        assert_eq!(second, first);
-        assert_eq!(calls.get(), 1, "successful template should load only once");
-    }
-
-    #[test]
-    fn failed_model_catalog_template_load_can_retry() {
-        use std::cell::Cell;
-
-        let cache = OnceCell::new();
-        let calls = Cell::new(0);
-        let first = get_or_load_codex_model_catalog_template(&cache, || {
-            calls.set(calls.get() + 1);
-            Err(AppError::Message("temporary failure".to_string()))
-        });
-        assert!(first.is_err());
-
-        let second = get_or_load_codex_model_catalog_template(&cache, || {
-            calls.set(calls.get() + 1);
-            Ok(json!({ "slug": "recovered" }))
-        })
-        .expect("retry template load");
-
-        assert_eq!(second, json!({ "slug": "recovered" }));
-        assert_eq!(calls.get(), 2, "failed loads must not poison the cache");
     }
 
     #[test]
@@ -5519,21 +6078,155 @@ wire_api = "responses"
         );
     }
 
+    fn create_cli_candidate(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("candidate parent"))
+            .expect("create candidate parent");
+        std::fs::write(path, "").expect("create candidate");
+    }
+
+    fn desktop_cli(applications: &Path, bundle: &str, layout: &str) -> PathBuf {
+        applications.join(bundle).join(layout)
+    }
+
     #[test]
-    fn static_template_is_valid_json_with_slug() {
-        let template =
-            load_codex_model_template_static().expect("static template must parse as valid JSON");
-        assert_eq!(
-            template.get("slug").and_then(|v| v.as_str()),
-            Some("gpt-5.5"),
-            "static template slug must be gpt-5.5"
+    fn codex_cli_candidates_include_desktop_app_bundles_and_layouts() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let applications = temp_home.path().join("Applications");
+        let current_layout = CODEX_DESKTOP_CLI_IN_BUNDLE[0];
+        let legacy_layout = CODEX_DESKTOP_CLI_IN_BUNDLE[1];
+        let chatgpt_current = desktop_cli(&applications, "ChatGPT.app", current_layout);
+        let chatgpt_legacy = desktop_cli(&applications, "ChatGPT.app", legacy_layout);
+        // 改名前的 Codex.app 只有旧结构（openai/codex#48052）。
+        let codex_legacy = desktop_cli(&applications, "Codex.app", legacy_layout);
+        for path in [&chatgpt_current, &chatgpt_legacy, &codex_legacy] {
+            create_cli_candidate(path);
+        }
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_desktop_codex_cli_candidates(&mut candidates, &mut seen, temp_home.path());
+
+        let position = |path: &Path| {
+            candidates
+                .iter()
+                .position(|candidate| candidate == path)
+                .unwrap_or_else(|| panic!("missing desktop candidate {}", path.display()))
+        };
+        assert!(position(&chatgpt_current) < position(&chatgpt_legacy));
+        // 两份都在时 ChatGPT.app 是新的那份，先用它。
+        assert!(position(&chatgpt_legacy) < position(&codex_legacy));
+    }
+
+    fn set_mtime(path: &Path, time: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open")
+            .set_times(std::fs::FileTimes::new().set_modified(time))
+            .expect("set mtime");
+    }
+
+    #[test]
+    fn codex_cli_candidates_try_the_newest_desktop_version_first() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
+        let now = std::time::SystemTime::now();
+        // 按目录名倒序排的话 0.99.0 会排在前面。
+        let older = root.join("0.99.0").join("codex.exe");
+        let newer = root.join("0.162.0").join("codex.exe");
+        create_cli_candidate(&older);
+        create_cli_candidate(&newer);
+        set_mtime(&older, now - std::time::Duration::from_secs(3600));
+        set_mtime(&newer, now);
+        std::fs::create_dir_all(root.join("logs")).expect("create dir without codex.exe");
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_codex_cli_candidates_newest_first(&mut candidates, &mut seen, root, "codex.exe");
+
+        assert_eq!(candidates, vec![newer, older]);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_cli_candidates_try_the_desktop_app_cli_after_standalone_installs() {
+        let test_home = CodexLiveTestHome::new();
+        let home = test_home._dir.path();
+        let standalone = home.join(".volta/bin/codex");
+        let desktop = desktop_cli(
+            &home.join("Applications"),
+            "ChatGPT.app",
+            CODEX_DESKTOP_CLI_IN_BUNDLE[0],
         );
+        create_cli_candidate(&standalone);
+        create_cli_candidate(&desktop);
+
+        let candidates = codex_cli_candidates();
+        let position = |path: &Path| {
+            candidates
+                .iter()
+                .position(|candidate| candidate == path)
+                .unwrap_or_else(|| panic!("missing candidate {}", path.display()))
+        };
+
+        // 装了独立 CLI 的人照旧先用它，桌面版的只做兜底。
+        assert!(position(&standalone) < position(&desktop));
+    }
+
+    #[test]
+    fn classic_tool_template_keeps_the_classic_tool_contract() {
+        let template = load_codex_classic_tool_template();
+        assert_eq!(template["slug"], "gpt-5.5");
+        // 转换层照着这套工具写：freeform apply_patch、unified_exec，带 Skills / 插件使用说明。
+        assert_eq!(template["apply_patch_tool_type"], "freeform");
+        assert_eq!(template["shell_type"], "unified_exec");
+        assert_eq!(template["include_skills_usage_instructions"], true);
+        assert_eq!(template["include_plugin_usage_instructions"], true);
+        // 新官方条目才有的 code mode / v2 子代理 / 实验工具，不能被带给第三方模型。
+        assert!(template.get("tool_mode").is_none());
+        assert!(template.get("multi_agent_version").is_none());
+        assert_eq!(template["experimental_supported_tools"], json!([]));
+        assert_eq!(template["visibility"], "list");
+    }
+
+    #[test]
+    #[serial]
+    fn proxy_chat_catalog_ignores_codex_models_cache() {
+        let home = CodexLiveTestHome::new();
+        let codex_dir = home._dir.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            json!({ "models": [{
+                "slug": "gpt-5.5",
+                "visibility": "hide",
+                "shell_type": "shell_command",
+                "tool_mode": "code_mode_only",
+                "base_instructions": "cached"
+            }] })
+            .to_string(),
+        )
+        .expect("write models cache");
+
+        let settings = json!({ "modelCatalog": { "models": [{ "model": "glm-5.3" }] } });
+        let config_text = "model_provider = \"custom\"\nmodel = \"glm-5.3\"\n\n[model_providers.custom]\nname = \"x\"\nbase_url = \"https://open.bigmodel.cn/api/coding/paas/v4\"\nwire_api = \"chat\"\n";
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            config_text,
+            CodexCatalogToolProfile::ProxyChat,
+        )
+        .expect("build catalog")
+        .expect("catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["slug"], "glm-5.3");
+        assert_eq!(entry["shell_type"], "unified_exec");
+        assert!(entry.get("tool_mode").is_none());
+        assert_ne!(entry["base_instructions"], "cached");
     }
 
     #[test]
     fn static_template_has_required_keys() {
-        let template =
-            load_codex_model_template_static().expect("static template must parse as valid JSON");
+        let template = load_codex_classic_tool_template();
         for key in &[
             "model_messages",
             "base_instructions",

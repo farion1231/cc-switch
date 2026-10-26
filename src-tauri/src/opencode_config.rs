@@ -585,6 +585,31 @@ pub fn remove_provider(id: &str) -> Result<(), AppError> {
     .map(|_| ())
 }
 
+/// Top-level `model` (`"<provider>/<model>"`): the model OpenCode starts with.
+pub fn get_default_model() -> Result<Option<String>, AppError> {
+    Ok(read_opencode_config()?
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+
+/// Only rewrites the top-level `model`; `small_model` and everything else stay as is.
+pub fn set_default_model(model: &str) -> Result<(), AppError> {
+    let model = model.trim();
+    if !model
+        .split_once('/')
+        .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty())
+    {
+        return Err(AppError::InvalidInput(format!(
+            "OpenCode model must be \"<provider>/<model>\": {model}"
+        )));
+    }
+    edit_config(get_opencode_config_path, |config| {
+        config["model"] = json!(model);
+    })
+    .map(|_| ())
+}
+
 pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
     let config = read_opencode_config()?;
     Ok(config
@@ -1115,6 +1140,36 @@ mod tests {
         assert_eq!(
             config["model"], "keep-me",
             "unrelated user config must be preserved"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn set_default_model_only_touches_top_level_model() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        write_config(
+            temp.path(),
+            "{\n  // keep me\n  \"model\": \"old/a\",\n  \"small_model\": \"old/b\"\n}\n",
+        );
+        assert_eq!(get_default_model().unwrap().as_deref(), Some("old/a"));
+
+        set_default_model("relay/vendor/model-x").expect("set must succeed");
+
+        let path = get_opencode_config_path().unwrap();
+        let source = std::fs::read_to_string(&path).unwrap();
+        assert!(source.contains("// keep me"), "comments must survive");
+        let config = read_opencode_config().unwrap();
+        assert_eq!(config["model"], "relay/vendor/model-x");
+        assert_eq!(config["small_model"], "old/b");
+
+        for invalid in ["", "no-slash", "/model", "provider/"] {
+            assert!(set_default_model(invalid).is_err(), "{invalid:?}");
+        }
+        assert_eq!(
+            read_opencode_config().unwrap()["model"],
+            "relay/vendor/model-x"
         );
     }
 

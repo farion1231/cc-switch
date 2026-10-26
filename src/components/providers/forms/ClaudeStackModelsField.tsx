@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
-import { Download, Loader2, Plus, Star, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
@@ -8,7 +9,10 @@ import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 import type { ClaudeStackModel } from "@/types";
-import { FetchedModelPicker } from "./FetchedModelPicker";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import { ModelDropdown } from "./shared";
 import {
   hasClaudeOneMMarker,
@@ -94,6 +98,8 @@ interface ClaudeStackModelsFieldProps {
   fetchedModels: FetchedModel[];
   onFetchModels: () => void;
   isFetchingModels: boolean;
+  /** 供应商地址：选择弹窗按它查各模型的窗口等参数。 */
+  baseUrl?: string;
 }
 
 /**
@@ -106,6 +112,7 @@ export function ClaudeStackModelsField({
   fetchedModels,
   onFetchModels,
   isFetchingModels,
+  baseUrl = "",
 }: ClaudeStackModelsFieldProps) {
   const { t } = useTranslation();
 
@@ -114,45 +121,50 @@ export function ClaudeStackModelsField({
       rows.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)),
     );
 
-  const addFetchedModels = (modelIds: string[]) => {
-    const configured = new Set(
-      rows.map((row) => stripClaudeOneMMarker(row.model).trim()),
+  const applyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const removed = new Set(remove);
+    const kept = rows.filter(
+      (row) => !removed.has(stripClaudeOneMMarker(row.model).trim()),
     );
-    const additions = modelIds
+    const configured = new Set(
+      kept.map((row) => stripClaudeOneMMarker(row.model).trim()),
+    );
+    const additions = add
       .filter((id) => !configured.has(id))
       .map((id) => createClaudeStackModelRow({ model: id }));
-    onRowsChange([...rows, ...additions]);
-  };
-
-  const makeDefault = (rowId: string) => {
-    const row = rows.find((other) => other.rowId === rowId);
-    if (!row) return;
-    onRowsChange([row, ...rows.filter((other) => other.rowId !== rowId)]);
+    onRowsChange([...kept, ...additions]);
   };
 
   return (
     <div className="space-y-3">
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-3">
-          <FormLabel>
-            {t("providerForm.stackModelsLabel", { defaultValue: "模型列表" })}
-          </FormLabel>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onFetchModels}
-              disabled={isFetchingModels}
-              className="h-7 gap-1"
+          <div className="flex items-center gap-0.5">
+            <FormLabel>
+              {t("providerForm.stackModelsLabel", { defaultValue: "模型列表" })}
+            </FormLabel>
+            <HelpTip
+              title={t("providerForm.stackModelsLabel", {
+                defaultValue: "模型列表",
+              })}
             >
-              {isFetchingModels ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
+              {t("providerForm.stackModelDefaultHelp", {
+                defaultValue:
+                  "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一行是默认模型，也会写成这张卡的 ANTHROPIC_MODEL。",
+              })}
+            </HelpTip>
+          </div>
+          <div className="flex gap-2">
+            <FetchedModelPicker
+              models={fetchedModels}
+              configuredModelIds={rows.map((row) =>
+                stripClaudeOneMMarker(row.model).trim(),
               )}
-              {t("providerForm.fetchModels")}
-            </Button>
+              onApply={applyFetchedModels}
+              onFetch={onFetchModels}
+              isFetching={isFetchingModels}
+              metadataSource={{ baseUrl }}
+            />
             <Button
               type="button"
               variant="outline"
@@ -167,23 +179,7 @@ export function ClaudeStackModelsField({
             </Button>
           </div>
         </div>
-        <p className="text-xs leading-relaxed text-fg-2">
-          {t("providerForm.stackModelsHint", {
-            defaultValue:
-              "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
-          })}
-        </p>
       </div>
-
-      {fetchedModels.length > 0 && (
-        <FetchedModelPicker
-          models={fetchedModels}
-          configuredModelIds={rows.map((row) =>
-            stripClaudeOneMMarker(row.model).trim(),
-          )}
-          onAdd={addFetchedModels}
-        />
-      )}
 
       {rows.length === 0 ? (
         <p className="text-xs leading-relaxed text-fg-2">
@@ -194,8 +190,7 @@ export function ClaudeStackModelsField({
         </p>
       ) : (
         <div className="space-y-2">
-          <div className="hidden grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
-            <span />
+          <div className="hidden grid-cols-[1fr_minmax(0,1fr)_64px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
             <span>
               {t("providerForm.modelDisplayNameLabel", {
                 defaultValue: "显示名称",
@@ -211,41 +206,13 @@ export function ClaudeStackModelsField({
             </span>
             <span />
           </div>
-          {rows.map((row, index) => {
+          {rows.map((row) => {
             const modelBase = stripClaudeOneMMarker(row.model).trim();
-            const isDefault = index === 0;
-            const defaultLabel = isDefault
-              ? t("providerForm.stackModelDefault", {
-                  defaultValue: "默认模型",
-                })
-              : t("providerForm.stackModelMakeDefault", {
-                  defaultValue: "设为默认模型",
-                });
             return (
               <div
                 key={row.rowId}
-                className="grid grid-cols-1 gap-2 md:grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px]"
+                className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,1fr)_64px_36px]"
               >
-                <HoverTip content={defaultLabel}>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => makeDefault(row.rowId)}
-                    disabled={isDefault}
-                    aria-label={defaultLabel}
-                    aria-pressed={isDefault}
-                    className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
-                  >
-                    <Star
-                      className={
-                        isDefault
-                          ? "h-4 w-4 fill-warning text-warning-text"
-                          : "h-4 w-4"
-                      }
-                    />
-                  </Button>
-                </HoverTip>
                 <ImeSafeInput
                   value={row.displayName ?? ""}
                   onValueChange={(value) =>

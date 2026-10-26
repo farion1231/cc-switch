@@ -50,6 +50,12 @@ fn catalog_model_ids(models: Option<serde_json::Value>) -> Vec<String> {
             ["slug", "id"]
                 .iter()
                 .find_map(|k| m.get(k)?.as_str().filter(|s| !s.is_empty()))
+                .or_else(|| {
+                    m.get("name")?
+                        .as_str()?
+                        .strip_prefix("models/")
+                        .filter(|s| !s.is_empty())
+                })
         })
         .map(str::to_string)
         .collect()
@@ -89,10 +95,21 @@ pub async fn fetch_models(
     api_format: Option<&str>,
     request_headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<FetchedModel>, String> {
-    let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
+    let candidates = if api_format == Some("google-generative-ai")
+        && models_url_override.is_none()
+        && !is_full_url
+    {
+        let base = base_url.trim_end_matches('/');
+        let base = base
+            .strip_suffix("/v1beta")
+            .or_else(|| base.strip_suffix("/v1"))
+            .unwrap_or(base);
+        vec![format!("{base}/v1beta/models")]
+    } else {
+        build_models_url_candidates(base_url, is_full_url, models_url_override)?
+    };
     let headers =
         build_model_fetch_headers(api_key, api_format, user_agent.as_ref(), request_headers)?;
-    let client = crate::proxy::http_client::get();
     let mut last_err: Option<String> = None;
     let mut known_secrets = vec![api_key.to_string()];
     if let Some(request_headers) = request_headers {
@@ -104,7 +121,7 @@ pub async fn fetch_models(
             "[ModelFetch] Trying endpoint: {}",
             crate::url_for_log_with_secrets(url, &known_secrets)
         );
-        let request = client
+        let request = crate::proxy::http_client::get_for_url(url)
             .get(url)
             .headers(headers.clone())
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
@@ -665,6 +682,15 @@ mod tests {
         assert_eq!(data.len(), 2);
         assert_eq!(data[0].id, "model-a");
         assert_eq!(data[1].id, "model-b");
+    }
+
+    #[test]
+    fn agy_google_model_catalog_keeps_other_protocol_ids() {
+        let models = catalog_model_ids(Some(serde_json::json!([
+            {"name":"models/gemini-test"}, {"id":"models/custom-id"},
+            {"slug":"slug","name":"models/ignored"}, {"name":"Display name"}
+        ])));
+        assert_eq!(models, ["gemini-test", "models/custom-id", "slug"]);
     }
 
     #[test]

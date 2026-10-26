@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 export type ManagedAuthProvider =
   | "github_copilot"
   | "codex_oauth"
-  | "xai_oauth";
+  | "xai_oauth"
+  | "agy_oauth";
 
 export const CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR =
   "codex_oauth_duplicate_account";
@@ -117,6 +118,11 @@ export async function authLogout(
   });
 }
 
+/** 有没有正在运行的 agy：在跑的 agy 还用切换前的账号，续期时可能把旧登录写回去。 */
+export async function agyAccountIsRunning(): Promise<boolean> {
+  return invoke<boolean>("agy_account_is_running");
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -126,4 +132,5 @@ export const authApi = {
   authRemoveAccount,
   authSetDefaultAccount,
   authLogout,
+  agyAccountIsRunning,
 };
