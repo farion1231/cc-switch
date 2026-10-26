@@ -901,11 +901,9 @@ impl RequestForwarder {
                         .await);
                 }
                 Err(mut e) => {
-                    // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
-                    let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
-                    let is_anthropic_provider = matches!(
-                        provider_type,
-                        Some(ProviderType::Claude | ProviderType::ClaudeAuth)
+                    // 检测是否需要触发整流器（上游为 Anthropic Messages 的供应商）
+                    let is_anthropic_provider = uses_anthropic_rectifiers(
+                        ProviderType::from_app_type_and_config(app_type, provider),
                     );
                     let mut signature_rectifier_non_retryable_client_error = false;
 
@@ -1183,7 +1181,7 @@ impl RequestForwarder {
                         }
                     }
 
-                    // 检测是否需要触发 budget 整流器（仅 Claude/ClaudeAuth 供应商）
+                    // 检测是否需要触发 budget 整流器（上游为 Anthropic Messages 的供应商）
                     if is_anthropic_provider {
                         let error_message = extract_error_message(&e);
                         if should_rectify_thinking_budget(
@@ -3936,6 +3934,18 @@ fn rewrite_codex_endpoint_for_copilot(
     (rewritten, passthrough_query)
 }
 
+/// Providers whose errors can come from an Anthropic Messages endpoint and therefore
+/// need the thinking signature / budget rectifiers. GitHub Copilot passes Anthropic
+/// models through to its native `/v1/messages`, where history replayed from another
+/// provider or from the Responses bridge fails signature validation; errors from its
+/// Chat / Responses bridges never match the rectifier keywords.
+fn uses_anthropic_rectifiers(provider_type: Option<ProviderType>) -> bool {
+    matches!(
+        provider_type,
+        Some(ProviderType::Claude | ProviderType::ClaudeAuth | ProviderType::GitHubCopilot)
+    )
+}
+
 /// Pick the Copilot upstream protocol for a Claude-client request.
 ///
 /// Anthropic models that advertise `/v1/messages` are passed through natively:
@@ -6260,6 +6270,25 @@ mod tests {
             headers["x-interaction-id"],
             context.interaction_id.as_deref().unwrap()
         );
+    }
+
+    #[test]
+    fn anthropic_rectifiers_cover_copilot_native_messages() {
+        for provider_type in [
+            ProviderType::Claude,
+            ProviderType::ClaudeAuth,
+            ProviderType::GitHubCopilot,
+        ] {
+            assert!(uses_anthropic_rectifiers(Some(provider_type)));
+        }
+        for provider_type in [
+            ProviderType::Codex,
+            ProviderType::OpenRouter,
+            ProviderType::CodexOAuth,
+        ] {
+            assert!(!uses_anthropic_rectifiers(Some(provider_type)));
+        }
+        assert!(!uses_anthropic_rectifiers(None));
     }
 
     #[test]
