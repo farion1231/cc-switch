@@ -1,7 +1,8 @@
 //! S3 v2 sync protocol layer.
 //!
 //! Implements manifest-based synchronization on top of the S3 transport
-//! primitives in [`super::s3`]. Artifact set: `db.sql` + `skills.zip`.
+//! primitives in [`super::s3`].
+//! Artifact set: `db.sql` + `skills.zip` + optional `extra.zip` (#7835).
 
 use std::collections::BTreeMap;
 
@@ -17,7 +18,7 @@ use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
     validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
     RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
-    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_EXTRA_ZIP, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
 #[cfg(test)]
@@ -50,6 +51,12 @@ pub async fn upload(
 
     let skills_key = s3_key(settings, REMOTE_SKILLS_ZIP);
     s3::put_object(&creds, &skills_key, snapshot.skills_zip, "application/zip").await?;
+
+    // Optional artifact: only uploaded when extra sync paths produced content.
+    if let Some(extra_zip) = &snapshot.extra_zip {
+        let extra_key = s3_key(settings, REMOTE_EXTRA_ZIP);
+        s3::put_object(&creds, &extra_key, extra_zip.clone(), "application/zip").await?;
+    }
 
     let manifest_key = s3_key(settings, REMOTE_MANIFEST);
     s3::put_object(
@@ -109,9 +116,16 @@ pub async fn download(
     let db_sql = download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest.artifacts).await?;
     let skills_zip =
         download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
+    // Optional artifact: remotes that never uploaded extra.zip list none, and
+    // a manifest without it simply restores no extra paths.
+    let extra_zip = if manifest.artifacts.contains_key(REMOTE_EXTRA_ZIP) {
+        Some(download_and_verify(settings, &creds, REMOTE_EXTRA_ZIP, &manifest.artifacts).await?)
+    } else {
+        None
+    };
 
     // Apply snapshot
-    apply_snapshot(db, &db_sql, &skills_zip)?;
+    apply_snapshot(db, &db_sql, &skills_zip, extra_zip.as_deref())?;
 
     let manifest_hash = sha256_hex(&manifest_bytes);
     let _persisted =

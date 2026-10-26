@@ -760,6 +760,7 @@
         "content": "将同步以下内容到 WebDAV 服务器：",
         "dbItem": "数据库（所有 Provider 配置和数据）",
         "skillsItem": "技能包（所有自定义技能）",
+        "extraItem": "自定义路径（extra.zip）",
         "targetPath": "目标路径",
         "existingData": "云端已有数据",
         "deviceName": "上传设备",
@@ -770,6 +771,23 @@
         "legacyNotice": "检测到旧版云端路径数据。本次上传将写入新路径 v2/db-v6，不会覆盖旧路径。",
         "confirm": "确认上传"
       }
+    },
+    "syncExtraPaths": {
+      "title": "自定义同步路径",
+      "description": "把这些 ~/.claude 下的目录或文件一并打进云同步快照，例如 hooks 引用的脚本、output-styles、agents。对 WebDAV 与 S3 同步同时生效。",
+      "empty": "尚未添加自定义路径，同步内容与之前完全一致。",
+      "placeholder": "例如：hooks 或 hooks/guard.sh",
+      "sourceLabel": "同步路径",
+      "enabled": "随同步启用",
+      "remove": "移除",
+      "add": "添加路径",
+      "rulesHint": "仅支持相对 ~/.claude 的路径；不支持 ..、绝对路径与符号链接；与本机 Skills 存储目录重叠的路径会被跳过。",
+      "errorEmpty": "路径不能为空，且不能包含空分量（连续或结尾分隔符）",
+      "errorAbsolute": "不支持绝对路径，请填写相对 ~/.claude 的路径",
+      "errorTraversal": "路径分量不能是 . 或 ..",
+      "errorInvalidChar": "包含非法字符（Windows 保留字符 < > : \" | ? *，或以点/空格结尾）",
+      "errorDuplicate": "存在重复路径",
+      "errorNested": "存在互相嵌套的路径，请只保留其中之一"
     },
     "syncType": {
       "label": "同步方式",
@@ -862,6 +880,7 @@
         "content": "将同步以下内容到 S3 存储桶：",
         "dbItem": "数据库（所有 Provider 配置和数据）",
         "skillsItem": "技能包（所有自定义技能）",
+        "extraItem": "自定义路径（extra.zip）",
         "targetPath": "目标对象路径",
         "existingData": "云端已有数据",
         "deviceName": "上传设备",

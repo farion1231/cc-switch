@@ -131,6 +131,155 @@ fn default_profile() -> String {
     "default".to_string()
 }
 
+/// 云同步额外路径上限，防止 settings.json 被塞满无意义条目。
+pub const MAX_SYNC_EXTRA_PATHS: usize = 64;
+
+/// 云同步额外路径：随快照一起打包的 Claude 配置目录（默认 `~/.claude`）下的
+/// 自定义目录/文件（hooks 引用的脚本、output-styles、agents 等，#7835）。
+///
+/// 打包为独立的 `extra.zip` artifact；列表为空（`None`）时行为与旧版本完全一致。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncExtraPath {
+    /// 相对 Claude 配置目录的路径，如 `hooks`、`hooks/guard.sh`。
+    /// 仅允许相对路径，拒绝 `..`、绝对路径；符号链接在打包时跳过。
+    pub source: String,
+    /// 是否随同步打包/恢复。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// 归一化并校验单个额外同步路径，返回归一化后的形式。
+///
+/// 规则：
+/// - 非空；统一使用 `/` 分隔（先归一化 Windows 反斜杠）；
+/// - 拒绝绝对路径（`/` 开头、Windows 盘符）；
+/// - 拒绝 `.` / `..` 分量（配置目录整体与越界访问均不由该机制覆盖）；
+/// - 拒绝空分量（连续或结尾分隔符）、控制字符、Windows 保留字符 `<>:"|?*`
+///   与以点/空格结尾的分量（Windows 会静默截断）。
+pub fn normalize_sync_extra_source(source: &str) -> Result<String, AppError> {
+    let invalid = |zh: &str, en: &str| {
+        AppError::localized(
+            "settings.syncExtraPaths.invalidSource",
+            format!("无效的同步路径「{source}」: {zh}"),
+            format!("Invalid sync path \"{source}\": {en}"),
+        )
+    };
+
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        return Err(invalid("路径不能为空", "path is empty"));
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err(invalid("包含控制字符", "contains control characters"));
+    }
+    let normalized = trimmed.replace('\\', "/");
+    if normalized.starts_with('/') {
+        return Err(invalid("不允许绝对路径", "absolute paths are not allowed"));
+    }
+    if normalized.len() >= 2 {
+        let bytes = normalized.as_bytes();
+        if bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+            return Err(invalid("不允许绝对路径", "absolute paths are not allowed"));
+        }
+    }
+    let components: Vec<&str> = normalized.split('/').collect();
+    if components.iter().any(|c| c.is_empty()) {
+        return Err(invalid("包含空路径分量", "contains empty path components"));
+    }
+    for component in &components {
+        match *component {
+            "." | ".." => {
+                return Err(invalid(
+                    "不允许 . 或 .. 路径分量",
+                    "\".\" and \"..\" components are not allowed",
+                ));
+            }
+            "CON" | "PRN" | "AUX" | "NUL" | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6"
+            | "COM7" | "COM8" | "COM9" | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6"
+            | "LPT7" | "LPT8" | "LPT9" => {
+                return Err(invalid(
+                    "包含 Windows 保留设备名",
+                    "contains a Windows reserved device name",
+                ));
+            }
+            _ => {}
+        }
+        if component.ends_with('.') || component.ends_with(' ') {
+            return Err(invalid(
+                "分量不能以点或空格结尾",
+                "components must not end with a dot or space",
+            ));
+        }
+        if component
+            .chars()
+            .any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        {
+            return Err(invalid(
+                "包含 Windows 保留字符 < > : \" | ? *",
+                "contains Windows reserved characters < > : \" | ? *",
+            ));
+        }
+    }
+    Ok(normalized)
+}
+
+/// 校验额外同步路径列表：逐项归一化，并拒绝重复与互相嵌套的路径。
+///
+/// 返回归一化后的列表，保存时用它覆盖原值。
+pub fn validate_sync_extra_paths(paths: &[SyncExtraPath]) -> Result<Vec<SyncExtraPath>, AppError> {
+    if paths.len() > MAX_SYNC_EXTRA_PATHS {
+        return Err(AppError::localized(
+            "settings.syncExtraPaths.tooMany",
+            format!("同步路径最多 {MAX_SYNC_EXTRA_PATHS} 条"),
+            format!("At most {MAX_SYNC_EXTRA_PATHS} sync paths are allowed"),
+        ));
+    }
+
+    let mut normalized: Vec<SyncExtraPath> = Vec::with_capacity(paths.len());
+    for path in paths {
+        let source = normalize_sync_extra_source(&path.source)?;
+        if normalized.iter().any(|p| p.source == source) {
+            return Err(AppError::localized(
+                "settings.syncExtraPaths.duplicate",
+                format!("同步路径重复: {source}"),
+                format!("Duplicate sync path: {source}"),
+            ));
+        }
+        normalized.push(SyncExtraPath {
+            source,
+            enabled: path.enabled,
+        });
+    }
+
+    // 嵌套路径会让同一内容被打包两次、恢复时互相覆盖，直接拒绝。
+    for (idx, path) in normalized.iter().enumerate() {
+        let prefix = format!("{}/", path.source);
+        for other in normalized.iter().skip(idx + 1) {
+            if other.source.starts_with(&prefix)
+                || path.source.starts_with(&format!("{}/", other.source))
+            {
+                return Err(AppError::localized(
+                    "settings.syncExtraPaths.nested",
+                    format!("同步路径嵌套: {} 与 {}", path.source, other.source),
+                    format!("Nested sync paths: {} and {}", path.source, other.source),
+                ));
+            }
+        }
+    }
+    Ok(normalized)
+}
+
+/// 当前启用的额外同步路径（未配置时为空）。
+pub fn enabled_sync_extra_paths() -> Vec<SyncExtraPath> {
+    get_settings()
+        .sync_extra_paths
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|path| path.enabled)
+        .collect()
+}
+
 /// WebDAV 同步设置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -608,6 +757,12 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3_sync: Option<S3SyncSettings>,
 
+    // ===== 云同步额外路径（#7835）=====
+    /// 随云同步打包的 Claude 配置目录下的自定义目录/文件。
+    /// `None`（未配置）与空列表都表示不产出额外 artifact，行为与旧版本一致。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_extra_paths: Option<Vec<SyncExtraPath>>,
+
     // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
@@ -707,6 +862,7 @@ impl Default for AppSettings {
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
             s3_sync: None,
+            sync_extra_paths: None,
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,

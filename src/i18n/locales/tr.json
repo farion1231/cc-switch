@@ -722,6 +722,7 @@
         "content": "Aşağıdakiler WebDAV sunucusuyla eşitle edilecektir:",
         "dbItem": "Veritabanı (tüm sağlayıcı yapılandırmaları ve verileri)",
         "skillsItem": "Beceriler (tüm özel beceriler)",
+        "extraItem": "Özel yollar (extra.zip)",
         "targetPath": "Hedef yolu",
         "existingData": "Mevcut bulut verileri",
         "deviceName": "Yükleyen:",
@@ -732,6 +733,23 @@
         "legacyNotice": "Eski uzak veriler algılandı. Bu yükleme, yeni v2/db-v6 yoluna yazacak ve eski yolun üzerine yazılmayacaktır.",
         "confirm": "Yüklemeyi Onayla"
       }
+    },
+    "syncExtraPaths": {
+      "title": "Özel eşitleme yolları",
+      "description": "~/.claude altındaki bu dizin veya dosyaları bulut eşitleme anlık görüntüsüne ekleyin; örneğin hooks tarafından başvurulan betikler, output-styles, agents. Hem WebDAV hem de S3 eşitlemesi için geçerlidir.",
+      "empty": "Henüz özel yol eklenmedi; eşitlenen içerik öncekiyle aynı.",
+      "placeholder": "örn. hooks veya hooks/guard.sh",
+      "sourceLabel": "Eşitleme yolu",
+      "enabled": "Eşitlemeye dahil et",
+      "remove": "Kaldır",
+      "add": "Yol ekle",
+      "rulesHint": "Yalnızca ~/.claude'a göreli yollara izin verilir; .., mutlak yollar ve sembolik bağlantılar desteklenmez. Skills depolama diziniyle çakışan yollar atlanır.",
+      "errorEmpty": "Yol boş olamaz veya boş bileşen içeremez (üst üste veya sondaki ayraçlar)",
+      "errorAbsolute": "Mutlak yollar desteklenmez; ~/.claude'a göreli bir yol girin",
+      "errorTraversal": "Yol bileşenleri \".\" veya \"..\" olamaz",
+      "errorInvalidChar": "Geçersiz karakter içeriyor (Windows ayrılmış karakterleri < > : \" | ? * veya sondaki nokta/boşluk)",
+      "errorDuplicate": "Yinelenen yollar var",
+      "errorNested": "İç içe yollara izin verilmiyor; yalnızca birini bırakın"
     },
     "syncType": {
       "label": "Eşitleme Türü",
@@ -824,6 +842,7 @@
         "content": "Aşağıdakiler S3 paketiyle eşitle edilecek:",
         "dbItem": "Veritabanı (tüm sağlayıcı yapılandırmaları ve verileri)",
         "skillsItem": "Beceriler (tüm özel beceriler)",
+        "extraItem": "Özel yollar (extra.zip)",
         "targetPath": "Hedef nesne yolu",
         "existingData": "Mevcut bulut verileri",
         "deviceName": "Yükleyen:",

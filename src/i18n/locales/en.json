@@ -760,6 +760,7 @@
         "content": "The following will be synced to the WebDAV server:",
         "dbItem": "Database (all provider configs and data)",
         "skillsItem": "Skills (all custom skills)",
+        "extraItem": "Custom paths (extra.zip)",
         "targetPath": "Target path",
         "existingData": "Existing cloud data",
         "deviceName": "Uploaded by",
@@ -770,6 +771,23 @@
         "legacyNotice": "Legacy remote data was detected. This upload will write to the new v2/db-v6 path and will not overwrite the legacy path.",
         "confirm": "Confirm Upload"
       }
+    },
+    "syncExtraPaths": {
+      "title": "Custom sync paths",
+      "description": "Include these directories or files under ~/.claude in the cloud sync snapshot, e.g. scripts referenced by hooks, output-styles, or agents. Applies to both WebDAV and S3 sync.",
+      "empty": "No custom paths yet; synced content is identical to before.",
+      "placeholder": "e.g. hooks or hooks/guard.sh",
+      "sourceLabel": "Sync path",
+      "enabled": "Include in sync",
+      "remove": "Remove",
+      "add": "Add path",
+      "rulesHint": "Only paths relative to ~/.claude are allowed; .., absolute paths and symlinks are not supported. Paths overlapping the local Skills storage directory are skipped.",
+      "errorEmpty": "Path must not be empty or contain empty components (consecutive or trailing separators)",
+      "errorAbsolute": "Absolute paths are not supported; use a path relative to ~/.claude",
+      "errorTraversal": "Path components cannot be \".\" or \"..\"",
+      "errorInvalidChar": "Contains invalid characters (Windows reserved characters < > : \" | ? *, or a trailing dot/space)",
+      "errorDuplicate": "Duplicate paths",
+      "errorNested": "Nested paths are not allowed; keep only one of them"
     },
     "syncType": {
       "label": "Sync Type",
@@ -862,6 +880,7 @@
         "content": "The following will be synced to the S3 bucket:",
         "dbItem": "Database (all provider configs and data)",
         "skillsItem": "Skills (all custom skills)",
+        "extraItem": "Custom paths (extra.zip)",
         "targetPath": "Target object path",
         "existingData": "Existing cloud data",
         "deviceName": "Uploaded by",
