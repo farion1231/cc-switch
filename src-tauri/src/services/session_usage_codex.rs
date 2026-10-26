@@ -5981,7 +5981,7 @@ mod tests {
                 "alias",
                 Some("alias"),
                 None,
-                true,
+                false,
                 Some("thread"),
                 Some("1970-01-01T00:16:41Z"),
                 None,
@@ -6012,7 +6012,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_cache_write_is_not_treated_as_explicit_zero() -> Result<(), AppError> {
+    fn unknown_cache_write_matches_legacy_but_explicit_zero_stays_strict() -> Result<(), AppError> {
         let db = Database::memory()?;
         let conn = lock_conn!(db.conn);
         conn.execute(
@@ -6036,6 +6036,11 @@ mod tests {
         assert!(
             matching_codex_proxy_for_session(&conn, Some("alias"), None, &key, true)?.is_none()
         );
+        assert_eq!(
+            matching_codex_proxy_for_session(&conn, Some("alias"), None, &key, false)?.as_deref(),
+            Some("proxy")
+        );
+        key.cache_creation_tokens = 1;
         assert!(
             matching_codex_proxy_for_session(&conn, Some("alias"), None, &key, false)?.is_none()
         );
@@ -6054,14 +6059,16 @@ mod tests {
                 .as_deref(),
             Some("proxy")
         );
-        assert!(matching_codex_proxy_for_session(
-            &conn,
-            Some("alias"),
-            Some("different-id"),
-            &key,
-            true
-        )?
-        .is_none());
+        for cache_write_known in [true, false] {
+            assert!(matching_codex_proxy_for_session(
+                &conn,
+                Some("alias"),
+                Some("different-id"),
+                &key,
+                cache_write_known
+            )?
+            .is_none());
+        }
         Ok(())
     }
 
@@ -6119,6 +6126,87 @@ mod tests {
         let session = db.get_session_usage_summary("codex", PARENT_ID)?;
         assert_eq!(session.total_requests, 1);
         assert_eq!(session.total_cost, "0.200000");
+        Ok(())
+    }
+
+    #[test]
+    fn old_codex_rollout_without_cache_write_links_proxy_in_both_orders() -> Result<(), AppError> {
+        use crate::proxy::usage::calculator::CostBreakdown;
+        use crate::proxy::usage::logger::{RequestLog, UsageLogger};
+
+        for proxy_first in [true, false] {
+            let db = Database::memory()?;
+            let dir = tempdir().unwrap();
+            let file = rollout_path(dir.path(), PARENT_ID);
+            let timestamp = Utc::now().to_rfc3339();
+            write_jsonl(
+                &file,
+                &[
+                    session_meta(PARENT_ID),
+                    turn_context_for_model_at("gpt-5.6", &timestamp),
+                    token_count_with_last_at(100, 50, 10, 100, 50, 10, "codex", &timestamp),
+                ],
+            );
+            let proxy = RequestLog {
+                request_id: "proxy".to_string(),
+                provider_id: "provider-1".to_string(),
+                app_type: "codex".to_string(),
+                model: "gpt-5.6".to_string(),
+                request_model: "gpt-5.6".to_string(),
+                pricing_model: "gpt-5.6".to_string(),
+                usage: TokenUsage {
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    cache_read_tokens: 50,
+                    cache_creation_tokens: 7,
+                    ..Default::default()
+                },
+                cost: Some(CostBreakdown {
+                    input_cost: Decimal::new(2, 1),
+                    output_cost: Decimal::ZERO,
+                    cache_read_cost: Decimal::ZERO,
+                    cache_creation_cost: Decimal::ZERO,
+                    total_cost: Decimal::new(2, 1),
+                }),
+                latency_ms: 1,
+                first_token_ms: None,
+                status_code: 200,
+                error_message: None,
+                session_id: None,
+                provider_type: Some("codex".to_string()),
+                is_streaming: true,
+                cost_multiplier: "1".to_string(),
+            };
+            if proxy_first {
+                UsageLogger::new(&db).log_request(&proxy)?;
+            }
+            assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+            if !proxy_first {
+                UsageLogger::new(&db).log_request(&proxy)?;
+            }
+            let conn = lock_conn!(db.conn);
+            let (raw_rows, known, linked): (i64, i64, Option<String>) = conn.query_row(
+                "SELECT (SELECT COUNT(*) FROM proxy_request_logs),
+                        cache_write_known, matched_proxy_request_id
+                 FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(raw_rows, 2, "proxy_first={proxy_first}");
+            assert_eq!(known, 0, "proxy_first={proxy_first}");
+            assert_eq!(
+                linked.as_deref(),
+                Some("proxy"),
+                "proxy_first={proxy_first}"
+            );
+            drop(conn);
+            let global = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+            assert_eq!(global.total_requests, 1, "proxy_first={proxy_first}");
+            assert_eq!(global.total_cost, "0.200000", "proxy_first={proxy_first}");
+            let session = db.get_session_usage_summary("codex", PARENT_ID)?;
+            assert_eq!(session.total_requests, 1, "proxy_first={proxy_first}");
+            assert_eq!(session.total_cost, "0.200000", "proxy_first={proxy_first}");
+        }
         Ok(())
     }
 

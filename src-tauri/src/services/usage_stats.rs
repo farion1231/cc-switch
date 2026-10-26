@@ -799,10 +799,12 @@ fn codex_new_usage_match_sql(proxy: &str, session: &str, by_response_id: bool) -
              AND {proxy}.input_tokens = {session}.input_tokens
              AND {proxy}.output_tokens = {session}.output_tokens
              AND {proxy}.cache_read_tokens = {session}.cache_read_tokens
-             AND {session}.cache_write_known = 1
-             AND ({proxy}.cache_creation_tokens = {session}.cache_creation_tokens
-                  OR ({proxy}.cache_creation_tokens = 0
-                      AND {proxy}.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}))
+             AND (({session}.cache_write_known = 0
+                   AND {session}.cache_creation_tokens = 0)
+                  OR ({session}.cache_write_known = 1
+                      AND ({proxy}.cache_creation_tokens = {session}.cache_creation_tokens
+                           OR ({proxy}.cache_creation_tokens = 0
+                               AND {proxy}.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}))))
              AND {proxy}.created_at BETWEEN
                  {session}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
                  AND {session}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
@@ -849,9 +851,6 @@ pub(crate) fn matching_codex_proxy_for_session(
     key: &DedupKey<'_>,
     cache_write_known: bool,
 ) -> Result<Option<String>, AppError> {
-    if response_id.is_none() && !cache_write_known {
-        return Ok(None);
-    }
     let candidates = conn
         .prepare_cached(&MATCHING_CODEX_PROXY_SQL)?
         .query_map(
