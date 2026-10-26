@@ -331,6 +331,7 @@ pub struct LogFilters {
     pub provider_name: Option<String>,
     pub model: Option<String>,
     pub project_key: Option<String>,
+    pub project_keys: Option<Vec<String>>,
     pub status_code: Option<u16>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
@@ -563,16 +564,23 @@ fn push_provider_model_filters(
     }
 }
 
-/// 项目筛选：`projectKey` 为空/未传时统计全部项目；传空串表示只看未识别项目。
+/// Selected projects form a union; no selection means all projects, and "" is unidentified.
 fn push_project_filter(
     conditions: &mut Vec<String>,
     params: &mut Vec<Box<dyn rusqlite::ToSql>>,
     alias: &str,
-    project_key: Option<&str>,
+    project_keys: Option<&[String]>,
 ) {
-    if let Some(key) = project_key {
-        conditions.push(format!("{alias}.project_key = ?"));
-        params.push(Box::new(key.to_string()));
+    if let Some(keys) = project_keys.filter(|keys| !keys.is_empty()) {
+        conditions.push(format!(
+            "{alias}.project_key IN ({})",
+            vec!["?"; keys.len()].join(", ")
+        ));
+        params.extend(
+            keys.iter()
+                .cloned()
+                .map(|key| Box::new(key) as Box<dyn rusqlite::ToSql>),
+        );
     }
 }
 
@@ -731,13 +739,14 @@ fn connection_total_changes(conn: &Connection) -> Result<u64, AppError> {
 
 fn log_count_cache_key(filters: &LogFilters) -> String {
     format!(
-        "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
+        "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
         filters.app_type,
         filters.provider_app_type,
         filters.provider_id,
         filters.provider_name,
         filters.model,
         filters.project_key,
+        filters.project_keys,
         filters.status_code,
         filters.start_date
     )
@@ -1117,7 +1126,7 @@ impl Database {
         provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
-        project_key: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<UsageSummary, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -1149,7 +1158,7 @@ impl Database {
             provider_name,
             model,
         );
-        push_project_filter(&mut conditions, &mut params_vec, "l", project_key);
+        push_project_filter(&mut conditions, &mut params_vec, "l", project_keys);
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -1187,7 +1196,12 @@ impl Database {
             provider_name,
             model,
         );
-        push_project_filter(&mut rollup_conditions, &mut rollup_params, "r", project_key);
+        push_project_filter(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            project_keys,
+        );
 
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
@@ -1292,7 +1306,7 @@ impl Database {
         provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
-        project_key: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -1318,7 +1332,12 @@ impl Database {
             provider_name,
             model,
         );
-        push_project_filter(&mut detail_conditions, &mut detail_params, "l", project_key);
+        push_project_filter(
+            &mut detail_conditions,
+            &mut detail_params,
+            "l",
+            project_keys,
+        );
         let detail_where = format!("WHERE {}", detail_conditions.join(" AND "));
         let detail_join = if provider_name.is_some() {
             providers_join("l", "p")
@@ -1345,7 +1364,12 @@ impl Database {
             provider_name,
             model,
         );
-        push_project_filter(&mut rollup_conditions, &mut rollup_params, "r", project_key);
+        push_project_filter(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            project_keys,
+        );
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -1468,7 +1492,7 @@ impl Database {
         provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
-        project_key: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -1494,7 +1518,7 @@ impl Database {
 
             let mut extra_conditions: Vec<String> = Vec::new();
             let mut extra_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            push_project_filter(&mut extra_conditions, &mut extra_params, "l", project_key);
+            push_project_filter(&mut extra_conditions, &mut extra_params, "l", project_keys);
             if let Some(at) = app_type {
                 extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
                 extra_params.push(Box::new(at.to_string()));
@@ -1611,7 +1635,7 @@ impl Database {
 
         let mut extra_conditions: Vec<String> = Vec::new();
         let mut extra_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        push_project_filter(&mut extra_conditions, &mut extra_params, "l", project_key);
+        push_project_filter(&mut extra_conditions, &mut extra_params, "l", project_keys);
         if let Some(at) = app_type {
             extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             extra_params.push(Box::new(at.to_string()));
@@ -1692,7 +1716,12 @@ impl Database {
         let rollup_bounds = compute_rollup_date_bounds(Some(start_ts), Some(end_ts))?;
         let mut rollup_conditions = Vec::new();
         let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        push_project_filter(&mut rollup_conditions, &mut rollup_params, "r", project_key);
+        push_project_filter(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            project_keys,
+        );
         push_rollup_date_filters(
             &mut rollup_conditions,
             &mut rollup_params,
@@ -1823,7 +1852,7 @@ impl Database {
         provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
-        project_key: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -1833,7 +1862,12 @@ impl Database {
             detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
-        push_project_filter(&mut detail_conditions, &mut detail_params, "l", project_key);
+        push_project_filter(
+            &mut detail_conditions,
+            &mut detail_params,
+            "l",
+            project_keys,
+        );
         push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
@@ -1873,7 +1907,12 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_project_filter(&mut rollup_conditions, &mut rollup_params, "r", project_key);
+        push_project_filter(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            project_keys,
+        );
         push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
@@ -1926,7 +1965,7 @@ impl Database {
         provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
-        project_key: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<ProviderStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -1946,7 +1985,12 @@ impl Database {
             detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
-        push_project_filter(&mut detail_conditions, &mut detail_params, "l", project_key);
+        push_project_filter(
+            &mut detail_conditions,
+            &mut detail_params,
+            "l",
+            project_keys,
+        );
         push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
@@ -1976,7 +2020,12 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_project_filter(&mut rollup_conditions, &mut rollup_params, "r", project_key);
+        push_project_filter(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            project_keys,
+        );
         push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
@@ -2155,6 +2204,7 @@ impl Database {
         provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<ProjectStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -2183,6 +2233,12 @@ impl Database {
             provider_id,
             provider_name,
             model,
+        );
+        push_project_filter(
+            &mut detail_conditions,
+            &mut detail_params,
+            "l",
+            project_keys,
         );
         let detail_where = format!("WHERE {}", detail_conditions.join(" AND "));
         let detail_join = if provider_name.is_some() {
@@ -2214,6 +2270,12 @@ impl Database {
             provider_name,
             model,
         );
+        push_project_filter(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            project_keys,
+        );
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -2240,7 +2302,7 @@ impl Database {
                 SUM(cache_creation) AS cache_creation,
                 SUM(cache_read) AS cache_read,
                 COUNT(DISTINCT app_type) AS app_count,
-                COUNT(DISTINCT provider_id) AS provider_count,
+                COUNT(DISTINCT json_array(app_type, provider_id)) AS provider_count,
                 MAX(last_active) AS last_active
              FROM (
                 SELECT l.project_key AS project_key,
@@ -2329,104 +2391,58 @@ impl Database {
             None,
             None,
             None,
-            Some(project_key),
+            Some(&[project_key.to_string()]),
         )
     }
 
     /// 项目下拉选项：只返回当前范围内有数据的项目。
+    #[allow(clippy::too_many_arguments)]
     pub fn get_usage_projects(
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
     ) -> Result<Vec<ProjectOption>, AppError> {
-        let conn = lock_conn!(self.conn);
-
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
-        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(start) = start_date {
-            detail_conditions.push("l.created_at >= ?".to_string());
-            detail_params.push(Box::new(start));
-        }
-        if let Some(end) = end_date {
-            detail_conditions.push("l.created_at <= ?".to_string());
-            detail_params.push(Box::new(end));
-        }
-        if let Some(at) = app_type {
-            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            detail_params.push(Box::new(at.to_string()));
-        }
-        let detail_where = format!("WHERE {}", detail_conditions.join(" AND "));
-
-        let mut rollup_conditions = Vec::new();
-        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-        push_rollup_date_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r.date",
-            &rollup_bounds,
-        );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
-        let rollup_where = if rollup_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", rollup_conditions.join(" AND "))
-        };
-
-        let sql = format!(
-            "SELECT project_key,
-                COALESCE(MAX(NULLIF(project_name, '')), '') AS project_name,
-                COALESCE(MAX(NULLIF(project_path, '')), '') AS project_path,
-                SUM(request_count) AS request_count
-             FROM (
-                SELECT l.project_key AS project_key,
-                    COALESCE(MAX(NULLIF(l.project_name, '')), '') AS project_name,
-                    COALESCE(MAX(NULLIF(l.project_path, '')), '') AS project_path,
-                    COUNT(*) AS request_count
-                FROM proxy_request_logs l {detail_where}
-                GROUP BY l.project_key
-                UNION ALL
-                SELECT r.project_key,
-                    COALESCE(MAX(NULLIF(r.project_name, '')), '') AS project_name,
-                    COALESCE(MAX(NULLIF(r.project_path, '')), '') AS project_path,
-                    COALESCE(SUM(r.request_count), 0) AS request_count
-                FROM usage_daily_rollups r {rollup_where}
-                GROUP BY r.project_key
-             )
-             GROUP BY project_key
-             ORDER BY request_count DESC"
-        );
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = detail_params;
-        params.extend(rollup_params);
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(param_refs.as_slice(), |row| {
-            Ok(ProjectOption {
-                project_key: row.get(0)?,
-                project_name: row.get(1)?,
-                project_path: row.get(2)?,
-                request_count: row.get::<_, i64>(3)?.max(0) as u64,
+        // Facet candidates inherit other dimensions but do not filter themselves.
+        let mut options: Vec<_> = self
+            .get_project_stats(
+                start_date,
+                end_date,
+                app_type,
+                provider_app_type,
+                provider_id,
+                provider_name,
+                model,
+                None,
+            )?
+            .into_iter()
+            .map(|stat| ProjectOption {
+                project_key: stat.project_key,
+                project_name: stat.project_name,
+                project_path: stat.project_path,
+                request_count: stat.request_count,
             })
-        })?;
-        let mut options = Vec::new();
-        for row in rows {
-            options.push(row?);
-        }
+            .collect();
+        options.sort_by_key(|stat| std::cmp::Reverse(stat.request_count));
         Ok(options)
     }
 
     /// 数据质量：只统计仍保留在明细里的行（日汇总没有置信度列）。
+    #[allow(clippy::too_many_arguments)]
     pub fn get_usage_data_quality(
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<DataQualityStats, AppError> {
         let conn = lock_conn!(self.conn);
         let mut conditions = vec![effective_usage_log_filter_for_range(
@@ -2445,11 +2461,27 @@ impl Database {
             conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             params.push(Box::new(at.to_string()));
         }
+        push_provider_model_filters(
+            &mut conditions,
+            &mut params,
+            "l",
+            "p",
+            provider_app_type,
+            provider_id,
+            provider_name,
+            model,
+        );
+        push_project_filter(&mut conditions, &mut params, "l", project_keys);
+        let join = if provider_name.is_some() {
+            providers_join("l", "p")
+        } else {
+            String::new()
+        };
         let sql = format!(
             "SELECT COUNT(*),
                 COALESCE(SUM(CASE WHEN l.attribution_confidence = 'unknown' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN l.project_key = '' THEN 1 ELSE 0 END), 0)
-             FROM proxy_request_logs l
+             FROM proxy_request_logs l {join}
              WHERE {}",
             conditions.join(" AND ")
         );
@@ -2480,7 +2512,7 @@ impl Database {
         provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
-        project_key: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -2500,7 +2532,12 @@ impl Database {
             detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
-        push_project_filter(&mut detail_conditions, &mut detail_params, "l", project_key);
+        push_project_filter(
+            &mut detail_conditions,
+            &mut detail_params,
+            "l",
+            project_keys,
+        );
         push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
@@ -2545,7 +2582,12 @@ impl Database {
             provider_name,
             model,
         );
-        push_project_filter(&mut rollup_conditions, &mut rollup_params, "r", project_key);
+        push_project_filter(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            project_keys,
+        );
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -2730,10 +2772,11 @@ impl Database {
             conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             params.push(Box::new(app_type.clone()));
         }
-        if let Some(ref project_key) = filters.project_key {
-            conditions.push("l.project_key = ?".to_string());
-            params.push(Box::new(project_key.clone()));
-        }
+        let projects = filters
+            .project_keys
+            .clone()
+            .or_else(|| filters.project_key.clone().map(|key| vec![key]));
+        push_project_filter(&mut conditions, &mut params, "l", projects.as_deref());
         // 与 Dashboard 顶部下拉筛选同口径：Provider 按展示名精确匹配（会话占位
         // 行如 "Claude (Session)" 也能命中），模型按有效计价模型匹配。
         push_provider_model_filters(
@@ -6822,3 +6865,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "usage_stats/scope_tests.rs"]
+mod scope_tests;

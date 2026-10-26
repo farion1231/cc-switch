@@ -28,6 +28,7 @@ interface UsageHeatmapProps {
   providerId?: string;
   providerName?: string;
   projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   refreshIntervalMs: number;
 }
@@ -176,6 +177,7 @@ function useAllSpansDailyTrends(
     providerId?: string;
     providerName?: string;
     projectKey?: string;
+    projectKeys?: string[];
     model?: string;
   },
   refreshIntervalMs: number,
@@ -183,9 +185,10 @@ function useAllSpansDailyTrends(
   const refetchInterval = refreshIntervalMs > 0 ? refreshIntervalMs : false;
   const firstDateQuery = useUsageFirstDate(filters, { refetchInterval });
   const today = startOfDay(new Date());
-  const spanCount = firstDateQuery.isSuccess
-    ? spanCountFor(firstDateQuery.data, today)
-    : null;
+  const spanCount =
+    firstDateQuery.isSuccess && !firstDateQuery.isPlaceholderData
+      ? spanCountFor(firstDateQuery.data, today)
+      : null;
   const startKey = dayKey(spanStart(today, (spanCount ?? 1) - 1));
   const selection = useMemo<UsageRangeSelection>(
     () => ({
@@ -206,7 +209,11 @@ function useAllSpansDailyTrends(
   return {
     spanCount: spanCount ?? 1,
     trends: trendsQuery.data,
-    isLoading: firstDateQuery.isPending || trendsQuery.isLoading,
+    isLoading:
+      firstDateQuery.isPending ||
+      firstDateQuery.isPlaceholderData ||
+      trendsQuery.isLoading ||
+      trendsQuery.isPlaceholderData,
   };
 }
 
@@ -261,6 +268,7 @@ export function UsageHeatmap({
   providerId,
   providerName,
   projectKey,
+  projectKeys,
   model,
   refreshIntervalMs,
 }: UsageHeatmapProps) {
@@ -286,7 +294,15 @@ export function UsageHeatmap({
   const locale = getLocaleFromLanguage(language);
 
   const { spanCount, trends, isLoading } = useAllSpansDailyTrends(
-    { appType, providerAppType, providerId, providerName, projectKey, model },
+    {
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    },
     refreshIntervalMs,
   );
 

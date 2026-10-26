@@ -29,6 +29,7 @@ interface UsageHeroProps {
   providerId?: string;
   providerName?: string;
   projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   refreshIntervalMs: number;
   /** 窄容器下指标排成两列 */
@@ -214,6 +215,7 @@ export function UsageHero({
   providerId,
   providerName,
   projectKey,
+  projectKeys,
   model,
   refreshIntervalMs,
   compact = false,
@@ -226,9 +228,16 @@ export function UsageHero({
   const [moreOpen, setMoreOpen] = useState(false);
   const moreId = useId();
 
-  const { data, isLoading } = useUsageSummaryByApp(
+  const { data, isLoading, isPlaceholderData } = useUsageSummaryByApp(
     range,
-    { providerAppType, providerId, providerName, model, projectKey },
+    {
+      providerAppType,
+      providerId,
+      providerName,
+      model,
+      projectKey,
+      projectKeys,
+    },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -255,7 +264,8 @@ export function UsageHero({
 
   // 加载中写「…」；这段时间一条请求都没有时，各项都写「—」（和表格的空值一致），
   // 不写 0 / 0.0%：那是「有数据、结果为零」的意思
-  const placeholder = isLoading ? "…" : requests === 0 ? "—" : undefined;
+  const placeholder =
+    isLoading || isPlaceholderData ? "…" : requests === 0 ? "—" : undefined;
   // 命中率的分母（新增输入 + 缓存写入 + 缓存命中）为 0 时没有意义，同样写「—」
   const hitRateKnown = input + cacheWrite + cacheRead > 0;
   const tokens = (value: number) => formatTokensCompact(value, locale);

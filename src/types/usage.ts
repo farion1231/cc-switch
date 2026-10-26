@@ -212,13 +212,14 @@ export interface LogFilters {
   providerName?: string;
   model?: string;
   projectKey?: string;
+  projectKeys?: string[];
   statusCode?: number;
   startDate?: number;
   endDate?: number;
 }
 
 /**
- * Dashboard 顶栏的全局筛选维度，作用于 Hero / 趋势图 / 三个统计 Tab。
+ * Dashboard 顶栏的全局筛选维度，作用于指标、图表、四类明细和数据质量提示。
  *
  * - `providerName` 按展示名精确匹配（与 Provider 统计列表同口径，含
  *   "Claude (Session)" 等会话占位名）；
@@ -232,7 +233,10 @@ export interface UsageScopeFilters {
   providerId?: string;
   providerName?: string;
   model?: string;
+  /** 兼容单项目下钻；全局选择使用 projectKeys。 */
   projectKey?: string;
+  /** 项目集合取并集；未传或空数组表示全部，空字符串成员表示未识别项目。 */
+  projectKeys?: string[];
 }
 
 export interface ProviderLimitStatus {

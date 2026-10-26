@@ -26,6 +26,7 @@ interface ProviderUsageBreakdownProps {
   providerAppType: string;
   providerName: string;
   projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   range: UsageRangeSelection;
   refreshIntervalMs: number;
@@ -38,6 +39,7 @@ export function ProviderUsageBreakdown({
   providerAppType,
   providerName,
   projectKey,
+  projectKeys,
   model,
   range,
   refreshIntervalMs,
@@ -49,7 +51,7 @@ export function ProviderUsageBreakdown({
   const [metric, setMetric] = useState<ShareMetric>("tokens");
   const modelQuery = useModelStats(
     range,
-    { providerId, providerAppType, projectKey, model },
+    { providerId, providerAppType, projectKey, projectKeys, model },
     { refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false },
   );
   const stats = modelQuery.data;

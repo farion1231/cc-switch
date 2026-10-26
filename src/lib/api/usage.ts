@@ -61,7 +61,7 @@ export const usageApi = {
     providerId?: string,
     providerName?: string,
     model?: string,
-    projectKey?: string,
+    projectKeys?: string[],
   ): Promise<UsageSummary> => {
     return invoke("get_usage_summary", {
       startDate,
@@ -71,7 +71,7 @@ export const usageApi = {
       providerId,
       providerName,
       model,
-      projectKey,
+      projectKeys,
     });
   },
 
@@ -89,7 +89,7 @@ export const usageApi = {
     providerId?: string,
     providerName?: string,
     model?: string,
-    projectKey?: string,
+    projectKeys?: string[],
   ): Promise<UsageSummaryByApp[]> => {
     return invoke("get_usage_summary_by_app", {
       startDate,
@@ -98,7 +98,7 @@ export const usageApi = {
       providerId,
       providerName,
       model,
-      projectKey,
+      projectKeys,
     });
   },
 
@@ -110,7 +110,7 @@ export const usageApi = {
     providerId?: string,
     providerName?: string,
     model?: string,
-    projectKey?: string,
+    projectKeys?: string[],
   ): Promise<DailyStats[]> => {
     return invoke("get_usage_trends", {
       startDate,
@@ -120,7 +120,7 @@ export const usageApi = {
       providerId,
       providerName,
       model,
-      projectKey,
+      projectKeys,
     });
   },
 
@@ -131,7 +131,7 @@ export const usageApi = {
     providerId?: string,
     providerName?: string,
     model?: string,
-    projectKey?: string,
+    projectKeys?: string[],
   ): Promise<string | null> => {
     return invoke("get_usage_first_date", {
       appType,
@@ -139,7 +139,7 @@ export const usageApi = {
       providerId,
       providerName,
       model,
-      projectKey,
+      projectKeys,
     });
   },
 
@@ -151,7 +151,7 @@ export const usageApi = {
     providerId?: string,
     providerName?: string,
     model?: string,
-    projectKey?: string,
+    projectKeys?: string[],
   ): Promise<ProviderStats[]> => {
     return invoke("get_provider_stats", {
       startDate,
@@ -161,7 +161,7 @@ export const usageApi = {
       providerId,
       providerName,
       model,
-      projectKey,
+      projectKeys,
     });
   },
 
@@ -173,7 +173,7 @@ export const usageApi = {
     providerId?: string,
     providerName?: string,
     model?: string,
-    projectKey?: string,
+    projectKeys?: string[],
   ): Promise<ModelStats[]> => {
     return invoke("get_model_stats", {
       startDate,
@@ -183,7 +183,7 @@ export const usageApi = {
       providerId,
       providerName,
       model,
-      projectKey,
+      projectKeys,
     });
   },
 
@@ -195,6 +195,7 @@ export const usageApi = {
     providerId?: string,
     providerName?: string,
     model?: string,
+    projectKeys?: string[],
   ): Promise<ProjectStats[]> => {
     return invoke("get_project_stats", {
       startDate,
@@ -204,6 +205,7 @@ export const usageApi = {
       providerId,
       providerName,
       model,
+      projectKeys,
     });
   },
 
@@ -225,11 +227,19 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerAppType?: string,
+    providerId?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<ProjectOption[]> => {
     return invoke("get_usage_projects", {
       startDate,
       endDate,
       appType,
+      providerAppType,
+      providerId,
+      providerName,
+      model,
     });
   },
 
@@ -237,11 +247,21 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerAppType?: string,
+    providerId?: string,
+    providerName?: string,
+    model?: string,
+    projectKeys?: string[],
   ): Promise<DataQualityStats> => {
     return invoke("get_usage_data_quality", {
       startDate,
       endDate,
       appType,
+      providerAppType,
+      providerId,
+      providerName,
+      model,
+      projectKeys,
     });
   },
 

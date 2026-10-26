@@ -24,6 +24,7 @@ interface ProviderStatsTableProps {
   providerId?: string;
   providerName?: string;
   projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   refreshIntervalMs: number;
 }
@@ -35,15 +36,28 @@ export function ProviderStatsTable({
   providerId,
   providerName,
   projectKey,
+  projectKeys,
   model,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t, i18n } = useTranslation();
   const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
-  const { data: stats, isLoading } = useProviderStats(
+  const {
+    data: stats,
+    isLoading,
+    isPlaceholderData,
+  } = useProviderStats(
     range,
-    { appType, providerAppType, providerId, providerName, projectKey, model },
+    {
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -63,6 +77,7 @@ export function ProviderStatsTable({
       providerId,
       providerName,
       projectKey,
+      projectKeys,
       model,
     ]),
   );
@@ -80,7 +95,7 @@ export function ProviderStatsTable({
     });
   };
 
-  if (isLoading) {
+  if (isLoading || isPlaceholderData) {
     return <div className={usageTable.skeleton} />;
   }
 
@@ -186,6 +201,7 @@ export function ProviderStatsTable({
                         providerAppType={stat.appType}
                         providerName={stat.providerName}
                         projectKey={projectKey}
+                        projectKeys={projectKeys}
                         model={model}
                         range={range}
                         refreshIntervalMs={refreshIntervalMs}

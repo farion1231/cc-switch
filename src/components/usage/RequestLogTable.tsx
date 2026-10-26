@@ -57,6 +57,7 @@ interface RequestLogTableProps {
   providerId?: string;
   providerName?: string;
   projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   /** 状态码筛选（页签行右侧的下拉） */
   statusCode?: number;
@@ -186,6 +187,7 @@ export function RequestLogTable({
   providerId,
   providerName,
   projectKey,
+  projectKeys,
   model,
   statusCode,
   refreshIntervalMs,
@@ -208,6 +210,7 @@ export function RequestLogTable({
     providerId,
     providerName,
     projectKey,
+    projectKeys,
     model,
     statusCode,
   };
@@ -331,6 +334,7 @@ export function RequestLogTable({
     providerId,
     providerName,
     projectKey,
+    projectKeys,
     model,
     statusCode,
     range.customEndDate,
@@ -343,7 +347,7 @@ export function RequestLogTable({
   // 「今天」按本地时区判断；每次渲染（含自动刷新）取一次当前时间
   const now = new Date();
 
-  if (isLoading) {
+  if (isLoading || isPlaceholderData) {
     return <div className={usageTable.skeleton} />;
   }
 

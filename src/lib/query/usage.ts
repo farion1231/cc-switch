@@ -39,6 +39,7 @@ type RequestLogsKey = {
   providerName?: string;
   model?: string;
   projectKey?: string;
+  projectKeys?: string[];
   statusCode?: number;
 };
 
@@ -64,7 +65,7 @@ export const usageKeys = {
       filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
-      filters?.projectKey ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   summaryByApp: (
     preset: UsageRangeSelection["preset"],
@@ -72,7 +73,12 @@ export const usageKeys = {
     customEndDate: number | undefined,
     filters?: Pick<
       UsageScopeFilters,
-      "providerAppType" | "providerId" | "providerName" | "model" | "projectKey"
+      | "providerAppType"
+      | "providerId"
+      | "providerName"
+      | "model"
+      | "projectKey"
+      | "projectKeys"
     >,
     liveEndTime?: boolean,
   ) =>
@@ -87,7 +93,7 @@ export const usageKeys = {
       filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
-      filters?.projectKey ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   trends: (
     preset: UsageRangeSelection["preset"],
@@ -108,7 +114,7 @@ export const usageKeys = {
       filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
-      filters?.projectKey ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   firstDate: (filters?: UsageScopeFilters) =>
     [
@@ -119,7 +125,7 @@ export const usageKeys = {
       filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
-      filters?.projectKey ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
@@ -140,7 +146,7 @@ export const usageKeys = {
       filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
-      filters?.projectKey ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   modelStats: (
     preset: UsageRangeSelection["preset"],
@@ -161,7 +167,7 @@ export const usageKeys = {
       filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
-      filters?.projectKey ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   logs: (key: RequestLogsKey, page: number, pageSize: number) =>
     [
@@ -176,7 +182,7 @@ export const usageKeys = {
       key.providerId ?? "",
       key.providerName ?? "",
       key.model ?? "",
-      key.projectKey ?? null,
+      selectedProjectKeys(key) ?? null,
       key.statusCode ?? -1,
       page,
       pageSize,
@@ -192,6 +198,16 @@ export const usageKeys = {
     [...usageKeys.all, providerId, appType] as const,
 };
 
+/** Canonical set keys avoid cache misses when the same projects are selected in a different order. */
+function selectedProjectKeys(
+  filters?: Pick<UsageScopeFilters, "projectKey" | "projectKeys">,
+) {
+  const keys =
+    filters?.projectKeys ??
+    (filters?.projectKey !== undefined ? [filters.projectKey] : []);
+  return keys.length ? [...new Set(keys)].sort() : undefined;
+}
+
 /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
 function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
   return {
@@ -200,7 +216,7 @@ function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
     providerId: filters?.providerId,
     providerName: filters?.providerName,
     model: filters?.model,
-    projectKey: filters?.projectKey,
+    projectKeys: selectedProjectKeys(filters),
   };
 }
 
@@ -231,7 +247,7 @@ export function useUsageSummary(
         effective.providerId,
         effective.providerName,
         effective.model,
-        effective.projectKey,
+        effective.projectKeys,
       );
     },
     placeholderData: keepPreviousData,
@@ -244,7 +260,12 @@ export function useUsageSummaryByApp(
   range: UsageRangeSelection,
   filters?: Pick<
     UsageScopeFilters,
-    "providerAppType" | "providerId" | "providerName" | "model" | "projectKey"
+    | "providerAppType"
+    | "providerId"
+    | "providerName"
+    | "model"
+    | "projectKey"
+    | "projectKeys"
   >,
   options?: UsageQueryOptions,
 ) {
@@ -265,7 +286,7 @@ export function useUsageSummaryByApp(
         filters?.providerId,
         filters?.providerName,
         filters?.model,
-        filters?.projectKey,
+        selectedProjectKeys(filters),
       );
     },
     placeholderData: keepPreviousData,
@@ -298,7 +319,7 @@ export function useUsageTrends(
         effective.providerId,
         effective.providerName,
         effective.model,
-        effective.projectKey,
+        effective.projectKeys,
       );
     },
     enabled: options?.enabled ?? true,
@@ -323,7 +344,7 @@ export function useUsageFirstDate(
         effective.providerId,
         effective.providerName,
         effective.model,
-        effective.projectKey,
+        effective.projectKeys,
       ),
     placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -355,7 +376,7 @@ export function useProviderStats(
         effective.providerId,
         effective.providerName,
         effective.model,
-        effective.projectKey,
+        effective.projectKeys,
       );
     },
     placeholderData: keepPreviousData,
@@ -389,7 +410,7 @@ export function useModelStats(
         effective.providerId,
         effective.providerName,
         effective.model,
-        effective.projectKey,
+        effective.projectKeys,
       );
     },
     placeholderData: keepPreviousData,
@@ -416,14 +437,19 @@ export function useRequestLogs({
     providerId: filters.providerId,
     providerName: filters.providerName,
     model: filters.model,
-    projectKey: filters.projectKey,
+    projectKeys: selectedProjectKeys(filters),
     statusCode: filters.statusCode,
   };
 
   return useQuery({
     queryKey: usageKeys.logs(key, page, pageSize),
     queryFn: () => {
-      const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
+      const effectiveFilters = {
+        ...filters,
+        projectKey: undefined,
+        projectKeys: selectedProjectKeys(filters),
+        ...resolveUsageRange(range),
+      };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
     placeholderData: keepPreviousData,
@@ -473,10 +499,7 @@ export function useModelPricing() {
 
 export function useProjectStats(
   range: UsageRangeSelection,
-  filters?: Pick<
-    UsageScopeFilters,
-    "appType" | "providerAppType" | "providerId" | "providerName" | "model"
-  >,
+  filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
   const effective = normalizeScopeFilters(filters);
@@ -493,6 +516,7 @@ export function useProjectStats(
       effective.providerId ?? null,
       effective.providerName ?? null,
       effective.model ?? null,
+      effective.projectKeys ?? null,
     ] as const,
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -504,6 +528,7 @@ export function useProjectStats(
         effective.providerId,
         effective.providerName,
         effective.model,
+        effective.projectKeys,
       );
     },
     enabled: options?.enabled ?? true,
@@ -515,9 +540,10 @@ export function useProjectStats(
 
 export function useUsageProjects(
   range: UsageRangeSelection,
-  appType?: string,
+  filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
+  const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: [
       ...usageKeys.all,
@@ -526,14 +552,22 @@ export function useUsageProjects(
       range.customStartDate ?? 0,
       range.customEndDate ?? 0,
       range.liveEndTime ?? false,
-      appType === "all" ? null : (appType ?? null),
+      effective.appType ?? null,
+      effective.providerAppType ?? null,
+      effective.providerId ?? null,
+      effective.providerName ?? null,
+      effective.model ?? null,
     ] as const,
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
       return usageApi.getUsageProjects(
         startDate,
         endDate,
-        appType === "all" ? undefined : appType,
+        effective.appType,
+        effective.providerAppType,
+        effective.providerId,
+        effective.providerName,
+        effective.model,
       );
     },
     placeholderData: keepPreviousData,
@@ -577,9 +611,10 @@ export function useProjectProviderStats(
 
 export function useUsageDataQuality(
   range: UsageRangeSelection,
-  appType?: string,
+  filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
+  const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: [
       ...usageKeys.all,
@@ -588,14 +623,24 @@ export function useUsageDataQuality(
       range.customStartDate ?? 0,
       range.customEndDate ?? 0,
       range.liveEndTime ?? false,
-      appType === "all" ? null : (appType ?? null),
+      effective.appType ?? null,
+      effective.providerAppType ?? null,
+      effective.providerId ?? null,
+      effective.providerName ?? null,
+      effective.model ?? null,
+      effective.projectKeys ?? null,
     ] as const,
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
       return usageApi.getUsageDataQuality(
         startDate,
         endDate,
-        appType === "all" ? undefined : appType,
+        effective.appType,
+        effective.providerAppType,
+        effective.providerId,
+        effective.providerName,
+        effective.model,
+        effective.projectKeys,
       );
     },
     placeholderData: keepPreviousData,

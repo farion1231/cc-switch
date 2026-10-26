@@ -1558,15 +1558,23 @@ fn migrate_copied_database_to_v21() -> Result<(), AppError> {
         conn: std::sync::Mutex::new(conn),
         log_count_cache: std::sync::Mutex::new(None),
     };
-    let projects = db.get_project_stats(None, None, None, None, None, None, None)?;
+    let projects = db.get_project_stats(None, None, None, None, None, None, None, None)?;
     assert!(
         projects.iter().any(|p| p.project_key == ""),
         "legacy rows should surface as the unidentified project"
     );
-    let options = db.get_usage_projects(None, None, None)?;
+    let options = db.get_usage_projects(None, None, None, None, None, None, None)?;
     assert!(options.iter().any(|p| p.project_key == ""));
-    let providers =
-        db.get_provider_stats(None, None, Some("codex"), None, None, None, None, Some(""))?;
+    let providers = db.get_provider_stats(
+        None,
+        None,
+        Some("codex"),
+        None,
+        None,
+        None,
+        None,
+        Some(&[("").to_string()]),
+    )?;
     assert!(!providers.is_empty(), "project-filtered provider stats");
     assert!(
         providers.iter().all(|p| p.cacheable_input_tokens
@@ -1582,17 +1590,34 @@ fn migrate_copied_database_to_v21() -> Result<(), AppError> {
         5,
     )?;
     assert!(logs.total > 0, "project-filtered logs");
-    let summary =
-        db.get_usage_summary(None, None, Some("codex"), None, None, None, None, Some(""))?;
+    let summary = db.get_usage_summary(
+        None,
+        None,
+        Some("codex"),
+        None,
+        None,
+        None,
+        None,
+        Some(&[("").to_string()]),
+    )?;
     assert!(summary.total_requests > 0, "project-filtered summary");
-    let quality = db.get_usage_data_quality(None, None, None)?;
+    let quality = db.get_usage_data_quality(None, None, None, None, None, None, None, None)?;
     assert!(quality.total_requests > 0);
     assert_eq!(
         quality.unknown_project_requests, quality.total_requests,
         "all legacy rows have an empty project key"
     );
     assert!(quality.unknown_provider_requests > 0);
-    let models = db.get_model_stats(None, None, Some("codex"), None, None, None, None, Some(""))?;
+    let models = db.get_model_stats(
+        None,
+        None,
+        Some("codex"),
+        None,
+        None,
+        None,
+        None,
+        Some(&[("").to_string()]),
+    )?;
     assert!(!models.is_empty(), "project-filtered model stats");
     assert!(
         models.iter().all(|m| {

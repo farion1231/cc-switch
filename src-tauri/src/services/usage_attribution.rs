@@ -8,9 +8,13 @@ use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use rusqlite::{params, Connection, OptionalExtension};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
+
+use super::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH};
 
 /// 供应商激活记录（切换式客户端的直连归属证据）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +129,24 @@ fn find_git_root(path: &Path) -> Option<PathBuf> {
         .map(|ancestor| ancestor.to_path_buf())
 }
 
+/// Linked worktrees share a common Git directory. Keep submodules and unknown
+/// layouts separate when that metadata cannot establish a common repository.
+fn repository_project_root(root: &Path) -> PathBuf {
+    let shared_root = (|| {
+        let marker = std::fs::read_to_string(root.join(".git")).ok()?;
+        let git_dir = root.join(marker.trim().strip_prefix("gitdir:")?.trim());
+        let common = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+        let common = strip_windows_verbatim_prefix(
+            &std::fs::canonicalize(git_dir.join(common.trim())).ok()?,
+        );
+        if common.file_name()? != ".git" {
+            return None;
+        }
+        Some(common.parent()?.to_path_buf())
+    })();
+    shared_root.unwrap_or_else(|| root.to_path_buf())
+}
+
 fn normalize_pathbuf(path: &Path) -> String {
     let mut value = path.to_string_lossy().replace('\\', "/");
     while value.len() > 1 && value.ends_with('/') {
@@ -163,7 +185,9 @@ pub fn project_from_cwd(
     let resolved = strip_windows_verbatim_prefix(
         &std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(&normalized)),
     );
-    let root = find_git_root(&resolved).unwrap_or_else(|| resolved.clone());
+    let root = find_git_root(&resolved)
+        .map(|root| repository_project_root(&root))
+        .unwrap_or_else(|| resolved.clone());
     let project_path = normalize_pathbuf(&resolved);
     let project_key = if project_path.is_empty() {
         "/".to_string()
@@ -197,6 +221,143 @@ pub fn provider_config_fingerprint(settings_config: &str) -> String {
 }
 
 impl Database {
+    /// Repair retained project identities using current Git metadata, without
+    /// inferring relationships from directory names or changing provider evidence.
+    pub fn normalize_worktree_projects(&self) -> Result<usize, AppError> {
+        let keys = {
+            let conn = lock_conn!(self.conn);
+            let mut stmt = conn.prepare(
+                "SELECT project_key FROM session_projects WHERE project_key != ''
+                 UNION SELECT project_key FROM proxy_request_logs WHERE project_key != ''
+                 UNION SELECT project_key FROM usage_daily_rollups WHERE project_key != ''",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let aliases: Vec<_> = keys
+            .into_iter()
+            .filter_map(|key| {
+                let path = strip_windows_verbatim_prefix(&std::fs::canonicalize(&key).ok()?);
+                let root = find_git_root(&path)?;
+                let canonical = normalize_pathbuf(&repository_project_root(&root));
+                (canonical != key).then_some((key, canonical))
+            })
+            .collect();
+        if aliases.is_empty() {
+            return Ok(0);
+        }
+        let conn = lock_conn!(self.conn);
+        conn.execute_batch("SAVEPOINT normalize_worktree_projects")?;
+        let result = (|| {
+            for (alias, canonical) in &aliases {
+                Self::merge_project_rollups(&conn, alias, canonical)?;
+                for table in ["session_projects", "proxy_request_logs"] {
+                    conn.execute(
+                        &format!("UPDATE {table} SET project_key=?1 WHERE project_key=?2"),
+                        params![canonical, alias],
+                    )?;
+                }
+            }
+            Ok(aliases.len())
+        })();
+        match result {
+            Ok(count) => {
+                conn.execute_batch("RELEASE normalize_worktree_projects")?;
+                Ok(count)
+            }
+            Err(error) => {
+                let _ = conn.execute_batch(
+                    "ROLLBACK TO normalize_worktree_projects; RELEASE normalize_worktree_projects",
+                );
+                Err(error)
+            }
+        }
+    }
+
+    fn merge_project_rollups(
+        conn: &Connection,
+        alias: &str,
+        canonical: &str,
+    ) -> Result<(), AppError> {
+        let costs = {
+            let mut stmt = conn.prepare(
+                "SELECT r.rowid, r.total_cost_usd, target.total_cost_usd
+                 FROM usage_daily_rollups r
+                 LEFT JOIN usage_daily_rollups target
+                   ON target.project_key=?1 AND target.date=r.date
+                  AND target.app_type=r.app_type AND target.provider_id=r.provider_id
+                  AND target.model=r.model AND target.request_model=r.request_model
+                  AND target.pricing_model=r.pricing_model AND target.data_source=r.data_source
+                 WHERE r.project_key=?2 ORDER BY r.rowid",
+            )?;
+            let rows = stmt.query_map(params![canonical, alias], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let source_fresh = fresh_input_sql("r");
+        let target_fresh = fresh_input_sql("usage_daily_rollups");
+        let sql = format!(
+            "INSERT INTO usage_daily_rollups
+                (date, app_type, provider_id, model, request_model, pricing_model, data_source,
+                 project_key, project_name, project_path, provider_name_snapshot,
+                 request_count, success_count, input_tokens, output_tokens,
+                 cache_read_tokens, cache_creation_tokens, input_token_semantics,
+                 total_cost_usd, avg_latency_ms)
+             SELECT date, app_type, provider_id, model, request_model, pricing_model, data_source,
+                    ?1, project_name, project_path, provider_name_snapshot,
+                    request_count, success_count, {source_fresh}, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, {INPUT_TOKEN_SEMANTICS_FRESH},
+                    ?2, avg_latency_ms
+             FROM usage_daily_rollups r WHERE r.rowid=?3
+             ON CONFLICT(date, app_type, provider_id, model, request_model, pricing_model, data_source, project_key)
+             DO UPDATE SET
+                avg_latency_ms = CASE WHEN usage_daily_rollups.request_count + excluded.request_count > 0
+                    THEN (usage_daily_rollups.avg_latency_ms * usage_daily_rollups.request_count
+                          + excluded.avg_latency_ms * excluded.request_count)
+                         / (usage_daily_rollups.request_count + excluded.request_count) ELSE 0 END,
+                request_count = usage_daily_rollups.request_count + excluded.request_count,
+                success_count = usage_daily_rollups.success_count + excluded.success_count,
+                input_tokens = ({target_fresh}) + excluded.input_tokens,
+                output_tokens = usage_daily_rollups.output_tokens + excluded.output_tokens,
+                cache_read_tokens = usage_daily_rollups.cache_read_tokens + excluded.cache_read_tokens,
+                cache_creation_tokens = usage_daily_rollups.cache_creation_tokens + excluded.cache_creation_tokens,
+                input_token_semantics = {INPUT_TOKEN_SEMANTICS_FRESH},
+                total_cost_usd = excluded.total_cost_usd,
+                project_name = COALESCE(NULLIF(usage_daily_rollups.project_name, ''), excluded.project_name),
+                project_path = COALESCE(NULLIF(usage_daily_rollups.project_path, ''), excluded.project_path),
+                provider_name_snapshot = COALESCE(NULLIF(usage_daily_rollups.provider_name_snapshot, ''), excluded.provider_name_snapshot)"
+        );
+        for (rowid, source_cost, target_cost) in costs {
+            let cost = match target_cost {
+                Some(target_cost) => {
+                    let parse = |value: &str| {
+                        Decimal::from_str(value).map_err(|error| {
+                            AppError::Database(format!("Invalid project rollup cost: {error}"))
+                        })
+                    };
+                    parse(&source_cost)?
+                        .checked_add(parse(&target_cost)?)
+                        .ok_or_else(|| {
+                            AppError::Database("Project rollup cost overflow".to_string())
+                        })?
+                        .to_string()
+                }
+                None => source_cost,
+            };
+            conn.execute(&sql, params![canonical, cost, rowid])?;
+        }
+        conn.execute(
+            "DELETE FROM usage_daily_rollups WHERE project_key=?1",
+            [alias],
+        )?;
+        Ok(())
+    }
+
     /// 追加一条激活记录。连续相同的 (mode, provider_id, fingerprint) 合并，避免
     /// 启动恢复/重复提交产生噪声。返回是否真正写入。
     pub fn record_provider_activation(
@@ -620,6 +781,276 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn worktree_fixture(base: &Path) -> (PathBuf, PathBuf) {
+        let repo = base.join("main/demo");
+        let worktree = base.join("worktrees/agent/demo");
+        let git_dir = repo.join(".git/worktrees/agent");
+        fs::create_dir_all(&git_dir).unwrap();
+        fs::create_dir_all(worktree.join("src")).unwrap();
+        fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", git_dir.display()),
+        )
+        .unwrap();
+        fs::write(git_dir.join("commondir"), "../..\n").unwrap();
+        (repo, worktree)
+    }
+
+    #[test]
+    fn project_identity_groups_linked_worktrees_across_tools() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, worktree) = worktree_fixture(temp.path());
+        let main =
+            project_from_cwd("codex", "s1", &repo.to_string_lossy(), "session_meta").unwrap();
+        let linked = project_from_cwd(
+            "claude",
+            "s2",
+            &worktree.join("src").to_string_lossy(),
+            "session_meta",
+        )
+        .unwrap();
+        assert_eq!(linked.project_key, main.project_key);
+        assert_eq!(
+            linked.project_path,
+            normalize_pathbuf(&strip_windows_verbatim_prefix(
+                &fs::canonicalize(worktree.join("src")).unwrap()
+            ))
+        );
+        assert_eq!(linked.project_name, "src");
+    }
+
+    #[test]
+    fn project_identity_keeps_same_named_independent_repositories_separate() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("a/demo");
+        let second = temp.path().join("b/demo");
+        fs::create_dir_all(first.join(".git")).unwrap();
+        fs::create_dir_all(second.join(".git")).unwrap();
+        let first =
+            project_from_cwd("codex", "s1", &first.to_string_lossy(), "session_meta").unwrap();
+        let second =
+            project_from_cwd("claude", "s2", &second.to_string_lossy(), "session_meta").unwrap();
+        assert_eq!(first.project_name, second.project_name);
+        assert_ne!(first.project_key, second.project_key);
+    }
+
+    #[test]
+    fn project_identity_handles_relative_git_links_without_merging_submodules() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, worktree) = worktree_fixture(temp.path());
+        fs::write(
+            worktree.join(".git"),
+            "gitdir: ../../../main/demo/.git/worktrees/agent\n",
+        )
+        .unwrap();
+        let linked =
+            project_from_cwd("claude", "s", &worktree.to_string_lossy(), "session_meta").unwrap();
+        assert_eq!(
+            linked.project_key,
+            normalize_pathbuf(&strip_windows_verbatim_prefix(
+                &fs::canonicalize(&repo).unwrap()
+            ))
+        );
+        fs::remove_file(repo.join(".git/worktrees/agent/commondir")).unwrap();
+        let separate =
+            project_from_cwd("claude", "s", &worktree.to_string_lossy(), "session_meta").unwrap();
+        assert_eq!(
+            separate.project_key,
+            normalize_pathbuf(&strip_windows_verbatim_prefix(
+                &fs::canonicalize(&worktree).unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn worktree_history_repair_preserves_usage_and_provider_evidence() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, worktree) = worktree_fixture(temp.path());
+        let main = normalize_pathbuf(&strip_windows_verbatim_prefix(
+            &fs::canonicalize(&repo).unwrap(),
+        ));
+        let alias = normalize_pathbuf(&strip_windows_verbatim_prefix(
+            &fs::canonicalize(&worktree).unwrap(),
+        ));
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("INSERT INTO session_projects(app_type,session_key,project_key,project_path,project_name,source,updated_at) VALUES ('claude','s',?1,?1,'demo','session_meta',1)", [&alias])?;
+            for (id, app, key) in [("main", "codex", &main), ("linked", "claude", &alias)] {
+                conn.execute("INSERT INTO proxy_request_logs(request_id,provider_id,app_type,model,latency_ms,status_code,created_at,project_key,project_path,project_name,session_key,provider_name_snapshot,attribution_source,attribution_confidence) VALUES (?1,'keep-provider',?2,'m',10,500,1,?3,?3,'demo','s','Original','proxy','exact')", params![id,app,key])?;
+            }
+            for (key, source, model, count, input, output, read, semantics, cost, latency) in [
+                (
+                    &main,
+                    "codex_session",
+                    "m",
+                    1,
+                    100,
+                    5,
+                    80,
+                    1,
+                    "0.123456789012345678",
+                    100,
+                ),
+                (&alias, "codex_session", "m", 3, 10, 7, 20, 2, "0.2", 300),
+                (&alias, "proxy", "m", 2, 12, 0, 0, 2, "0.04", 50),
+                (
+                    &alias,
+                    "codex_session",
+                    "other-model",
+                    1,
+                    2,
+                    0,
+                    0,
+                    2,
+                    "0.005",
+                    10,
+                ),
+            ] {
+                conn.execute("INSERT INTO usage_daily_rollups(date,app_type,provider_id,model,data_source,project_key,project_path,project_name,provider_name_snapshot,request_count,success_count,input_tokens,output_tokens,cache_read_tokens,input_token_semantics,total_cost_usd,avg_latency_ms) VALUES ('2026-01-01','codex','keep-provider',?1,?2,?3,?3,'demo','Original',?4,?4,?5,?6,?7,?8,?9,?10)", params![model,source,key,count,input,output,read,semantics,cost,latency])?;
+            }
+        }
+        assert_eq!(db.normalize_worktree_projects()?, 1);
+        assert_eq!(db.normalize_worktree_projects()?, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            let detail: (String,String,String,String,String) = conn.query_row("SELECT project_key,project_path,provider_id,provider_name_snapshot,attribution_confidence FROM proxy_request_logs WHERE request_id='linked'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
+            assert_eq!(
+                detail,
+                (
+                    main.clone(),
+                    alias.clone(),
+                    "keep-provider".into(),
+                    "Original".into(),
+                    "exact".into()
+                )
+            );
+            let indexed: String = conn.query_row(
+                "SELECT project_key FROM session_projects WHERE session_key='s'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(indexed, main);
+            let merged: (i64,i64,i64,i64,i64,i64,String) = conn.query_row("SELECT request_count,input_tokens,output_tokens,cache_read_tokens,input_token_semantics,avg_latency_ms,total_cost_usd FROM usage_daily_rollups WHERE project_key=?1 AND model='m' AND data_source='codex_session'", [&main], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)))?;
+            assert_eq!(
+                merged,
+                (4, 30, 12, 100, 2, 250, "0.323456789012345678".into())
+            );
+            let totals: (i64, i64) = conn.query_row(
+                "SELECT COUNT(*),SUM(request_count) FROM usage_daily_rollups",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!(totals, (3, 7));
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |r| r
+                    .get::<_, i64>(0))?,
+                2
+            );
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM usage_daily_rollups WHERE project_key=?1",
+                    [&alias],
+                    |r| r.get::<_, i64>(0)
+                )?,
+                0
+            );
+        }
+        let projects = db.get_project_stats(None, None, None, None, None, None, None, None)?;
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].app_count, 2);
+        assert_eq!(projects[0].provider_count, 2);
+        assert_eq!(
+            db.get_usage_projects(None, None, None, None, None, None, None)?
+                .len(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_history_repair_rolls_back_on_invalid_rollup_cost() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, worktree) = worktree_fixture(temp.path());
+        let main = normalize_pathbuf(&strip_windows_verbatim_prefix(
+            &fs::canonicalize(&repo).unwrap(),
+        ));
+        let alias = normalize_pathbuf(&strip_windows_verbatim_prefix(
+            &fs::canonicalize(&worktree).unwrap(),
+        ));
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (model, key, cost) in [
+                ("a", &main, "0.1"),
+                ("a", &alias, "0.2"),
+                ("b", &main, "0.1"),
+                ("b", &alias, "invalid"),
+            ] {
+                conn.execute("INSERT INTO usage_daily_rollups(date,app_type,provider_id,model,project_key,request_count,total_cost_usd) VALUES ('2026-01-01','claude','p',?1,?2,1,?3)",params![model,key,cost])?;
+            }
+        }
+        assert!(db.normalize_worktree_projects().is_err());
+        let conn = lock_conn!(db.conn);
+        let counts: (i64, i64) = conn.query_row(
+            "SELECT COUNT(*),SUM(request_count) FROM usage_daily_rollups",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!(counts, (4, 4));
+        let retained: String = conn.query_row(
+            "SELECT total_cost_usd FROM usage_daily_rollups WHERE project_key=?1 AND model='a'",
+            [&main],
+            |r| r.get(0),
+        )?;
+        assert_eq!(retained, "0.1");
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires a disposable database copy via CC_SWITCH_WORKTREE_REPAIR_TEST_DB"]
+    fn worktree_history_repair_on_database_copy() -> Result<(), AppError> {
+        let path = std::env::var("CC_SWITCH_WORKTREE_REPAIR_TEST_DB")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let db = Database::memory()?;
+        *lock_conn!(db.conn) =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let snapshot = || -> Result<(i64, i64, Decimal), AppError> {
+            let conn = lock_conn!(db.conn);
+            let mut stmt = conn.prepare(&format!(
+                "SELECT 1, {}, total_cost_usd FROM proxy_request_logs l
+                 UNION ALL SELECT request_count, {}, total_cost_usd FROM usage_daily_rollups r",
+                super::super::sql_helpers::real_total_tokens_sql("l"),
+                super::super::sql_helpers::real_total_tokens_sql("r")
+            ))?;
+            let mut requests = 0;
+            let mut tokens = 0;
+            let mut cost = Decimal::ZERO;
+            for row in stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })? {
+                let (count, token_count, value) = row?;
+                requests += count;
+                tokens += token_count;
+                cost += Decimal::from_str(&value).map_err(|e| AppError::Database(e.to_string()))?;
+            }
+            Ok((requests, tokens, cost))
+        };
+        let before = snapshot()?;
+        let merged = db.normalize_worktree_projects()?;
+        assert_eq!(snapshot()?, before);
+        assert_eq!(db.normalize_worktree_projects()?, 0);
+        println!(
+            "repaired project keys={merged}; requests={}, real_tokens={}, cost={} preserved",
+            before.0, before.1, before.2
+        );
+        Ok(())
+    }
+
     #[test]
     fn normalize_session_key_strips_codex_prefix_and_claude_wrapper() {
         assert_eq!(normalize_session_key("codex", "codex_019a-abc"), "019a-abc");
@@ -711,7 +1142,9 @@ mod tests {
             .expect("project");
         assert_eq!(
             project.project_key,
-            fs::canonicalize(&repo).unwrap().to_string_lossy()
+            normalize_pathbuf(&strip_windows_verbatim_prefix(
+                &fs::canonicalize(&repo).unwrap()
+            ))
         );
         // 项目名取 cwd 末级目录名（用户直觉），project_key 仍为 git 根目录。
         assert_eq!(project.project_name, "deep");

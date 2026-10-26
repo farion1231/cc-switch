@@ -22,6 +22,7 @@ interface ModelStatsTableProps {
   providerId?: string;
   providerName?: string;
   projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   refreshIntervalMs: number;
 }
@@ -33,15 +34,28 @@ export function ModelStatsTable({
   providerId,
   providerName,
   projectKey,
+  projectKeys,
   model,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t, i18n } = useTranslation();
   const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
-  const { data: stats, isLoading } = useModelStats(
+  const {
+    data: stats,
+    isLoading,
+    isPlaceholderData,
+  } = useModelStats(
     range,
-    { appType, providerAppType, providerId, providerName, projectKey, model },
+    {
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -60,11 +74,12 @@ export function ModelStatsTable({
       providerId,
       providerName,
       projectKey,
+      projectKeys,
       model,
     ]),
   );
 
-  if (isLoading) {
+  if (isLoading || isPlaceholderData) {
     return <div className={usageTable.skeleton} />;
   }
 

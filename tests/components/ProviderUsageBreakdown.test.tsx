@@ -37,8 +37,9 @@ describe("ProviderUsageBreakdown", () => {
           <ProviderUsageBreakdown
             providerId="p-1"
             providerAppType="codex"
-            providerName="DeepSeek"
-            projectKey="/repo"
+            providerName="Synthetic Provider"
+            projectKey="synthetic-project"
+            projectKeys={["synthetic-alpha", "synthetic-beta"]}
             range={range}
             refreshIntervalMs={0}
             colSpan={8}
@@ -49,7 +50,12 @@ describe("ProviderUsageBreakdown", () => {
 
     expect(useModelStatsMock).toHaveBeenCalledWith(
       range,
-      { providerId: "p-1", providerAppType: "codex", projectKey: "/repo" },
+      {
+        providerId: "p-1",
+        providerAppType: "codex",
+        projectKey: "synthetic-project",
+        projectKeys: ["synthetic-alpha", "synthetic-beta"],
+      },
       { refetchInterval: false },
     );
   });

@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/sliding-indicator";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuPortal,
@@ -171,7 +172,7 @@ function ScopeModelItems({
   range,
   appType,
   provider,
-  projectKey,
+  projectKeys,
   providerCount,
   active,
   selectedModel,
@@ -181,7 +182,7 @@ function ScopeModelItems({
   range: UsageRangeSelection;
   appType: AppTypeFilter;
   provider: UsageProviderSelection | null;
-  projectKey?: string;
+  projectKeys?: string[];
   providerCount: number;
   /** 这一级就是当前选中的供应商（勾才画在它的模型上） */
   active: boolean;
@@ -196,7 +197,7 @@ function ScopeModelItems({
       appType,
       providerId: provider?.id,
       providerAppType: provider?.appType,
-      projectKey,
+      projectKeys,
     },
     { refetchInterval: false },
   );
@@ -294,7 +295,12 @@ export function UsageDashboard({
   const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
   const [providerSelection, setProviderSelection] =
     useState<UsageProviderSelection | null>(null);
-  const [projectKey, setProjectKey] = useState<string | undefined>(undefined);
+  const [projectKeys, setProjectKeys] = useState<string[] | undefined>(
+    undefined,
+  );
+  const [selectedProjectNames, setSelectedProjectNames] = useState<
+    Record<string, string>
+  >({});
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
 
@@ -357,7 +363,8 @@ export function UsageDashboard({
   useEffect(() => {
     setAppType(initialAppType);
     setProviderSelection(null);
-    setProjectKey(undefined);
+    setProjectKeys(undefined);
+    setSelectedProjectNames({});
     setModel(undefined);
   }, [initialAppType]);
 
@@ -367,7 +374,8 @@ export function UsageDashboard({
     setAppType(next);
     if (next !== appType) {
       setProviderSelection(null);
-      setProjectKey(undefined);
+      setProjectKeys(undefined);
+      setSelectedProjectNames({});
       setModel(undefined);
     }
   };
@@ -478,19 +486,34 @@ export function UsageDashboard({
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
-    { appType, projectKey },
+    { appType, projectKeys },
     refetch,
   );
   const { data: projectOptionsData } = useUsageProjects(
     range,
-    appType === "all" ? undefined : appType,
+    {
+      appType,
+      providerId: providerSelection?.id,
+      providerAppType: providerSelection?.appType,
+      providerName: providerSelection?.name,
+      model,
+      projectKeys,
+    },
     refetch,
   );
-  const { data: dataQuality } = useUsageDataQuality(
-    range,
-    appType === "all" ? undefined : appType,
-    refetch,
-  );
+  const { data: dataQuality, isPlaceholderData: isQualityPlaceholderData } =
+    useUsageDataQuality(
+      range,
+      {
+        appType,
+        providerId: providerSelection?.id,
+        providerAppType: providerSelection?.appType,
+        providerName: providerSelection?.name,
+        model,
+        projectKeys,
+      },
+      refetch,
+    );
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
   const { data: allTimeSummary } = useQuery({
     queryKey: [...usageKeys.all, "all-time-summary"],
@@ -535,16 +558,21 @@ export function UsageDashboard({
       path: project.projectPath,
       count: project.requestCount,
     }));
-    if (projectKey && !options.some((option) => option.key === projectKey)) {
-      options.push({
-        key: projectKey,
-        name: projectKey === "" ? t("usage.projectFilter.unknown") : projectKey,
-        path: "",
-        count: 0,
-      });
+    const optionKeys = new Set(options.map((option) => option.key));
+    for (const projectKey of projectKeys ?? []) {
+      if (!optionKeys.has(projectKey)) {
+        options.push({
+          key: projectKey,
+          name:
+            selectedProjectNames[projectKey] ??
+            (projectKey === "" ? t("usage.projectFilter.unknown") : projectKey),
+          path: "",
+          count: 0,
+        });
+      }
     }
     return options.sort((a, b) => b.count - a.count);
-  }, [projectOptionsData, projectKey, t]);
+  }, [projectOptionsData, projectKeys, selectedProjectNames, t]);
   const projectTotal = projectOptions.reduce((sum, p) => sum + p.count, 0);
   // 触发器：「供应商 / 模型」，哪一级选了就换成选中的名字
   const providerText = providerSelection
@@ -770,7 +798,7 @@ export function UsageDashboard({
                       range={range}
                       appType={appType}
                       provider={provider}
-                      projectKey={projectKey}
+                      projectKeys={projectKeys}
                       providerCount={option.count}
                       active={active}
                       selectedModel={active ? model : undefined}
@@ -792,18 +820,30 @@ export function UsageDashboard({
             size="regular"
             className="min-w-[78px] max-w-[176px] shrink gap-1 pe-2 ps-3"
             title={
-              projectKey === ""
-                ? t("usage.projectFilter.unknown")
-                : (projectKey ?? t("usage.projectFilter.title"))
+              projectKeys == null || projectKeys.length === 0
+                ? t("usage.projectFilter.title")
+                : projectKeys.length === 1
+                  ? (projectOptions.find(
+                      (option) => option.key === projectKeys[0],
+                    )?.name ?? projectKeys[0])
+                  : t("usage.projectFilter.selected", {
+                      count: projectKeys.length,
+                    })
             }
           >
             <span className="min-w-0 truncate">
-              {projectKey == null
+              {projectKeys == null || projectKeys.length === 0
                 ? t("usage.projectFilter.label")
-                : projectKey === ""
-                  ? t("usage.projectFilter.unknown")
-                  : (projectOptions.find((option) => option.key === projectKey)
-                      ?.name ?? projectKey)}
+                : projectKeys.length === 1
+                  ? (projectOptions.find(
+                      (option) => option.key === projectKeys[0],
+                    )?.name ??
+                    (projectKeys[0] === ""
+                      ? t("usage.projectFilter.unknown")
+                      : projectKeys[0]))
+                  : t("usage.projectFilter.selected", {
+                      count: projectKeys.length,
+                    })}
             </span>
             <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
           </Button>
@@ -815,23 +855,40 @@ export function UsageDashboard({
         >
           <DropdownMenuItem
             className={menuItemClass}
-            onSelect={() => setProjectKey(undefined)}
+            onSelect={() => setProjectKeys(undefined)}
           >
-            <MenuCheck checked={projectKey == null} />
+            <MenuCheck
+              checked={projectKeys == null || projectKeys.length === 0}
+            />
             {t("usage.projectFilter.all")}
             <MenuMeta>{fmtInt(projectTotal, locale)}</MenuMeta>
           </DropdownMenuItem>
           {projectOptions.map((option) => (
-            <DropdownMenuItem
+            <DropdownMenuCheckboxItem
               key={option.key || "__unknown__"}
               className={menuItemClass}
               title={option.path || option.name}
-              onSelect={() => setProjectKey(option.key)}
+              checked={projectKeys?.includes(option.key) ?? false}
+              onSelect={(event) => event.preventDefault()}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  setSelectedProjectNames((names) => ({
+                    ...names,
+                    [option.key]: option.name,
+                  }));
+                }
+                setProjectKeys((current) => {
+                  const selected = current ?? [];
+                  const next = checked
+                    ? [...selected, option.key]
+                    : selected.filter((key) => key !== option.key);
+                  return next.length ? next : undefined;
+                });
+              }}
             >
-              <MenuCheck checked={projectKey === option.key} />
               <span className="min-w-0 truncate">{option.name}</span>
               <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
-            </DropdownMenuItem>
+            </DropdownMenuCheckboxItem>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -846,7 +903,7 @@ export function UsageDashboard({
     providerId: providerSelection?.id,
     providerAppType: providerSelection?.appType,
     providerName: providerSelection?.name,
-    projectKey,
+    projectKeys,
     model,
   };
 
@@ -870,6 +927,7 @@ export function UsageDashboard({
       providerAppType: providerSelection?.appType,
       providerName: providerSelection?.name,
       model,
+      projectKeys,
     },
     refetch,
   );
@@ -990,7 +1048,7 @@ export function UsageDashboard({
             providerId={providerSelection?.id}
             providerAppType={providerSelection?.appType}
             providerName={providerSelection?.name}
-            projectKey={projectKey}
+            projectKeys={projectKeys}
             model={model}
             statusCode={statusCode}
             refreshIntervalMs={0}
@@ -1010,6 +1068,7 @@ export function UsageDashboard({
             providerId={providerSelection?.id}
             providerAppType={providerSelection?.appType}
             providerName={providerSelection?.name}
+            projectKeys={projectKeys}
             model={model}
             refreshIntervalMs={0}
           />
@@ -1021,7 +1080,7 @@ export function UsageDashboard({
             providerId={providerSelection?.id}
             providerAppType={providerSelection?.appType}
             providerName={providerSelection?.name}
-            projectKey={projectKey}
+            projectKeys={projectKeys}
             model={model}
             refreshIntervalMs={0}
           />
@@ -1033,7 +1092,7 @@ export function UsageDashboard({
             providerId={providerSelection?.id}
             providerAppType={providerSelection?.appType}
             providerName={providerSelection?.name}
-            projectKey={projectKey}
+            projectKeys={projectKeys}
             model={model}
             refreshIntervalMs={0}
           />
@@ -1051,7 +1110,7 @@ export function UsageDashboard({
         providerId={providerSelection?.id}
         providerAppType={providerSelection?.appType}
         providerName={providerSelection?.name}
-        projectKey={projectKey}
+        projectKeys={projectKeys}
         model={model}
         refreshIntervalMs={0}
         compact={compact}
@@ -1066,7 +1125,7 @@ export function UsageDashboard({
           providerId={providerSelection?.id}
           providerAppType={providerSelection?.appType}
           providerName={providerSelection?.name}
-          projectKey={projectKey}
+          projectKeys={projectKeys}
           model={model}
           refreshIntervalMs={0}
         />
@@ -1078,12 +1137,13 @@ export function UsageDashboard({
           providerId={providerSelection?.id}
           providerAppType={providerSelection?.appType}
           providerName={providerSelection?.name}
-          projectKey={projectKey}
+          projectKeys={projectKeys}
           model={model}
           refreshIntervalMs={0}
         />
       )}
-      {dataQuality &&
+      {!isQualityPlaceholderData &&
+      dataQuality &&
       (dataQuality.unknownProviderRequests > 0 ||
         dataQuality.unknownProjectRequests > 0) ? (
         <div className="flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-2">
