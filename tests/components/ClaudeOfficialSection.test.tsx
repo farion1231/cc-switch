@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ClaudeAccountSelect,
   ClaudeBoundAccountLine,
-  ClaudeBoundAccountQuotaGate,
   ClaudeOfficialSection,
 } from "@/components/providers/forms/ClaudeOfficialSection";
 
@@ -231,60 +230,6 @@ describe("ClaudeOfficialSection", () => {
     expect(
       await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
     ).toBeInTheDocument();
-  });
-
-  it("shows the bound account on the card and its quota only when it is the login", async () => {
-    mocks.getStatus.mockResolvedValue({
-      provider: "claude_official",
-      authenticated: true,
-      default_account_id: null,
-      accounts: [account("acc:org", "me@example.com")],
-    });
-    withQuery(
-      <>
-        <ClaudeBoundAccountLine
-          accountId="acc:org"
-          providerName="Claude Official"
-        />
-        <ClaudeBoundAccountQuotaGate accountId="acc:org">
-          <span>quota-acc</span>
-        </ClaudeBoundAccountQuotaGate>
-        <ClaudeBoundAccountQuotaGate accountId="gone:org">
-          <span>quota-gone</span>
-        </ClaudeBoundAccountQuotaGate>
-      </>,
-    );
-    expect(await screen.findByText(/me@example\.com/)).toBeInTheDocument();
-    expect(screen.getByText("quota-acc")).toBeInTheDocument();
-    expect(screen.queryByText("quota-gone")).not.toBeInTheDocument();
-  });
-
-  it("hides the quota when switching cards can't change the login", async () => {
-    mocks.getStatus.mockResolvedValue({
-      provider: "claude_official",
-      authenticated: true,
-      default_account_id: null,
-      accounts: [account("acc:org", "me@example.com")],
-    });
-    mocks.getLoginSwitch.mockResolvedValue(
-      loginSwitch({ blocked: "overrideDir" }),
-    );
-    withQuery(
-      <>
-        <ClaudeBoundAccountLine
-          accountId="acc:org"
-          providerName="Claude Official"
-        />
-        <ClaudeBoundAccountQuotaGate accountId="acc:org">
-          <span>quota-acc</span>
-        </ClaudeBoundAccountQuotaGate>
-      </>,
-    );
-    // 副标题写出「从卡片打开终端」= 账号和切换状态都回来了，额度仍然不显示
-    expect(
-      await screen.findByText(/从卡片打开终端使用|terminalHint/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("quota-acc")).not.toBeInTheDocument();
   });
 
   it("words the card subtitle like the Codex card", async () => {

@@ -17,6 +17,7 @@ pub mod layout;
 pub mod login;
 pub mod shared;
 pub mod snapshot;
+pub mod usage;
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;

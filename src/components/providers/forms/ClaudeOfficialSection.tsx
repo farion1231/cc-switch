@@ -579,20 +579,3 @@ export function ClaudeBoundAccountLine({
     </div>
   );
 }
-
-/**
- * 额度查的是 Claude Code 默认登录的号：切卡会把卡上的号换进去，才对得上。
- * 切卡不换号（设了配置目录覆盖）、或卡上的号不在这台电脑上时，不显示额度。
- */
-export function ClaudeBoundAccountQuotaGate({
-  accountId,
-  children,
-}: {
-  accountId: string;
-  children: React.ReactNode;
-}) {
-  const terminalOnly = useClaudeAccountTerminalOnly();
-  const { account } = useClaudeAccount(accountId);
-  if (terminalOnly || !account) return null;
-  return <>{children}</>;
-}

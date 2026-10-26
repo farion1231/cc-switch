@@ -8,6 +8,9 @@ export const subscriptionApi = {
     invoke("get_codex_oauth_quota", { accountId }),
   getXaiOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
     invoke("get_xai_oauth_quota", { accountId }),
+  /** 绑了账号的 Claude 官方卡：按那个账号自己的登录查 */
+  getClaudeAccountQuota: (accountId: string): Promise<SubscriptionQuota> =>
+    invoke("get_claude_account_quota", { accountId }),
   getAgyAccountQuota: (accountId: string): Promise<SubscriptionQuota> =>
     invoke("agy_account_quota", { accountId }),
   getCodingPlanQuota: (

@@ -116,6 +116,15 @@ pub fn default_owner(default: &Slot) -> Option<String> {
     identity::identity_from_profile(&profile).map(|found| found.key)
 }
 
+/// 账号 `account` 现在的登录在哪个槽位，查额度用：它在默认槽位里就是默认槽位，否则是它自己
+/// 的账号目录。本机没有这个账号时为 `None`。
+pub fn account_slot(data_dir: &Path, account: &str) -> Option<Slot> {
+    if is_live(account) {
+        return Some(Slot::default_slot());
+    }
+    crate::services::claude_account::config_dir_on_disk(data_dir, account).map(Slot::Account)
+}
+
 /// 账号目录里有没有能用的登录（读凭据判断；钥匙串条目在、里面只剩 MCP 授权也算没有）。
 pub fn dir_has_login(config_dir: &Path) -> bool {
     creds::read_login(

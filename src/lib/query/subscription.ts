@@ -14,11 +14,7 @@ const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 export const subscriptionKeys = {
   all: ["subscription"] as const,
-  /** `account`：卡片绑了账号时按账号分开缓存，换号后不会先显示上一个号的额度 */
-  quota: (appId: AppId, account?: string) =>
-    account
-      ? ([...subscriptionKeys.all, "quota", appId, account] as const)
-      : ([...subscriptionKeys.all, "quota", appId] as const),
+  quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
 };
 
 /**
@@ -86,7 +82,6 @@ export function useSubscriptionQuota(
   enabled: boolean,
   autoQuery = false,
   autoQueryIntervalMinutes = 5,
-  account?: string,
 ) {
   const refetchInterval =
     autoQuery && autoQueryIntervalMinutes > 0
@@ -94,7 +89,7 @@ export function useSubscriptionQuota(
       : false;
 
   const query = useQuery({
-    queryKey: subscriptionKeys.quota(appId, account),
+    queryKey: subscriptionKeys.quota(appId),
     queryFn: () => subscriptionApi.getQuota(appId),
     enabled:
       enabled &&
@@ -109,7 +104,7 @@ export function useSubscriptionQuota(
     retry: 1,
   });
 
-  return useQuotaKeepLastGood(query, account ? `${appId}:${account}` : appId);
+  return useQuotaKeepLastGood(query, appId);
 }
 
 export interface UseCodexOauthQuotaOptions {
@@ -261,6 +256,37 @@ export function useKimiAccountQuota(
   const query = useQuery({
     queryKey: ["kimi_oauth", "quota", accountId],
     queryFn: () => kimiOAuthApi.quota(accountId),
+    enabled,
+    refetchInterval,
+    refetchIntervalInBackground: Boolean(refetchInterval),
+    refetchOnWindowFocus: Boolean(refetchInterval),
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId);
+}
+
+/**
+ * 绑了账号的 Claude 官方卡额度（按账号查）：在用的号读默认登录，没在用的读它自己的账号目录。
+ * 令牌过期时后端会在那个目录里跑一次 `claude -p /usage`（Claude Code 自己刷新），可能要几秒。
+ */
+export function useClaudeAccountQuota(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
+  const refetchInterval =
+    autoQuery && autoQueryIntervalMinutes > 0
+      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+      : false;
+  const query = useQuery({
+    queryKey: ["claude_official", "quota", accountId],
+    queryFn: () => subscriptionApi.getClaudeAccountQuota(accountId),
     enabled,
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),

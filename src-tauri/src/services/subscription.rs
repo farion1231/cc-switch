@@ -1553,38 +1553,100 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
 /// 瞬时传输失败以 `Err` 传播（前端 reject → retry + 保留上次成功值）。Expired
 /// 分支的"过期也试一把"重试同样用 `?` 传播瞬时错误——不能折叠成"已过期"，
 /// 否则一次网络抖动会被误报成确定性的凭据过期。
-pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, String> {
-    match tool {
-        "claude" => {
-            let (token, status, message) = read_claude_credentials();
-
-            match status {
-                CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("claude")),
-                CredentialStatus::ParseError => Ok(SubscriptionQuota::error(
-                    "claude",
-                    CredentialStatus::ParseError,
-                    message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
-                )),
-                CredentialStatus::Expired | CredentialStatus::RefreshPending => {
-                    // 即使过期也尝试调用 API（token 可能实际上仍有效）
-                    if let Some(token) = token {
-                        let result = query_claude_quota(&token).await?;
-                        if result.success {
-                            return Ok(result);
-                        }
-                    }
-                    Ok(SubscriptionQuota::error(
-                        "claude",
-                        status,
-                        message.unwrap_or_else(|| "OAuth token has expired".to_string()),
-                    ))
-                }
-                CredentialStatus::Valid => {
-                    let token = token.expect("token must be Some when status is Valid");
-                    query_claude_quota(&token).await
+/// 按读到的 Claude 凭据查额度：访问令牌过期也先试一次（可能实际上还有效）。
+async fn claude_quota_from(
+    (token, status, message): (Option<String>, CredentialStatus, Option<String>),
+) -> Result<SubscriptionQuota, String> {
+    match status {
+        CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("claude")),
+        CredentialStatus::ParseError => Ok(SubscriptionQuota::error(
+            "claude",
+            CredentialStatus::ParseError,
+            message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
+        )),
+        CredentialStatus::Expired | CredentialStatus::RefreshPending => {
+            if let Some(token) = token {
+                let result = query_claude_quota(&token).await?;
+                if result.success {
+                    return Ok(result);
                 }
             }
+            Ok(SubscriptionQuota::error(
+                "claude",
+                status,
+                message.unwrap_or_else(|| "OAuth token has expired".to_string()),
+            ))
         }
+        CredentialStatus::Valid => {
+            let token = token.expect("token must be Some when status is Valid");
+            query_claude_quota(&token).await
+        }
+    }
+}
+
+/// 绑了账号的 Claude 官方卡：按那个账号自己的登录查额度（在用的号读默认槽位，没在用的读它
+/// 的账号目录）。令牌有效就直接查；过期了（没在用的号放几个小时就会这样）在那个目录里跑一次
+/// `claude -p /usage`，由 Claude Code 自己刷新并缓存额度，再读它的缓存。CC Switch 不刷新令牌。
+pub async fn get_claude_account_quota(
+    data_dir: std::path::PathBuf,
+    account: String,
+) -> Result<SubscriptionQuota, String> {
+    use crate::services::claude_account::{snapshot, usage};
+
+    let found = {
+        let account = account.clone();
+        tokio::task::spawn_blocking(move || {
+            let slot = snapshot::account_slot(&data_dir, &account)?;
+            let secret = snapshot::store::platform_store().read(&slot);
+            Some((slot, secret))
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    };
+    let Some((slot, secret)) = found else {
+        return Ok(SubscriptionQuota::not_found("claude"));
+    };
+    let Some(secret) = secret.map_err(|error| error.to_string())? else {
+        return Ok(SubscriptionQuota::not_found("claude"));
+    };
+    let json = String::from_utf8_lossy(&secret.to_bytes()).into_owned();
+    let direct = claude_quota_from(parse_claude_credentials_json(&json)).await?;
+    if direct.success
+        || !matches!(
+            direct.credential_status,
+            CredentialStatus::Expired | CredentialStatus::RefreshPending
+        )
+    {
+        return Ok(direct);
+    }
+
+    let account_uuid = account
+        .split_once(':')
+        .map_or(account.as_str(), |(uuid, _)| uuid)
+        .to_string();
+    let profile = slot.global_config();
+    let config_dir = match &slot {
+        snapshot::store::Slot::Default { .. } => None,
+        snapshot::store::Slot::Account(dir) => Some(dir.clone()),
+    };
+    let cached = tokio::task::spawn_blocking(move || {
+        usage::refresh_via_cli(&account, config_dir.as_deref());
+        usage::read_cached(&profile, &account_uuid)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(match cached {
+        Some(cached) => SubscriptionQuota {
+            queried_at: Some(cached.fetched_at_ms),
+            ..parse_claude_quota(&cached.utilization)
+        },
+        None => direct,
+    })
+}
+
+pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, String> {
+    match tool {
+        "claude" => claude_quota_from(read_claude_credentials()).await,
         "codex" => {
             let (token, account_id, status, message) = read_codex_credentials();
 

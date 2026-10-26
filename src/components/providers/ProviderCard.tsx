@@ -23,10 +23,8 @@ import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
-import {
-  ClaudeBoundAccountLine,
-  ClaudeBoundAccountQuotaGate,
-} from "@/components/providers/forms/ClaudeOfficialSection";
+import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
+import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
@@ -254,9 +252,17 @@ export function ProviderCard({
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
-  const usageEnabled =
-    provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
   const isOfficial = isOfficialProvider(provider, appId);
+  // Claude 官方卡绑了 Claude 官方账号：副标题写账号，额度按这个号查
+  const claudeBoundAccountId =
+    appId === "claude" && isOfficial
+      ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
+        null
+      : null;
+  // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
+  const usageEnabled =
+    provider.meta?.usage_script?.enabled ??
+    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
   const supportsOfficialSubscription =
     isOfficial &&
     ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
@@ -279,12 +285,6 @@ export function ProviderCard({
   const agyBoundAccountId =
     appId === "agy" && isOfficial && isMac()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
-      : null;
-  // Claude 官方卡绑了 Claude 官方账号：副标题写账号；额度查的是默认登录，切卡会把这个号换进去
-  const claudeBoundAccountId =
-    appId === "claude" && isOfficial
-      ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
-        null
       : null;
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
@@ -525,6 +525,17 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : claudeBoundAccountId ? (
+                usageEnabled ? (
+                  <ClaudeAccountQuotaFooter
+                    accountId={claudeBoundAccountId}
+                    inline={true}
+                    isCurrent={isCurrent}
+                    autoQueryInterval={
+                      provider.meta?.usage_script?.autoQueryInterval ?? 5
+                    }
+                  />
+                ) : null
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
                   agyBoundAccountId ? (
@@ -536,20 +547,6 @@ export function ProviderCard({
                         provider.meta?.usage_script?.autoQueryInterval ?? 0
                       }
                     />
-                  ) : claudeBoundAccountId ? (
-                    <ClaudeBoundAccountQuotaGate
-                      accountId={claudeBoundAccountId}
-                    >
-                      <SubscriptionQuotaFooter
-                        appId={appId}
-                        inline={true}
-                        isCurrent={isCurrent}
-                        autoQueryInterval={
-                          provider.meta?.usage_script?.autoQueryInterval ?? 0
-                        }
-                        account={claudeBoundAccountId}
-                      />
-                    </ClaudeBoundAccountQuotaGate>
                   ) : (
                     <SubscriptionQuotaFooter
                       appId={appId}

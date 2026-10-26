@@ -462,6 +462,12 @@ fn spawn_login(
 
 /// 让命令只用这个账号目录：清掉会指向别处的变量，设 `CLAUDE_CONFIG_DIR`。
 pub fn apply_account_env(cmd: &mut std::process::Command, config_dir: &Path) {
+    clear_account_env(cmd);
+    cmd.env("CLAUDE_CONFIG_DIR", config_dir);
+}
+
+/// 清掉会把 Claude Code 指到别的登录、别的接口的变量（`CLAUDE_CONFIG_DIR` 由调用方决定）。
+pub fn clear_account_env(cmd: &mut std::process::Command) {
     for (key, _) in std::env::vars_os() {
         let name = key.to_string_lossy();
         if name.starts_with("ANTHROPIC_") || name.starts_with("CLAUDE_CODE_USE_") {
@@ -471,7 +477,6 @@ pub fn apply_account_env(cmd: &mut std::process::Command, config_dir: &Path) {
     for key in CLAUDE_ACCOUNT_UNSET {
         cmd.env_remove(key);
     }
-    cmd.env("CLAUDE_CONFIG_DIR", config_dir);
 }
 
 #[cfg(test)]

@@ -1901,6 +1901,7 @@ pub fn run() {
             commands::agy_account_is_running,
             commands::agy_account_quota,
             commands::claude_account_submit_paste,
+            commands::get_claude_account_quota,
             commands::get_claude_login_switch,
             commands::kimi_oauth_status,
             commands::kimi_oauth_start,

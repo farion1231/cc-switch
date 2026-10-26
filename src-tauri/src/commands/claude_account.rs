@@ -20,6 +20,18 @@ pub async fn claude_account_submit_paste(
         .map_err(|error| error.to_string())
 }
 
+/// 绑了账号的 Claude 官方卡的额度：按那个账号自己的登录查。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_claude_account_quota(
+    account_id: String,
+) -> Result<crate::services::subscription::SubscriptionQuota, String> {
+    crate::services::subscription::get_claude_account_quota(
+        crate::config::get_app_config_dir(),
+        account_id,
+    )
+    .await
+}
+
 /// 切卡时切换 Claude Code 登录的状态。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
