@@ -396,6 +396,8 @@ export function useAddSkillRepo() {
   return useMutation({
     mutationFn: async (repo: SkillRepo) => {
       await skillsApi.addRepo(repo);
+      // 写库后马上刷新仓库列表：勾选框读的是它，不能等下面的归档下载完
+      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
       if (!repo.enabled) return { skills: [], failures: [] };
       try {
         return await skillsApi.discoverRepo(repo.owner, repo.name);
@@ -406,7 +408,6 @@ export function useAddSkillRepo() {
     },
     onMutate: nextRepoMutation,
     onSuccess: async (discovery, repo, ctx) => {
-      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
       if (!isLatestRepoMutation(ctx)) return;
       if (discovery) {
         await patchRepoDiscovery(queryClient, repo, discovery);

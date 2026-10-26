@@ -206,6 +206,20 @@ describe("repo mutation races", () => {
     queryClient.clear();
   });
 
+  it("refreshes the repo list before the repo's archive finishes downloading", async () => {
+    const { queryClient, wrapper } = setup();
+    apiMocks.discoverRepo.mockReturnValue(new Promise(() => {}));
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(() => useAddSkillRepo(), { wrapper });
+    act(() => {
+      void result.current.mutateAsync(repoA);
+    });
+
+    await vi.waitFor(() => expect(apiMocks.discoverRepo).toHaveBeenCalled());
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["skills", "repos"] });
+  });
+
   it("a slow discovery does not restore a repo removed meanwhile", async () => {
     const { queryClient, wrapper } = setup();
     queryClient.setQueryData<SkillDiscoveryResult>(DISCOVERABLE, {
@@ -246,8 +260,12 @@ describe("useRefreshDiscoverableSkills", () => {
   it("asks the backend to bypass its per-repo cache", async () => {
     apiMocks.discoverAvailable.mockResolvedValue({ skills: [], failures: [] });
     const { queryClient, wrapper } = setup();
-    // 需要一个活跃的 observer，refetchQueries 才会真正发请求
-    renderHook(() => useDiscoverableSkills(), { wrapper });
+    // 需要一个活跃的 observer，refetchQueries 才会真正发请求；先等挂载时的
+    // 首次发现结束，否则刷新会直接复用那次在飞的请求
+    const discover = renderHook(() => useDiscoverableSkills(), { wrapper });
+    await vi.waitFor(() =>
+      expect(discover.result.current.isFetching).toBe(false),
+    );
 
     const { result } = renderHook(() => useRefreshDiscoverableSkills(), {
       wrapper,
