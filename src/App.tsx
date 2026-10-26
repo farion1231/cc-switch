@@ -21,6 +21,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
+import type { SubscriptionQuota } from "@/types/subscription";
 import {
   providersQueryOptions,
   proxyKeys,
@@ -138,6 +139,7 @@ import {
   DEFAULT_VISIBLE_APPS,
   isModeAppId,
   isPiFamilyApp,
+  orderAppIds,
 } from "@/config/appConfig";
 import type { PiFamilyAppId } from "@/lib/api/pi";
 
@@ -221,7 +223,10 @@ function App() {
   );
 
   const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
+    return (
+      orderAppIds(settingsData?.appOrder).find((app) => visibleApps[app]) ??
+      "claude"
+    );
   };
 
   useEffect(() => {
@@ -445,6 +450,22 @@ function App() {
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
             }
+            if (event.appType === "claude") {
+              // 托盘切卡、应用项目同样可能把默认登录收成新账号
+              await queryClient.invalidateQueries({
+                queryKey: ["managed-auth-status", "claude_official"],
+              });
+            }
+            // 切换会顺带刷新托管 ChatGPT 账号的令牌（托盘切换也一样）：
+            // 重查停在失败上的账号额度，免得主界面一直显示旧的「登录过期」
+            await queryClient.invalidateQueries({
+              predicate: (query) =>
+                query.queryKey[0] === "codex_oauth" &&
+                query.queryKey[1] === "quota" &&
+                (query.state.status === "error" ||
+                  (query.state.data as SubscriptionQuota | undefined)
+                    ?.success === false),
+            });
           },
         );
         if (!active) {

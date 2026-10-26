@@ -949,7 +949,6 @@ fn signature_for_last_usage(usage: &CumulativeTokens) -> TokenUsageSignature {
 struct PendingUsageRecord {
     key: String,
     usage: CumulativeTokens,
-    line_offset: i64,
     timestamp: Option<String>,
     model: String,
 }
@@ -957,6 +956,7 @@ struct PendingUsageRecord {
 fn push_unmatched_usage(
     events: &mut Vec<ParsedTokenEvent>,
     pending: PendingUsageRecord,
+    flush_line_offset: i64,
     has_billable_tokens: &mut bool,
 ) {
     let delta = delta_from_usage(&pending.usage);
@@ -964,8 +964,13 @@ fn push_unmatched_usage(
         return;
     }
     *has_billable_tokens = true;
+    // 事件挂在补偿它的 token_count 行上而不是记录行：记录行可能在更早的
+    // 同步轮就被游标越过（首轮无可计费内容也推进游标），挂回记录行会被
+    // `line_offset <= last_offset` 门永久丢弃。配对 token_count 行必然晚于
+    // 任何已有游标（每轮全量重解析、追加写文件），且 `usage:<key>` 请求 ID
+    // 保证重解析不重复入账。
     events.push(ParsedTokenEvent {
-        line_offset: pending.line_offset,
+        line_offset: flush_line_offset,
         signature: signature_for_last_usage(&pending.usage),
         delta,
         event_index: None,
@@ -1481,6 +1486,7 @@ fn parse_codex_file_with_index(
                         push_unmatched_usage(
                             &mut usage_record_events,
                             pending,
+                            line_offset,
                             &mut has_billable_tokens,
                         );
                     }
@@ -1618,7 +1624,6 @@ fn parse_codex_file_with_index(
                 pending_usage = Some(PendingUsageRecord {
                     key,
                     usage,
-                    line_offset,
                     timestamp: value
                         .get("timestamp")
                         .and_then(serde_json::Value::as_str)
@@ -2718,6 +2723,60 @@ mod tests {
         assert_eq!(rows[0].1, 26_705);
         assert_eq!(rows[0].2, 491);
         assert!(rows[0].0.ends_with(":usage:resp_compact"));
+        Ok(())
+    }
+
+    #[test]
+    fn remote_compaction_usage_record_survives_a_sync_pass_before_its_token_count(
+    ) -> Result<(), AppError> {
+        // The usage record and its compensating zero-last token_count can land
+        // in different sync passes (the token_count may lag by the whole tool
+        // execution window). The first pass has nothing billable and advances
+        // the cursor past the record; the compensating event must still be
+        // imported by the pass that finally sees the token_count.
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_compact", 26_705, 0, 491, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        let first = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(first.imported, 0, "nothing billable yet");
+
+        append_jsonl(
+            &path,
+            token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:05:02Z"),
+        );
+
+        let second = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(
+            second.imported, 1,
+            "compaction usage must be imported once its token_count arrives"
+        );
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+        assert!(rows[0].0.ends_with(":usage:resp_compact"));
+
+        // A later pass that reparses the file (any new content) must not bill
+        // the compensating event again: the record is re-discovered on every
+        // reparse, so the line-offset gate plus the `usage:<key>` request id
+        // are what keep it at exactly one row.
+        append_jsonl(
+            &path,
+            token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:06:02Z"),
+        );
+        let third = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(third.imported, 0, "compensating event must not re-import");
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
         Ok(())
     }
 

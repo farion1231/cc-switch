@@ -424,6 +424,10 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// 退出时是否处于轻量模式（主窗口已销毁、只留托盘）；下次启动按它恢复。
+    /// 只经 [`set_lightweight_mode`] 写，前端全量保存不透传。
+    #[serde(default)]
+    pub lightweight_mode: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -524,6 +528,9 @@ pub struct AppSettings {
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
+    /// 应用页和侧栏的应用顺序（应用 ID）。缺的应用由前端按默认顺序插回，不认识的忽略
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_order: Option<Vec<String>>,
 
     // ===== 设备级目录覆盖 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -644,6 +651,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            lightweight_mode: false,
             enable_local_proxy: false,
             enable_stack_mode: false,
             proxy_confirmed: None,
@@ -671,6 +679,7 @@ impl Default for AppSettings {
             language: None,
             quota_display: None,
             visible_apps: None,
+            app_order: None,
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
@@ -1182,6 +1191,14 @@ pub fn clear_codex_unify_migrate_existing() -> Result<(), AppError> {
     })
 }
 
+/// 记下当前是否处于轻量模式（见 [`AppSettings::lightweight_mode`]），值没变就不写盘。
+pub fn set_lightweight_mode(enabled: bool) -> Result<(), AppError> {
+    if get_settings().lightweight_mode == enabled {
+        return Ok(());
+    }
+    mutate_settings(|settings| settings.lightweight_mode = enabled)
+}
+
 /// 客户端地址（见 [`AppSettings::proxy_client_host`]），去掉首尾空白；没设或为空时是 `None`。
 pub fn get_proxy_client_host() -> Option<String> {
     get_settings()
@@ -1610,6 +1627,31 @@ mod tests {
             serde_json::to_value(&hidden).expect("serialize"),
             serde_json::json!({ "sidebarTodayItems": [] })
         );
+    }
+
+    #[test]
+    fn app_order_round_trips_as_camel_case() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "appOrder": ["codex", "claude", "future-app"]
+        }))
+        .expect("parse settings");
+        assert_eq!(
+            settings.app_order.as_deref(),
+            Some(
+                &[
+                    "codex".to_string(),
+                    "claude".to_string(),
+                    "future-app".to_string()
+                ][..]
+            )
+        );
+        let value = serde_json::to_value(&settings).expect("serialize settings");
+        assert_eq!(
+            value["appOrder"],
+            serde_json::json!(["codex", "claude", "future-app"])
+        );
+        let default = serde_json::to_value(AppSettings::default()).expect("serialize default");
+        assert!(default.get("appOrder").is_none());
     }
 
     #[test]
