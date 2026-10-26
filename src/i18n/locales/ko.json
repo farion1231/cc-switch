@@ -231,6 +231,27 @@
         "oauthTitle": "OAuth 인증 모드",
         "oauthHint": "Google 공식은 OAuth 개인 인증을 사용하므로 API 키를 입력할 필요가 없습니다. 처음 사용할 때 로그인을 위해 브라우저가 자동으로 열립니다.",
         "apiKeyPlaceholder": "Gemini API 키를 입력하세요"
+      },
+      "claudeAccount": {
+        "label": "계정",
+        "default": "기본 로그인 (~/.claude)",
+        "missing": "이 컴퓨터에 없는 계정",
+        "add": "새 계정으로 로그인",
+        "pending": "브라우저에 Claude 로그인 페이지가 열렸습니다. 로그인 후 접근을 허용하면 해당 계정이 자동으로 선택됩니다.",
+        "helpTerminal": "설정에서 Claude 설정 디렉터리를 별도로 지정했으므로 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. 선택한 계정을 사용하려면 카드의 ‘터미널 열기’를 이용하세요.",
+        "help": "이 카드로 전환하면 Claude Code의 로그인 계정이 선택한 계정으로 바뀌며, 이후 어디서든 새로 실행하는 claude는 해당 계정을 사용합니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요.",
+        "claudeAccount": "Claude 계정",
+        "reauthBadge": "다시 로그인 필요",
+        "terminalHint": "카드의 ‘터미널 열기’로 사용",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team 프리미엄 시트",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "설정에서 공급자 식별자를 읽지 못했습니다. 설정을 수정하고 다시 시도해 주세요.",
@@ -1835,7 +1856,6 @@
   "codexOauth": {
     "authStatus": "인증 상태",
     "notAuthenticated": "인증되지 않음",
-    "loginWithChatGPT": "ChatGPT로 로그인",
     "loginRequired": "먼저 ChatGPT에 로그인하세요.",
     "statusLoading": "계정 상태 로드 중...",
     "statusUnavailable": "상태를 알 수 없음",
@@ -4349,7 +4369,6 @@
       "routing": "라우팅",
       "currentDefault": "현재 기본값",
       "defaultAfterSwitch": "전환 후 기본값",
-      "current": "현재",
       "default": "기본값"
     },
     "action": {
@@ -4366,7 +4385,8 @@
       "edit": "{{name}} 편집",
       "more": "{{name}}에 대한 추가 작업",
       "moveUp": "{{name}}을(를) 위로 이동",
-      "moveDown": "{{name}}을(를) 아래로 이동"
+      "moveDown": "{{name}}을(를) 아래로 이동",
+      "openTerminal": "{{name}} 설정으로 터미널 열기"
     },
     "chip": {
       "official": "공식",
@@ -4386,7 +4406,6 @@
       "defaultWhileRouting": "라우팅 중에는 라우팅 대상이 기본 공급자입니다. 통합 모드로 전환할 때 다른 공급자를 선택할 수 있습니다.",
       "needsRoute": "라우팅 필요: {{reason}}; 직접 연결할 수 없습니다.",
       "defaultCannotRemove": "기본값은 제거할 수 없습니다. 먼저 다른 공급자를 기본값으로 설정하세요.",
-      "currentCannotRemove": "사용 중인 공급자는 제거할 수 없습니다. 먼저 다른 공급자를 활성화하세요.",
       "inUseCannotDelete": "사용 중인 공급자는 삭제할 수 없습니다. 먼저 다른 것으로 전환하세요.",
       "directDefaultCannotDelete": "라우팅을 종료하면 이 공급자로 돌아오므로 삭제할 수 없습니다. 먼저 직접 연결 페이지에서 다른 공급자의 ‘직접 연결로 돌아가서 사용’을 선택하세요.",
       "noFailover": "공식 계정은 장애 조치 대기열에 참여할 수 없습니다. 클라이언트 자체 로그인을 사용하고 다른 공급자와 순환할 수 없습니다."
@@ -4877,12 +4896,12 @@
       "copilotHelp": "Claude Code와 Claude Desktop의 GitHub Copilot 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
-      "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다."
+      "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
+      "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우(예: WSL 경로), 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
+      "claudeHelp": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 공식 공급자 카드에서 계정을 선택하면, 해당 카드로 전환할 때 Claude Code의 로그인 계정이 선택한 계정으로 바뀝니다. 이후 터미널이나 IDE 확장에서 새로 실행하는 claude는 해당 계정을 사용합니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요. 계정을 전환할 때는 Claude Code 자체의 로그인 정보 저장 위치 간에 로그인 토큰을 이동합니다. 토큰은 이 컴퓨터에만 보관되며, 업로드하거나 갱신하지 않고 계정을 로그아웃시키지도 않습니다. Anthropic 약관은 타사 도구의 세션 토큰 저장을 허용하지 않습니다. 이 사용 방식은 약관상 허용 여부가 불분명하므로 사용 여부는 직접 판단해 주세요. 카드 전환 시 로그인 계정이 바뀌지 않게 하려면 카드의 계정을 ‘기본 로그인’으로 되돌리세요. 처음 전환할 때는 Claude Code에 현재 로그인된 계정이 자동으로 추가됩니다. 계정을 전환하면 사용 중인 Remote Control 연결이 끊기며, 전환 후 첫 메시지에서 프롬프트 캐시가 다시 생성됩니다."
     },
     "addAccount": "계정 추가",
-    "groupMenu": "{{service}}의 추가 작업",
     "accountMenu": "{{login}}의 추가 작업",
-    "removeAll": "모든 계정 삭제",
     "removeAccount": "계정 삭제",
     "setDefault": "기본값으로 설정",
     "reauth": "다시 로그인",
@@ -4902,7 +4921,6 @@
     "loginFailed": "로그인이 완료되지 않았습니다",
     "pending": {
       "add": "{{service}} 계정 추가 중 · 인증 대기 중…",
-      "login": "{{service}}에 로그인 중 · 인증 대기 중…",
       "reauth": "{{login}}(으)로 다시 로그인 중 · 인증 대기 중…",
       "enterCode": "브라우저에 다음 코드를 입력하세요:",
       "copy": "코드 복사",
@@ -4927,12 +4945,25 @@
       "addedOn": "{{date}}에 추가됨",
       "statusLoadFailed": "Antigravity 계정을 읽을 수 없습니다. 다시 시도하세요.",
       "empty": "아직 Antigravity 계정이 없습니다. agy에 로그인된 계정이 자동으로 여기에 표시됩니다.",
-      "login": "Google로 로그인",
       "current": "agy에서 사용 중",
       "switchTo": "agy를 이 계정으로 전환",
       "removeNote": "agy의 로그인은 유지됩니다. 이 계정을 사용 중인 경우 여기서 제거해도 계속 작동합니다.",
       "switched": "전환했습니다. 새 agy 세션은 이 계정을 사용합니다.",
       "switchedWhileRunning": "전환했습니다. 실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. agy를 모두 종료한 뒤 다시 실행하세요."
+    },
+    "claude": {
+      "pasteSubmitted": "제출되었습니다. 로그인을 완료하는 중…",
+      "pasteToggle": "접근을 허용한 후 이 화면으로 돌아오지 않았나요?",
+      "pasteHint": "접근을 허용한 후 브라우저 주소 표시줄의 주소 또는 페이지에 표시된 코드를 여기에 붙여넣으세요.",
+      "pasteLabel": "인증 코드 또는 주소",
+      "pasteSubmit": "제출",
+      "reauthNote": "로그인 정보가 만료되었습니다. 다시 로그인해 주세요.",
+      "addedOn": "{{date}}에 추가됨",
+      "loginExpiresOn": "로그인 정보는 {{date}}경 만료되며, 이후 다시 로그인해야 합니다.",
+      "loginMaybeExpired": "로그인 정보가 만료되었을 수 있습니다. 이 계정으로 전환하기 전에 다시 로그인해 주세요.",
+      "statusLoadFailed": "Claude 계정을 불러올 수 없습니다. 다시 시도해 주세요.",
+      "empty": "아직 추가된 Claude 계정이 없습니다. 여러 구독 계정 간에 전환하려면 여기에서 로그인하세요.",
+      "removeNote": "CC Switch에 저장된 이 계정의 로그인 정보만 삭제합니다. 다른 곳에서는 로그아웃되지 않으며, Claude Code의 현재 로그인 상태(~/.claude)에도 영향을 주지 않습니다. 이 계정에 연결된 카드는 Claude Code에 현재 로그인된 계정을 사용하도록 변경됩니다."
     }
   },
   "kimi": {
