@@ -1,12 +1,10 @@
 //! 恢复：补完崩溃时没做完的切换。
 
-use serde_json::Value;
-
 use super::creds::{account_fingerprint, credential_org};
 use super::files::{read_profile, refresh_locks};
 use super::store::Slot;
 use super::switch::finish;
-use super::{default_owner, load_state, update_state, Ctx, Step, SWITCH};
+use super::{default_owner, identity, load_state, update_state, Ctx, Journal, Step, SWITCH};
 use crate::error::AppError;
 
 /// 补完上一次没做完的切换（启动时、每次切换前）。补完的切换停在 [`Step::Done`]，等调用方确认。
@@ -39,9 +37,28 @@ pub(super) fn recover_locked(ctx: &Ctx<'_>) -> Result<(), AppError> {
             owner.as_deref() == Some(journal.target.as_str()) || owner == journal.before_owner
         };
     if now_account.as_deref() == Some(journal.target_account.as_str()) || refreshed {
+        // T 之后在授权中心重新登录过：旧目录已删，资料在它现在的目录里
+        let found = [
+            Some(journal.target_dir.clone()),
+            ctx.accounts.dir_of(&journal.target),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|dir| {
+            let profile = read_profile(&Slot::Account(dir.clone()).global_config())?;
+            let owner = identity::identity_from_profile(&profile)?;
+            (owner.key == journal.target).then_some((dir, profile))
+        });
+        let Some((target_dir, profile)) = found else {
+            // 读不到 T 的资料就不收尾：换不了资料，也不清 T 的登录，日志留着
+            log::warn!("[ClaudeAccount] 上次切换没做完，读不到目标账号的资料，暂不补完");
+            return Ok(());
+        };
         log::info!("[ClaudeAccount] 补完上次没做完的切换");
-        let profile = read_profile(&Slot::Account(journal.target_dir.clone()).global_config())
-            .unwrap_or(Value::Null);
+        let journal = Journal {
+            target_dir,
+            ..journal
+        };
         return finish(ctx, &journal, &profile);
     }
     if now_account != journal.before_account {

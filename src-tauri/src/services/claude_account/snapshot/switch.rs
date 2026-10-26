@@ -179,7 +179,13 @@ fn park_previous(ctx: &Ctx<'_>, plan: &Plan) -> Result<Outcome, AppError> {
             dir
         }
     };
-    park(ctx.store, live, &Slot::Account(park_dir.clone()))?;
+    park(
+        ctx.store,
+        live,
+        plan.live_profile.as_ref(),
+        &owner.key,
+        &Slot::Account(park_dir.clone()),
+    )?;
     update_state(ctx.data_dir, |state| note_expiry(state, &owner.key, live))?;
     Ok(Outcome::Switched {
         adopted,
@@ -299,7 +305,14 @@ pub fn vacate(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<(), AppE
     if default_owner(default).as_deref() != Some(target) {
         return Ok(());
     }
-    park(ctx.store, &live, &Slot::Account(target_dir.to_path_buf()))?;
+    let live_profile = read_profile(&default.global_config());
+    park(
+        ctx.store,
+        &live,
+        live_profile.as_ref(),
+        target,
+        &Slot::Account(target_dir.to_path_buf()),
+    )?;
     {
         let _storage = storage_lock(default)?;
         let now = ctx.store.read(default)?;
@@ -315,8 +328,23 @@ pub fn vacate(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<(), AppE
 }
 
 /// 把默认槽位里 O 的账号键写回 O 的账号槽位（覆盖：默认槽位里的那份是 O 最新在用的）。
-fn park(store: &dyn CredentialStore, live: &Secret, slot: &Slot) -> Result<(), AppError> {
+/// `live_profile` 是默认槽位的 `.claude.json`、`owner` 是核实过的 O：账号目录里的资料已经
+/// 不是 O 的（从它的终端里 `/login` 过别的号）时一起换回来，否则切回 O 时对不上身份。
+fn park(
+    store: &dyn CredentialStore,
+    live: &Secret,
+    live_profile: Option<&Value>,
+    owner: &str,
+    slot: &Slot,
+) -> Result<(), AppError> {
     let _refresh = refresh_locks(slot)?;
+    let path = slot.global_config();
+    let dir_owner = read_profile(&path).and_then(|doc| identity::identity_from_profile(&doc));
+    if dir_owner.map(|found| found.key).as_deref() != Some(owner) {
+        if let Some(account) = live_profile.and_then(|doc| doc.get("oauthAccount")) {
+            write_profile(&path, Some(account))?;
+        }
+    }
     let _storage = storage_lock(slot)?;
     let existing = store.read(slot)?;
     if let (Some(existing), Slot::Account(dir)) = (existing.as_ref(), slot) {

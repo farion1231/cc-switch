@@ -678,6 +678,130 @@ fn failure_after_the_commit_still_counts_as_switched() {
     assert!(!unfinished(&fx.data));
 }
 
+/// 切到 work 之后收尾失败、日志停在 Committed（同 [`failure_after_the_commit_still_counts_as_switched`]）。
+fn commit_without_finishing(fx: &Fixture, work: &str, work_dir: &Path) {
+    let failing = FailOn {
+        inner: &fx.store,
+        slot: Slot::Account(backup_dir(work_dir)),
+    };
+    let ctx = Ctx {
+        store: &failing,
+        ..fx.ctx()
+    };
+    check_out(&ctx, work, work_dir).unwrap();
+    assert!(unfinished(&fx.data));
+}
+
+#[test]
+fn recovery_finds_the_target_in_its_new_folder_after_a_relogin() {
+    // 崩在提交点之后（资料还没换），之后 work 在授权中心重新登录：旧目录删了，新登录在新目录
+    let fx = Fixture::new();
+    fx.sign_in_default("me", "org-me", "rt-me");
+    fx.account("me", "org-me", "rt-me");
+    let (work, old_dir) = fx.account("work", "org-work", "rt-work");
+    let target = fx.store.get(&Slot::Account(old_dir.clone())).unwrap();
+    let planned = merge(fx.store.get(&fx.default()).as_ref(), &target);
+    fx.store.put(&fx.default(), planned);
+    save_state(
+        &fx.data,
+        &State {
+            journal: Some(Journal {
+                target: work.clone(),
+                target_dir: old_dir.clone(),
+                target_org: Some("org-work".into()),
+                target_account: account_fingerprint(&target),
+                before_account: Some(account_fingerprint(&secret("org-me", "rt-me"))),
+                before_owner: Some(identity::account_key("me", Some("org-me"))),
+                step: Step::Committed,
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&old_dir).unwrap();
+    fx.store.delete(&Slot::Account(old_dir)).unwrap();
+    let new_dir = fx._tmp.path().join("acct-work-relogin");
+    std::fs::create_dir_all(&new_dir).unwrap();
+    std::fs::write(
+        new_dir.join(".claude.json"),
+        serde_json::to_vec(&json!({"oauthAccount": profile("work", "org-work")})).unwrap(),
+    )
+    .unwrap();
+    fx.store.put(
+        &Slot::Account(new_dir.clone()),
+        secret("org-work", "rt-work-new"),
+    );
+    fx.accounts
+        .0
+        .borrow_mut()
+        .insert(work.clone(), new_dir.clone());
+
+    recover(&fx.ctx()).unwrap();
+    assert_eq!(fx.default_profile()["oauthAccount"]["accountUuid"], "work");
+    // 新目录里的是另一次登录，留着
+    assert_eq!(
+        fx.refresh_of(&Slot::Account(new_dir.clone())).as_deref(),
+        Some("rt-work-new")
+    );
+    assert_eq!(
+        done(&fx.data).map(|journal| journal.target_dir),
+        Some(new_dir)
+    );
+}
+
+#[test]
+fn recovery_waits_when_the_target_profile_is_gone() {
+    let fx = Fixture::new();
+    fx.sign_in_default("me", "org-me", "rt-me");
+    fx.account("me", "org-me", "rt-me");
+    let (work, work_dir) = fx.account("work", "org-work", "rt-work");
+    commit_without_finishing(&fx, &work, &work_dir);
+    std::fs::remove_file(work_dir.join(".claude.json")).unwrap();
+    let before = fx.default_profile();
+
+    recover(&fx.ctx()).unwrap();
+    assert_eq!(fx.default_profile(), before);
+    assert_eq!(
+        fx.refresh_of(&Slot::Account(work_dir)).as_deref(),
+        Some("rt-work")
+    );
+    assert!(unfinished(&fx.data));
+}
+
+#[test]
+fn parking_brings_back_the_profile_after_a_login_in_its_terminal() {
+    // me 在默认槽位里时，从它的终端里 /login 了另一个号：目录里的资料和凭据都是那个号的
+    let fx = Fixture::new();
+    fx.sign_in_default("me", "org-me", "rt-me");
+    let (me, me_dir) = fx.account("me", "org-me", "rt-me");
+    let (work, work_dir) = fx.account("work", "org-work", "rt-work");
+    std::fs::write(
+        me_dir.join(".claude.json"),
+        serde_json::to_vec(&json!({"oauthAccount": profile("other", "org-other")})).unwrap(),
+    )
+    .unwrap();
+    fx.store.put(
+        &Slot::Account(me_dir.clone()),
+        secret("org-other", "rt-other"),
+    );
+
+    check_out(&fx.ctx(), &work, &work_dir).unwrap();
+    confirm(&fx.data);
+    let parked: Value =
+        serde_json::from_slice(&std::fs::read(me_dir.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(parked["oauthAccount"]["accountUuid"], "me");
+    // 那个号的登录留作备份
+    assert_eq!(
+        fx.refresh_of(&Slot::Account(backup_dir(&me_dir)))
+            .as_deref(),
+        Some("rt-other")
+    );
+
+    check_out(&fx.ctx(), &me, &me_dir).unwrap();
+    assert_eq!(fx.refresh_of(&fx.default()).as_deref(), Some("rt-me"));
+    assert_eq!(fx.default_profile()["oauthAccount"]["accountUuid"], "me");
+}
+
 #[test]
 fn switching_keeps_fields_written_meanwhile() {
     // 登录完成和切换各改各的字段
