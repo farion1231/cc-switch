@@ -4793,6 +4793,8 @@
       "installed": "Yüklendi · {{count}} uygulamalar",
       "installedAria": "{{name}}, {{count}} uygulamalarına yüklenir; Yüklendi altında görüntüleyin",
       "dirTaken": "Klasör adı {{name}} ({{source}}) tarafından kullanılıyor",
+      "adopt": "Devral ve güncelle",
+      "adoptAria": "{{name}} becerisini deposundan devral ve güncellemeleri yönet",
       "installing": "Kurulum",
       "installingAria": "{{name}}'yi yükleme",
       "installAria": "{{name}}'yi yükleyin",
