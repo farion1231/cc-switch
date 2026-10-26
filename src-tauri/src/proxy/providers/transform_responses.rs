@@ -2285,6 +2285,16 @@ pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Val
     result
 }
 
+/// Responses input 的 message item 必须带顶层 `type: "message"`，
+/// 否则上游会以 `MissingParameter: input.type` 拒绝（#7552）。
+fn message_item(role: &str, content: Value) -> Value {
+    json!({
+        "type": "message",
+        "role": role,
+        "content": content
+    })
+}
+
 /// 将 Anthropic messages 数组转换为 Responses API input 数组
 ///
 /// 核心转换逻辑：
@@ -2310,10 +2320,10 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                 } else {
                     "input_text"
                 };
-                input.push(json!({
-                    "role": role,
-                    "content": [{ "type": content_type, "text": text }]
-                }));
+                input.push(message_item(
+                    role,
+                    json!([{ "type": content_type, "text": text }]),
+                ));
             }
 
             // 数组内容（多模态/工具调用）
@@ -2373,10 +2383,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                         "tool_use" => {
                             // 先刷新已累积的消息内容
                             if !message_content.is_empty() {
-                                input.push(json!({
-                                    "role": role,
-                                    "content": message_content.clone()
-                                }));
+                                input.push(message_item(role, message_content.clone().into()));
                                 message_content.clear();
                             }
 
@@ -2396,10 +2403,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                         "tool_result" => {
                             // 先刷新已累积的消息内容
                             if !message_content.is_empty() {
-                                input.push(json!({
-                                    "role": role,
-                                    "content": message_content.clone()
-                                }));
+                                input.push(message_item(role, message_content.clone().into()));
                                 message_content.clear();
                             }
 
@@ -2429,10 +2433,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                                 });
                             if let Some(web_search_call) = web_search_call {
                                 if !message_content.is_empty() {
-                                    input.push(json!({
-                                        "role": role,
-                                        "content": message_content.clone()
-                                    }));
+                                    input.push(message_item(role, message_content.clone().into()));
                                     message_content.clear();
                                 }
                                 input.push(web_search_call);
@@ -2449,10 +2450,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                                 openai_reasoning_item_from_anthropic_block(block)
                             {
                                 if !message_content.is_empty() {
-                                    input.push(json!({
-                                        "role": role,
-                                        "content": message_content.clone()
-                                    }));
+                                    input.push(message_item(role, message_content.clone().into()));
                                     message_content.clear();
                                 }
                                 input.push(reasoning_item);
@@ -2465,16 +2463,13 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
 
                 // 刷新剩余的消息内容
                 if !message_content.is_empty() {
-                    input.push(json!({
-                        "role": role,
-                        "content": message_content
-                    }));
+                    input.push(message_item(role, message_content.into()));
                 }
             }
 
             _ => {
-                // 无内容或 null
-                input.push(json!({ "role": role }));
+                // 无内容或 null（content 字段按原样省略）
+                input.push(json!({ "type": "message", "role": role }));
             }
         }
 
@@ -3212,6 +3207,7 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["model"], "gpt-4o");
         assert_eq!(result["max_output_tokens"], 1024);
+        assert_eq!(result["input"][0]["type"], "message");
         assert_eq!(result["input"][0]["role"], "user");
         assert_eq!(result["input"][0]["content"][0]["type"], "input_text");
         assert_eq!(result["input"][0]["content"][0]["text"], "Hello");
@@ -3869,6 +3865,7 @@ mod tests {
         assert_eq!(input_arr.len(), 2);
 
         // First: assistant message with output_text
+        assert_eq!(input_arr[0]["type"], "message");
         assert_eq!(input_arr[0]["role"], "assistant");
         assert_eq!(input_arr[0]["content"][0]["type"], "output_text");
         assert_eq!(input_arr[0]["content"][0]["text"], "Let me check");
