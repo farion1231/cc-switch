@@ -4955,7 +4955,6 @@
       "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
       "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
       "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
-      "login": "Sign in to Claude",
       "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in."
     }
   },

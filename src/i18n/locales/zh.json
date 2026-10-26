@@ -4955,7 +4955,6 @@
       "loginMaybeExpired": "登录可能已过期，切换前请重新登录",
       "statusLoadFailed": "无法读取 Claude 账号，请重试。",
       "empty": "还没有添加 Claude 账号。要在多个订阅账号之间切换时在这里登录。",
-      "login": "登录 Claude 账号",
       "removeNote": "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。"
     }
   },

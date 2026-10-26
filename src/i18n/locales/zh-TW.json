@@ -4956,7 +4956,6 @@
       "loginMaybeExpired": "登入可能已過期，切換前請重新登入",
       "statusLoadFailed": "無法讀取 Claude 帳號，請重試。",
       "empty": "還沒有新增 Claude 帳號。要在多個訂閱帳號之間切換時在這裡登入。",
-      "login": "登入 Claude 帳號",
       "removeNote": "只刪除 CC Switch 為這個帳號儲存的登入，不會讓它在其他地方登出；Claude Code 目前的登入（~/.claude）不受影響。綁定它的卡片會改用 Claude Code 目前的登入。"
     }
   },

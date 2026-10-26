@@ -169,7 +169,6 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
     addAccount,
     removeAccount,
     cancelAuth,
-    logout,
     refetchStatus,
   } = useManagedAuth("claude_official");
   const accountUsers = useManagedAccountUsers("claude_official", null);
@@ -179,9 +178,8 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
-    if (!target) return;
-    if (target.kind === "all") logout();
-    else removeAccount(target.accountId);
+    // 这组没有「删除全部」，只会是单个账号
+    if (target?.kind === "one") removeAccount(target.accountId);
   };
 
   const now = Date.now();
@@ -268,9 +266,6 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         defaultValue:
           "还没有添加 Claude 账号。要在多个订阅账号之间切换时在这里登录。",
       })}
-      loginLabel={t("authCenter.claude.login", {
-        defaultValue: "登录 Claude 账号",
-      })}
       onAdd={addAccount}
       canReauth
       reauthOnlyWhenExpired
@@ -279,12 +274,6 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
       settingDefault={false}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
-      }
-      onRemoveAll={() =>
-        setRemoveTarget({
-          kind: "all",
-          accountIds: accounts.map((account) => account.id),
-        })
       }
       removing={isRemovingAccount}
       login={{
