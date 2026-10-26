@@ -136,6 +136,19 @@ pub fn dir_has_login(config_dir: &Path) -> bool {
     .is_some()
 }
 
+/// 凭据里 Claude Code 记的套餐。
+pub fn credential_plan(secret: &store::Secret) -> crate::services::claude_account::AccountPlan {
+    creds::credential_plan(secret)
+}
+
+/// 账号目录里的登录记的套餐；读不到凭据时为 `None`。
+pub fn dir_plan(config_dir: &Path) -> Option<crate::services::claude_account::AccountPlan> {
+    let secret = store::platform_store()
+        .read(&Slot::Account(config_dir.to_path_buf()))
+        .ok()??;
+    Some(creds::credential_plan(&secret))
+}
+
 /// 刚登录完的账号：从它的槽位记下登录过期时间（尽力而为）。
 pub fn note_login_expiry(data_dir: &Path, account: &str, config_dir: &Path) {
     let store = store::platform_store();

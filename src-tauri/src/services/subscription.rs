@@ -162,8 +162,17 @@ fn read_claude_credentials_from_keychain(
 #[cfg(target_os = "macos")]
 fn read_claude_credentials_from_keychain_with(
     account: Option<&str>,
-    mut run: impl FnMut(&mut std::process::Command) -> std::io::Result<std::process::Output>,
+    run: impl FnMut(&mut std::process::Command) -> std::io::Result<std::process::Output>,
 ) -> Option<(Option<String>, CredentialStatus, Option<String>)> {
+    claude_keychain_json_with(account, run).map(|json| parse_claude_credentials_json(&json))
+}
+
+/// 钥匙串里带 Claude 登录的那条凭据（JSON）；读不了钥匙串或没有时为 `None`（交给文件）。
+#[cfg(target_os = "macos")]
+fn claude_keychain_json_with(
+    account: Option<&str>,
+    mut run: impl FnMut(&mut std::process::Command) -> std::io::Result<std::process::Output>,
+) -> Option<String> {
     for account in account.into_iter().map(Some).chain(std::iter::once(None)) {
         let mut command = std::process::Command::new("security");
         command.args(["find-generic-password", "-s", "Claude Code-credentials"]);
@@ -180,14 +189,41 @@ fn read_claude_credentials_from_keychain_with(
         let Ok(json_str) = String::from_utf8(output.stdout) else {
             continue;
         };
-        let result = parse_claude_credentials_json(json_str.trim());
+        let json = json_str.trim();
         // 同名条目可能只存了 mcpOAuth；没有 Claude token 时继续找，最后回退到文件。
         // 已过期的 Claude token 仍是该账户的凭据，保留其过期/待刷新状态。
-        if result.0.is_some() {
-            return Some(result);
+        if parse_claude_credentials_json(json).0.is_some() {
+            return Some(json.to_string());
         }
     }
     None
+}
+
+/// 默认登录的套餐：和默认登录的额度读同一份凭据（钥匙串优先，再是 Claude 配置目录里的文件）。
+pub fn read_claude_default_plan() -> Option<crate::services::claude_account::AccountPlan> {
+    #[cfg(target_os = "macos")]
+    {
+        let account = std::env::var("USER").ok().filter(|user| !user.is_empty());
+        if let Some(json) =
+            claude_keychain_json_with(account.as_deref(), |command| command.output())
+        {
+            return plan_from_credentials_json(&json);
+        }
+    }
+    let json =
+        std::fs::read_to_string(config::get_claude_config_dir().join(".credentials.json")).ok()?;
+    plan_from_credentials_json(&json)
+}
+
+/// 凭据 JSON 里 Claude Code 记的套餐；没写套餐时为 `None`。
+fn plan_from_credentials_json(json: &str) -> Option<crate::services::claude_account::AccountPlan> {
+    use crate::services::claude_account::snapshot;
+
+    let serde_json::Value::Object(map) = serde_json::from_str(json).ok()? else {
+        return None;
+    };
+    Some(snapshot::credential_plan(&snapshot::store::Secret(map)))
+        .filter(|plan| plan.subscription_type.is_some())
 }
 
 /// 从文件读取 Claude 凭据
@@ -1585,8 +1621,8 @@ async fn claude_quota_from(
 pub async fn get_claude_account_quota(
     data_dir: std::path::PathBuf,
     account: String,
-) -> Result<SubscriptionQuota, String> {
-    use crate::services::claude_account::{snapshot, usage};
+) -> Result<ClaudeAccountQuota, String> {
+    use crate::services::claude_account::{note_plan, snapshot, usage};
 
     let data_dir_for_expiry = data_dir.clone();
     let found = {
@@ -1594,21 +1630,38 @@ pub async fn get_claude_account_quota(
         tokio::task::spawn_blocking(move || {
             let slot = snapshot::account_slot(&data_dir, &account)?;
             let secret = snapshot::store::platform_store().read(&slot);
-            Some((slot, secret))
+            // 套餐顺手记进账号：授权中心和没开额度的卡片也能显示
+            let plan = secret
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .map(snapshot::credential_plan);
+            if let Some(plan) = &plan {
+                note_plan(&data_dir, &account, plan);
+            }
+            Some((slot, secret, plan))
         })
         .await
         .map_err(|error| error.to_string())?
     };
-    let Some((slot, secret)) = found else {
-        return Ok(SubscriptionQuota::not_found("claude"));
+    let Some((slot, secret, plan)) = found else {
+        return Ok(ClaudeAccountQuota::without_plan(
+            SubscriptionQuota::not_found("claude"),
+        ));
     };
     let Some(secret) = secret.map_err(|error| error.to_string())? else {
-        return Ok(SubscriptionQuota::not_found("claude"));
+        return Ok(ClaudeAccountQuota::without_plan(
+            SubscriptionQuota::not_found("claude"),
+        ));
+    };
+    let with_plan = |quota| ClaudeAccountQuota {
+        quota,
+        plan: plan.clone().filter(|plan| plan.subscription_type.is_some()),
     };
     let json = String::from_utf8_lossy(&secret.to_bytes()).into_owned();
     let direct = claude_quota_from(parse_claude_credentials_json(&json)).await?;
     if !needs_cli_usage(&direct) {
-        return Ok(direct);
+        return Ok(with_plan(direct));
     }
 
     let account_uuid = account
@@ -1630,7 +1683,27 @@ pub async fn get_claude_account_quota(
     })
     .await
     .map_err(|error| error.to_string())?;
-    Ok(account_quota_with_cache(direct, cached, now_millis()))
+    Ok(with_plan(account_quota_with_cache(
+        direct,
+        cached,
+        now_millis(),
+    )))
+}
+
+/// 绑号卡的额度，带上这个号的套餐（凭据里记的；读不到时缺省）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeAccountQuota {
+    #[serde(flatten)]
+    pub quota: SubscriptionQuota,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<crate::services::claude_account::AccountPlan>,
+}
+
+impl ClaudeAccountQuota {
+    fn without_plan(quota: SubscriptionQuota) -> Self {
+        Self { quota, plan: None }
+    }
 }
 
 /// 直接查的结果是令牌过期：要在槽位里跑 `claude -p /usage`，让 Claude Code 自己刷新。
@@ -1783,6 +1856,21 @@ mod tests {
                 "five_hour": {"utilization": 13.0, "resets_at": null}
             }),
         }
+    }
+
+    #[test]
+    fn default_plan_reads_the_plan_next_to_the_login() {
+        let plan = plan_from_credentials_json(
+            r#"{"claudeAiOauth":{"accessToken":"at","subscriptionType":"team","rateLimitTier":"default_claude_max_5x"}}"#,
+        )
+        .unwrap();
+        assert_eq!(plan.subscription_type.as_deref(), Some("team"));
+        assert_eq!(
+            plan.rate_limit_tier.as_deref(),
+            Some("default_claude_max_5x")
+        );
+        assert_eq!(plan_from_credentials_json(r#"{"claudeAiOauth":{}}"#), None);
+        assert_eq!(plan_from_credentials_json("not json"), None);
     }
 
     #[test]

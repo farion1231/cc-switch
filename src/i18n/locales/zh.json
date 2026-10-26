@@ -242,7 +242,16 @@
         "help": "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它。想同时用几个号，从卡片「打开终端」。",
         "claudeAccount": "Claude 账号",
         "reauthBadge": "需要重新登录",
-        "terminalHint": "从卡片打开终端使用"
+        "terminalHint": "从卡片打开终端使用",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team 高级席位",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",

@@ -25,6 +25,8 @@ import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
+import { claudePlanLabel } from "@/lib/claudePlan";
+import { useClaudeDefaultPlan } from "@/lib/query/subscription";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
@@ -271,6 +273,22 @@ export function ProviderCard({
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
   const officialSubscriptionEnabled =
     supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
+  // 没绑账号的 Claude 官方卡用 Claude Code 的默认登录：开了额度查询时，地址后面跟默认登录的套餐
+  const showClaudeDefaultPlan =
+    appId === "claude" &&
+    isOfficial &&
+    !claudeBoundAccountId &&
+    officialSubscriptionEnabled;
+  const { data: claudeDefaultPlan } = useClaudeDefaultPlan(
+    showClaudeDefaultPlan,
+  );
+  const claudeDefaultPlanLabel = showClaudeDefaultPlan
+    ? claudePlanLabel(
+        t,
+        claudeDefaultPlan?.subscriptionType,
+        claudeDefaultPlan?.rateLimitTier,
+      )
+    : null;
 
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
@@ -463,12 +481,31 @@ export function ProviderCard({
               accountId={claudeBoundAccountId}
               providerName={provider.name}
               note={manualNote}
+              showPlan={usageEnabled}
             />
           ) : agyModel ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
               <span className="min-w-0 truncate" title={agyModel}>
                 {agyModel}
               </span>
+            </div>
+          ) : displayUrl && claudeDefaultPlanLabel ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              <button
+                type="button"
+                onClick={handleOpenWebsite}
+                className={cn(
+                  "inline-flex min-w-0 items-center overflow-hidden text-start",
+                  isClickableUrl
+                    ? "cursor-pointer decoration-border-strong underline-offset-[3px] hover:underline"
+                    : "cursor-default",
+                )}
+                title={displayUrl}
+                disabled={!isClickableUrl}
+              >
+                <span className="min-w-0 truncate">{displayUrl}</span>
+              </button>
+              <span className="-ms-1 shrink-0">· {claudeDefaultPlanLabel}</span>
             </div>
           ) : displayUrl ? (
             <button

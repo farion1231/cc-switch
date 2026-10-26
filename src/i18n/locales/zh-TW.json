@@ -242,7 +242,16 @@
         "help": "切到這張卡後，Claude Code 的登入會換成選取的帳號，任何地方新啟動的 claude 都用它。想同時用幾個帳號，從卡片「開啟終端機」。",
         "claudeAccount": "Claude 帳號",
         "reauthBadge": "需要重新登入",
-        "terminalHint": "從卡片開啟終端機使用"
+        "terminalHint": "從卡片開啟終端機使用",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team 進階席位",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",

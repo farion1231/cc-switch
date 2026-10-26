@@ -26,6 +26,7 @@ import {
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { ClaudeAccountQuota } from "@/components/settings/auth/AccountQuota";
+import { claudePlanLabel } from "@/lib/claudePlan";
 
 /** 不在默认登录里的账号，过期前多久开始提示 */
 const EXPIRY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -194,6 +195,8 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
       ? signedInDate(Math.floor(expiresAt / 1000), i18n.language)
       : null;
     const details: React.ReactNode[] = [];
+    const plan = claudePlanLabel(t, account.plan, account.rate_limit_tier);
+    if (plan) details.push(plan);
     if (account.requires_reauth) {
       details.push(
         t("authCenter.claude.reauthNote", {
@@ -519,10 +522,13 @@ export function ClaudeBoundAccountLine({
   accountId,
   providerName,
   note,
+  showPlan = false,
 }: {
   accountId: string;
   providerName: string;
   note?: string;
+  /** 卡片开了额度查询时才写套餐 */
+  showPlan?: boolean;
 }) {
   const { t } = useTranslation();
   const terminalOnly = useClaudeAccountTerminalOnly();
@@ -543,6 +549,9 @@ export function ClaudeBoundAccountLine({
   const expiresAt = account.login_expires_at ?? null;
   const needsReauth =
     account.requires_reauth || (expiresAt !== null && expiresAt <= Date.now());
+  const plan = showPlan
+    ? claudePlanLabel(t, account.plan, account.rate_limit_tier)
+    : null;
   const name = providerName.trim();
   const label =
     note ??
@@ -556,6 +565,8 @@ export function ClaudeBoundAccountLine({
       <span className="min-w-0 truncate" title={note ?? account.login}>
         {label}
       </span>
+      {/* 跟在账号后面：「me@example.com · Max 20x」（抵掉一半间距，和「 · 」一样宽） */}
+      {plan && <span className="-ms-1 shrink-0">· {plan}</span>}
       {needsReauth ? (
         <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
           <AlertTriangle className="h-3.5 w-3.5" />

@@ -44,9 +44,12 @@ struct AccountData {
     email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     org_name: Option<String>,
-    /// `claude auth status` 报的套餐（pro / max / team …），登录时记一次
+    /// 套餐（pro / max / team …）：登录时按 `claude auth status` 记，之后按凭据里的更新
     #[serde(default, skip_serializing_if = "Option::is_none")]
     plan: Option<String>,
+    /// 凭据里的 `rateLimitTier`（如 `default_claude_max_20x`），区分 Max 5x / 20x
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rate_limit_tier: Option<String>,
     added_at: i64,
 }
 
@@ -68,6 +71,7 @@ pub struct ClaudeAccount {
     pub email: Option<String>,
     pub org_name: Option<String>,
     pub plan: Option<String>,
+    pub rate_limit_tier: Option<String>,
     pub authenticated_at: i64,
     /// 目录没了或里面的登录没了，只能重新登录
     pub requires_reauth: bool,
@@ -186,6 +190,36 @@ pub fn config_dir_on_disk(data_dir: &Path, account_id: &str) -> Option<PathBuf> 
     let dir = layout::config_dir(data_dir, &data.local_id);
     layout::assert_config_dir(data_dir, &dir).ok()?;
     dir.is_dir().then_some(dir)
+}
+
+/// 账号的订阅套餐：Claude Code 写在凭据 `claudeAiOauth` 里，刷新登录时按账号资料更新。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountPlan {
+    /// `pro` / `max` / `team` / `enterprise`
+    pub subscription_type: Option<String>,
+    /// 如 `default_claude_max_5x`、`default_claude_max_20x`
+    pub rate_limit_tier: Option<String>,
+}
+
+/// 把从凭据读到的套餐记进账号（尽力而为）：账号列表靠它显示套餐。凭据里没写套餐时不动原记录。
+pub fn note_plan(data_dir: &Path, account: &str, plan: &AccountPlan) {
+    if plan.subscription_type.is_none() {
+        return;
+    }
+    let _file = store_file_guard();
+    let mut store = load_store(data_dir);
+    let Some(data) = store.accounts.get_mut(account) else {
+        return;
+    };
+    if data.plan == plan.subscription_type && data.rate_limit_tier == plan.rate_limit_tier {
+        return;
+    }
+    data.plan = plan.subscription_type.clone();
+    data.rate_limit_tier = plan.rate_limit_tier.clone();
+    if let Err(error) = persist_store(data_dir, &store) {
+        log::warn!("[ClaudeAccount] 记录账号套餐失败: {error}");
+    }
 }
 
 impl ClaudeAccountManager {
@@ -344,6 +378,7 @@ impl ClaudeAccountManager {
                 .clone()
                 .or_else(|| status.as_ref().and_then(|s| s.org_name.clone())),
             plan: status.and_then(|s| s.subscription_type),
+            rate_limit_tier: None,
             added_at: chrono::Utc::now().timestamp(),
         };
         let replaced = store.accounts.insert(found.key.clone(), data);
@@ -356,7 +391,10 @@ impl ClaudeAccountManager {
             let key = found.key.clone();
             let config_dir = config_dir.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                snapshot::note_login_expiry(&data_dir, &key, &config_dir)
+                snapshot::note_login_expiry(&data_dir, &key, &config_dir);
+                if let Some(plan) = snapshot::dir_plan(&config_dir) {
+                    note_plan(&data_dir, &key, &plan);
+                }
             })
             .await;
         }
@@ -532,6 +570,7 @@ fn to_account(key: &str, data: &AccountData, data_dir: &Path) -> ClaudeAccount {
         email: data.email.clone(),
         org_name: data.org_name.clone(),
         plan: data.plan.clone(),
+        rate_limit_tier: data.rate_limit_tier.clone(),
         authenticated_at: data.added_at,
         // 被移进默认槽位的账号，自己的槽位是空的；槽位空了但有收回时留的备份，切换会用备份
         requires_reauth: !layout::valid_local_id(&data.local_id)
@@ -595,6 +634,7 @@ impl snapshot::Adopter for DiskAccounts {
                 email: found.email.clone(),
                 org_name: found.org_name.clone(),
                 plan: None,
+                rate_limit_tier: None,
                 added_at: chrono::Utc::now().timestamp(),
             },
         );

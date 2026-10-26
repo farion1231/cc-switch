@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use super::store::{CredentialStore, Secret, Slot};
 use super::{identity, State, ACCOUNT_KEYS};
 use crate::error::AppError;
+use crate::services::claude_account::AccountPlan;
 
 /// `base` 的非账号键 + `account` 的账号键。
 pub(super) fn merge(base: Option<&Secret>, account: &Secret) -> Secret {
@@ -94,6 +95,23 @@ pub(super) fn login_expiry(secret: &Secret) -> Option<i64> {
         .or_else(|| value.as_f64().map(|at| at as i64))?;
     // 秒级的时间戳换成毫秒
     Some(if at < 100_000_000_000 { at * 1000 } else { at })
+}
+
+/// 凭据里 Claude Code 记的套餐（非机密字段）。
+pub(super) fn credential_plan(secret: &Secret) -> AccountPlan {
+    let oauth = secret.0.get("claudeAiOauth");
+    let field = |name: &str| {
+        oauth
+            .and_then(|oauth| oauth.get(name))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    AccountPlan {
+        subscription_type: field("subscriptionType"),
+        rate_limit_tier: field("rateLimitTier"),
+    }
 }
 
 /// 把 `account` 的登录过期时间按 `secret` 记进状态（没有这个字段就删掉旧记录）。

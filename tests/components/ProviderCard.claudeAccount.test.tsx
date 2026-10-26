@@ -6,6 +6,16 @@ import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const claudeQuotaProps = vi.hoisted(() => vi.fn());
+const getClaudeDefaultPlan = vi.hoisted(() => vi.fn());
+const claudeLineProps = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api/subscription", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/api/subscription")>();
+  return {
+    subscriptionApi: { ...actual.subscriptionApi, getClaudeDefaultPlan },
+  };
+});
 
 vi.mock("@/components/providers/ProviderCardActions", () => ({
   ProviderCardActions: () => null,
@@ -22,7 +32,10 @@ vi.mock("@/components/ClaudeAccountQuotaFooter", () => ({
   },
 }));
 vi.mock("@/components/providers/forms/ClaudeOfficialSection", () => ({
-  ClaudeBoundAccountLine: () => <div>account-line</div>,
+  ClaudeBoundAccountLine: (props: { showPlan?: boolean }) => {
+    claudeLineProps(props);
+    return <div>account-line</div>;
+  },
 }));
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
@@ -43,6 +56,15 @@ const boundCard = (meta: Provider["meta"] = {}): Provider => ({
       accountId: "work:org",
     },
     ...meta,
+  },
+});
+
+const officialUsage = (enabled: boolean): Provider["meta"] => ({
+  usage_script: {
+    enabled,
+    language: "javascript",
+    code: "",
+    templateType: "official_subscription",
   },
 });
 
@@ -88,5 +110,47 @@ describe("ProviderCard with a Claude official account", () => {
       true,
     );
     expect(screen.queryByText("claude-account-quota")).not.toBeInTheDocument();
+  });
+
+  it("shows the default login's plan on a card without an account", async () => {
+    getClaudeDefaultPlan.mockReset().mockResolvedValue({
+      subscriptionType: "max",
+      rateLimitTier: "default_claude_max_20x",
+    });
+    renderCard({
+      id: "claude-official",
+      name: "Claude Official",
+      category: "official",
+      websiteUrl: "https://www.anthropic.com/claude-code",
+      settingsConfig: { env: {} },
+      meta: officialUsage(true),
+    });
+    expect(await screen.findByText("· Max 20x")).toBeInTheDocument();
+    expect(
+      screen.getByText("https://www.anthropic.com/claude-code"),
+    ).toBeInTheDocument();
+  });
+
+  it("doesn't read the default login's plan when usage is off or an account is bound", () => {
+    getClaudeDefaultPlan.mockReset();
+    renderCard(boundCard());
+    renderCard({
+      id: "claude-official",
+      name: "Claude Official",
+      category: "official",
+      websiteUrl: "https://www.anthropic.com/claude-code",
+      settingsConfig: { env: {} },
+      meta: officialUsage(false),
+    });
+    expect(getClaudeDefaultPlan).not.toHaveBeenCalled();
+  });
+
+  it("only shows the bound account's plan when usage is on", () => {
+    claudeLineProps.mockClear();
+    renderCard(boundCard());
+    renderCard(boundCard(officialUsage(false)));
+    expect(claudeLineProps.mock.calls.map(([props]) => props.showPlan)).toEqual(
+      [true, false],
+    );
   });
 });

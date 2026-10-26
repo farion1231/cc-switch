@@ -27,6 +27,10 @@ export interface ManagedAuthAccount {
   requires_reauth: boolean;
   /** Claude official only: when the sign-in of an account not in Claude Code's default slot expires (ms, as last recorded). */
   login_expires_at?: number | null;
+  /** Claude official only: plan (`pro` / `max` / `team` / `enterprise`) from the account's sign-in. */
+  plan?: string | null;
+  /** Claude official only: `rateLimitTier` (e.g. `default_claude_max_20x`), tells Max 5x from 20x. */
+  rate_limit_tier?: string | null;
 }
 
 export interface ManagedAuthStatus {

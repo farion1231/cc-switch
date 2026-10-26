@@ -242,7 +242,16 @@
         "help": "このカードに切り替えると Claude Code のログインが選んだアカウントになり、以降どこで起動した claude もこのアカウントを使います。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。",
         "claudeAccount": "Claude アカウント",
         "reauthBadge": "再ログインが必要",
-        "terminalHint": "ターミナルを開いて使用"
+        "terminalHint": "ターミナルを開いて使用",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team プレミアム",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",

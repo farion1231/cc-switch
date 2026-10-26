@@ -14,6 +14,7 @@ impl ClaudeAccountManager {
                 email: Some(email.to_string()),
                 org_name: None,
                 plan: Some("max".to_string()),
+                rate_limit_tier: None,
                 added_at: 1,
             },
         );
@@ -116,6 +117,7 @@ async fn corrupt_local_id_never_resolves() {
                 email: None,
                 org_name: None,
                 plan: None,
+                rate_limit_tier: None,
                 added_at: 0,
             },
         );
@@ -147,4 +149,46 @@ async fn polls_after_login_ends_never_report_expired() {
 
     manager.ended_flows().clear();
     assert!(manager.poll_login("flow").await.is_err());
+}
+
+#[tokio::test]
+async fn plan_from_the_credentials_updates_the_account() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manager = ClaudeAccountManager::new(tmp.path().to_path_buf());
+    manager.insert_for_test("acc:org", "me@example.com").await;
+
+    let max_20x = AccountPlan {
+        subscription_type: Some("max".to_string()),
+        rate_limit_tier: Some("default_claude_max_20x".to_string()),
+    };
+    note_plan(tmp.path(), "acc:org", &max_20x);
+    let listed = &manager.list().await[0];
+    assert_eq!(listed.plan.as_deref(), Some("max"));
+    assert_eq!(
+        listed.rate_limit_tier.as_deref(),
+        Some("default_claude_max_20x")
+    );
+
+    // 凭据里没写套餐（旧版 Claude Code）：不抹掉已有的记录
+    note_plan(tmp.path(), "acc:org", &AccountPlan::default());
+    let listed = &manager.list().await[0];
+    assert_eq!(
+        listed.rate_limit_tier.as_deref(),
+        Some("default_claude_max_20x")
+    );
+
+    // 降级到 Pro 后跟着变；不认识的账号不收录
+    note_plan(
+        tmp.path(),
+        "acc:org",
+        &AccountPlan {
+            subscription_type: Some("pro".to_string()),
+            rate_limit_tier: None,
+        },
+    );
+    note_plan(tmp.path(), "other:org", &max_20x);
+    let accounts = manager.list().await;
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].plan.as_deref(), Some("pro"));
+    assert_eq!(accounts[0].rate_limit_tier, None);
 }

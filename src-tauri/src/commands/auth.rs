@@ -37,6 +37,12 @@ pub struct ManagedAuthAccount {
     /// Claude 官方专用：不在 Claude Code 默认登录里的账号，登录约什么时候过期（毫秒）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub login_expires_at: Option<i64>,
+    /// Claude 官方专用：套餐（`pro` / `max` / `team` / `enterprise`）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    /// Claude 官方专用：凭据里的 `rateLimitTier`，区分 Max 5x / 20x
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -82,6 +88,8 @@ fn map_account(
         reauth_required: account.reauth_required,
         requires_reauth: false,
         login_expires_at: None,
+        plan: None,
+        rate_limit_tier: None,
         id: account.id,
         provider: provider.to_string(),
         login: account.login,
@@ -106,6 +114,8 @@ fn map_xai_account(
         reauth_required: false,
         requires_reauth: account.requires_reauth,
         login_expires_at: None,
+        plan: None,
+        rate_limit_tier: None,
     }
 }
 
@@ -119,6 +129,8 @@ fn map_agy_account(account: AgyAccount, current_account_id: Option<&str>) -> Man
         reauth_required: false,
         requires_reauth: account.requires_reauth,
         login_expires_at: None,
+        plan: None,
+        rate_limit_tier: None,
         provider: AUTH_PROVIDER_AGY_OAUTH.to_string(),
         id: account.id,
     }
@@ -135,6 +147,8 @@ fn map_claude_account(account: ClaudeAccount) -> ManagedAuthAccount {
         reauth_required: false,
         requires_reauth: account.requires_reauth,
         login_expires_at: account.login_expires_at,
+        plan: account.plan.clone(),
+        rate_limit_tier: account.rate_limit_tier.clone(),
         provider: AUTH_PROVIDER_CLAUDE_OFFICIAL.to_string(),
         id: account.id,
     }

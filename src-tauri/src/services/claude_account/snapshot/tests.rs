@@ -975,3 +975,27 @@ fn relogin_of_an_account_not_in_the_default_slot_changes_nothing() {
     );
     assert!(load_state(&fx.data).journal.is_none());
 }
+
+#[test]
+fn reads_the_plan_claude_code_keeps_with_the_login() {
+    let Value::Object(map) = json!({
+        "claudeAiOauth": {
+            "accessToken": "at", "refreshToken": "rt", "expiresAt": 1,
+            "subscriptionType": "max", "rateLimitTier": "default_claude_max_5x",
+        },
+    }) else {
+        unreachable!()
+    };
+    let plan = credential_plan(&Secret(map));
+    assert_eq!(plan.subscription_type.as_deref(), Some("max"));
+    assert_eq!(
+        plan.rate_limit_tier.as_deref(),
+        Some("default_claude_max_5x")
+    );
+
+    // 旧版凭据没有这两个字段；空串也当没有
+    let mut bare = secret("org", "rt");
+    assert_eq!(credential_plan(&bare), Default::default());
+    bare.0["claudeAiOauth"]["subscriptionType"] = json!("");
+    assert_eq!(credential_plan(&bare).subscription_type, None);
+}
