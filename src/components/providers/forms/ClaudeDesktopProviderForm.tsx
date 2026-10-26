@@ -385,6 +385,12 @@ export function ClaudeDesktopProviderForm({
   );
   const activeProviderType =
     activePreset?.providerType ?? initialData?.meta?.providerType;
+  // Codex/xAI OAuth ignore editable URLs and use fixed backend endpoints.
+  const usesAutomaticCopilotFormat =
+    activeProviderType === "github_copilot" ||
+    (activeProviderType !== "codex_oauth" &&
+      activeProviderType !== "xai_oauth" &&
+      baseUrl.includes("githubcopilot.com"));
   const { isAuthenticated: isCopilotAuthenticated, accounts: copilotAccounts } =
     useCopilotAuth();
   const {
@@ -875,6 +881,12 @@ export function ClaudeDesktopProviderForm({
       return acc;
     }, {});
 
+    // Gemini format takes precedence in backend auth detection. Clear it only
+    // when saving Copilot, keeping the local selection if the URL changes back.
+    const savedApiFormat =
+      usesAutomaticCopilotFormat && apiFormat === "gemini_native"
+        ? "anthropic"
+        : apiFormat;
     const meta: ProviderMeta = {
       ...(initialData?.meta ?? {}),
       claudeDesktopMode: effectiveMode,
@@ -882,7 +894,7 @@ export function ClaudeDesktopProviderForm({
         activeProviderType === "xai_oauth"
           ? "openai_responses"
           : effectiveMode === "proxy"
-            ? apiFormat
+            ? savedApiFormat
             : "anthropic",
     };
 
@@ -1119,14 +1131,20 @@ export function ClaudeDesktopProviderForm({
                       </Label>
                       <Select
                         value={apiFormat}
-                        disabled={activeProviderType === "github_copilot"}
+                        disabled={usesAutomaticCopilotFormat}
                         onValueChange={(value) =>
                           setApiFormat(value as ClaudeApiFormat)
                         }
                       >
                         <SelectTrigger className="w-full">
-                          <SelectValue>
-                            {activeProviderType === "github_copilot"
+                          <SelectValue
+                            key={
+                              usesAutomaticCopilotFormat
+                                ? "automatic"
+                                : "manual"
+                            }
+                          >
+                            {usesAutomaticCopilotFormat
                               ? t("copilot.automaticFormat")
                               : undefined}
                           </SelectValue>
@@ -1156,7 +1174,7 @@ export function ClaudeDesktopProviderForm({
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      {activeProviderType === "github_copilot" && (
+                      {usesAutomaticCopilotFormat && (
                         <p className="text-xs leading-relaxed text-fg-2">
                           {t("copilot.automaticFormatHint")}
                         </p>
