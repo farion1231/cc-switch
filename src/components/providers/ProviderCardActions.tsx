@@ -60,7 +60,6 @@ const BUTTON_ICON: Record<string, LucideIcon> = {
   add: Plus,
   remove: Minus,
   enable: Power,
-  use: Power,
   disable: PowerOff,
   openTerminal: SquareTerminal,
 };
@@ -75,12 +74,14 @@ interface ProviderCardActionsProps {
   isTesting?: boolean;
   onConfigureUsage?: () => void;
   onOpenTerminal?: () => void;
+  /** 这张卡打开的终端是否与 CC Switch 的切换隔离（见 terminalIsIsolated），决定提示里带不带「环境隔离」 */
+  openTerminalIsolated?: boolean;
 }
 
 /**
- * 卡片右侧（v7）：主操作位（状态文字或按钮）→ 上移 / 下移（故障转移队列）→ 编辑 → ⋯。
- * 次要操作都在 ⋯ 里：跟当前模式有关的（聚合页、OpenClaw / OpenCode 的「设为默认」）在最前，然后是复制、检测连通、
- * 配置用量查询、打开终端、删除。
+ * 卡片右侧（v7）：主操作位（状态文字或按钮）→ 上移 / 下移（故障转移队列）→ 打开终端（Claude Code）
+ * → 编辑 → ⋯。次要操作都在 ⋯ 里：跟当前模式有关的（聚合页、OpenClaw / OpenCode 的「设为默认」）在
+ * 最前，然后是复制、检测连通、配置用量查询、删除。
  * 按钮一律纯图标 + HoverTip；有禁用原因时改由 DisabledReason 的说明卡报原因。
  */
 export function ProviderCardActions({
@@ -93,13 +94,16 @@ export function ProviderCardActions({
   isTesting,
   onConfigureUsage,
   onOpenTerminal,
+  openTerminalIsolated,
 }: ProviderCardActionsProps) {
   const { t } = useTranslation();
   const { status, buttons, move, menuItems = [] } = presentation;
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <div className="flex items-center justify-end gap-1">
+      {/* 主操作位定宽：图标按钮和「● 使用中」这类状态文字宽度不同，不定宽的话
+          切换后左边的用量会被推开、跟其他卡片对不齐。按最长的常见状态留宽，靠右对齐 */}
+      <div className="flex min-w-20 items-center justify-end gap-1">
         {status && (
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-1 text-body font-medium text-fg-1">
             <span
@@ -147,6 +151,27 @@ export function ProviderCardActions({
             </Button>
           </HoverTip>
         </div>
+      )}
+
+      {onOpenTerminal && (
+        <HoverTip
+          content={t(
+            openTerminalIsolated
+              ? "provider.openTerminalIsolated"
+              : "provider.openTerminal",
+          )}
+        >
+          <Button
+            variant="quiet"
+            size="icon-compact"
+            aria-label={t("providerCard.action.openTerminal", {
+              name: providerName,
+            })}
+            onClick={onOpenTerminal}
+          >
+            <SquareTerminal className="h-4 w-4" strokeWidth={1.5} />
+          </Button>
+        </HoverTip>
       )}
 
       <IconAction
@@ -198,12 +223,7 @@ export function ProviderCardActions({
               {t("provider.configureUsage")}
             </DropdownMenuItem>
           )}
-          {onOpenTerminal && (
-            <DropdownMenuItem onSelect={onOpenTerminal}>
-              {t("provider.openTerminal")}
-            </DropdownMenuItem>
-          )}
-          {(onDuplicate || onTest || onConfigureUsage || onOpenTerminal) && (
+          {(onDuplicate || onTest || onConfigureUsage) && (
             <DropdownMenuSeparator />
           )}
           <DropdownMenuItem

@@ -187,6 +187,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 2. **Fork and branch** — Create a feature branch from `main` (e.g., `feat/my-feature` or `fix/issue-123`).
 3. **Keep PRs focused** — One feature or fix per PR. Avoid unrelated changes.
 4. **Follow the PR template** — Fill in the summary, related issue, and checklist.
+5. **Leave the database version to maintainers** — Don't change `SCHEMA_VERSION`; such PRs from non-collaborators are closed automatically. If your change truly needs a schema change, mention any one maintainer (`@farion1231`, `@funkpopo`, `@YUZHEthefool`, `@Owlbay` or `@SaladDay`) in the PR to explain why.
 
 ### PR Checklist
 
@@ -444,6 +445,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 2. **Fork 并创建分支** — 从 `main` 创建功能分支（如 `feat/my-feature` 或 `fix/issue-123`）。
 3. **保持 PR 专注** — 每个 PR 只做一件事，避免无关改动。
 4. **遵循 PR 模板** — 填写概述、关联 Issue 和检查清单。
+5. **数据库版本交给维护者** — 请勿修改 `SCHEMA_VERSION`，非协作者的此类 PR 会被自动关闭。如确需改动数据库结构，请在 PR 中 @ 任意一位维护者（`@farion1231`、`@funkpopo`、`@YUZHEthefool`、`@Owlbay`、`@SaladDay`）说明原因。
 
 ### PR 检查清单
 

@@ -87,7 +87,6 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // DeepSeek 直连照抄官方 catalog 镜像（Jason 2026-08-15 拍板：表单可见性
     // 优先，接受快照过时风险——官方目录变更时须同步）
     ["DeepSeek", "deepseek-flash", ["low", "high", "max"]],
-    ["DeepSeek", "deepseek-v4-pro", ["low", "high", "max"]],
     // MiniMax-M3 官方 catalog=none/high；M3.1 Flash 思考不可关，实测 low–max 可用、none 报 2013；MiMo 2026-09-23 官方目录为四档、默认 low。
     ["MiniMax", "MiniMax-M3", ["none", "high"]],
     [
@@ -147,22 +146,21 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["SambaNova", "MiniMax-M3", ["high"]],
     ["SambaNova", "gpt-oss-120b", ["low", "medium", "high"]],
     // DigitalOcean（native Responses）：GPT-6.1 Sol 平台写 low 到 max，按 OpenAI
-    // 官方列五档；GLM-5.3 平台声明 low/high/max；DeepSeek V4 Pro 0813 平台未
-    // 声明，退回 DeepSeek 官方档位
+    // 官方列五档；GLM-5.3 平台声明 low/high/max；DeepSeek V4.1 Flash 1017 平台
+    // 未声明，退回 DeepSeek 官方档位
     [
       "DigitalOcean",
       "openai-gpt-6-1-sol",
       ["low", "medium", "high", "xhigh", "max"],
     ],
     ["DigitalOcean", "glm-5.3", ["low", "high", "max"]],
-    ["DigitalOcean", "deepseek-v4-pro-0813", ["low", "high", "max"]],
+    ["DigitalOcean", "deepseek-v4.1-flash-1017", ["low", "high", "max"]],
     // 千帆 v2 官方 thinking:{type}（声明已补）→ 两态
     ["Baidu Qianfan Coding Plan", "qianfan-code-latest", ["none", "high"]],
-    // 千帆 Token Plan：deepseek-v4-pro/v4-flash 在 thinking+reasoning_effort
+    // 千帆 Token Plan：deepseek-v4-flash 在 thinking+reasoning_effort
     // 双官方清单内（effort 仅 high/max 两档真实深度）；不声明 default=回落
     // max，恰好等于平台对复杂 Agent 类请求的自动行为。glm-5.1 只在 thinking
     // 清单 → 两态
-    ["Baidu Qianfan Token Plan", "deepseek-v4-pro", ["none", "high", "max"]],
     ["Baidu Qianfan Token Plan", "deepseek-v4-flash", ["none", "high", "max"]],
     ["Baidu Qianfan Token Plan", "glm-5.1", ["none", "high"]],
     // BytePlus 国际站已切原生 Responses，档位=官方 Codex 文档三档（与国内
@@ -197,7 +195,6 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["OpenCode Go", "glm-5.3", ["low", "high", "max"], "high"],
     ["OpenCode Go", "glm-5.3-flash", ["low", "high", "max"], "high"],
     ["OpenCode Go", "kimi-k3.1-pro", ["max"]],
-    ["OpenCode Go", "deepseek-v4-pro", ["high", "max"]],
     ["OpenCode Go", "deepseek-v4.1-flash", ["low", "high", "max"]],
     // 千问官方 Codex 页只发布一份 model-catalog.local.json，且该元数据段落
     // 位于套餐分页之前（help.aliyun.com/zh/model-studio/codex，2026-09-08
@@ -214,7 +211,6 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Ollama Cloud", "glm-5.3", ["low", "high", "max"]],
     ["Ollama Cloud", "glm-5.3-flash", ["low", "high", "max"]],
     ["Ollama Cloud", "kimi-k3", ["low", "high", "max"]],
-    ["Ollama Cloud", "deepseek-v4-pro:0813", ["low", "high", "max"]],
     ["Ollama Cloud", "deepseek-v4.1-flash", ["low", "high", "max"]],
     // Ollama 本机（原生 Responses 直连）：gpt-oss 取 ollama.com/api/show 的
     // thinking.values；qwen3.5 只支持开关，文档写 none 映射为关（2026-10-14）
@@ -227,11 +223,7 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // llama.cpp 本机（原生 Responses 直连）：Qwen3-Coder 不思考，llama-server 把
     // reasoning_effort 交给模型模板（PR #26941，2026-10-14），该模板不读，照
     // Nebius 先例只钉单档 high
-    [
-      "llama.cpp",
-      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
-      ["high"],
-    ],
+    ["llama.cpp", "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF", ["high"]],
     // vLLM 本机（原生 Responses 直连）：vLLM 用户没设 enable_thinking 时按
     // effort != "none" 开关思考（responses/protocol.py，v0.31.0，2026-10-14），
     // Qwen3.6 模板只有开关，故两态
@@ -270,7 +262,6 @@ describe("Codex preset pre-filled reasoning levels", () => {
       "deepseek-ai/DeepSeek-V4.1-Flash-1017",
       ["low", "high", "max"],
     ],
-    ["DeepInfra", "deepseek-ai/DeepSeek-V4-Pro-0813", ["low", "high", "max"]],
     ["DeepInfra", "moonshotai/Kimi-K3", ["low", "high", "max"]],
     ["DeepInfra", "zai-org/GLM-5.3", ["low", "high", "max"]],
     // Vercel AI Gateway（原生 Responses 直连）：GET ai-gateway.vercel.sh/codex/
@@ -308,13 +299,13 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Nebius Token Factory", "zai-org/GLM-5.3-Flash", ["high"]],
     ["Nebius Token Factory", "moonshotai/Kimi-K3", ["high"]],
     ["Nebius Token Factory", "moonshotai/Kimi-K2.7-Code", ["high"]],
-    ["Nebius Token Factory", "deepseek-ai/DeepSeek-V4-Pro-0813", ["high"]],
+    ["Nebius Token Factory", "deepseek-ai/DeepSeek-V4.1-Flash", ["high"]],
     // Hugging Face（Chat 路由，不下发推理参数）：router.huggingface.co/v1/models
     // 不按模型声明思考开关与档位（2026-10-14），上游钉 :baseten，只钉单档 high
     ["Hugging Face", "zai-org/GLM-5.3:baseten", ["high"]],
     ["Hugging Face", "zai-org/GLM-5.3-Flash:baseten", ["high"]],
     ["Hugging Face", "moonshotai/Kimi-K3:baseten", ["high"]],
-    ["Hugging Face", "deepseek-ai/DeepSeek-V4-Pro-0813:baseten", ["high"]],
+    ["Hugging Face", "deepseek-ai/DeepSeek-V4.1-Flash-1017:baseten", ["high"]],
     // Fireworks AI（原生 Responses 直连）：Kimi K3 / DeepSeek V4.1 Flash 取 Chat
     // API 参考逐模型说明（docs.fireworks.ai/api-reference/post-chatcompletions，
     // 2026-10-14），GLM 5.3 / 5.3 Flash 参考未写，取 Pi 内置目录与 z.ai 官方
