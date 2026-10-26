@@ -233,11 +233,11 @@
         "apiKeyPlaceholder": "Enter Gemini API Key"
       },
       "claudeAccount": {
-        "label": "Account",
-        "default": "Default sign-in (~/.claude)",
+        "label": "Sign-in method",
+        "default": "Follow Claude Code login",
+        "defaultDescription": "The account changes with the current Claude Code login",
         "missing": "Account not on this computer",
-        "add": "Sign in to a new account",
-        "pending": "Claude's sign-in page is open in your browser. After you sign in and authorize, the account is selected automatically.",
+        "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
         "help": "Switching to this card signs Claude Code in to the selected account, and claude started anywhere afterwards uses it. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
@@ -4897,7 +4897,7 @@
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings (for example, to WSL), so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
-      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: switching to the card signs Claude Code in to that account, and claude started afterwards in any terminal or IDE extension uses it. To use several accounts at once, use Open Terminal on the card. Switching moves sign-in tokens between Claude Code's own sign-in locations; they stay on this computer and are never uploaded, refreshed or signed out. Anthropic's terms don't allow third-party tools to store session tokens, so this is a gray area; decide for yourself. To keep a card from switching, set its account back to \"Default sign-in\". The first switch saves the account Claude Code is signed in to now; a switch ends an open Remote Control session, and the first message afterwards rebuilds the prompt cache."
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, every newly started claude uses it. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
     },
     "addAccount": "Add account",
     "accountMenu": "More actions for {{login}}",
