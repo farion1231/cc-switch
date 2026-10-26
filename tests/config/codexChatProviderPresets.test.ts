@@ -24,7 +24,6 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://qianfan.baidubce.com/v2/tokenplan/personal",
       contextWindows: {
-        "deepseek-v4-pro": 1048576,
         "deepseek-v4-flash": 1048576,
         "deepseek-v4-flash-0731": 1048576,
         "glm-5.2": 1048576,
@@ -112,7 +111,6 @@ const expectedChatPresets = new Map<
         "glm-5.3": 1000000,
         "glm-5.3-flash": 1000000,
         "kimi-k3.1-pro": 1048576,
-        "deepseek-v4-pro": 1048576,
         "deepseek-v4.1-flash": 1048576,
         "mimo-v2.6-pro": 1048576,
       },
@@ -124,7 +122,7 @@ describe("Codex Chat provider presets", () => {
   it.each([
     ["StepFun API", "https://api.stepfun.com/v1", "step-3.7-flash"],
     ["StepFun API en", "https://api.stepfun.ai/v1", "step-3.7-flash"],
-    ["Baidu Qianfan", "https://qianfan.baidubce.com/v2", "deepseek-v4-pro"],
+    ["Baidu Qianfan", "https://qianfan.baidubce.com/v2", "deepseek-v4-flash"],
     [
       "Astron Coding Plan",
       "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
@@ -252,7 +250,6 @@ describe("Codex Chat provider presets", () => {
         {
           contextWindows: {
             "deepseek-flash": 1048576,
-            "deepseek-v4-pro": 1048576,
           },
         },
       ],
@@ -396,7 +393,6 @@ describe("Codex Chat provider presets", () => {
       "glm-5.3": ["low", "high", "max"],
       "glm-5.3-flash": ["low", "high", "max"],
       "kimi-k3.1-pro": ["max"],
-      "deepseek-v4-pro": ["high", "max"],
       "deepseek-v4.1-flash": ["low", "high", "max"],
       "mimo-v2.6-pro": null,
     });

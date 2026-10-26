@@ -1005,6 +1005,8 @@ describe("PiProviderForm", () => {
     expect(config.models.map((model: { id: string }) => model.id)).toEqual([
       "kimi-k2.7-code",
       "kimi-k3",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro-highspeed",
       "kimi-k2.7-code-highspeed",
       "kimi-k2.6",
     ]);
@@ -1016,6 +1018,8 @@ describe("PiProviderForm", () => {
     ).toEqual([
       { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
       { id: "kimi-k3", name: "Kimi K3" },
+      { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro" },
+      { id: "kimi-k3.1-pro-highspeed", name: "Kimi K3.1 Pro HighSpeed" },
       { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
       { id: "kimi-k2.6", name: "Kimi K2.6" },
     ]);
