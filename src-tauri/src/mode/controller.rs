@@ -414,7 +414,8 @@ async fn write_proxy(
                 &others,
             );
             let unchanged = !force && live_now.has_contract(&contract.key);
-            let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
+            let mut patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
+            crate::services::provider::claude_official::strip_from_patch(&mut patch);
             target.contract = Some(contract);
             claude_direct::run(
                 &state.db,
@@ -530,16 +531,22 @@ fn write_direct(
             let empty = ClaudeProjection::default();
             let projection = usable_direct(app, direct.as_ref())
                 .map(|provider| ClaudeProjection::of(&provider.settings_config));
-            let patch = direct_patch(
+            let mut patch = direct_patch(
                 live_now.claude_exclusive_owner().as_ref(),
                 projection.as_ref().unwrap_or(&empty),
             );
-            claude_direct::run(
-                &state.db,
-                op_name,
-                attached.then_some(&patch),
-                pending_target,
-            )
+            crate::services::provider::claude_official::strip_from_patch(&mut patch);
+            // 退出路由（不是退出 CC Switch 时的分离）回到直连的官方卡：和切换一样把它绑的
+            // 账号换进 Claude Code 的登录（路由期间可能改过这张卡绑的号）
+            let login_target = usable_direct(app, direct.as_ref()).filter(|_| op_name == op::EXIT);
+            crate::services::provider::claude_official::with_login_switch(login_target, || {
+                claude_direct::run(
+                    &state.db,
+                    op_name,
+                    attached.then_some(&patch),
+                    pending_target,
+                )
+            })
             .map_err(err)?;
         }
         AppType::Codex => {
@@ -1330,7 +1337,11 @@ async fn set_stack_member_locked(
     if next == current {
         return Ok(());
     }
+    publish_stack(state, app, next).await
+}
 
+/// 落定新的 Stack 名单：代理模式且已接上时和契约一起提交，否则只落定名单。
+async fn publish_stack(state: &AppState, app: &AppType, next: StackState) -> Result<(), String> {
     match attached_route(state, app)? {
         Some((mode, route)) => {
             let live_now = LiveNow::of(state, app, &mode)?;
@@ -1347,6 +1358,33 @@ async fn set_stack_member_locked(
             },
         ),
     }
+}
+
+/// 拖动排序后让 Stack 名单跟界面顺序一致：名单顺序就是客户端看到的聚合模型顺序（Codex 的
+/// 模型目录等），界面「已添加」却按 `sort_index` 排。只重排已有成员，不增删；顺序没变就什么
+/// 都不写。不在库里的成员（理论上不会有）排到最后，保持原相对顺序。
+pub async fn sync_stack_order(state: &AppState, app: &AppType) -> Result<(), String> {
+    if !stack::supports_stack(app) {
+        return Ok(());
+    }
+    let _guard = lock_settled(state, app).await.map_err(err)?;
+    let current = settled_stack(app)?;
+    if current.members.len() < 2 {
+        return Ok(());
+    }
+    let providers = state.db.get_all_providers(app.as_str()).map_err(err)?;
+    let mut next = current.clone();
+    // 稳定排序：sort_index 相同或缺失时保留原名单顺序。
+    next.members.sort_by_key(|id| {
+        providers
+            .get(id)
+            .and_then(|provider| provider.sort_index)
+            .map_or((1, 0), |index| (0, index))
+    });
+    if next == current {
+        return Ok(());
+    }
+    publish_stack(state, app, next).await
 }
 
 /// Stack 模式的状态、名单里的每一家和它发布的模型 id（给前端）。
@@ -8025,6 +8063,150 @@ model_provider = "c"
             .map(|m| m["slug"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(slugs, vec!["gpt-a", "ccs-deepseek/deepseek-v5"]);
+    }
+
+    /// 「已添加」列表拖动排序：名单按 sort_index 重排，合并目录跟着重写；顺序没变时不写。
+    #[tokio::test]
+    #[serial]
+    async fn reordering_providers_reorders_the_codex_stack_catalog() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        set_codex_member(&state, "zhipu", true).await;
+        assert_eq!(
+            catalog_slugs(),
+            vec![
+                "gpt-a",
+                "ccs-deepseek/deepseek-v4-pro",
+                "ccs-zhipu/gpt-zhipu"
+            ]
+        );
+
+        let updates = ["zhipu", "a", "deepseek"]
+            .iter()
+            .enumerate()
+            .map(
+                |(index, id)| crate::services::provider::ProviderSortUpdate {
+                    id: id.to_string(),
+                    sort_index: index,
+                },
+            )
+            .collect();
+        ProviderService::update_sort_order(&state, AppType::Codex, updates).expect("sort");
+        sync_stack_order(&state, &AppType::Codex)
+            .await
+            .expect("sync order");
+        assert_eq!(
+            stack_state_of(&AppType::Codex).members,
+            vec!["zhipu", "a", "deepseek"]
+        );
+        // 默认那家的行永远排最前，其余按名单顺序。
+        assert_eq!(
+            catalog_slugs(),
+            vec![
+                "gpt-a",
+                "ccs-zhipu/gpt-zhipu",
+                "ccs-deepseek/deepseek-v4-pro"
+            ]
+        );
+
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        let before = std::fs::metadata(&catalog_path)
+            .unwrap()
+            .modified()
+            .unwrap();
+        sync_stack_order(&state, &AppType::Codex)
+            .await
+            .expect("sync again");
+        assert_eq!(
+            std::fs::metadata(&catalog_path)
+                .unwrap()
+                .modified()
+                .unwrap(),
+            before
+        );
+    }
+
+    /// 直连模式下拖动排序只落定名单、不碰客户端文件，下次进入聚合时按新顺序发布。
+    #[tokio::test]
+    #[serial]
+    async fn reordering_providers_in_direct_mode_only_settles_the_stack() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+        set_codex_member(&state, "deepseek", true).await;
+        set_codex_member(&state, "zhipu", true).await;
+        assert_eq!(
+            stack_state_of(&AppType::Codex).members,
+            vec!["deepseek", "zhipu"]
+        );
+        let config_path = crate::codex_config::get_codex_config_path();
+        let config_before = std::fs::read(&config_path).unwrap();
+
+        let updates = ["zhipu", "a", "deepseek"]
+            .iter()
+            .enumerate()
+            .map(
+                |(index, id)| crate::services::provider::ProviderSortUpdate {
+                    id: id.to_string(),
+                    sort_index: index,
+                },
+            )
+            .collect();
+        ProviderService::update_sort_order(&state, AppType::Codex, updates).expect("sort");
+        sync_stack_order(&state, &AppType::Codex)
+            .await
+            .expect("sync order");
+        assert_eq!(
+            stack_state_of(&AppType::Codex).members,
+            vec!["zhipu", "deepseek"]
+        );
+        assert_eq!(std::fs::read(&config_path).unwrap(), config_before);
+
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        assert_eq!(
+            catalog_slugs(),
+            vec![
+                "gpt-a",
+                "ccs-zhipu/gpt-zhipu",
+                "ccs-deepseek/deepseek-v4-pro"
+            ]
+        );
+    }
+
+    /// 排序只改 sort_index：排序批次里带着刚删掉的供应商也不会把它写回来。
+    #[tokio::test]
+    #[serial]
+    async fn sort_order_update_does_not_resurrect_a_deleted_provider() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+        state.db.delete_provider("codex", "zhipu").unwrap();
+
+        let updates = ["zhipu", "deepseek", "a"]
+            .iter()
+            .enumerate()
+            .map(
+                |(index, id)| crate::services::provider::ProviderSortUpdate {
+                    id: id.to_string(),
+                    sort_index: index,
+                },
+            )
+            .collect();
+        ProviderService::update_sort_order(&state, AppType::Codex, updates).expect("sort");
+        assert!(state
+            .db
+            .get_provider_by_id("zhipu", "codex")
+            .unwrap()
+            .is_none());
+        let deepseek = state
+            .db
+            .get_provider_by_id("deepseek", "codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(deepseek.sort_index, Some(1));
     }
 
     #[tokio::test]

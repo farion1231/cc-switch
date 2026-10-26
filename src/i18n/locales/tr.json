@@ -179,7 +179,8 @@
     "configureUsage": "Kullanım sorgusunu yapılandırma",
     "managedByHermes": "Hermes Yönetilen",
     "managedByHermesHint": "Hermes' sağlayıcılarında tanımlanmıştır: dict. Hermes Web kullanıcı arayüzü aracılığıyla düzenleyin veya kaldırın.",
-    "openTerminal": "Terminali Aç",
+    "openTerminal": "Bu sağlayıcıyla terminal aç",
+    "openTerminalIsolated": "Bu sağlayıcıyla terminal aç (yalıtılmış)",
     "openTerminalWithProvider": "Bu sağlayıcıyla terminal aç",
     "terminalOpened": "Terminal açıldı",
     "terminalOpenFailed": "Terminal açılamadı",
@@ -1639,7 +1640,7 @@
       "grooroute": "GrooRoute Pro; kullandıkça öde ve abonelik planlarıyla OpenAI, Claude, DeepSeek ve diğer yaygın modellere erişim sağlayan güvenilir bir yapay zekâ API aktarım hizmetidir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ¥5 deneme bakiyesi kazanır!",
       "dit": "DIT.ai, birden fazla sağlayıcıya daha düşük maliyetle yönlendirme yapan bir yapay zekâ token borsasıdır. OpenAI uyumlu tek bir API üzerinden GPT, Claude, Gemini, DeepSeek, Grok ve Llama dahil 50'den fazla önde gelen modele erişilir; 160'tan fazla rotada sağlayıcılar rekabet eder ve fiyatlar genellikle resmî ücretlerden %30–70 daha düşüktür. CC Switch kullanıcıları bu bağlantıdan kaydolup \"ccswitch\" promosyon koduyla 5 ABD doları değerinde hoş geldin kuponu alabilir!",
       "buytoken": "BuyToken; Claude Code, Codex, DeepSeek ve daha fazlası için kurumsal düzeyde eşzamanlılık ve hızlı faturalandırma sunan, uzun süreli ve istikrarlı kullanım için tasarlanmış bir yönlendirme hizmetidir. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 3 ¥ deneme kredisi ve ilk yüklemelerinde %10 indirim kazanır.",
-      "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için istikrarlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşme ve e-fatura (temel veya ticari) sağlar. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır."
+      "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için kararlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşmelerin yanı sıra genel ve özel KDV faturaları sağlar. Bu bağlantıdan kaydolan CC Switch kullanıcıları 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır!"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1827,12 +1828,13 @@
     "deploymentType": "GitHub Dağıtım Türü",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Kurumsal Sunucu",
-    "enterpriseDomainPlaceholder": "örneğin şirket.ghe.com"
+    "enterpriseDomainPlaceholder": "örneğin şirket.ghe.com",
+    "automaticFormat": "Yönlendirme tarafından otomatik seçilir",
+    "automaticFormatHint": "Yönlendirme, her model için Copilot üst akış biçimini seçer; elle belirlenen biçim ayarları yok sayılır."
   },
   "codexOauth": {
     "authStatus": "Kimlik doğrulama durumu",
     "notAuthenticated": "Kimliği doğrulanmadı",
-    "loginWithChatGPT": "ChatGPT ile oturum açın",
     "loginRequired": "Lütfen önce ChatGPT'de oturum açın",
     "statusLoading": "Hesap durumu yükleniyor...",
     "statusUnavailable": "Durum kullanılamıyor",
@@ -1867,7 +1869,12 @@
     "retry": "Yeniden dene",
     "copyCode": "Kodu kopyala",
     "fastMode": "FAST modu",
-    "fastModeDescription": "Daha düşük gecikme süresi için service_tier=\"priority\" gönderin. Varsayılan olarak kapalı — etkinleştirilmesi ChatGPT kotanızı daha yüksek oranda tüketir."
+    "fastModeDescription": "Daha düşük gecikme süresi için service_tier=\"priority\" gönderin. Varsayılan olarak kapalı — etkinleştirilmesi ChatGPT kotanızı daha yüksek oranda tüketir.",
+    "loginMethod": "Oturum açma yöntemi",
+    "browserLogin": "Tarayıcıyla oturum aç",
+    "deviceCodeLogin": "Cihaz koduyla oturum aç",
+    "openBrowserLogin": "Tarayıcıda oturum açma sayfasını aç",
+    "loginExpired": "Oturum süresi doldu. Lütfen yeniden deneyin."
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth kimlik doğrulaması",
@@ -4205,7 +4212,10 @@
       "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
       "agy": "Resmî kurulum betiğiyle yüklenir",
       "omp": "Resmi komut dosyasıyla yüklenir"
-    }
+    },
+    "sectionInstalled": "Yüklü · {{count}}",
+    "sectionNotInstalled": "Yüklü değil · {{count}}",
+    "dragHandle": "{{name}} öğesini yeniden sıralamak için sürükleyin"
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -4245,7 +4255,7 @@
       "unavailableOption": "{{model}} (artık birleştirmede değil)",
       "unavailable": "Seçilen model artık birleştirmede bulunmuyor (sağlayıcı kaldırıldı veya modeli yayımlamayı durdurdu); bu nedenle alt aracılar şimdilik ana modeli izliyor. Modeli yeniden eklediğinizde tekrar kullanılabilir.",
       "noModels": "Henüz birleştirilmiş model yayımlanmamış. Önce birleştirmeye sağlayıcı ekleyin.",
-      "classicOff": "Alt aracı ana araçtan farklı bir sağlayıcı kullanıyor; bu yüzden Codex'in yeni alt aracı araçları görevi yalnızca ana aracının sağlayıcısının okuyabileceği şekilde şifreler ve alt aracı hiçbir içerik alamaz. Aşağıdaki \"Birleştirmede klasik alt aracı araçları\" seçeneğini açmanız gerekir.",
+      "classicOff": "Alt ajan ana ajandan farklı bir sağlayıcıda çalıştığı için Codex'in yeni alt ajan araçları görevi, yalnızca ana ajanın sağlayıcısının okuyabileceği şekilde şifreler; alt ajan görevin içeriğini alamaz. Bu araçları kullanmak için aşağıdaki \"Birleştirme modunda klasik alt ajan araçları\" seçeneğini açın.",
       "autoReviewModel": "Otomatik inceleme modeli",
       "autoReviewDescription": "Otomatik onay (Benim yerime onayla) açıkken bir işlemin devam edip edemeyeceğine karar veren Codex modeli. Başka bir sağlayıcının birleştirilmiş modeli olabilir. Değişikliklerden sonra Codex'i yeniden başlatın.",
       "autoReviewDefaultOfficial": "Resmî Otomatik İnceleme (varsayılan)",
@@ -4869,9 +4879,7 @@
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz."
     },
     "addAccount": "Hesap ekle",
-    "groupMenu": "{{service}} için daha fazla eylem",
     "accountMenu": "{{login}} için daha fazla eylem",
-    "removeAll": "Tüm hesapları sil",
     "removeAccount": "Hesabı sil",
     "setDefault": "Varsayılan olarak ayarla",
     "reauth": "Tekrar oturum açın",
@@ -4891,7 +4899,6 @@
     "loginFailed": "Oturum açma işlemi tamamlanmadı",
     "pending": {
       "add": "{{service}} hesabı ekleniyor · Yetkilendirme bekleniyor…",
-      "login": "{{service}}'de oturum açılıyor · Yetkilendirme bekleniyor…",
       "reauth": "{{login}} olarak tekrar oturum açılıyor · Yetkilendirme bekleniyor…",
       "enterCode": "Bu kodu tarayıcıya girin:",
       "copy": "Kodu kopyala",
@@ -4916,7 +4923,6 @@
       "addedOn": "{{date}} tarihinde eklendi",
       "statusLoadFailed": "Antigravity hesapları okunamadı. Yeniden deneyin.",
       "empty": "Henüz Antigravity hesabı yok. agy'nin oturum açtığı hesap burada otomatik olarak görünür.",
-      "login": "Google ile oturum aç",
       "current": "agy tarafından kullanılıyor",
       "switchTo": "agy'yi bu hesaba geçir",
       "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",
@@ -4950,7 +4956,9 @@
       "current": "Kimi tarafından kullanılıyor",
       "primaryShort": "Kimi Code'un kendi oturumu",
       "empty": "Henüz Kimi hesabı yok. Kimi Code'da oturum açılmış hesap burada otomatik olarak görünür.",
-      "help": "Birden fazla Kimi kodlama planı hesabı ekleyin; her hesap için Kimi Code'da ayrı bir sağlayıcı ve model kümesi oluşturulur. “Bu hesabı kullan” seçeneği Kimi Code'un varsayılan modelini o hesaba geçirir ve bundan sonra açılan oturumlar bu hesabı kullanır. Kimi Code'un kendi oturum açtığı hesap burada otomatik olarak görünür ve web aramasıyla veri getirme işlemlerinde her zaman kullanılır. Bu hesabı buradan kaldırmak yalnızca listeden gizler; Kimi Code oturumunu kapatmaz."
+      "help": "Birden fazla Kimi kodlama planı hesabı ekleyin; her hesap için Kimi Code'da ayrı bir sağlayıcı ve model kümesi oluşturulur. “Bu hesabı kullan” seçeneği Kimi Code'un varsayılan modelini o hesaba geçirir ve bundan sonra açılan oturumlar bu hesabı kullanır. Kimi Code'un kendi oturum açtığı hesap burada otomatik olarak görünür ve web aramasıyla veri getirme işlemlerinde her zaman kullanılır. Bu hesabı buradan kaldırmak yalnızca listeden gizler; Kimi Code oturumunu kapatmaz.",
+      "noSubscription": "Abonelik yok",
+      "connectionManaged": "Bağlantı ve oturum açma, Yetkilendirme Merkezi'nden yönetilir; burada yalnızca modelleri düzenleyebilirsiniz. Modelleri getir seçeneği, bu hesap için şu anda kullanılabilen resmî modelleri listeler."
     },
     "modelSelectionHint": "Bir sağlayıcıyı seçmek için kartındaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code'da /model komutunu kullanın.",
     "contextSize": "Bağlam uzunluğu",
@@ -4992,7 +5000,16 @@
     "form": {
       "discoveryType": "Model keşfi",
       "discoveryOff": "Kapalı",
-      "discoveryHint": "Açıkken Oh My Pi uç noktaya hangi modelleri sunduğunu sorar; modelleri tek tek yazmanız gerekmez ve yeni modeller kendiliğinden görünür. Çevrimiçi servislerin çoğunda “OpenAI model list”, kendi bilgisayarınızda çalışan modellerde ilgili uygulamayı seçin. Anthropic biçimli uç noktalarda genellikle model listesi yoktur, kapalı bırakın. Elle eklenen modeller geçerliliğini korur."
+      "discoveryHint": "Açıkken Oh My Pi uç noktaya hangi modelleri sunduğunu sorar; modelleri tek tek yazmanız gerekmez ve yeni modeller kendiliğinden görünür. Çevrimiçi servislerin çoğunda “OpenAI model list”, kendi bilgisayarınızda çalışan modellerde ilgili uygulamayı seçin. Anthropic biçimli uç noktalarda genellikle model listesi yoktur, kapalı bırakın. Elle eklenen modeller geçerliliğini korur.",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI model listesi (çevrimiçi hizmetlerin çoğu)",
+        "proxy": "Proxy (her model kendi biçimini kullanır)",
+        "ollama": "Ollama (yerel)",
+        "llamaCpp": "llama.cpp (yerel)",
+        "lmStudio": "LM Studio (yerel)",
+        "litellm": "LiteLLM ağ geçidi",
+        "appleFoundationModels": "Apple cihaz içi modelleri (macOS)"
+      }
     },
     "errors": {
       "fileTooLarge": "Oh My Pi yapılandırması 1 MiB sınırını aşıyor.",
@@ -5004,7 +5021,8 @@
       "manualEdit": "Bu YAML yapısını CC Switch güvenle düzenleyemiyor. models.yml dosyasını elle düzenleyin.",
       "duplicateProvider": "Bu Oh My Pi sağlayıcı anahtarı zaten var.",
       "renameProvider": "Oh My Pi sağlayıcı anahtarları yeniden adlandırılamaz.",
-      "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil."
+      "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil.",
+      "legacyModelsJson": "Oh My Pi'de eski biçimde bir models.json dosyası var. omp, sonraki açılışında bunu models.yml biçimine geçirir. omp'yi bir kez çalıştırın, ardından sağlayıcıyı yeniden ekleyin."
     }
   }
 }
