@@ -4296,6 +4296,13 @@
       "saveFailed": "保存失败：{{error}}"
     },
     "queueMoved": "{{name}} 移到第 {{position}} 位。",
+    "status": {
+      "directLead": "直连生效中 · 直接连接",
+      "routeLead": "路由生效中",
+      "byQueue": "按队列",
+      "stackLead": "聚合生效中 · 默认",
+      "stackValue": "{{name}} · 另有 {{count}} 家共 {{models}} 个模型"
+    },
     "activate": {
       "viewing": "你在查看「{{view}}」，{{app}} 目前是{{active}}。",
       "route": "开始路由",

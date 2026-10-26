@@ -4296,6 +4296,13 @@
       "saveFailed": "保存に失敗しました：{{error}}"
     },
     "queueMoved": "{{name}} を {{position}} 番目に移動しました。",
+    "status": {
+      "directLead": "直接接続が有効 · 接続先",
+      "routeLead": "ルーティングが有効",
+      "byQueue": "キュー順",
+      "stackLead": "集約が有効 · 既定",
+      "stackValue": "{{name}} · ほか {{count}} 社、{{models}} モデル"
+    },
     "activate": {
       "viewing": "「{{view}}」を表示中です。{{app}} は現在{{active}}です。",
       "route": "ルーティングを開始",

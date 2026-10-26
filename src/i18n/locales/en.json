@@ -4296,6 +4296,13 @@
       "saveFailed": "Failed to save: {{error}}"
     },
     "queueMoved": "{{name}} moved to position {{position}}.",
+    "status": {
+      "directLead": "Direct is active · connected to",
+      "routeLead": "Routing is active",
+      "byQueue": "by queue",
+      "stackLead": "Aggregation is active · default",
+      "stackValue": "{{name}} · {{count}} more with {{models}} models"
+    },
     "activate": {
       "viewing": "You're viewing “{{view}}”. {{app}} is currently on {{active}}.",
       "route": "Start routing",

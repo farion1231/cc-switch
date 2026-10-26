@@ -4273,6 +4273,13 @@
       "saveFailed": "Kaydetme başarısız: {{error}}"
     },
     "queueMoved": "{{name}}, {{position}} konumuna taşındı.",
+    "status": {
+      "directLead": "Doğrudan etkin · şuraya bağlı:",
+      "routeLead": "Yönlendirme etkin",
+      "byQueue": "sıraya göre",
+      "stackLead": "Birleştirme etkin · varsayılan",
+      "stackValue": "{{name}} · {{count}} sağlayıcı daha, {{models}} model"
+    },
     "activate": {
       "viewing": "“{{view}}”yi görüntülüyorsunuz. {{app}} şu anda {{active}}'de.",
       "route": "Yönlendirmeyi başlat",
