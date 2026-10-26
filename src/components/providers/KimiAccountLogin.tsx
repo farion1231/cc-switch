@@ -135,7 +135,6 @@ export function KimiAccountLogin({ helpSide }: KimiAccountLoginProps) {
           ? t("kimi.oauth.primaryHidden")
           : t("kimi.oauth.empty")
       }
-      loginLabel={t("kimi.oauth.signIn")}
       onAdd={() => setChoosing(true)}
       chooser={chooser || undefined}
       defaultLabel={t("kimi.oauth.current")}

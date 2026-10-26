@@ -231,6 +231,27 @@
         "oauthTitle": "OAuth Authentication Mode",
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
+      },
+      "claudeAccount": {
+        "label": "Account",
+        "default": "Default sign-in (~/.claude)",
+        "missing": "Account not on this computer",
+        "add": "Sign in to a new account",
+        "pending": "Claude's sign-in page is open in your browser. After you sign in and authorize, the account is selected automatically.",
+        "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
+        "help": "Switching to this card signs Claude Code in to the selected account, and claude started anywhere afterwards uses it. To use several accounts at once, use Open Terminal on the card.",
+        "claudeAccount": "Claude account",
+        "reauthBadge": "Re-login required",
+        "terminalHint": "Use via Open Terminal",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team Premium",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
@@ -1835,7 +1856,6 @@
   "codexOauth": {
     "authStatus": "Auth status",
     "notAuthenticated": "Not authenticated",
-    "loginWithChatGPT": "Sign in with ChatGPT",
     "loginRequired": "Please sign in to ChatGPT first",
     "statusLoading": "Loading account status...",
     "statusUnavailable": "Status unavailable",
@@ -4349,7 +4369,6 @@
       "routing": "Routing",
       "currentDefault": "Current default",
       "defaultAfterSwitch": "Default after switching",
-      "current": "Current",
       "default": "Default"
     },
     "action": {
@@ -4366,7 +4385,8 @@
       "edit": "Edit {{name}}",
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
-      "moveDown": "Move {{name}} down"
+      "moveDown": "Move {{name}} down",
+      "openTerminal": "Open a terminal with {{name}}"
     },
     "chip": {
       "official": "Official",
@@ -4386,7 +4406,6 @@
       "defaultWhileRouting": "While routing, the default is the provider you route to. You can pick another one when switching to Aggregation.",
       "needsRoute": "Needs routing: {{reason}}; can't connect directly.",
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
-      "currentCannotRemove": "The provider in use can't be removed. Enable another one first.",
       "inUseCannotDelete": "The provider in use can't be deleted. Switch to another one first.",
       "directDefaultCannotDelete": "Leaving routing switches back to this provider, so it can't be deleted. On the direct page, choose \"Back to direct and use\" on another provider first.",
       "noFailover": "Official accounts can't join the failover queue: they use the client's own login and can't rotate with other providers."
@@ -4877,12 +4896,12 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
-      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
+      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
+      "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings (for example, to WSL), so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: switching to the card signs Claude Code in to that account, and claude started afterwards in any terminal or IDE extension uses it. To use several accounts at once, use Open Terminal on the card. Switching moves sign-in tokens between Claude Code's own sign-in locations; they stay on this computer and are never uploaded, refreshed or signed out. Anthropic's terms don't allow third-party tools to store session tokens, so this is a gray area; decide for yourself. To keep a card from switching, set its account back to \"Default sign-in\". The first switch saves the account Claude Code is signed in to now; a switch ends an open Remote Control session, and the first message afterwards rebuilds the prompt cache."
     },
     "addAccount": "Add account",
-    "groupMenu": "More actions for {{service}}",
     "accountMenu": "More actions for {{login}}",
-    "removeAll": "Delete all accounts",
     "removeAccount": "Delete account",
     "setDefault": "Set as default",
     "reauth": "Sign in again",
@@ -4902,7 +4921,6 @@
     "loginFailed": "Sign-in didn't finish",
     "pending": {
       "add": "Adding a {{service}} account · Waiting for authorization…",
-      "login": "Signing in to {{service}} · Waiting for authorization…",
       "reauth": "Signing in again as {{login}} · Waiting for authorization…",
       "enterCode": "Enter this code in the browser:",
       "copy": "Copy code",
@@ -4927,12 +4945,25 @@
       "addedOn": "Added {{date}}",
       "statusLoadFailed": "Couldn't read Antigravity accounts. Try again.",
       "empty": "No Antigravity accounts yet. The account agy is signed in with appears here automatically.",
-      "login": "Sign in with Google",
       "current": "In use by agy",
       "switchTo": "Switch agy to this account",
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
+    },
+    "claude": {
+      "pasteSubmitted": "Submitted. Finishing sign-in…",
+      "pasteToggle": "Didn't come back here after authorizing?",
+      "pasteHint": "Paste the address from the browser's address bar after authorizing, or the code shown on the page.",
+      "pasteLabel": "Authorization code or address",
+      "pasteSubmit": "Submit",
+      "reauthNote": "Sign-in expired. Sign in again.",
+      "addedOn": "Added {{date}}",
+      "loginExpiresOn": "Sign-in expires around {{date}}; sign in again after that",
+      "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
+      "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
+      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in."
     }
   },
   "kimi": {

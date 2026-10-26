@@ -691,13 +691,6 @@ requires_openai_auth = true`,
         reasoningLevels: ["low", "high", "max"],
       },
       {
-        model: "deepseek-v4-pro-0813",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        inputModalities: ["text"],
-        reasoningLevels: ["low", "high", "max"],
-      },
-      {
         model: "deepseek-v4.1-flash",
         displayName: "DeepSeek V4.1 Flash",
         contextWindow: 1048576,
@@ -747,19 +740,13 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "fluxa_tokenplan",
       "https://api.baiduqianfan.ai/v2/tokenplan/team",
-      "deepseek-v4-pro",
+      "deepseek-v4.1-flash",
     ),
     endpointCandidates: ["https://api.baiduqianfan.ai/v2/tokenplan/team"],
     apiFormat: "openai_chat",
     // 模型表 Capabilities 列只有 Text / Thinking、无视觉项 —— 显式声明纯文本，
     // 与国内 Token Plan 预设一致（勿依赖全局名单）
     modelCatalog: modelCatalog([
-      {
-        model: "deepseek-v4-pro",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        inputModalities: ["text"],
-      },
       {
         model: "deepseek-v4.1-flash",
         displayName: "DeepSeek V4.1 Flash",
@@ -1746,14 +1733,7 @@ requires_openai_auth = true`,
         contextWindow: 1048576,
         reasoningLevels: ["low", "high", "max"],
       },
-      // pro 已于 2026-08 开通 Responses/Codex 集成（官方 catalog 条目与 flash 仅差 priority）
-      {
-        model: "deepseek-v4-pro",
-        displayName: "DeepSeek V4 Pro",
-        inputModalities: ["text"],
-        contextWindow: 1048576,
-        reasoningLevels: ["low", "high", "max"],
-      },
+      // 2026-10-25 起不再列 deepseek-v4-pro：Pro 贵且效果不如 Flash
     ]),
     category: "cn_official",
     icon: "deepseek",
@@ -1877,23 +1857,17 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "qianfan",
       "https://qianfan.baidubce.com/v2",
-      "deepseek-v4-pro",
+      "deepseek-v4-flash",
     ),
     // 通用按量 Responses：cloud.baidu.com/doc/qianfan-docs/s/4mi400l1m。
     // 与 /v2/coding、/v2/tokenplan/personal 的专属 Key/额度分开，不互作候选。
     endpointCandidates: ["https://qianfan.baidubce.com/v2"],
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      // 先收官方 Responses 支持名单中的 V4 两款，窗口按千帆部署的 1M。
+      // 官方 Responses 支持名单中的 V4 两款只收 Flash（2026-10-25 起不用 Pro：
+      // 贵且效果不如 Flash），窗口按千帆部署的 1M。
       // 纯文本，不继承 DeepSeek 原厂将旧 Flash 别名升级为视觉模型的行为。
       // high 与生成的配置一致；不把 Chat 的 thinking 开关当成 Responses none。
-      {
-        model: "deepseek-v4-pro",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        inputModalities: ["text"],
-        reasoningLevels: ["high"],
-      },
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
@@ -1960,27 +1934,18 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "qianfan_tokenplan",
       "https://qianfan.baidubce.com/v2/tokenplan/personal",
-      "deepseek-v4-pro",
+      "deepseek-v4-flash",
     ),
     endpointCandidates: ["https://qianfan.baidubce.com/v2/tokenplan/personal"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       // 阵容与排序=Token Plan 个人版文档（2026-08-14 版）；ernie-5.1 官方
       // 标注 8/20 下线不收。窗口=千帆平台模型列表页口径（2026-08-06 版，
-      // glm-5.1 与官方 OpenCode 接入页 198000 双重印证）
+      // glm-5.1 与官方 OpenCode 接入页 198000 双重印证）。2026-10-25 起不列
+      // deepseek-v4-pro（贵且效果不如 Flash），默认改为 deepseek-v4-flash
       {
         // 千帆 Token Plan 托管的 DeepSeek V4 是纯文本部署（Coding Plan 文档明写"暂未支持图像理解能力"，附图 400），
         // 与官方端点把 v4-flash 路由到识图的 V4.1 Flash 不同——显式声明纯文本，勿依赖全局名单（#7283 follow-up）
-        model: "deepseek-v4-pro",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        // thinking + reasoning_effort 双官方清单模型：none=关思考，high/max
-        // =官方仅有的两档真实深度。不声明 default：官方对复杂 Agent 类请求
-        // 自动置 max=回落结果，显式钉 high 反而会压低平台该行为
-        reasoningLevels: ["none", "high", "max"],
-        inputModalities: ["text"],
-      },
-      {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
@@ -2019,7 +1984,7 @@ requires_openai_auth = true`,
     ]),
     // 与 Coding Plan 的差异：这里开 supportsEffort——Coding Plan 因别名不知
     // 解析到谁而保持 false；Token Plan catalog 全为显式模型，默认模型
-    // deepseek-v4-pro 在 reasoning_effort 官方清单内（清单仅 v4-pro/v4-flash，
+    // deepseek-v4-flash 在 reasoning_effort 官方清单内（清单仅 v4-pro/v4-flash，
     // 档位仅 high/max）。effortValueMode:"deepseek"（max/xhigh/ultra→max、
     // 其余→high）与千帆官方向下兼容映射（low/medium→high、xhigh→max）逐字
     // 吻合；非清单模型收到 reasoning_effort 按平台明文"忽略不报错"，无害
@@ -2395,12 +2360,6 @@ requires_openai_auth = true`,
         reasoningLevels: ["none", "high"],
       },
       {
-        model: "deepseek-v4-pro-202606",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        reasoningLevels: ["none", "high"],
-      },
-      {
         model: "minimax-m2.7",
         displayName: "MiniMax M2.7",
         contextWindow: 200000,
@@ -2498,12 +2457,6 @@ requires_openai_auth = true`,
         model: "kimi-k2.6",
         displayName: "Kimi K2.6",
         contextWindow: 262144,
-        reasoningLevels: ["none", "high"],
-      },
-      {
-        model: "deepseek-v4-pro-202606",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
       },
       {
@@ -2643,13 +2596,6 @@ requires_openai_auth = true`,
         inputModalities: ["text"],
       },
       {
-        model: "deepseek-v4-pro",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        reasoningLevels: ["none", "high"],
-        inputModalities: ["text"],
-      },
-      {
         model: "deepseek-v4-flash-0731",
         displayName: "DeepSeek V4 Flash 0731 GA",
         contextWindow: 1048576,
@@ -2657,22 +2603,8 @@ requires_openai_auth = true`,
         inputModalities: ["text"],
       },
       {
-        model: "deepseek-v4-pro-0813",
-        displayName: "DeepSeek V4 Pro 0813 GA",
-        contextWindow: 1048576,
-        reasoningLevels: ["none", "high"],
-        inputModalities: ["text"],
-      },
-      {
         model: "deepseek-v4-flash-202605",
         displayName: "DeepSeek V4 Flash Official",
-        contextWindow: 1048576,
-        reasoningLevels: ["none", "high"],
-        inputModalities: ["text"],
-      },
-      {
-        model: "deepseek-v4-pro-202606",
-        displayName: "DeepSeek V4 Pro Official",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
         inputModalities: ["text"],
@@ -2774,13 +2706,6 @@ requires_openai_auth = true`,
         inputModalities: ["text"],
       },
       {
-        model: "deepseek-v4-pro",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        reasoningLevels: ["none", "high"],
-        inputModalities: ["text"],
-      },
-      {
         model: "deepseek-v4-flash-0731",
         displayName: "DeepSeek V4 Flash 0731 GA",
         contextWindow: 1048576,
@@ -2788,22 +2713,8 @@ requires_openai_auth = true`,
         inputModalities: ["text"],
       },
       {
-        model: "deepseek-v4-pro-0813",
-        displayName: "DeepSeek V4 Pro 0813 GA",
-        contextWindow: 1048576,
-        reasoningLevels: ["none", "high"],
-        inputModalities: ["text"],
-      },
-      {
         model: "deepseek-v4-flash-202605",
         displayName: "DeepSeek V4 Flash Official",
-        contextWindow: 1048576,
-        reasoningLevels: ["none", "high"],
-        inputModalities: ["text"],
-      },
-      {
-        model: "deepseek-v4-pro-202606",
-        displayName: "DeepSeek V4 Pro Official",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
         inputModalities: ["text"],
@@ -3700,14 +3611,6 @@ requires_openai_auth = true`,
         reasoningLevels: ["low", "high", "max"],
       },
       {
-        // 不带日期的 deepseek-v4-pro 是会漂移的别名，不在 /v1/models 列表里
-        model: "deepseek-v4-pro:0813",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        inputModalities: ["text"],
-        reasoningLevels: ["low", "high", "max"],
-      },
-      {
         model: "deepseek-v4.1-flash",
         displayName: "DeepSeek V4.1 Flash",
         contextWindow: 1048576,
@@ -3988,13 +3891,6 @@ requires_openai_auth = true`,
         reasoningLevels: ["low", "high", "max"],
       },
       {
-        model: "deepseek-ai/DeepSeek-V4-Pro-0813",
-        displayName: "DeepSeek V4 Pro 0813",
-        contextWindow: 1048576,
-        inputModalities: ["text"],
-        reasoningLevels: ["low", "high", "max"],
-      },
-      {
         model: "moonshotai/Kimi-K3",
         displayName: "Kimi K3",
         contextWindow: 1048576,
@@ -4146,13 +4042,6 @@ requires_openai_auth = true`,
         reasoningLevels: ["high"],
       },
       {
-        model: "deepseek-ai/DeepSeek-V4-Pro-0813",
-        displayName: "DeepSeek V4 Pro 0813",
-        contextWindow: 979000,
-        inputModalities: ["text"],
-        reasoningLevels: ["high"],
-      },
-      {
         model: "deepseek-ai/DeepSeek-V4.1-Flash",
         displayName: "DeepSeek V4.1 Flash",
         contextWindow: 1048000,
@@ -4292,7 +4181,8 @@ requires_openai_auth = true`,
     // 同日）写明支持 Responses 的模型：GPT-5.6 三款与 Kimi K3 只支持 Chat，
     // GPT-5.3-Codex 未写端点，不收。档位：GPT-6.1 Sol 平台写 low 到 max（OpenAI
     // 官方列 low/medium/high/xhigh/max，无 none/minimal）；GLM-5.3 平台声明
-    // low/high/max；DeepSeek V4 Pro 0813 平台未写，退回 DeepSeek 官方
+    // low/high/max；DeepSeek 2026-10-25 起改用 V4.1 Flash 1017（Pro 贵且效果
+    // 不如 Flash；平台模型表标原生识图），档位平台未写，退回 DeepSeek 官方
     // low/high/max。每档都含 high，与 config 的 model_reasoning_effort = "high"
     // 一致，无需 defaultReasoningLevel。窗口取平台模型表；GPT-6.1 Sol 超 272K
     // 按长上下文价计费（docs.digitalocean.com/products/inference/details/
@@ -4314,10 +4204,10 @@ requires_openai_auth = true`,
         reasoningLevels: ["low", "high", "max"],
       },
       {
-        model: "deepseek-v4-pro-0813",
-        displayName: "DeepSeek V4 Pro 0813",
+        model: "deepseek-v4.1-flash-1017",
+        displayName: "DeepSeek V4.1 Flash 1017",
         contextWindow: 1048576,
-        inputModalities: ["text"],
+        inputModalities: ["text", "image"],
         reasoningLevels: ["low", "high", "max"],
       },
     ]),
@@ -4368,13 +4258,6 @@ requires_openai_auth = true`,
         displayName: "Kimi K3 (Baseten)",
         contextWindow: 1048576,
         inputModalities: ["text", "image"],
-        reasoningLevels: ["high"],
-      },
-      {
-        model: "deepseek-ai/DeepSeek-V4-Pro-0813:baseten",
-        displayName: "DeepSeek V4 Pro 0813 (Baseten)",
-        contextWindow: 1048576,
-        inputModalities: ["text"],
         reasoningLevels: ["high"],
       },
       {
@@ -4580,12 +4463,6 @@ requires_openai_auth = true`,
         contextWindow: 1048576,
         inputModalities: ["text", "image"],
         reasoningLevels: ["max"],
-      },
-      {
-        model: "deepseek-v4-pro",
-        displayName: "DeepSeek V4 Pro",
-        contextWindow: 1048576,
-        reasoningLevels: ["high", "max"],
       },
       {
         model: "deepseek-v4.1-flash",
@@ -4874,14 +4751,6 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
         contextWindow: 1000000,
         inputModalities: ["text"],
         reasoningLevels: ["low", "high", "max"],
-      },
-      {
-        model: "DeepSeek-V4-Pro-0813",
-        displayName: "DeepSeek V4 Pro 0813",
-        contextWindow: 1000000,
-        inputModalities: ["text"],
-        // MoArk 400 明文：'low', 'medium', 'high', 'xhigh', 'max'
-        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
       },
       {
         model: "GLM-5.3",
