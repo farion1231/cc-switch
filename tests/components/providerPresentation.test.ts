@@ -639,7 +639,7 @@ describe("buildAdditiveSections", () => {
     });
 
     expect(button(sections, "relay", "remove").disabledReason).toBe(
-      "providerCard.reason.currentCannotRemove",
+      "providerCard.reason.defaultCannotRemove",
     );
     expect(item(sections, "relay").tone).toBe("direct");
     expect(item(sections, "managed").tone).toBeUndefined();
@@ -648,12 +648,39 @@ describe("buildAdditiveSections", () => {
       editDisabledReason: "provider.managedByHermesHint",
       deleteDisabledReason: "provider.managedByHermesHint",
     });
-    expect(button(sections, "managed", "use").disabledReason).toBe(
-      "provider.managedByHermesHint",
-    );
+    expect(
+      item(sections, "managed").menuItems?.find(
+        (action) => action.key === "setDefault",
+      )?.disabledReason,
+    ).toBe("provider.managedByHermesHint");
   });
 
-  it("protects every official Kimi OAuth provider, including inactive accounts", () => {
+  it("puts Hermes set-default in the more menu like other additive apps", () => {
+    const other = provider("other");
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "hermes",
+      t,
+      providers: [relay, other],
+      isInConfig: () => true,
+      hermesCurrentId: "relay",
+      actions,
+    });
+
+    expect(item(sections, "relay").status?.label).toBe(
+      "providerCard.status.default",
+    );
+    expect(item(sections, "relay").menuItems).toBeUndefined();
+    expect(item(sections, "other").buttons.map((b) => b.key)).toEqual([
+      "remove",
+    ]);
+    item(sections, "other")
+      .menuItems?.find((action) => action.key === "setDefault")
+      ?.onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(other);
+  });
+
+  it("lets official Kimi accounts edit models and leave Kimi, but not be deleted while there", () => {
     const accounts = ["managed:kimi-code", "kimi-code-ccs-second"].map((id) =>
       provider(id, {
         settingsConfig: {
@@ -671,12 +698,16 @@ describe("buildAdditiveSections", () => {
     });
     for (const account of accounts) {
       const presentation = item(sections, account.id);
-      expect(presentation.editDisabledReason).toBe("kimi.oauth.managedHint");
+      expect(presentation.editDisabledReason).toBeUndefined();
       expect(presentation.deleteDisabledReason).toBe("kimi.oauth.managedHint");
-      expect(button(sections, account.id, "remove").disabledReason).toBe(
-        "kimi.oauth.managedHint",
-      );
     }
+    // 只有正在用的那个号不能移除
+    expect(button(sections, accounts[0].id, "remove").disabledReason).toBe(
+      "providerCard.reason.defaultCannotRemove",
+    );
+    expect(
+      button(sections, accounts[1].id, "remove").disabledReason,
+    ).toBeUndefined();
     expect(
       item(sections, accounts[1].id).menuItems?.find(
         (action) => action.key === "setDefault",
@@ -744,7 +775,7 @@ describe("buildAdditiveSections", () => {
       "remove",
     ]);
     expect(button(sections, "current", "remove").disabledReason).toBe(
-      "providerCard.reason.currentCannotRemove",
+      "providerCard.reason.defaultCannotRemove",
     );
     expect(item(sections, "current").menuItems).toBeUndefined();
   });
@@ -765,6 +796,25 @@ describe("buildAdditiveSections", () => {
     });
     expect(item(sections, "relay").deleteDisabledReason).toBe(
       "pi.current.stateUnavailableHint",
+    );
+  });
+
+  it("blocks every Oh My Pi change while its current state is unavailable", () => {
+    const sections = buildAdditiveSections({
+      app: "omp",
+      t,
+      providers: [relay],
+      isInConfig: () => false,
+      piStateUnavailable: true,
+      actions: additiveActions(),
+    });
+
+    expect(button(sections, "relay", "add")).toMatchObject({
+      label: "providerCard.action.enable",
+      disabledReason: "omp.current.stateUnavailableHint",
+    });
+    expect(item(sections, "relay").deleteDisabledReason).toBe(
+      "omp.current.stateUnavailableHint",
     );
   });
 });
