@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,8 @@ import { ApiKeySection } from "./shared";
 import { zcodeProviderKinds } from "@/config/zcodeProviderPresets";
 import { cn } from "@/lib/utils";
 import { ZCODE_EXTRA_OPTION_DRAFT_PREFIX } from "./helpers/zcodeFormUtils";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import { fillZCodeModel, metadataFilledAnything } from "./modelMetadataFill";
 import type { ProviderCategory, ZCodeModel } from "@/types";
 
 /**
@@ -159,6 +161,27 @@ export function ZCodeFormFields({
   // Track which models have expanded details panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
 
+  // models 由父组件持有；fill 的异步回调用 ref 读最新一行，确认没被用户改掉。
+  const modelsRef = useRef(models);
+  modelsRef.current = models;
+
+  // ZCode 没有拉取模型列表的入口，预设也不带窗口参数：只从 models.dev 补，
+  // 缓存未命中时 fill 自己拉。补全只发生在 Model ID 提交（blur）那一刻。
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: () => [],
+    prefetch: false,
+  });
+  const fillModelMetadataFor = (key: string, id: string) =>
+    fillModelMetadata(id, (metadata) => {
+      const model = modelsRef.current[key];
+      if (model === undefined) return false;
+      const filled = fillZCodeModel(model, metadata);
+      if (!metadataFilledAnything(model, filled)) return false;
+      onModelsChange({ ...modelsRef.current, [key]: filled });
+      return true;
+    });
+
   const toggleModelExpand = (key: string) => {
     setExpandedModels((prev) => {
       const next = new Set(prev);
@@ -198,6 +221,9 @@ export function ZCodeFormFields({
       }
     }
     onModelsChange(newModels);
+    // fill 的「当场」一拨在父组件重渲染前运行，先把 ref 对齐到刚提交的行。
+    modelsRef.current = newModels;
+    fillModelMetadataFor(newKey, newKey);
     if (expandedModels.has(oldKey)) {
       setExpandedModels((prev) => {
         const next = new Set(prev);
