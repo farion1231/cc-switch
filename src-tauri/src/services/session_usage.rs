@@ -1704,6 +1704,10 @@ mod tests {
             row.get(0)
         })?;
         assert_eq!(count, 1);
+        drop(conn);
+        let summary = db.get_usage_summary(None, None, Some("claude"), None, None)?;
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_cost, "0.100000");
 
         Ok(())
     }

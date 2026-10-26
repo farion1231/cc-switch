@@ -773,6 +773,102 @@ pub(crate) fn has_matching_proxy_usage_log(
         .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
 }
 
+/// Codex 会话的 model 用于展示和定价；跨来源关联只比较原始 request_model。
+fn codex_new_usage_match_sql(proxy: &str, session: &str) -> String {
+    format!(
+        "{proxy}.app_type = 'codex'
+         AND COALESCE({proxy}.data_source, 'proxy') = 'proxy'
+         AND {proxy}.status_code >= 200 AND {proxy}.status_code < 300
+         AND {session}.app_type = 'codex' AND {session}.data_source = 'codex_session'
+         AND TRIM({proxy}.request_model) = TRIM({session}.request_model)
+         AND TRIM({session}.request_model) <> ''
+         AND LOWER(TRIM({session}.request_model)) <> 'unknown'
+         AND {proxy}.input_tokens = {session}.input_tokens
+         AND {proxy}.output_tokens = {session}.output_tokens
+         AND {proxy}.cache_read_tokens = {session}.cache_read_tokens
+         AND ({proxy}.cache_creation_tokens = {session}.cache_creation_tokens
+              OR {session}.cache_creation_tokens = 0
+              OR ({proxy}.cache_creation_tokens = 0
+                  AND {proxy}.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}))
+         AND {proxy}.created_at BETWEEN
+             {session}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+             AND {session}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}"
+    )
+}
+
+/// Proxy 先到时，只跳过能唯一关联到成功 Proxy 的 Codex 会话行。
+pub(crate) fn should_skip_codex_session_insert(
+    conn: &Connection,
+    request_id: &str,
+    key: &DedupKey<'_>,
+    request_model: Option<&str>,
+) -> Result<bool, AppError> {
+    if proxy_request_id_exists(conn, request_id)? {
+        return Ok(true);
+    }
+    static SQL: LazyLock<String> = LazyLock::new(|| {
+        format!(
+            "WITH s AS (SELECT 'codex' AS app_type, 'codex_session' AS data_source,
+                ?1 AS request_model, ?2 AS input_tokens, ?3 AS output_tokens,
+                ?4 AS cache_read_tokens, ?5 AS cache_creation_tokens, ?6 AS created_at)
+             SELECT COUNT(*) FROM (SELECT p.rowid FROM proxy_request_logs p CROSS JOIN s
+                 WHERE {} LIMIT 2)",
+            codex_new_usage_match_sql("p", "s")
+        )
+    });
+    let count: i64 = conn.prepare_cached(&SQL)?.query_row(
+        params![
+            request_model,
+            key.input_tokens,
+            key.output_tokens,
+            key.cache_read_tokens,
+            key.cache_creation_tokens,
+            key.created_at,
+        ],
+        |row| row.get(0),
+    )?;
+    Ok(count == 1)
+}
+
+/// Session 先到时，成功 Proxy 写入后仅删除双方候选均唯一的会话行。
+/// 调用方须在写入 Proxy 的同一事务内执行。
+pub(crate) fn remove_matching_codex_session_for_proxy(
+    conn: &Connection,
+    request_id: &str,
+) -> Result<bool, AppError> {
+    static SESSION_SQL: LazyLock<String> = LazyLock::new(|| {
+        format!(
+            "SELECT s.rowid FROM proxy_request_logs p JOIN proxy_request_logs s
+             WHERE p.request_id = ?1 AND {} LIMIT 2",
+            codex_new_usage_match_sql("p", "s")
+        )
+    });
+    let sessions = conn
+        .prepare_cached(&SESSION_SQL)?
+        .query_map([request_id], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let [session_rowid] = sessions.as_slice() else {
+        return Ok(false);
+    };
+    static PROXY_SQL: LazyLock<String> = LazyLock::new(|| {
+        format!(
+            "SELECT COUNT(*) FROM (SELECT p.rowid FROM proxy_request_logs s
+             JOIN proxy_request_logs p WHERE s.rowid = ?1 AND {} LIMIT 2)",
+            codex_new_usage_match_sql("p", "s")
+        )
+    });
+    let proxy_count: i64 = conn
+        .prepare_cached(&PROXY_SQL)?
+        .query_row([session_rowid], |row| row.get(0))?;
+    if proxy_count != 1 {
+        return Ok(false);
+    }
+    Ok(conn.execute(
+        "DELETE FROM proxy_request_logs WHERE rowid = ?1",
+        [session_rowid],
+    )? == 1)
+}
+
 /// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
 /// 代理直录行，即认为当时处于代理接管态，会话事件应整体跳过——同一请求
 /// 已由代理逐请求记账，会话侧再入账必双算。

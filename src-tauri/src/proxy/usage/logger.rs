@@ -5,7 +5,9 @@ use super::parser::TokenUsage;
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
-use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
+use crate::services::usage_stats::{
+    find_model_pricing_row, is_placeholder_pricing_model, remove_matching_codex_session_for_proxy,
+};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
@@ -99,6 +101,13 @@ impl<'a> UsageLogger<'a> {
     /// 记录成功的请求
     pub fn log_request(&self, log: &RequestLog) -> Result<(), AppError> {
         let conn = crate::database::lock_conn!(self.db.conn);
+        let codex_success = log.app_type == "codex" && (200..300).contains(&log.status_code);
+        let tx = if codex_success {
+            Some(conn.unchecked_transaction()?)
+        } else {
+            None
+        };
+        let writer: &rusqlite::Connection = tx.as_deref().unwrap_or(&conn);
 
         let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
             if let Some(cost) = &log.cost {
@@ -127,7 +136,7 @@ impl<'a> UsageLogger<'a> {
                 INPUT_TOKEN_SEMANTICS_FRESH
             };
         let semantic = UsageSemantic::from_log(log, input_token_semantics);
-        let existing = Self::load_existing_semantic(&conn, &log.request_id)?;
+        let existing = Self::load_existing_semantic(writer, &log.request_id)?;
 
         let (request_id, replace_session_log, collision) = match existing {
             None => (log.request_id.clone(), false, false),
@@ -145,7 +154,7 @@ impl<'a> UsageLogger<'a> {
             Some(_) => {
                 let fallback = format!("{}:collision:{}", log.request_id, semantic.sha256());
                 if let Some((data_source, existing_semantic)) =
-                    Self::load_existing_semantic(&conn, &fallback)?
+                    Self::load_existing_semantic(writer, &fallback)?
                 {
                     if data_source.as_deref().unwrap_or("proxy") == "proxy"
                         && existing_semantic == semantic
@@ -175,7 +184,7 @@ impl<'a> UsageLogger<'a> {
                 provider_type, is_streaming, cost_multiplier, created_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
         );
-        let affected_rows = conn
+        let affected_rows = writer
             .execute(
                 &sql,
                 rusqlite::params![
@@ -208,6 +217,12 @@ impl<'a> UsageLogger<'a> {
             )
             .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
 
+        if affected_rows > 0 && codex_success {
+            remove_matching_codex_session_for_proxy(writer, &request_id)?;
+        }
+        if let Some(tx) = tx {
+            tx.commit()?;
+        }
         if affected_rows > 0 {
             if collision {
                 log::warn!(
@@ -461,6 +476,141 @@ mod tests {
         }
     }
 
+    fn codex_alias_log(request_id: &str) -> RequestLog {
+        let mut log = request_log(request_id, 19_472);
+        log.model = "glm-5.3".to_string();
+        log.request_model = "ccswitch-live-alpha".to_string();
+        log.pricing_model = "glm-5.3".to_string();
+        log.usage.output_tokens = 165;
+        log.usage.cache_read_tokens = 16_704;
+        log.cost = Some(CostBreakdown {
+            input_cost: Decimal::new(2, 1),
+            output_cost: Decimal::ZERO,
+            cache_read_cost: Decimal::ZERO,
+            cache_creation_cost: Decimal::ZERO,
+            total_cost: Decimal::new(2, 1),
+        });
+        log
+    }
+
+    fn insert_codex_alias_session(db: &Database, id: &str) -> Result<(), AppError> {
+        let conn = crate::database::lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_token_semantics, total_cost_usd, latency_ms, status_code,
+                created_at, data_source
+             ) VALUES (?1, '_codex_session', 'codex', 'ccswitch-live-alpha',
+                'ccswitch-live-alpha', 19472, 165, 16704, 0, ?2, '0.20', 1, 200,
+                ?3, 'codex_session')",
+            rusqlite::params![
+                id,
+                INPUT_TOKEN_SEMANTICS_TOTAL,
+                chrono::Utc::now().timestamp(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn codex_session_first_is_replaced_by_one_proxy_charge() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        insert_codex_alias_session(&db, "codex-session")?;
+        UsageLogger::new(&db).log_request(&codex_alias_log("codex-proxy"))?;
+
+        let summary = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_cost, "0.200000");
+        let conn = crate::database::lock_conn!(db.conn);
+        let ids = conn
+            .prepare("SELECT request_id FROM proxy_request_logs")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(ids, ["codex-proxy"]);
+        Ok(())
+    }
+
+    #[test]
+    fn codex_ambiguous_session_or_failed_proxy_is_not_deleted() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        insert_codex_alias_session(&db, "session-one")?;
+        insert_codex_alias_session(&db, "session-two")?;
+        UsageLogger::new(&db).log_request(&codex_alias_log("ambiguous-proxy"))?;
+        let count: i64 = crate::database::lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 3);
+
+        let db = Database::memory()?;
+        insert_codex_alias_session(&db, "session")?;
+        let mut failed = codex_alias_log("failed-proxy");
+        failed.status_code = 500;
+        UsageLogger::new(&db).log_request(&failed)?;
+        let count: i64 = crate::database::lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn codex_session_cleanup_rolls_back_proxy_on_delete_error() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        insert_codex_alias_session(&db, "codex-session")?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER reject_codex_session_delete BEFORE DELETE ON proxy_request_logs
+                 WHEN OLD.data_source = 'codex_session'
+                 BEGIN SELECT RAISE(FAIL, 'session delete blocked'); END;",
+            )?;
+        }
+        assert!(UsageLogger::new(&db)
+            .log_request(&codex_alias_log("codex-proxy"))
+            .is_err());
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            let ids = conn
+                .prepare("SELECT request_id FROM proxy_request_logs")?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(ids, ["codex-session"]);
+            conn.execute_batch("DROP TRIGGER reject_codex_session_delete")?;
+        }
+        UsageLogger::new(&db).log_request(&codex_alias_log("codex-proxy"))?;
+        let summary = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_cost, "0.200000");
+        Ok(())
+    }
+
+    #[test]
+    fn codex_canonical_charge_survives_rollup() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        insert_codex_alias_session(&db, "codex-session")?;
+        UsageLogger::new(&db).log_request(&codex_alias_log("codex-proxy"))?;
+        let before = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+        assert_eq!(before.total_requests, 1);
+        assert_eq!(before.total_cost, "0.200000");
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_request_logs SET created_at = ?1 WHERE request_id = 'codex-proxy'",
+                [chrono::Utc::now().timestamp() - 40 * 86400],
+            )?;
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+        let after = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+        assert_eq!(after.total_requests, 1);
+        assert_eq!(after.total_cost, "0.200000");
+        Ok(())
+    }
+
     #[test]
     fn test_log_request() -> Result<(), AppError> {
         let db = Database::memory()?;
@@ -616,6 +766,46 @@ mod tests {
     }
 
     #[test]
+    fn claude_code_proxy_replaces_session_charge() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                 ) VALUES ('session:msg_code', '_session', 'claude',
+                    'claude-sonnet-4-5', 10, 5, 2, 0, '0.10', 0, 200, 1, 'session_log')",
+                [],
+            )?;
+        }
+        let mut proxy_log = request_log("session:msg_code", 10);
+        proxy_log.app_type = "claude".to_string();
+        proxy_log.model = "claude-sonnet-4-5".to_string();
+        proxy_log.request_model = proxy_log.model.clone();
+        proxy_log.usage.message_id = Some("msg_code".to_string());
+        proxy_log.cost = Some(CostBreakdown {
+            input_cost: Decimal::new(2, 1),
+            output_cost: Decimal::ZERO,
+            cache_read_cost: Decimal::ZERO,
+            cache_creation_cost: Decimal::ZERO,
+            total_cost: Decimal::new(2, 1),
+        });
+        UsageLogger::new(&db).log_request(&proxy_log)?;
+        let summary = db.get_usage_summary(None, None, Some("claude"), None, None)?;
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_cost, "0.200000");
+        let source: String = crate::database::lock_conn!(db.conn).query_row(
+            "SELECT data_source FROM proxy_request_logs WHERE request_id = 'session:msg_code'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(source, "proxy");
+        Ok(())
+    }
+
+    #[test]
     fn claude_desktop_proxy_replaces_matching_session_log_row() -> Result<(), AppError> {
         let db = Database::memory()?;
         {
@@ -624,9 +814,9 @@ mod tests {
                 "INSERT INTO proxy_request_logs (
                     request_id, provider_id, app_type, model, input_tokens,
                     output_tokens, cache_read_tokens, cache_creation_tokens,
-                    latency_ms, status_code, created_at, data_source
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
                  ) VALUES ('session:msg_desktop', '_session', 'claude',
-                    'claude-sonnet-4-5', 10, 5, 2, 1, 0, 200, 1, 'session_log')",
+                    'claude-sonnet-4-5', 10, 5, 2, 1, '0.10', 0, 200, 1, 'session_log')",
                 [],
             )?;
         }
@@ -651,6 +841,13 @@ mod tests {
         proxy_log.request_model = "claude-sonnet-4-5".to_string();
         proxy_log.pricing_model = "claude-sonnet-4-5".to_string();
         proxy_log.usage = usage;
+        proxy_log.cost = Some(CostBreakdown {
+            input_cost: Decimal::new(2, 1),
+            output_cost: Decimal::ZERO,
+            cache_read_cost: Decimal::ZERO,
+            cache_creation_cost: Decimal::ZERO,
+            total_cost: Decimal::new(2, 1),
+        });
 
         UsageLogger::new(&db).log_request(&proxy_log)?;
 
@@ -664,6 +861,10 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(source, "proxy");
         assert_eq!(app_type, "claude-desktop");
+        drop(conn);
+        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_cost, "0.200000");
         Ok(())
     }
 
