@@ -23,7 +23,10 @@ import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
-import { ClaudeBoundAccountFooter } from "@/components/providers/forms/ClaudeOfficialSection";
+import {
+  ClaudeBoundAccountLine,
+  ClaudeBoundAccountQuotaGate,
+} from "@/components/providers/forms/ClaudeOfficialSection";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
@@ -277,7 +280,7 @@ export function ProviderCard({
     appId === "agy" && isOfficial && isMac()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
       : null;
-  // Claude 官方卡绑了 Claude 官方账号：底部写账号（额度只查得到默认登录的）
+  // Claude 官方卡绑了 Claude 官方账号：副标题写账号；额度查的是默认登录，切卡会把这个号换进去
   const claudeBoundAccountId =
     appId === "claude" && isOfficial
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
@@ -455,6 +458,12 @@ export function ProviderCard({
                 </span>
               )}
             </div>
+          ) : claudeBoundAccountId ? (
+            <ClaudeBoundAccountLine
+              accountId={claudeBoundAccountId}
+              providerName={provider.name}
+              note={manualNote}
+            />
           ) : agyModel ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
               <span className="min-w-0 truncate" title={agyModel}>
@@ -516,8 +525,6 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
-              ) : claudeBoundAccountId ? (
-                <ClaudeBoundAccountFooter accountId={claudeBoundAccountId} />
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
                   agyBoundAccountId ? (
@@ -529,6 +536,20 @@ export function ProviderCard({
                         provider.meta?.usage_script?.autoQueryInterval ?? 0
                       }
                     />
+                  ) : claudeBoundAccountId ? (
+                    <ClaudeBoundAccountQuotaGate
+                      accountId={claudeBoundAccountId}
+                    >
+                      <SubscriptionQuotaFooter
+                        appId={appId}
+                        inline={true}
+                        isCurrent={isCurrent}
+                        autoQueryInterval={
+                          provider.meta?.usage_script?.autoQueryInterval ?? 0
+                        }
+                        account={claudeBoundAccountId}
+                      />
+                    </ClaudeBoundAccountQuotaGate>
                   ) : (
                     <SubscriptionQuotaFooter
                       appId={appId}

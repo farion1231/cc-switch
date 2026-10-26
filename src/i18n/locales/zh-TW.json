@@ -240,8 +240,9 @@
         "pending": "已在瀏覽器開啟 Claude 的登入頁，登入並授權後會自動選上這個帳號。",
         "helpTerminal": "設定裡覆寫了 Claude 設定目錄，切到這張卡不會切換 Claude Code 的登入，請從卡片「開啟終端機」使用選取的帳號。",
         "help": "切到這張卡後，Claude Code 的登入會換成選取的帳號，任何地方新啟動的 claude 都用它。想同時用幾個帳號，從卡片「開啟終端機」。",
-        "card": "帳號：{{label}}",
-        "cardTerminal": "帳號：{{label}} · 從卡片開啟終端機使用"
+        "claudeAccount": "Claude 帳號",
+        "reauthBadge": "需要重新登入",
+        "terminalHint": "從卡片開啟終端機使用"
       }
     },
     "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",

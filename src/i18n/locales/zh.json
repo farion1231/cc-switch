@@ -240,8 +240,9 @@
         "pending": "已在浏览器打开 Claude 的登录页，登录并授权后会自动选上这个账号。",
         "helpTerminal": "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
         "help": "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它。想同时用几个号，从卡片「打开终端」。",
-        "card": "账号：{{label}}",
-        "cardTerminal": "账号：{{label}} · 从卡片打开终端使用"
+        "claudeAccount": "Claude 账号",
+        "reauthBadge": "需要重新登录",
+        "terminalHint": "从卡片打开终端使用"
       }
     },
     "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",

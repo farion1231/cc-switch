@@ -25,6 +25,8 @@ interface SubscriptionQuotaFooterProps {
   inline?: boolean;
   isCurrent?: boolean;
   autoQueryInterval?: number;
+  /** 卡片绑定的账号：额度按账号分开缓存 */
+  account?: string;
 }
 
 interface SubscriptionQuotaViewProps {
@@ -359,6 +361,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   inline = false,
   isCurrent = false,
   autoQueryInterval = 5,
+  account,
 }) => {
   const display = useQuotaDisplay();
   const {
@@ -370,6 +373,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
     isCurrent,
     isCurrent && autoQueryInterval > 0,
     autoQueryInterval,
+    account,
   );
 
   if (!isCurrent) return null;

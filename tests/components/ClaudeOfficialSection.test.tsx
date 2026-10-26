@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ClaudeAccountSelect,
+  ClaudeBoundAccountLine,
+  ClaudeBoundAccountQuotaGate,
   ClaudeOfficialSection,
 } from "@/components/providers/forms/ClaudeOfficialSection";
 
@@ -12,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   openExternal: vi.fn(),
   submitPaste: vi.fn(),
   getLoginSwitch: vi.fn(),
+  getStatus: vi.fn(),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -28,6 +31,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     settingsApi: { ...actual.settingsApi, openExternal: mocks.openExternal },
     authApi: {
       ...actual.authApi,
+      authGetStatus: mocks.getStatus,
       claudeAccountSubmitPaste: mocks.submitPaste,
       getClaudeLoginSwitch: mocks.getLoginSwitch,
     },
@@ -93,6 +97,7 @@ describe("ClaudeOfficialSection", () => {
     mocks.openExternal.mockReset();
     mocks.submitPaste.mockReset();
     mocks.getLoginSwitch.mockReset().mockResolvedValue(loginSwitch());
+    mocks.getStatus.mockReset();
   });
 
   it("has no default account and no re-login while the login is valid", async () => {
@@ -226,5 +231,105 @@ describe("ClaudeOfficialSection", () => {
     expect(
       await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
     ).toBeInTheDocument();
+  });
+
+  it("shows the bound account on the card and its quota only when it is the login", async () => {
+    mocks.getStatus.mockResolvedValue({
+      provider: "claude_official",
+      authenticated: true,
+      default_account_id: null,
+      accounts: [account("acc:org", "me@example.com")],
+    });
+    withQuery(
+      <>
+        <ClaudeBoundAccountLine
+          accountId="acc:org"
+          providerName="Claude Official"
+        />
+        <ClaudeBoundAccountQuotaGate accountId="acc:org">
+          <span>quota-acc</span>
+        </ClaudeBoundAccountQuotaGate>
+        <ClaudeBoundAccountQuotaGate accountId="gone:org">
+          <span>quota-gone</span>
+        </ClaudeBoundAccountQuotaGate>
+      </>,
+    );
+    expect(await screen.findByText(/me@example\.com/)).toBeInTheDocument();
+    expect(screen.getByText("quota-acc")).toBeInTheDocument();
+    expect(screen.queryByText("quota-gone")).not.toBeInTheDocument();
+  });
+
+  it("hides the quota when switching cards can't change the login", async () => {
+    mocks.getStatus.mockResolvedValue({
+      provider: "claude_official",
+      authenticated: true,
+      default_account_id: null,
+      accounts: [account("acc:org", "me@example.com")],
+    });
+    mocks.getLoginSwitch.mockResolvedValue(
+      loginSwitch({ blocked: "overrideDir" }),
+    );
+    withQuery(
+      <>
+        <ClaudeBoundAccountLine
+          accountId="acc:org"
+          providerName="Claude Official"
+        />
+        <ClaudeBoundAccountQuotaGate accountId="acc:org">
+          <span>quota-acc</span>
+        </ClaudeBoundAccountQuotaGate>
+      </>,
+    );
+    // 副标题写出「从卡片打开终端」= 账号和切换状态都回来了，额度仍然不显示
+    expect(
+      await screen.findByText(/从卡片打开终端使用|terminalHint/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("quota-acc")).not.toBeInTheDocument();
+  });
+
+  it("words the card subtitle like the Codex card", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    mocks.getStatus.mockResolvedValue({
+      provider: "claude_official",
+      authenticated: true,
+      default_account_id: null,
+      accounts: [
+        account("plain:org", "plain@example.com"),
+        {
+          ...account("old:org", "old@example.com"),
+          login_expires_at: Date.now() - day,
+        },
+        account("named:org", "named@example.com"),
+      ],
+    });
+    withQuery(
+      <>
+        <ClaudeBoundAccountLine accountId="plain:org" providerName="Work" />
+        <ClaudeBoundAccountLine accountId="old:org" providerName="Old" />
+        <ClaudeBoundAccountLine
+          accountId="named:org"
+          providerName="Claude (named@example.com)"
+        />
+        <ClaudeBoundAccountLine
+          accountId="plain:org"
+          providerName="Noted"
+          note="团队号"
+        />
+        <ClaudeBoundAccountLine accountId="gone:org" providerName="Gone" />
+      </>,
+    );
+    // 不带「账号：」前缀
+    expect(await screen.findByText("plain@example.com")).toBeInTheDocument();
+    // 登录过期跟一个标记
+    expect(screen.getByText("old@example.com")).toBeInTheDocument();
+    expect(screen.getAllByText(/需要重新登录|reauthBadge/)).toHaveLength(1);
+    // 卡名里已经有账号就不重复
+    expect(screen.queryByText("named@example.com")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Claude 账号|claudeAccount\.claudeAccount/),
+    ).toBeInTheDocument();
+    // 备注优先
+    expect(screen.getByText("团队号")).toBeInTheDocument();
+    expect(screen.getByText(/不在这台电脑上的账号/)).toBeInTheDocument();
   });
 });

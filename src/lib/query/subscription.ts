@@ -14,7 +14,11 @@ const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 export const subscriptionKeys = {
   all: ["subscription"] as const,
-  quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
+  /** `account`：卡片绑了账号时按账号分开缓存，换号后不会先显示上一个号的额度 */
+  quota: (appId: AppId, account?: string) =>
+    account
+      ? ([...subscriptionKeys.all, "quota", appId, account] as const)
+      : ([...subscriptionKeys.all, "quota", appId] as const),
 };
 
 /**
@@ -82,6 +86,7 @@ export function useSubscriptionQuota(
   enabled: boolean,
   autoQuery = false,
   autoQueryIntervalMinutes = 5,
+  account?: string,
 ) {
   const refetchInterval =
     autoQuery && autoQueryIntervalMinutes > 0
@@ -89,7 +94,7 @@ export function useSubscriptionQuota(
       : false;
 
   const query = useQuery({
-    queryKey: subscriptionKeys.quota(appId),
+    queryKey: subscriptionKeys.quota(appId, account),
     queryFn: () => subscriptionApi.getQuota(appId),
     enabled:
       enabled &&
@@ -104,7 +109,7 @@ export function useSubscriptionQuota(
     retry: 1,
   });
 
-  return useQuotaKeepLastGood(query, appId);
+  return useQuotaKeepLastGood(query, account ? `${appId}:${account}` : appId);
 }
 
 export interface UseCodexOauthQuotaOptions {

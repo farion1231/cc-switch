@@ -1,7 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Plus } from "lucide-react";
+import { AlertTriangle, Loader2, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { authApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -504,36 +504,95 @@ export function ClaudeAccountSelect({
   );
 }
 
-/**
- * 绑了账号的 Claude 官方卡底部：写出用的是哪个号（额度查的是默认登录，对不上，先不显示）。
- * 切卡不会换号时（设了配置目录覆盖），提示从卡片打开终端。
- */
-export function ClaudeBoundAccountFooter({ accountId }: { accountId: string }) {
-  const { t } = useTranslation();
-  const terminalOnly = useClaudeAccountTerminalOnly();
+function useClaudeAccount(accountId: string) {
   const { data, isSuccess } = useQuery({
     queryKey: ["managed-auth-status", "claude_official"],
     queryFn: () => authApi.authGetStatus("claude_official"),
     staleTime: 30000,
   });
-  const account = data?.accounts.find((a) => a.id === accountId);
+  return {
+    isSuccess,
+    account: data?.accounts.find((a) => a.id === accountId),
+  };
+}
+
+/**
+ * 绑了账号的 Claude 官方卡副标题（官网地址的位置），和 Codex 官方卡同一套写法：写账号，
+ * 有备注写备注，卡名里已经有账号就写「Claude 账号」；登录失效、或切卡不会换号（设了配置
+ * 目录覆盖）时跟一句提示。
+ */
+export function ClaudeBoundAccountLine({
+  accountId,
+  providerName,
+  note,
+}: {
+  accountId: string;
+  providerName: string;
+  note?: string;
+}) {
+  const { t } = useTranslation();
+  const terminalOnly = useClaudeAccountTerminalOnly();
+  const { isSuccess, account } = useClaudeAccount(accountId);
   if (!isSuccess) return null;
-  const label = account
-    ? account.login
-    : t("provider.form.claudeAccount.missing", {
-        defaultValue: "不在这台电脑上的账号",
-      });
-  return (
-    <span className="min-w-0 truncate text-caption text-fg-2" title={label}>
-      {terminalOnly
-        ? t("provider.form.claudeAccount.cardTerminal", {
-            defaultValue: "账号：{{label}} · 从卡片打开终端使用",
-            label,
-          })
-        : t("provider.form.claudeAccount.card", {
-            defaultValue: "账号：{{label}}",
-            label,
+  if (!account) {
+    return (
+      <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-warning-text">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">
+          {t("provider.form.claudeAccount.missing", {
+            defaultValue: "不在这台电脑上的账号",
           })}
-    </span>
+        </span>
+      </div>
+    );
+  }
+  const expiresAt = account.login_expires_at ?? null;
+  const needsReauth =
+    account.requires_reauth || (expiresAt !== null && expiresAt <= Date.now());
+  const name = providerName.trim();
+  const label =
+    note ??
+    (name === account.login || name.includes(account.login)
+      ? t("provider.form.claudeAccount.claudeAccount", {
+          defaultValue: "Claude 账号",
+        })
+      : account.login);
+  return (
+    <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+      <span className="min-w-0 truncate" title={note ?? account.login}>
+        {label}
+      </span>
+      {needsReauth ? (
+        <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          {t("provider.form.claudeAccount.reauthBadge", {
+            defaultValue: "需要重新登录",
+          })}
+        </span>
+      ) : terminalOnly ? (
+        <span className="shrink-0">
+          {t("provider.form.claudeAccount.terminalHint", {
+            defaultValue: "从卡片打开终端使用",
+          })}
+        </span>
+      ) : null}
+    </div>
   );
+}
+
+/**
+ * 额度查的是 Claude Code 默认登录的号：切卡会把卡上的号换进去，才对得上。
+ * 切卡不换号（设了配置目录覆盖）、或卡上的号不在这台电脑上时，不显示额度。
+ */
+export function ClaudeBoundAccountQuotaGate({
+  accountId,
+  children,
+}: {
+  accountId: string;
+  children: React.ReactNode;
+}) {
+  const terminalOnly = useClaudeAccountTerminalOnly();
+  const { account } = useClaudeAccount(accountId);
+  if (terminalOnly || !account) return null;
+  return <>{children}</>;
 }

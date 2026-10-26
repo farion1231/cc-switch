@@ -240,8 +240,9 @@
         "pending": "Claude's sign-in page is open in your browser. After you sign in and authorize, the account is selected automatically.",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
         "help": "Switching to this card signs Claude Code in to the selected account, and claude started anywhere afterwards uses it. To use several accounts at once, use Open Terminal on the card.",
-        "card": "Account: {{label}}",
-        "cardTerminal": "Account: {{label}} · use via Open Terminal"
+        "claudeAccount": "Claude account",
+        "reauthBadge": "Re-login required",
+        "terminalHint": "Use via Open Terminal"
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
