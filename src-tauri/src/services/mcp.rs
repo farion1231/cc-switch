@@ -295,6 +295,10 @@ impl McpService {
         match app {
             AppType::Claude => {
                 mcp::sync_single_server_to_claude(&Default::default(), &server.id, &server.server)?;
+                // 各官方账号目录镜像默认 .claude.json 的 mcpServers
+                crate::services::claude_account::sync_all_shared(
+                    &crate::config::get_app_config_dir(),
+                );
             }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
@@ -358,7 +362,12 @@ impl McpService {
 
     fn remove_server_from_app(_state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
         match app {
-            AppType::Claude => mcp::remove_server_from_claude(id)?,
+            AppType::Claude => {
+                mcp::remove_server_from_claude(id)?;
+                crate::services::claude_account::sync_all_shared(
+                    &crate::config::get_app_config_dir(),
+                );
+            }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }

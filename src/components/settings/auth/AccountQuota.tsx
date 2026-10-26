@@ -33,6 +33,7 @@ import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
 import {
   useAgyAccountQuota,
+  useClaudeAccountQuota,
   useKimiAccountQuota,
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
@@ -61,8 +62,10 @@ interface AccountQuotaColumnProps {
 }
 
 /**
- * 授权中心账号行右侧的额度（v7 Auth 画板）：212 宽的额度条（条和数字按设置写剩余或已用，
+ * 授权中心账号行右侧的额度（v7 Auth 画板）：额度条（条和数字按设置写剩余或已用，
  * 平时 --chart-1；不到 20% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
+ * 档名、数值、倒计时三格定宽，倒计时格没有也留着；整列宽度只随分组卡片宽度变
+ * （.auth-quota-col，见 index.css），各账号、各分组的条起点和长度一致。
  * 打开页面时查一次，不轮询；↻ 手动重查。
  */
 export function AccountQuotaColumn({
@@ -79,14 +82,10 @@ export function AccountQuotaColumn({
   );
   const agoId = useId();
   if (!state) return null;
-  // 有一档带重置时间，每行数值后面都留出倒计时那一格（各行对齐），整列加宽
-  const showReset =
-    state.kind === "rows" &&
-    state.rows.some(({ line }) => countdownStr(line.resetsAt, now));
-  const resetCell = (line: QuotaLine) =>
-    showReset ? (
-      <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
-    ) : null;
+  // 倒计时格始终留着（没有重置时间就空着），别的号的条才不会因此变宽或挪位
+  const resetCell = (line: QuotaLine) => (
+    <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
+  );
 
   const ago = queriedAt ? formatRelativeTime(queriedAt, now, t) : "";
   const agoText = loading
@@ -95,12 +94,7 @@ export function AccountQuotaColumn({
 
   return (
     <>
-      <div
-        className={cn(
-          "flex shrink-0 flex-col gap-0.5",
-          showReset ? "w-[272px]" : "w-[212px]",
-        )}
-      >
+      <div className="auth-quota-col flex shrink-0 flex-col gap-0.5">
         {state.kind === "rows" &&
           state.rows.map(({ label, line }) =>
             line.breakdown ? (
@@ -142,8 +136,10 @@ export function AccountQuotaColumn({
           </>
         )}
         {state.kind === "note" && (
-          // 写在额度行数值（「剩余 91%」）那一格：靠右，和别的号的数值对齐
-          <span className="self-end text-caption text-fg-3">{state.text}</span>
+          // 写在额度行数值（「剩余 91%」）那一格：右边让出倒计时格（52）和间距（8），和别的号的数值对齐
+          <span className="me-[60px] self-end text-caption text-fg-3">
+            {state.text}
+          </span>
         )}
         {state.kind === "loading" && (
           <span className="text-caption text-fg-3">
@@ -202,7 +198,11 @@ function QuotaRowCells({
   const value = line.value ?? line.text;
   return (
     <>
-      <span className="min-w-[52px] shrink-0 whitespace-nowrap text-fg-2">
+      {/* 定宽：「Claude/GPT 每周」这类长档名不再把条挤短；更长的截断，悬停看全名 */}
+      <span
+        title={label}
+        className="w-[112px] shrink-0 truncate whitespace-nowrap text-fg-2"
+      >
         {label}
       </span>
       {line.caption ? (
@@ -229,7 +229,8 @@ function QuotaRowCells({
         </span>
       )}
       {/* 旁边已有额度条，正常时数值不上色 */}
-      <span className="w-14 shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
+      {/* 64 宽放得下「剩余 100%」，和「剩余 99%」右边对齐 */}
+      <span className="w-16 shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
         <TonedText
           text={value}
           line={line}
@@ -399,6 +400,32 @@ export function AgyAccountQuota({
     isFetching: loading,
     refetch,
   } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** Claude 官方账号的订阅额度（get_claude_account_quota(accountId)，不用先切号） */
+export function ClaudeAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useClaudeAccountQuota(accountId, { enabled: true, autoQuery: false });
   return (
     <AccountQuotaColumn
       login={login}
