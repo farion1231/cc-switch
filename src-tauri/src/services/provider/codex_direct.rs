@@ -25,9 +25,10 @@ use crate::codex_config::{
 use crate::codex_config::{
     codex_auth_has_credential_login_material, codex_config_auth_store_mode,
     codex_disables_web_search, codex_live_auth_is_managed_chatgpt_login,
-    codex_managed_oauth_marker_bytes, extract_codex_auth_api_key, get_codex_auth_path,
-    get_codex_config_path, get_codex_managed_oauth_live_auth_marker_path,
-    get_codex_model_catalog_path, plan_codex_model_catalog, CodexAuthStoreMode,
+    codex_live_auth_is_stale_third_party_residue, codex_managed_oauth_marker_bytes,
+    extract_codex_auth_api_key, get_codex_auth_path, get_codex_config_path,
+    get_codex_managed_oauth_live_auth_marker_path, get_codex_model_catalog_path,
+    plan_codex_model_catalog, CodexAuthStoreMode,
 };
 use crate::config::sorted_json_bytes;
 use crate::database::Database;
@@ -300,8 +301,10 @@ fn predicted_auth(
         live: live.as_ref(),
         live_is_managed: live_is_managed(prepared, live.as_ref()),
         third_party_keys: &planned.retired_keys,
+        official_keys: &planned.official_keys,
         leaving_official: planned.leaving_official.as_ref(),
         target: auth_target(&planned.auth, op::SWITCH),
+        detach: false,
         stash,
         now: chrono::Utc::now().timestamp(),
     });
@@ -458,10 +461,12 @@ pub(crate) fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> 
 }
 
 /// 数据库里所有 Codex 行能证明的事：它们的投影写过哪些表、第三方的 Key、官方卡里存着的
-/// 登录（登录暂存第一次建立时用）。
+/// 登录（登录暂存第一次建立时用）、官方卡里存着的 API Key（官方投影写进 `auth.json` 的
+/// 就是它，用来认出接管期的纯 key 占位，#8390）。
 struct RowFacts {
     retired: Vec<KnownTable>,
     third_party_keys: Vec<String>,
+    official_keys: Vec<String>,
     official_logins: Vec<Value>,
 }
 
@@ -469,6 +474,7 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
     let mut facts = RowFacts {
         retired: Vec::new(),
         third_party_keys: Vec::new(),
+        official_keys: Vec::new(),
         official_logins: Vec::new(),
     };
     for provider in db.get_all_providers(app())?.values() {
@@ -479,6 +485,12 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
                     auth.filter(|auth| codex_auth_has_credential_login_material(auth))
                 {
                     facts.official_logins.push(auth.clone());
+                }
+                if let Some(key) = auth
+                    .filter(|auth| codex_login::is_api_key_credential(auth))
+                    .and_then(extract_codex_auth_api_key)
+                {
+                    facts.official_keys.push(key);
                 }
             }
             continue;
@@ -559,6 +571,7 @@ pub(crate) struct Planned {
     /// 切走的是没绑托管账号的官方卡：它行里的 `auth`。
     leaving_official: Option<Value>,
     retired_keys: Vec<String>,
+    official_keys: Vec<String>,
     official_logins: Vec<Value>,
     /// 目录里的官方行取自哪个登录的官方列表：拿写锁后和实际的目标登录核对。
     native_identity: Option<String>,
@@ -761,6 +774,7 @@ pub(crate) fn plan(
         auth,
         leaving_official,
         retired_keys: facts.third_party_keys,
+        official_keys: facts.official_keys,
         official_logins: facts.official_logins,
         native_identity: prepared
             .native
@@ -1162,8 +1176,10 @@ pub(crate) fn run_with_edits(
         live: live_auth.as_ref(),
         live_is_managed,
         third_party_keys: &planned.retired_keys,
+        official_keys: &planned.official_keys,
         leaving_official: planned.leaving_official.as_ref(),
         target: auth_target(&planned.auth, op),
+        detach: op == crate::mode::state::op::DETACH,
         stash,
         now: chrono::Utc::now().timestamp(),
     });
@@ -1322,6 +1338,33 @@ pub(crate) fn write_direct(
     let prepared = prepare(manager, &owner, &target)?;
     let planned = plan(db, &owner, &target, &prepared)?;
     run(db, op, planned, &prepared, pending)
+}
+
+/// 分离收尾的兜底提醒（#8390 最低诉求）：`auth.json` 还是纯 key 占位（没有任何登录
+/// 材料）时记一条警告。占位可能是接管期写进来、但证明不了归属或暂存里没有可还原登录
+/// 而留下的，也可能是用户自己的 API key——直连卡自己声明的 key 不提醒。
+pub(crate) fn warn_if_auth_left_as_key_placeholder(direct: Option<&Provider>) {
+    let live = read_current(&get_codex_auth_path())
+        .ok()
+        .flatten()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let Some(auth) = live else {
+        return;
+    };
+    if !codex_live_auth_is_stale_third_party_residue(&auth) {
+        return;
+    }
+    let key = extract_codex_auth_api_key(&auth);
+    let declared = direct
+        .and_then(|provider| provider.settings_config.get("auth"))
+        .and_then(extract_codex_auth_api_key);
+    if key.is_some() && key == declared {
+        log::debug!("Codex auth.json 保留直连卡声明的 API key（没有 ChatGPT 登录）");
+        return;
+    }
+    log::warn!(
+        "退出后 Codex auth.json 仍只有 API key、没有任何 ChatGPT 登录材料；如果这不是你自己配置的 API key，可在 Codex 里重新登录，或在 CC Switch 里切一次官方卡，从登录暂存还原"
+    );
 }
 
 /// 只校验，不写：切换前用它挡住会被拒绝的目标（行有问题时指针不能先动）。
