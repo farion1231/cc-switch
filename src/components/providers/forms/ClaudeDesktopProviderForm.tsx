@@ -157,11 +157,6 @@ function routeIdForRole(role: RouteRole, usedRoutes: Set<string>) {
   return `${baseRoute}-r${index}`;
 }
 
-/** 比对预设地址与当前输入时忽略大小写和结尾斜杠。 */
-function normalizeBaseUrlForCompare(value: string) {
-  return value.trim().replace(/\/+$/, "").toLowerCase();
-}
-
 function fallbackCatalogRouteId(usedRoutes: Set<string>) {
   const role = ROLE_ORDER.find((candidate) => {
     const route = ROLE_ROUTE_IDS[candidate];
@@ -302,7 +297,6 @@ export function ClaudeDesktopProviderForm({
     partnerPromotionKey?: string;
     providerType?: string;
     requiresOAuth?: boolean;
-    baseUrlOptions?: string[];
   } | null>(null);
   const [directRoutes, setDirectRoutes] = useState<RouteRow[]>(() => {
     const rows = initialRouteRows(initialData?.meta?.claudeDesktopModelRoutes);
@@ -413,22 +407,6 @@ export function ClaudeDesktopProviderForm({
   const routes = needsModelMapping ? proxyRoutes : directRoutes;
   const setRoutes = needsModelMapping ? setProxyRoutes : setDirectRoutes;
 
-  // 请求地址候选：新建/切预设时直接取预设；编辑已有供应商时用当前地址反查
-  // 预设（预设带地址候选才算命中），命中后同样可以一键切换。
-  const baseUrlOptions = useMemo(() => {
-    if (activePreset?.baseUrlOptions?.length) {
-      return activePreset.baseUrlOptions;
-    }
-    const current = normalizeBaseUrlForCompare(baseUrl);
-    if (!current) return [];
-    const entry = presetEntries.find((item) =>
-      [item.preset.baseUrl, ...(item.preset.baseUrlOptions ?? [])].some(
-        (candidate) => normalizeBaseUrlForCompare(candidate) === current,
-      ),
-    );
-    return entry?.preset.baseUrlOptions ?? [];
-  }, [activePreset, baseUrl, presetEntries]);
-
   // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
   const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
   const {
@@ -521,7 +499,6 @@ export function ClaudeDesktopProviderForm({
       partnerPromotionKey: entry.preset.partnerPromotionKey,
       providerType: entry.preset.providerType,
       requiresOAuth: entry.preset.requiresOAuth,
-      baseUrlOptions: entry.preset.baseUrlOptions,
     });
     applyDesktopPreset(entry.preset);
   };
@@ -1057,50 +1034,23 @@ export function ClaudeDesktopProviderForm({
               />
             )}
 
-            <div className="space-y-2">
-              <EndpointField
-                id="baseUrl"
-                label={t("providerForm.apiEndpoint")}
-                value={baseUrl}
-                onChange={(v) => setBaseUrl(v)}
-                placeholder={t("providerForm.apiEndpointPlaceholder")}
-                hint={
-                  needsModelMapping && apiFormat === "openai_responses"
-                    ? t("providerForm.apiHintResponses")
-                    : needsModelMapping && apiFormat === "openai_chat"
-                      ? t("providerForm.apiHintOAI")
-                      : needsModelMapping && apiFormat === "gemini_native"
-                        ? t("providerForm.apiHintGeminiNative")
-                        : t("providerForm.apiHint")
-                }
-                showManageButton={false}
-              />
-              {baseUrlOptions.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {baseUrlOptions.map((url) => {
-                    const selected =
-                      normalizeBaseUrlForCompare(baseUrl) ===
-                      normalizeBaseUrlForCompare(url);
-                    return (
-                      <Button
-                        key={url}
-                        type="button"
-                        size="sm"
-                        variant={selected ? "default" : "outline"}
-                        className="h-7 max-w-full px-2 text-xs font-normal"
-                        title={url}
-                        aria-pressed={selected}
-                        onClick={() => setBaseUrl(url)}
-                      >
-                        <span className="truncate">
-                          {url.replace(/^https?:\/\//, "")}
-                        </span>
-                      </Button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            <EndpointField
+              id="baseUrl"
+              label={t("providerForm.apiEndpoint")}
+              value={baseUrl}
+              onChange={(v) => setBaseUrl(v)}
+              placeholder={t("providerForm.apiEndpointPlaceholder")}
+              hint={
+                needsModelMapping && apiFormat === "openai_responses"
+                  ? t("providerForm.apiHintResponses")
+                  : needsModelMapping && apiFormat === "openai_chat"
+                    ? t("providerForm.apiHintOAI")
+                    : needsModelMapping && apiFormat === "gemini_native"
+                      ? t("providerForm.apiHintGeminiNative")
+                      : t("providerForm.apiHint")
+              }
+              showManageButton={false}
+            />
 
             <div className="space-y-4 border-l border-border pl-3">
               <div className="flex items-stretch justify-between gap-4">
