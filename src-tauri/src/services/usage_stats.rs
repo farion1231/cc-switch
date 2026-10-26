@@ -390,6 +390,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_kimi_session' THEN 'Kimi Code (Session)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
          WHEN '_pi_session' THEN 'Pi (Session)' \
+         WHEN '_omp_session' THEN 'Oh My Pi (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }

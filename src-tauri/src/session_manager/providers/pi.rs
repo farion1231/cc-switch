@@ -120,7 +120,12 @@ pub(crate) fn session_roots_for(d: &Dialect) -> Vec<PathBuf> {
 /// instead of silently treating an incomplete import as success. Nested
 /// subagent and fork sessions are included.
 pub(crate) fn session_files() -> Result<Vec<PathBuf>, String> {
-    session_files_from_resolution(resolve_session_root())
+    session_files_for(&PI)
+}
+
+/// [`session_files`] for any Pi-format dialect (Oh My Pi).
+pub(crate) fn session_files_for(d: &Dialect) -> Result<Vec<PathBuf>, String> {
+    session_files_from_resolution((d.resolve_root)())
 }
 
 fn session_files_from_resolution(

@@ -45,6 +45,11 @@ pub fn session_roots() -> Vec<PathBuf> {
     pi::session_roots_for(&OMP)
 }
 
+/// Candidate session JSONL files for the usage importer (`session_usage_omp`).
+pub fn session_files() -> Result<Vec<PathBuf>, String> {
+    pi::session_files_for(&OMP)
+}
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
     pi::scan_sessions_for(&OMP)
 }

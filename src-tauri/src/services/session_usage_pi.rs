@@ -21,9 +21,49 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-const APP_TYPE: &str = "pi";
-const DATA_SOURCE: &str = "pi_session";
-const PROVIDER_PLACEHOLDER: &str = "_pi_session";
+/// 同一套 Pi 格式会话在不同应用下的落库标识。
+///
+/// OMP（Oh My Pi）会话文件与 Pi 完全同构（见 `session_manager::providers::omp`），
+/// 解析逻辑共用，只有写库时的 app_type / 来源命名空间不同；各字段在跨 app
+/// 之间不得重叠（request_id 是主键，去重账本按 data_source 分命名空间）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct UsageDialect {
+    /// proxy_request_logs.app_type
+    pub(crate) app_type: &'static str,
+    /// proxy_request_logs.data_source，同时是去重账本的命名空间
+    pub(crate) data_source: &'static str,
+    /// 会话行在供应商筛选里的占位 provider_id（`usage_stats.rs` 负责映射可读名）
+    pub(crate) provider_placeholder: &'static str,
+    /// request_id / semantic_id 前缀，跨 app 不重叠防主键互撞
+    pub(crate) id_prefix: &'static str,
+    /// session_log_sync 保留行 key：子会话起算时间
+    pub(crate) child_cutoff_key: &'static str,
+    /// 用户可见的应用名（错误消息里指明是哪个应用）
+    pub(crate) display_name: &'static str,
+    /// 日志标签
+    pub(crate) log_tag: &'static str,
+}
+
+pub(crate) const PI_DIALECT: UsageDialect = UsageDialect {
+    app_type: "pi",
+    data_source: "pi_session",
+    provider_placeholder: "_pi_session",
+    id_prefix: "pi_session",
+    child_cutoff_key: "pi:child-cutoff",
+    display_name: "Pi",
+    log_tag: "PI-SYNC",
+};
+
+pub(crate) const OMP_DIALECT: UsageDialect = UsageDialect {
+    app_type: "omp",
+    data_source: "omp_session",
+    provider_placeholder: "_omp_session",
+    id_prefix: "omp_session",
+    child_cutoff_key: "omp:child-cutoff",
+    display_name: "Oh My Pi",
+    log_tag: "OMP-SYNC",
+};
+
 const UNKNOWN_MODEL: &str = "unknown";
 const MAX_USAGE_LABEL_BYTES: usize = 512;
 const MIN_SQLITE_UNIX_MILLIS: i64 = -62_167_219_200_000;
@@ -50,7 +90,7 @@ const PI_LEGACY_SEMANTIC_DEDUP_SQL: &str = "SELECT EXISTS(
          WHERE data_source = ?1 AND semantic_id = ?2 AND has_entry_id = 0
      )";
 // Reserved session_log_sync row; unlike `settings`, it stays on this device.
-const CHILD_CUTOFF_KEY: &str = "pi:child-cutoff";
+// (Pi and OMP keep separate cutoff rows; see `UsageDialect.child_cutoff_key`.)
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PiCosts {
@@ -168,10 +208,15 @@ impl ChildScope {
 pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let files = crate::session_manager::providers::pi::session_files()
         .map_err(|error| AppError::Config(format!("无法发现 Pi 会话: {error}")))?;
-    Ok(sync_pi_files(db, &files))
+    Ok(sync_usage_files(db, &PI_DIALECT, &files))
 }
 
-fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
+/// [`sync_pi_usage`] 的方言化内核，OMP 复用同一套解析与落库。
+pub(crate) fn sync_usage_files(
+    db: &Database,
+    dialect: &UsageDialect,
+    files: &[PathBuf],
+) -> SessionSyncResult {
     let mut result = SessionSyncResult {
         files_scanned: files.len().min(u32::MAX as usize) as u32,
         ..Default::default()
@@ -186,22 +231,23 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
         }
     };
 
-    let cutoff = match child_cutoff(db, &cursors) {
+    let cutoff = match child_cutoff(db, dialect, &cursors) {
         Ok(cutoff) => cutoff,
         Err(error) => {
-            result
-                .errors
-                .push(format!("记录 Pi 子会话起算时间失败: {error}"));
+            result.errors.push(format!(
+                "记录 {} 子会话起算时间失败: {error}",
+                dialect.display_name
+            ));
             return result;
         }
     };
     let scope = ChildScope::new(files, cutoff);
     for file_path in files {
-        match sync_single_pi_file(db, file_path, &cursors, &scope) {
+        match sync_single_pi_file(db, dialect, file_path, &cursors, &scope) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
                 let message = format!("{}: {error}", file_path.display());
-                log::warn!("[PI-SYNC] 会话文件解析失败: {message}");
+                log::warn!("[{}] 会话文件解析失败: {message}", dialect.log_tag);
                 result.errors.push(message);
             }
         }
@@ -209,7 +255,8 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
 
     if result.imported > 0 {
         log::info!(
-            "[PI-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, 扫描 {} 个文件",
+            "[{}] 同步完成: 导入 {} 条, 跳过 {} 条, 扫描 {} 个文件",
+            dialect.log_tag,
             result.imported,
             result.skipped,
             result.files_scanned
@@ -220,9 +267,10 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
 
 fn child_cutoff(
     db: &Database,
+    dialect: &UsageDialect,
     cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
 ) -> Result<i64, AppError> {
-    if let Some(cursor) = cursors.get(CHILD_CUTOFF_KEY) {
+    if let Some(cursor) = cursors.get(dialect.child_cutoff_key) {
         return Ok(cursor.last_synced_at);
     }
     let now = chrono::Utc::now().timestamp();
@@ -230,37 +278,49 @@ fn child_cutoff(
     conn.execute(
         "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
          VALUES (?1, 0, 0, ?2)",
-        rusqlite::params![CHILD_CUTOFF_KEY, now],
+        rusqlite::params![dialect.child_cutoff_key, now],
     )
-    .map_err(|error| AppError::Database(format!("写入 Pi 子会话起算时间失败: {error}")))?;
+    .map_err(|error| {
+        AppError::Database(format!(
+            "写入 {} 子会话起算时间失败: {error}",
+            dialect.display_name
+        ))
+    })?;
     Ok(now)
 }
 
 fn sync_single_pi_file(
     db: &Database,
+    dialect: &UsageDialect,
     file_path: &Path,
     cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
     scope: &ChildScope,
 ) -> Result<SessionSyncResult, AppError> {
-    let metadata = fs::symlink_metadata(file_path)
-        .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件元数据: {error}")))?;
+    let metadata = fs::symlink_metadata(file_path).map_err(|error| {
+        AppError::Config(format!(
+            "无法读取 {} 会话文件元数据: {error}",
+            dialect.display_name
+        ))
+    })?;
     if !metadata.file_type().is_file()
         || file_path.extension().and_then(|value| value.to_str()) != Some("jsonl")
     {
-        return Err(AppError::Config(
-            "Pi 会话路径不是普通 JSONL 文件".to_string(),
-        ));
+        return Err(AppError::Config(format!(
+            "{} 会话路径不是普通 JSONL 文件",
+            dialect.display_name
+        )));
     }
     if metadata.len() > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
         return Err(AppError::Config(format!(
-            "Pi 会话文件超过 {} 字节安全上限",
+            "{} 会话文件超过 {} 字节安全上限",
+            dialect.display_name,
             crate::session_manager::providers::pi::MAX_SESSION_BYTES
         )));
     }
 
     let file_path_string = file_path.to_string_lossy().to_string();
     let modified = metadata_modified_nanos(&metadata);
-    let revision = pi_file_revision(file_path, &metadata, modified)?;
+    let revision = pi_file_revision(dialect, file_path, &metadata, modified)?;
     let previous = decode_pi_sync_state(cursors.get(&file_path_string));
     if previous.is_some_and(|state| state.revision == revision) {
         return Ok(SessionSyncResult::default());
@@ -274,13 +334,14 @@ fn sync_single_pi_file(
         Some(state)
             if state.revision.complete
                 && revision.file_size > state.revision.file_size
-                && pi_prefix_tail_matches(file_path, state.revision)? =>
+                && pi_prefix_tail_matches(dialect, file_path, state.revision)? =>
         {
             (state.last_line_offset, Some(state.revision.file_size))
         }
         Some(_) | None => (0, None),
     };
     let parsed = parse_pi_file(
+        dialect,
         file_path,
         start_after_line,
         start_at_byte,
@@ -289,21 +350,34 @@ fn sync_single_pi_file(
         scope,
     )?;
     let conn = lock_conn!(db.conn);
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|error| AppError::Database(format!("启动 Pi 用量导入事务失败: {error}")))?;
+    let tx = conn.unchecked_transaction().map_err(|error| {
+        AppError::Database(format!(
+            "启动 {} 用量导入事务失败: {error}",
+            dialect.display_name
+        ))
+    })?;
     let mut result = SessionSyncResult::default();
     for record in &parsed.records {
-        if insert_pi_record(&tx, record)? {
+        if insert_pi_record(&tx, dialect, record)? {
             result.imported = result.imported.saturating_add(1);
         } else {
             result.skipped = result.skipped.saturating_add(1);
         }
     }
 
-    update_pi_sync_state_on_conn(&tx, &file_path_string, revision, parsed.last_complete_line)?;
-    tx.commit()
-        .map_err(|error| AppError::Database(format!("提交 Pi 用量导入事务失败: {error}")))?;
+    update_pi_sync_state_on_conn(
+        &tx,
+        dialect,
+        &file_path_string,
+        revision,
+        parsed.last_complete_line,
+    )?;
+    tx.commit().map_err(|error| {
+        AppError::Database(format!(
+            "提交 {} 用量导入事务失败: {error}",
+            dialect.display_name
+        ))
+    })?;
     if parsed.incomplete_tail {
         result.deferred_files = 1;
     }
@@ -341,6 +415,7 @@ fn decode_pi_sync_state(
 
 fn update_pi_sync_state_on_conn(
     conn: &rusqlite::Connection,
+    dialect: &UsageDialect,
     file_path: &str,
     revision: PiFileRevision,
     last_line_offset: i64,
@@ -352,11 +427,17 @@ fn update_pi_sync_state_on_conn(
         "UPDATE session_log_sync SET last_synced_at = ?2 WHERE file_path = ?1",
         rusqlite::params![file_path, revision.encoded()],
     )
-    .map_err(|error| AppError::Database(format!("更新 Pi 会话同步状态失败: {error}")))?;
+    .map_err(|error| {
+        AppError::Database(format!(
+            "更新 {} 会话同步状态失败: {error}",
+            dialect.display_name
+        ))
+    })?;
     Ok(())
 }
 
 fn pi_file_revision(
+    dialect: &UsageDialect,
     file_path: &Path,
     metadata: &fs::Metadata,
     modified_nanos: i64,
@@ -364,11 +445,20 @@ fn pi_file_revision(
     let tail_len = metadata.len().min(REVISION_TAIL_BYTES);
     let mut tail = vec![0; tail_len as usize];
     if tail_len > 0 {
-        let mut file = File::open(file_path)
-            .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
+        let mut file = File::open(file_path).map_err(|error| {
+            AppError::Config(format!(
+                "无法打开 {} 会话文件: {error}",
+                dialect.display_name
+            ))
+        })?;
         file.seek(SeekFrom::Start(metadata.len() - tail_len))
             .and_then(|_| file.read_exact(&mut tail))
-            .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件尾部: {error}")))?;
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "无法读取 {} 会话文件尾部: {error}",
+                    dialect.display_name
+                ))
+            })?;
     }
 
     let complete = tail.last() == Some(&b'\n');
@@ -381,15 +471,28 @@ fn pi_file_revision(
     })
 }
 
-fn pi_prefix_tail_matches(file_path: &Path, previous: PiFileRevision) -> Result<bool, AppError> {
+fn pi_prefix_tail_matches(
+    dialect: &UsageDialect,
+    file_path: &Path,
+    previous: PiFileRevision,
+) -> Result<bool, AppError> {
     let tail_len = previous.file_size.min(REVISION_TAIL_BYTES);
     let mut tail = vec![0; tail_len as usize];
     if tail_len > 0 {
-        let mut file = File::open(file_path)
-            .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
+        let mut file = File::open(file_path).map_err(|error| {
+            AppError::Config(format!(
+                "无法打开 {} 会话文件: {error}",
+                dialect.display_name
+            ))
+        })?;
         file.seek(SeekFrom::Start(previous.file_size - tail_len))
             .and_then(|_| file.read_exact(&mut tail))
-            .map_err(|error| AppError::Config(format!("无法校验 Pi 会话追加边界: {error}")))?;
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "无法校验 {} 会话追加边界: {error}",
+                    dialect.display_name
+                ))
+            })?;
     }
     Ok(pi_tail_fingerprint(&tail) == previous.tail_fingerprint)
 }
@@ -403,6 +506,7 @@ fn pi_tail_fingerprint(tail: &[u8]) -> u32 {
 }
 
 fn parse_pi_file(
+    dialect: &UsageDialect,
     file_path: &Path,
     start_after_line: i64,
     start_at_byte: Option<u64>,
@@ -410,8 +514,12 @@ fn parse_pi_file(
     file_modified_nanos: i64,
     scope: &ChildScope,
 ) -> Result<ParsedPiFile, AppError> {
-    let file = File::open(file_path)
-        .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
+    let file = File::open(file_path).map_err(|error| {
+        AppError::Config(format!(
+            "无法打开 {} 会话文件: {error}",
+            dialect.display_name
+        ))
+    })?;
     let mut reader = BufReader::new(file);
     let mut buffer = String::new();
     let mut line_number = 0i64;
@@ -431,15 +539,24 @@ fn parse_pi_file(
         let read = Read::by_ref(&mut reader)
             .take(remaining)
             .read_line(&mut buffer)
-            .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件: {error}")))?;
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "无法读取 {} 会话文件: {error}",
+                    dialect.display_name
+                ))
+            })?;
         if read == 0 {
-            return Err(AppError::Config("Pi 会话文件在读取期间被截断".to_string()));
+            return Err(AppError::Config(format!(
+                "{} 会话文件在读取期间被截断",
+                dialect.display_name
+            )));
         }
         bytes_read = bytes_read.saturating_add(read as u64);
         if bytes_read > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
-            return Err(AppError::Config(
-                "Pi 会话文件读取时超过安全上限".to_string(),
-            ));
+            return Err(AppError::Config(format!(
+                "{} 会话文件读取时超过安全上限",
+                dialect.display_name
+            )));
         }
         let has_newline = buffer.ends_with('\n');
         let line = buffer.trim();
@@ -458,7 +575,8 @@ fn parse_pi_file(
         line_number = line_number.saturating_add(1);
         if line_number > crate::session_manager::providers::pi::MAX_TREE_ENTRIES as i64 + 1 {
             return Err(AppError::Config(format!(
-                "Pi 会话超过 {} 条 entry 安全上限",
+                "{} 会话超过 {} 条 entry 安全上限",
+                dialect.display_name,
                 crate::session_manager::providers::pi::MAX_TREE_ENTRIES
             )));
         }
@@ -475,9 +593,10 @@ fn parse_pi_file(
 
         if session_id.is_none() {
             if value.get("type").and_then(Value::as_str) != Some("session") {
-                return Err(AppError::Config(
-                    "Pi 会话的首条有效 JSON 不是 session header".to_string(),
-                ));
+                return Err(AppError::Config(format!(
+                    "{} 会话的首条有效 JSON 不是 session header",
+                    dialect.display_name
+                )));
             }
             session_id = value
                 .get("id")
@@ -485,13 +604,19 @@ fn parse_pi_file(
                 .filter(|id| crate::session_manager::providers::pi::is_valid_tree_id(id))
                 .map(str::to_string);
             if session_id.is_none() {
-                return Err(AppError::Config("Pi 会话 header 缺少 id".to_string()));
+                return Err(AppError::Config(format!(
+                    "{} 会话 header 缺少 id",
+                    dialect.display_name
+                )));
             }
             let header_timestamp_millis = value.get("timestamp").and_then(parse_timestamp_millis);
             session_timestamp = header_timestamp_millis.map(|timestamp| timestamp / 1000);
             if let Some(byte_offset) = start_at_byte.filter(|offset| *offset >= bytes_read) {
                 reader.seek(SeekFrom::Start(byte_offset)).map_err(|error| {
-                    AppError::Config(format!("无法定位 Pi 会话增量边界: {error}"))
+                    AppError::Config(format!(
+                        "无法定位 {} 会话增量边界: {error}",
+                        dialect.display_name
+                    ))
                 })?;
                 bytes_read = byte_offset;
                 line_number = start_after_line;
@@ -499,6 +624,7 @@ fn parse_pi_file(
             continue;
         }
         let Some(record) = parse_usage_record(
+            dialect,
             &value,
             session_id.as_deref().unwrap_or_default(),
             session_timestamp,
@@ -517,7 +643,10 @@ fn parse_pi_file(
     }
 
     if session_id.is_none() && !incomplete_tail {
-        return Err(AppError::Config("Pi 会话没有有效 header".to_string()));
+        return Err(AppError::Config(format!(
+            "{} 会话没有有效 header",
+            dialect.display_name
+        )));
     }
     Ok(ParsedPiFile {
         records,
@@ -568,6 +697,7 @@ fn collect_session_files<'a>(value: &'a Value, links: &mut Vec<&'a str>) {
 }
 
 fn parse_usage_record(
+    dialect: &UsageDialect,
     entry: &Value,
     session_id: &str,
     session_timestamp: Option<i64>,
@@ -617,7 +747,7 @@ fn parse_usage_record(
 
     let (provider_id, model, request_model) = if kind == "assistant" {
         let message = message?;
-        let provider = bounded_label(message.get("provider"), PROVIDER_PLACEHOLDER);
+        let provider = bounded_label(message.get("provider"), dialect.provider_placeholder);
         let requested = bounded_label(message.get("model"), UNKNOWN_MODEL);
         let actual = nonempty_string(message.get("responseModel"))
             .map(truncate_usage_label)
@@ -626,7 +756,7 @@ fn parse_usage_record(
         (provider, actual, requested)
     } else {
         (
-            PROVIDER_PLACEHOLDER.to_string(),
+            dialect.provider_placeholder.to_string(),
             UNKNOWN_MODEL.to_string(),
             UNKNOWN_MODEL.to_string(),
         )
@@ -642,13 +772,13 @@ fn parse_usage_record(
         match stop_reason {
             Some("error") | Some("aborted") => {
                 let fallback = if stop_reason == Some("aborted") {
-                    "Pi request aborted"
+                    format!("{} request aborted", dialect.display_name)
                 } else {
-                    "Pi request failed"
+                    format!("{} request failed", dialect.display_name)
                 };
                 let error = message
                     .and_then(|value| nonempty_string(value.get("errorMessage")))
-                    .unwrap_or(fallback)
+                    .unwrap_or(&fallback)
                     .chars()
                     .take(4096)
                     .collect();
@@ -667,7 +797,7 @@ fn parse_usage_record(
         (200, None)
     };
 
-    let identity = pi_request_identity(entry, kind, usage_value, message);
+    let identity = pi_request_identity(dialect, entry, kind, usage_value, message);
 
     // Pi initializes an assistant message's timestamp before the request and
     // appends the entry on message_end. Their difference includes first-token
@@ -779,6 +909,7 @@ fn parse_timestamp_millis(value: &Value) -> Option<i64> {
 }
 
 fn pi_request_identity(
+    dialect: &UsageDialect,
     entry: &Value,
     kind: &str,
     usage: &Value,
@@ -827,7 +958,9 @@ fn pi_request_identity(
     }
     hash_field(&mut hasher, b"usage");
     hash_json(&mut hasher, usage);
-    let semantic_id = format!("pi_session_semantic:{:x}", hasher.finalize());
+    // Pi 的既有标识格式是 `pi_session_semantic:<hash>`；方言前缀拼出同名格式，
+    // 改动 Pi 的前缀会让去重账本里的存量语义键失配（无 entry id 的旧行会重导）。
+    let semantic_id = format!("{}_semantic:{:x}", dialect.id_prefix, hasher.finalize());
     let entry_id = nonempty_string(entry.get("id"));
     let request_id = if let Some(entry_id) = entry_id {
         let mut request_hasher = Sha256::new();
@@ -837,7 +970,7 @@ fn pi_request_identity(
         if let Some(timestamp) = entry.get("timestamp") {
             hash_json(&mut request_hasher, timestamp);
         }
-        format!("pi_session:{:x}", request_hasher.finalize())
+        format!("{}:{:x}", dialect.id_prefix, request_hasher.finalize())
     } else {
         semantic_id.clone()
     };
@@ -888,14 +1021,23 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
+fn insert_pi_record(
+    conn: &rusqlite::Connection,
+    dialect: &UsageDialect,
+    record: &PiUsageRecord,
+) -> Result<bool, AppError> {
     let request_seen: bool = conn
         .query_row(
             PI_REQUEST_DEDUP_SQL,
-            rusqlite::params![DATA_SOURCE, record.request_id],
+            rusqlite::params![dialect.data_source, record.request_id],
             |row| row.get(0),
         )
-        .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
+        .map_err(|error| {
+            AppError::Database(format!(
+                "查询 {} 用量去重账本失败: {error}",
+                dialect.display_name
+            ))
+        })?;
     let already_seen = request_seen
         || conn
             .query_row(
@@ -904,10 +1046,15 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
                 } else {
                     PI_SEMANTIC_DEDUP_SQL
                 },
-                rusqlite::params![DATA_SOURCE, record.semantic_id],
+                rusqlite::params![dialect.data_source, record.semantic_id],
                 |row| row.get(0),
             )
-            .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
+            .map_err(|error| {
+                AppError::Database(format!(
+                    "查询 {} 用量去重账本失败: {error}",
+                    dialect.display_name
+                ))
+            })?;
     if already_seen {
         return Ok(false);
     }
@@ -916,13 +1063,18 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
          (data_source, request_id, semantic_id, has_entry_id)
          VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![
-            DATA_SOURCE,
+            dialect.data_source,
             record.request_id,
             record.semantic_id,
             i64::from(record.has_entry_id),
         ],
     )
-    .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
+    .map_err(|error| {
+        AppError::Database(format!(
+            "写入 {} 用量去重账本失败: {error}",
+            dialect.display_name
+        ))
+    })?;
 
     let usage = TokenUsage {
         input_tokens: record.input_tokens,
@@ -936,7 +1088,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
     let costs = record.costs.reported().or_else(|| {
         find_model_pricing(conn, &record.model).map(|pricing| {
             let calculated =
-                CostCalculator::calculate_for_app(APP_TYPE, &usage, &pricing, Decimal::ONE);
+                CostCalculator::calculate_for_app(dialect.app_type, &usage, &pricing, Decimal::ONE);
             (
                 calculated.input_cost,
                 calculated.output_cost,
@@ -971,7 +1123,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
         rusqlite::params![
             record.request_id,
             record.provider_id,
-            APP_TYPE,
+            dialect.app_type,
             record.model,
             record.request_model,
             record.model,
@@ -990,15 +1142,20 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             record.status_code,
             record.error_message,
             record.session_id,
-            Some(DATA_SOURCE),
+            Some(dialect.data_source),
             1i64,
             "1.0",
             record.created_at,
-            DATA_SOURCE,
+            dialect.data_source,
         ],
     )
     .map(|changed| changed > 0)
-    .map_err(|error| AppError::Database(format!("插入 Pi 会话用量失败: {error}")))
+    .map_err(|error| {
+        AppError::Database(format!(
+            "插入 {} 会话用量失败: {error}",
+            dialect.display_name
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -1007,6 +1164,11 @@ mod tests {
     use serde_json::json;
     use std::fs::FileTimes;
     use std::io::Write;
+
+    /// Pi 方言下的同步入口；OMP 侧的行为差异由 `omp_dialect_*` 测试单独覆盖。
+    fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
+        sync_usage_files(db, &PI_DIALECT, files)
+    }
 
     fn session_path(root: &Path, name: &str) -> PathBuf {
         root.join(format!("{name}.jsonl"))
@@ -1090,7 +1252,7 @@ mod tests {
             "INSERT OR REPLACE INTO session_log_sync
              (file_path, last_modified, last_line_offset, last_synced_at)
              VALUES (?1, 0, 0, ?2)",
-            rusqlite::params![CHILD_CUTOFF_KEY, seconds],
+            rusqlite::params![PI_DIALECT.child_cutoff_key, seconds],
         )?;
         Ok(())
     }
@@ -1124,9 +1286,10 @@ mod tests {
         ] {
             let mut statement = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
             let plan = statement
-                .query_map(rusqlite::params![DATA_SOURCE, "identity"], |row| {
-                    row.get::<_, String>(3)
-                })?
+                .query_map(
+                    rusqlite::params![PI_DIALECT.data_source, "identity"],
+                    |row| row.get::<_, String>(3),
+                )?
                 .collect::<Result<Vec<_>, _>>()?;
             assert!(
                 plan.iter().any(|step| step.contains(expected)),
@@ -1218,7 +1381,8 @@ mod tests {
 
         let providers = db.get_provider_stats(None, None, Some("pi"), None, None)?;
         assert!(providers.iter().any(|provider| {
-            provider.provider_id == PROVIDER_PLACEHOLDER && provider.provider_name == "Pi (Session)"
+            provider.provider_id == PI_DIALECT.provider_placeholder
+                && provider.provider_name == "Pi (Session)"
         }));
         Ok(())
     }
@@ -1300,7 +1464,8 @@ mod tests {
         message.insert("model".to_string(), Value::String(oversized.clone()));
         message.insert("responseModel".to_string(), Value::String(oversized));
 
-        let record = parse_usage_record(&entry, "session", None, 0).expect("usage record");
+        let record =
+            parse_usage_record(&PI_DIALECT, &entry, "session", None, 0).expect("usage record");
         for label in [record.provider_id, record.model, record.request_model] {
             assert!(label.len() <= MAX_USAGE_LABEL_BYTES);
             assert!(std::str::from_utf8(label.as_bytes()).is_ok());
@@ -1315,8 +1480,8 @@ mod tests {
         entry["timestamp"] = Value::from(i64::MIN);
         entry["message"]["timestamp"] = Value::from(i64::MAX);
 
-        let record =
-            parse_usage_record(&entry, "session", Some(1_700_000_000), 0).expect("usage record");
+        let record = parse_usage_record(&PI_DIALECT, &entry, "session", Some(1_700_000_000), 0)
+            .expect("usage record");
         assert_eq!(record.created_at, 1_700_000_000);
     }
 
@@ -1336,7 +1501,8 @@ mod tests {
                 Value::from(1_700_000_002_250i64),
             ] {
                 entry["timestamp"] = end;
-                let record = parse_usage_record(&entry, "session", None, 0).expect("usage record");
+                let record = parse_usage_record(&PI_DIALECT, &entry, "session", None, 0)
+                    .expect("usage record");
                 assert_eq!(record.latency_ms, 2_250);
                 assert_eq!(record.created_at, 1_700_000_002);
             }
@@ -1363,8 +1529,14 @@ mod tests {
             entry["message"]["timestamp"] = start;
             entry["timestamp"] = end;
             // Header/mtime fallbacks are for created_at only, never latency.
-            let record = parse_usage_record(&entry, "session", Some(1_700_000_000), 1_700_000_000)
-                .expect("usage record");
+            let record = parse_usage_record(
+                &PI_DIALECT,
+                &entry,
+                "session",
+                Some(1_700_000_000),
+                1_700_000_000,
+            )
+            .expect("usage record");
             assert_eq!(record.latency_ms, 0, "{entry}");
         }
     }
@@ -1375,13 +1547,15 @@ mod tests {
             serde_json::from_str(&assistant_line("tool", "2023-11-14T22:13:22Z", 1))
                 .expect("assistant entry");
         entry["message"]["role"] = Value::from("toolResult");
-        let record = parse_usage_record(&entry, "session", None, 0).expect("tool usage");
+        let record =
+            parse_usage_record(&PI_DIALECT, &entry, "session", None, 0).expect("tool usage");
         assert_eq!(record.latency_ms, 0);
 
         entry["usage"] = entry["message"]["usage"].clone();
         for kind in ["compaction", "branch_summary"] {
             entry["type"] = Value::from(kind);
-            let record = parse_usage_record(&entry, "session", None, 0).expect("summary usage");
+            let record =
+                parse_usage_record(&PI_DIALECT, &entry, "session", None, 0).expect("summary usage");
             assert_eq!(record.latency_ms, 0);
         }
     }
@@ -1426,7 +1600,7 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()?;
             assert_eq!(timings, vec![(10_000, None), (20_000, None)]);
         }
-        let stats = db.get_provider_stats(None, None, Some(APP_TYPE), None, None)?;
+        let stats = db.get_provider_stats(None, None, Some(PI_DIALECT.app_type), None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].est_speed_output_tokens, 1_500);
         assert_eq!(stats[0].est_speed_duration_ms, 30_000);
@@ -1728,6 +1902,7 @@ mod tests {
         }
 
         let parsed = parse_pi_file(
+            &PI_DIALECT,
             &path,
             0,
             None,
@@ -2210,7 +2385,7 @@ mod tests {
             let conn = lock_conn!(db.conn);
             Ok(conn.query_row(
                 "SELECT last_synced_at FROM session_log_sync WHERE file_path = ?1",
-                [CHILD_CUTOFF_KEY],
+                [PI_DIALECT.child_cutoff_key],
                 |row| row.get(0),
             )?)
         };
@@ -2224,6 +2399,104 @@ mod tests {
         let second = sync_pi_files(&db, &[]);
         assert!(second.errors.is_empty(), "{:?}", second.errors);
         assert_eq!(recorded(&db)?, 42);
+        Ok(())
+    }
+
+    fn omp_rows(db: &Database, data_source: &str) -> Result<(i64, i64), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0)
+             FROM proxy_request_logs WHERE data_source = ?1",
+            [data_source],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(AppError::from)
+    }
+
+    #[test]
+    fn omp_dialect_lands_in_its_own_namespace_without_swallowing_pi() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let omp = session_path(temp.path(), "omp-session");
+        let pi = session_path(temp.path(), "pi-session");
+        let header = |id: &str| {
+            format!(
+                r#"{{"type":"session","version":3,"id":"{id}","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}}"#
+            )
+        };
+        let call = assistant_line("shared", "2023-11-14T22:13:21Z", 10);
+        let bare = assistant_line("bare", "2023-11-14T22:13:22Z", 3)
+            .replace(r#""provider":"fixture-provider","#, "");
+        write_lines(&omp, &[&header("omp-a"), &call, &bare]);
+        write_lines(&pi, &[&header("pi-a"), &call]);
+
+        let db = Database::memory()?;
+        let omp_result = sync_usage_files(&db, &OMP_DIALECT, std::slice::from_ref(&omp));
+        assert!(omp_result.errors.is_empty(), "{:?}", omp_result.errors);
+        assert_eq!(omp_result.imported, 2);
+        let pi_result = sync_pi_files(&db, std::slice::from_ref(&pi));
+        assert!(pi_result.errors.is_empty(), "{:?}", pi_result.errors);
+        assert_eq!(pi_result.imported, 1);
+
+        let conn = lock_conn!(db.conn);
+        let labeled: (String, String, String) = conn.query_row(
+            "SELECT app_type, provider_id, provider_type FROM proxy_request_logs
+             WHERE data_source = 'omp_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        // assistant 行带请求里的真实 provider；占位符只给无 provider 标签的行
+        assert_eq!(
+            labeled,
+            (
+                "omp".to_string(),
+                "fixture-provider".to_string(),
+                "omp_session".to_string()
+            )
+        );
+        drop(conn);
+
+        // Same content, different dialects: both rows survive with distinct
+        // request ids (proxy_request_logs.request_id is the primary key).
+        assert_eq!(omp_rows(&db, "omp_session")?, (2, 13));
+        assert_eq!(omp_rows(&db, "pi_session")?, (1, 10));
+
+        let stats = db.get_provider_stats(None, None, Some("omp"), None, None)?;
+        assert!(stats.iter().any(|provider| {
+            provider.provider_id == OMP_DIALECT.provider_placeholder
+                && provider.provider_name == "Oh My Pi (Session)"
+        }));
+
+        // Each dialect tracks its own child cutoff row.
+        let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
+        assert!(cursors.contains_key(OMP_DIALECT.child_cutoff_key));
+        assert!(cursors.contains_key(PI_DIALECT.child_cutoff_key));
+        Ok(())
+    }
+
+    #[test]
+    fn omp_dialect_rescans_are_deduped_by_the_omp_ledger() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "omp-dedup");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"omp-dedup","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("first", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+        let db = Database::memory()?;
+        let initial = sync_usage_files(&db, &OMP_DIALECT, std::slice::from_ref(&path));
+        assert_eq!(initial.imported, 1);
+        let second = sync_usage_files(&db, &OMP_DIALECT, std::slice::from_ref(&path));
+        assert_eq!(second.imported, 0);
+
+        // The Pi ledger must not credit OMP rows (and vice versa).
+        let pi_ledger: i64 = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'pi_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pi_ledger, 0);
         Ok(())
     }
 }
