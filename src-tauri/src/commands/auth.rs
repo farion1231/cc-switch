@@ -34,10 +34,12 @@ pub struct ManagedAuthAccount {
     pub reauth_required: bool,
     /// xAI 专用：refresh token 已失效，账号不可再用于请求。
     pub requires_reauth: bool,
-    /// Claude 官方专用：不在 Claude Code 默认登录里的账号，登录约什么时候过期（毫秒）
+    /// Claude 官方账号：不在 Claude Code 默认登录里的账号，登录约什么时候过期（毫秒）；
+    /// Codex：id_token 的 `exp`，这组凭据约什么时候过期（账号刷新后会前移）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub login_expires_at: Option<i64>,
-    /// Claude 官方专用：套餐（`pro` / `max` / `team` / `enterprise`）
+    /// Claude 官方账号：套餐（`pro` / `max` / `team` / `enterprise`）；
+    /// Codex：id_token 里的 ChatGPT 套餐（`plus` / `pro` / `free`…）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
     /// Claude 官方专用：凭据里的 `rateLimitTier`，区分 Max 5x / 20x
@@ -87,8 +89,10 @@ fn map_account(
         is_default: default_account_id == Some(account.id.as_str()),
         reauth_required: account.reauth_required,
         requires_reauth: false,
-        login_expires_at: None,
-        plan: None,
+        // Codex 在 GitHubAccount::from(CodexAccountData) 里从 id_token 读出；
+        // Copilot 恒为 None。
+        login_expires_at: account.login_expires_at,
+        plan: account.plan,
         rate_limit_tier: None,
         id: account.id,
         provider: provider.to_string(),

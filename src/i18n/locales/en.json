@@ -1854,6 +1854,13 @@
     "enterpriseDomainPlaceholder": "e.g. company.ghe.com"
   },
   "codexOauth": {
+    "plan": {
+      "free": "Free",
+      "plus": "Plus",
+      "pro": "Pro",
+      "team": "Team",
+      "enterprise": "Enterprise"
+    },
     "authStatus": "Auth status",
     "notAuthenticated": "Not authenticated",
     "loginRequired": "Please sign in to ChatGPT first",
@@ -4918,6 +4925,8 @@
     "enterpriseDomain": "Enterprise domain",
     "enterpriseDomainRequired": "Enter the enterprise domain first, e.g. company.ghe.com",
     "codexReauthNote": "Missing a sign-in credential (id_token), so it can't be used for Codex managed binding",
+    "codexLoginExpiresOn": "Sign-in expires around {{date}}; it refreshes automatically on use",
+    "codexLoginMaybeExpired": "Sign-in may have expired; it refreshes automatically on use",
     "xaiReauthNote": "Sign-in credential expired; providers using it won't work",
     "statusLoading": "Loading accounts…",
     "xaiStatusLoadFailed": "Couldn't load xAI accounts. Try again.",

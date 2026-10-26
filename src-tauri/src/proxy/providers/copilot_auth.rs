@@ -484,6 +484,14 @@ pub struct GitHubAccount {
     /// Codex：缺少持久化 id_token 的旧账号为 true；Copilot 恒为 false。
     #[serde(default)]
     pub reauth_required: bool,
+    /// 登录凭据里记录的套餐（`plus` / `pro` / `free` / `team` / `enterprise`…）。
+    /// Codex：id_token JWT 里的 ChatGPT 套餐；Copilot 恒为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    /// Codex：id_token 的 `exp`（毫秒），这组凭据大约什么时候过期，账号刷新后会前移；
+    /// 真正的订阅续费到期日上游不提供。Copilot 恒为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login_expires_at: Option<i64>,
 }
 
 impl From<&GitHubAccountData> for GitHubAccount {
@@ -495,6 +503,8 @@ impl From<&GitHubAccountData> for GitHubAccount {
             authenticated_at: data.authenticated_at,
             github_domain: data.github_domain.clone(),
             reauth_required: false,
+            plan: None,
+            login_expires_at: None,
         }
     }
 }
@@ -689,6 +699,8 @@ impl CopilotAuthManager {
             authenticated_at: now,
             github_domain,
             reauth_required: false,
+            plan: None,
+            login_expires_at: None,
         };
 
         {
@@ -1862,6 +1874,8 @@ mod tests {
                 authenticated_at: 1234567890,
                 github_domain: DEFAULT_GITHUB_DOMAIN.to_string(),
                 reauth_required: false,
+                plan: None,
+                login_expires_at: None,
             }],
             default_account_id: Some("12345".to_string()),
             migration_error: None,
