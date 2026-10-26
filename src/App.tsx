@@ -488,6 +488,27 @@ function App() {
     }
   });
 
+  // 上游响应回显的模型与请求模型不一致（疑似供应商偷换模型）：非阻塞告警
+  useTauriEvent<{
+    appType: string;
+    providerId: string;
+    providerName: string;
+    requestModel: string;
+    outboundModel?: string | null;
+    responseModel: string;
+  }>("provider-model-mismatch", (payload) => {
+    toast.warning(
+      t("proxy.modelMismatch.detected", {
+        provider: payload.providerName,
+        requestModel: payload.requestModel,
+        responseModel: payload.responseModel,
+        defaultValue:
+          "模型不一致：供应商「{{provider}}」请求 {{requestModel}}，实际响应 {{responseModel}}",
+      }),
+      { closeButton: true },
+    );
+  });
+
   // 应用项目后刷新相关缓存（providers 由既有 provider-switched 监听承接；
   // proxy 状态由后端直接改 DB，不走 mutation，必须显式刷新）
   useTauriEvent("profile-applied", async () => {

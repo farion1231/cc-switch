@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Switch } from "@/components/ui/switch";
 import { Save, Loader2, Info } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useAppProxyConfig, useUpdateAppProxyConfig } from "@/lib/query/proxy";
@@ -33,6 +34,7 @@ export function AutoFailoverConfigPanel({
     circuitTimeoutSeconds: "60",
     circuitErrorRateThreshold: "50", // 存储百分比值
     circuitMinRequests: "10",
+    modelMismatchBreaker: false,
   });
 
   useEffect(() => {
@@ -50,6 +52,7 @@ export function AutoFailoverConfigPanel({
           Math.round(config.circuitErrorRateThreshold * 100),
         ),
         circuitMinRequests: String(config.circuitMinRequests),
+        modelMismatchBreaker: config.modelMismatchBreaker,
       });
     }
   }, [config]);
@@ -172,6 +175,7 @@ export function AutoFailoverConfigPanel({
         circuitTimeoutSeconds: raw.circuitTimeoutSeconds,
         circuitErrorRateThreshold: raw.circuitErrorRateThreshold / 100,
         circuitMinRequests: raw.circuitMinRequests,
+        modelMismatchBreaker: formData.modelMismatchBreaker,
       });
       toast.success(
         t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),
@@ -199,6 +203,7 @@ export function AutoFailoverConfigPanel({
           Math.round(config.circuitErrorRateThreshold * 100),
         ),
         circuitMinRequests: String(config.circuitMinRequests),
+        modelMismatchBreaker: config.modelMismatchBreaker,
       });
     }
   };
@@ -491,6 +496,32 @@ export function AutoFailoverConfigPanel({
                 )}
               </p>
             </div>
+          </div>
+
+          <div className="flex items-start justify-between gap-4 pt-1">
+            <div className="space-y-1">
+              <Label htmlFor={`modelMismatchBreaker-${appType}`}>
+                {t(
+                  "proxy.autoFailover.modelMismatchBreaker",
+                  "模型不一致时熔断",
+                )}
+              </Label>
+              <p className="text-xs text-fg-2">
+                {t(
+                  "proxy.autoFailover.modelMismatchBreakerHint",
+                  "上游返回的模型与请求的模型不一致（如请求 gpt-6 实际用 luna 响应）时，计入一次熔断器失败，达到阈值后跳过该供应商。默认关闭：只弹提示不熔断。",
+                )}
+              </p>
+            </div>
+            <Switch
+              id={`modelMismatchBreaker-${appType}`}
+              size="sm"
+              checked={formData.modelMismatchBreaker}
+              onCheckedChange={(checked) =>
+                setFormData({ ...formData, modelMismatchBreaker: checked })
+              }
+              disabled={isDisabled}
+            />
           </div>
         </div>
 
