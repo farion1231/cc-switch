@@ -27,6 +27,11 @@ enum CodingPlanProvider {
     OpencodeGo,
     /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
     CommandCode,
+    /// 阿里云百炼 / 千问AI平台 Token Plan（base_url 形如
+    /// `https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic`）。
+    /// 用量接口在控制台网关（非模型域），鉴权用 AK/SK 换的临时 console token，
+    /// 套餐的 `sk-sp-...` Key 只授权模型调用，不授权控制台查询（#7484 实测）。
+    Bailian,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -59,6 +64,11 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 额度，不在此命中。用量探测本身是双 plan 自动探测（GetAFPUsage →
         // GetCodingPlanUsage），无需在此区分两种订阅。
         Some(CodingPlanProvider::Volcengine)
+    } else if url.contains("token-plan") && url.contains("maas.aliyuncs.com") {
+        // 百炼 Token Plan 数据面入口形如 `token-plan.<region>.maas.aliyuncs.com`
+        //（与「千问AI平台 Token Plan」预设一致）。`maas.aliyuncs.com` 单独出现
+        // 不一定是套餐入口，要求两个子串同时命中。
+        Some(CodingPlanProvider::Bailian)
     } else {
         None
     }
@@ -76,6 +86,7 @@ pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
         CodingPlanProvider::Volcengine => "volcengine",
         CodingPlanProvider::OpencodeGo => "opencode_go",
         CodingPlanProvider::CommandCode => "command_code",
+        CodingPlanProvider::Bailian => "bailian",
     })
 }
 
@@ -1361,8 +1372,11 @@ fn volc_sha256_hex(data: &[u8]) -> String {
     format!("{:x}", Sha256::digest(data))
 }
 
-/// RFC3986 unreserved 之外全部按 `%XX` 编码（用于 canonical query string）。
-fn volc_uri_encode(input: &str) -> String {
+/// RFC3986 unreserved 之外全部按 `%XX` 编码（用于 canonical query string 与
+/// bailian 网关的 query/表单编码；对 ASCII unreserved 字符集外的同一输入，
+/// 与 JS `URLSearchParams` 的 form-urlencoded 序列化逐字节一致——本模块的
+/// 取值只含 unreserved 与 `/`，两种编码产物相同）。
+fn uri_encode_rfc3986(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for byte in input.bytes() {
         match byte {
@@ -1389,7 +1403,7 @@ fn volcengine_canonical_query(action: &str, region: &str) -> String {
     pairs.sort_by(|a, b| a.0.cmp(b.0));
     pairs
         .iter()
-        .map(|(k, v)| format!("{}={}", volc_uri_encode(k), volc_uri_encode(v)))
+        .map(|(k, v)| format!("{}={}", uri_encode_rfc3986(k), uri_encode_rfc3986(v)))
         .collect::<Vec<_>>()
         .join("&")
 }
@@ -1722,6 +1736,611 @@ async fn query_volcengine(
     }
 }
 
+// ── 阿里云百炼 / 千问AI平台 Token Plan ──────────────────────
+//
+// 与火山同理，套餐的 `sk-sp-...` 数据面 Key **不授权控制台查询**（#7484 实测：
+// 拿它查网关回 HTTP 200 + `BailianGateway.Login.NotLogined`），用量接口在百炼
+// 控制台网关，鉴权用**临时 console access token**。两步链路：
+//   ① ACS3-HMAC-SHA256 签名 POST GenerateCLIAccessToken（ModelStudio OpenAPI，
+//      版本 2026-02-10）→ `cliAccessToken`（CLI 侧数日有效，这里内存缓存 10 分钟削峰）；
+//   ② Bearer 该 token POST `bailian-cs.console.aliyun.com/cli/api.json` 网关
+//      （form body：params=<JSON>&region=...），api 为
+//      `zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage`。
+// token 过期时网关回 HTTP 200 + `success:false` + `NotLogined` 错误码（不是 4xx），
+// 因此凭据类判定主要靠错误码；`NotLogined` 刷新 token 重试一次。RAM 子账号还需
+// 被授权进百炼业务空间（官方 `bl workspace init` 会做），否则回
+// `BailianGateway.Team.NotAuthorised`——这不是凭据错误，单独给引导文案。
+// 接口无公开文档，字段按官方 CLI（modelstudioai/cli 的 usage/token-plan）与
+// 社区实测对照做防御式解析。
+
+const BAILIAN_OPENAPI_HOST: &str = "modelstudio.cn-beijing.aliyuncs.com";
+const BAILIAN_TOKEN_PATH: &str = "/modelstudio/cli/generateAccessToken";
+const BAILIAN_TOKEN_ACTION: &str = "GenerateCLIAccessToken";
+const BAILIAN_API_VERSION: &str = "2026-02-10";
+const BAILIAN_CONTENT_TYPE: &str = "application/json";
+
+/// 网关查询参数（路径固定走 CLI 通道 `/cli/api.json`；控制台页面通道是
+/// `/data/api.json` + Cookie，这里不用）。
+const BAILIAN_GATEWAY_HOST: &str = "bailian-cs.console.aliyuncs.com";
+const BAILIAN_GATEWAY_PATH: &str = "/cli/api.json";
+const BAILIAN_GATEWAY_ACTION: &str = "BroadScopeAspnGateway";
+const BAILIAN_GATEWAY_PRODUCT: &str = "sfm_bailian";
+const BAILIAN_USAGE_API: &str = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
+/// Token Plan 个人版目前只有国内站（cn-beijing）；base_url 里认不出 region 时的回落值。
+const BAILIAN_DEFAULT_REGION: &str = "cn-beijing";
+
+/// console token 内存缓存时长（CLI 侧 token 数日有效，短 TTL 仅用于削峰）。
+const BAILIAN_TOKEN_TTL_MS: i64 = 10 * 60 * 1000;
+
+/// ACS3-HMAC-SHA256（阿里云 V3 签名）的 SignedHeaders 集合固定，按字母序。
+const BAILIAN_SIGNED_HEADERS: &str = "content-type;host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version";
+
+/// 鉴权失败时的引导文案（ModelStudio OpenAPI 侧）。
+const BAILIAN_AKSK_HINT: &str = "Check the AccessKey ID / Secret are correct and the RAM user has modelstudio:GenerateCLIAccessToken permission.";
+
+/// 业务空间未授权的引导文案（`BailianGateway.Team.NotAuthorised`）。
+const BAILIAN_WORKSPACE_HINT: &str = "The RAM user must be added to the Bailian workspace before Token Plan usage can be queried (run `bl workspace init` or grant workspace access in the Bailian console).";
+
+/// 复用已有的 HMAC/SHA-256 小工具（与火山签名共用实现）。
+fn bailian_sha256_hex(data: &[u8]) -> String {
+    volc_sha256_hex(data)
+}
+
+fn bailian_hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    volc_hmac_sha256(key, data)
+}
+
+/// 从数据面 base_url 提取网关 `region` 表单值（如
+/// `token-plan.cn-beijing.maas.aliyuncs.com` → `cn-beijing`）；认不出时回落
+/// cn-beijing（个人版 Token Plan 目前仅国内站）。
+fn bailian_region(base_url: &str) -> String {
+    let host = base_url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(base_url)
+        .split('/')
+        .next()
+        .unwrap_or("");
+    host.split('.')
+        .find(|p| p.starts_with("cn-") || p.starts_with("ap-"))
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| BAILIAN_DEFAULT_REGION.to_string())
+}
+
+/// 构造 ACS3-HMAC-SHA256 的 Authorization 头。
+///
+/// 与火山变体/SigV4 的三点差异（对照官方 V3 签名文档与已验证网关的实现）：
+///   1. StringToSign 只有 `ACS3-HMAC-SHA256\nSHA256(CanonicalRequest)` 两行——
+///      **不含时间戳**，时间在 `x-acs-date` 头里参与 canonical headers；
+///   2. 签名密钥就是裸 SK（**无密钥派生**，SigV4/火山都要先 HMAC 出 kDate）；
+///   3. Authorization 无 scope 段：`ACS3-HMAC-SHA256 Credential={AK},SignedHeaders=...,Signature=...`。
+///
+/// canonical headers 按字母序（host/content-type/x-acs-*），canonical query 为空
+/// （Action/Version 走 `x-acs-*` 头而非 query）。`date`/`nonce` 由调用方注入便于
+/// 确定性单测；返回 `(Authorization, x-acs-content-sha256)`。
+#[allow(clippy::too_many_arguments)]
+fn bailian_acs3_sign(
+    access_key_id: &str,
+    secret_access_key: &str,
+    host: &str,
+    pathname: &str,
+    action: &str,
+    version: &str,
+    body: &[u8],
+    date: &str,
+    nonce: &str,
+) -> (String, String) {
+    let content_sha256 = bailian_sha256_hex(body);
+    // 与 BAILIAN_SIGNED_HEADERS 逐字对应（字母序）。
+    let canonical_headers = format!(
+        "content-type:{BAILIAN_CONTENT_TYPE}\nhost:{host}\nx-acs-action:{action}\nx-acs-content-sha256:{content_sha256}\nx-acs-date:{date}\nx-acs-signature-nonce:{nonce}\nx-acs-version:{version}\n"
+    );
+    let canonical_request = format!(
+        "POST\n{pathname}\n\n{canonical_headers}\n{BAILIAN_SIGNED_HEADERS}\n{content_sha256}"
+    );
+    let string_to_sign = format!(
+        "ACS3-HMAC-SHA256\n{}",
+        bailian_sha256_hex(canonical_request.as_bytes())
+    );
+    let signature: String =
+        bailian_hmac_sha256(secret_access_key.as_bytes(), string_to_sign.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+    let authorization = format!(
+        "ACS3-HMAC-SHA256 Credential={access_key_id},SignedHeaders={BAILIAN_SIGNED_HEADERS},Signature={signature}"
+    );
+    (authorization, content_sha256)
+}
+
+/// 缓存条目：AK → (console token, 过期时间毫秒)。
+type TokenCache = std::collections::HashMap<String, (String, i64)>;
+
+/// console token 的内存缓存（键只用 AK，SK 不落映射）。
+fn bailian_token_cache() -> &'static std::sync::Mutex<TokenCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<TokenCache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn bailian_cache_get(access_key_id: &str) -> Option<String> {
+    let now = now_millis();
+    let mut cache = bailian_token_cache().lock().ok()?;
+    // 惰性清理：顺手删掉同 AK 的过期项，避免缓存长期膨胀。
+    cache.retain(|_, (_, expires_at)| *expires_at > now);
+    cache.get(access_key_id).map(|(token, _)| token.clone())
+}
+
+fn bailian_cache_put(access_key_id: &str, token: &str) {
+    if let Ok(mut cache) = bailian_token_cache().lock() {
+        cache.insert(
+            access_key_id.to_string(),
+            (token.to_string(), now_millis() + BAILIAN_TOKEN_TTL_MS),
+        );
+    }
+}
+
+fn bailian_cache_invalidate(access_key_id: &str) {
+    if let Ok(mut cache) = bailian_token_cache().lock() {
+        cache.remove(access_key_id);
+    }
+}
+
+/// 单次 Bailian 调用的归类结果（同 [`VolcCall`] 的分层思路）。
+#[derive(Debug)]
+enum BailianStep {
+    /// 成功：Body 为业务负载（token 接口为 `Value::String`，网关接口为解包后的
+    /// usage 字段对象）。
+    Body(serde_json::Value),
+    /// 网关报 `NotLogined`：console token 失效，可刷新 token 后重试一次。
+    Stale(String),
+    /// 硬鉴权失败（AK/SK 被拒 / 刷新后的 token 仍被拒）——停，不再重试。
+    Auth(String),
+    /// 其他确定性业务错误（含业务空间未授权）。
+    Soft(String),
+    /// 瞬时传输失败（网络/超时/读体中断）——以 `Err` 传播（前端 retry）。
+    Transient(String),
+}
+
+/// 判断 ModelStudio OpenAPI 错误码是否属于鉴权类（AK/SK 无权限/签名错误）。
+fn bailian_is_auth_error_code(code: &str) -> bool {
+    let c = code.to_lowercase();
+    c.contains("nopermission")
+        || c.contains("accessdenied")
+        || c.contains("signature")
+        || c.contains("invalidaccesskey")
+        || c.contains("unauthorized")
+        || c.contains("forbidden")
+        || c.contains("credential")
+}
+
+/// 提取 ModelStudio OpenAPI 响应错误（`Code`/`Message` + `AccessDeniedDetail.AuthAction`）。
+fn bailian_openapi_error(body: &serde_json::Value) -> Option<(String, String)> {
+    let code = body
+        .get("Code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut msg = body
+        .get("Message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if msg.is_empty() {
+        msg = body
+            .get("AccessDeniedDetail")
+            .and_then(|d| d.get("AuthAction"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    if code.is_empty() && msg.is_empty() {
+        None
+    } else {
+        Some((code, msg))
+    }
+}
+
+/// ACS3 签名调 `GenerateCLIAccessToken`，成功返回 `Value::String(cliAccessToken)`。
+async fn bailian_generate_token(access_key_id: &str, secret_access_key: &str) -> BailianStep {
+    let client = crate::proxy::http_client::get();
+    let date = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let body: &[u8] = b"";
+    let (authorization, content_sha256) = bailian_acs3_sign(
+        access_key_id,
+        secret_access_key,
+        BAILIAN_OPENAPI_HOST,
+        BAILIAN_TOKEN_PATH,
+        BAILIAN_TOKEN_ACTION,
+        BAILIAN_API_VERSION,
+        body,
+        &date,
+        &nonce,
+    );
+    let url = format!("https://{BAILIAN_OPENAPI_HOST}{BAILIAN_TOKEN_PATH}");
+
+    let resp = client
+        .post(&url)
+        .header("Content-Type", BAILIAN_CONTENT_TYPE)
+        .header("X-ACS-Action", BAILIAN_TOKEN_ACTION)
+        .header("X-ACS-Version", BAILIAN_API_VERSION)
+        .header("X-ACS-Date", &date)
+        .header("X-ACS-Signature-Nonce", &nonce)
+        .header("X-ACS-Content-Sha256", &content_sha256)
+        .header("Authorization", authorization)
+        .body(body.to_vec())
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return BailianStep::Transient(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        let raw = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()
+            .and_then(|b| bailian_openapi_error(&b))
+            .map(|(c, m)| format!("{c}: {m}"))
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        return BailianStep::Auth(format!(
+            "Authentication failed ({detail}). {BAILIAN_AKSK_HINT}"
+        ));
+    }
+    if !status.is_success() {
+        let raw = resp.text().await.unwrap_or_default();
+        return BailianStep::Soft(format!(
+            "GenerateCLIAccessToken API error (HTTP {status}): {}",
+            raw.chars().take(300).collect::<String>()
+        ));
+    }
+
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return BailianStep::Transient(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return BailianStep::Soft(format!("Failed to parse response: {e}")),
+    };
+
+    // 网关对 AK/SK 类错误也常回 2xx + Code 信封，与火山同理在这里兜一层。
+    if let Some((code, msg)) = bailian_openapi_error(&body) {
+        if bailian_is_auth_error_code(&code) {
+            return BailianStep::Auth(format!(
+                "Authentication failed ({code}): {msg}. {BAILIAN_AKSK_HINT}"
+            ));
+        }
+        return BailianStep::Soft(format!("GenerateCLIAccessToken API error ({code}): {msg}"));
+    }
+
+    match body
+        .get("cliAccessToken")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(token) => BailianStep::Body(serde_json::Value::String(token.to_string())),
+        None => BailianStep::Soft(format!(
+            "GenerateCLIAccessToken response has no cliAccessToken: {}",
+            body.to_string().chars().take(300).collect::<String>()
+        )),
+    }
+}
+
+/// 取 console token：缓存命中直接用，否则 ACS3 签名换新并写入缓存。
+async fn bailian_get_token(access_key_id: &str, secret_access_key: &str) -> BailianStep {
+    if let Some(token) = bailian_cache_get(access_key_id) {
+        return BailianStep::Body(serde_json::Value::String(token));
+    }
+    match bailian_generate_token(access_key_id, secret_access_key).await {
+        BailianStep::Body(token) => {
+            if let Some(tok) = token.as_str() {
+                bailian_cache_put(access_key_id, tok);
+            }
+            BailianStep::Body(token)
+        }
+        other => other,
+    }
+}
+
+/// 构造网关 query（与 JS `URLSearchParams` 的 action→product→api→_v 序列一致，
+/// 值经 RFC3986 编码，`/` → `%2F`，网关正常解码）。
+fn bailian_gateway_query(api: &str) -> String {
+    [
+        ("action", BAILIAN_GATEWAY_ACTION),
+        ("product", BAILIAN_GATEWAY_PRODUCT),
+        ("api", api),
+        ("_v", ""),
+    ]
+    .iter()
+    .map(|(k, v)| format!("{}={}", uri_encode_rfc3986(k), uri_encode_rfc3986(v)))
+    .collect::<Vec<_>>()
+    .join("&")
+}
+
+/// 构造网关 form body：`params=<JSON>&region=<region>`。
+fn bailian_gateway_body(params_json: &str, region: &str) -> String {
+    format!(
+        "params={}&region={}",
+        uri_encode_rfc3986(params_json),
+        uri_encode_rfc3986(region)
+    )
+}
+
+/// 构造网关 `params` 表单值（与官方 CLI `buildGatewayParams` 同形）。
+fn bailian_gateway_params(api: &str) -> String {
+    serde_json::json!({
+        "Api": api,
+        "V": "1.0",
+        "Data": {
+            "cornerstoneParam": {
+                "protocol": "V2",
+                "console": "ONE_CONSOLE",
+                "productCode": "p_efm",
+                "switchUserType": 3,
+                "consoleSite": "BAILIAN_ALIYUN",
+            }
+        }
+    })
+    .to_string()
+}
+
+/// 解析网关响应（纯函数，便于单测）：
+/// - 非 `success:true` 信封按错误码归类（`NotLogined` → Stale，
+///   `Team.NotAuthorised` → Soft + 业务空间引导，其余 → Soft）；
+/// - 成功时逐层解包 `data.DataV2.data.data`（宽松回退 `data.DataV2.data` →
+///   `data.data` → 原值），返回最内层业务负载。
+fn bailian_gateway_parse(body: &serde_json::Value) -> BailianStep {
+    let null = serde_json::Value::Null;
+    let data = body.get("data").unwrap_or(&null);
+
+    // 失败信封可能出现在外层（data.success）或内层（data.DataV2.data.success）。
+    let mut error_code = String::new();
+    let mut error_msg = String::new();
+    let inner = data
+        .get("DataV2")
+        .and_then(|v| v.get("data"))
+        .unwrap_or(&null);
+    for level in [data, inner] {
+        if level.get("success") == Some(&serde_json::Value::Bool(false)) {
+            error_code = level
+                .get("errorCode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            error_msg = level
+                .get("errorMsg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            break;
+        }
+    }
+
+    if !error_code.is_empty() || !error_msg.is_empty() {
+        if error_code.contains("NotLogined") {
+            return BailianStep::Stale(error_msg);
+        }
+        let mut detail = if error_msg.is_empty() {
+            error_code.clone()
+        } else {
+            format!("{error_code}: {error_msg}")
+        };
+        if error_code.contains("NotAuthorised") {
+            detail.push_str(&format!(". {BAILIAN_WORKSPACE_HINT}"));
+        }
+        return BailianStep::Soft(detail);
+    }
+
+    let payload = data
+        .get("DataV2")
+        .and_then(|v| v.get("data"))
+        .and_then(|v| v.get("data"))
+        .or_else(|| {
+            data.get("DataV2")
+                .and_then(|v| v.get("data"))
+                .or_else(|| data.get("data"))
+        })
+        .unwrap_or(&null);
+    BailianStep::Body(payload.clone())
+}
+
+/// Bearer console token 调网关查一次用量（单次请求，不含刷新重试）。
+async fn bailian_gateway_call(
+    region: &str,
+    token: &str,
+    params_json: &str,
+) -> Result<serde_json::Value, BailianStep> {
+    let client = crate::proxy::http_client::get();
+    let url = format!(
+        "https://{BAILIAN_GATEWAY_HOST}{BAILIAN_GATEWAY_PATH}?{}",
+        bailian_gateway_query(BAILIAN_USAGE_API)
+    );
+    let form = bailian_gateway_body(params_json, region);
+
+    let resp = client
+        .post(&url)
+        .header("Accept", "*/*")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(form)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(BailianStep::Transient(format!("Network error: {e}")));
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let raw = resp.text().await.unwrap_or_default();
+        // 网关业务错误几乎总是 HTTP 200 + success:false；4xx/5xx 里 401/403
+        // 归鉴权（Bearer 被拒），其余按普通 API 错误处理。
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(BailianStep::Auth(format!(
+                "Authentication failed (HTTP {status}). {BAILIAN_AKSK_HINT}"
+            )));
+        }
+        return Err(BailianStep::Soft(format!(
+            "Bailian gateway API error (HTTP {status}): {}",
+            raw.chars().take(300).collect::<String>()
+        )));
+    }
+
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(BailianStep::Transient(format!(
+                "Failed to read response: {e}"
+            )));
+        }
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(BailianStep::Soft(format!("Failed to parse response: {e}")));
+        }
+    };
+    Ok(body)
+}
+
+/// `per*Percentage` 归一化为 0-100 百分数：常态是 **0-1 比值**（官方 CLI 按
+/// ×100 渲染，真实抓包 0.2751 ⇒ 控制台 27.51%）；防御式兼容直接回 0-100 的
+/// 百分数变体（>1 不可能是比值）。钳制到 0-100。
+fn bailian_pct_to_utilization(value: f64) -> f64 {
+    let percent = if value > 1.0 { value } else { value * 100.0 };
+    percent.clamp(0.0, 100.0)
+}
+
+/// 解析 usage 负载为 tier 列表。
+///
+/// 三档窗口字段各自独立、缺失即跳过（官方 CLI 2026-10 起主发 `per1Month*`，
+/// 更早版本回 `per5Hour*`/`per1Week*`，字段可能并存）：百分比缺失时按 0 展示
+///（该窗口可能不限量），重置时间缺失不强求。窗口顺序 5h → 周 → 月。
+fn parse_bailian_tiers(payload: &serde_json::Value) -> Vec<QuotaTier> {
+    let mut tiers = Vec::new();
+    for (pct_key, reset_key, name) in [
+        ("per5HourPercentage", "per5HourResetTime", TIER_FIVE_HOUR),
+        ("per1WeekPercentage", "per1WeekResetTime", TIER_WEEKLY_LIMIT),
+        ("per1MonthPercentage", "per1MonthResetTime", TIER_MONTHLY),
+    ] {
+        let percentage = payload.get(pct_key).and_then(parse_f64);
+        let resets_at = payload.get(reset_key).and_then(extract_reset_time);
+        if percentage.is_none() && resets_at.is_none() {
+            continue;
+        }
+        tiers.push(QuotaTier {
+            name: name.to_string(),
+            utilization: bailian_pct_to_utilization(percentage.unwrap_or(0.0)),
+            resets_at,
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+    tiers
+}
+
+/// 终态步骤转结果：鉴权失败 → 凭据失效，业务错误 → 失败结果，瞬时 → `Err`。
+fn bailian_step_to_result(step: BailianStep) -> Result<SubscriptionQuota, String> {
+    match step {
+        BailianStep::Auth(detail) => Ok(volcengine_auth_error(detail)),
+        BailianStep::Stale(detail) => Ok(volcengine_auth_error(format!(
+            "Authentication failed ({detail}). {BAILIAN_AKSK_HINT}"
+        ))),
+        BailianStep::Soft(detail) => Ok(make_error(detail)),
+        BailianStep::Transient(detail) => Err(detail),
+        BailianStep::Body(_) => Ok(make_error("Unexpected Bailian success payload".to_string())),
+    }
+}
+
+/// 刷新 console token：作废缓存 → 重新 ACS3 签名获取 → 写回缓存。
+async fn bailian_refresh_token(access_key_id: &str, secret_access_key: &str) -> BailianStep {
+    bailian_cache_invalidate(access_key_id);
+    match bailian_generate_token(access_key_id, secret_access_key).await {
+        BailianStep::Body(token) => {
+            if let Some(tok) = token.as_str() {
+                bailian_cache_put(access_key_id, tok);
+            }
+            BailianStep::Body(token)
+        }
+        other => other,
+    }
+}
+
+async fn query_bailian(
+    base_url: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<SubscriptionQuota, String> {
+    let region = bailian_region(base_url);
+    let params_json = bailian_gateway_params(BAILIAN_USAGE_API);
+
+    // 1) 取 console token（缓存命中直接用，否则 ACS3 签名换新）。
+    let mut token = match bailian_get_token(access_key_id, secret_access_key).await {
+        BailianStep::Body(v) => match v.as_str() {
+            Some(tok) => tok.to_string(),
+            None => return Ok(make_error("Empty console token".to_string())),
+        },
+        BailianStep::Transient(detail) => return Err(format!("GenerateCLIAccessToken: {detail}")),
+        other => return bailian_step_to_result(other),
+    };
+
+    // 2) 查用量；`NotLogined`（token 失效）刷新重试一次，再失败即停。
+    //    （Stale 只会从 bailian_gateway_parse 产生——网关业务错误走 HTTP 200 +
+    //    success:false 信封，而非传输层错误。）
+    let mut refreshed = false;
+    let payload = loop {
+        let body = match bailian_gateway_call(&region, &token, &params_json).await {
+            Ok(body) => body,
+            Err(step) => return bailian_step_to_result(step),
+        };
+        match bailian_gateway_parse(&body) {
+            BailianStep::Body(payload) => break payload,
+            BailianStep::Stale(_) if !refreshed => {
+                refreshed = true;
+                token = match bailian_refresh_token(access_key_id, secret_access_key).await {
+                    BailianStep::Body(v) => match v.as_str() {
+                        Some(tok) => tok.to_string(),
+                        None => return Ok(make_error("Empty console token".to_string())),
+                    },
+                    BailianStep::Transient(detail) => {
+                        return Err(format!("GenerateCLIAccessToken: {detail}"))
+                    }
+                    other => return bailian_step_to_result(other),
+                };
+                continue;
+            }
+            BailianStep::Stale(detail) => {
+                return Ok(volcengine_auth_error(format!(
+                    "Authentication failed ({detail}). {BAILIAN_AKSK_HINT}"
+                )))
+            }
+            step => return bailian_step_to_result(step),
+        }
+    };
+
+    // 3) 解析三档窗口；解析不出时带原始响应用于诊断（区分"真没订阅"与"字段
+    //    改名/包裹层变化"）。
+    let tiers = parse_bailian_tiers(&payload);
+    if !tiers.is_empty() {
+        return Ok(volcengine_success(tiers, Some("Token Plan".to_string())));
+    }
+    Ok(make_error(format!(
+        "No Token Plan usage data found (authenticated OK). Raw: {}",
+        payload.to_string().chars().take(700).collect::<String>()
+    )))
+}
+
 // ── 公开入口 ────────────────────────────────────────────────
 
 /// 构造"凭据缺失 / 域名未命中"的失败结果（NotFound 状态 + 明确错误文案）。
@@ -1876,17 +2495,28 @@ pub(crate) async fn query_coding_plan(
         None => return Ok(Quota(coding_plan_not_found("Unknown coding plan provider"))),
     };
 
-    // 火山方舟走控制面 AK/SK 签名（区别于其他供应商的数据面 Bearer api_key），凭据
-    // 校验与查询路径都不同，单独分支提前处理。
-    if let CodingPlanProvider::Volcengine = provider {
+    // 火山方舟与百炼 Token Plan 都走 AK/SK 签名（区别于其他供应商的数据面
+    // Bearer api_key），凭据校验与查询路径都不同，单独分支提前处理。
+    if matches!(
+        provider,
+        CodingPlanProvider::Volcengine | CodingPlanProvider::Bailian
+    ) {
         let ak = access_key_id.unwrap_or("").trim();
         let sk = secret_access_key.unwrap_or("").trim();
         if ak.is_empty() || sk.is_empty() {
-            return Ok(Quota(coding_plan_not_found(
-                "Volcengine usage query needs the account AccessKey ID + Secret (not the inference API key)",
-            )));
+            // 百炼的推理 Key 是 sk-sp- 前缀的数据面 Key，不授权控制台查询，
+            // 必须显式提示填账号级 AK/SK。
+            let msg = if matches!(provider, CodingPlanProvider::Bailian) {
+                "Bailian Token Plan usage query needs the Alibaba Cloud AccessKey ID + Secret (not the sk-sp- inference key)"
+            } else {
+                "Volcengine usage query needs the account AccessKey ID + Secret (not the inference API key)"
+            };
+            return Ok(Quota(coding_plan_not_found(msg)));
         }
-        return query_volcengine(base_url, ak, sk).await.map(Quota);
+        return match provider {
+            CodingPlanProvider::Bailian => query_bailian(base_url, ak, sk).await.map(Quota),
+            _ => query_volcengine(base_url, ak, sk).await.map(Quota),
+        };
     }
 
     // 其余供应商：数据面 Bearer api_key。
@@ -1905,9 +2535,9 @@ pub(crate) async fn query_coding_plan(
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
         CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
         CodingPlanProvider::CommandCode => query_command_code(api_key).await,
-        // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
-        CodingPlanProvider::Volcengine => {
-            unreachable!("volcengine handled via AK/SK branch above")
+        // 火山/百炼已在上面的 AK/SK 分支提前返回，此处不可达。
+        CodingPlanProvider::Volcengine | CodingPlanProvider::Bailian => {
+            unreachable!("AK/SK providers handled via the AK/SK branch above")
         }
     };
     quota.map(Quota)
@@ -1916,12 +2546,15 @@ pub(crate) async fn query_coding_plan(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
-        parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
-        query_command_code_at, query_zhipu_at, query_zhipu_team_at, volcengine_canonical_query,
-        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
-        volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base, CodingPlanOutcome,
-        CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        bailian_acs3_sign, bailian_gateway_body, bailian_gateway_params, bailian_gateway_parse,
+        bailian_gateway_query, bailian_is_auth_error_code, bailian_pct_to_utilization,
+        bailian_region, detect_provider, parse_afp_tiers, parse_bailian_tiers,
+        parse_coding_plan_tiers, parse_command_code_quota, parse_minimax_tiers,
+        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_command_code_at, query_zhipu_at,
+        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
+        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_outcome_from_body,
+        zhipu_quota_base, BailianStep, CodingPlanOutcome, CodingPlanProvider, CredentialStatus,
+        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -3018,6 +3651,270 @@ mod tests {
         // 确定性：同输入同输出。
         let (auth2, _, _) = volcengine_sign("AKLTtest", "secretkey", region, &query, b"", now);
         assert_eq!(auth, auth2);
+    }
+
+    // ── 百炼 Token Plan ────────────────────────────────────────
+
+    #[test]
+    fn bailian_detects_token_plan_maas_hosts() {
+        for base_url in [
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+            "https://TOKEN-PLAN.CN-BEIJING.MAAS.ALIYUNCS.COM/apps/anthropic",
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/v1",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::Bailian)
+            ));
+        }
+        // maas.aliyuncs.com 单独出现不一定是套餐入口，两个子串必须同时命中。
+        assert!(detect_provider("https://gw.maas.aliyuncs.com/v1").is_none());
+        assert!(detect_provider("https://token-plan.example.com/v1").is_none());
+        assert!(
+            detect_provider("https://dashscope.aliyuncs.com/apps/anthropic").is_none(),
+            "按量付费入口不应命中 Token Plan"
+        );
+    }
+
+    #[test]
+    fn bailian_region_derivation() {
+        assert_eq!(
+            bailian_region("https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"),
+            "cn-beijing"
+        );
+        assert_eq!(
+            bailian_region("https://token-plan.cn-shanghai.maas.aliyuncs.com/v1"),
+            "cn-shanghai"
+        );
+        // 认不出 region 段回落 cn-beijing（个人版 Token Plan 目前仅国内站）。
+        assert_eq!(bailian_region("https://example.com/v1"), "cn-beijing");
+    }
+
+    #[test]
+    fn bailian_acs3_sign_matches_golden_vector() {
+        // 金标准向量由公开 ACS3-HMAC-SHA256 规范独立实现（node crypto）算出：
+        // 空 body、固定 date/nonce。锁定 canonical headers 字母序、StringToSign
+        // 无时间戳行、裸 SK 签名密钥与 Authorization 无 scope 段四个契约点。
+        let (auth, content_sha) = bailian_acs3_sign(
+            "AKtest",
+            "secretkey",
+            "modelstudio.cn-beijing.aliyuncs.com",
+            "/modelstudio/cli/generateAccessToken",
+            "GenerateCLIAccessToken",
+            "2026-02-10",
+            b"",
+            "2024-06-21T00:00:00Z",
+            "deterministic-nonce-7484",
+        );
+        // 空 body 的 SHA-256（固定值）。
+        assert_eq!(
+            content_sha,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            auth,
+            "ACS3-HMAC-SHA256 Credential=AKtest,SignedHeaders=content-type;host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version,Signature=3ab089c9a79f71edd4d91319e17be389305197dac86c01d72a7be5f5debb7176"
+        );
+
+        // 确定性：同输入同输出；nonce 变化必须改变签名（nonce 参与规范头）。
+        let (auth2, _) = bailian_acs3_sign(
+            "AKtest",
+            "secretkey",
+            "modelstudio.cn-beijing.aliyuncs.com",
+            "/modelstudio/cli/generateAccessToken",
+            "GenerateCLIAccessToken",
+            "2026-02-10",
+            b"",
+            "2024-06-21T00:00:00Z",
+            "deterministic-nonce-7484",
+        );
+        assert_eq!(auth, auth2);
+        let (auth3, _) = bailian_acs3_sign(
+            "AKtest",
+            "secretkey",
+            "modelstudio.cn-beijing.aliyuncs.com",
+            "/modelstudio/cli/generateAccessToken",
+            "GenerateCLIAccessToken",
+            "2026-02-10",
+            b"",
+            "2024-06-21T00:00:00Z",
+            "other-nonce",
+        );
+        assert_ne!(auth3, auth);
+    }
+
+    #[test]
+    fn bailian_is_auth_error_code_classification() {
+        assert!(bailian_is_auth_error_code("NoPermission"));
+        assert!(bailian_is_auth_error_code("AccessDenied"));
+        assert!(bailian_is_auth_error_code("SignatureDoesNotMatch"));
+        assert!(bailian_is_auth_error_code("InvalidAccessKeyId.NotFound"));
+        assert!(!bailian_is_auth_error_code("InvalidParameter.Action"));
+        assert!(!bailian_is_auth_error_code("InternalError"));
+    }
+
+    #[test]
+    fn bailian_gateway_query_and_params_shape() {
+        // 与官方 CLI 的 `?action=...&product=...&api=...` 序列一致，api 里的
+        // `/` 编码为 %2F（网关正常解码）。
+        assert_eq!(
+            bailian_gateway_query("zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage"),
+            "action=BroadScopeAspnGateway&product=sfm_bailian&api=zeldaHttp.apikeyMgr.%2Ftokenplan%2Fpersonal%2Fapi%2Fv2%2Fusage&_v="
+        );
+
+        let params = bailian_gateway_params("zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage");
+        let parsed: serde_json::Value = serde_json::from_str(&params).unwrap();
+        assert_eq!(
+            parsed["Api"],
+            "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage"
+        );
+        assert_eq!(parsed["V"], "1.0");
+        assert_eq!(parsed["Data"]["cornerstoneParam"]["protocol"], "V2");
+        assert_eq!(parsed["Data"]["cornerstoneParam"]["console"], "ONE_CONSOLE");
+        assert_eq!(parsed["Data"]["cornerstoneParam"]["productCode"], "p_efm");
+        assert_eq!(parsed["Data"]["cornerstoneParam"]["switchUserType"], 3);
+        assert_eq!(
+            parsed["Data"]["cornerstoneParam"]["consoleSite"],
+            "BAILIAN_ALIYUN"
+        );
+
+        let body = bailian_gateway_body(&params, "cn-beijing");
+        assert!(body.starts_with("params=%7B%22Api%22"));
+        assert!(
+            body.ends_with("&region=cn-beijing"),
+            "unexpected body: {body}"
+        );
+    }
+
+    #[test]
+    fn bailian_gateway_parse_unwraps_envelope_and_classifies_errors() {
+        // 成功双信封：data.DataV2.data.data。
+        let ok = json!({
+            "code": "200",
+            "httpStatusCode": "200",
+            "data": {
+                "success": true,
+                "DataV2": { "data": { "data": {
+                    "per5HourPercentage": 0.5,
+                    "per5HourResetTime": 1786000000000_i64,
+                    "per1WeekPercentage": 0.25,
+                    "per1WeekResetTime": 1786100000000_i64
+                } } }
+            }
+        });
+        match bailian_gateway_parse(&ok) {
+            BailianStep::Body(payload) => {
+                assert_eq!(payload["per5HourPercentage"], 0.5);
+                assert_eq!(payload["per1WeekPercentage"], 0.25);
+            }
+            other => panic!("expected Body, got {other:?}"),
+        }
+
+        // 未登录：外层信封 success:false + NotLogined → Stale（可刷新重试）。
+        let not_logined = json!({
+            "code": "200",
+            "data": {
+                "success": false,
+                "errorCode": "BailianGateway.Login.NotLogined",
+                "errorMsg": "BailianGateway.Login.NotLogined"
+            }
+        });
+        assert!(matches!(
+            bailian_gateway_parse(&not_logined),
+            BailianStep::Stale(_)
+        ));
+
+        // 业务空间未授权：Soft + 引导文案（不是凭据失效）。
+        let not_authorised = json!({
+            "code": "200",
+            "data": {
+                "success": false,
+                "errorCode": "BailianGateway.Team.NotAuthorised",
+                "errorMsg": "team not authorised"
+            }
+        });
+        match bailian_gateway_parse(&not_authorised) {
+            BailianStep::Soft(detail) => {
+                assert!(detail.contains("team not authorised"));
+                assert!(detail.contains("workspace"), "missing hint: {detail}");
+            }
+            other => panic!("expected Soft, got {other:?}"),
+        }
+
+        // 其他错误码：普通 Soft。错误码也可能出现在内层信封。
+        let inner_error = json!({
+            "data": {
+                "DataV2": { "data": {
+                    "success": false,
+                    "errorCode": "BailianGateway.SomethingElse",
+                    "errorMsg": "boom"
+                } }
+            }
+        });
+        match bailian_gateway_parse(&inner_error) {
+            BailianStep::Soft(detail) => assert!(detail.contains("SomethingElse")),
+            other => panic!("expected Soft, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bailian_tiers_parse_ratio_percent_and_missing_windows() {
+        // 常态 0-1 比值（官方 CLI ×100 渲染）+ 百分数变体（>1）并存防御。
+        let payload = json!({
+            "per5HourPercentage": 0.5,
+            "per5HourResetTime": 1786000000000_i64,
+            "per1WeekPercentage": 0.2750906925,
+            "per1WeekResetTime": 1786100000000_i64,
+            "per1MonthPercentage": 45.0
+        });
+        let tiers = parse_bailian_tiers(&payload);
+        assert_eq!(tiers.len(), 3);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 50.0).abs() < 1e-9);
+        // 毫秒时间戳经 extract_reset_time 转 ISO 8601（1786000000000 → 2026-08-06T07:06:40Z）。
+        assert_eq!(
+            tiers[0].resets_at.as_deref(),
+            Some("2026-08-06T07:06:40+00:00")
+        );
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 27.50906925).abs() < 1e-9);
+        assert_eq!(tiers[2].name, TIER_MONTHLY);
+        assert!(
+            (tiers[2].utilization - 45.0).abs() < 1e-9,
+            "百分数变体不放大"
+        );
+        assert_eq!(tiers[2].resets_at, None, "百分比 0/缺失时通常无 reset 时间");
+
+        // 官方 CLI 2026-10 形态：仅月度窗口。
+        let monthly_only = json!({
+            "per1MonthPercentage": 0.3,
+            "per1MonthResetTime": 1786100000000_i64
+        });
+        let tiers = parse_bailian_tiers(&monthly_only);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_MONTHLY);
+        assert!((tiers[0].utilization - 30.0).abs() < 1e-9);
+
+        // 周窗口 0 用量（可能不带 reset 时间）仍展示。
+        let zero_week = json!({ "per1WeekPercentage": 0 });
+        let tiers = parse_bailian_tiers(&zero_week);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[0].utilization, 0.0);
+        assert_eq!(tiers[0].resets_at, None);
+
+        // 缺失窗口跳过；空负载无 tier（调用方据此带原始响应报错）。
+        assert!(parse_bailian_tiers(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn bailian_pct_to_utilization_edges() {
+        assert_eq!(bailian_pct_to_utilization(0.0), 0.0);
+        assert_eq!(bailian_pct_to_utilization(1.0), 100.0, "1.0 按比值取满");
+        assert!((bailian_pct_to_utilization(0.5) - 50.0).abs() < 1e-9);
+        assert!((bailian_pct_to_utilization(45.0) - 45.0).abs() < 1e-9);
+        assert_eq!(bailian_pct_to_utilization(120.0), 100.0, "钳制上限");
+        assert_eq!(bailian_pct_to_utilization(-0.1), 0.0, "钳制下限");
     }
 
     #[test]

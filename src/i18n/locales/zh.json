@@ -2624,6 +2624,8 @@
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "火山用量查询需账号级 AccessKey ID / Secret（与推理 API Key 不同）。请在火山引擎控制台右上角账号菜单 →「API访问密钥」中创建。",
     "volcengineKeyConsoleLink": "密钥创建地址：",
+    "bailianAkSkHint": "百炼 Token Plan 用量查询需阿里云账号级 AccessKey ID / Secret（不是套餐的 sk-sp- 推理 Key）：先用 AK/SK 签名换取临时 console token，再查控制台网关。RAM 子账号还需被授权进百炼业务空间（可运行 bl workspace init）。",
+    "bailianKeyConsoleLink": "AccessKey 创建地址：",
     "zhipuTeamHint": "智谱团队套餐用量查询需团队 API Key（沿用本供应商凭据）+ 组织 ID + 项目 ID（作为请求头 bigmodel-organization / bigmodel-project）。组织与项目 ID 可在团队管理后台用量页的 URL 中找到。",
     "zhipuTeamConsoleLink": "团队用量页：",
     "organizationId": "组织 ID",
