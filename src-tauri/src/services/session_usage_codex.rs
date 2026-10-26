@@ -5954,60 +5954,71 @@ mod tests {
 
     #[test]
     fn one_proxy_cannot_consume_two_equal_session_requests() -> Result<(), AppError> {
-        let db = Database::memory()?;
-        let conn = lock_conn!(db.conn);
-        conn.execute(
-            "INSERT INTO proxy_request_logs (
-                request_id, provider_id, app_type, model, request_model,
-                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                input_token_semantics, latency_ms, status_code, created_at
-             ) VALUES ('proxy', 'p', 'codex', 'mapped', 'alias',
-                 100, 10, 50, 0, ?1, 1, 200, 1000)",
-            [INPUT_TOKEN_SEMANTICS_TOTAL],
-        )?;
-        let delta = DeltaTokens {
-            input: 100,
-            cached_input: 50,
-            cache_write_input: 0,
-            output: 10,
-        };
-        let mut suspected = 0;
-        let mut pricing = HashMap::new();
-        for id in ["first", "second"] {
-            assert!(insert_codex_session_entry_on_conn(
-                &conn,
-                id,
-                &delta,
-                "alias",
-                Some("alias"),
-                None,
-                false,
-                Some("thread"),
-                Some("1970-01-01T00:16:41Z"),
-                None,
-                &mut suspected,
-                &mut pricing,
-            )?);
+        for cache_write_known in [true, false] {
+            let db = Database::memory()?;
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_token_semantics, latency_ms, status_code, created_at
+                 ) VALUES ('proxy', 'p', 'codex', 'mapped', 'alias',
+                     100, 10, 50, 0, ?1, 1, 200, 1000)",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+            let delta = DeltaTokens {
+                input: 100,
+                cached_input: 50,
+                cache_write_input: 0,
+                output: 10,
+            };
+            let mut suspected = 0;
+            let mut pricing = HashMap::new();
+            for id in ["first", "second"] {
+                assert!(
+                    insert_codex_session_entry_on_conn(
+                        &conn,
+                        id,
+                        &delta,
+                        "alias",
+                        Some("alias"),
+                        None,
+                        cache_write_known,
+                        Some("thread"),
+                        Some("1970-01-01T00:16:41Z"),
+                        None,
+                        &mut suspected,
+                        &mut pricing,
+                    )?,
+                    "cache_write_known={cache_write_known}, request_id={id}"
+                );
+            }
+            let links: Vec<Option<String>> = conn
+                .prepare(
+                    "SELECT matched_proxy_request_id FROM proxy_request_logs
+                 WHERE data_source = 'codex_session' ORDER BY request_id",
+                )?
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(
+                links,
+                [Some("proxy".to_string()), None],
+                "cache_write_known={cache_write_known}"
+            );
+            drop(conn);
+            assert_eq!(
+                db.get_usage_summary(None, None, Some("codex"), None, None)?
+                    .total_requests,
+                2,
+                "cache_write_known={cache_write_known}"
+            );
+            assert_eq!(
+                db.get_session_usage_summary("codex", "thread")?
+                    .total_requests,
+                2,
+                "cache_write_known={cache_write_known}"
+            );
         }
-        let links: Vec<Option<String>> = conn
-            .prepare(
-                "SELECT matched_proxy_request_id FROM proxy_request_logs
-             WHERE data_source = 'codex_session' ORDER BY request_id",
-            )?
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        assert_eq!(links, [Some("proxy".to_string()), None]);
-        drop(conn);
-        assert_eq!(
-            db.get_usage_summary(None, None, Some("codex"), None, None)?
-                .total_requests,
-            2
-        );
-        assert_eq!(
-            db.get_session_usage_summary("codex", "thread")?
-                .total_requests,
-            2
-        );
         Ok(())
     }
 
