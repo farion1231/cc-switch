@@ -5,9 +5,33 @@ import {
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   isCodexRemoteCompactionEnabled,
+  mergeCodexSettingsConfigForSave,
   setCodexModelName,
   setCodexRemoteCompaction,
 } from "./providerConfigUtils";
+
+describe("Codex guided-form settings", () => {
+  it("preserves advanced settings while replacing form-owned fields", () => {
+    const saved = mergeCodexSettingsConfigForSave(
+      {
+        auth: { OPENAI_API_KEY: "old-key" },
+        config: "old-config",
+        modelCatalog: { models: [{ model: "old-model" }] },
+        responsesCompatibility: { flattenNamespaces: true },
+        customGatewayOption: "keep-me",
+      },
+      { OPENAI_API_KEY: "new-key" },
+      "new-config",
+    );
+
+    expect(saved).toEqual({
+      auth: { OPENAI_API_KEY: "new-key" },
+      config: "new-config",
+      responsesCompatibility: { flattenNamespaces: true },
+      customGatewayOption: "keep-me",
+    });
+  });
+});
 
 describe("Codex wire API helpers", () => {
   it("recognizes Anthropic Messages aliases", () => {
