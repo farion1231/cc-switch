@@ -945,6 +945,7 @@ export interface OpenClawModel {
     toolSchemaProfile?: string; // 工具 schema 清理档案（如 llama-server 用 "llamacpp"）
     supportsReasoningEffort?: boolean; // 接受 reasoning effort 参数
     supportedReasoningEfforts?: string[]; // 接口接受的 effort 档位
+    supportsTemperature?: boolean; // 是否接受 temperature 参数
   };
 }
 

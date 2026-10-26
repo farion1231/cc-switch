@@ -159,6 +159,19 @@ export const piThinkingProfiles = {
       max: "max",
     },
   },
+  // MiniMax-M3.1-Flash always thinks (reasoning_effort "none" is rejected) and
+  // takes low/medium/high/xhigh/max.
+  minimaxM31: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
   geminiLowHigh: {
     map: {
       off: null,
