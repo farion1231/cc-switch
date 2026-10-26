@@ -416,7 +416,7 @@ fn mcp_api_uses_persistent_appimage_path_and_rejects_flatpak() {
 
 #[test]
 fn mcp_api_deepseek_example_is_importable_and_constrains_search_arguments() {
-    let source = include_str!("../../../docs/config/mcp-api/deepseek-search-fetch.openapi.json");
+    let source = include_str!("../../../docs/guides/mcp-api-deepseek-search-fetch.openapi.json");
     let preview = compile_document(source, None, None).unwrap();
     assert_eq!(preview.tools.len(), 2);
     assert!(preview.skipped.is_empty());
