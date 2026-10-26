@@ -233,7 +233,7 @@ function ScopeModelItems({
           onSelect={() => onPick(option.name)}
         >
           <MenuCheck checked={active && selectedModel === option.name} />
-          <span className="min-w-0 truncate font-mono text-caption">
+          <span className="min-w-0 flex-1 truncate font-mono text-caption">
             {option.name}
           </span>
           <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
@@ -775,7 +775,7 @@ export function UsageDashboard({
                   onClick={() => pickScope(provider, undefined)}
                 >
                   <MenuCheck checked={active} />
-                  <span className="min-w-0 truncate">
+                  <span className="min-w-0 flex-1 truncate">
                     {label ? label.label : t("usage.providerFilter.all")}
                   </span>
                   <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
@@ -866,9 +866,14 @@ export function UsageDashboard({
           {projectOptions.map((option) => (
             <DropdownMenuCheckboxItem
               key={option.key || "__unknown__"}
-              className={cn(menuItemClass, "pl-[30px]")}
+              className={menuItemClass}
               title={option.path || option.name}
               checked={projectKeys?.includes(option.key) ?? false}
+              indicator={
+                <MenuCheck
+                  checked={projectKeys?.includes(option.key) ?? false}
+                />
+              }
               onSelect={(event) => event.preventDefault()}
               onCheckedChange={(checked) => {
                 if (checked) {
