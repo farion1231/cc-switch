@@ -5,11 +5,67 @@ import {
   providerNeedsRouting,
   resolveCodexOfficialIdentity,
   supportsOfficialProxyTakeover,
+  supportsConnectivityCheck,
+  isOfficialAccount,
 } from "@/utils/providerCapabilities";
 
 function mkProvider(overrides: Partial<Provider> = {}): Provider {
   return { id: "p1", name: "Test", settingsConfig: {}, ...overrides };
 }
+
+describe("Kimi official account identity", () => {
+  it.each([
+    "oauth/kimi-code",
+    "kimi-code",
+    "oauth/kimi-code-env-0e4f99c69cc27850",
+  ])(
+    "recognizes a native OAuth reference %s without relying on a legacy category",
+    (key) => {
+      const provider = mkProvider({
+        id: "managed:kimi-code",
+        settingsConfig: { provider: { type: "kimi", oauth: { key } } },
+      });
+      expect(isOfficialAccount("kimi", provider)).toBe(true);
+    },
+  );
+  it("recognizes an official account with its own provider ID and credential slot", () => {
+    expect(
+      isOfficialAccount(
+        "kimi",
+        mkProvider({
+          id: "kimi-code-ccs-second",
+          settingsConfig: {
+            provider: {
+              type: "kimi",
+              oauth: { key: "oauth/kimi-code-ccs-second" },
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+  it("does not mark an API-key or custom OAuth provider as the official login", () => {
+    expect(
+      isOfficialAccount(
+        "kimi",
+        mkProvider({
+          id: "managed:kimi-code",
+          category: "official",
+          settingsConfig: { provider: { api_key: "test-key" } },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isOfficialAccount(
+        "kimi",
+        mkProvider({
+          id: "my-provider",
+          settingsConfig: { provider: { oauth: { key: "oauth/kimi-code" } } },
+        }),
+      ),
+    ).toBe(false);
+  });
+});
 
 // wire_api 取自 config.toml；chat_completions 需转换（需路由），responses 直连。
 const codexConfig = (wireApi: "chat_completions" | "responses") =>
@@ -379,5 +435,37 @@ describe("providerNeedsRouting", () => {
         ).toBe(true);
       },
     );
+  });
+});
+
+describe("supportsConnectivityCheck", () => {
+  it("第三方 OpenCode 供应商可以检测连通", () => {
+    expect(
+      supportsConnectivityCheck(
+        "opencode",
+        mkProvider({
+          settingsConfig: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "http://127.0.0.1:8317/v1" },
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["official", "omo", "omo-slim"] as const)(
+    "%s 卡片没有可探测的上游地址",
+    (category) => {
+      expect(
+        supportsConnectivityCheck(
+          "opencode",
+          mkProvider({ category, settingsConfig: {} }),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["mcode", "kimi"] as const)("%s 不支持连通检测", (appId) => {
+    expect(supportsConnectivityCheck(appId, mkProvider())).toBe(false);
   });
 });

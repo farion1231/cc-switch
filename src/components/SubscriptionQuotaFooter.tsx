@@ -11,7 +11,9 @@ import {
   creditsLine,
   failedLines,
   resetCreditsLine,
+  resetText,
   tierLine,
+  type QuotaBreakdown,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -35,6 +37,8 @@ interface SubscriptionQuotaViewProps {
   inline?: boolean;
   /** 按档写剩余还是已用；由外层按设置传入，这里不读设置（见 useQuotaDisplay） */
   display?: QuotaDisplay;
+  /** 查询成功但一档都没有时写的一句（Kimi 没订阅的号返回空对象）；不给时不显示 */
+  emptyText?: string;
 }
 
 /** 已知 tier 名称的显示映射（官方订阅 + Token Plan 共用） */
@@ -50,6 +54,11 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   gemini_pro: "subscription.geminiPro",
   gemini_flash: "subscription.geminiFlash",
   gemini_flash_lite: "subscription.geminiFlashLite",
+  // Antigravity：Gemini 一组、Claude 和 GPT 一组，各有 5 小时和每周两档
+  agy_gemini_five_hour: "subscription.agyGeminiFiveHour",
+  agy_gemini_weekly: "subscription.agyGeminiWeekly",
+  agy_third_party_five_hour: "subscription.agyThirdPartyFiveHour",
+  agy_third_party_weekly: "subscription.agyThirdPartyWeekly",
   // Token Plan（five_hour 已在上方官方映射中）
   weekly_limit: "subscription.sevenDay",
   // 火山方舟 Agent Plan / Coding Plan 的月窗口
@@ -62,6 +71,59 @@ export const TIER_I18N_KEYS: Record<string, string> = {
 
 /** 卡片上不显示的档（展开时仍列出） */
 const HIDDEN_INLINE_TIERS = new Set(["seven_day_sonnet"]);
+
+/**
+ * 卡片上按组只留剩余最少的一档、标签写组名（展开时仍逐档列出）：
+ * Antigravity 的 Gemini、Claude 和 GPT 两组各有 5 小时和每周两档，四档在卡片上放不下
+ */
+const INLINE_TIER_GROUPS: Record<string, string> = {
+  agy_gemini_five_hour: "subscription.agyGemini",
+  agy_gemini_weekly: "subscription.agyGemini",
+  agy_third_party_five_hour: "subscription.agyThirdParty",
+  agy_third_party_weekly: "subscription.agyThirdParty",
+};
+
+function collapseInlineGroups(tiers: QuotaTier[]): QuotaTier[] {
+  const kept = new Map<string, QuotaTier>();
+  for (const tier of tiers) {
+    const group = INLINE_TIER_GROUPS[tier.name] ?? tier.name;
+    const current = kept.get(group);
+    if (!current || tier.utilization > current.utilization) {
+      kept.set(group, tier);
+    }
+  }
+  return tiers.filter((tier) =>
+    [...kept.values()].some((keptTier) => keptTier === tier),
+  );
+}
+
+/**
+ * 卡片按组合并过档位时（Antigravity），整列做成一个下拉逐档列出：
+ * 「Gemini 5 小时  4h59m后重置  剩余 100%」。没合并时不需要（null）
+ */
+export function tierBreakdown(
+  t: TFunction,
+  tiers: QuotaTier[],
+  display: QuotaDisplay = "left",
+): QuotaBreakdown | null {
+  const known = tiers.filter((tier) => tier.name in TIER_I18N_KEYS);
+  if (collapseInlineGroups(known).length === known.length) return null;
+  return {
+    title: t("quota.windows.title"),
+    openLabel: t("quota.windows.showAll"),
+    items: known.map((tier) => {
+      const label = tierLabel(t, tier.name);
+      const line = tierLine(t, tier, label, { display });
+      return {
+        key: tier.name,
+        label,
+        hint: resetText(t, line) ?? undefined,
+        value: line.value ?? line.text,
+        tone: line.tone,
+      };
+    }),
+  };
+}
 
 export function tierLabel(t: TFunction, name: string): string {
   return TIER_I18N_KEYS[name] ? t(TIER_I18N_KEYS[name]) : name;
@@ -82,19 +144,20 @@ export function tierLines(
     display = "left",
   }: { inline?: boolean; display?: QuotaDisplay } = {},
 ): { label: string; line: QuotaLine }[] {
-  return tiers
+  const known = tiers
     .filter((tier) => tier.name in TIER_I18N_KEYS)
-    .filter((tier) => !inline || !HIDDEN_INLINE_TIERS.has(tier.name))
-    .map((tier) => {
-      const label = tierLabel(t, tier.name);
-      return {
-        label,
-        line: tierLine(t, tier, label, {
-          short: tierShortLabel(t, tier.name),
-          display,
-        }),
-      };
-    });
+    .filter((tier) => !inline || !HIDDEN_INLINE_TIERS.has(tier.name));
+  return (inline ? collapseInlineGroups(known) : known).map((tier) => {
+    const group = inline ? INLINE_TIER_GROUPS[tier.name] : undefined;
+    const label = group ? t(group) : tierLabel(t, tier.name);
+    return {
+      label,
+      line: tierLine(t, tier, label, {
+        short: group ? label : tierShortLabel(t, tier.name),
+        display,
+      }),
+    };
+  });
 }
 
 /**
@@ -137,7 +200,7 @@ export function quotaRows(
   ];
 }
 
-/** 额度没查到的原因：登录过期 / 令牌待刷新写固定文案，其余写后端给的错误 */
+/** 额度查询失败的原因：登录过期 / 令牌待刷新写固定文案，其余写后端给的错误 */
 export function quotaFailureReason(
   t: TFunction,
   quota: SubscriptionQuota,
@@ -153,7 +216,7 @@ export function quotaFailureReason(
 
 /**
  * 纯展示组件：渲染 SubscriptionQuota 的状态（not_found / parse_error 不显示；
- * 登录过期 / 令牌待刷新 / 查询失败写「额度没查到」+ 原因；成功按档写剩余或已用），支持卡片（inline）和展开两种布局。
+ * 登录过期 / 令牌待刷新 / 查询失败写「额度查询失败」+ 原因；成功按档写剩余或已用），支持卡片（inline）和展开两种布局。
  *
  * 数据源由调用方 hook 注入，方便不同的额度后端复用同一套渲染逻辑：
  * - `SubscriptionQuotaFooter`（CLI 凭据路径，by appId）
@@ -166,6 +229,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   appIdForExpiredHint,
   inline = false,
   display = "left",
+  emptyText,
 }) => {
   const { t, i18n } = useTranslation();
 
@@ -214,7 +278,32 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   }
 
   const rows = quotaRows(t, quota, i18n.language, { inline, display });
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    if (!emptyText) return null;
+    if (inline) {
+      return (
+        <QuotaLines
+          lines={[
+            { key: "empty", left: Infinity, tone: "muted", text: emptyText },
+          ]}
+          queriedAt={quota.queriedAt}
+          loading={loading}
+          onRefresh={refetch}
+        />
+      );
+    }
+    return (
+      <QuotaBars
+        className="mt-3"
+        title={t("subscription.title")}
+        rows={[]}
+        queriedAt={quota.queriedAt}
+        loading={loading}
+        onRefresh={refetch}
+        footer={<p className="text-caption text-fg-3">{emptyText}</p>}
+      />
+    );
+  }
 
   if (inline) {
     return (
@@ -223,6 +312,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
         queriedAt={quota.queriedAt}
         loading={loading}
         onRefresh={refetch}
+        breakdown={tierBreakdown(t, quota.tiers || [], display) ?? undefined}
       />
     );
   }

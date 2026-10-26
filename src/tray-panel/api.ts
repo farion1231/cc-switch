@@ -15,8 +15,13 @@ export interface PanelTexts {
   openPanel: string;
   configTab: string;
   usageTab: string;
-  /** 某一档的重置时间：`{when}` */
-  resetsAt: string;
+  /** 某一档还有多久重置：`{when}` 是下面几个单位拼出的时长 */
+  resetsIn: string;
+  /** 时长单位：`{n}` 是数字；最多取两级，中间用 `durationSep` 隔开 */
+  durationDays: string;
+  durationHours: string;
+  durationMinutes: string;
+  durationSep: string;
   /** 可用的额度重置次数：`{count}` */
   resetCredits: string;
 }
@@ -33,6 +38,8 @@ export interface PanelQuotaLine {
   warn: boolean;
   /** 这一档什么时候重置（ISO 8601） */
   resetsAt: string | null;
+  /** `text` 里要上绿色的那段数值（还有余额时的金额） */
+  emphasis: string | null;
 }
 
 export interface PanelQuota {
@@ -86,6 +93,8 @@ export interface TrayPanelState {
 export interface PanelPlacement {
   seq: number;
   platform: string;
+  /** 图标所在显示器的 DPI 缩放；可能与 WebView 的 devicePixelRatio 不同。 */
+  scaleFactor: number;
   side: "left" | "right";
   edge: "top" | "bottom";
   boundsTop: number;

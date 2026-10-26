@@ -1,7 +1,6 @@
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
 const DAY_SECONDS = 24 * 60 * 60;
-const DAY_MS = DAY_SECONDS * 1000;
 
 export interface ResolvedUsageRange {
   startDate: number;
@@ -18,9 +17,15 @@ function getPresetLookbackStart(
   nowMs: number,
 ): number {
   const dayCount = preset === "7d" ? 7 : preset === "14d" ? 14 : 30;
-  return Math.floor(
-    getStartOfLocalDayDate(nowMs - (dayCount - 1) * DAY_MS).getTime() / 1000,
+  // 按本地日历往前数天：直接减 N×24h 跨夏令时切换会落到相邻日期。
+  // 用年月日重新构造，目标日的午夜也按当天日首算（午夜被夏令时跳过的时区不带上今天的时分）
+  const now = new Date(nowMs);
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - (dayCount - 1),
   );
+  return Math.floor(start.getTime() / 1000);
 }
 
 export function resolveUsageRange(

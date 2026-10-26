@@ -73,13 +73,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   {
     // OpenCode Go（$10/月订阅，三时间窗口美元额度）。用量端点
     // GET /zen/go/v1/usage 是官方第一方但未文档化的路由，只认
-    // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）。
-    // base 分两档：/zen/go（claude/claude-desktop 直连 /messages）与
-    // /zen/go/v1（codex/opencode/pi 走 Chat），子串同时覆盖；
+    // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）；
+    // /inference/go/v1/usage 返回同一份数据，两个入口共用该端点。
+    // base 分两档：Anthropic 端 /inference/go/anthropic 与旧入口 /zen/go，
+    // OpenAI Chat 端分别是 /inference/go/v1 与 /zen/go/v1；
     // Zen 按量版（/zen/v1）没有用量 API，刻意不命中。
     id: "opencode_go",
     label: "OpenCode Go",
-    pattern: /opencode\.ai\/zen\/go/i,
+    pattern: /opencode\.ai\/(?:zen|inference)\/go/i,
   },
   {
     // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
@@ -127,7 +128,7 @@ export function detectCodingPlanProvider(
 /**
  * 认出套餐地址后，额度查询是否默认启用。火山方舟、百炼 Coding Plan、千问
  * Token Plan 查额度都要账号级 AccessKey ID + Secret（不是推理 Key），新建或
- * 导入时还没有这两项，启用了只会在卡片上显示「额度没查到」，被误读成供应商
+ * 导入时还没有这两项，启用了只会在卡片上显示「额度查询失败」，被误读成供应商
  * 没生效（#8494）。所以它们只预选套餐、不启用，等用户在额度设置里填好凭据再
  * 打开。与后端深链接导入的默认值一致。
  */
@@ -174,8 +175,12 @@ export function extractBaseUrlForUsageDetection(
       raw = settingsConfig.options?.baseURL;
       break;
     case "pi":
+    case "omp":
     case "openclaw":
       raw = settingsConfig.baseUrl;
+      break;
+    case "kimi":
+      raw = settingsConfig.provider?.base_url;
       break;
     case "hermes":
       raw = settingsConfig.base_url;
