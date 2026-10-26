@@ -1186,10 +1186,12 @@ pub fn run() {
             // 冷启动补取：Windows/Linux 上插件在自身初始化时就解析了启动参数并发出事件，
             // macOS 的 Opened 也可能早于这里，都赶在上面的回调注册之前，只能从 get_current 取。
             // 万一两边都处理了同一条链接也无妨：暂存区只留最新一条，前端处理完就清除。
+            let mut startup_deeplink = false;
             match app.deep_link().get_current() {
                 Ok(Some(urls)) => {
                     for url in urls {
                         if handle_deeplink_url(app.handle(), url.as_str(), true, "get_current") {
+                            startup_deeplink = true;
                             break;
                         }
                     }
@@ -1484,7 +1486,14 @@ pub fn run() {
                     let _ = window.set_decorations(false);
                     let _ = window.set_shadow(true);
                 }
-                if settings.silent_startup {
+                // 上次退出时在轻量模式：照旧只留托盘。由深链接冷启动的要给用户看导入对话框，正常启动。
+                if settings.lightweight_mode && !startup_deeplink {
+                    if let Err(e) = crate::lightweight::enter_lightweight_mode(app.handle()) {
+                        log::error!("启动时恢复轻量模式失败: {e}");
+                    } else {
+                        log::info!("上次退出时在轻量模式，启动后已恢复");
+                    }
+                } else if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
