@@ -21,6 +21,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
+import type { SubscriptionQuota } from "@/types/subscription";
 import {
   providersQueryOptions,
   proxyKeys,
@@ -449,6 +450,16 @@ function App() {
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
             }
+            // 切换会顺带刷新托管 ChatGPT 账号的令牌（托盘切换也一样）：
+            // 重查停在失败上的账号额度，免得主界面一直显示旧的「登录过期」
+            await queryClient.invalidateQueries({
+              predicate: (query) =>
+                query.queryKey[0] === "codex_oauth" &&
+                query.queryKey[1] === "quota" &&
+                (query.state.status === "error" ||
+                  (query.state.data as SubscriptionQuota | undefined)
+                    ?.success === false),
+            });
           },
         );
         if (!active) {
