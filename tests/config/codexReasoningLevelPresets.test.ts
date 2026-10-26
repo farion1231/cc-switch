@@ -241,6 +241,14 @@ describe("Codex preset pre-filled reasoning levels", () => {
       ["none", "high", "max"],
       "high",
     ],
+    // Runcrate（原生 Responses 直连）：runcrate.ai/docs/models/responses 的
+    // reasoning.effort 映射表（2026-10-26）。平台收 minimal/low/medium/high/
+    // xhigh，但 minimal 并入 low、xhigh 并入 high，实际三档 low/medium/high；
+    // 每档都含 high，沿用模板默认 high，不声明 default
+    ["Runcrate", "zai-org/GLM-5.3", ["low", "medium", "high"]],
+    ["Runcrate", "moonshotai/Kimi-K3", ["low", "medium", "high"]],
+    ["Runcrate", "deepseek-ai/DeepSeek-V4.1-Flash", ["low", "medium", "high"]],
+    ["Runcrate", "zai-org/GLM-5.3-Flash", ["low", "medium", "high"]],
     // Meta Model API（原生 Responses 直连）：dev.meta.ai/docs/models.md 与
     // reasoning.md（2026-10-14）。两款常开思考，none 返回 400 故不列；
     // minimal 到 max 全支持
