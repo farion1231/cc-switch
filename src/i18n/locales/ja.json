@@ -170,7 +170,6 @@
     "searchPlaceholder": "名前・メモ・URLで検索...",
     "searchAriaLabel": "プロバイダーを検索",
     "searchScopeHint": "名前・メモ・公式サイト・API アドレスを対象に検索します。",
-    "searchButtonTip": "プロバイダーを検索（{{shortcut}}）",
     "searchCloseHint": "Esc で閉じる",
     "searchCloseAriaLabel": "検索を閉じる",
     "noSearchResults": "一致するプロバイダーがありません。",
@@ -908,9 +907,7 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
-      "showProfileSwitcher": "プロジェクト切り替えを表示",
-      "showProviderSearch": "プロバイダー検索を表示",
-      "showProviderSearchDescription": "プロバイダー画面の上部に検索ボタンを表示し、名前・メモ・公式サイト・API アドレスで検索できます。非表示にしても ⌘F / Ctrl+F で検索を開けます"
+      "showProfileSwitcher": "プロジェクト切り替えを表示"
     },
     "terminal": {
       "title": "優先ターミナル",
@@ -4205,8 +4202,7 @@
       "route": "ルーティング",
       "stack": "集約"
     },
-    "needsAttention": "対応が必要",
-    "back": "戻る"
+    "needsAttention": "対応が必要"
   },
   "appsPage": {
     "showInSidebar": "{{name}} をサイドバーに表示",
@@ -4465,6 +4461,7 @@
     "clientHostHelp": "CC Switch がクライアント設定（Claude Desktop のゲートウェイ URL を含む）に書き込むホストです。空欄の場合は待ち受けアドレスから決まります。クライアントがループバックでこのマシンに届かない場合に設定します。例：WSL2（NAT モード）内の Claude Desktop セッションでは、待ち受けアドレスを 0.0.0.0 にし、WSL から到達できる Windows の IP（vEthernet (WSL) アダプターのアドレスなど）を入力し、ファイアウォールでポートを許可してください。",
     "clientHostSummary": "クライアント設定に書き込むプロキシホスト（空欄なら自動）",
     "logging": "リクエストの使用量を記録",
+    "loggingHelp": "オフにすると、使用量にルーティング経由のリクエストの明細が残りません。",
     "usingApps": "ルーティングを使用中のアプリ · {{count}}",
     "noApps": "ルーティングを使っているアプリはありません。アプリページの「ルーティング」か「集約」タブから開始します。",
     "routeDetail": "転送先 {{name}}",

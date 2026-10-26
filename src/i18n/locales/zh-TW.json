@@ -170,7 +170,6 @@
     "searchPlaceholder": "依名稱/備註/網址搜尋供應商...",
     "searchAriaLabel": "搜尋供應商",
     "searchScopeHint": "根據名稱、備註、官網和請求位址比對結果。",
-    "searchButtonTip": "搜尋供應商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 關閉",
     "searchCloseAriaLabel": "關閉供應商搜尋",
     "noSearchResults": "沒有符合搜尋條件的供應商。",
@@ -908,9 +907,7 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
-      "showProfileSwitcher": "顯示專案切換",
-      "showProviderSearch": "顯示供應商搜尋",
-      "showProviderSearchDescription": "在供應商頁頂部顯示搜尋按鈕，可依名稱、備註、官網和請求位址查找。關閉後仍可用 ⌘F / Ctrl+F 開啟搜尋"
+      "showProfileSwitcher": "顯示專案切換"
     },
     "terminal": {
       "title": "首選終端機",
@@ -4206,8 +4203,7 @@
       "route": "路由",
       "stack": "聚合"
     },
-    "needsAttention": "需要處理",
-    "back": "返回"
+    "needsAttention": "需要處理"
   },
   "appsPage": {
     "showInSidebar": "在側欄顯示 {{name}}",
@@ -4466,6 +4462,7 @@
     "clientHostHelp": "CC Switch 寫入用戶端設定的代理主機（含 Claude Desktop 的閘道位址）。留空時依監聽位址推導。用戶端無法透過本機回送存取時填寫，例如 WSL2（NAT 模式）中的 Claude Desktop 工作階段：將監聽位址設為 0.0.0.0，在此填入 WSL 能存取的 Windows IP（如 vEthernet (WSL) 介面卡的位址），並在防火牆中放行連接埠。",
     "clientHostSummary": "寫進用戶端設定的代理主機，留空自動推導",
     "logging": "記錄請求用量",
+    "loggingHelp": "關閉後，用量統計裡沒有經路由的請求明細。",
     "usingApps": "正在使用路由的應用 · {{count}}",
     "noApps": "沒有應用在用路由。在應用頁的「路由」或「聚合」分頁裡進入。",
     "routeDetail": "路由到 {{name}}",

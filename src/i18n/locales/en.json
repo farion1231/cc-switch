@@ -170,7 +170,6 @@
     "searchPlaceholder": "Search name, notes, or URL...",
     "searchAriaLabel": "Search providers",
     "searchScopeHint": "Matches provider name, notes, website, and API address.",
-    "searchButtonTip": "Search providers ({{shortcut}})",
     "searchCloseHint": "Press Esc to close",
     "searchCloseAriaLabel": "Close provider search",
     "noSearchResults": "No providers match your search.",
@@ -908,9 +907,7 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
-      "showProfileSwitcher": "Show project switcher",
-      "showProviderSearch": "Show provider search",
-      "showProviderSearchDescription": "Show a search button at the top of the provider page to find providers by name, notes, website, or API address. When hidden, ⌘F / Ctrl+F still opens search"
+      "showProfileSwitcher": "Show project switcher"
     },
     "terminal": {
       "title": "Preferred Terminal",
@@ -4205,8 +4202,7 @@
       "route": "Routing",
       "stack": "Aggregation"
     },
-    "needsAttention": "Needs attention",
-    "back": "Back"
+    "needsAttention": "Needs attention"
   },
   "appsPage": {
     "showInSidebar": "Show {{name}} in the sidebar",
@@ -4465,6 +4461,7 @@
     "clientHostHelp": "The host CC Switch writes into client configs (including Claude Desktop's gateway URL). Leave it empty to derive it from the listen address. Set it when clients can't reach this machine through loopback, e.g. Claude Desktop sessions inside WSL2 (NAT mode): set the listen address to 0.0.0.0 and enter a Windows IP that WSL can reach (such as the vEthernet (WSL) adapter address), and allow the port through the firewall.",
     "clientHostSummary": "Proxy host written to client configs; derived when empty",
     "logging": "Record request usage",
+    "loggingHelp": "When off, Usage has no per-request details for routed requests.",
     "usingApps": "Apps using routing · {{count}}",
     "noApps": "No app is using routing. Enter it from the Routing or Aggregation tab on an app's page.",
     "routeDetail": "Routing to {{name}}",

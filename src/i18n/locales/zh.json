@@ -170,7 +170,6 @@
     "searchPlaceholder": "按名称/备注/网址搜索供应商...",
     "searchAriaLabel": "搜索供应商",
     "searchScopeHint": "根据名称、备注、官网和请求地址匹配结果。",
-    "searchButtonTip": "搜索供应商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 关闭",
     "searchCloseAriaLabel": "关闭供应商搜索",
     "noSearchResults": "没有符合搜索条件的供应商。",
@@ -908,9 +907,7 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
-      "showProfileSwitcher": "显示项目切换",
-      "showProviderSearch": "显示供应商搜索",
-      "showProviderSearchDescription": "在供应商页顶部显示搜索按钮，可按名称、备注、官网和请求地址查找。关掉后仍可用 ⌘F / Ctrl+F 打开搜索"
+      "showProfileSwitcher": "显示项目切换"
     },
     "terminal": {
       "title": "首选终端",
@@ -4205,8 +4202,7 @@
       "route": "路由",
       "stack": "聚合"
     },
-    "needsAttention": "需要处理",
-    "back": "返回"
+    "needsAttention": "需要处理"
   },
   "appsPage": {
     "showInSidebar": "在侧栏显示 {{name}}",
@@ -4465,6 +4461,7 @@
     "clientHostHelp": "CC Switch 写进客户端配置的代理主机（含 Claude Desktop 的网关地址）。留空时按监听地址推导。客户端无法通过本机回环访问时填写，例如 WSL2（NAT 模式）里的 Claude Desktop 会话：把监听地址设为 0.0.0.0，在这里填 WSL 能访问到的 Windows IP（如 vEthernet (WSL) 网卡的地址），并在防火墙中放行端口。",
     "clientHostSummary": "写进客户端配置的代理主机，留空自动推导",
     "logging": "记录请求用量",
+    "loggingHelp": "关闭后，用量统计里没有经路由的请求明细。",
     "usingApps": "正在使用路由的应用 · {{count}}",
     "noApps": "没有应用在用路由。在应用页的「路由」或「聚合」页签里进入。",
     "routeDetail": "路由到 {{name}}",

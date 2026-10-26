@@ -1,7 +1,6 @@
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Activity,
   ArrowDown,
   ArrowUp,
   ChevronRight,
@@ -88,9 +87,8 @@ interface ProviderCardActionsProps {
 }
 
 /**
- * 卡片右侧（v7）：悬停露出的常用操作 → 主操作位（状态标签或带名字的按钮）→ 上移 / 下移（故障转移队列）
- * → 打开终端（Claude Code）→ 编辑 → ⋯。
- * 「检测连通」在鼠标悬停 / 键盘聚焦到这张卡时直接露出来，不用进 ⋯。
+ * 卡片右侧（v7）：主操作位（状态标签或带名字的按钮）→ 上移 / 下移（故障转移队列）→ 打开终端（Claude Code）
+ * → 编辑 → ⋯。
  * ⋯ 里仍是全部次要操作：跟当前模式有关的（聚合页、OpenClaw / OpenCode 的「设为默认」）在最前，然后是复制、检测连通、
  * 配置用量查询、删除。
  * 主操作按钮带名字；打开终端、编辑、⋯ 等图标按钮配 HoverTip；有禁用原因时改由 DisabledReason 的说明卡报原因。
@@ -112,30 +110,9 @@ export function ProviderCardActions({
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      {onTest && (
-        // 不占位：平时隐藏，名字区不会被常驻地挤窄
-        <div className="hidden items-center gap-0.5 group-focus-within:flex group-hover:flex">
-          <Button
-            variant="quiet"
-            size="compact"
-            className="px-2 text-fg-2 hover:text-fg-1"
-            disabled={isTesting}
-            onClick={onTest}
-          >
-            {isTesting ? (
-              <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
-            ) : (
-              <Activity className="h-4 w-4" strokeWidth={1.5} />
-            )}
-            {t("provider.connectivityCheck")}
-          </Button>
-        </div>
-      )}
-
       {/* 主操作位定宽：按钮和「● 使用中」这类状态标签宽度不同，不定宽的话
           切换后左边的用量会被推开、跟其他卡片对不齐。按最长的常见状态留宽，靠右对齐 */}
       <div className="flex min-w-20 items-center justify-end gap-1">
-
         {status && (
           <span
             className={cn(
