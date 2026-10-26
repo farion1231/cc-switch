@@ -15,7 +15,7 @@
  * - OpenCode Go 上游自 2026-08 起已提供 grok-4.5，但暂仍不收录：
  *   订阅制网关是否纳入 Grok 预设属产品决策，收录前需单独评估。
  * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.5；
- *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.5"。
+ *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.7"。
  *
  * config 字段沿用 Codex 风格 TOML 作为载体：Grok 表单只从中提取
  * base_url / model / wire_api 三个字段（extractCodex* 工具），再重建
@@ -58,7 +58,7 @@ export const grokBuildOfficialPreset: GrokBuildProviderPreset = {
 };
 
 /** OpenRouter 系命名空间路由站的 Grok 模型 id */
-const OPENROUTER_STYLE_GROK_MODEL = "x-ai/grok-4.5";
+const OPENROUTER_STYLE_GROK_MODEL = "x-ai/grok-4.7";
 
 const grokAuth = (): Record<string, any> => ({ OPENAI_API_KEY: "" });
 
@@ -663,7 +663,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     websiteUrl: "https://x.ai/api",
     apiKeyUrl: "https://console.x.ai",
     auth: grokAuth(),
-    config: grokPresetConfig("xAI (Grok)", "https://api.x.ai/v1"),
+    config: grokPresetConfig("xAI (Grok)", "https://api.x.ai/v1", "grok-4.7"),
     endpointCandidates: ["https://api.x.ai/v1"],
     apiFormat: "openai_responses",
     category: "third_party",
@@ -759,7 +759,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig(
       "TheRouter",
       "https://api.therouter.ai/v1",
-      OPENROUTER_STYLE_GROK_MODEL,
+      // TheRouter 的 xAI 前缀是 xai/（不是 x-ai/）
+      "xai/grok-4.7",
     ),
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",

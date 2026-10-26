@@ -561,6 +561,7 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_claude_desktop_status`, () =>
     success({
       supported: true,
+      installed: false,
       configured: false,
       proxyRunning: false,
       staleRawModels: false,

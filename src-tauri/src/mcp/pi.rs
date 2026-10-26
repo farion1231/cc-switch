@@ -20,7 +20,8 @@ use std::{
 };
 
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
-const TRANSPORT_FIELDS: [&str; 7] = ["command", "args", "env", "cwd", "url", "headers", "type"];
+pub(crate) const TRANSPORT_FIELDS: [&str; 7] =
+    ["command", "args", "env", "cwd", "url", "headers", "type"];
 /// Pi 自己的条目字段：重建条目时从数据库里保存的连接定义（导入时原样存下）带回来
 const PI_FIELDS: [&str; 6] = [
     "timeout",
@@ -246,7 +247,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     }
 }
 
-fn transport_spec(spec: &Value) -> Value {
+pub(crate) fn transport_spec(spec: &Value) -> Value {
     let mut spec = unified_spec(spec);
     if let Some(object) = spec.as_object_mut() {
         object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));

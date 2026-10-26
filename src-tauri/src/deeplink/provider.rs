@@ -361,6 +361,11 @@ pub(crate) fn build_provider_from_request(
             }
             settings
         }
+        AppType::Omp => {
+            return Err(AppError::InvalidInput(
+                "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
+            ));
+        }
     };
 
     // Build usage script configuration if provided
@@ -492,7 +497,7 @@ fn build_provider_meta(
 
     // 套餐地址且没带脚本：和在应用里新建一样，按套餐额度查询并默认启用
     // （链接写了 `usageEnabled` 仍照办）。额度走后端固定端点，不执行任何脚本。
-    // 火山例外：查额度要账号级 AccessKey，链接里没有，默认启用只会显示「额度没查到」，
+    // 火山例外：查额度要账号级 AccessKey，链接里没有，默认启用只会显示「额度查询失败」，
     // 所以只预选套餐不启用（前端 `codingPlanEnabledByDefault` 与此一致）。
     if let (Some(provider_id), true) = (coding_plan_provider, code.is_empty()) {
         return Ok(Some(ProviderMeta {
