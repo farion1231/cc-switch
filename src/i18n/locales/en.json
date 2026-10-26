@@ -4177,6 +4177,7 @@
     "extraUsage": "Extra Usage",
     "expired": "Session expired",
     "expiredHint": "Run the {{tool}} command to refresh your login",
+    "expiredHintAccounts": "Sign in to this account again in Accounts",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
   },
