@@ -16,7 +16,6 @@ use crate::proxy::{
     error::ProxyError,
     json_canonical::{
         canonical_json_string, canonicalize_json_string_if_parseable, canonicalize_tool_arguments,
-        short_sha256_hex,
     },
     tool_media::{
         chat_file_from_input_file, flush_pending_chat_tool_media, plan_chat_tool_output_media,
@@ -48,7 +47,6 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const ORPHAN_TOOL_OUTPUT_MARKER: &str = "[tool_result without a matching tool_call]";
-const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1705,22 +1703,7 @@ fn collect_input_declared_tools(value: &Value, context: &mut CodexToolContext) {
 }
 
 pub(crate) fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
-    let full_name = format!("{namespace}__{name}");
-    if full_name.len() <= CHAT_TOOL_NAME_MAX_LEN {
-        return full_name;
-    }
-
-    let hash = short_sha256_hex(full_name.as_bytes());
-    let suffix = format!("__{hash}");
-    let prefix_len = CHAT_TOOL_NAME_MAX_LEN.saturating_sub(suffix.len());
-    let mut prefix = String::new();
-    for ch in full_name.chars() {
-        if prefix.len() + ch.len_utf8() > prefix_len {
-            break;
-        }
-        prefix.push(ch);
-    }
-    format!("{prefix}{suffix}")
+    super::transform::chat_tool_name(&format!("{namespace}__{name}")).into_owned()
 }
 
 fn responses_tool_name(tool: &Value) -> Option<String> {

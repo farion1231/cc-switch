@@ -3,6 +3,7 @@
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
 use super::inline_think::InlineThinkSplitter;
+use super::transform::ChatToolNames;
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -241,9 +242,10 @@ fn open_block_stop_events(
     events
 }
 
-/// 创建 Anthropic SSE 流
-pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
+/// 创建 Anthropic SSE 流；`tool_names` 把上游工具调用里的 Chat 短名还原成客户端原名。
+pub(crate) fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    tool_names: ChatToolNames,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -568,7 +570,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         }
                                                         if let Some(function) = &tool_call.function {
                                                             if let Some(name) = &function.name {
-                                                                state.name = name.clone();
+                                                                state.name = tool_names.restore(name).to_string();
                                                             }
                                                         }
 
@@ -960,7 +962,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
             .into_iter()
@@ -998,6 +1000,55 @@ mod tests {
                     .to_string()
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn test_streaming_restores_shortened_tool_names() {
+        let long_name = format!(
+            "mcp__plugin_sgame-toolkit_devops-prod-pipeline-streamable__{}",
+            "get_artifact_user_url"
+        );
+        let request = serde_json::json!({
+            "tools": [{"name": long_name, "input_schema": {"type": "object"}}]
+        });
+        let short = crate::proxy::providers::transform::chat_tool_name(&long_name).into_owned();
+        let first_chunk = serde_json::json!({
+            "id": "chatcmpl_short",
+            "model": "glm-5.3",
+            "choices": [{"delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_0",
+                "type": "function",
+                "function": {"name": short, "arguments": "{}"}
+            }]}}]
+        });
+        let input = format!(
+            "data: {first_chunk}\n\ndata: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
+        );
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
+        let converted = create_anthropic_sse_stream(
+            upstream,
+            crate::proxy::providers::transform::ChatToolNames::from_anthropic_request(&request),
+        );
+        let merged = converted
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>()
+            .await;
+
+        let tool_start = merged
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .find(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event["content_block"]["type"] == "tool_use"
+            })
+            .expect("tool call must be forwarded");
+        assert_eq!(tool_start["content_block"]["name"], long_name);
     }
 
     #[tokio::test]
@@ -1189,7 +1240,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1279,7 +1330,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
             .into_iter()
@@ -1361,7 +1412,7 @@ mod tests {
             Ok::<_, std::io::Error>(chunk1),
             Ok::<_, std::io::Error>(chunk2),
         ]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1393,7 +1444,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1665,7 +1716,7 @@ mod tests {
         let upstream = stream::iter(vec![Err::<Bytes, _>(std::io::Error::other(
             "upstream disconnected",
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1932,7 +1983,7 @@ mod tests {
                 .into_iter()
                 .map(|part| Ok::<_, std::io::Error>(Bytes::from(part))),
         );
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         let chunks: Vec<_> = converted.collect().await;
         chunks
             .into_iter()
@@ -1951,7 +2002,7 @@ mod tests {
                 yield item;
             }
         };
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         tokio::pin!(converted);
 
         // 流首开标签：确立 Reasoning 态，本身不产生输出。
@@ -2071,7 +2122,7 @@ mod tests {
             Ok::<_, std::io::Error>(Bytes::from(content_chunk("err", "<think>partial reas</th"))),
             Err(std::io::Error::other("upstream disconnected")),
         ]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, ChatToolNames::default());
         let chunks: Vec<_> = converted.collect().await;
         let events: Vec<Value> = chunks
             .into_iter()
@@ -2299,7 +2350,7 @@ mod tests {
             Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
             None => {}
         }
-        create_anthropic_sse_stream(futures::stream::iter(chunks))
+        create_anthropic_sse_stream(futures::stream::iter(chunks), ChatToolNames::default())
             .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
             .collect::<Vec<_>>()
             .await
@@ -2350,7 +2401,7 @@ mod tests {
         .chain(futures::stream::pending());
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            create_anthropic_sse_stream(upstream).collect::<Vec<_>>(),
+            create_anthropic_sse_stream(upstream, ChatToolNames::default()).collect::<Vec<_>>(),
         )
         .await
         .expect("a terminal response must not await another upstream chunk");

@@ -580,6 +580,7 @@ async fn handle_claude_transform(
         transform_responses::anthropic_web_search_tool_name(original_body).map(ToString::to_string);
     let hosted_web_search_max_uses =
         transform_responses::anthropic_web_search_max_uses(original_body);
+    let chat_tool_names = transform::ChatToolNames::from_anthropic_request(original_body);
 
     if use_streaming {
         // 根据 api_format 选择流式转换器
@@ -607,7 +608,10 @@ async fn handle_claude_transform(
                 tool_schema_hints.clone(),
             )))
         } else {
-            Box::new(Box::pin(create_anthropic_sse_stream(stream)))
+            Box::new(Box::pin(create_anthropic_sse_stream(
+                stream,
+                chat_tool_names,
+            )))
         };
 
         // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
@@ -813,7 +817,10 @@ async fn handle_claude_transform(
                 tool_schema_hints.as_ref(),
             )
         }
-        (None, Some(response)) => transform::openai_to_anthropic(response),
+        (None, Some(response)) => transform::openai_to_anthropic(response).map(|mut message| {
+            chat_tool_names.restore_in_message(&mut message);
+            message
+        }),
         (None, None) => Err(ProxyError::Internal(
             "Missing upstream response after Claude format conversion".to_string(),
         )),

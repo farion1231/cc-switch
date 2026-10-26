@@ -6,15 +6,92 @@
 use super::inline_think::split_leading_think_block;
 use crate::proxy::{
     error::ProxyError,
-    json_canonical::canonical_json_string,
+    json_canonical::{canonical_json_string, short_sha256_hex},
     tool_media::{
         chat_media_part_from_tool_part, flush_pending_chat_tool_media, plan_chat_tool_output_media,
         queue_chat_tool_output_media, ToolMediaScope,
     },
 };
 use serde_json::{json, Value};
+use std::{borrow::Cow, collections::HashMap};
 
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
+
+/// OpenAI Chat Completions 函数名的长度上限。
+pub(crate) const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
+
+/// 超过 Chat 上限的工具名换成「原名前缀 + `__` + 原名哈希」，总长卡在上限内；
+/// 不超限的原样返回。
+///
+/// 上游对超长名各有处理：有的直接拒收，CodeBuddy 先截到 64 字符再查重，同一 MCP
+/// 服务下前缀相同的工具会被判成重名（400 / code 11152）。哈希取自完整原名，同名
+/// 总得到同一短名，响应侧用 [`ChatToolNames`] 按同一规则还原，不必跨请求保存状态。
+pub(crate) fn chat_tool_name(name: &str) -> Cow<'_, str> {
+    if name.len() <= CHAT_TOOL_NAME_MAX_LEN {
+        return Cow::Borrowed(name);
+    }
+    let suffix = format!("__{}", short_sha256_hex(name.as_bytes()));
+    let mut prefix_end = CHAT_TOOL_NAME_MAX_LEN - suffix.len();
+    while !name.is_char_boundary(prefix_end) {
+        prefix_end -= 1;
+    }
+    Cow::Owned(format!("{}{suffix}", &name[..prefix_end]))
+}
+
+/// 一次 Claude → Chat 请求里被 [`chat_tool_name`] 缩短的工具名，用于把上游返回的
+/// 工具调用名还原成客户端声明的原名。
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ChatToolNames {
+    original_by_chat_name: HashMap<String, String>,
+}
+
+impl ChatToolNames {
+    pub(crate) fn from_anthropic_request(body: &Value) -> Self {
+        let original_by_chat_name = body
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .filter_map(|name| match chat_tool_name(name) {
+                Cow::Owned(chat_name) => Some((chat_name, name.to_string())),
+                Cow::Borrowed(_) => None,
+            })
+            .collect();
+        Self {
+            original_by_chat_name,
+        }
+    }
+
+    pub(crate) fn restore<'a>(&'a self, chat_name: &'a str) -> &'a str {
+        self.original_by_chat_name
+            .get(chat_name)
+            .map_or(chat_name, String::as_str)
+    }
+
+    /// 还原已转换成 Anthropic 格式的非流式响应里的 `tool_use` 名。
+    pub(crate) fn restore_in_message(&self, message: &mut Value) {
+        if self.original_by_chat_name.is_empty() {
+            return;
+        }
+        let Some(blocks) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            return;
+        };
+        for block in blocks {
+            if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+                continue;
+            }
+            let restored = block
+                .get("name")
+                .and_then(Value::as_str)
+                .and_then(|name| self.original_by_chat_name.get(name))
+                .cloned();
+            if let Some(original) = restored {
+                block["name"] = json!(original);
+            }
+        }
+    }
+}
 
 /// Strip only a leading Claude Code attribution line from system text.
 ///
@@ -311,7 +388,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
             .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
             .map(|t| {
                 let mut function = json!({
-                    "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                    "name": chat_tool_name(t.get("name").and_then(|n| n.as_str()).unwrap_or("")),
                 });
                 // 缺失的 description 省略而非输出 null：hosted 工具（web_search 等）
                 // 与未填描述的自定义/MCP 工具都不带该字段，严格上游收到 null 会
@@ -392,7 +469,7 @@ fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
                 let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 json!({
                     "type": "function",
-                    "function": { "name": name }
+                    "function": { "name": chat_tool_name(name) }
                 })
             }
             _ => tool_choice.clone(),
@@ -456,7 +533,7 @@ fn convert_message_to_openai(
                         "id": id,
                         "type": "function",
                         "function": {
-                            "name": name,
+                            "name": chat_tool_name(name),
                             "arguments": canonical_json_string(&input)
                         }
                     }));
@@ -814,6 +891,114 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LONG_MCP_PREFIX: &str = "mcp__plugin_sgame-toolkit_devops-prod-pipeline-streamable__";
+
+    #[test]
+    fn chat_tool_name_keeps_names_within_the_limit() {
+        let name = "a".repeat(CHAT_TOOL_NAME_MAX_LEN);
+        assert_eq!(chat_tool_name(&name), name.as_str());
+        assert!(matches!(chat_tool_name("Bash"), Cow::Borrowed("Bash")));
+    }
+
+    #[test]
+    fn chat_tool_name_keeps_long_names_with_a_shared_prefix_distinct() {
+        let names = [
+            format!("{LONG_MCP_PREFIX}build_list"),
+            format!("{LONG_MCP_PREFIX}build_start"),
+            format!("{LONG_MCP_PREFIX}build_startInfo"),
+            format!("{LONG_MCP_PREFIX}get_artifact_user_url"),
+        ];
+        let shortened: Vec<String> = names
+            .iter()
+            .map(|name| chat_tool_name(name).into_owned())
+            .collect();
+        for (name, short) in names.iter().zip(&shortened) {
+            assert!(short.len() <= CHAT_TOOL_NAME_MAX_LEN, "{short}");
+            assert!(short.starts_with("mcp__plugin_sgame-toolkit"), "{short}");
+            assert_eq!(chat_tool_name(name), short.as_str());
+        }
+        let unique: std::collections::HashSet<&String> = shortened.iter().collect();
+        assert_eq!(unique.len(), names.len());
+    }
+
+    #[test]
+    fn chat_tool_name_cuts_on_a_char_boundary() {
+        let name = format!("{}{}", "工".repeat(20), "x".repeat(10));
+        let short = chat_tool_name(&name);
+        assert!(short.len() <= CHAT_TOOL_NAME_MAX_LEN);
+        assert!(short.starts_with('工'));
+    }
+
+    #[test]
+    fn anthropic_to_openai_shortens_long_tool_names_everywhere_they_appear() {
+        let long_name = format!("{LONG_MCP_PREFIX}get_artifact_user_url");
+        let short = chat_tool_name(&long_name).into_owned();
+        let input = json!({
+            "model": "glm-5.3",
+            "max_tokens": 64,
+            "messages": [
+                {"role": "user", "content": "find the artifact"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "toolu_1", "name": long_name, "input": {}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}
+                ]}
+            ],
+            "tools": [
+                {"name": "Bash", "input_schema": {"type": "object"}},
+                {"name": long_name, "input_schema": {"type": "object"}}
+            ],
+            "tool_choice": {"type": "tool", "name": long_name}
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        assert_eq!(result["tools"][0]["function"]["name"], "Bash");
+        assert_eq!(result["tools"][1]["function"]["name"], short);
+        assert_eq!(
+            result["messages"][1]["tool_calls"][0]["function"]["name"],
+            short
+        );
+        assert_eq!(result["tool_choice"]["function"]["name"], short);
+    }
+
+    #[test]
+    fn chat_tool_names_restore_shortened_tool_use_in_responses() {
+        let long_name = format!("{LONG_MCP_PREFIX}build_status");
+        let request = json!({
+            "tools": [
+                {"name": "Read", "input_schema": {"type": "object"}},
+                {"name": long_name, "input_schema": {"type": "object"}}
+            ]
+        });
+        let names = ChatToolNames::from_anthropic_request(&request);
+        let short = chat_tool_name(&long_name).into_owned();
+        let response = json!({
+            "id": "chatcmpl_1",
+            "model": "glm-5.3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "call_1", "type": "function",
+                         "function": {"name": short, "arguments": "{}"}},
+                        {"id": "call_2", "type": "function",
+                         "function": {"name": "Read", "arguments": "{}"}}
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let mut message = openai_to_anthropic(response).unwrap();
+        names.restore_in_message(&mut message);
+
+        assert_eq!(message["content"][0]["name"], long_name);
+        assert_eq!(message["content"][1]["name"], "Read");
+        assert_eq!(names.restore("unknown_tool"), "unknown_tool");
+    }
 
     #[test]
     fn test_anthropic_to_openai_simple() {
