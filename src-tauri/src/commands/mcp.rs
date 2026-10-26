@@ -47,6 +47,13 @@ use crate::app_config::McpServer;
 pub async fn get_mcp_servers(
     state: State<'_, AppState>,
 ) -> Result<IndexMap<String, McpServer>, AppError> {
+    let _guard = state.proxy_service.lock_switch_for_app("kimi").await;
+    if let Err(error) = crate::mcp::kimi::reconcile_enabled(
+        &state,
+        &crate::kimi_config::data_dir().join("mcp.json"),
+    ) {
+        log::warn!("Reconciling Kimi Code MCP enabled states failed: {error}");
+    }
     McpService::get_all_servers(&state)
 }
 
