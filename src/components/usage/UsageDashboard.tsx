@@ -866,7 +866,7 @@ export function UsageDashboard({
           {projectOptions.map((option) => (
             <DropdownMenuCheckboxItem
               key={option.key || "__unknown__"}
-              className={menuItemClass}
+              className={cn(menuItemClass, "pl-[30px]")}
               title={option.path || option.name}
               checked={projectKeys?.includes(option.key) ?? false}
               onSelect={(event) => event.preventDefault()}
@@ -886,7 +886,7 @@ export function UsageDashboard({
                 });
               }}
             >
-              <span className="min-w-0 truncate">{option.name}</span>
+              <span className="min-w-0 flex-1 truncate">{option.name}</span>
               <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
             </DropdownMenuCheckboxItem>
           ))}
