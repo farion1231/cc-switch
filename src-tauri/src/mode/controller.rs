@@ -1850,10 +1850,9 @@ async fn drain_legacy_backup(state: &AppState, app: &AppType) -> bool {
             return false;
         }
     };
-    let dir = crate::config::get_home_dir()
-        .join(".cc-switch")
-        .join("backups")
-        .join("proxy-live-backup");
+    // 设备本地备份：不跟随 app_config_dir 覆盖，但跟随 CC_SWITCH_HOME / XDG。
+    let backup_root = crate::config::get_device_data_dir().join("backups");
+    let dir = backup_root.join("proxy-live-backup");
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
     let path = dir.join(format!("{}-{stamp}.json", app.as_str()));
     let saved = serde_json::to_vec_pretty(&json!({

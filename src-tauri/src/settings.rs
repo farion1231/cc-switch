@@ -400,7 +400,9 @@ pub struct UsageDisplaySettings {
 
 /// 应用设置结构
 ///
-/// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
+/// 存储设备级别设置，保存在本地设备数据目录的 `settings.json`（默认
+/// `~/.cc-switch/settings.json`，可用 `CC_SWITCH_HOME` / `XDG_CONFIG_HOME`
+/// 整体搬迁），不随数据库同步。
 /// 这确保了云同步场景下多设备可以独立运作。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -719,12 +721,9 @@ impl AppSettings {
     }
 
     fn settings_path() -> Option<PathBuf> {
-        // settings.json 保留用于旧版本迁移和无数据库场景
-        Some(
-            crate::config::get_home_dir()
-                .join(".cc-switch")
-                .join("settings.json"),
-        )
+        // settings.json 保留用于旧版本迁移和无数据库场景。
+        // 设备本地文件：不跟随 app_config_dir 覆盖，但跟随 CC_SWITCH_HOME / XDG。
+        Some(crate::config::get_device_data_dir().join("settings.json"))
     }
 
     fn normalize_paths(&mut self) {
