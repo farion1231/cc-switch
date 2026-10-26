@@ -192,7 +192,7 @@ describe("WorkBuddyAccountSection", () => {
     expect(mocks.setDefault).not.toHaveBeenCalled();
   });
 
-  it("imports the current sign-in from the empty state", async () => {
+  it("imports the current sign-in from the header Add account", async () => {
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     mocks.importCurrent.mockResolvedValue({
       account: account("u-1"),
@@ -200,7 +200,7 @@ describe("WorkBuddyAccountSection", () => {
     });
     renderWithClient(<WorkBuddyAccountSection />);
 
-    await userEvent.click(screen.getByRole("button", { name: /收录当前登录/ }));
+    await userEvent.click(screen.getByRole("button", { name: /添加账号/ }));
     await waitFor(() => expect(mocks.importCurrent).toHaveBeenCalledOnce());
   });
 
@@ -233,7 +233,7 @@ describe("WorkBuddyAccountSection", () => {
     mocks.importCurrent.mockRejectedValue(new Error("not signed in"));
     renderWithClient(<WorkBuddyAccountSection />);
 
-    await userEvent.click(screen.getByRole("button", { name: /收录当前登录/ }));
+    await userEvent.click(screen.getByRole("button", { name: /添加账号/ }));
     expect(
       await screen.findByText("WorkBuddy 当前没有登录"),
     ).toBeInTheDocument();

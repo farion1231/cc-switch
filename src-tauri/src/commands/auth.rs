@@ -2,6 +2,7 @@ use tauri::State;
 
 use crate::app_config::AppType;
 use crate::commands::agy_account::AgyAccountState;
+use crate::commands::claude_account::ClaudeAccountState;
 use crate::commands::codex_oauth::CodexOAuthState;
 use crate::commands::copilot::CopilotAuthState;
 use crate::commands::workbuddy_account::{run_workbuddy, WorkBuddyAccountState};
@@ -12,6 +13,7 @@ use crate::proxy::providers::copilot_auth::{
 };
 use crate::proxy::providers::xai_oauth_auth::{XaiOAuthAccount, XaiOAuthError};
 use crate::services::agy_account::AgyAccount;
+use crate::services::claude_account::ClaudeAccount;
 use crate::services::workbuddy_account::WorkBuddyAccount;
 use crate::store::AppState;
 
@@ -20,6 +22,7 @@ const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
 const AUTH_PROVIDER_XAI_OAUTH: &str = "xai_oauth";
 const AUTH_PROVIDER_AGY_OAUTH: &str = "agy_oauth";
 const AUTH_PROVIDER_WORKBUDDY_ACCOUNT: &str = "workbuddy_account";
+const AUTH_PROVIDER_CLAUDE_OFFICIAL: &str = "claude_official";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ManagedAuthAccount {
@@ -37,6 +40,15 @@ pub struct ManagedAuthAccount {
     /// WorkBuddy 专用：版型 / 套餐（明文画像的 `editionType`），没有时退回账号类型（`account.type`）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_kind: Option<String>,
+    /// Claude 官方专用：不在 Claude Code 默认登录里的账号，登录约什么时候过期（毫秒）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_expires_at: Option<i64>,
+    /// Claude 官方专用：套餐（`pro` / `max` / `team` / `enterprise`）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    /// Claude 官方专用：凭据里的 `rateLimitTier`，区分 Max 5x / 20x
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -56,6 +68,9 @@ pub struct ManagedAuthDeviceCodeResponse {
     pub verification_uri: String,
     pub expires_in: u64,
     pub interval: u64,
+    /// 登录页已经由 CLI 自己在浏览器里打开了（Claude 官方账号在 Windows 上），窗口不要再开
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub browser_opened: bool,
 }
 
 fn ensure_auth_provider(auth_provider: &str) -> Result<&'static str, String> {
@@ -65,6 +80,7 @@ fn ensure_auth_provider(auth_provider: &str) -> Result<&'static str, String> {
         AUTH_PROVIDER_XAI_OAUTH => Ok(AUTH_PROVIDER_XAI_OAUTH),
         AUTH_PROVIDER_AGY_OAUTH => Ok(AUTH_PROVIDER_AGY_OAUTH),
         AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Ok(AUTH_PROVIDER_WORKBUDDY_ACCOUNT),
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => Ok(AUTH_PROVIDER_CLAUDE_OFFICIAL),
         _ => Err(format!("Unsupported auth provider: {auth_provider}")),
     }
 }
@@ -78,6 +94,9 @@ fn map_account(
         is_default: default_account_id == Some(account.id.as_str()),
         reauth_required: account.reauth_required,
         requires_reauth: false,
+        login_expires_at: None,
+        plan: None,
+        rate_limit_tier: None,
         id: account.id,
         provider: provider.to_string(),
         login: account.login,
@@ -103,6 +122,9 @@ fn map_xai_account(
         reauth_required: false,
         requires_reauth: account.requires_reauth,
         account_kind: None,
+        login_expires_at: None,
+        plan: None,
+        rate_limit_tier: None,
     }
 }
 
@@ -115,6 +137,9 @@ fn map_agy_account(account: AgyAccount, current_account_id: Option<&str>) -> Man
         github_domain: "google.com".to_string(),
         reauth_required: false,
         requires_reauth: account.requires_reauth,
+        login_expires_at: None,
+        plan: None,
+        rate_limit_tier: None,
         provider: AUTH_PROVIDER_AGY_OAUTH.to_string(),
         id: account.id,
         account_kind: None,
@@ -138,6 +163,28 @@ pub(crate) fn map_workbuddy_account(
         // 优先显示版型 / 套餐（editionType，如 free / pro），没有时退回账号类型（personal 等）。
         // 两者都是 WorkBuddy 明文字段，前端按已知 code 本地化、未知 code 原样显示。
         account_kind: account.plan.or(account.kind),
+        login_expires_at: None,
+        plan: None,
+        rate_limit_tier: None,
+        id: account.id,
+    }
+}
+
+/// Claude 官方账号没有「默认账号」：用哪个号由绑定它的官方卡决定。
+fn map_claude_account(account: ClaudeAccount) -> ManagedAuthAccount {
+    ManagedAuthAccount {
+        is_default: false,
+        login: account.label(),
+        avatar_url: None,
+        authenticated_at: account.authenticated_at,
+        github_domain: "claude.ai".to_string(),
+        reauth_required: false,
+        requires_reauth: account.requires_reauth,
+        login_expires_at: account.login_expires_at,
+        plan: account.plan.clone(),
+        rate_limit_tier: account.rate_limit_tier.clone(),
+        provider: AUTH_PROVIDER_CLAUDE_OFFICIAL.to_string(),
+        account_kind: None,
         id: account.id,
     }
 }
@@ -157,6 +204,7 @@ fn map_device_code_response(
         verification_uri: response.verification_uri,
         expires_in: response.expires_in,
         interval: response.interval,
+        browser_opened: false,
     }
 }
 
@@ -171,6 +219,7 @@ pub async fn auth_start_login(
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
+    claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<ManagedAuthDeviceCodeResponse, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     let browser_login = match login_method.as_deref().unwrap_or("device_code") {
@@ -228,6 +277,27 @@ pub async fn auth_start_login(
                 verification_uri: start.auth_url,
                 expires_in: start.expires_in,
                 interval: 1,
+                browser_opened: false,
+            })
+        }
+        // 同上：在新账号目录里跑 `claude auth login`，授权页地址是它要打开的那个
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => {
+            if target_account_id.is_some() {
+                return Err("Targeted re-authentication is only supported for Codex OAuth".into());
+            }
+            let start = claude_state
+                .0
+                .start_login()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(ManagedAuthDeviceCodeResponse {
+                provider: auth_provider.to_string(),
+                device_code: start.flow_id,
+                user_code: String::new(),
+                verification_uri: start.auth_url,
+                expires_in: start.expires_in,
+                interval: 1,
+                browser_opened: start.browser_opened,
             })
         }
         AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Err(workbuddy_login_unsupported()),
@@ -246,6 +316,7 @@ pub async fn auth_poll_for_account(
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
+    claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<Option<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -316,6 +387,22 @@ pub async fn auth_poll_for_account(
             Ok(Some(map_agy_account(account, current.as_deref())))
         }
         AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Err(workbuddy_login_unsupported()),
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => {
+            let account = claude_state
+                .0
+                .poll_login(&device_code)
+                .await
+                .map_err(|e| e.to_string())?;
+            if account.is_some() {
+                // 同一账号重新登录会换掉目录：正在用它的官方卡要把新目录写进 live
+                crate::services::provider::claude_official::refresh_live_after_account_change(
+                    app_state.inner(),
+                    &claude_state.0,
+                )
+                .await?;
+            }
+            Ok(account.map(map_claude_account))
+        }
         _ => unreachable!(),
     }
 }
@@ -326,11 +413,13 @@ pub async fn auth_cancel_login(
     device_code: String,
     codex_state: State<'_, CodexOAuthState>,
     agy_state: State<'_, AgyAccountState>,
+    claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<bool, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
         AUTH_PROVIDER_CODEX_OAUTH => Ok(codex_state.0.cancel_device_flow(&device_code).await),
         AUTH_PROVIDER_AGY_OAUTH => Ok(agy_state.0.cancel_login(&device_code).await),
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => Ok(claude_state.0.cancel_login(&device_code).await),
         _ => Err("Login cancellation is only supported for Codex OAuth".to_string()),
     }
 }
@@ -343,6 +432,7 @@ pub async fn auth_list_accounts(
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
     workbuddy_state: State<'_, WorkBuddyAccountState>,
+    claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<Vec<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -394,6 +484,13 @@ pub async fn auth_list_accounts(
                 .map(|account| map_workbuddy_account(account, current.as_deref()))
                 .collect())
         }
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => Ok(claude_state
+            .0
+            .list()
+            .await
+            .into_iter()
+            .map(map_claude_account)
+            .collect()),
         _ => unreachable!(),
     }
 }
@@ -406,6 +503,7 @@ pub async fn auth_get_status(
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
     workbuddy_state: State<'_, WorkBuddyAccountState>,
+    claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<ManagedAuthStatus, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -493,10 +591,21 @@ pub async fn auth_get_status(
                     .collect(),
             })
         }
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => {
+            let accounts = claude_state.0.list().await;
+            Ok(ManagedAuthStatus {
+                provider: auth_provider.to_string(),
+                authenticated: !accounts.is_empty(),
+                default_account_id: None,
+                migration_error: None,
+                accounts: accounts.into_iter().map(map_claude_account).collect(),
+            })
+        }
         _ => unreachable!(),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_remove_account(
     auth_provider: String,
@@ -506,6 +615,7 @@ pub async fn auth_remove_account(
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
     workbuddy_state: State<'_, WorkBuddyAccountState>,
+    claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -539,6 +649,19 @@ pub async fn auth_remove_account(
             })
             .await
         }
+        // 删目录和钥匙串条目（不吊销、不登出）；正在用它的官方卡退回默认登录
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => {
+            claude_state
+                .0
+                .remove(&account_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            crate::services::provider::claude_official::refresh_live_after_account_change(
+                app_state.inner(),
+                &claude_state.0,
+            )
+            .await
+        }
         _ => unreachable!(),
     }
 }
@@ -568,6 +691,7 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_set_default_account(
     auth_provider: String,
@@ -577,6 +701,7 @@ pub async fn auth_set_default_account(
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
     workbuddy_state: State<'_, WorkBuddyAccountState>,
+    _claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -614,6 +739,10 @@ pub async fn auth_set_default_account(
             })
             .await
         }
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => {
+            let _ = account_id;
+            Err("Claude accounts are used through the official provider card bound to them".into())
+        }
         _ => unreachable!(),
     }
 }
@@ -625,6 +754,7 @@ pub async fn auth_logout(
     copilot_state: State<'_, CopilotAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     agy_state: State<'_, AgyAccountState>,
+    claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -645,6 +775,18 @@ pub async fn auth_logout(
             .map_err(|e| e.to_string()),
         // WorkBuddy 账号只能逐个删除，没有「删除全部」
         AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Err("WorkBuddy 账号请逐个删除".to_string()),
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => {
+            claude_state
+                .0
+                .remove_all()
+                .await
+                .map_err(|e| e.to_string())?;
+            crate::services::provider::claude_official::refresh_live_after_account_change(
+                app_state.inner(),
+                &claude_state.0,
+            )
+            .await
+        }
         _ => unreachable!(),
     }
 }

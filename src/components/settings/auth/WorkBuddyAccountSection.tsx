@@ -367,9 +367,6 @@ export function WorkBuddyAccountSection({
         defaultValue:
           "还没有 WorkBuddy 账号。先在 WorkBuddy 里登录，再收录当前登录的账号。",
       })}
-      loginLabel={t("authCenter.workbuddy.importCurrent", {
-        defaultValue: "收录当前登录",
-      })}
       onAdd={() => importMutation.mutate()}
       chooser={addHintPanel || undefined}
       defaultLabel={t("authCenter.workbuddy.current", {
