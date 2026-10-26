@@ -262,6 +262,45 @@ describe("ClaudeOfficialSection", () => {
     ).toBeInTheDocument();
   });
 
+  it("lays out the sign-in choices like the Codex card", async () => {
+    // jsdom 没有 scrollIntoView，下拉打开时会调
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    mocks.getStatus.mockResolvedValue({
+      accounts: [account("work:org", "work@example.com")],
+    });
+    const onChange = vi.fn();
+    const onManageAccounts = vi.fn();
+    withQuery(
+      <ClaudeAccountSelect
+        value={null}
+        onChange={onChange}
+        onManageAccounts={onManageAccounts}
+      />,
+    );
+
+    const select = screen.getByRole("combobox", { name: "登录方式" });
+    expect(select).toHaveTextContent("跟随 Claude Code 登录");
+    await user.click(select);
+    expect(
+      (await screen.findAllByRole("option")).map((el) => el.textContent),
+    ).toEqual([
+      "work@example.com",
+      "添加或管理 Claude 账号",
+      "跟随 Claude Code 登录账号会随 Claude Code 当前登录变化",
+    ]);
+    await user.click(screen.getByRole("option", { name: /添加或管理/ }));
+    expect(onManageAccounts).toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+
+    await user.click(select);
+    await user.click(
+      await screen.findByRole("option", { name: "work@example.com" }),
+    );
+    expect(onChange).toHaveBeenCalledWith("work:org");
+  });
+
   it("points to Open Terminal when a config dir override blocks switching", async () => {
     mocks.getLoginSwitch.mockResolvedValue(
       loginSwitch({ blocked: "overrideDir" }),

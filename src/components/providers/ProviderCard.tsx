@@ -38,12 +38,14 @@ import { isMac } from "@/lib/platform";
 import {
   isOfficialAccount,
   resolveCodexOfficialIdentity,
+  supportsConnectivityCheck,
 } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 import { ProviderCardActions } from "./ProviderCardActions";
+import { terminalIsIsolated } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
 interface DragHandleProps {
@@ -645,12 +647,7 @@ export function ProviderCard({
                 : undefined
             }
             onTest={
-              // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放。官方供应商一律不给：
-              // 它们 base_url 故意留空、走客户端默认/OAuth 端点，没有可靠的探测目标。
-              onTest &&
-              appId !== "mcode" &&
-              appId !== "kimi" &&
-              provider.category !== "official"
+              onTest && supportsConnectivityCheck(appId, provider)
                 ? () => onTest(provider)
                 : undefined
             }
@@ -666,6 +663,7 @@ export function ProviderCard({
             onOpenTerminal={
               onOpenTerminal ? () => onOpenTerminal(provider) : undefined
             }
+            openTerminalIsolated={terminalIsIsolated(provider, appId)}
           />
         </div>
       </div>
