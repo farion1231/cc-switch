@@ -49,6 +49,9 @@ pub struct OpaqueStateRejection {
     ///   转成文字，到得了官方的压缩密文都是官方自己签发的。
     /// - 第三方：一被拒就换。它收到的压缩密文多半是官方签发的（Stack 模式下切换过来）。
     pub compaction: bool,
+    /// 条目 id 一律去掉，不只是格式不对的。Azure 的条目归属到签发它的资源，中转把后续请求
+    /// 转到另一个资源时，格式合法的 `msg_…`、`fc_…` 也会被拒（只在上游点名这一点时才开）。
+    pub item_ids: bool,
 }
 
 /// 整流结果
@@ -98,6 +101,9 @@ pub fn detect_opaque_state_rejection(
                     || messages
                         .iter()
                         .any(|message| message.contains("compaction")),
+                item_ids: messages
+                    .iter()
+                    .any(|message| is_foreign_resource_rejection(message)),
             });
         }
     }
@@ -113,6 +119,7 @@ pub fn detect_opaque_state_rejection(
         OpaqueStateRejection {
             reasoning: false,
             compaction: true,
+            item_ids: false,
         },
     )
 }
@@ -239,6 +246,14 @@ fn is_rejection_message(message: &str) -> bool {
         // store:false 下按 id 回查推理条目：
         // "Item with id 'rs_…' not found. Items are not persisted when `store` is set to false. ..."
         || (message.contains("not found") && message.contains("Items are not persisted when"))
+        || is_foreign_resource_rejection(message)
+}
+
+/// Azure 的条目（含推理密文）属于签发它的资源，换了资源就不认：
+/// "The requested item was created under a different Azure OpenAI resource. Use the same
+/// resource that created the item to access it."（#8877：中转在多个 Azure 资源间分流）
+fn is_foreign_resource_rejection(message: &str) -> bool {
+    message.contains("created under a different") && message.contains("resource")
 }
 
 /// OpenAI 不收带内容的推理条目："Invalid 'input[N].content': array too long. Expected an array
@@ -315,8 +330,16 @@ pub fn rectify_opaque_state(
             }
             _ => {}
         }
-        // 别家签发的 id（MiniMax 的 `<hex>_msg_N`、`<hex>_fc_N`）不合 OpenAI 的前缀校验
-        if rejection.reasoning && strip_mismatched_item_id(&mut item, &item_type) {
+        // 别家签发的 id（MiniMax 的 `<hex>_msg_N`、`<hex>_fc_N`）不合 OpenAI 的前缀校验；
+        // 上游说条目属于别的资源时，格式合法的 id 也去掉。`item_reference` 只靠 id 指向
+        // 条目，去掉就成了空引用，不动。`call_id` 等其他字段一律保留。
+        let stripped = if rejection.item_ids && item_type != "item_reference" {
+            item.as_object_mut()
+                .is_some_and(|obj| obj.remove("id").is_some())
+        } else {
+            rejection.reasoning && strip_mismatched_item_id(&mut item, &item_type)
+        };
+        if stripped {
             result.removed_foreign_ids += 1;
         }
         rectified.push(item);
@@ -366,14 +389,17 @@ mod tests {
     const ALL_STATE: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: true,
         compaction: true,
+        item_ids: false,
     };
     const REASONING_ONLY: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: true,
         compaction: false,
+        item_ids: false,
     };
     const COMPACTION_ONLY: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: false,
         compaction: true,
+        item_ids: false,
     };
 
     fn upstream(status: u16, body: Value) -> ProxyError {
@@ -786,6 +812,57 @@ mod tests {
         let error = unreadable_agent_task_error();
         let request = json!({ "input": [agent_message("gAAAA")] });
         assert_eq!(detect_with(&error, &request, THIRD_PARTY), None);
+    }
+
+    /// 中转把同一会话分到不同的 Azure 资源（#8877）：格式合法的 id 也属于旧资源，重试时
+    /// 推理条目和所有条目 id 都去掉，正文、工具名、参数、结果和 `call_id` 关联原样保留。
+    #[test]
+    fn azure_foreign_resource_rejection_strips_every_item_id() {
+        let rejection = upstream(
+            400,
+            json!({ "error": { "type": "invalid_request_error", "param": "input", "code": null,
+                               "message": "The requested item was created under a different Azure OpenAI resource. Use the same resource that created the item to access it. (request id: 2026102515)" } }),
+        );
+        let request = json!({ "input": [] });
+        let azure = detect_with(&rejection, &request, THIRD_PARTY).unwrap();
+        assert!(azure.reasoning && azure.compaction && azure.item_ids);
+        assert!(
+            detect_with(&rejection, &request, OFFICIAL)
+                .unwrap()
+                .item_ids
+        );
+        // 别的拒绝照旧只去掉格式不对的 id。
+        let coded = upstream(
+            400,
+            json!({ "error": { "code": "invalid_encrypted_content", "message": "bad" } }),
+        );
+        assert!(!detect_with(&coded, &request, THIRD_PARTY).unwrap().item_ids);
+
+        let mut body = json!({ "input": [
+            { "type": "message", "id": "msg_01a1", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+            { "type": "reasoning", "id": "rs_01a1", "summary": [], "encrypted_content": "gAAAA-resource-a" },
+            { "type": "function_call", "id": "fc_01a1", "call_id": "call_9", "name": "exec_command",
+              "arguments": "{\"id\":\"keep-me\"}" },
+            { "type": "function_call_output", "call_id": "call_9", "output": "{\"id\":1}" },
+            { "type": "message", "id": "msg_01a2", "role": "assistant", "content": [{ "type": "output_text", "text": "done" }] },
+            { "type": "item_reference", "id": "msg_01a3" },
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "next" }] }
+        ] });
+        let result = rectify_opaque_state(&mut body, azure);
+        assert!(result.applied);
+        assert_eq!(result.removed_reasoning_items, 1);
+        assert_eq!(result.removed_foreign_ids, 3);
+
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 6);
+        assert!(input[..4].iter().all(|item| item.get("id").is_none()));
+        assert_eq!(input[0]["content"][0]["text"], "hi");
+        assert_eq!(input[1]["call_id"], "call_9");
+        assert_eq!(input[1]["name"], "exec_command");
+        assert_eq!(input[1]["arguments"], "{\"id\":\"keep-me\"}");
+        assert_eq!(input[2]["call_id"], "call_9");
+        assert_eq!(input[2]["output"], "{\"id\":1}");
+        assert_eq!(input[4]["id"], "msg_01a3");
     }
 
     #[test]

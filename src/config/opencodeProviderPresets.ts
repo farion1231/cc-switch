@@ -978,12 +978,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
           limit: { context: 1048576, output: 131072 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
-        "deepseek-v4-pro-0813": {
-          name: "DeepSeek V4 Pro",
-          reasoning: true,
-          limit: { context: 1048576, output: 384000 },
-          modalities: { input: ["text"], output: ["text"] },
-        },
         "deepseek-v4.1-flash-1017": {
           name: "DeepSeek V4.1 Flash 1017",
           reasoning: true,
@@ -1043,7 +1037,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro", reasoning: true },
         "deepseek-v4-flash-0731": {
           name: "DeepSeek V4 Flash 0731",
           reasoning: true,
@@ -1473,6 +1466,52 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "TeamoRouter Claude",
+    websiteUrl: "https://teamorouter.cn",
+    apiKeyUrl:
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "TeamoRouter Claude",
+      options: {
+        baseURL: "https://api.teamorouter.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PPIO",
     websiteUrl: "https://ppio.com",
     apiKeyUrl: "https://ppio.com/activity/ccswitch",
@@ -1499,12 +1538,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
           name: "GLM-5.3",
           reasoning: true,
           limit: { context: 1000000, output: 128000 },
-          modalities: { input: ["text"], output: ["text"] },
-        },
-        "deepseek/deepseek-v4-pro": {
-          name: "DeepSeek V4 Pro",
-          reasoning: true,
-          limit: { context: 1000000, output: 384000 },
           modalities: { input: ["text"], output: ["text"] },
         },
       },
@@ -2402,12 +2435,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "deepseek-v4-pro": {
-          name: "DeepSeek V4 Pro",
-          reasoning: true,
-          limit: { context: 1000000, output: 384000 },
-          modalities: { input: ["text"], output: ["text"] },
-        },
         "deepseek-flash": {
           name: "DeepSeek V4.1 Flash",
           reasoning: true,
@@ -2535,7 +2562,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
           name: "DeepSeek V4 Flash",
           reasoning: true,
         },
-        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro", reasoning: true },
         "minimax-m2.7": { name: "MiniMax M2.7", reasoning: true },
         "glm-5": { name: "GLM-5", reasoning: true },
         "glm-5.1": { name: "GLM-5.1", reasoning: true },
@@ -2583,7 +2609,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         auto: { name: "Auto" },
         "glm-5.2": { name: "GLM-5.2", reasoning: true },
         "kimi-k2.6": { name: "Kimi K2.6", reasoning: true },
-        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro", reasoning: true },
         "deepseek-v4-flash-202605": {
           name: "DeepSeek V4 Flash",
           reasoning: true,
@@ -2640,21 +2665,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "kimi-k2.6": { name: "Kimi K2.6", reasoning: true },
         "minimax-m3": { name: "MiniMax M3", reasoning: true },
         "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro", reasoning: true },
         "deepseek-v4-flash-0731": {
           name: "DeepSeek V4 Flash 0731 GA",
           reasoning: true,
         },
-        "deepseek-v4-pro-0813": {
-          name: "DeepSeek V4 Pro 0813 GA",
-          reasoning: true,
-        },
         "deepseek-v4-flash-202605": {
           name: "DeepSeek V4 Flash Official",
-          reasoning: true,
-        },
-        "deepseek-v4-pro-202606": {
-          name: "DeepSeek V4 Pro Official",
           reasoning: true,
         },
       },
@@ -2703,21 +2719,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
           reasoning: true,
         },
         "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro", reasoning: true },
         "deepseek-v4-flash-0731": {
           name: "DeepSeek V4 Flash 0731 GA",
           reasoning: true,
         },
-        "deepseek-v4-pro-0813": {
-          name: "DeepSeek V4 Pro 0813 GA",
-          reasoning: true,
-        },
         "deepseek-v4-flash-202605": {
           name: "DeepSeek V4 Flash Official",
-          reasoning: true,
-        },
-        "deepseek-v4-pro-202606": {
-          name: "DeepSeek V4 Pro Official",
           reasoning: true,
         },
       },
@@ -2827,7 +2834,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro", reasoning: true },
         "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
         "deepseek-v4-flash-0731": {
           name: "DeepSeek V4 Flash 0731",
@@ -3579,7 +3585,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "glm-5.3": { name: "GLM 5.3", reasoning: true },
         "glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
         "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro", reasoning: true },
         "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", reasoning: true },
         "mimo-v2.6-pro": { name: "MiMo V2.6 Pro", reasoning: true },
       },
@@ -4333,11 +4338,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         // 故显式声明容量，取值与本 PR 的 Pi / OpenClaw 预设一致
         "deepseek-v4.1-flash": {
           name: "DeepSeek V4.1 Flash",
-          reasoning: true,
-          limit: { context: 1000000, output: 384000 },
-        },
-        "DeepSeek-V4-Pro-0813": {
-          name: "DeepSeek V4 Pro",
           reasoning: true,
           limit: { context: 1000000, output: 384000 },
         },

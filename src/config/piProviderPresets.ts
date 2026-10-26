@@ -126,6 +126,22 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
+        // 官方文档：K3.1 Pro 同 K3 用顶层 reasoning_effort（low/high/max），
+        // HighSpeed 与之能力相同
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro", {
+            id: "kimi-k3.1-pro",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro-highspeed", {
+            id: "kimi-k3.1-pro-highspeed",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
           thinkingProfile: "offUnsupported",
@@ -162,6 +178,22 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         {
           ...piModel("moonshotai/kimi-k3", {
             id: "kimi-k3",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        // 官方文档：K3.1 Pro 同 K3 用顶层 reasoning_effort（low/high/max），
+        // HighSpeed 与之能力相同
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro", {
+            id: "kimi-k3.1-pro",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro-highspeed", {
+            id: "kimi-k3.1-pro-highspeed",
             thinkingProfile: "kimi3",
           }),
           compat: { ...KIMI_K3_COMPAT },
@@ -497,10 +529,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("zai/glm-5.3", { id: "glm-5.3", maxTokens: 128_000 }),
         piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-0813",
-          contextWindow: 1_048_576,
-        }),
         // V4.1 Flash 1017 为较新的带日期构建，窗口与最大输出取站点目录
         piModel("deepseek/deepseek-flash", {
           id: "deepseek-v4.1-flash-1017",
@@ -549,7 +577,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
         piModel("deepseek/deepseek-v4-flash", {
           id: "deepseek-v4-flash-0731",
           name: "DeepSeek V4 Flash 0731",
@@ -810,6 +837,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+  },
+  {
+    name: "TeamoRouter Claude",
+    providerKey: "cc-switch-teamo-router-claude",
+    websiteUrl: "https://teamorouter.cn",
+    apiKeyUrl:
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    settingsConfig: {
+      name: "TeamoRouter Claude",
+      baseUrl: "https://api.teamorouter.cn",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
@@ -1390,10 +1439,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro",
-          thinkingProfile: "deepseekV4",
-        }),
         piModel("deepseek/deepseek-flash", {
           id: "deepseek-flash",
           thinkingProfile: "deepseekV4",
@@ -1927,13 +1972,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...OPENAI_COMPLETIONS_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-flash", {
             id: "deepseek-v4.1-flash",
             thinkingProfile: "deepseekV4",
@@ -2191,8 +2229,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("zai/glm-5.3", { id: "glm-5.3" }),
         piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
         piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro:0813",
+        // 2026-10-25 起 DeepSeek 一律用 Flash（Pro 贵且效果不如 Flash），
+        // id 与 Codex / Hermes 的 Ollama Cloud 预设一致
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-v4.1-flash",
           contextWindow: 1_048_576,
         }),
         // 目录默认 1M，Ollama 云端只开 512K，必须覆盖
@@ -2337,15 +2377,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { supportsDeveloperRole: false, thinkingFormat: "deepseek" },
         },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-ai/DeepSeek-V4-Pro-0813",
-            name: "DeepSeek V4 Pro 0813",
-            contextWindow: 1_048_576,
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { supportsDeveloperRole: false, thinkingFormat: "deepseek" },
-        },
         // KIMI_K3_COMPAT 是 Moonshot 官方端点的口径，DeepInfra 未证实，不抄
         piModel("moonshotai/kimi-k3", {
           id: "moonshotai/Kimi-K3",
@@ -2441,11 +2472,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           id: "moonshotai/Kimi-K2.7-Code",
           input: ["text"],
         }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
-          name: "DeepSeek V4 Pro 0813",
-          contextWindow: 979_000,
-        }),
       ],
     },
     category: "aggregator",
@@ -2528,7 +2554,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       // OpenAI Chat 端点 base 为 /v1（docs.digitalocean.com/products/inference/
       // how-to/use-with-coding-agents，2026-10-14 核对），Bearer 鉴权，不加
       // compat（同 Novita 等聚合平台）。Pi 内置供应商里没有 DigitalOcean。
-      // catalog 没有 V4 Pro 0813，借 V4 Pro 的能力值。Sonnet 5.5 须 Tier 3+
+      // DeepSeek 用平台表所列 V4.1 Flash 1017（2026-10-25 起 DeepSeek 一律用 Flash（Pro 贵且效果不如 Flash）），
+      // 借目录 V4.1 Flash 的能力值。Sonnet 5.5 须 Tier 3+
       // 账号，首行用所有等级可用的 GLM-5.3
       baseUrl: "https://inference.do-ai.run/v1",
       api: "openai-completions",
@@ -2536,7 +2563,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("zai/glm-5.3", { id: "glm-5.3" }),
         piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
-        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro-0813" }),
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+          contextWindow: 1_048_576,
+        }),
         piModel("anthropic/claude-sonnet-5.5", {
           id: "anthropic-claude-sonnet-5.5",
         }),
@@ -2558,8 +2589,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       //（huggingface.co/docs/inference-providers/integrations/pi，2026-10-14
       // 核对），Bearer 鉴权，不加 compat（同 Novita 等聚合平台）。上游钉
       // :baseten（同 Claude Code 预设）；公开 /v1/models 对 Baseten 的同日声明
-      // 窗口均为 1048576，目录里 V4 Pro 记为 1000000，故覆盖。catalog 没有
-      // V4 Pro 0813，借 V4 Pro 的能力值
+      // 窗口均为 1048576，目录里记为 1000000，故覆盖。DeepSeek 2026-10-25 起
+      // 只留 V4.1 Flash 1017（Pro 贵且效果不如 Flash）
       baseUrl: "https://router.huggingface.co/v1",
       api: "openai-completions",
       apiKey: "",
@@ -2572,10 +2603,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           name: "DeepSeek V4.1 Flash 1017",
           contextWindow: 1_048_576,
           maxTokens: 262_144,
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-ai/DeepSeek-V4-Pro-0813:baseten",
-          contextWindow: 1_048_576,
         }),
       ],
     },
@@ -2752,14 +2779,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
         piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
         piModel("zai/glm-5", { id: "glm-5" }),
         piModel("zai/glm-5.1", { id: "glm-5.1" }),
@@ -2789,14 +2808,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("tencent/tokenplan-auto", { id: "auto" }),
         piModel("zai/glm-5.2", { id: "glm-5.2" }),
         piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
         {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-202605",
@@ -2850,13 +2861,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-0731",
             name: "DeepSeek V4 Flash 0731 GA",
@@ -2865,25 +2869,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-0813",
-            name: "DeepSeek V4 Pro 0813 GA",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-202605",
             name: "DeepSeek V4 Flash Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -2928,13 +2916,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-0731",
             name: "DeepSeek V4 Flash 0731 GA",
@@ -2943,25 +2924,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-0813",
-            name: "DeepSeek V4 Pro 0813 GA",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-202605",
             name: "DeepSeek V4 Flash Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -3040,14 +3005,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash-vision-exp", {
             id: "deepseek/deepseek-v4-flash-vision-exp",
             thinkingProfile: "deepseekV4",
@@ -3063,23 +3020,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-0813",
-            name: "DeepSeek V4 Pro 0813 GA",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -3136,14 +3078,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash-vision-exp", {
             id: "deepseek/deepseek-v4-flash-vision-exp",
             thinkingProfile: "deepseekV4",
@@ -3159,23 +3093,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-0813",
-            name: "DeepSeek V4 Pro 0813 GA",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -3256,7 +3175,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("deepseek/deepseek-flash", {
           id: "deepseek-v4.1-flash",
         }),
-        piModel("deepseek/deepseek-v4-pro", { id: "DeepSeek-V4-Pro-0813" }),
         piModel("zai/glm-5.3", { id: "GLM-5.3" }),
         piModel("zai/glm-5.3-flash", { id: "GLM-5.3-Flash" }),
         piModel("moonshotai/kimi-k3.1-pro", { id: "kimi-k3.1-pro" }),
