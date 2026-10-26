@@ -15,7 +15,7 @@
  * - OpenCode Go 上游自 2026-08 起已提供 grok-4.5，但暂仍不收录：
  *   订阅制网关是否纳入 Grok 预设属产品决策，收录前需单独评估。
  * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.5；
- *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.5"。
+ *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.7"。
  *
  * config 字段沿用 Codex 风格 TOML 作为载体：Grok 表单只从中提取
  * base_url / model / wire_api 三个字段（extractCodex* 工具），再重建
@@ -58,7 +58,7 @@ export const grokBuildOfficialPreset: GrokBuildProviderPreset = {
 };
 
 /** OpenRouter 系命名空间路由站的 Grok 模型 id */
-const OPENROUTER_STYLE_GROK_MODEL = "x-ai/grok-4.5";
+const OPENROUTER_STYLE_GROK_MODEL = "x-ai/grok-4.7";
 
 const grokAuth = (): Record<string, any> => ({ OPENAI_API_KEY: "" });
 
@@ -210,13 +210,50 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     auth: grokAuth(),
     config: grokPresetConfig("DIT.ai", "https://api.dit.ai/v1", "grok-4.7"),
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "dit",
     icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    auth: grokAuth(),
+    // 须用 grok 分组的 Key；分组里只有 grok-4.7（buytoken.work/pricing，2026-10-23）
+    config: grokPresetConfig(
+      "BuyToken",
+      "https://api.buytoken.work/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    auth: grokAuth(),
+    // grok-4.7 支持 /v1/responses，只在 gf 分组（gpt.ge/models/grok-4.7，2026-10-23）
+    config: grokPresetConfig("V-API", "https://api.gpt.ge/v1", "grok-4.7"),
+    category: "aggregator",
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge/v1",
+      "https://api.vveai.com/v1",
+      "https://run.v3.cm/v1",
+      "https://api1.v3.cm/v1",
+      "https://api2.v3.cm/v1",
+      "https://us.gpt.ge/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
   },
   {
     name: "Shengsuanyun",
@@ -626,7 +663,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     websiteUrl: "https://x.ai/api",
     apiKeyUrl: "https://console.x.ai",
     auth: grokAuth(),
-    config: grokPresetConfig("xAI (Grok)", "https://api.x.ai/v1"),
+    config: grokPresetConfig("xAI (Grok)", "https://api.x.ai/v1", "grok-4.7"),
     endpointCandidates: ["https://api.x.ai/v1"],
     apiFormat: "openai_responses",
     category: "third_party",
@@ -722,7 +759,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig(
       "TheRouter",
       "https://api.therouter.ai/v1",
-      OPENROUTER_STYLE_GROK_MODEL,
+      // TheRouter 的 xAI 前缀是 xai/（不是 x-ai/）
+      "xai/grok-4.7",
     ),
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",

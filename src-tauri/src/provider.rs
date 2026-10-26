@@ -213,6 +213,10 @@ impl Provider {
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
+            AppType::Kimi => (
+                str_at(settings.pointer("/provider/base_url")),
+                str_at(settings.pointer("/provider/api_key")),
+            ),
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
@@ -222,10 +226,11 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
-            // Pi custom providers use the native models.json field names.
+            // Pi custom providers use the native models.json field names. Pi expands
+            // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
             AppType::Pi => (
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
-                str_at(settings.get("apiKey")),
+                crate::pi_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
@@ -252,6 +257,12 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
+            // Oh My Pi custom providers use the models.yml field names. omp reads `apiKey` as
+            // an environment variable name first, so resolve it before sending.
+            AppType::Omp => (
+                crate::omp_config::provider_base_url(settings).unwrap_or_default(),
+                crate::omp_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a
@@ -1726,6 +1737,17 @@ mod tests {
                 "sk-pi".to_string()
             )
         );
+    }
+
+    #[test]
+    fn resolve_credentials_pi_never_sends_key_references_literally() {
+        for reference in ["$CC_SWITCH_TEST_UNSET_8822", "!echo sk-from-command"] {
+            let p = provider_with(json!({
+                "baseUrl": "https://api.example.com/v1",
+                "apiKey": reference,
+            }));
+            assert_eq!(p.resolve_usage_credentials(&AppType::Pi).1, "");
+        }
     }
 
     #[test]

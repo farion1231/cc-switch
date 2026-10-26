@@ -1,12 +1,14 @@
 pub mod agy_account;
 pub mod backup_storage;
 pub mod balance;
+pub mod claude_account;
 pub mod codex_oauth_models;
 pub mod codex_session_compression;
 pub mod coding_plan;
 pub mod config;
 pub mod env_checker;
 pub mod env_manager;
+pub mod kimi_oauth;
 pub mod mcp;
 pub mod model_fetch;
 pub mod model_pricing;
@@ -56,6 +58,7 @@ pub use usage_stats::{
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 
+pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 
 pub mod session_usage_agy;

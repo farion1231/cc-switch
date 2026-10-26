@@ -22,6 +22,8 @@ mod grok_config;
 pub mod hermes_config;
 mod init_status;
 mod jsonc_document;
+mod kimi_config;
+mod kimi_session;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -30,6 +32,7 @@ mod mcode_config;
 mod mcp;
 pub mod mode;
 mod model_capabilities;
+mod omp_config;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -71,7 +74,7 @@ pub use mcp::{
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
-    profile::{ProfilePayload, ProfileScope, ProfileService},
+    profile::{ProfilePayload, ProfileScope, ProfileService, NO_ACTIVE_PROMPT},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
@@ -989,6 +992,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
+            match crate::services::provider::import_omp_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Oh My Pi provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1196,10 +1206,12 @@ pub fn run() {
             // 冷启动补取：Windows/Linux 上插件在自身初始化时就解析了启动参数并发出事件，
             // macOS 的 Opened 也可能早于这里，都赶在上面的回调注册之前，只能从 get_current 取。
             // 万一两边都处理了同一条链接也无妨：暂存区只留最新一条，前端处理完就清除。
+            let mut startup_deeplink = false;
             match app.deep_link().get_current() {
                 Ok(Some(urls)) => {
                     for url in urls {
                         if handle_deeplink_url(app.handle(), url.as_str(), true, "get_current") {
+                            startup_deeplink = true;
                             break;
                         }
                     }
@@ -1279,6 +1291,7 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            app.manage(services::kimi_oauth::KimiOAuthManager::default());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1323,6 +1336,21 @@ pub fn run() {
                 use crate::services::agy_account::AgyAccountManager;
                 let manager = AgyAccountManager::new(crate::config::get_app_config_dir());
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
+            }
+
+            // Claude Code 官方订阅账号（授权中心加号；每个账号一个 CLAUDE_CONFIG_DIR）
+            {
+                use crate::services::claude_account::ClaudeAccountManager;
+                let data_dir = crate::config::get_app_config_dir();
+                let manager = ClaudeAccountManager::new(data_dir.clone());
+                app.manage(commands::ClaudeAccountState(Arc::new(manager)));
+                let db = app.state::<AppState>().db.clone();
+                std::thread::spawn(move || {
+                    // 上次切换登录时崩溃、断电：先补完（配置操作在前面已补完，指针已落定）
+                    crate::services::provider::claude_official::recover_login_switch(&db);
+                    // 默认目录的设置、MCP 可能在 CC Switch 没运行时改过
+                    crate::services::claude_account::sync_all_shared(&data_dir)
+                });
             }
 
             // 初始化全局出站代理 HTTP 客户端
@@ -1493,7 +1521,14 @@ pub fn run() {
                     let _ = window.set_decorations(false);
                     let _ = window.set_shadow(true);
                 }
-                if settings.silent_startup {
+                // 上次退出时在轻量模式：照旧只留托盘。由深链接冷启动的要给用户看导入对话框，正常启动。
+                if settings.lightweight_mode && !startup_deeplink {
+                    if let Err(e) = crate::lightweight::enter_lightweight_mode(app.handle()) {
+                        log::error!("启动时恢复轻量模式失败: {e}");
+                    } else {
+                        log::info!("上次退出时在轻量模式，启动后已恢复");
+                    }
+                } else if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
@@ -1530,6 +1565,7 @@ pub fn run() {
             commands::update_provider,
             commands::get_provider_editor_view,
             commands::delete_provider,
+            commands::add_provider_to_live_config,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
@@ -1634,6 +1670,8 @@ pub fn run() {
             commands::get_pi_current_state,
             commands::update_pi_provider_usage_script,
             commands::get_pi_session_discovery,
+            // Oh My Pi native provider and session views
+            commands::get_omp_current_state,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,
@@ -1882,6 +1920,18 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::claude_account_submit_paste,
+            commands::get_claude_account_quota,
+            commands::get_claude_default_plan,
+            commands::get_claude_login_switch,
+            commands::kimi_oauth_status,
+            commands::kimi_oauth_start,
+            commands::kimi_oauth_poll,
+            commands::kimi_oauth_cancel,
+            commands::kimi_oauth_remove,
+            commands::kimi_oauth_quota,
+            commands::kimi_oauth_use_account,
+            commands::kimi_oauth_models,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,
             commands::copilot_poll_for_auth,
