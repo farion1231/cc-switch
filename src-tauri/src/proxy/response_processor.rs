@@ -26,6 +26,7 @@ use std::{
     },
     time::Duration,
 };
+use tauri::Emitter;
 use tokio::sync::Mutex;
 
 // ============================================================================
@@ -245,9 +246,27 @@ pub async fn handle_non_streaming(
         body_bytes.len()
     );
 
-    // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
+    // 整包 JSON 解析一次，usage 记账与模型不一致检测共用。模型不一致检测是
+    // 默认开启的保护，不放在 usage logging 闸内：关闭 usage logging 只跳过
+    // 记账，不跳过检测（代价是 logging 关闭时仍有一次有界整包 parse）。
+    let json_value = serde_json::from_slice::<Value>(&body_bytes).ok();
+
+    // 模型不一致检测：仅对成功响应做，失败响应的 body 没有「上游选了什么模型」的语义
+    if status.is_success() {
+        if let Some(response_model) = json_value
+            .as_ref()
+            .and_then(|v| v.get("model"))
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.is_empty())
+        {
+            let check = ModelMismatchContext::from_ctx(ctx);
+            check_model_mismatch(state, &check, response_model);
+        }
+    }
+
+    // 解析并记录使用量。关闭 usage logging 时跳过 usage 解析与记账。
     if usage_logging_enabled(state) {
-        if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+        if let Some(json_value) = json_value {
             // 解析使用量
             if let Some(usage) = (parser_config.response_parser)(&json_value) {
                 // 归因优先级：usage 解析出的模型 → 响应 model 字段 → 映射后的出站
@@ -328,6 +347,130 @@ pub async fn handle_non_streaming(
         log::error!("[{}] 构建响应失败: {e}", ctx.tag);
         ProxyError::Internal(format!("Failed to build response: {e}"))
     })
+}
+
+// ============================================================================
+// 模型不一致检测（#7589：上游偷换模型，如请求 gpt-6 上游用 luna 响应）
+// ============================================================================
+
+/// 模型不一致检测所需的请求侧快照。
+///
+/// 流式挂点在 usage 收集器闭包里拿不到 `RequestContext`，挂点处先提取成
+/// 这个小快照再捕获进闭包。
+#[derive(Clone)]
+struct ModelMismatchContext {
+    provider_id: String,
+    provider_name: String,
+    app_type_str: &'static str,
+    tag: &'static str,
+    request_model: String,
+    /// 路由接管/模型映射后实际发往上游的模型（无映射时为 None）
+    outbound_model: Option<String>,
+    /// 可选熔断层开关（AppProxyConfig.modelMismatchBreaker，默认关）
+    breaker_enabled: bool,
+}
+
+impl ModelMismatchContext {
+    fn from_ctx(ctx: &RequestContext) -> Self {
+        Self {
+            provider_id: ctx.provider.id.clone(),
+            provider_name: ctx.provider.name.clone(),
+            app_type_str: ctx.app_type_str,
+            tag: ctx.tag,
+            request_model: ctx.request_model.clone(),
+            outbound_model: ctx.outbound_model.clone(),
+            breaker_enabled: ctx.app_config.model_mismatch_breaker,
+        }
+    }
+}
+
+/// 判断响应回显模型与期望模型是否语义一致。
+///
+/// 容忍规则刻意保持最小（#7552 的数据证明合法变体后缀普遍存在，如请求
+/// `deepseek-v4-flash` 回显 `deepseek-v4-flash-ga-260731`）：
+/// - 精确相等；
+/// - 响应以期望模型为前缀，且后缀仅含字母/数字/连字符/点。
+///
+/// 其余一律视为不一致；不引入别名表。
+fn model_matches(expected: &str, response_model: &str) -> bool {
+    if response_model == expected {
+        return true;
+    }
+    match response_model.strip_prefix(expected) {
+        Some(suffix) => {
+            !suffix.is_empty()
+                && suffix
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        }
+        None => false,
+    }
+}
+
+/// 检测「响应回显 model 与请求 model 不一致」，不一致时告警并按需计入熔断器。
+///
+/// 默认层（总开）：`log::warn!` + 向前端发 `provider-model-mismatch` 事件。
+/// 可选层（默认关，`modelMismatchBreaker`）：向熔断器补记一次失败，保护后续
+/// 请求。注意时序：成功已在响应头返回时记入熔断器，body 校验只能事后追加。
+fn check_model_mismatch(state: &ProxyState, check: &ModelMismatchContext, response_model: &str) {
+    // 缺少请求模型或响应没有回显 model 时无比较基准，不检测
+    if check.request_model.is_empty() || response_model.is_empty() {
+        return;
+    }
+    // 出站模型存在（路由接管/模型映射）时它是实际发给上游的真值，
+    // 回显出站模型是正常现象，不能算供应商偷换
+    let outbound = check.outbound_model.as_deref().unwrap_or("");
+    if model_matches(&check.request_model, response_model)
+        || (!outbound.is_empty() && model_matches(outbound, response_model))
+    {
+        return;
+    }
+
+    log::warn!(
+        "[{}] [MM-001] 响应模型不一致: provider=\"{}\" ({}) 请求模型=\"{}\" 出站模型=\"{}\" 响应模型=\"{}\"",
+        check.tag,
+        check.provider_name,
+        check.provider_id,
+        check.request_model,
+        outbound,
+        response_model
+    );
+
+    // 默认层：发事件给前端做非阻塞提示
+    if let Some(app) = &state.app_handle {
+        let payload = serde_json::json!({
+            "appType": check.app_type_str,
+            "providerId": check.provider_id,
+            "providerName": check.provider_name,
+            "requestModel": check.request_model,
+            "outboundModel": check.outbound_model,
+            "responseModel": response_model,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Err(e) = app.emit("provider-model-mismatch", payload) {
+            log::error!("[{}] 发射模型不一致事件失败: {e}", check.tag);
+        }
+    }
+
+    // 可选层：计入熔断器失败。`used_half_open_permit` 传 false——本次请求的
+    // permit（如有）已在响应头返回时随 record_success 释放，这里不再重复释放。
+    if check.breaker_enabled {
+        let router = state.provider_router.clone();
+        let provider_id = check.provider_id.clone();
+        let app_type = check.app_type_str.to_string();
+        let error_msg = format!(
+            "model mismatch: req={} resp={}",
+            check.request_model, response_model
+        );
+        tokio::spawn(async move {
+            if let Err(e) = router
+                .record_result(&provider_id, &app_type, false, false, Some(error_msg))
+                .await
+            {
+                log::warn!("记录模型不一致到熔断器失败: provider_id={provider_id}, error={e}");
+            }
+        });
+    }
 }
 
 /// 通用响应处理入口
@@ -505,6 +648,9 @@ pub(crate) fn create_usage_collector(
         .map(|c| c.enable_logging)
         .unwrap_or(true);
     if !logging_enabled {
+        // 已知限制：模型不一致检测对流式响应挂在 usage 收集器回调上，关闭
+        // usage logging 时不建收集器、也就不解析 SSE 事件，检测随之停用
+        // （这是「不在流式热路径上解析每个 SSE event」优化的既有代价）。
         return None;
     }
 
@@ -526,11 +672,21 @@ pub(crate) fn create_usage_collector(
     let stream_parser = parser_config.stream_parser;
     let model_extractor = parser_config.model_extractor;
     let session_id = ctx.session_id.clone();
+    // 模型不一致检测的请求侧快照（闭包里拿不到 RequestContext）
+    let mismatch_check = ModelMismatchContext::from_ctx(ctx);
 
     Some(SseUsageCollector::new(
         start_time,
         parser_config.stream_event_filter,
         move |events, first_token_ms| {
+            // 模型不一致检测：与 usage 记账无关，只看事件里回显的模型。
+            // fallback 传空串——上游没回显 model（extractor 返回空）时不检测。
+            if (200..300).contains(&status_code) {
+                let echo_model = model_extractor(&events, "");
+                if !echo_model.is_empty() {
+                    check_model_mismatch(&state, &mismatch_check, &echo_model);
+                }
+            }
             if let Some(usage) = stream_parser(&events) {
                 let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;

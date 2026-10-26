@@ -176,6 +176,7 @@ impl Database {
             circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
             circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+            model_mismatch_breaker INTEGER NOT NULL DEFAULT 0,
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -449,6 +450,15 @@ impl Database {
             "ALTER TABLE proxy_config ADD COLUMN non_streaming_timeout INTEGER NOT NULL DEFAULT 600",
             [],
         );
+
+        // 幂等补齐模型不一致熔断开关列（#7589，默认关）；不提升 SCHEMA_VERSION，
+        // 兼容同版本开发库和已执行过该补丁的数据库。
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "model_mismatch_breaker",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         // 兼容：若旧版 proxy_config 仍为单例结构（无 app_type），则在启动时直接转换为三行结构
         // 说明：user_version=2 时不会再触发 v1->v2 迁移，但新代码查询依赖 app_type 列。
@@ -1604,6 +1614,7 @@ impl Database {
                 circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
                 circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
                 circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                model_mismatch_breaker INTEGER NOT NULL DEFAULT 0,
                 default_cost_multiplier TEXT NOT NULL DEFAULT '1',
                 pricing_model_source TEXT NOT NULL DEFAULT 'response',
                 live_takeover_active INTEGER NOT NULL DEFAULT 0,
@@ -1631,6 +1642,7 @@ impl Database {
             ("circuit_timeout_seconds", "60"),
             ("circuit_error_rate_threshold", "0.6"),
             ("circuit_min_requests", "10"),
+            ("model_mismatch_breaker", "0"),
             ("default_cost_multiplier", "'1'"),
             ("pricing_model_source", "'response'"),
             ("live_takeover_active", "0"),
@@ -1656,7 +1668,7 @@ impl Database {
                 enabled, auto_failover_enabled, max_retries,
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests,
+                circuit_error_rate_threshold, circuit_min_requests, model_mismatch_breaker,
                 default_cost_multiplier, pricing_model_source, live_takeover_active,
                 created_at, updated_at
             )
