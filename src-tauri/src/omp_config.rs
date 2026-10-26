@@ -356,27 +356,83 @@ fn check_common(node: &Value, apis: &[&[&str]]) -> Result<(), AppError> {
     })?;
     check_type(node, &["headers"], string_map)?;
     if let Some(compat) = node.get("compat") {
-        if !compat.is_object() {
+        check_compat(compat)?;
+        if let Some(when_thinking) = compat.get("whenThinking") {
+            check_compat(when_thinking)?;
+        }
+    }
+    Ok(())
+}
+
+/// Enumerated `compat` fields, as omp v18.12's models.yml schema lists them. A Pi value
+/// such as `thinkingFormat: deepseek` would make omp drop every custom provider.
+const COMPAT_ENUMS: &[(&str, &[&str])] = &[
+    ("maxTokensField", &["max_completion_tokens", "max_tokens"]),
+    (
+        "reasoningContentField",
+        &["reasoning_content", "reasoning", "reasoning_text"],
+    ),
+    (
+        "thinkingFormat",
+        &["openai", "openrouter", "zai", "qwen", "qwen-chat-template"],
+    ),
+    ("cacheControlFormat", &["anthropic"]),
+    ("toolStrictMode", &["all_strict", "none"]),
+    (
+        "streamMarkupHealingPattern",
+        &["kimi", "dsml", "qwen", "thinking"],
+    ),
+    ("promptCacheMode", &["none", "automatic", "explicit"]),
+];
+
+fn check_compat(compat: &Value) -> Result<(), AppError> {
+    if !compat.is_object() {
+        return Err(invalid_provider());
+    }
+    check_type(
+        compat,
+        &[
+            "supportsStore",
+            "supportsDeveloperRole",
+            "supportsReasoningEffort",
+            "supportsUsageInStreaming",
+            "requiresToolResultName",
+            "requiresMistralToolIds",
+            "requiresAssistantAfterToolResult",
+            "requiresThinkingAsText",
+            "supportsStrictMode",
+        ],
+        Value::is_boolean,
+    )?;
+    for (key, allowed) in COMPAT_ENUMS {
+        check_type(compat, &[key], |v| {
+            v.as_str().is_some_and(|s| allowed.contains(&s))
+        })?;
+    }
+    if let Some(map) = compat.get("reasoningEffortMap") {
+        if !map.is_object() {
             return Err(invalid_provider());
         }
+        // omp declares these six levels and keeps any other key as is.
         check_type(
-            compat,
-            &[
-                "supportsStore",
-                "supportsDeveloperRole",
-                "supportsReasoningEffort",
-                "supportsUsageInStreaming",
-                "requiresToolResultName",
-                "requiresMistralToolIds",
-                "requiresAssistantAfterToolResult",
-                "requiresThinkingAsText",
-                "supportsStrictMode",
-            ],
-            Value::is_boolean,
+            map,
+            &["minimal", "low", "medium", "high", "xhigh", "max"],
+            Value::is_string,
         )?;
     }
     Ok(())
 }
+
+/// `discovery.type` values omp v18.12 accepts.
+const DISCOVERY_TYPES: &[&str] = &[
+    "ollama",
+    "llama.cpp",
+    "lm-studio",
+    "openai-models-list",
+    "proxy",
+    "litellm",
+    "apple-foundation-models",
+];
 
 /// Validate the one node CC Switch writes. Other providers in the file are never judged.
 pub(crate) fn validate_provider(id: &str, node: &Value) -> Result<(), AppError> {
@@ -384,6 +440,14 @@ pub(crate) fn validate_provider(id: &str, node: &Value) -> Result<(), AppError> 
         return Err(invalid_provider());
     }
     check_common(node, &[APIS])?;
+    check_type(node, &["auth"], |v| {
+        matches!(v.as_str(), Some("apiKey" | "none" | "oauth"))
+    })?;
+    check_type(
+        node,
+        &["authHeader", "disableStrictTools"],
+        Value::is_boolean,
+    )?;
     let models = match node.get("models") {
         None => &[][..],
         Some(v) => v.as_array().ok_or_else(invalid_provider)?.as_slice(),
@@ -455,11 +519,17 @@ pub(crate) fn validate_provider(id: &str, node: &Value) -> Result<(), AppError> 
     }
     // Proxy discovery supplies its API at runtime, as in omp's native validator.
     if let Some(discovery) = node.get("discovery") {
-        if discovery.get("type").and_then(Value::as_str) != Some("proxy")
-            && node.get("api").is_none()
+        let kind = discovery.get("type").and_then(Value::as_str);
+        if !kind.is_some_and(|kind| DISCOVERY_TYPES.contains(&kind))
+            || (kind != Some("proxy") && node.get("api").is_none())
+            || (discovery.get("injectV1").is_some() && kind != Some("openai-models-list"))
         {
             return Err(invalid_provider());
         }
+        check_type(discovery, &["injectV1"], Value::is_boolean)?;
+        check_type(discovery, &["timeoutMs"], |v| {
+            v.as_f64().is_some_and(|n| n > 0.0 && n.is_finite())
+        })?;
     }
     Ok(())
 }
@@ -669,13 +739,21 @@ fn mapping_key(line: &str) -> Result<String, AppError> {
 }
 
 /// Anchors, aliases, tags and merge keys can't be edited as text without breaking a
-/// reference elsewhere; refuse them before writing.
+/// reference elsewhere; refuse them before writing. `&`, `*` and `!` are only YAML
+/// indicators where a node starts: inside a plain scalar (`name: Search & Fetch`, which
+/// serde_yaml and Bun both write unquoted) they are ordinary text.
 fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
     let mut quote = None;
     let mut escaped = false;
-    let mut boundary = true;
+    // A node may start here: line start, after `:`, a flow opener or `,`, and after a
+    // `- `/`? ` entry marker that itself sits where a node starts. Whitespace keeps the
+    // state; any other character is node content.
+    let mut node_start = true;
+    // `#` starts a comment only at line start or after whitespace.
+    let mut after_space = true;
     let mut previous = [' '; 2];
-    for c in line.chars() {
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
         if escaped {
             escaped = false;
             continue;
@@ -684,9 +762,15 @@ fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
             escaped = true;
             continue;
         }
+        if quote == Some('\'') && c == '\'' && chars.peek() == Some(&'\'') {
+            // `''` is an escaped quote inside a single-quoted scalar.
+            chars.next();
+            continue;
+        }
         if quote == Some(c) {
             quote = None;
-            boundary = false;
+            node_start = false;
+            after_space = false;
             continue;
         }
         if quote.is_some() {
@@ -696,13 +780,19 @@ fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
             return Err(manual_edit());
         }
         match c {
-            '"' | '\'' if boundary => quote = Some(c),
-            '#' if boundary => break,
-            '&' | '*' | '!' if boundary => return Err(manual_edit()),
+            '#' if after_space => break,
+            '"' | '\'' if node_start => quote = Some(c),
+            '&' | '*' | '!' if node_start => return Err(manual_edit()),
             _ => {}
         }
         previous = [previous[1], c];
-        boundary = c.is_whitespace() || matches!(c, ':' | '[' | '{' | ',');
+        after_space = c.is_whitespace();
+        if !c.is_whitespace() {
+            let entry_marker = node_start
+                && matches!(c, '-' | '?')
+                && chars.peek().is_none_or(|next| next.is_whitespace());
+            node_start = entry_marker || matches!(c, ':' | '[' | '{' | ',');
+        }
     }
     Ok(())
 }
@@ -734,6 +824,11 @@ pub(crate) fn change_and_commit<T>(
         Change::ReplaceIfPresent | Change::Remove if old.is_none() => return commit(None),
         _ => {}
     }
+    // With neither YAML file present, omp migrates a legacy models.json itself. Creating
+    // models.yml first would make omp skip that migration and drop the user's providers.
+    if before.is_none() && path.with_file_name("models.json").exists() {
+        return Err(AppError::Config("omp.errors.legacyModelsJson".into()));
+    }
     let after = edit_provider(&text, id, config)?;
     write_and_commit(&path, before.as_deref(), after.as_bytes(), || commit(old))
 }
@@ -756,6 +851,83 @@ pub(crate) fn provider_base_url(config: &Value) -> Result<String, AppError> {
         })
         .map(str::to_string)
         .ok_or_else(|| AppError::InvalidInput("Oh My Pi provider has no request URL".to_string()))
+}
+
+/// The key CC Switch's own usage queries should send for an omp `apiKey` value.
+///
+/// omp reads the value as an environment variable name first and falls back to the literal
+/// string when that variable is unset or empty; unlike Pi there is no `$NAME` syntax. Besides
+/// the process environment it reads `.env` in the agent dir, the config root and home, in that
+/// order. Values starting with `!` are shell commands, which CC Switch never runs, so they give
+/// an empty key instead of being sent as the credential.
+pub(crate) fn resolve_usage_api_key(value: &str) -> String {
+    let dotenv_files: Vec<PathBuf> = [get_omp_agent_dir(), get_omp_config_root()]
+        .into_iter()
+        .flatten()
+        .map(|dir| dir.join(".env"))
+        .chain([get_home_dir().join(".env")])
+        .collect();
+    resolve_usage_api_key_with(value, |name| {
+        // omp matches names exactly; Windows' own lookup would ignore case.
+        std::env::vars_os()
+            .find(|(key, _)| key == name)
+            .and_then(|(_, value)| value.into_string().ok())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                // Only shell identifiers are imported from dotenv files.
+                let identifier = name.starts_with(|c: char| c == '_' || c.is_ascii_alphabetic())
+                    && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+                identifier
+                    .then(|| {
+                        dotenv_files
+                            .iter()
+                            .find_map(|path| dotenv_value(path, name))
+                    })
+                    .flatten()
+            })
+    })
+}
+
+fn resolve_usage_api_key_with(value: &str, env: impl Fn(&str) -> Option<String>) -> String {
+    if value.starts_with('!') {
+        return String::new();
+    }
+    env(value).unwrap_or_else(|| value.to_string())
+}
+
+/// omp's config root, `~/<PI_CONFIG_DIR or .omp>` or a profile's directory under it, where it
+/// reads a second `.env`. Agent-dir overrides do not move it.
+fn get_omp_config_root() -> Result<PathBuf, AppError> {
+    let config_dir = std::env::var("PI_CONFIG_DIR").ok();
+    let profile = get_omp_active_profile()?;
+    let agent = native_agent_dir(
+        &get_home_dir(),
+        config_dir.as_deref(),
+        profile.as_deref(),
+        None,
+        None,
+    )?;
+    Ok(agent.parent().map_or(agent.clone(), Path::to_path_buf))
+}
+
+/// One variable from a dotenv file: `[export ]NAME=value`. The last assignment wins, and an empty
+/// one leaves the variable unset for this file. Quotes are stripped and an unquoted value ends at
+/// `#`. Multi-line values are not read.
+fn dotenv_value(path: &Path, name: &str) -> Option<String> {
+    let text = String::from_utf8(read_bytes(path).ok()??).ok()?;
+    let raw = text.lines().rev().find_map(|line| {
+        let line = line.trim();
+        let (key, raw) = line
+            .strip_prefix("export ")
+            .unwrap_or(line)
+            .split_once('=')?;
+        (key.trim() == name).then(|| raw.trim())
+    })?;
+    let value = match raw.chars().next() {
+        Some(quote @ ('"' | '\'' | '`')) => raw[1..].split(quote).next().unwrap_or_default(),
+        _ => raw.split('#').next().unwrap_or_default().trim(),
+    };
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 // ============================================================================
@@ -981,6 +1153,35 @@ mod tests {
     }
 
     #[test]
+    fn edits_plain_scalars_that_contain_indicator_characters() {
+        // Bun's YAML.stringify (omp's models.json migration) and serde_yaml both leave
+        // these unquoted; they are text, not anchors, aliases or tags.
+        let text = "providers:\n  other:\n    baseUrl: https://x.example/v1?a=1&b=2\n    models:\n      - id: m\n        name: Search & Fetch * x\n        note: Claude! a-b 'n # c *d\n        tip: 'it''s \"quoted: * text\"'\n        why: What?! a-!b\n        flag: -!important\n  p:\n    apiKey: old\n";
+        let after = edit_provider(text, "p", Some(&provider())).unwrap();
+        assert_eq!(providers(&parse(&after).unwrap()).unwrap()["p"], provider());
+
+        let mut named = provider();
+        named["models"][0]["name"] = json!("Search & Fetch * x ! What?! a-!b");
+        let once = edit_provider("", "p", Some(&named)).unwrap();
+        let twice = edit_provider(&once, "p", Some(&provider())).unwrap();
+        assert_eq!(providers(&parse(&twice).unwrap()).unwrap()["p"], provider());
+
+        for text in [
+            "providers:\n  p:\n    apiKey: a\n    headers: [*anchor]\n",
+            "providers:\n  p:\n    models:\n      - &m {id: a}\n",
+            "providers:\n  p:\n    apiKey: key\n    compat: {a: !!str b}\n",
+            "providers:\n  p:\n    apiKey: key\n    headers: {'a'' \"x:\"': &a hello}\n",
+            "providers:\n  p:\n    apiKey: key\n    headers: {X: -'abc, Y: &a b}\n",
+            "providers:\n  p:\n    models:\n      - - *anchor\n",
+        ] {
+            assert!(
+                edit_provider(text, "p", Some(&provider())).is_err(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn handles_empty_null_and_last_removal_without_invalid_native_null() {
         for text in [
             "",
@@ -1095,6 +1296,93 @@ mod tests {
         }
         fs::write(&path, vec![b' '; MAX_FILE_BYTES as usize + 1]).unwrap();
         assert!(read_bytes(&path).is_err());
+    }
+
+    #[test]
+    fn rejects_enum_and_discovery_values_omp_would_refuse() {
+        // Each of these makes omp disable every custom provider in models.yml.
+        for compat in [
+            json!({"thinkingFormat": "deepseek"}),
+            json!({"maxTokensField": "max_output_tokens"}),
+            json!({"reasoningContentField": 1}),
+            json!({"whenThinking": {"thinkingFormat": "deepseek"}}),
+            json!({"reasoningEffortMap": {"high": 1}}),
+        ] {
+            let mut invalid = provider();
+            invalid["models"][0]["compat"] = compat.clone();
+            assert!(validate_provider("p", &invalid).is_err(), "{compat}");
+        }
+        for (key, value) in [
+            ("auth", json!("bearer")),
+            ("authHeader", json!("yes")),
+            ("discovery", json!({"type": "ollama", "injectV1": false})),
+            (
+                "discovery",
+                json!({"type": "openai-models-list", "injectV1": "no"}),
+            ),
+            ("discovery", json!({"type": "ollama", "timeoutMs": 0})),
+            ("discovery", json!({})),
+        ] {
+            let mut invalid = provider();
+            invalid[key] = value.clone();
+            assert!(validate_provider("p", &invalid).is_err(), "{key}: {value}");
+        }
+        let mut valid = provider();
+        valid["compat"] =
+            json!({"thinkingFormat": "qwen", "whenThinking": {"maxTokensField": "max_tokens"}});
+        valid["discovery"] =
+            json!({"type": "openai-models-list", "injectV1": false, "timeoutMs": 500});
+        valid["auth"] = json!("apiKey");
+        valid["models"][0]["compat"] =
+            json!({"reasoningEffortMap": {"high": "high", "none": null}});
+        assert!(validate_provider("p", &valid).is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn leaves_a_legacy_models_json_for_omp_to_migrate() {
+        let _agent = test_support::TestAgentDir::new();
+        let dir = get_omp_agent_dir().unwrap();
+        fs::write(dir.join("models.json"), r#"{"providers":{}}"#).unwrap();
+        let result = change_and_commit("p", Some(&provider()), Change::Insert, |_| Ok(()));
+        assert!(
+            matches!(result, Err(AppError::Config(key)) if key == "omp.errors.legacyModelsJson")
+        );
+        assert!(!dir.join("models.yml").exists());
+        // Removing a provider that is not there writes nothing, so it still goes through.
+        change_and_commit("p", None, Change::Remove, |_| Ok(())).unwrap();
+        // Once omp has migrated, edits work as usual.
+        fs::write(dir.join("models.yml"), "# migrated by omp\n").unwrap();
+        change_and_commit("p", Some(&provider()), Change::Insert, |_| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn usage_api_key_follows_omp_resolution() {
+        let env = |name: &str| (name == "DS_KEY").then(|| "sk-env".to_string());
+        let resolve = |value: &str| resolve_usage_api_key_with(value, env);
+        assert_eq!(resolve("DS_KEY"), "sk-env");
+        // Unset names fall back to the literal string, as in omp.
+        assert_eq!(resolve("UNSET_NAME"), "UNSET_NAME");
+        assert_eq!(resolve("sk-literal"), "sk-literal");
+        // omp has no `$NAME` syntax; the value is a literal.
+        assert_eq!(resolve("$DS_KEY"), "$DS_KEY");
+        assert_eq!(resolve("!op read op://dev/key"), "");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        fs::write(
+            &path,
+            "# DS_KEY=commented\nexport DS_KEY=\"sk-first\"\nOTHER=x\nDS_KEY=sk-last # note\nQUOTED='a # b'\nEMPTY=\nINLINE=sk-good#comment\nCLEARED=sk-old\nCLEARED=\n",
+        )
+        .unwrap();
+        assert_eq!(dotenv_value(&path, "DS_KEY").as_deref(), Some("sk-last"));
+        assert_eq!(dotenv_value(&path, "QUOTED").as_deref(), Some("a # b"));
+        assert_eq!(dotenv_value(&path, "EMPTY"), None);
+        assert_eq!(dotenv_value(&path, "INLINE").as_deref(), Some("sk-good"));
+        // A later empty assignment clears an earlier key in the same file.
+        assert_eq!(dotenv_value(&path, "CLEARED"), None);
+        assert_eq!(dotenv_value(&path, "MISSING"), None);
+        assert_eq!(dotenv_value(&dir.path().join("none"), "DS_KEY"), None);
     }
 
     #[test]
