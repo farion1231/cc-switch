@@ -424,6 +424,10 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// 退出时是否处于轻量模式（主窗口已销毁、只留托盘）；下次启动按它恢复。
+    /// 只经 [`set_lightweight_mode`] 写，前端全量保存不透传。
+    #[serde(default)]
+    pub lightweight_mode: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -647,6 +651,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            lightweight_mode: false,
             enable_local_proxy: false,
             enable_stack_mode: false,
             proxy_confirmed: None,
@@ -1184,6 +1189,14 @@ pub fn clear_codex_unify_migrate_existing() -> Result<(), AppError> {
     mutate_settings(|settings| {
         settings.unify_codex_migrate_existing = None;
     })
+}
+
+/// 记下当前是否处于轻量模式（见 [`AppSettings::lightweight_mode`]），值没变就不写盘。
+pub fn set_lightweight_mode(enabled: bool) -> Result<(), AppError> {
+    if get_settings().lightweight_mode == enabled {
+        return Ok(());
+    }
+    mutate_settings(|settings| settings.lightweight_mode = enabled)
 }
 
 /// 客户端地址（见 [`AppSettings::proxy_client_host`]），去掉首尾空白；没设或为空时是 `None`。
