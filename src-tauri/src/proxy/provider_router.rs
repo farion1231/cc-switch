@@ -5,8 +5,9 @@
 use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::provider::Provider;
+use crate::provider::{Provider, QuotaCycleConfig};
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::quota_relay::QuotaRelay;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -26,14 +27,17 @@ pub struct ProviderRouter {
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+    /// 订阅配额接力（issue #7493）- per-(provider, app) 内存周期额度窗口
+    quota_relay: QuotaRelay,
 }
 
 impl ProviderRouter {
     /// 创建新的供应商路由器
     pub fn new(db: Arc<Database>) -> Self {
         Self {
-            db,
+            db: db.clone(),
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            quota_relay: QuotaRelay::new(db),
         }
     }
 
@@ -147,6 +151,36 @@ impl ProviderRouter {
         let circuit_key = format!("{app_type}:{provider_id}");
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
         breaker.allow_request().await
+    }
+
+    /// 订阅配额接力（issue #7493）：供应商当前周期额度是否已用尽
+    ///
+    /// `config` 由调用方从内存中的 `Provider.meta`（`quotaCycle` 字段）传入，避免
+    /// 每请求查库。窗口过期在内部惰性重置（不跑后台计时器）。
+    pub async fn is_quota_exhausted(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        config: &QuotaCycleConfig,
+    ) -> bool {
+        self.quota_relay
+            .is_exhausted(app_type, provider_id, config)
+            .await
+    }
+
+    /// 订阅配额接力（issue #7493）：把一次请求的真实消耗 tokens 计入供应商周期窗口
+    ///
+    /// 供应商未配置 `quotaCycle` 时是 no-op。用量记录点在 `response_processor`
+    /// 的 `log_usage_internal`（本地路由的用量统一漏斗）。
+    pub async fn record_quota_usage(&self, app_type: &str, provider_id: &str, tokens: i64) {
+        self.quota_relay
+            .record_usage(app_type, provider_id, tokens)
+            .await;
+    }
+
+    /// 订阅配额接力（issue #7493）：启动预填，见 [`QuotaRelay::prefill_all`]
+    pub async fn prefill_quota_windows(&self) {
+        self.quota_relay.prefill_all().await;
     }
 
     /// 记录供应商请求结果
