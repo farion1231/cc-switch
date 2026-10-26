@@ -212,6 +212,13 @@ describe("ClaudeDesktopProviderForm", () => {
       });
       expect(modelModePicker).toHaveTextContent("模型映射");
       expect(modelModePicker).toBeDisabled();
+      if (providerType === "github_copilot") {
+        const formatControl = screen
+          .getByText("copilot.automaticFormat")
+          .closest("button");
+        expect(formatControl).toBeDisabled();
+        expect(screen.getByText(/copilot.automaticFormatHint/)).toBeVisible();
+      }
     },
   );
 

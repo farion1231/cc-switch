@@ -7,6 +7,9 @@ export type ManagedAuthProvider =
   | "codebuddy_oauth"
   | "agy_oauth";
 
+export type CodexLoginMethod = "browser" | "device_code";
+export type AuthCenterTarget = ManagedAuthProvider | "kimi_oauth";
+
 export const CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR =
   "codex_oauth_duplicate_account";
 
@@ -51,11 +54,13 @@ export async function authStartLogin(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
   targetAccountId?: string,
+  loginMethod?: CodexLoginMethod,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,
     githubDomain: githubDomain || null,
     targetAccountId: targetAccountId || null,
+    ...(loginMethod ? { loginMethod } : {}),
   });
 }
 

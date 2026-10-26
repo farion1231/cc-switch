@@ -613,6 +613,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  omp: {
+    name: "omp",
+    displayName: "Oh My Pi",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["omp", "oh my pi", "oh-my-pi", "pi"],
+    defaultColor: "#9b4dff",
+  },
   ollama: {
     name: "ollama",
     displayName: "ollama",
@@ -1136,6 +1144,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     shape: "tile",
     keywords: ["haoai", "hao.ai", "hao", "aggregator", "gateway"],
+    defaultColor: "currentColor",
+  },
+  buytoken: {
+    name: "buytoken",
+    displayName: "BuyToken",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["buytoken", "buy token", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
+  vapi: {
+    name: "vapi",
+    displayName: "V-API",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["vapi", "v-api", "gpt.ge", "relay", "aggregator"],
     defaultColor: "currentColor",
   },
   everyapi: {

@@ -59,6 +59,48 @@ function createWrapper(
 }
 
 describe("useManagedAuth", () => {
+  it("opens browser login without copying a device code and keeps the reauth target", async () => {
+    const { copyText } = await import("@/lib/clipboard");
+    const { settingsApi } = await import("@/lib/api");
+    vi.mocked(copyText).mockClear();
+    vi.mocked(settingsApi.openExternal).mockClear();
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "codex_oauth",
+      device_code: "browser:flow",
+      user_code: "",
+      verification_uri: "https://auth.openai.com/oauth/authorize?state=random",
+      expires_in: 900,
+      interval: 1,
+    });
+    const { result, unmount } = renderHook(
+      () => useManagedAuth("codex_oauth", undefined, "browser"),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+    act(() => result.current.reauthAccount("acct-1"));
+    await waitFor(() => expect(result.current.isPolling).toBe(true));
+    expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
+      "codex_oauth",
+      undefined,
+      "acct-1",
+      "browser",
+    );
+    await waitFor(() =>
+      expect(settingsApi.openExternal).toHaveBeenCalledWith(
+        "https://auth.openai.com/oauth/authorize?state=random",
+      ),
+    );
+    expect(copyText).not.toHaveBeenCalled();
+    act(() => result.current.cancelAuth());
+    await waitFor(() =>
+      expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+        "codex_oauth",
+        "browser:flow",
+      ),
+    );
+    unmount();
+  });
+
   beforeEach(() => {
     apiMocks.authGetStatus.mockReset().mockResolvedValue({
       provider: "codex_oauth",
@@ -85,6 +127,172 @@ describe("useManagedAuth", () => {
     apiMocks.authCancelLogin.mockReset().mockResolvedValue(true);
     apiMocks.authRemoveAccount.mockReset().mockResolvedValue(undefined);
     apiMocks.authLogout.mockReset().mockResolvedValue(undefined);
+  });
+
+  describe.each(["codex_oauth", "agy_oauth"] as const)(
+    "%s browser login",
+    (provider) => {
+      const browserResponse = {
+        provider,
+        device_code: "browser:flow",
+        user_code: "",
+        verification_uri: "https://example.com/authorize",
+        expires_in: 60,
+        interval: 1,
+      };
+      const renderBrowserAuth = () =>
+        renderHook(
+          () =>
+            useManagedAuth(
+              provider,
+              undefined,
+              provider === "codex_oauth" ? "browser" : undefined,
+            ),
+          { wrapper: createWrapper() },
+        );
+
+      it("polls every 1500 ms without overlapping and resumes after pending errors", async () => {
+        const { copyText } = await import("@/lib/clipboard");
+        const { settingsApi } = await import("@/lib/api");
+        let resolvePoll!: (account: null) => void;
+        apiMocks.authStartLogin.mockResolvedValue(browserResponse);
+        apiMocks.authPollForAccount
+          .mockImplementationOnce(
+            () => new Promise((resolve) => (resolvePoll = resolve)),
+          )
+          .mockRejectedValueOnce(new Error("authorization_pending"))
+          .mockRejectedValueOnce(new Error("slow_down"))
+          .mockResolvedValueOnce({ id: "acct-1" });
+        const { result, unmount } = renderBrowserAuth();
+        await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+        vi.useFakeTimers();
+        try {
+          await act(async () => result.current.startAuth());
+          expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
+          expect(settingsApi.openExternal).toHaveBeenCalledWith(
+            browserResponse.verification_uri,
+          );
+          expect(copyText).not.toHaveBeenCalled();
+          await act(() => vi.advanceTimersByTimeAsync(4500));
+          expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
+
+          await act(async () => resolvePoll(null));
+          await act(() => vi.advanceTimersByTimeAsync(1499));
+          expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
+          for (const elapsed of [1, 1500, 1500]) {
+            await act(() => vi.advanceTimersByTimeAsync(elapsed));
+          }
+          expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(4);
+          expect(result.current.pollingState).toBe("idle");
+          expect(result.current.deviceCode).toBeNull();
+          await act(() => vi.advanceTimersByTimeAsync(60000));
+          expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(4);
+          expect(apiMocks.authCancelLogin).not.toHaveBeenCalled();
+        } finally {
+          unmount();
+          vi.useRealTimers();
+        }
+      });
+
+      it.each(["cancel", "expire", "replace", "unmount"] as const)(
+        "ignores an in-flight result after %s and cancels the old flow",
+        async (ending) => {
+          let resolvePoll!: (account: object) => void;
+          apiMocks.authStartLogin
+            .mockResolvedValueOnce(browserResponse)
+            .mockResolvedValueOnce({
+              ...browserResponse,
+              device_code: "browser:replacement",
+            });
+          apiMocks.authPollForAccount
+            .mockImplementationOnce(
+              () => new Promise((resolve) => (resolvePoll = resolve)),
+            )
+            .mockImplementation(() => new Promise(() => {}));
+          const { result, unmount } = renderBrowserAuth();
+          await waitFor(() =>
+            expect(result.current.isStatusSuccess).toBe(true),
+          );
+          vi.useFakeTimers();
+          try {
+            await act(async () => result.current.startAuth());
+            expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
+            const statusCalls = apiMocks.authGetStatus.mock.calls.length;
+            if (ending === "expire") {
+              await act(() => vi.advanceTimersByTimeAsync(60000));
+              expect(result.current.pollingState).toBe("error");
+              expect(result.current.error).toBe(
+                "Login expired. Please try again.",
+              );
+            } else if (ending === "replace") {
+              await act(async () => result.current.startAuth());
+              expect(result.current.deviceCode?.device_code).toBe(
+                "browser:replacement",
+              );
+            } else if (ending === "unmount") {
+              unmount();
+            } else {
+              await act(async () => result.current.cancelAuth());
+              expect(result.current.pollingState).toBe("idle");
+              expect(result.current.deviceCode).toBeNull();
+            }
+            expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+              provider,
+              "browser:flow",
+            );
+
+            await act(async () => resolvePoll({ id: "stale-account" }));
+            await act(() => vi.advanceTimersByTimeAsync(4500));
+            expect(apiMocks.authGetStatus).toHaveBeenCalledTimes(statusCalls);
+            expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(
+              ending === "replace" ? 2 : 1,
+            );
+            if (ending === "replace") {
+              expect(result.current.isPolling).toBe(true);
+              expect(result.current.deviceCode?.device_code).toBe(
+                "browser:replacement",
+              );
+            }
+          } finally {
+            unmount();
+            vi.useRealTimers();
+          }
+        },
+      );
+    },
+  );
+
+  it.each([
+    [1, 8000],
+    [10, 13000],
+  ])("keeps device-code backoff for interval %s", async (interval, delay) => {
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "codex_oauth",
+      device_code: "device-1",
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://example.com/device",
+      expires_in: 600,
+      interval,
+    });
+    const { result, unmount } = renderHook(
+      () => useManagedAuth("codex_oauth"),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+    vi.useFakeTimers();
+    try {
+      await act(async () => result.current.startAuth());
+      expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTimeAsync(delay - 1));
+      expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(2);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("starts reauthentication for the selected account", async () => {

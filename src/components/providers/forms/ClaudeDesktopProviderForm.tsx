@@ -1171,12 +1171,17 @@ export function ClaudeDesktopProviderForm({
                         </Label>
                         <Select
                           value={apiFormat}
+                          disabled={activeProviderType === "github_copilot"}
                           onValueChange={(value) =>
                             setApiFormat(value as ClaudeApiFormat)
                           }
                         >
                           <SelectTrigger className="w-full">
-                            <SelectValue />
+                            <SelectValue>
+                              {activeProviderType === "github_copilot"
+                                ? t("copilot.automaticFormat")
+                                : undefined}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="anthropic">
@@ -1204,6 +1209,11 @@ export function ClaudeDesktopProviderForm({
                             </SelectItem>
                           </SelectContent>
                         </Select>
+                        {activeProviderType === "github_copilot" && (
+                          <p className="text-xs leading-relaxed text-fg-2">
+                            {t("copilot.automaticFormatHint")}
+                          </p>
+                        )}
                       </div>
                     )}
 

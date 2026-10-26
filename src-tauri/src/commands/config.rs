@@ -138,6 +138,13 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Kimi => {
+            let file = crate::kimi_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
         AppType::Mcode => {
             let file = crate::mcode_config::config_path();
             Ok(ConfigStatus {
@@ -163,6 +170,18 @@ pub async fn get_config_status(
                 path: dir.to_string_lossy().into_owned(),
             })
         }
+        AppType::Omp => {
+            let config_path =
+                crate::omp_config::get_omp_models_path().map_err(|e| e.to_string())?;
+            let path = crate::omp_config::get_omp_agent_dir()
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            Ok(ConfigStatus {
+                exists: config_path.exists(),
+                path,
+            })
+        }
     }
 }
 
@@ -185,6 +204,8 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
@@ -209,6 +230,8 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()

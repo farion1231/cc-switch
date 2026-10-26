@@ -30,8 +30,12 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::Kimi => {
+            crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -301,7 +305,9 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::Kimi
         | AppType::Agy
+        | AppType::Omp
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -378,8 +384,10 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::Kimi
         | AppType::ClaudeDesktop
-        | AppType::Agy => Ok(settings.clone()),
+        | AppType::Agy
+        | AppType::Omp => Ok(settings.clone()),
     }
 }
 
@@ -694,6 +702,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Kimi => {
+            crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -705,6 +716,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Agy => {
             return Err(AppError::Config(
                 "Antigravity configuration requires the provider switch flow".into(),
+            ));
+        }
+        AppType::Omp => {
+            return Err(AppError::InvalidInput(
+                "Oh My Pi providers use the Oh My Pi provider service".to_string(),
             ));
         }
     }
@@ -837,7 +853,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi | AppType::Mcode) {
+        if matches!(
+            app_type,
+            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp
+        ) {
             continue;
         }
         let result = if app_type.is_additive_mode() {
@@ -993,10 +1012,14 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
+        AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
         AppType::Agy => crate::agy_config::read_live_settings(),
+        AppType::Omp => Err(AppError::InvalidInput(
+            "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
+        )),
     }
 }
 
@@ -1111,7 +1134,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             live
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Omp => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
