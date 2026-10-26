@@ -179,7 +179,8 @@
     "configureUsage": "Configure usage query",
     "managedByHermes": "Hermes Managed",
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
-    "openTerminal": "Open Terminal",
+    "openTerminal": "Open Terminal with This Provider",
+    "openTerminalIsolated": "Open Terminal with This Provider (Isolated)",
     "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
@@ -231,6 +232,27 @@
         "oauthTitle": "OAuth Authentication Mode",
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
+      },
+      "claudeAccount": {
+        "label": "Sign-in method",
+        "default": "Follow Claude Code login",
+        "defaultDescription": "The account changes with the current Claude Code login",
+        "missing": "Account not on this computer",
+        "manage": "Add or manage Claude accounts",
+        "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
+        "help": "Switching to this card signs Claude Code in to the selected account, and claude started anywhere afterwards uses it. To use several accounts at once, use Open Terminal on the card.",
+        "claudeAccount": "Claude account",
+        "reauthBadge": "Re-login required",
+        "terminalHint": "Use via Open Terminal",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team Premium",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
@@ -1625,7 +1647,7 @@
       "qiniu": "Qiniu Cloud is a multi-protocol AI relay: one key for native Claude, GPT, and Gemini models, with the Anthropic, OpenAI, and Gemini APIs all supported.",
       "haoai": "hao.ai is a fast, stable unified LLM API gateway for developers and teams: one key reaches GPT, Claude, Grok, and other leading models over OpenAI- and Anthropic-compatible APIs, with model routing, failover, and full request logs, at prices as low as 15% of official reference rates. CC Switch users who register via this link get 5% bonus credit on their first order!",
       "fenno": "Fenno.ai is a stable, efficient API relay giving you access to a wide range of mainstream models. Exclusive CC Switch offer: subscribe via this link to the $1.99 Trial Plan worth $50 in credits, valid for 7 days!",
-      "teamorouter": "TeamoRouter is an enterprise-grade Agentic LLM gateway with pricing up to 90% off. It offers exclusive benefits for CC Switch users: register via this link as a new user for 10% off your first top-up!",
+      "teamorouter": "TeamoRouter gives Claude Code one key for Opus 5.5, Sonnet 5.5 and Fable 5.1, with Opus 5.5 at about 28% of the official price, pay as you go, on the native Anthropic protocol. CC Switch users who sign up through this link get an extra 10% credit on a first top-up of $10, $20 or $50!",
       "ppio": "PPIO is a leading independent Agentic Cloud provider in China, serving every flagship open-source model through a single API key. Register via this link and complete identity verification to receive a ¥10 credit voucher.",
       "xycai": "XycAi is an enterprise-grade token factory: one-click access to 200+ global models, automatic SLA compensation, and 100% refunds for abnormal cache charges!",
       "9527code": "9527 CODE is an enterprise-grade, full-capability AI relay platform delivering fast, stable relay for Claude Code, Codex and other mainstream models. One year of continuous operation, 99.9% service stability, and 7×24 human technical support. New users can contact support for trial credit, with unlimited referral cashback!",
@@ -1834,7 +1856,6 @@
   "codexOauth": {
     "authStatus": "Auth status",
     "notAuthenticated": "Not authenticated",
-    "loginWithChatGPT": "Sign in with ChatGPT",
     "loginRequired": "Please sign in to ChatGPT first",
     "statusLoading": "Loading account status...",
     "statusUnavailable": "Status unavailable",
@@ -4348,7 +4369,6 @@
       "routing": "Routing",
       "currentDefault": "Current default",
       "defaultAfterSwitch": "Default after switching",
-      "current": "Current",
       "default": "Default"
     },
     "action": {
@@ -4365,7 +4385,8 @@
       "edit": "Edit {{name}}",
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
-      "moveDown": "Move {{name}} down"
+      "moveDown": "Move {{name}} down",
+      "openTerminal": "Open a terminal with {{name}}"
     },
     "chip": {
       "official": "Official",
@@ -4385,7 +4406,6 @@
       "defaultWhileRouting": "While routing, the default is the provider you route to. You can pick another one when switching to Aggregation.",
       "needsRoute": "Needs routing: {{reason}}; can't connect directly.",
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
-      "currentCannotRemove": "The provider in use can't be removed. Enable another one first.",
       "inUseCannotDelete": "The provider in use can't be deleted. Switch to another one first.",
       "directDefaultCannotDelete": "Leaving routing switches back to this provider, so it can't be deleted. On the direct page, choose \"Back to direct and use\" on another provider first.",
       "noFailover": "Official accounts can't join the failover queue: they use the client's own login and can't rotate with other providers."
@@ -4667,6 +4687,10 @@
       "writeTo": "Write to",
       "writeToHelpTitle": "How it's written to apps",
       "writeToHelp": "The same config is written as-is to every ticked app; if one app needs different arguments, create a separate entry for it. MiniMax Code only replaces the connection fields; other fields in mcp.json are kept.",
+      "sseAsHttpTitle": "{{apps}} doesn't support SSE and will connect over HTTP",
+      "sseAsHttpBody": "{{apps}} only supports stdio and HTTP (Streamable HTTP), so this URL will be used as an HTTP server; it won't connect if the server only speaks SSE. If the server also offers Streamable HTTP, switch to HTTP.",
+      "sseRejectedTitle": "SSE isn't supported by {{apps}}",
+      "sseRejectedBody": "These apps only support stdio and HTTP (Streamable HTTP), so writing to them will fail on save. Switch to HTTP, or untick these apps.",
       "meta": "Description & links",
       "metaHint": "Display name, description, tags, homepage, docs",
       "displayName": "Display name",
@@ -4876,12 +4900,12 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
-      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
+      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
+      "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings (for example, to WSL), so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, every newly started claude uses it. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
     },
     "addAccount": "Add account",
-    "groupMenu": "More actions for {{service}}",
     "accountMenu": "More actions for {{login}}",
-    "removeAll": "Delete all accounts",
     "removeAccount": "Delete account",
     "setDefault": "Set as default",
     "reauth": "Sign in again",
@@ -4901,7 +4925,6 @@
     "loginFailed": "Sign-in didn't finish",
     "pending": {
       "add": "Adding a {{service}} account · Waiting for authorization…",
-      "login": "Signing in to {{service}} · Waiting for authorization…",
       "reauth": "Signing in again as {{login}} · Waiting for authorization…",
       "enterCode": "Enter this code in the browser:",
       "copy": "Copy code",
@@ -4926,12 +4949,25 @@
       "addedOn": "Added {{date}}",
       "statusLoadFailed": "Couldn't read Antigravity accounts. Try again.",
       "empty": "No Antigravity accounts yet. The account agy is signed in with appears here automatically.",
-      "login": "Sign in with Google",
       "current": "In use by agy",
       "switchTo": "Switch agy to this account",
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
+    },
+    "claude": {
+      "pasteSubmitted": "Submitted. Finishing sign-in…",
+      "pasteToggle": "Didn't come back here after authorizing?",
+      "pasteHint": "Paste the address from the browser's address bar after authorizing, or the code shown on the page.",
+      "pasteLabel": "Authorization code or address",
+      "pasteSubmit": "Submit",
+      "reauthNote": "Sign-in expired. Sign in again.",
+      "addedOn": "Added {{date}}",
+      "loginExpiresOn": "Sign-in expires around {{date}}; sign in again after that",
+      "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
+      "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
+      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in."
     }
   },
   "kimi": {

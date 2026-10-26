@@ -21,9 +21,9 @@ enum CodingPlanProvider {
     /// `https://ark.cn-beijing.volces.com/api/plan[/v3]`（Agent Plan）
     /// 或 `/api/coding[/v3]`（Coding Plan））。
     Volcengine,
-    /// OpenCode Go（$10/月订阅，美元额度三时间窗口）。base_url 分两档：
-    /// `https://opencode.ai/zen/go`（claude/claude-desktop 直连 /messages）
-    /// 与 `https://opencode.ai/zen/go/v1`（codex/opencode/pi 走 Chat）。
+    /// OpenCode Go（$10/月订阅，美元额度三时间窗口）。base_url 分两个入口：
+    /// `https://opencode.ai/inference/go/anthropic`（Anthropic 端，现行文档地址）
+    /// 与 `https://opencode.ai/zen/go`（旧入口），OpenAI Chat 端在各自后面加 `/v1`。
     OpencodeGo,
     /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
     CommandCode,
@@ -46,8 +46,9 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
-    } else if url.contains("opencode.ai/zen/go") {
-        // 同时覆盖 /zen/go 与 /zen/go/v1 两档 base；Zen 按量版（/zen/v1）
+    } else if url.contains("opencode.ai/zen/go") || url.contains("opencode.ai/inference/go") {
+        // 覆盖 /zen/go、/zen/go/v1 与 /inference/go、/inference/go/v1、
+        // /inference/go/anthropic；Zen 按量版（/zen/v1 或 /inference/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
         Some(CodingPlanProvider::OpencodeGo)
     } else if url.contains("api.commandcode.ai/provider") {
@@ -2345,9 +2346,18 @@ mod tests {
     }
 
     #[test]
-    fn opencode_go_detects_both_base_variants_but_not_zen() {
-        // claude/claude-desktop 预设 base 是 /zen/go，codex/opencode/pi 是
-        // /zen/go/v1，两档都要命中；Zen 按量版（/zen/v1）无用量 API，不得命中。
+    fn opencode_go_detects_current_and_legacy_bases_but_not_zen() {
+        // Claude Desktop 预设 base 是 /inference/go/anthropic，Codex/OpenCode/Pi
+        // 是 /inference/go/v1；旧入口 /zen/go[/v1] 仍可用，也要命中；Zen 按量版
+        // （/zen/v1）无用量 API，不得命中。
+        assert!(matches!(
+            detect_provider("https://opencode.ai/inference/go/anthropic"),
+            Some(CodingPlanProvider::OpencodeGo)
+        ));
+        assert!(matches!(
+            detect_provider("https://opencode.ai/inference/go/v1"),
+            Some(CodingPlanProvider::OpencodeGo)
+        ));
         assert!(matches!(
             detect_provider("https://opencode.ai/zen/go"),
             Some(CodingPlanProvider::OpencodeGo)
@@ -2357,6 +2367,7 @@ mod tests {
             Some(CodingPlanProvider::OpencodeGo)
         ));
         assert!(detect_provider("https://opencode.ai/zen/v1").is_none());
+        assert!(detect_provider("https://opencode.ai/inference/v1").is_none());
     }
 
     #[test]

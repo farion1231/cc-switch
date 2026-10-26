@@ -179,7 +179,8 @@
     "configureUsage": "利用状況を設定",
     "managedByHermes": "Hermes 管理",
     "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
-    "openTerminal": "ターミナルを開く",
+    "openTerminal": "このプロバイダーでターミナルを開く",
+    "openTerminalIsolated": "このプロバイダーでターミナルを開く（環境を分離）",
     "openTerminalWithProvider": "このプロバイダーでターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
@@ -231,6 +232,27 @@
         "oauthTitle": "OAuth 認証モード",
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
+      },
+      "claudeAccount": {
+        "label": "ログイン方法",
+        "default": "Claude Code のログインに追従",
+        "defaultDescription": "Claude Code で現在ログイン中のアカウントに追従します",
+        "missing": "このコンピューターにないアカウント",
+        "manage": "Claude アカウントを追加または管理",
+        "helpTerminal": "設定で Claude の設定フォルダーが上書きされているため、このカードに切り替えても Claude Code のログインは変わりません。選んだアカウントはカードの「ターミナルを開く」から使ってください。",
+        "help": "このカードに切り替えると Claude Code のログインが選んだアカウントになり、以降どこで起動した claude もこのアカウントを使います。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。",
+        "claudeAccount": "Claude アカウント",
+        "reauthBadge": "再ログインが必要",
+        "terminalHint": "ターミナルを開いて使用",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team プレミアム",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
@@ -1625,7 +1647,7 @@
       "qiniu": "Qiniu Cloud（七牛云）はマルチプロトコル対応の AI 中継プラットフォームです。1つのキーでネイティブの Claude・GPT・Gemini モデルを利用でき、Anthropic／OpenAI／Gemini の各 API に対応します。",
       "haoai": "hao.ai は開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つのキーで GPT、Claude、Grok などの主要モデルを OpenAI・Anthropic 互換 API で利用でき、モデルルーティング、フェイルオーバー、完全な呼び出しログを備え、価格は公式参考価格の最大 85% オフです。CC Switch ユーザーがこのリンクから登録すると、初回注文で 5% のボーナスクレジットを受け取れます！",
       "fenno": "Fenno.ai は安定・高効率な API 中継サービスで、幅広い主要モデルを利用できます。CC Switch 利用者限定特典：このリンクから 1.99 ドルで 50 ドル相当の Trial プランを購入できます（有効期間 7 日間）！",
-      "teamorouter": "TeamoRouter はエンタープライズグレードの Agentic LLM ゲートウェイで、料金は最大 90% オフ。CC Switch ユーザーに特別特典を提供しています：このリンクから新規登録すると初回チャージが 10% オフ！",
+      "teamorouter": "TeamoRouter なら 1 つのキーで Claude Code から Opus 5.5・Sonnet 5.5・Fable 5.1 を利用でき、Opus 5.5 は公式価格の約 28%、従量課金、Anthropic ネイティブプロトコル対応です。このリンクから登録した CC Switch ユーザーは、$10 / $20 / $50 の初回チャージで 10% のクレジットが追加されます！",
       "ppio": "PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、API キー 1 つで主要なオープンソースモデルをすべて利用できます。このリンクから登録し実名認証を完了すると、¥10 のクーポンがもらえます。",
       "xycai": "XycAi はエンタープライズグレードのトークンファクトリー：200+ のグローバルモデルにワンクリック接続、SLA 自動補償、異常キャッシュは 100% 返金！",
       "9527code": "9527 CODE はエンタープライズ級のフルスペック AI 中継プラットフォームで、Claude Code や Codex などの主要モデルに高速・安定した中継サービスを提供します。1 年間の継続運営、サービス安定性 99.9%、7×24 時間の有人技術サポート。新規ユーザーはサポートへのご連絡で体験クレジットを進呈、紹介キャッシュバックは上限なし！",
@@ -1834,7 +1856,6 @@
   "codexOauth": {
     "authStatus": "認証状態",
     "notAuthenticated": "未認証",
-    "loginWithChatGPT": "ChatGPT でログイン",
     "loginRequired": "先に ChatGPT にログインしてください",
     "statusLoading": "アカウント状態を読み込み中...",
     "statusUnavailable": "状態を取得できません",
@@ -4348,7 +4369,6 @@
       "routing": "転送中",
       "currentDefault": "現在の既定",
       "defaultAfterSwitch": "切り替え後の既定",
-      "current": "現在",
       "default": "既定"
     },
     "action": {
@@ -4365,7 +4385,8 @@
       "edit": "{{name}} を編集",
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
-      "moveDown": "{{name}} を下へ"
+      "moveDown": "{{name}} を下へ",
+      "openTerminal": "{{name}} でターミナルを開く"
     },
     "chip": {
       "official": "公式",
@@ -4385,7 +4406,6 @@
       "defaultWhileRouting": "ルーティング中は、転送先のプロバイダーがそのまま既定になります。集約に切り替えるときに別のプロバイダーを選べます。",
       "needsRoute": "ルーティングが必要：{{reason}}。直接接続はできません。",
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
-      "currentCannotRemove": "使用中のプロバイダーは削除できません。先にほかを有効にしてください。",
       "inUseCannotDelete": "使用中のプロバイダーは削除できません。先にほかへ切り替えてください。",
       "directDefaultCannotDelete": "ルーティングを終了するとこのプロバイダーに戻るため、削除できません。先に直接接続ページでほかのプロバイダーの「直接接続に戻して使う」を選んでください。",
       "noFailover": "公式アカウントはフェイルオーバーキューに入れられません。クライアント自身のログインを使うため、ほかと交代できません。"
@@ -4667,6 +4687,10 @@
       "writeTo": "書き込み先",
       "writeToHelpTitle": "各アプリへの書き込み方",
       "writeToHelp": "同じ設定をチェックした各アプリにそのまま書き込みます。アプリごとに引数を変えたいときは、そのアプリだけの項目を別に作ってください。MiniMax Code は接続項目だけを置き換え、mcp.json の他の項目は残します。",
+      "sseAsHttpTitle": "{{apps}} は SSE に対応しておらず、HTTP として接続します",
+      "sseAsHttpBody": "{{apps}} は stdio と HTTP（Streamable HTTP）のみに対応しているため、この URL を HTTP サーバーとして接続します。サーバーが SSE のみの場合は接続できません。サーバーが Streamable HTTP にも対応していれば、HTTP に切り替えてください。",
+      "sseRejectedTitle": "{{apps}} は SSE に対応していません",
+      "sseRejectedBody": "これらのアプリは stdio と HTTP（Streamable HTTP）のみに対応しているため、保存時の書き込みが失敗します。HTTP に切り替えるか、これらのアプリのチェックを外してください。",
       "meta": "説明とリンク",
       "metaHint": "表示名・説明・タグ・ホームページ・ドキュメント",
       "displayName": "表示名",
@@ -4876,12 +4900,12 @@
       "copilotHelp": "Claude Code、Claude Desktop の GitHub Copilot プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
-      "agyHelp": "Antigravity CLI（agy）の公式ログインです。agy は同時に 1 つのアカウントにしかログインできません。「切り替え」で agy のログインを選んだアカウントに置き換え、以降に起動する agy はそのアカウントを使います。agy に元々ログインしていたアカウントは自動でここに追加されるため、切り替えても失われません。"
+      "agyHelp": "Antigravity CLI（agy）の公式ログインです。agy は同時に 1 つのアカウントにしかログインできません。「切り替え」で agy のログインを選んだアカウントに置き換え、以降に起動する agy はそのアカウントを使います。agy に元々ログインしていたアカウントは自動でここに追加されるため、切り替えても失われません。",
+      "claudeHelpTerminal": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。設定で Claude の設定フォルダーが上書きされている（WSL など）ため、カードを切り替えても Claude Code のログインは変わりません。公式カードでアカウントを選び、カードの「ターミナルを開く」から使ってください。",
+      "claudeHelp": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。Claude の公式カードでアカウントを選ぶと、そのカードに切り替えた後に起動する claude はこのアカウントを使います。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。ログイントークンはこのコンピューターから出ず、アップロード・更新・ログアウトは行いません。最初の切り替えで、Claude Code に今ログインしているアカウントを自動で保存します。切り替えると Remote Control は切断され、プロンプトキャッシュは作り直されます。"
     },
     "addAccount": "アカウントを追加",
-    "groupMenu": "{{service}} のその他の操作",
     "accountMenu": "{{login}} のその他の操作",
-    "removeAll": "すべてのアカウントを削除",
     "removeAccount": "アカウントを削除",
     "setDefault": "デフォルトに設定",
     "reauth": "再ログイン",
@@ -4901,7 +4925,6 @@
     "loginFailed": "ログインが完了しませんでした",
     "pending": {
       "add": "{{service}} アカウントを追加 · 認可を待っています…",
-      "login": "{{service}} にログイン · 認可を待っています…",
       "reauth": "{{login}} に再ログイン · 認可を待っています…",
       "enterCode": "ブラウザでこのコードを入力：",
       "copy": "コードをコピー",
@@ -4926,12 +4949,25 @@
       "addedOn": "{{date}}に追加",
       "statusLoadFailed": "Antigravity アカウントを読み込めませんでした。再試行してください。",
       "empty": "Antigravity アカウントはまだありません。agy でログイン中のアカウントは自動でここに表示されます。",
-      "login": "Google でログイン",
       "current": "agy で使用中",
       "switchTo": "agy をこのアカウントに切り替え",
       "removeNote": "agy からはログアウトしません。agy が現在このアカウントを使っている場合、削除後もそのまま使えます。",
       "switched": "切り替えました。新しく起動する agy はこのアカウントを使います。",
       "switchedWhileRunning": "切り替えました。agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。agy を終了してから開き直してください。"
+    },
+    "claude": {
+      "pasteSubmitted": "送信しました。ログインを完了しています…",
+      "pasteToggle": "認可後にここへ戻らない場合",
+      "pasteHint": "認可後にブラウザのアドレスバーに表示されたアドレス、またはページに表示されたコードを貼り付けてください。",
+      "pasteLabel": "認可コードまたはアドレス",
+      "pasteSubmit": "送信",
+      "reauthNote": "ログインの有効期限が切れました。再ログインしてください",
+      "addedOn": "{{date}}に追加",
+      "loginExpiresOn": "ログインは{{date}}頃に期限切れになります。その後は再ログインが必要です",
+      "loginMaybeExpired": "ログインの有効期限が切れている可能性があります。切り替える前に再ログインしてください",
+      "statusLoadFailed": "Claude アカウントを読み込めませんでした。再試行してください。",
+      "empty": "Claude アカウントはまだありません。複数のサブスクリプションアカウントを切り替えるときはここでログインします。",
+      "removeNote": "CC Switch がこのアカウント用に保存したログインだけを削除します。他の場所でログアウトされることはなく、Claude Code の現在のログイン（~/.claude）も変わりません。このアカウントを使うカードは Claude Code の現在のログインに切り替わります。"
     }
   },
   "kimi": {

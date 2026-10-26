@@ -756,7 +756,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           key: "remove",
           label: t("providerCard.action.remove"),
           disabledReason: current
-            ? t("providerCard.reason.currentCannotRemove")
+            ? t("providerCard.reason.defaultCannotRemove")
             : undefined,
           onClick: () => actions.remove(p),
         });
@@ -908,16 +908,18 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       }
     }
 
+    // Hermes 跟 OpenClaw / OpenCode 一样是累加式：model.provider 只是默认那家，
+    // 「设为默认」收在「更多」菜单里，主操作位只留「移除」
     if (app === "hermes") {
       if (p.id === input.hermesCurrentId) {
         isDefault = true;
-        status = { label: t("providerCard.status.current"), dot: "direct" };
-        removeReason = t("providerCard.reason.currentCannotRemove");
+        status = { label: t("providerCard.status.default"), dot: "direct" };
+        removeReason = t("providerCard.reason.defaultCannotRemove");
       } else {
-        buttons.push({
-          key: "use",
-          label: t("providerCard.action.enable"),
-          onClick: () => actions.setDefault(p),
+        menuItems.push({
+          key: "setDefault",
+          label: t("providerCard.action.setDefault"),
+          onSelect: () => actions.setDefault(p),
           disabledReason: readOnlyReason,
         });
       }
