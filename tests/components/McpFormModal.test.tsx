@@ -67,7 +67,7 @@ describe("McpFormModal (drawer)", () => {
     renderForm();
     expect(MCP_APP_IDS).toContain("pi");
     expect(MCP_APP_IDS).not.toContain("deepseek-harness");
-    expect(screen.getByRole("checkbox", { name: /Pi/ })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /^Pi$/ })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /DeepSeek/ })).toBeNull();
   });
 

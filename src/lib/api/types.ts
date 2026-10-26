@@ -12,4 +12,5 @@ export type AppId =
   | "deepseek-harness"
   | "kimi"
   | "mcode"
-  | "agy";
+  | "agy"
+  | "omp";

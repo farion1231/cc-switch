@@ -18,6 +18,7 @@ import type { McodeProviderPreset } from "@/config/mcodeProviderPresets";
 import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
 import type { DeepSeekHarnessProviderPreset } from "@/config/deepseekHarnessProviderPresets";
+import type { OmpProviderPreset } from "@/config/ompProviderPresets";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
@@ -75,7 +76,8 @@ export type AnyPreset =
   | PiProviderPreset
   | DeepSeekHarnessProviderPreset
   | McodeProviderPreset
-  | KimiProviderPreset;
+  | KimiProviderPreset
+  | OmpProviderPreset;
 
 export type PresetEntry = {
   id: string;

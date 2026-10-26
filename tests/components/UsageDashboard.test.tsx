@@ -367,6 +367,7 @@ describe("UsageDashboard", () => {
         "deepseek-harness": false,
         kimi: false,
         agy: false,
+        omp: false,
       },
     });
     renderDashboard({ initialAppType: "gemini" });

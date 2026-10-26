@@ -33,6 +33,7 @@ mod mcode_config;
 mod mcp;
 pub mod mode;
 mod model_capabilities;
+mod omp_config;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -983,6 +984,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No DeepSeek Harness provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import DeepSeek Harness providers: {e}"),
             }
+            match crate::services::provider::import_omp_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Oh My Pi provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1515,6 +1523,7 @@ pub fn run() {
             commands::update_provider,
             commands::get_provider_editor_view,
             commands::delete_provider,
+            commands::add_provider_to_live_config,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
@@ -1619,6 +1628,8 @@ pub fn run() {
             commands::get_pi_current_state,
             commands::update_pi_provider_usage_script,
             commands::get_pi_session_discovery,
+            // Oh My Pi native provider and session views
+            commands::get_omp_current_state,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,
@@ -1874,8 +1885,10 @@ pub fn run() {
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,
             commands::kimi_oauth_cancel,
-            commands::kimi_oauth_logout,
+            commands::kimi_oauth_remove,
+            commands::kimi_oauth_quota,
             commands::kimi_oauth_use_account,
+            commands::kimi_oauth_models,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,
             commands::copilot_poll_for_auth,

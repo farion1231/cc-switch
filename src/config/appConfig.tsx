@@ -1,5 +1,6 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
+import type { PiFamilyAppId } from "@/lib/api/pi";
 import type { VisibleApps } from "@/types";
 import {
   ClaudeIcon,
@@ -30,6 +31,7 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -46,7 +48,31 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   agy: true,
+  omp: true,
 };
+
+/**
+ * 应用页和侧栏的应用顺序：先按用户拖出来的顺序（`settings.appOrder`，不认识的 ID 忽略），
+ * 没在里面的应用（比如新版本加的）插回默认顺序里它前一个应用的后面。
+ */
+export function orderAppIds(saved: readonly string[] | undefined): AppId[] {
+  if (!saved?.length) return [...APP_IDS];
+  const known = new Set<string>(APP_IDS);
+  const ordered: AppId[] = [];
+  for (const id of saved) {
+    if (known.has(id) && !ordered.includes(id as AppId)) {
+      ordered.push(id as AppId);
+    }
+  }
+  APP_IDS.forEach((app, index) => {
+    if (ordered.includes(app)) return;
+    const previous = APP_IDS.slice(0, index)
+      .reverse()
+      .find((id) => ordered.includes(id));
+    ordered.splice(previous ? ordered.indexOf(previous) + 1 : 0, 0, app);
+  });
+  return ordered;
+}
 
 /** App IDs shown in Skills panels. */
 export type SkillsAppId = Exclude<
@@ -64,6 +90,7 @@ export const SKILLS_APP_IDS: SkillsAppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export type ProxyAppId = Extract<
@@ -119,6 +146,7 @@ export type AdditiveAppId = Extract<
   | "pi"
   | "mcode"
   | "kimi"
+  | "omp"
   | "deepseek-harness"
 >;
 
@@ -130,10 +158,18 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "omp",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
+}
+
+/** Oh My Pi 是 Pi 的分支：供应商表单、启用状态和用量脚本命令与 Pi 共用。 */
+export const PI_FAMILY_APP_IDS: PiFamilyAppId[] = ["pi", "omp"];
+
+export function isPiFamilyApp(appId: string): appId is PiFamilyAppId {
+  return (PI_FAMILY_APP_IDS as string[]).includes(appId);
 }
 
 /**
@@ -167,6 +203,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -314,6 +351,16 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
     badgeClass:
       "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
+  },
+  omp: {
+    label: "Oh My Pi",
+    icon: (
+      <ProviderIcon icon="omp" name="Oh My Pi" size={14} showFallback={false} />
+    ),
+    activeClass:
+      "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+    badgeClass:
+      "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
   },
 };
 
