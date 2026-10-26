@@ -1648,6 +1648,78 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "TeamoRouter Claude",
+    websiteUrl: "https://teamorouter.cn",
+    apiKeyUrl:
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    settingsConfig: {
+      baseUrl: "https://api.teamorouter.cn",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: {
+            input: 1.116,
+            output: 5.58,
+            cacheRead: 0.0558,
+            cacheWrite: 1.395,
+          },
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: {
+            input: 0.544,
+            output: 2.72,
+            cacheRead: 0.0544,
+            cacheWrite: 0.68,
+          },
+        },
+        {
+          id: "claude-fable-5-1",
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 3, output: 15, cacheRead: 0.075, cacheWrite: 3.75 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "teamorouter-claude/claude-opus-5-5",
+        fallbacks: ["teamorouter-claude/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "teamorouter-claude/claude-opus-5-5": { alias: "Opus" },
+        "teamorouter-claude/claude-sonnet-5-5": { alias: "Sonnet" },
+        "teamorouter-claude/claude-fable-5-1": { alias: "Fable" },
+      },
+    },
+  },
+  {
     name: "PPIO",
     websiteUrl: "https://ppio.com",
     apiKeyUrl: "https://ppio.com/activity/ccswitch",
