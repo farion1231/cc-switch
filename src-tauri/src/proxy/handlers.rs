@@ -172,8 +172,8 @@ fn claude_model_discovery(state: &ProxyState) -> Value {
 /// `model` 换成上游名。解不出来（成员已移除、供应商已删除、key 没登记）就按客户端的协议
 /// 直接返回错误，不回落到默认路由。
 ///
-/// 只对 Claude Code 和 Codex 生效：同一个 handler 也服务 Claude Desktop、Grok Build，
-/// 它们的模型名不解码。普通模型名不读任何状态，路由请求的路径不变。
+/// 对 Claude Code、Codex、Claude Desktop 生效：同一个 handler 也服务 Grok Build，它的模型名
+/// 不解码。普通模型名不读任何状态，路由请求的路径不变。
 ///
 /// `Err` 是在进入路由之前就拒绝的请求，直接返回给客户端（装箱：`Response` 太大）。
 fn resolve_stack_target(
@@ -214,10 +214,11 @@ fn resolve_stack_target(
     }
 }
 
-/// Stack 模型解不出来时的错误体：Claude 用 Anthropic 的错误信封，Codex 用 OpenAI 的。
+/// Stack 模型解不出来时的错误体：Claude Code、Claude Desktop 用 Anthropic 的错误信封，Codex 用
+/// OpenAI 的。
 fn stack_miss_body(app_type: &AppType, message: &str) -> Value {
     match app_type {
-        AppType::Claude => json!({
+        AppType::Claude | AppType::ClaudeDesktop => json!({
             "type": "error",
             "error": { "type": "invalid_request_error", "message": message },
         }),
@@ -275,8 +276,31 @@ pub async fn handle_claude_desktop_models(
         .await
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
     let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
-    let response = crate::claude_desktop_config::model_list_response(provider)
+    let mut response = crate::claude_desktop_config::model_list_response(provider)
         .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    // 聚合模式下 profile 里关了模型发现，这里补上聚合的模型只是让两边一致
+    let stacked = crate::mode::stack::desktop_published_now(&state.db).unwrap_or_else(|error| {
+        log::warn!("[Claude Desktop] 读取聚合模型失败，只返回路由那家的: {error}");
+        Vec::new()
+    });
+    if let Some(data) = response.get_mut("data").and_then(Value::as_array_mut) {
+        data.extend(stacked.into_iter().map(|model| {
+            let mut item = json!({
+                "type": "model",
+                "id": model.id,
+                "display_name": model.label,
+                "created_at": crate::claude_desktop_config::DEFAULT_CREATED_AT,
+            });
+            if model.supports_1m {
+                item["supports1m"] = json!(true);
+            }
+            item
+        }));
+        let last_id = data.last().and_then(|item| item.get("id")).cloned();
+        if let Some(last_id) = last_id {
+            response["last_id"] = last_id;
+        }
+    }
     Ok(Json(response))
 }
 
@@ -947,7 +971,7 @@ pub async fn handle_chat_completions(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
-            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
 
@@ -1072,7 +1096,7 @@ async fn handle_responses_for_app(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
-            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
 
@@ -1304,7 +1328,7 @@ async fn handle_codex_standalone_passthrough(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, false, &err.error).await;
-            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, false);
         }
     };
 
@@ -1401,7 +1425,7 @@ async fn handle_responses_compact_for_app(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
-            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
 
@@ -1675,8 +1699,9 @@ async fn handle_codex_chat_to_responses_transform(
     if !status.is_success() {
         // 上游 Chat 错误体形状与 Responses 不一致（如 MiniMax 的 base_resp、自定义 detail 字段）；
         // 直接透传会让 Codex 客户端无法识别错误码。这里统一转换为 Responses 风格
-        // `{"error": {message, type, code, param}}`，保留原始 HTTP 状态码。
-        return handle_codex_chat_error_response(response, ctx, status).await;
+        // `{"error": {message, type, code, param}}`。输入超限的流式请求返回
+        // response.failed 以支持压缩恢复；其余错误保留原始 HTTP 状态码。
+        return handle_codex_chat_error_response(response, ctx, status, is_stream).await;
     }
 
     if is_stream || response.is_sse() {
@@ -1912,7 +1937,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     let status = response.status();
 
     if !status.is_success() {
-        return handle_codex_chat_error_response(response, ctx, status).await;
+        return handle_codex_chat_error_response(response, ctx, status, is_stream).await;
     }
 
     // Preserve live streaming when the gateway marks SSE correctly or omits an
@@ -2148,11 +2173,13 @@ fn build_codex_anthropic_sse_response(
 /// 与正常响应分支配套：正常响应已经被改写成 Responses 形式，错误响应若仍保留
 /// Chat 错误体（如 MiniMax 的 `{"base_resp": {"status_code": 2013}}`），Codex
 /// 客户端的错误处理就无法对齐字段。这里读取上游 body、规整成
-/// `{"error": {message, type, code, param}}` 并保留原始 HTTP 状态码。
+/// `{"error": {message, type, code, param}}`。输入超限的流式请求返回
+/// `response.failed` 以支持压缩恢复；其余错误保留原始 HTTP 状态码。
 async fn handle_codex_chat_error_response(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     status: axum::http::StatusCode,
+    is_stream: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let body_timeout =
         if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
@@ -2188,6 +2215,11 @@ async fn handle_codex_chat_error_response(
     };
 
     let responses_error = transform_codex_chat::chat_error_to_response_error(Some(&parsed_value));
+    if let Some(response) =
+        codex_context_window_sse_response(&ctx.request_model, &responses_error, status, is_stream)
+    {
+        return Ok(response);
+    }
 
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
@@ -2219,6 +2251,7 @@ async fn handle_codex_chat_error_response(
 /// 与 `handle_codex_chat_error_response`（处理上游真实错误响应、复制上游头）不同，
 /// 这里没有上游响应可参照，只产出一个 `application/json` 错误体。状态码走
 /// `map_proxy_error_to_status`，该函数已与 `ProxyError::into_response` 对齐。
+/// 输入超限的 Responses 流式请求通过 `response.failed` 交给 Codex 的压缩恢复逻辑。
 ///
 /// 注意：`endpoint` 经 `endpoint_with_query` 可能携带 query（如 `?beta=true`）并被
 /// 原样写入错误体。当前 Codex 端点不在 query 里放凭证，故安全；若将来复用到
@@ -2227,10 +2260,23 @@ fn build_codex_proxy_error_response(
     ctx: &RequestContext,
     endpoint: &str,
     error: &ProxyError,
+    is_stream: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = axum::http::StatusCode::from_u16(map_proxy_error_to_status(error))
         .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
     let body = codex_proxy_error_json(&ctx.provider.name, &ctx.request_model, endpoint, error);
+    let responses_endpoint = matches!(
+        endpoint.split('?').next(),
+        Some("/responses" | "/v1/responses")
+    );
+    if let Some(response) = codex_context_window_sse_response(
+        &ctx.request_model,
+        &body,
+        status,
+        is_stream && responses_endpoint,
+    ) {
+        return Ok(response);
+    }
     let body = serde_json::to_vec(&body).map_err(|e| {
         log::error!("[Codex] 序列化代理错误体失败: {e}");
         ProxyError::Internal(format!("Failed to serialize proxy error: {e}"))
@@ -2247,6 +2293,44 @@ fn build_codex_proxy_error_response(
             log::error!("[Codex] 构建代理错误响应失败: {e}");
             ProxyError::Internal(format!("Failed to build proxy error response: {e}"))
         })
+}
+
+/// Codex recognizes context-budget failures in `response.failed` SSE events.
+/// A bare HTTP 400 is an invalid request to the client, even when its JSON has
+/// the right code. Return a failed stream so local compaction can trim history
+/// and retry. Other HTTP errors and non-streaming callers keep their status.
+fn codex_context_window_sse_response(
+    model: &str,
+    body: &Value,
+    status: StatusCode,
+    is_stream: bool,
+) -> Option<axum::response::Response> {
+    if !is_stream
+        || status != StatusCode::BAD_REQUEST
+        || body.pointer("/error/code").and_then(Value::as_str) != Some("context_length_exceeded")
+    {
+        return None;
+    }
+    let response = json!({
+        "id": format!("resp_{}", uuid::Uuid::new_v4().simple()),
+        "object": "response",
+        "created_at": chrono::Utc::now().timestamp(),
+        "status": "failed",
+        "model": model,
+        "output": [],
+        "error": body["error"],
+    });
+    Some(
+        (
+            StatusCode::OK,
+            [
+                (axum::http::header::CONTENT_TYPE, "text/event-stream"),
+                (axum::http::header::CACHE_CONTROL, "no-cache"),
+            ],
+            super::providers::codex_responses_sse::response_failed(&response),
+        )
+            .into_response(),
+    )
 }
 
 fn codex_proxy_error_json(
@@ -4030,6 +4114,81 @@ mod stack_tests {
         let status = response.status();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn gemini_http_overflow_reaches_codex_as_a_failed_stream() {
+        let state = proxy_state();
+        let model = "ccs-gemini/gemini-3.8-flash-high";
+        let provider =
+            crate::provider::Provider::with_id("gemini".into(), "Gemini".into(), json!({}), None);
+        let ctx = RequestContext::new(
+            &state,
+            &json!({}),
+            &axum::http::HeaderMap::new(),
+            AppType::Codex,
+            "Codex",
+            "codex",
+            Some(crate::mode::stack::StackTarget {
+                provider,
+                upstream_model: "gemini-3.8-flash-high".into(),
+                original_model: model.into(),
+            }),
+        )
+        .await
+        .unwrap();
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(json!({ "error": {
+                "code": 400, "status": "INVALID_ARGUMENT",
+                "message": "The input token count exceeds the maximum number of tokens allowed 1048576."
+            } }).to_string()),
+        };
+        for endpoint in ["/responses", "/v1/responses?beta=true"] {
+            let response = build_codex_proxy_error_response(&ctx, endpoint, &error, true).unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["content-type"], "text/event-stream");
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let sse = String::from_utf8(bytes.to_vec()).unwrap();
+            assert!(sse.starts_with("event: response.failed\n"));
+            let data = sse
+                .lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .unwrap();
+            let event: Value = serde_json::from_str(data).unwrap();
+            assert_eq!(event["type"], "response.failed");
+            assert_eq!(event["response"]["status"], "failed");
+            assert_eq!(event["response"]["model"], model);
+            assert_eq!(
+                event["response"]["error"]["code"],
+                "context_length_exceeded"
+            );
+            assert_eq!(event["response"]["error"]["upstream_status"], 400);
+            assert!(!sse.contains("response.completed"));
+        }
+        // JSON consumers and other endpoints retain HTTP errors.
+        for (endpoint, stream) in [
+            ("/responses", false),
+            ("/responses/compact", true),
+            ("/chat/completions", true),
+        ] {
+            let response =
+                build_codex_proxy_error_response(&ctx, endpoint, &error, stream).unwrap();
+            let (status, body) = json_of(response).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body["error"]["code"], "context_length_exceeded");
+        }
+        let unrelated = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                json!({ "error": { "code": 400, "message": "Invalid API key" } }).to_string(),
+            ),
+        };
+        let response =
+            build_codex_proxy_error_response(&ctx, "/responses", &unrelated, true).unwrap();
+        let (status, body) = json_of(response).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], 400);
     }
 
     #[tokio::test]

@@ -241,13 +241,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
@@ -255,27 +254,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "packycode",
     icon: "packycode",
-  },
-  {
-    name: "ZetaAPI",
-    providerKey: "cc-switch-zeta-api",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      name: "ZetaAPI",
-      baseUrl: "https://api.zetaapi.ai/v1",
-      api: "openai-completions",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
-        }),
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
   },
   {
     name: "APINebula",
@@ -288,8 +266,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
@@ -310,11 +288,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
       ],
     },
@@ -323,6 +301,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     partnerPromotionKey: "aicodemirror",
     icon: "aicodemirror",
     iconColor: "#000000",
+  },
+  {
+    name: "hao.ai",
+    providerKey: "cc-switch-hao-ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      name: "hao.ai",
+      baseUrl: "https://api.hao.ai/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5-5",
+        }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -336,8 +338,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
       ],
     },
@@ -357,16 +359,15 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
@@ -388,20 +389,22 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
     name: "GrooRoute Pro",
     providerKey: "cc-switch-grooroute-pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       name: "GrooRoute Pro",
       baseUrl: "https://grooroute.pro",
@@ -414,38 +417,150 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    providerKey: "cc-switch-shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "DIT.ai",
+    providerKey: "cc-switch-dit-ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     settingsConfig: {
-      name: "Shengsuanyun",
-      baseUrl: "https://router.shengsuanyun.com/api",
+      name: "DIT.ai",
+      baseUrl: "https://api.dit.ai",
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "anthropic/claude-opus-5",
-        }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "anthropic/claude-sonnet-5",
-        }),
-        piModel("anthropic/claude-opus-5.5", {
-          id: "anthropic/claude-opus-5.5",
-        }),
-        piModel("anthropic/claude-fable-5.1", {
-          id: "anthropic/claude-fable-5.1",
-        }),
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
       ],
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    providerKey: "cc-switch-buytoken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    settingsConfig: {
+      name: "BuyToken",
+      baseUrl: "https://api.buytoken.work",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    providerKey: "cc-switch-vapi",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    settingsConfig: {
+      name: "V-API",
+      baseUrl: "https://api.gpt.ge",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    providerKey: "cc-switch-tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    settingsConfig: {
+      name: "TokenFactory",
+      // 官方 Pi 文档（docs.tokenfactory.cn/tools/pi，2026-10-15 核对）；
+      // 平台入口最大输出 128K，低于目录里的 131072，须覆盖
+      baseUrl: "https://api.tokenfactory.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "glm-5.3", maxTokens: 128_000 }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        // V4.1 Flash 1017 为较新的带日期构建，窗口与最大输出取站点目录
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+          contextWindow: 1_000_000,
+          maxTokens: 384_000,
+        }),
+        // V4.1 Flash 平台标注可看图，目录里的 V4 Flash 只收文本
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          input: ["text", "image"],
+          contextWindow: 1_048_576,
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "glm-5.3-flash",
+          maxTokens: 128_000,
+        }),
+        piModel("qwen/qwen3.8-flash", {
+          id: "qwen3.8-flash",
+          maxTokens: 128_000,
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "tokenfactory",
+  },
+  // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+  // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+  // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+  // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+  // .../personal 是两套部署，勿合并。阵容与 claude/codex/opencode/openclaw/
+  // hermes 五 app 的 FluxA 预设同源：七款取 FluxA 产品页模型表（排除标
+  // Coming soon 的 deepseek-v4-pro-0813 / glm-5.3），kimi-k2.6 是定稿赞助
+  // 文案点名补的。deepseek-v4-flash-0731 无独立目录键，按 v4-flash 同款
+  // 能力取用、id 写真实 wire 名。思考档位（thinkingProfile）不填：国内版
+  // 有、国际 team 部署未实测，与 Codex 侧不声明 codexChatReasoning 同理
+  {
+    name: "FluxA Token Plan",
+    providerKey: "cc-switch-fluxa-token-plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    settingsConfig: {
+      name: "FluxA Token Plan",
+      baseUrl: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4-flash-0731",
+          name: "DeepSeek V4 Flash 0731",
+        }),
+        piModel("deepseek/deepseek-flash", { id: "deepseek-v4.1-flash" }),
+        piModel("deepseek/deepseek-v3.2", { id: "deepseek-v3.2" }),
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("zai/glm-5.1", { id: "glm-5.1" }),
+        piModel("zai/glm-5", { id: "glm-5" }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
   },
   {
     name: "AIGoCode",
@@ -458,12 +573,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "third_party",
@@ -508,11 +624,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
       ],
     },
@@ -533,8 +649,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
@@ -544,44 +660,33 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     partnerPromotionKey: "subrouter",
     icon: "subrouter",
   },
-  // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
-  // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
-  // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
-  // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
-  // .../personal 是两套部署，勿合并。阵容与 claude/codex/opencode/openclaw/
-  // hermes 五 app 的 FluxA 预设同源：七款取 FluxA 产品页模型表（排除标
-  // Coming soon 的 deepseek-v4-pro-0813 / glm-5.3），kimi-k2.6 是定稿赞助
-  // 文案点名补的。deepseek-v4-flash-0731 无独立目录键，按 v4-flash 同款
-  // 能力取用、id 写真实 wire 名。思考档位（thinkingProfile）不填：国内版
-  // 有、国际 team 部署未实测，与 Codex 侧不声明 codexChatReasoning 同理
   {
-    name: "FluxA Token Plan",
-    providerKey: "cc-switch-fluxa-token-plan",
-    websiteUrl: "https://agentmarket.fluxapay.xyz/",
-    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    providerKey: "cc-switch-shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     settingsConfig: {
-      name: "FluxA Token Plan",
-      baseUrl: "https://api.baiduqianfan.ai/v2/tokenplan/team",
-      api: "openai-completions",
+      name: "Shengsuanyun",
+      baseUrl: "https://router.shengsuanyun.com/api",
+      api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-0731",
-          name: "DeepSeek V4 Flash 0731",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5.5",
         }),
-        piModel("deepseek/deepseek-v4-flash", { id: "deepseek-v4-flash" }),
-        piModel("deepseek/deepseek-v3.2", { id: "deepseek-v3.2" }),
-        piModel("zai/glm-5.2", { id: "glm-5.2" }),
-        piModel("zai/glm-5.1", { id: "glm-5.1" }),
-        piModel("zai/glm-5", { id: "glm-5" }),
-        piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5.5",
+        }),
+        piModel("anthropic/claude-fable-5.1", {
+          id: "anthropic/claude-fable-5.1",
+        }),
       ],
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "fluxa",
-    icon: "fluxa",
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
   },
   {
     name: "88API",
@@ -596,8 +701,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
@@ -618,15 +723,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "third_party",
@@ -645,16 +751,15 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
@@ -674,15 +779,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
   },
   {
@@ -697,6 +800,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
@@ -742,14 +847,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         {
           ...piModel("deepseek/deepseek-v4-flash", {
-            id: "deepseek/deepseek-v4-flash-0731",
-            name: "Deepseek V4 Flash 0731",
+            id: "deepseek/deepseek-v4.1-flash",
+            name: "DeepSeek V4.1 Flash",
             contextWindow: 1_048_576,
             maxTokens: 393_216,
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...DEEPSEEK_THINKING_COMPAT },
         },
+        piModel("moonshotai/kimi-k3.1-pro", { id: "moonshotai/kimi-k3.1-pro" }),
+        piModel("zai/glm-5.3", { id: "zai-org/glm-5.3" }),
       ],
     },
     category: "aggregator",
@@ -769,16 +876,15 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
@@ -880,7 +986,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       apiKey: "",
       models: [
         piModel("volcengine/doubao-seed-2.1-pro", {
-          id: "doubao-seed-2-1-pro-260628",
+          id: "doubao-seed-2-1-pro-260915",
         }),
       ],
     },
@@ -901,8 +1007,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
@@ -923,9 +1029,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
         piModel("openai/gpt-6-astra", {
           id: "gpt-6-astra",
         }),
+        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
       ],
     },
     category: "aggregator",
@@ -944,11 +1052,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
       ],
     },
@@ -969,14 +1077,14 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
-        piModel("anthropic/claude-haiku-4.5-20251001", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
       ],
     },
@@ -996,12 +1104,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "third_party",
@@ -1021,8 +1130,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
       ],
     },
@@ -1043,11 +1152,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
       ],
     },
@@ -1068,11 +1177,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
@@ -1094,11 +1203,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
       ],
     },
@@ -1120,12 +1229,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
       ],
     },
     category: "third_party",
@@ -1145,8 +1254,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
@@ -1155,6 +1264,76 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     icon: "sudocode-us",
+  },
+  {
+    name: "Modelflare",
+    providerKey: "cc-switch-modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // Responses + /v1（docs.modelflare.dev/guides/endpoints，2026-10-15
+    // 核对）；阵容同 OpenCode
+    settingsConfig: {
+      name: "Modelflare",
+      baseUrl: "https://modelflare.dev/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
+    name: "AllTokens",
+    providerKey: "cc-switch-alltokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key；GPT 账号池原生走
+    // Responses（分组与模型见 alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      name: "AllTokens",
+      baseUrl: "https://alltokens.cc/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    providerKey: "cc-switch-alltokens-si",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      name: "AllTokens SI",
+      baseUrl: "https://alltokens.si/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
   },
   {
     name: "Amux",
@@ -1167,8 +1346,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
         }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
@@ -1187,10 +1366,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("zai/glm-5.1", {
-          id: "zai-org/glm-5.1",
-          name: "GLM 5.1",
-        }),
+        piModel("zai/glm-5.3", { id: "zai-org/glm-5.3" }),
+        piModel("zai/glm-5.3-flash", { id: "zai-org/glm-5.3-flash" }),
+        piModel("moonshotai/kimi-k3", { id: "moonshotai/kimi-k3" }),
       ],
     },
     category: "aggregator",
@@ -1229,10 +1407,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro",
-          thinkingProfile: "deepseekV4",
-        }),
         piModel("deepseek/deepseek-flash", {
           id: "deepseek-flash",
           thinkingProfile: "deepseekV4",
@@ -1249,7 +1423,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "cn",
     providerKey: "cc-switch-zhipu-glm",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       name: "Zhipu GLM",
       baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
@@ -1272,7 +1446,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "intl",
     providerKey: "cc-switch-zhipu-glm-en",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       name: "Zhipu GLM en",
       baseUrl: "https://api.z.ai/api/coding/paas/v4",
@@ -1547,15 +1721,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("streamlake/kat-coder-pro", {
-          id: "ep-xxx-xxx",
-          name: "KAT-Coder Pro V2.5",
-          maxTokens: 80_000,
+        piModel("streamlake/kat-coder-pro-v2.5", {
+          id: "kat-coder-pro-v2.5",
         }),
       ],
     },
     category: "cn_official",
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "StreamLake en",
@@ -1570,13 +1742,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("streamlake/kat-coder-pro", {
-          id: "ep-xxx-xxx",
+        piModel("streamlake/kat-coder-pro-v2.5", {
+          id: "kat-coder-pro-v2.5",
         }),
       ],
     },
     category: "cn_official",
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "Longcat",
@@ -1611,6 +1783,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "MiniMax-M3.1-Flash",
+          maxTokens: 131072,
+        }),
         piModel("minimax/minimax-m3", {
           id: "MiniMax-M3",
           maxTokens: 131072,
@@ -1638,6 +1814,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "MiniMax-M3.1-Flash",
+          maxTokens: 131072,
+        }),
         piModel("minimax/minimax-m3", {
           id: "MiniMax-M3",
           maxTokens: 131072,
@@ -1685,18 +1865,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       apiKey: "",
       models: [
         {
-          ...piModel("xiaomi/mimo-v2.5-pro", {
-            id: "mimo-v2.5-pro",
-          }),
-          compat: { ...XIAOMI_THINKING_COMPAT },
-        },
-        {
-          ...piModel("xiaomi/mimo-v2.5", {
-            id: "mimo-v2.5",
-          }),
-          compat: { ...XIAOMI_THINKING_COMPAT },
-        },
-        {
           ...piModel("xiaomi/mimo-v2.6-pro", { id: "mimo-v2.6-pro" }),
           compat: XIAOMI_THINKING_COMPAT,
         },
@@ -1729,12 +1897,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("xiaomi/mimo-v2.5-pro", {
-          id: "mimo-v2.5-pro",
-        }),
-        piModel("xiaomi/mimo-v2.5", {
-          id: "mimo-v2.5",
-        }),
         {
           ...piModel("xiaomi/mimo-v2.6-pro", { id: "mimo-v2.6-pro" }),
           compat: XIAOMI_THINKING_COMPAT,
@@ -1761,36 +1923,42 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       apiKey: "",
       models: [
         {
-          ...piModel("zai/glm-5.2", {
-            id: "glm-5.2",
-            name: "GLM 5.2",
+          ...piModel("zai/glm-5.3", {
+            id: "glm-5.3",
             thinkingProfile: "openCodeGoGlm52",
           }),
           compat: { ...OPENAI_COMPLETIONS_COMPAT },
         },
         {
-          ...piModel("moonshotai/kimi-k2.7-code", {
-            id: "kimi-k2.7-code",
+          ...piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro", {
+            id: "kimi-k3.1-pro",
           }),
           compat: { ...OPENAI_COMPLETIONS_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
+          ...piModel("deepseek/deepseek-flash", {
+            id: "deepseek-v4.1-flash",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-flash", {
-            id: "deepseek-v4-flash",
-            thinkingProfile: "deepseekV4",
+          ...piModel("xiaomi/mimo-v2.6-pro", {
+            id: "mimo-v2.6-pro",
           }),
-          compat: { ...DEEPSEEK_THINKING_COMPAT },
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
         },
         {
-          ...piModel("xiaomi/mimo-v2.5-pro", {
-            id: "mimo-v2.5-pro",
+          ...piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+        {
+          ...piModel("minimax/minimax-m3.1-flash", {
+            id: "minimax-m3.1-flash",
           }),
           compat: { ...OPENAI_COMPLETIONS_COMPAT },
         },
@@ -1812,13 +1980,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
@@ -1837,11 +2005,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "anthropic/claude-sonnet-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5.5",
         }),
-        piModel("anthropic/claude-opus-5", {
-          id: "anthropic/claude-opus-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5.5",
         }),
         piModel("anthropic/claude-fable-5.1", {
           id: "anthropic/claude-fable-5.1",
@@ -1862,14 +2030,14 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "anthropic/claude-sonnet-5",
-        }),
-        piModel("anthropic/claude-opus-5", {
-          id: "anthropic/claude-opus-5",
-        }),
         piModel("anthropic/claude-opus-5.5", {
           id: "anthropic/claude-opus-5.5",
+        }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5.5",
+        }),
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "anthropic/claude-haiku-5.5",
         }),
         piModel("anthropic/claude-fable-5.1", {
           id: "anthropic/claude-fable-5.1",
@@ -1891,25 +2059,75 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-sonnet-5", {
-          id: "anthropic/claude-sonnet-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5-5",
         }),
-        piModel("openai/gpt-5.3-codex", {
-          id: "openai/gpt-5.3-codex",
+        piModel("anthropic/claude-fable-5.1", {
+          id: "anthropic/claude-fable-5-1",
         }),
-        piModel("openai/gpt-5.2", {
-          id: "openai/gpt-5.2",
+        piModel("openai/gpt-6.1-sol", {
+          id: "openai/gpt-6.1-sol",
         }),
-        piModel("google/gemini-3.6-flash", {
-          id: "google/gemini-3.6-flash",
+        piModel("openai/gpt-6-astra", {
+          id: "openai/gpt-6-astra",
         }),
-        piModel("qwen/qwen3-coder-480b", {
-          id: "qwen/qwen3-coder-480b",
+        piModel("google/gemini-3.8-flash", {
+          id: "google/gemini-3.8-flash",
+        }),
+        piModel("qwen/qwen3.8-max", {
+          id: "qwen/qwen3.8-max",
         }),
       ],
     },
     category: "aggregator",
     icon: "therouter",
+  },
+  {
+    name: "Baseten",
+    // Pi 运行时内置了 baseten，用 cc-switch- 前缀避免同名遮蔽内置定义
+    providerKey: "cc-switch-baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    settingsConfig: {
+      name: "Baseten",
+      // 官方编程工具接入文档 Pi 直连 /v1 Chat（docs.baseten.co/inference/
+      // model-apis/coding-agents，2026-10-14 核对）。窗口、最大输出与输入模态取
+      // docs.baseten.co/development/model-apis/overview 同日模型表：目录里
+      // glm-5.3 记为纯文本、131072，DeepSeek Flash 记为 1000000 / 384000，
+      // 与平台声明不同，故覆盖
+      baseUrl: "https://inference.baseten.co/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", {
+          id: "zai-org/GLM-5.3",
+          input: ["text", "image"],
+          maxTokens: 262_144,
+        }),
+        piModel("moonshotai/kimi-k3", {
+          id: "moonshotai/Kimi-K3",
+          maxTokens: 262_144,
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "zai-org/GLM-5.3-Flash",
+          maxTokens: 262_144,
+        }),
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+          contextWindow: 1_048_576,
+          maxTokens: 262_144,
+        }),
+        piModel("zai/glm-5.3", {
+          id: "zai-org/GLM-5.3-Fast",
+          name: "GLM-5.3 Fast",
+          input: ["text", "image"],
+          maxTokens: 262_144,
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "baseten",
   },
   {
     name: "Novita AI",
@@ -1922,12 +2140,17 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("zai/glm-5.1", {
-          id: "zai-org/glm-5.1",
-        }),
         piModel("zai/glm-5.3", { id: "zai-org/glm-5.3" }),
         piModel("zai/glm-5.3-flash", { id: "zai-org/glm-5.3-flash" }),
-        piModel("moonshotai/kimi-k3", { id: "moonshotai/kimi-k3" }),
+        piModel("moonshotai/kimi-k3.1-pro", { id: "moonshotai/kimi-k3.1-pro" }),
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek/deepseek-v4.1-flash",
+        }),
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "minimax/minimax-m3.1-flash",
+        }),
+        piModel("qwen/qwen3.8-max", { id: "qwen/qwen3.8-max" }),
+        piModel("xiaomi/mimo-v2.6-pro", { id: "xiaomimimo/mimo-v2.6-pro" }),
       ],
     },
     category: "aggregator",
@@ -1945,8 +2168,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("moonshotai/kimi-k3", {
-          id: "moonshotai/kimi-k3",
+        piModel("moonshotai/kimi-k2.6", {
+          id: "moonshotai/kimi-k2.6",
         }),
         piModel("zai/glm-5.3", { id: "z-ai/glm-5.3" }),
         piModel("zai/glm-5.3-flash", { id: "z-ai/glm-5.3-flash" }),
@@ -1955,6 +2178,432 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "nvidia",
     iconColor: "#000000",
+  },
+  {
+    // Pi 运行时没有内置 Ollama provider（pi-mono models.generated.ts 搜不到），
+    // 不违反「勿写内置节点」契约
+    name: "Ollama Cloud",
+    providerKey: "cc-switch-ollama-cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    settingsConfig: {
+      name: "Ollama Cloud",
+      // 云端 OpenAI 兼容 base（docs.ollama.com/api/openai-compatibility，
+      // 2026-10-14 核对）；窗口取 https://ollama.com/api/show
+      baseUrl: "https://ollama.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        // 2026-10-25 起 DeepSeek 一律用 Flash（Pro 贵且效果不如 Flash），
+        // id 与 Codex / Hermes 的 Ollama Cloud 预设一致
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-v4.1-flash",
+          contextWindow: 1_048_576,
+        }),
+        // 目录默认 1M，Ollama 云端只开 512K，必须覆盖
+        piModel("minimax/minimax-m3", {
+          id: "minimax-m3",
+          contextWindow: 512_000,
+        }),
+      ],
+    },
+    category: "cloud_provider",
+    icon: "ollama",
+  },
+  {
+    // Pi 运行时没有内置本机 Ollama provider，Pi 文档自己就用 models.json 写它
+    name: "Ollama",
+    providerKey: "cc-switch-ollama",
+    websiteUrl: "https://ollama.com",
+    settingsConfig: {
+      name: "Ollama",
+      // Pi 文档（pi-mono packages/coding-agent/docs/models.md，2026-10-14
+      // 核对）的本机写法：openai-completions + http://localhost:11434/v1。
+      // 服务端不校验 Key，但 Pi 文档说要填一个占位 Key 模型才会出现在列表里，
+      // 添加后手填 ollama。模型换成自己已下载的
+      baseUrl: "http://localhost:11434/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("qwen/qwen3.5", { id: "qwen3.5" }),
+        piModel("openai/gpt-oss-20b", { id: "gpt-oss:20b" }),
+      ],
+    },
+    category: "local",
+    icon: "ollama",
+  },
+  {
+    // Pi 运行时没有内置 LM Studio provider（pi-mono models.generated.ts 搜不到），
+    // Pi 文档自己就用 models.json 写它，不违反「勿写内置节点」契约
+    name: "LM Studio",
+    providerKey: "cc-switch-lmstudio",
+    websiteUrl: "https://lmstudio.ai",
+    settingsConfig: {
+      name: "LM Studio",
+      // 本机 OpenAI Chat base http://localhost:1234/v1（lmstudio.ai/docs/
+      // developer/openai-compat、pi-mono packages/coding-agent/docs/models.md，
+      // 2026-10-14 核对）。默认不鉴权，但 Pi 要填一个占位 Key 模型才会出现在
+      // 列表里，添加后手填 lmstudio。Chat 上的 reasoning_effort 未证实，同 Groq
+      // 先例不写 thinkingProfile，compat 按通用 OpenAI Completions 写；最大输出
+      // 取 models.dev 的 lmstudio 条目（目录里的 65536 来自 Groq）。模型换成
+      // 自己已下载的；实际窗口受 LM Studio 加载时的 context length 限制
+      baseUrl: "http://localhost:1234/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("openai/gpt-oss-20b", {
+            id: "openai/gpt-oss-20b",
+            maxTokens: 32_768,
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "local",
+    icon: "lmstudio",
+  },
+  {
+    // Pi 运行时没有内置 vLLM provider（pi-mono models.generated.ts 搜不到），
+    // Pi 文档把 vLLM 列为用 models.json 配置兼容端点的场景，不违反「勿写内置
+    // 节点」契约
+    name: "vLLM",
+    providerKey: "cc-switch-vllm",
+    websiteUrl: "https://vllm.ai",
+    settingsConfig: {
+      name: "vLLM",
+      // 本机 vllm serve 的 OpenAI Chat base http://localhost:8000/v1
+      //（docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server、
+      // pi-mono packages/coding-agent/docs/models.md，2026-10-14 核对）。不带
+      // --api-key 时不校验，但 Pi 要填一个非空占位 Key 模型才会出现在列表里，
+      // 添加后手填 dummy（带了 --api-key 就填那个值）。工具调用要启动时加
+      // --enable-auto-tool-choice --tool-call-parser qwen3_coder。档位映射没有
+      // 逐模型证据，不写 thinkingProfile。默认模型须与 /v1/models 的 id 一致，
+      // 换成自己已下载的；实际窗口受 --max-model-len 限制
+      baseUrl: "http://localhost:8000/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [piModel("qwen/qwen3.6-27b", { id: "Qwen/Qwen3.6-27B" })],
+    },
+    category: "local",
+    icon: "vllm",
+  },
+  {
+    name: "Meta Model API",
+    providerKey: "cc-switch-meta",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    settingsConfig: {
+      name: "Meta Model API",
+      // OpenAI Chat 端点 /v1/chat/completions（dev.meta.ai/docs/coding-agents.md，
+      // 2026-10-14 核对），Bearer 鉴权。两款常开思考（none 返回 400），关闭档
+      // 隐藏；xhigh/max 原样发（dev.meta.ai/docs/reasoning.md）。Chat 参数表只
+      // 列到 xhigh，max 是否被 Chat 接受未实测
+      baseUrl: "https://api.meta.ai/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("meta/muse-wonder-1.0", {
+          id: "muse-wonder-1.0",
+          thinkingProfile: "offUnsupportedXhighAndMax",
+        }),
+        piModel("meta/muse-spark-1.3", {
+          id: "muse-spark-1.3",
+          thinkingProfile: "offUnsupportedXhighAndMax",
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "meta",
+  },
+  {
+    name: "DeepInfra",
+    providerKey: "cc-switch-deepinfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    settingsConfig: {
+      name: "DeepInfra",
+      // 官方 Pi 接入文档（docs.deepinfra.com/integrations/pi.md，2026-10-14
+      // 核对）：Pi 未内置 DeepInfra，base 为 /v1/openai Chat。DeepSeek 两款须带
+      // supportsDeveloperRole: false（否则 developer 角色报 422）与
+      // thinkingFormat: "deepseek"，其余模型不加。目录里没有带日期的 DeepSeek
+      // key，用不带日期的条目覆盖 id；窗口取 https://api.deepinfra.com/models/<id>
+      // 同日元数据，GLM-5.2 最大输出按平台 163840 覆盖
+      baseUrl: "https://api.deepinfra.com/v1/openai",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            name: "DeepSeek V4.1 Flash 1017",
+            contextWindow: 1_048_576,
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { supportsDeveloperRole: false, thinkingFormat: "deepseek" },
+        },
+        // KIMI_K3_COMPAT 是 Moonshot 官方端点的口径，DeepInfra 未证实，不抄
+        piModel("moonshotai/kimi-k3", {
+          id: "moonshotai/Kimi-K3",
+          thinkingProfile: "kimi3",
+        }),
+        piModel("zai/glm-5.3", { id: "zai-org/GLM-5.3" }),
+        piModel("zai/glm-5.3-flash", { id: "zai-org/GLM-5.3-Flash" }),
+      ],
+    },
+    category: "aggregator",
+    icon: "deepinfra",
+  },
+  {
+    name: "Vercel AI Gateway",
+    // vercel-ai-gateway 是 Pi 内置供应商 ID，同名节点会遮蔽内置定义，故加前缀
+    providerKey: "cc-switch-vercel-ai-gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    settingsConfig: {
+      name: "Vercel AI Gateway",
+      // 走 /coding-agent/v1 Chat（vercel.com/docs/ai-gateway/coding-agents/pi 与
+      // vercel.com/docs/cli/ai-gateway，2026-10-14 核对）。Gemini 3.8 Flash 按
+      // GET https://ai-gateway.vercel.sh/v1/models 同日元数据覆盖窗口与最大输出；
+      // GPT 按 API 计费、窗口 1.05M，不用 catalog 的订阅窗口；Haiku 5.5、GPT-6.1 Sol 目录里还没有条目，暂不收
+      baseUrl: "https://ai-gateway.vercel.sh/coding-agent/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5.5",
+        }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5.5",
+        }),
+        piModel("anthropic/claude-fable-5.1", {
+          id: "anthropic/claude-fable-5.1",
+        }),
+        piModel("openai/gpt-6-astra", {
+          id: "openai/gpt-6-astra",
+          contextWindow: 1_050_000,
+        }),
+        piModel("openai/gpt-6-luna", {
+          id: "openai/gpt-6-luna",
+          contextWindow: 1_050_000,
+        }),
+        piModel("google/gemini-3.8-flash", {
+          id: "google/gemini-3.8-flash",
+          contextWindow: 1_000_000,
+          maxTokens: 65_535,
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "vercel",
+  },
+  {
+    name: "Nebius Token Factory",
+    // models.dev 已有 nebius 供应商，加前缀以免撞上可能的内置同名 ID
+    providerKey: "cc-switch-nebius-token-factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    settingsConfig: {
+      name: "Nebius Token Factory",
+      // OpenAI Chat 端点 base 为 /v1（docs.tokenfactory.nebius.com/switch.md，
+      // 2026-10-14 核对）。窗口与模态按官方公开目录
+      // tokenfactory.nebius.com/api/public/models_info 同日快照覆盖；同 Novita /
+      // Nvidia，聚合平台不假定厂商私有参数，不写 thinkingProfile / compat
+      baseUrl: "https://api.tokenfactory.nebius.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", {
+          id: "zai-org/GLM-5.3",
+          contextWindow: 1_024_000,
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "zai-org/GLM-5.3-Flash",
+          contextWindow: 1_024_000,
+        }),
+        piModel("moonshotai/kimi-k3", {
+          id: "moonshotai/Kimi-K3",
+          contextWindow: 1_024_000,
+        }),
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-ai/DeepSeek-V4.1-Flash",
+        }),
+        piModel("minimax/minimax-m3", { id: "MiniMaxAI/MiniMax-M3" }),
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "MiniMaxAI/MiniMax-M3.1-Flash",
+        }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "moonshotai/Kimi-K2.7-Code",
+          input: ["text"],
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "nebius",
+  },
+  {
+    name: "Groq",
+    // Pi 是否内置 groq provider 未证实，加前缀两种情况都不会遮蔽内置定义
+    providerKey: "cc-switch-groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    settingsConfig: {
+      name: "Groq",
+      // OpenAI Chat 端点 base 为 /openai/v1（console.groq.com/docs/openai，
+      // 2026-10-14 核对），只收自助可用的 Production 模型 gpt-oss 两款。Groq
+      // 是否接受 developer role / store 未证实，compat 按保守的通用 OpenAI
+      // Completions 写；同 Novita / Nvidia，不写 thinkingProfile
+      baseUrl: "https://api.groq.com/openai/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("openai/gpt-oss-120b", { id: "openai/gpt-oss-120b" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+        {
+          ...piModel("openai/gpt-oss-20b", { id: "openai/gpt-oss-20b" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "groq",
+  },
+  {
+    name: "SambaNova",
+    providerKey: "cc-switch-sambanova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    settingsConfig: {
+      name: "SambaNova",
+      // OpenAI Chat 端点 base 为 /v1（docs.sambanova.ai/docs/en/integrations/
+      // opencode，2026-10-14 核对）。OpenAPI 的 Chat 请求没有 developer 角色与
+      // store 字段，compat 按通用 OpenAI Completions 写。MiniMax-M3 在 SambaCloud
+      // 上只收文字，须覆盖 catalog 的 text+image；窗口取公开 /v1/models 同日值，
+      // maxTokens 同 MiniMax en 预设写 131072，不写 thinkingProfile。gpt-oss-120b
+      // 的 reasoning_effort 枚举为 low/medium/high（OpenAPI 声明）
+      baseUrl: "https://api.sambanova.ai/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("minimax/minimax-m3", {
+            id: "MiniMax-M3",
+            input: ["text"],
+            contextWindow: 1048576,
+            maxTokens: 131072,
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+        {
+          ...piModel("openai/gpt-oss-120b", {
+            id: "gpt-oss-120b",
+            thinkingProfile: "lowMediumHighOnly",
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "sambanova",
+  },
+  {
+    name: "DigitalOcean",
+    providerKey: "cc-switch-digitalocean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    settingsConfig: {
+      name: "DigitalOcean",
+      // OpenAI Chat 端点 base 为 /v1（docs.digitalocean.com/products/inference/
+      // how-to/use-with-coding-agents，2026-10-14 核对），Bearer 鉴权，不加
+      // compat（同 Novita 等聚合平台）。Pi 内置供应商里没有 DigitalOcean。
+      // DeepSeek 用平台表所列 V4.1 Flash 1017（2026-10-25 起 DeepSeek 一律用 Flash（Pro 贵且效果不如 Flash）），
+      // 借目录 V4.1 Flash 的能力值。Sonnet 5.5 须 Tier 3+
+      // 账号，首行用所有等级可用的 GLM-5.3
+      baseUrl: "https://inference.do-ai.run/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+          contextWindow: 1_048_576,
+        }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic-claude-sonnet-5.5",
+        }),
+      ],
+    },
+    category: "cloud_provider",
+    icon: "digitalocean",
+  },
+  {
+    name: "Hugging Face",
+    // Pi 运行时内置了 huggingface，用 cc-switch- 前缀避免同名遮蔽内置定义
+    providerKey: "cc-switch-hugging-face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    settingsConfig: {
+      name: "Hugging Face",
+      // OpenAI Chat 端点 base 为 https://router.huggingface.co/v1
+      //（huggingface.co/docs/inference-providers/integrations/pi，2026-10-14
+      // 核对），Bearer 鉴权，不加 compat（同 Novita 等聚合平台）。上游钉
+      // :baseten（同 Claude Code 预设）；公开 /v1/models 对 Baseten 的同日声明
+      // 窗口均为 1048576，目录里记为 1000000，故覆盖。DeepSeek 2026-10-25 起
+      // 只留 V4.1 Flash 1017（Pro 贵且效果不如 Flash）
+      baseUrl: "https://router.huggingface.co/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "zai-org/GLM-5.3:baseten" }),
+        piModel("zai/glm-5.3-flash", { id: "zai-org/GLM-5.3-Flash:baseten" }),
+        piModel("moonshotai/kimi-k3", { id: "moonshotai/Kimi-K3:baseten" }),
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-ai/DeepSeek-V4.1-Flash-1017:baseten",
+          name: "DeepSeek V4.1 Flash 1017",
+          contextWindow: 1_048_576,
+          maxTokens: 262_144,
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "huggingface",
+  },
+  {
+    name: "Microsoft Foundry",
+    providerKey: "cc-switch-microsoft-foundry",
+    websiteUrl: "https://azure.microsoft.com/en-us/products/ai-foundry",
+    apiKeyUrl: "https://ai.azure.com/",
+    settingsConfig: {
+      name: "Microsoft Foundry",
+      // 同 Claude Code 预设：Anthropic 端点 base 为 https://<资源名>.services.ai.azure.com/
+      // anthropic、不带 /v1，API Key 发 x-api-key（learn.microsoft.com/en-us/azure/
+      // foundry/foundry-models/how-to/use-foundry-models-claude，2026-10-14 核对）；
+      // pi-ai 对普通 Key 走 Anthropic SDK 的 apiKey，发的正是 x-api-key。Pi 内置的
+      // azure-openai-responses 只管 GPT，Claude 须自定义节点。资源名用字面占位符；
+      // 模型 ID 填默认部署名，自定义了须同步改。Haiku 5.5 为 1M / 128K、支持思考
+      //（learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/
+      // claude-models 同日），目录里原先没有，已补
+      baseUrl: "https://YOUR_RESOURCE_NAME.services.ai.azure.com/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
+      ],
+    },
+    category: "cloud_provider",
+    icon: "azure",
+    iconColor: "#0078D4",
   },
   {
     name: "PIPELLM",
@@ -1967,16 +2616,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
           name: "claude-opus-5",
         }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
           name: "claude-sonnet-5",
         }),
-        piModel("anthropic/claude-haiku-4.5-20251001", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
           name: "claude-haiku-4-5-20251001",
         }),
       ],
@@ -1995,8 +2644,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
           name: "gpt-5.6-sol",
         }),
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
@@ -2018,16 +2667,15 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        piModel("openai/gpt-5.2-codex", {
-          id: "gpt-5.2-codex",
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
           name: "gpt-5.2-codex",
         }),
-        piModel("openai/gpt-5.3-codex", {
-          id: "gpt-5.3-codex",
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", {
+          id: "gpt-6-astra",
           name: "gpt-5.3-codex",
         }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
     },
     category: "third_party",
@@ -2099,14 +2747,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
         piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
         piModel("zai/glm-5", { id: "glm-5" }),
         piModel("zai/glm-5.1", { id: "glm-5.1" }),
@@ -2136,14 +2776,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("tencent/tokenplan-auto", { id: "auto" }),
         piModel("zai/glm-5.2", { id: "glm-5.2" }),
         piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
         {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-202605",
@@ -2188,18 +2820,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           thinkingProfile: "offUnsupported",
         }),
         piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
-        piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
         piModel("minimax/minimax-m3", { id: "minimax-m3" }),
         {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -2213,25 +2837,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-0813",
-            name: "DeepSeek V4 Pro 0813 GA",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-202605",
             name: "DeepSeek V4 Flash Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -2276,13 +2884,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-0731",
             name: "DeepSeek V4 Flash 0731 GA",
@@ -2291,25 +2892,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-0813",
-            name: "DeepSeek V4 Pro 0813 GA",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash-202605",
             name: "DeepSeek V4 Flash Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -2388,14 +2973,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash-vision-exp", {
             id: "deepseek/deepseek-v4-flash-vision-exp",
             thinkingProfile: "deepseekV4",
@@ -2411,23 +2988,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-0813",
-            name: "DeepSeek V4 Pro 0813 GA",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -2484,14 +3046,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-202606",
-            name: "DeepSeek V4 Pro Official",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash-vision-exp", {
             id: "deepseek/deepseek-v4-flash-vision-exp",
             thinkingProfile: "deepseekV4",
@@ -2507,23 +3061,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
         },
         {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro-0813",
-            name: "DeepSeek V4 Pro 0813 GA",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
           ...piModel("deepseek/deepseek-v4-flash", {
             id: "deepseek-v4-flash",
-            thinkingProfile: "deepseekV4",
-          }),
-          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
-        },
-        {
-          ...piModel("deepseek/deepseek-v4-pro", {
-            id: "deepseek-v4-pro",
             thinkingProfile: "deepseekV4",
           }),
           compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
@@ -2574,15 +3113,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
+        piModel("anthropic/claude-opus-5.5", {
+          id: "claude-opus-5-5",
         }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "claude-sonnet-5-5",
         }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
@@ -2600,13 +3140,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       apiKey: "",
       // 聚合网关，上游思考档位语义未逐一核对，交给 Pi 原生默认行为（{}）
       models: [
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-0731",
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-v4.1-flash",
         }),
-        piModel("deepseek/deepseek-v4-pro", { id: "DeepSeek-V4-Pro" }),
         piModel("zai/glm-5.3", { id: "GLM-5.3" }),
-        piModel("moonshotai/kimi-k2.7-code", { id: "Kimi-K2.7-Code" }),
-        piModel("qwen/qwen3-coder-plus", { id: "qwen3-coder-plus" }),
+        piModel("zai/glm-5.3-flash", { id: "GLM-5.3-Flash" }),
+        piModel("moonshotai/kimi-k3.1-pro", { id: "kimi-k3.1-pro" }),
+        piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+        piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
+        piModel("minimax/minimax-m3", { id: "MiniMax-M3" }),
+        piModel("stepfun/step-3.7-flash", { id: "Step-3.7-Flash" }),
       ],
     },
     category: "aggregator",
@@ -2625,9 +3168,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
@@ -2646,9 +3190,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
@@ -2667,9 +3212,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
@@ -2688,9 +3234,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
@@ -2709,10 +3256,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       apiKey: "",
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
-        piModel("anthropic/claude-sonnet-5", { id: "claude-sonnet-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
@@ -2731,9 +3279,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",
@@ -2755,8 +3304,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
       ],
     },
@@ -2776,9 +3325,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-4.5", {
-          id: "claude-haiku-4-5-20251001",
+        piModel("anthropic/claude-haiku-5.5", {
+          id: "claude-haiku-5-5",
         }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
     category: "aggregator",

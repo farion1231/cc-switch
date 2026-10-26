@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
 import type {
+  NodeRequirementGap,
   ToolInstallation,
   ToolInstallationReport,
   ToolUninstallPlan,
@@ -33,6 +34,8 @@ export interface ToolVersion {
   installed_but_broken: boolean;
   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
   wsl_distro: string | null;
+  // 有新版本、但这处安装用的 Node 达不到新版本的要求：不给升级，提示先升级 Node。
+  update_blocked_by_node: NodeRequirementGap | null;
 }
 
 export const TOOL_NAMES = [
@@ -45,9 +48,16 @@ export const TOOL_NAMES = [
   "hermes",
   "pi",
   "mcode",
+  "kimi",
+  "agy",
+  "omp",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
+
+export function hermesUninstallMayLeaveFiles(plan: ToolUninstallPlan) {
+  return isWindows() && plan.tool === "hermes" && !plan.wsl_distro;
+}
 
 interface PendingUpgrade {
   toolNames: ToolName[];
@@ -114,6 +124,14 @@ const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy By
   "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
 )}`;
 
+const KIMI_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
+)}`;
+
+const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://antigravity.google/cli/install.ps1 | iex",
+)}`;
+
 // 与后端 npm_install_command_for("claude") 保持一致：原生依赖和 postinstall 缺一不可，
 // 否则 bin/claude.exe 会保留文本占位文件，在 Windows 上报兼容性错误。
 const CLAUDE_NPM_INSTALL_COMMAND =
@@ -141,7 +159,13 @@ ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/herm
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}`;
+${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
+# Kimi Code
+${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
+# Antigravity CLI
+${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -160,7 +184,13 @@ ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${MCODE_WINDOWS_INSTALL_COMMAND}`;
+${MCODE_WINDOWS_INSTALL_COMMAND}
+# Kimi Code
+${KIMI_WINDOWS_INSTALL_COMMAND}
+# Antigravity CLI
+${AGY_WINDOWS_INSTALL_COMMAND}
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -176,6 +206,9 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  kimi: "Kimi Code",
+  agy: "Antigravity CLI",
+  omp: "Oh My Pi",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -194,6 +227,9 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "mcode",
+  kimi: "kimi",
+  agy: "agy",
+  omp: "omp",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
@@ -340,6 +376,7 @@ export function useToolManagement() {
         return (
           !busyTools.has(toolName) &&
           !loadingTools[toolName] &&
+          !tool?.update_blocked_by_node &&
           isUpdateAvailable(tool?.version, tool?.latest_version)
         );
       }),
@@ -530,18 +567,18 @@ export function useToolManagement() {
   const diagnoseToolSilently = useCallback(async (toolName: ToolName) => {
     try {
       const [report] = await settingsApi.probeToolInstallations([toolName]);
+      // 没拿到报告代表状态未知，不能把它当成「没有其他安装」。
+      if (!report) return false;
       // 同一份报告也是行上的路径 / 来源 / 「另有 N 处安装」：装完、升级完就刷新，
       // 不用等手动「检查更新」
-      if (report) {
-        updateToolManagementState({
-          installReports: {
-            ...(toolManagementState.installReports ?? {}),
-            [toolName]: report,
-          },
-        });
-      }
+      updateToolManagementState({
+        installReports: {
+          ...(toolManagementState.installReports ?? {}),
+          [toolName]: report,
+        },
+      });
       setToolDiagnostics((prev) => {
-        if (report?.is_conflict) {
+        if (report.is_conflict) {
           return { ...prev, [toolName]: report.installs };
         }
         // 无冲突：清掉残留;无旧结果则返回同引用，避免无谓 re-render。
@@ -550,11 +587,13 @@ export function useToolManagement() {
         delete next[toolName];
         return next;
       });
+      return true;
     } catch (error) {
       console.error(
         `[useToolManagement] Auto-diagnose failed for ${toolName}`,
         error,
       );
+      return false;
     }
   }, []);
 
@@ -610,7 +649,7 @@ export function useToolManagement() {
       const isBatch = toolNames.length > 1;
 
       // 每个工具独立调用后端，一个失败不会中断其它工具。
-      // soft=true 表示"命令成功执行但结果仍需用户介入"（版本没变/装上却跑不起来），
+      // soft=true 表示"命令成功执行但结果仍需用户介入"（版本没变/无法运行/卸载待核实），
       // 与命令本身报错（soft=false）区别对待：前者不算硬失败，toast 降级为 warning。
       const failures: {
         toolName: ToolName;
@@ -658,15 +697,30 @@ export function useToolManagement() {
             );
             const tool = refreshed.find((t) => t.name === toolName);
             if (action === "uninstall") {
-              await diagnoseToolSilently(toolName);
-              if (!tool) {
-                throw new Error(t("settings.toolUninstallCheckFailed"));
+              const diagnosed = await diagnoseToolSilently(toolName);
+              const warnings: string[] = [];
+              if (!tool || !diagnosed) {
+                warnings.push(t("settings.toolUninstallCheckFailed"));
               }
-              if (tool.version || tool.installed_but_broken) {
+              if (
+                uninstallPlan &&
+                hermesUninstallMayLeaveFiles(uninstallPlan)
+              ) {
+                warnings.push(t("settings.toolUninstallHermesWindowsHint"));
+              }
+              if (tool?.version || tool?.installed_but_broken) {
                 toast.info(t("settings.toolUninstallRemaining"), {
                   description: TOOL_DISPLAY_NAMES[toolName],
                   closeButton: true,
                 });
+              }
+              if (warnings.length > 0) {
+                failures.push({
+                  toolName,
+                  detail: warnings.join("\n"),
+                  soft: true,
+                });
+                return;
               }
               succeeded += 1;
               return;
@@ -777,12 +831,14 @@ export function useToolManagement() {
         failures.every((f) => f.soft && f.kind === "versionUnchanged");
 
       if (succeeded === 0 && hardFailures.length === 0) {
-        // 命令均成功执行、但结果需要用户介入（版本没变 / 装上却跑不起来）
+        // 命令均成功执行、但结果需要用户介入（版本没变 / 无法运行 / 卸载待核实）
         // → 降级为 warning 并解释原因。
         toast.warning(
-          allSoftVersionUnchanged
-            ? t("settings.toolActionVersionUnchangedTitle")
-            : t("settings.toolActionInstalledNotRunnable"),
+          action === "uninstall"
+            ? t("settings.toolUninstallWarningTitle")
+            : allSoftVersionUnchanged
+              ? t("settings.toolActionVersionUnchangedTitle")
+              : t("settings.toolActionInstalledNotRunnable"),
           {
             description: failureDescription || undefined,
             closeButton: true,

@@ -91,6 +91,14 @@ export const handlers = [
     success(getLiveProviderIds("opencode")),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_opencode_default_model`, () =>
+    success(null),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/set_opencode_default_model`, () =>
+    success(null),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_openclaw_live_provider_ids`, () =>
     success(getLiveProviderIds("openclaw")),
   ),
@@ -148,6 +156,10 @@ export const handlers = [
     deleteProvider(app, id);
     return success(true);
   }),
+
+  http.post(`${TAURI_ENDPOINT}/add_provider_to_live_config`, () =>
+    success(true),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/remove_provider_from_live_config`, () =>
     success(true),
@@ -407,6 +419,10 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/set_proxy_stack_member`, () => success(null)),
 
+  http.post(`${TAURI_ENDPOINT}/codex_forces_multi_agent_v2`, () =>
+    success(false),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/restart_codex_app_server_daemon`, () =>
     success("restarted"),
   ),
@@ -522,6 +538,16 @@ export const handlers = [
       accounts: [],
     });
   }),
+  http.post(`${TAURI_ENDPOINT}/claude_account_submit_paste`, () =>
+    success(null),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_claude_login_switch`, () =>
+    success({
+      active: true,
+      blocked: null,
+      live: null,
+    }),
+  ),
   // 应用页页头的「提示词：X ›」会读各应用的提示词列表
   http.post(`${TAURI_ENDPOINT}/get_prompts`, () => success({})),
   http.post(
@@ -545,6 +571,7 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_claude_desktop_status`, () =>
     success({
       supported: true,
+      installed: false,
       configured: false,
       proxyRunning: false,
       staleRawModels: false,

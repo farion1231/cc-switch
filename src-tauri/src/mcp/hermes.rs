@@ -21,7 +21,7 @@ use crate::app_config::{McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 use crate::hermes_config;
 
-use super::validation::validate_server_spec;
+use super::validation::{spec_transport_type, validate_server_spec};
 
 /// Hermes-specific fields preserved on merge-on-write, stripped on import.
 /// Update this list when Hermes adds new per-server config fields.
@@ -63,7 +63,7 @@ fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
         .as_object()
         .ok_or_else(|| AppError::McpValidation("MCP spec must be a JSON object".into()))?;
 
-    let typ = obj.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
+    let typ = spec_transport_type(spec);
 
     let mut result = serde_json::Map::new();
 
@@ -312,6 +312,7 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
                     name: id.clone(),
                     server: unified_spec,
                     apps: McpApps {
+                        agy: false,
                         claude: false,
                         codex: false,
                         gemini: false,
@@ -319,7 +320,9 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
                         opencode: false,
                         hermes: true,
                         mcode: false,
+                        kimi: false,
                         pi: false,
+                        omp: false,
                     },
                     description: None,
                     homepage: None,
@@ -396,6 +399,31 @@ mod tests {
         assert!(result.get("type").is_none());
         assert_eq!(result["url"], "https://example.com/mcp");
         assert_eq!(result["enabled"], true);
+    }
+
+    #[test]
+    fn test_convert_url_without_type_to_hermes() {
+        // #8579: 面板 JSON 模式 / deeplink 建的远程服务器常常没有 type
+        let spec = json!({
+            "url": "https://mcp.example.com/mcp",
+            "headers": { "Authorization": "Bearer x" }
+        });
+
+        let result = convert_to_hermes_format(&spec).unwrap();
+        assert!(result.get("type").is_none());
+        assert!(result.get("command").is_none());
+        assert_eq!(result["url"], "https://mcp.example.com/mcp");
+        assert_eq!(result["headers"]["Authorization"], "Bearer x");
+        assert_eq!(result["enabled"], true);
+    }
+
+    #[test]
+    fn test_convert_command_without_type_stays_stdio_for_hermes() {
+        let spec = json!({ "command": "npx", "args": ["-y", "pkg"] });
+
+        let result = convert_to_hermes_format(&spec).unwrap();
+        assert_eq!(result["command"], "npx");
+        assert!(result.get("url").is_none());
     }
 
     #[test]

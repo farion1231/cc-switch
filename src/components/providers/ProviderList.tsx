@@ -1,5 +1,5 @@
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter } from "@dnd-kit/core";
+import { DndContext, closestCenter, type Modifier } from "@dnd-kit/core";
 import {
   SortableContext,
   useSortable,
@@ -20,9 +20,13 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { OpenClawProviderConfig, Provider } from "@/types";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  translatePiProviderMutationError,
+} from "@/utils/errorUtils";
 import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
@@ -43,13 +47,15 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
+import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
+import { isPiFamilyApp } from "@/config/appConfig";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
-  buildDesktopSections,
+  buildLaunchSections,
   buildSwitchSections,
   type CardPresentation,
   type ProviderSection,
@@ -58,6 +64,10 @@ import {
 
 /** 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）的模式状态和动作，由供应商页传入。 */
 export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
+
+const verticalDragModifiers: Modifier[] = [
+  ({ transform }) => ({ ...transform, x: 0 }),
+];
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -83,6 +93,11 @@ interface ProviderListProps {
   /** 搜索面板开关由页头按钮控制时传入；不传则列表自己管（只能 ⌘F 打开） */
   searchOpen?: boolean;
   onSearchOpenChange?: (open: boolean) => void;
+  /**
+   * 模式行右端给搜索框留的位置（null＝位置还没挂上，先不画）；不传则放在列表第一行右端，
+   * 与第一个分组标题同行
+   */
+  searchSlot?: HTMLElement | null;
 }
 
 export function ProviderList({
@@ -105,6 +120,7 @@ export function ProviderList({
   isLoading = false,
   searchOpen,
   onSearchOpenChange,
+  searchSlot,
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -119,6 +135,11 @@ export function ProviderList({
       queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
       enabled: appId === "opencode",
     });
+  const { data: opencodeDefaultModel } = useQuery({
+    queryKey: ["opencodeDefaultModel"],
+    queryFn: () => providersApi.getOpenCodeDefaultModel(),
+    enabled: appId === "opencode",
+  });
   const { data: openclawLiveIds, isPending: isOpenclawLiveIdsPending } =
     useOpenClawLiveProviderIds(appId === "openclaw");
   const { data: hermesLiveIds, isPending: isHermesLiveIdsPending } =
@@ -136,8 +157,8 @@ export function ProviderList({
     isPending: isPiCurrentStatePending,
     isError: isPiCurrentStateError,
     error: piCurrentStateError,
-  } = usePiCurrentState(appId === "pi");
-  const isPiStateReady = appId !== "pi" || isPiCurrentStateSuccess;
+  } = usePiCurrentState(isPiFamilyApp(appId), appId === "omp" ? "omp" : "pi");
+  const isPiStateReady = !isPiFamilyApp(appId) || isPiCurrentStateSuccess;
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -145,11 +166,12 @@ export function ProviderList({
     (appId === "opencode" && isOpencodeLiveIdsPending) ||
     (appId === "openclaw" && isOpenclawLiveIdsPending) ||
     (appId === "hermes" && isHermesLiveIdsPending) ||
-    (appId === "pi" && isPiCurrentStatePending);
+    (isPiFamilyApp(appId) && isPiCurrentStatePending);
 
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
       switch (appId) {
+        case "kimi":
         case "mcode":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
@@ -159,6 +181,7 @@ export function ProviderList({
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
         case "pi":
+        case "omp":
           return isPiStateReady
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
                 false)
@@ -227,6 +250,13 @@ export function ProviderList({
   const isSearchOpen = searchOpen ?? innerSearchOpen;
   const setIsSearchOpen = onSearchOpenChange ?? setInnerSearchOpen;
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const focusSearch = useCallback(() => {
+    const input = searchInputRef.current;
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    input.select();
+    input.scrollIntoView?.({ block: "nearest" });
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -238,7 +268,12 @@ export function ProviderList({
         // ProviderPresetSelector 的搜索框），避免与其同名快捷键冲突。
         if (isTextEditableTarget(document.activeElement)) return;
         event.preventDefault();
-        setIsSearchOpen(true);
+        if (isSearchOpen) {
+          // The list-row field may have scrolled out of view since it was opened.
+          focusSearch();
+        } else {
+          setIsSearchOpen(true);
+        }
         return;
       }
 
@@ -249,17 +284,14 @@ export function ProviderList({
 
     globalThis.addEventListener("keydown", handleKeyDown);
     return () => globalThis.removeEventListener("keydown", handleKeyDown);
-  }, [setIsSearchOpen]);
+  }, [setIsSearchOpen, isSearchOpen, focusSearch]);
 
   useEffect(() => {
     if (isSearchOpen) {
-      const frame = requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
+      const frame = requestAnimationFrame(focusSearch);
       return () => cancelAnimationFrame(frame);
     }
-  }, [isSearchOpen]);
+  }, [isSearchOpen, focusSearch]);
 
   // 每家可被搜到的文字：名称、备注、官网、请求地址（请求地址要解析配置，只随列表变化重算）
   const searchIndex = useMemo(
@@ -301,15 +333,20 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
-    if (appId === "claude-desktop") {
-      return buildDesktopSections({
+    if (appId === "agy") {
+      return buildLaunchSections({
+        app: appId,
         t,
         providers: filteredProviders,
-        currentId: currentProviderId,
-        onSwitch,
+        openTerminal: (provider) => onOpenTerminal?.(provider),
       });
     }
-    const defaultPrimary = openclawDefaultModel?.primary ?? "";
+    const defaultPrimary =
+      (appId === "openclaw"
+        ? openclawDefaultModel?.primary
+        : appId === "opencode"
+          ? opencodeDefaultModel
+          : null) ?? "";
     const slash = defaultPrimary.indexOf("/");
     return buildAdditiveSections({
       app: appId,
@@ -318,14 +355,20 @@ export function ProviderList({
       isInConfig,
       currentOmoId,
       currentOmoSlimId,
-      openclawDefault:
-        appId === "openclaw" && slash > 0
+      defaultModel:
+        slash > 0
           ? {
               providerId: defaultPrimary.slice(0, slash),
               model: defaultPrimary.slice(slash + 1),
             }
           : null,
-      openclawModels: (provider) => {
+      defaultModelOptions: (provider) => {
+        if (appId === "opencode") {
+          return getOpencodeDeclaredModels(
+            provider.id,
+            provider.settingsConfig,
+          );
+        }
         const config = provider.settingsConfig as OpenClawProviderConfig;
         if (!Array.isArray(config?.models)) return [];
         return config.models
@@ -335,7 +378,8 @@ export function ProviderList({
       hermesCurrentId: hermesModelConfig?.provider ?? null,
       isHermesManaged: (provider) =>
         isHermesReadOnlyProvider(provider.settingsConfig),
-      piStateUnavailable: appId === "pi" && !isPiStateReady,
+      piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
+      kimiCurrentId: currentProviderId,
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -355,14 +399,16 @@ export function ProviderList({
     t,
     sortedProviders,
     filteredProviders,
-    currentProviderId,
     onSwitch,
+    onOpenTerminal,
     openclawDefaultModel?.primary,
+    opencodeDefaultModel,
     isInConfig,
     currentOmoId,
     currentOmoSlimId,
     hermesModelConfig?.provider,
     isPiStateReady,
+    currentProviderId,
     onRemoveFromConfig,
     onDelete,
     onDisableOmo,
@@ -370,19 +416,21 @@ export function ProviderList({
     onSetAsDefault,
   ]);
 
-  const piStateError =
-    appId === "pi" && isPiCurrentStateError
+  const piStateRawError =
+    isPiFamilyApp(appId) && isPiCurrentStateError
       ? extractErrorMessage(piCurrentStateError)
       : "";
+  const piStateError =
+    translatePiProviderMutationError(piStateRawError, t) || piStateRawError;
   const piStateErrorNotice =
-    appId === "pi" && isPiCurrentStateError ? (
+    isPiFamilyApp(appId) && isPiCurrentStateError ? (
       <Notice
         tone="warning"
-        title={t("pi.current.readFailed", {
+        title={t(`${appId}.current.readFailed`, {
           defaultValue: "无法读取 Pi 当前配置",
         })}
       >
-        {t("pi.current.stateUnavailableHint")}
+        {t(`${appId}.current.stateUnavailableHint`)}
         {piStateError ? ` ${piStateError}` : ""}
       </Notice>
     ) : null;
@@ -406,9 +454,9 @@ export function ProviderList({
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
-          onCreate={appId === "pi" ? undefined : onCreate}
+          onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
           onImport={
-            appId === "pi" || appId === "mcode"
+            isPiFamilyApp(appId) || appId === "mcode" || appId === "kimi"
               ? undefined
               : () => importMutation.mutate()
           }
@@ -417,9 +465,11 @@ export function ProviderList({
     );
   }
 
-  // 「当前」只用来决定额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项
+  // 「当前」只用来决定额度显示和自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
+  // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
   const isCurrentFor = (provider: Provider) => {
-    if (appId === "pi") return false;
+    if (isPiFamilyApp(appId)) return false;
+    if (appId === "agy") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;
@@ -442,83 +492,107 @@ export function ProviderList({
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
-      onOpenTerminal={onOpenTerminal}
+      // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
+      onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
       onTest={handleTest}
       isTesting={isChecking(provider.id)}
     />
   );
 
+  // 搜索框放在列表上方第一行的最右端，不盖住卡片、打开时卡片也不下移
+  const searchField = (
+    <AnimatePresence>
+      {isSearchOpen && (
+        <motion.div
+          key="provider-search"
+          initial={{ opacity: 0, x: 8 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 8 }}
+          transition={{ duration: 0.15, ease: "easeOut" }}
+          className="relative flex w-64 min-w-[10rem] shrink items-center"
+        >
+          <Search className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-3" />
+          <Input
+            ref={searchInputRef}
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder={t("provider.searchPlaceholder", {
+              defaultValue: "Search name, notes, or URL...",
+            })}
+            aria-label={t("provider.searchAriaLabel", {
+              defaultValue: "Search providers",
+            })}
+            title={`${t("provider.searchScopeHint", {
+              defaultValue:
+                "Matches provider name, notes, website, and API address.",
+            })} ${t("provider.searchCloseHint", {
+              defaultValue: "Press Esc to close",
+            })}`}
+            className={searchTerm ? "pe-[5.5rem] ps-8" : "pe-9 ps-8"}
+          />
+          {searchTerm && (
+            <Button
+              variant="quiet"
+              size="compact"
+              className="absolute end-8 top-1/2 h-6 -translate-y-1/2 px-1.5"
+              onClick={() => setSearchTerm("")}
+            >
+              {t("common.clear", { defaultValue: "Clear" })}
+            </Button>
+          )}
+          <Button
+            variant="quiet"
+            size="icon-compact"
+            className="absolute end-1 top-1/2 h-6 w-6 -translate-y-1/2"
+            onClick={() => setIsSearchOpen(false)}
+            aria-label={t("provider.searchCloseAriaLabel", {
+              defaultValue: "Close provider search",
+            })}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
+  const renderSectionTitle = (section: ProviderSection) => (
+    <div className="flex items-center gap-1 text-caption font-semibold text-fg-2">
+      <h2 className="m-0 text-caption font-semibold">{section.title}</h2>
+      {section.help && (
+        <HelpTip title={section.help.title}>{section.help.body}</HelpTip>
+      )}
+    </div>
+  );
+
+  // 没有模式行的应用：第一个分组标题和搜索框同一行。这一行一直在（搜不到结果时只剩搜索框），
+  // 输入框在树里的位置不变，打字中途不会因为结果清空被重新挂载而丢焦点
+  const hostedSearch = searchSlot !== undefined;
+  const leadSection = sections[0];
+  const liftLeadTitle =
+    !hostedSearch &&
+    Boolean(leadSection?.title) &&
+    filteredProviders.length > 0;
+  const showListHeader =
+    !hostedSearch && (Boolean(leadSection?.title) || isSearchOpen);
+
   // 卡片列表铺满主区域，和页头同宽
   return (
     <div className="space-y-4">
       {piStateErrorNotice}
-      {/* 面板挂到 body：留在 space-y 容器里会被算作兄弟元素，下面的列表多出 margin-top 往下挤 */}
-      {createPortal(
-        <AnimatePresence>
-          {isSearchOpen && (
-            <motion.div
-              key="provider-search"
-              initial={{ opacity: 0, y: -8, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -8, scale: 0.98 }}
-              transition={{ duration: 0.18, ease: "easeOut" }}
-              className="fixed end-6 top-[6.5rem] z-40 w-[min(90vw,26rem)]"
-            >
-              <div className="space-y-3 rounded-panel border border-border bg-surface p-4 shadow-v7-lg">
-                <div className="relative flex items-center gap-2">
-                  <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-3" />
-                  <Input
-                    ref={searchInputRef}
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                    placeholder={t("provider.searchPlaceholder", {
-                      defaultValue: "Search name, notes, or URL...",
-                    })}
-                    aria-label={t("provider.searchAriaLabel", {
-                      defaultValue: "Search providers",
-                    })}
-                    className="pe-16 ps-9"
-                  />
-                  {searchTerm && (
-                    <Button
-                      variant="quiet"
-                      size="compact"
-                      className="absolute end-11 top-1/2 -translate-y-1/2"
-                      onClick={() => setSearchTerm("")}
-                    >
-                      {t("common.clear", { defaultValue: "Clear" })}
-                    </Button>
-                  )}
-                  <Button
-                    variant="quiet"
-                    size="icon-compact"
-                    className="ms-auto"
-                    onClick={() => setIsSearchOpen(false)}
-                    aria-label={t("provider.searchCloseAriaLabel", {
-                      defaultValue: "Close provider search",
-                    })}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 text-caption text-fg-3">
-                  <span>
-                    {t("provider.searchScopeHint", {
-                      defaultValue:
-                        "Matches provider name, notes, website, and API address.",
-                    })}
-                  </span>
-                  <span>
-                    {t("provider.searchCloseHint", {
-                      defaultValue: "Press Esc to close",
-                    })}
-                  </span>
-                </div>
-              </div>
-            </motion.div>
+      {searchSlot && createPortal(searchField, searchSlot)}
+      {showListHeader && (
+        <div
+          className={cn(
+            "flex min-h-8 items-center gap-3",
+            liftLeadTitle && "-mb-2",
           )}
-        </AnimatePresence>,
-        document.body,
+        >
+          <div className="min-w-0 flex-1">
+            {liftLeadTitle && renderSectionTitle(leadSection)}
+          </div>
+          {searchField}
+        </div>
       )}
 
       {filteredProviders.length === 0 ? (
@@ -530,22 +604,14 @@ export function ProviderList({
       ) : (
         <DndContext
           sensors={sensors}
+          modifiers={verticalDragModifiers}
           collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
-          {sections.map((section) => (
+          {sections.map((section, index) => (
             <section key={section.key} className="space-y-2">
-              {section.title && (
-                <div className="flex items-center gap-1 pt-1 text-caption font-semibold text-fg-2">
-                  <h2 className="m-0 text-caption font-semibold">
-                    {section.title}
-                  </h2>
-                  {section.help && (
-                    <HelpTip title={section.help.title}>
-                      {section.help.body}
-                    </HelpTip>
-                  )}
-                </div>
+              {section.title && !(index === 0 && liftLeadTitle) && (
+                <div className="pt-1">{renderSectionTitle(section)}</div>
               )}
               {section.items.length === 0 && section.emptyText ? (
                 <div className="rounded-panel border border-dashed border-border px-4 py-3 text-caption text-fg-3">
@@ -598,8 +664,10 @@ function SortableProviderCard(props: SortableProviderCardProps) {
   } = useSortable({ id: props.provider.id });
 
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Translate.toString(transform),
     transition,
+    position: "relative",
+    zIndex: isDragging ? 10 : undefined,
   };
 
   return (

@@ -21,10 +21,15 @@ pub fn check_env_conflicts(app: &str) -> Result<Vec<EnvConflict>, String> {
     let keywords = get_keywords_for_app(app);
     let mut conflicts = Vec::new();
 
-    // Check system environment variables
+    // Check system environment variables (Windows Registry)
+    #[cfg(target_os = "windows")]
     conflicts.extend(check_system_env(&keywords)?);
 
-    // Check shell configuration files (Unix only)
+    // Check shell configuration files (Unix only). The process environment is
+    // deliberately not scanned here: it is inherited from whatever launched
+    // CC Switch (e.g. Claude Desktop injects ANTHROPIC_BASE_URL into the
+    // terminals it spawns, so `pnpm dev` started there always "conflicts"),
+    // and such variables cannot be removed from inside the app anyway.
     #[cfg(not(target_os = "windows"))]
     conflicts.extend(check_shell_configs(&keywords)?);
 
@@ -94,25 +99,6 @@ fn check_system_env(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String>
                     source_path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment".to_string(),
                 });
             }
-        }
-    }
-
-    Ok(conflicts)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn check_system_env(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String> {
-    let mut conflicts = Vec::new();
-
-    // Check current process environment
-    for (key, value) in std::env::vars() {
-        if matches_env_keyword(&key, keywords) {
-            conflicts.push(EnvConflict {
-                var_name: key,
-                var_value: value,
-                source_type: "system".to_string(),
-                source_path: "Process Environment".to_string(),
-            });
         }
     }
 
@@ -231,5 +217,18 @@ mod tests {
         assert!(matches_env_keyword("anthropic_base_url", &keywords));
         assert!(!matches_env_keyword("MY_ANTHROPIC_API_KEY", &keywords));
         assert!(!matches_env_keyword("NOT_ANTHROPIC", &keywords));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn inherited_process_env_is_not_reported_on_unix() {
+        const VAR: &str = "ANTHROPIC_CC_SWITCH_INHERITED_PROBE";
+        std::env::set_var(VAR, "https://api.anthropic.com");
+        let conflicts = check_env_conflicts("claude");
+        std::env::remove_var(VAR);
+
+        let conflicts = conflicts.expect("check should succeed");
+        assert!(conflicts.iter().all(|c| c.source_type == "file"));
+        assert!(!conflicts.iter().any(|c| c.var_name == VAR));
     }
 }

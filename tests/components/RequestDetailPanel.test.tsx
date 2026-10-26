@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { describe, expect, it, vi } from "vitest";
 import { RequestDetailPanel } from "@/components/usage/RequestDetailPanel";
 import type { RequestLog } from "@/types/usage";
@@ -89,25 +90,52 @@ describe("RequestDetailPanel", () => {
     expect(screen.queryByText("usage.detail.firstToken")).toBeNull();
   });
 
-  it("shows the estimated first token for session logs that have one", () => {
+  it.each(["codex_session", "kimi_session"])(
+    "shows the estimated first token for %s",
+    (dataSource) => {
+      renderWith(
+        log({
+          dataSource,
+          firstTokenMs: 3_300,
+          outputTokens: 1_800,
+          latencyMs: 20_000,
+        }),
+      );
+
+      expect(
+        screen.getByText("usage.detail.firstTokenEstimated"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("3.3s")).toBeInTheDocument();
+      // 速度仍按整段耗时估
+      expect(
+        screen.getByText("usage.speedEstimatedValue:90"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("usage.detail.firstToken")).toBeNull();
+    },
+  );
+
+  it("shows Kimi's actual model and first token while keeping the short-output speed threshold", () => {
     renderWith(
       log({
-        dataSource: "codex_session",
-        firstTokenMs: 3_300,
-        outputTokens: 1_800,
-        latencyMs: 20_000,
+        appType: "kimi",
+        providerId: "_kimi_session",
+        providerName: "Kimi Code (Session)",
+        dataSource: "kimi_session",
+        model: "agnes-3.0-flash",
+        firstTokenMs: 10_061,
+        latencyMs: 10_228,
+        outputTokens: 2,
       }),
     );
-
+    expect(screen.getByText("agnes-3.0-flash")).toBeInTheDocument();
     expect(
       screen.getByText("usage.detail.firstTokenEstimated"),
     ).toBeInTheDocument();
-    expect(screen.getByText("3.3s")).toBeInTheDocument();
-    // 速度仍按整段耗时估
+    expect(screen.getByText("10.1s")).toBeInTheDocument();
+    expect(screen.getByText("10.2s")).toBeInTheDocument();
     expect(
-      screen.getByText("usage.speedEstimatedValue:90"),
+      screen.getByText("usage.detail.speedEstimateTooFew"),
     ).toBeInTheDocument();
-    expect(screen.queryByText("usage.detail.firstToken")).toBeNull();
   });
 
   it("explains why short session-log outputs have no estimate", () => {
@@ -138,7 +166,11 @@ describe("RequestDetailPanel", () => {
     expect(
       screen.getByText("usage.detail.noTimingSession"),
     ).toBeInTheDocument();
-    expect(screen.getByText("usage.detail.sourceSession")).toBeInTheDocument();
+    // 供应商已经叫「会话日志」：不再重复列来源和内部的供应商 ID
+    expect(screen.queryByText("usage.detail.source")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.detail.providerId"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the error and a retry button when loading fails", () => {

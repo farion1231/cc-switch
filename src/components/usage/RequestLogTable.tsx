@@ -1,4 +1,12 @@
-import { useEffect, useState } from "react";
+import {
+  cloneElement,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useRequestLogs } from "@/lib/query/usage";
 import { TablePagination } from "./TablePagination";
@@ -6,6 +14,7 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
 import {
+  CACHE_INCLUSIVE_APP_TYPES,
   getFreshInputTokens,
   isUnpricedUsage,
   type LogFilters,
@@ -15,7 +24,6 @@ import {
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatEstimatedTokensPerSecond,
   formatFirstTokenSeconds,
   formatOutputTokensPerSecond,
@@ -24,8 +32,21 @@ import {
   isSessionLogRequest,
   parseFiniteNumber,
 } from "./format";
-import { usageTable } from "./usageTable";
+import {
+  stickyCol,
+  usageTable,
+  useElementWidth,
+  useScrolledFromStart,
+} from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import {
+  REQUEST_LOG_COLUMN_LABEL_KEYS,
+  requestLogGroupBreaks,
+  requestLogPinnedStart,
+  resolveRequestLogColumns,
+  type RequestLogColumnId,
+} from "./requestLogColumns";
 
 interface RequestLogTableProps {
   range: UsageRangeSelection;
@@ -39,6 +60,12 @@ interface RequestLogTableProps {
   refreshIntervalMs: number;
   /** 点一行打开请求详情 */
   onOpenDetail?: (requestId: string) => void;
+  /** 要显示的列（按表格顺序）；不传按默认列 */
+  columns?: RequestLogColumnId[];
+  /** 每页几条（页面记住用户的选择）；不传按 20 */
+  pageSize?: number;
+  pageSizeOptions?: readonly number[];
+  onPageSizeChange?: (size: number) => void;
 }
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -94,6 +121,9 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax",
+  kimi: "Kimi",
+  agy: "Antigravity",
+  omp: "omp",
 };
 
 export function appShortName(appType: string): string {
@@ -101,6 +131,50 @@ export function appShortName(appType: string): string {
 }
 
 const isSuccessStatus = (code: number) => code >= 200 && code < 300;
+
+const DEFAULT_COLUMNS = resolveRequestLogColumns(undefined);
+
+/**
+ * 单条请求的缓存命中率，口径与用量页「缓存命中率」相同：
+ * 缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中）。没有可缓存的输入时返回 null。
+ */
+export function getRequestCacheHitRate(
+  log: RequestLog,
+): { rate: number; cacheable: number } | null {
+  const cacheable =
+    getFreshInputTokens(log) + log.cacheCreationTokens + log.cacheReadTokens;
+  if (cacheable <= 0) return null;
+  return { rate: log.cacheReadTokens / cacheable, cacheable };
+}
+
+/** 「87.3%」；只有真的全命中才写「100%」，99.96% 不进成 100 */
+export function formatHitPercent(rate: number): string {
+  const percent = Math.max(0, Math.min(100, rate * 100));
+  if (percent >= 100) return "100%";
+  return `${(Math.floor(percent * 10) / 10).toFixed(1)}%`;
+}
+
+function StatusBadge({
+  code,
+  title,
+  className,
+}: {
+  code: number;
+  title?: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "rounded-[4px] bg-danger-soft px-1 text-badge text-danger-text",
+        className,
+      )}
+      title={title || undefined}
+    >
+      {code}
+    </span>
+  );
+}
 
 export function RequestLogTable({
   range,
@@ -110,10 +184,14 @@ export function RequestLogTable({
   statusCode,
   refreshIntervalMs,
   onOpenDetail,
+  columns = DEFAULT_COLUMNS,
+  pageSize = 20,
+  pageSizeOptions,
+  onPageSizeChange,
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
+  const { money, usdHint } = useMoneyFormat();
   const [page, setPage] = useState(0);
-  const pageSize = 20;
 
   const effectiveFilters: LogFilters = {
     appType:
@@ -125,7 +203,11 @@ export function RequestLogTable({
     statusCode,
   };
 
-  const { data: result, isLoading } = useRequestLogs({
+  const {
+    data: result,
+    isLoading,
+    isPlaceholderData,
+  } = useRequestLogs({
     filters: effectiveFilters,
     range,
     page,
@@ -135,9 +217,102 @@ export function RequestLogTable({
     },
   });
 
+  // 固定列：左边有没有内容滚进固定列底下、第一列多宽（第二个贴左的列要让出这段）
+  const [scrollRef, scrolled] = useScrolledFromStart<HTMLDivElement>();
+  const [firstHeadRef, firstWidth] = useElementWidth<HTMLTableCellElement>();
+
   const logs = result?.data ?? [];
   const total = result?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  // 停在后面的页时总数变少了（「今天」跨日、重建 Codex 用量）：收回到最后一页。
+  // 只剩一页时翻页条不画，不收回就只剩一张空表、也翻不回去
+  const pageOutOfRange = !!result && !isPlaceholderData && page >= totalPages;
+  useEffect(() => {
+    if (pageOutOfRange) setPage(totalPages - 1);
+  }, [pageOutOfRange, totalPages]);
+
+  // 刷新带来新请求时：旧行从原位置滑到新位置，新行淡入并留一段渐隐的底色，
+  // 看着的那行往哪走了一眼就能跟上。只在第一页、筛选没变时做；减少动态效果时只留底色
+  const tbodyRef = useRef<HTMLTableSectionElement>(null);
+  const shownRef = useRef<{ view: string; ids: string[] } | null>(null);
+  // 翻页、换每页条数、换筛选都算换了一屏：多出来的行不是「新来的」，不播进场动画
+  const view = JSON.stringify([
+    page,
+    pageSize,
+    dashboardAppType,
+    providerName,
+    model,
+    statusCode,
+    range.preset,
+    range.customStartDate,
+    range.customEndDate,
+  ]);
+  useLayoutEffect(() => {
+    // 换筛选时先显示的是上一份数据，不算「新来的」
+    if (!result || isPlaceholderData) return;
+    const ids = result.data.map((log) => log.requestId);
+    const shown = shownRef.current;
+    shownRef.current = { view, ids };
+    const tbody = tbodyRef.current;
+    if (
+      page !== 0 ||
+      shown?.view !== view ||
+      !tbody ||
+      typeof tbody.animate !== "function"
+    ) {
+      return;
+    }
+    const before = new Map(shown.ids.map((id, index) => [id, index]));
+    const reduceMotion = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const highlight = getComputedStyle(tbody)
+      .getPropertyValue("--action-soft")
+      .trim();
+    ids.forEach((id, index) => {
+      const row = tbody.rows[index];
+      const from = before.get(id);
+      if (!row) return;
+      if (from === undefined) {
+        // 底色画在每个单元格上（盖得住固定列自己的底色）；
+        // 叠在格子原有的阴影上（贴左列滚动后的分隔线），动画期间不把它冲掉
+        for (const cell of Array.from(row.cells)) {
+          const own = getComputedStyle(cell).boxShadow;
+          const keep = own && own !== "none" ? `, ${own}` : "";
+          cell.animate(
+            [
+              { boxShadow: `inset 0 0 0 100vmax ${highlight}${keep}` },
+              { boxShadow: `inset 0 0 0 100vmax transparent${keep}` },
+            ],
+            {
+              duration: 1200,
+              delay: 300,
+              easing: "ease-in",
+              fill: "backwards",
+            },
+          );
+        }
+        if (!reduceMotion) {
+          row.animate([{ opacity: 0 }, { opacity: 1 }], {
+            duration: 240,
+            delay: 160,
+            easing: "ease-out",
+            fill: "backwards",
+          });
+        }
+      } else if (from !== index && !reduceMotion) {
+        // 行等高，按自身高度的倍数位移
+        row.animate(
+          [
+            { transform: `translateY(${(from - index) * 100}%)` },
+            { transform: "none" },
+          ],
+          { duration: 320, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+        );
+      }
+    });
+  }, [result, isPlaceholderData, view, page]);
 
   useEffect(() => {
     setPage(0);
@@ -159,6 +334,36 @@ export function RequestLogTable({
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
   }
+
+  // 带说明的列在表头挂「?」，其余只写列名
+  const headerHelp: Partial<
+    Record<RequestLogColumnId, { title: string; body: string }>
+  > = {
+    hitRate: {
+      title: t("usage.metrics.hitRateHelpTitle"),
+      body: t("usage.metrics.hitRateHelp"),
+    },
+    speed: { title: t("usage.speedHelpTitle"), body: t("usage.speedHelp") },
+    firstToken: {
+      title: t("usage.firstTokenHelpTitle"),
+      body: t("usage.firstTokenHelp"),
+    },
+  };
+  const renderHeader = (id: RequestLogColumnId) => {
+    const label = t(REQUEST_LOG_COLUMN_LABEL_KEYS[id]);
+    const help = headerHelp[id];
+    if (!help) return label;
+    return (
+      <span className="inline-flex items-center gap-0.5">
+        {label}
+        <HelpTip title={help.title} align="end">
+          {help.body}
+        </HelpTip>
+      </span>
+    );
+  };
+  // 打开了「状态码」列就不在时间旁边再挂一个错误码
+  const showStatusInTime = !columns.includes("statusCode");
 
   const renderRow = (log: RequestLog) => {
     const unpriced = isUnpricedUsage(log);
@@ -203,14 +408,17 @@ export function RequestLogTable({
         ? `${log.requestModel} → ${log.model}`
         : log.model;
     const hasCache = log.cacheReadTokens > 0;
+    // OpenAI 协议不单报缓存写入，这几个应用的 0 是「不知道」，不是「没写」
+    const cacheWriteUnknown = CACHE_INCLUSIVE_APP_TYPES.has(log.appType);
+    const hitRate = getRequestCacheHitRate(log);
+    const success = isSuccessStatus(log.statusCode);
 
-    return (
-      <tr
-        key={log.requestId}
-        className={onOpenDetail ? usageTable.rowInteractive : usageTable.row}
-        onClick={() => onOpenDetail?.(log.requestId)}
-      >
-        {/* 时间、应用两列收紧到内容宽度（w-px），多出来的宽度留给后面的数值列 */}
+    const cells: Record<
+      RequestLogColumnId,
+      ReactElement<{ className?: string; style?: CSSProperties }>
+    > = {
+      // 时间、应用两列收紧到内容宽度（w-px），多出来的宽度留给后面的数值列
+      time: (
         <td className={cn(usageTable.td, "w-px")}>
           <button
             type="button"
@@ -227,18 +435,19 @@ export function RequestLogTable({
           >
             {time}
           </button>
-          {!isSuccessStatus(log.statusCode) && (
-            <span
-              className="ms-1.5 rounded-[4px] bg-danger-soft px-1 text-badge text-danger-text"
-              title={log.errorMessage || undefined}
-            >
-              {log.statusCode}
-            </span>
+          {showStatusInTime && !success && (
+            <StatusBadge
+              className="ms-1.5"
+              code={log.statusCode}
+              title={log.errorMessage}
+            />
           )}
         </td>
+      ),
+      app: (
         <td className={cn(usageTable.td, "w-px")}>
           <span
-            className="flex max-w-[88px] items-center gap-1.5"
+            className="flex items-center gap-1.5"
             title={appDisplayName(log.appType)}
           >
             {isKnownAppId(log.appType) && (
@@ -248,28 +457,23 @@ export function RequestLogTable({
                 badgeClassName="bg-surface"
               />
             )}
-            <span className="truncate" aria-hidden="true">
-              {appShortName(log.appType)}
-            </span>
+            <span aria-hidden="true">{appShortName(log.appType)}</span>
             <span className="sr-only">{appDisplayName(log.appType)}</span>
           </span>
         </td>
-        {/* 供应商、模型两列按比例取宽（max-w-0 让百分比宽度生效、内容截断）；
-            比例合计 32%：40% 时常见窗口下数值列就只剩内容宽度，左松右挤。模型名通常比供应商名长，
-            放不下的截断、悬停看全名 */}
-        <td className={cn(usageTable.td, "w-[14%] max-w-0")}>
-          <span
-            className="block truncate"
-            title={usageProviderTitle(providerLabel)}
-          >
-            {provider}
-          </span>
+      ),
+      // 供应商、模型按内容取宽、不截断：放不下时整张表横向滚动，不把列挤到看不全
+      provider: (
+        <td className={usageTable.td}>
+          <span title={usageProviderTitle(providerLabel)}>{provider}</span>
         </td>
-        <td className={cn(usageTable.td, usageTable.mono, "w-[18%] max-w-0")}>
-          <span className="block truncate" title={modelTitle}>
-            {log.model}
-          </span>
+      ),
+      model: (
+        <td className={cn(usageTable.td, usageTable.mono)}>
+          <span title={modelTitle}>{log.model}</span>
         </td>
+      ),
+      freshInput: (
         <td
           className={usageTable.td}
           title={
@@ -280,9 +484,13 @@ export function RequestLogTable({
         >
           {formatTokensCompact(freshInput, locale)}
         </td>
+      ),
+      output: (
         <td className={usageTable.td} title={fmtInt(log.outputTokens, locale)}>
           {formatTokensCompact(log.outputTokens, locale)}
         </td>
+      ),
+      cacheRead: (
         <td
           className={cn(usageTable.td, !hasCache && usageTable.muted)}
           title={t("usage.cacheTip", {
@@ -292,6 +500,41 @@ export function RequestLogTable({
         >
           {hasCache ? formatTokensCompact(log.cacheReadTokens, locale) : "—"}
         </td>
+      ),
+      cacheWrite: (
+        <td
+          className={cn(
+            usageTable.td,
+            (cacheWriteUnknown || log.cacheCreationTokens <= 0) &&
+              usageTable.muted,
+          )}
+          title={
+            cacheWriteUnknown
+              ? t("usage.cacheWriteNotReported")
+              : fmtInt(log.cacheCreationTokens, locale)
+          }
+        >
+          {!cacheWriteUnknown && log.cacheCreationTokens > 0
+            ? formatTokensCompact(log.cacheCreationTokens, locale)
+            : "—"}
+        </td>
+      ),
+      hitRate: (
+        <td
+          className={cn(usageTable.td, hitRate == null && usageTable.muted)}
+          title={
+            hitRate == null
+              ? undefined
+              : t("usage.logColumns.hitRateTip", {
+                  read: fmtInt(log.cacheReadTokens, locale),
+                  total: fmtInt(hitRate.cacheable, locale),
+                })
+          }
+        >
+          {hitRate == null ? "—" : formatHitPercent(hitRate.rate)}
+        </td>
+      ),
+      cost: (
         <td
           className={cn(
             usageTable.td,
@@ -299,13 +542,20 @@ export function RequestLogTable({
             unpriced && "font-normal text-fg-3",
           )}
           title={
-            multiplier != null && multiplier !== 1
-              ? `${t("usage.costMultiplier")} ×${multiplier.toFixed(2)}`
-              : undefined
+            [
+              unpriced ? undefined : usdHint(log.totalCostUsd),
+              multiplier != null && multiplier !== 1
+                ? `${t("usage.costMultiplier")} ×${multiplier.toFixed(2)}`
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · ") || undefined
           }
         >
-          {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
+          {unpriced ? t("usage.unpriced") : money(log.totalCostUsd, 4)}
         </td>
+      ),
+      speed: (
         <td
           className={cn(usageTable.td, tps == null && usageTable.muted)}
           title={timingTip}
@@ -322,6 +572,8 @@ export function RequestLogTable({
             </>
           )}
         </td>
+      ),
+      firstToken: (
         <td
           className={cn(
             usageTable.td,
@@ -332,50 +584,111 @@ export function RequestLogTable({
           {isSession && firstTokenText != null && "≈"}
           {firstTokenText ?? "—"}
         </td>
+      ),
+      duration: (
+        <td
+          className={cn(usageTable.td, timing == null && usageTable.muted)}
+          title={
+            timing == null
+              ? undefined
+              : `${isSession ? "≈" : ""}${fmtInt(latency, locale)} ms`
+          }
+        >
+          {timing == null ? "—" : `${isSession ? "≈" : ""}${timing.duration}s`}
+        </td>
+      ),
+      statusCode: (
+        <td className={usageTable.td}>
+          {success ? (
+            log.statusCode
+          ) : (
+            <StatusBadge code={log.statusCode} title={log.errorMessage} />
+          )}
+        </td>
+      ),
+    };
+
+    return (
+      <tr
+        key={log.requestId}
+        className={onOpenDetail ? usageTable.rowInteractive : usageTable.row}
+        onClick={() => onOpenDetail?.(log.requestId)}
+      >
+        {columns.map((id) => {
+          const pin = pinFor(id, "body");
+          return cloneElement(cells[id], {
+            key: id,
+            className: cn(
+              cells[id].props.className,
+              usageTable.denseCell,
+              groupBreaks.has(id) && usageTable.denseGroupGap,
+              pin.className,
+            ),
+            style: pin.style,
+          });
+        })}
       </tr>
     );
   };
 
+  const groupBreaks = requestLogGroupBreaks(columns);
+
+  // 横向滚动时：开头的时间 / 应用列贴左
+  const pinnedStart = requestLogPinnedStart(columns);
+  const pinFor = (
+    id: RequestLogColumnId,
+    part: "head" | "body",
+  ): { className?: string; style?: CSSProperties } => {
+    const index = pinnedStart.indexOf(id);
+    if (index >= 0) {
+      return {
+        className: cn(
+          stickyCol.start,
+          stickyCol[part],
+          index === pinnedStart.length - 1 && scrolled && stickyCol.startEdge,
+        ),
+        // ponytail: 只量了第一列，偏移只对最多两列固定成立（requestLogPinnedStart 取前两列）；
+        // 要固定第三列时改成量每个固定列、按累计宽度偏移
+        style: { insetInlineStart: index === 0 ? 0 : firstWidth },
+      };
+    }
+    return {};
+  };
+
   return (
     <div className="flex flex-col">
-      <div className={usageTable.scroller}>
-        {/* 最小窗口（900）展开侧栏时表格区只有 644px：最小宽度超过它，最右的速度列就被挤到横向滚动里看不见 */}
+      <div ref={scrollRef} className={usageTable.scroller}>
+        {/* 表格按内容取宽（w-max），至少铺满面板；比面板宽时在外层横向滚动，每列都完整显示 */}
         <table
-          className={cn(usageTable.table, "min-w-[620px]")}
+          className={cn(usageTable.table, "w-max min-w-full")}
           aria-label={t("usage.requestLogs")}
         >
           <thead>
             <tr className={usageTable.headRow}>
-              <th className={usageTable.th}>{t("usage.time")}</th>
-              <th className={usageTable.th}>{t("usage.app")}</th>
-              <th className={usageTable.th}>{t("usage.provider")}</th>
-              <th className={usageTable.th}>{t("usage.model")}</th>
-              <th className={usageTable.th}>{t("usage.freshInput")}</th>
-              <th className={usageTable.th}>{t("usage.outputTokens")}</th>
-              <th className={usageTable.th}>{t("usage.cacheReadTokens")}</th>
-              <th className={usageTable.th}>{t("usage.cost")}</th>
-              <th className={usageTable.th}>
-                <span className="inline-flex items-center gap-0.5">
-                  {t("usage.speed")}
-                  <HelpTip title={t("usage.speedHelpTitle")} align="end">
-                    {t("usage.speedHelp")}
-                  </HelpTip>
-                </span>
-              </th>
-              <th className={usageTable.th}>
-                <span className="inline-flex items-center gap-0.5">
-                  {t("usage.firstToken")}
-                  <HelpTip title={t("usage.firstTokenHelpTitle")} align="end">
-                    {t("usage.firstTokenHelp")}
-                  </HelpTip>
-                </span>
-              </th>
+              {columns.map((id, index) => {
+                const pin = pinFor(id, "head");
+                return (
+                  <th
+                    key={id}
+                    ref={index === 0 ? firstHeadRef : undefined}
+                    className={cn(
+                      usageTable.th,
+                      usageTable.denseCell,
+                      groupBreaks.has(id) && usageTable.denseGroupGap,
+                      pin.className,
+                    )}
+                    style={pin.style}
+                  >
+                    {renderHeader(id)}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {logs.length === 0 ? (
               <tr>
-                <td colSpan={10} className={usageTable.empty}>
+                <td colSpan={columns.length} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>
@@ -391,6 +704,16 @@ export function RequestLogTable({
         totalPages={totalPages}
         total={total}
         onPageChange={setPage}
+        pageSize={pageSize}
+        pageSizeOptions={pageSizeOptions}
+        onPageSizeChange={
+          onPageSizeChange &&
+          ((next) => {
+            // 换条数后停在包含当前第一行的那一页
+            setPage(Math.floor((page * pageSize) / next));
+            onPageSizeChange(next);
+          })
+        }
       />
     </div>
   );
