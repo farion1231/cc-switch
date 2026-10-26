@@ -39,6 +39,7 @@ import {
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import { PI_THINKING_LEVELS } from "@/config/piThinkingProfiles";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
+import { OpenCodeVariantsEditor } from "./OpenCodeVariantsEditor";
 import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
@@ -270,6 +271,22 @@ function ReasoningEffortsField({
       )}
     </div>
   );
+}
+
+/**
+ * Extra fields that still need raw JSON editing. The variants editor owns
+ * object-form `variants` (and a missing one, since it can create levels);
+ * only shapes the editor cannot represent stay here as raw JSON.
+ */
+function getModelRawExtraFields(
+  model: OpenCodeModel,
+  modelDialect?: OpenCodeModelDialect,
+): Record<string, string> {
+  const extra = getModelExtraFields(model, modelDialect);
+  if (model.variants === undefined || isPlainObject(model.variants)) {
+    delete extra.variants;
+  }
+  return extra;
 }
 
 interface OpenCodeFormFieldsProps {
@@ -660,6 +677,25 @@ export function OpenCodeFormFields({
     onModelsChange({
       ...models,
       [modelKey]: { ...model, [fieldKey]: parsedValue },
+    });
+  };
+
+  // Reasoning levels (variants): the structured editor replaces the whole
+  // map in one piece and keeps level order; an empty map removes the key.
+  const handleModelVariantsChange = (
+    modelKey: string,
+    variants: Record<string, unknown>,
+  ) => {
+    const model = models[modelKey];
+    const nextModel = { ...model };
+    if (Object.keys(variants).length > 0) {
+      nextModel.variants = variants;
+    } else {
+      delete nextModel.variants;
+    }
+    onModelsChange({
+      ...models,
+      [modelKey]: nextModel,
     });
   };
 
@@ -1078,7 +1114,15 @@ export function OpenCodeFormFields({
                       />
                     )}
 
-                    {/* Model Properties (extra fields like variants, cost) */}
+                    {/* Reasoning levels (model.variants) */}
+                    <OpenCodeVariantsEditor
+                      variants={model.variants}
+                      onVariantsChange={(next) =>
+                        handleModelVariantsChange(key, next)
+                      }
+                    />
+
+                    {/* Model Properties (extra fields like cost, modalities) */}
                     <div className="space-y-2 sm:col-span-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium text-fg-2">
@@ -1096,17 +1140,17 @@ export function OpenCodeFormFields({
                           <Plus className="h-3 w-3" />
                         </Button>
                       </div>
-                      {Object.keys(getModelExtraFields(model, modelDialect))
+                      {Object.keys(getModelRawExtraFields(model, modelDialect))
                         .length === 0 ? (
                         <p className="text-xs text-fg-2 py-1">
                           {t("opencode.noModelExtraFields", {
                             defaultValue:
-                              "模型属性 (variants, cost 等)，点击 + 添加",
+                              "模型属性 (cost、modalities 等)，点击 + 添加",
                           })}
                         </p>
                       ) : (
                         Object.entries(
-                          getModelExtraFields(model, modelDialect),
+                          getModelRawExtraFields(model, modelDialect),
                         ).map(([fKey, fValue]) => (
                           <div key={fKey} className="flex items-center gap-2">
                             <ModelOptionKeyInput
