@@ -364,8 +364,9 @@ pub(crate) fn read_config_text() -> String {
         .unwrap_or_default()
 }
 
-/// live 的 `auth.json` 是不是这次涉及的托管账号的登录（切走时要清掉，不进暂存）。已被
-/// 删除的托管账号放弃了所有权：它留在盘上的登录按用户自己的登录处理。
+/// live 的 `auth.json` 是不是这次涉及的托管账号的登录（不进暂存；保留登录开启的第三方
+/// 直连不删，其余目标切走时清掉）。已被删除的托管账号放弃了所有权：它留在盘上的登录按
+/// 用户自己的登录处理。
 fn live_is_managed(prepared: &Prepared, live: Option<&Value>) -> bool {
     let managed_accounts: Vec<&str> = prepared
         .outgoing

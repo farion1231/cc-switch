@@ -215,7 +215,8 @@ pub(crate) enum AuthTarget<'a> {
 pub(crate) struct AuthInput<'a> {
     /// live 的 `auth.json`（文件不存在为 `None`，解析不了的按非对象处理）。
     pub live: Option<&'a Value>,
-    /// live 里是某个托管账号的登录（切走时要清掉，不进暂存）。
+    /// live 里是某个托管账号的登录（不进暂存；保留登录开启的第三方直连不删，其余目标
+    /// 切走时清掉）。
     pub live_is_managed: bool,
     /// 第三方供应商行里的 Key，用来认出旧版留下的残留。
     pub third_party_keys: &'a [String],
@@ -272,7 +273,11 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
                 stash.put(live);
             }
             // 保留登录关闭时第三方路由旁边不留任何 auth.json（写 `{}` 不等于登出）。
-            (managed || residue || (!preserve && input.live.is_some())).then_some(None)
+            // 保留登录开启时托管登录也留下（#7645）：请求凭据走路由表自己的
+            // `experimental_bearer_token`／`env_key`，不读 `auth.json`，盘上的登录只是
+            // 切回官方卡时的登录态。
+            ((managed && !preserve) || residue || (!preserve && input.live.is_some()))
+                .then_some(None)
         }
         AuthTarget::ProxyThirdParty { restore_last } => {
             let restored = (restore_last && !managed && native.is_none())
@@ -692,12 +697,28 @@ mod tests {
         assert_eq!(kept.auth, None, "the user's own API key login stays");
     }
 
+    /// 托管登录不进暂存：保留登录开启的第三方直连把它留在盘上（#7645），其余去向照旧清掉。
     #[test]
     fn managed_logins_are_cleared_and_never_stashed() {
         let managed = login("managed");
         let empty = json!({});
+
+        let preserved = plan(AuthInput {
+            live_is_managed: true,
+            ..input(
+                Some(&managed),
+                AuthTarget::ThirdParty { preserve: true },
+                ready(),
+            )
+        });
+        assert_eq!(
+            preserved.auth, None,
+            "preserve-login keeps the managed login on disk"
+        );
+        assert_eq!(preserved.stash, None, "managed logins are never stashed");
+
         for target in [
-            AuthTarget::ThirdParty { preserve: true },
+            AuthTarget::ThirdParty { preserve: false },
             AuthTarget::ProxyThirdParty {
                 restore_last: false,
             },
