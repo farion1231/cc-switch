@@ -4360,7 +4360,6 @@
       "routing": "路由中",
       "currentDefault": "目前預設",
       "defaultAfterSwitch": "切換後預設",
-      "current": "目前",
       "default": "預設"
     },
     "action": {
@@ -4398,7 +4397,6 @@
       "defaultWhileRouting": "正在路由時，預設就是路由到的那家；切換到聚合模式時可以另選。",
       "needsRoute": "需要路由：{{reason}}，不能直連。",
       "defaultCannotRemove": "預設那家不能移除，先把別家設為預設。",
-      "currentCannotRemove": "正在用的這家不能移除，先啟用別家。",
       "inUseCannotDelete": "正在用的這家不能刪除，先切到別家。",
       "directDefaultCannotDelete": "退出路由後會回到這家，所以不能刪除。先在直連頁對別家點「回到直連並使用」，再刪除。",
       "noFailover": "官方帳號不進故障轉移佇列：它用客戶端自己的登入，不能和別家輪換。"

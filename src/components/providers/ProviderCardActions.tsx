@@ -60,7 +60,6 @@ const BUTTON_ICON: Record<string, LucideIcon> = {
   add: Plus,
   remove: Minus,
   enable: Power,
-  use: Power,
   disable: PowerOff,
   openTerminal: SquareTerminal,
 };

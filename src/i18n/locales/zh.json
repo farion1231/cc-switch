@@ -4359,7 +4359,6 @@
       "routing": "路由中",
       "currentDefault": "当前默认",
       "defaultAfterSwitch": "切换后默认",
-      "current": "当前",
       "default": "默认"
     },
     "action": {
@@ -4397,7 +4396,6 @@
       "defaultWhileRouting": "正在路由时，默认就是路由到的那家；切换到聚合模式时可以另选。",
       "needsRoute": "需要路由：{{reason}}，不能直连。",
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
-      "currentCannotRemove": "正在用的这家不能移除，先启用别家。",
       "inUseCannotDelete": "正在用的这家不能删除，先切到别家。",
       "directDefaultCannotDelete": "退出路由后会回到这家，所以不能删除。先在直连页对别家点「回到直连并使用」，再删除。",
       "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。"
