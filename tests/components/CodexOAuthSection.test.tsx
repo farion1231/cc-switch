@@ -123,6 +123,20 @@ describe("CodexOAuthSection", () => {
     }
   });
 
+  it("shows the ChatGPT plan stored in the managed account token", () => {
+    const auth = mocks.useCodexOauth();
+    mocks.useCodexOauth.mockReturnValue({
+      ...auth,
+      accounts: auth.accounts.map((account: { id: string }) =>
+        account.id === "account-1" ? { ...account, plan: "plus" } : account,
+      ),
+    });
+
+    render(<CodexOAuthSection />);
+
+    expect(screen.getByText("Plus")).toBeInTheDocument();
+  });
+
   it("does not render account quota by default", () => {
     render(<CodexOAuthSection />);
 
