@@ -40,6 +40,10 @@ export interface GroupAccountRow {
   users: ManagedAccountUser[];
   /** 右侧的额度（AccountQuotaColumn）；需要重新登录的账号不传 */
   quota?: React.ReactNode;
+  /** ⋯ 里删除项的文案（Kimi Code 自己的登录是「移出列表」） */
+  removeLabel?: string;
+  /** 删除项不能点的原因（Kimi 正在用的号要先切走），照常列出、原因写在下面 */
+  removeDisabledReason?: string;
 }
 
 export interface GroupLoginFlow {
@@ -48,7 +52,10 @@ export interface GroupLoginFlow {
   /** 已拿到验证码，等用户在浏览器里授权 */
   polling: boolean;
   pollingState: "idle" | "polling" | "success" | "error";
-  deviceCode: ManagedAuthDeviceCodeResponse | null;
+  deviceCode: Pick<
+    ManagedAuthDeviceCodeResponse,
+    "user_code" | "verification_uri"
+  > | null;
   error: string | null;
   onCancel: () => void;
   onRetry: () => void;
@@ -75,13 +82,18 @@ interface ManagedAccountsGroupProps {
   onAdd: () => void;
   /** Copilot 选部署类型的那块；有它时不显示空状态那行 */
   chooser?: React.ReactNode;
+  loginOptions?: React.ReactNode;
+  /** 「默认」徽标和 ⋯ 里「设为默认」的文案（Antigravity 是「agy 在用」「切换 agy 到这个账号」） */
+  defaultLabel?: string;
+  setDefaultLabel?: string;
   /** ⋯ 里有没有「重新登录」（Copilot 没有） */
   canReauth: boolean;
   onReauth: (accountId: string) => void;
   onSetDefault: (accountId: string) => void;
   settingDefault: boolean;
   onRemove: (accountId: string, login: string) => void;
-  onRemoveAll: () => void;
+  /** 标题行 ⋯ 里的「删除全部账号」；不传就没有这个菜单（Kimi） */
+  onRemoveAll?: () => void;
   removing: boolean;
   login: GroupLoginFlow;
   /** 确认框等 */
@@ -111,6 +123,9 @@ export function ManagedAccountsGroup({
   loginLabel,
   onAdd,
   chooser,
+  loginOptions,
+  defaultLabel,
+  setDefaultLabel,
   canReauth,
   onReauth,
   onSetDefault,
@@ -239,7 +254,7 @@ export function ManagedAccountsGroup({
             {t("authCenter.addAccount", { defaultValue: "添加账号" })}
           </Button>
         )}
-        {ready && accounts.length > 1 && (
+        {ready && accounts.length > 1 && onRemoveAll && (
           <DropdownMenu>
             <HoverTip content={t("common.more", { defaultValue: "更多" })}>
               <DropdownMenuTrigger asChild>
@@ -308,6 +323,8 @@ export function ManagedAccountsGroup({
           <AccountRow
             key={account.id}
             account={account}
+            defaultLabel={defaultLabel}
+            setDefaultLabel={setDefaultLabel}
             canReauth={canReauth}
             busy={busy}
             pendingId={pendingId}
@@ -344,6 +361,7 @@ export function ManagedAccountsGroup({
       )}
 
       {chooser}
+      {loginOptions}
 
       <div role="status">
         {busy && (
@@ -368,7 +386,30 @@ export function ManagedAccountsGroup({
                 {t("common.cancel", { defaultValue: "取消" })}
               </Button>
             </div>
-            {login.deviceCode && (
+            {login.deviceCode && !login.deviceCode.user_code && (
+              <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
+                <span className="min-w-0 flex-1">
+                  {t("authCenter.pending.browserNote", {
+                    defaultValue:
+                      "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
+                    service: name,
+                  })}
+                </span>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="compact"
+                  className="gap-1"
+                  onClick={openPage}
+                >
+                  <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  {t("authCenter.pending.reopen", {
+                    defaultValue: "重新打开登录页",
+                  })}
+                </Button>
+              </div>
+            )}
+            {login.deviceCode?.user_code && (
               <>
                 <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
                   <span>
@@ -495,6 +536,8 @@ function AccountAvatar({
 
 interface AccountRowProps {
   account: GroupAccountRow;
+  defaultLabel?: string;
+  setDefaultLabel?: string;
   canReauth: boolean;
   busy: boolean;
   pendingId: string;
@@ -507,6 +550,8 @@ interface AccountRowProps {
 
 function AccountRow({
   account,
+  defaultLabel,
+  setDefaultLabel,
   canReauth,
   busy,
   pendingId,
@@ -534,7 +579,8 @@ function AccountRow({
           </span>
           {account.isDefault && (
             <span className={cn(PILL, "border border-border-strong text-fg-2")}>
-              {t("authCenter.default", { defaultValue: "默认" })}
+              {defaultLabel ??
+                t("authCenter.default", { defaultValue: "默认" })}
             </span>
           )}
           {account.needsReauth && (
@@ -603,7 +649,8 @@ function AccountRow({
               onSelect={() => onSetDefault(account.id)}
               className="h-[30px] rounded-control px-2.5 text-body"
             >
-              {t("authCenter.setDefault", { defaultValue: "设为默认" })}
+              {setDefaultLabel ??
+                t("authCenter.setDefault", { defaultValue: "设为默认" })}
             </DropdownMenuItem>
           )}
           {canReauth && (
@@ -625,11 +672,22 @@ function AccountRow({
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
-            disabled={removing}
+            disabled={removing || Boolean(account.removeDisabledReason)}
             onSelect={() => onRemove(account.id, account.login)}
-            className="h-[30px] rounded-control px-2.5 text-body text-danger-text focus:text-danger-text"
+            className={cn(
+              "min-h-[30px] flex-col items-start justify-center gap-0 rounded-control px-2.5 text-body text-danger-text focus:text-danger-text",
+              account.removeDisabledReason && "data-[disabled]:opacity-100",
+            )}
           >
-            {t("authCenter.removeAccount", { defaultValue: "删除账号…" })}
+            <span className={cn(account.removeDisabledReason && "text-fg-3")}>
+              {account.removeLabel ??
+                t("authCenter.removeAccount", { defaultValue: "删除账号…" })}
+            </span>
+            {account.removeDisabledReason && (
+              <span className="text-caption text-fg-3">
+                {account.removeDisabledReason}
+              </span>
+            )}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

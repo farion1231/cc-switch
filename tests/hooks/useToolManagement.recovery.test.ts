@@ -64,8 +64,12 @@ async function advance(ms: number) {
 }
 
 describe("tool detection recovery", () => {
-  beforeEach(() => {
+  let toolCount: number;
+
+  beforeEach(async () => {
     vi.resetModules();
+    const { TOOL_NAMES } = await import("@/components/apps/useToolManagement");
+    toolCount = TOOL_NAMES.length;
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
     api.getToolVersions
@@ -87,21 +91,21 @@ describe("tool detection recovery", () => {
   it("retries once, then rechecks only the expired failure when focused", async () => {
     await mountTools();
     await advance(1999);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(9);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount);
     await advance(1);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
     await advance(29_999);
     await act(async () => window.dispatchEvent(new Event("focus")));
-    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
     await advance(1);
     await act(async () => {
       window.dispatchEvent(new Event("focus"));
       document.dispatchEvent(new Event("visibilitychange"));
     });
-    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
     expect(api.getToolVersions).toHaveBeenLastCalledWith(["grok"], {});
     await advance(60_000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
   });
 
   it("cleans up its retry and focus listeners when the page unmounts", async () => {
@@ -112,7 +116,7 @@ describe("tool detection recovery", () => {
       window.dispatchEvent(new Event("focus"));
       document.dispatchEvent(new Event("visibilitychange"));
     });
-    expect(api.getToolVersions).toHaveBeenCalledTimes(9);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount);
   });
 
   it("does not overlap an automatic or focus retry with a pending manual probe", async () => {
@@ -127,7 +131,7 @@ describe("tool detection recovery", () => {
     });
     await advance(31_000);
     await act(async () => window.dispatchEvent(new Event("focus")));
-    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
     await act(async () => {
       resolve([version("grok")]);
       await manual;
@@ -141,13 +145,13 @@ describe("tool detection recovery", () => {
     const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
     await mountTools();
     await advance(5000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(9);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount);
     hidden.mockReturnValue(false);
     await act(async () =>
       document.dispatchEvent(new Event("visibilitychange")),
     );
     await advance(0);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
   });
 
   it("recovers failures cached by the startup background check", async () => {
@@ -176,10 +180,10 @@ describe("tool detection recovery", () => {
     );
     await advance(31_000);
     await act(async () => window.dispatchEvent(new Event("focus")));
-    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
     await advance(10 * 60_000 - 33_000);
     await act(async () => window.dispatchEvent(new Event("focus")));
-    expect(api.getToolVersions).toHaveBeenCalledTimes(20);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(2 * toolCount + 2);
   });
 
   it("keeps the recovered installation report when the initial scan arrives late", async () => {
@@ -230,7 +234,7 @@ describe("tool detection recovery", () => {
       "1.0.0",
     );
     await advance(2000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
   });
   it("retains an initial known installation when the automatic retry also fails", async () => {
     let finishScan!: (reports: ToolInstallationReport[]) => void;
@@ -360,7 +364,7 @@ describe("tool detection recovery", () => {
     });
     first.unmount();
     const second = await mountTools();
-    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
     await act(async () => {
       finishManual([version("grok", false)]);
       await manual;
@@ -386,7 +390,7 @@ describe("tool detection recovery", () => {
     expect(view.result.current.toolVersionByName.get("grok")?.version).toBe(
       "1.0.0",
     );
-    expect(api.getToolVersions).toHaveBeenCalledTimes(12);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 3);
   });
 
   it("keeps the newer recovery report when the older initial scan finishes first", async () => {
@@ -521,7 +525,7 @@ describe("tool detection recovery", () => {
     expect(api.listToolInstallations).toHaveBeenCalledTimes(2);
     expect(api.listToolInstallations).toHaveBeenLastCalledWith(["grok"]);
     await advance(3000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
   });
 
   it("does not resurrect an uninstalled path from an earlier scan", async () => {
@@ -584,13 +588,13 @@ describe("tool detection recovery", () => {
       view.result.current.toolVersionByName.get("grok")?.version,
     ).toBeNull();
     await advance(3000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
     await act(async () => {
       finishScan([installationReport()]);
       await background;
     });
     await advance(3000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
   });
   it("schedules short retry when mounting between background failure and scan completion", async () => {
     api.getToolVersions.mockImplementation(async (names: string[]) =>
@@ -621,13 +625,13 @@ describe("tool detection recovery", () => {
     expect(
       second.result.current.toolVersionByName.get("grok")?.version,
     ).toBeNull();
-    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
     await act(async () => {
       finishScan([installationReport()]);
       await background;
     });
     await advance(3000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
   });
   it("does not suppress reinstall with an initial scan older than the latest failed retry", async () => {
     let finishInitial!: (reports: ToolInstallationReport[]) => void;

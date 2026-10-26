@@ -37,8 +37,9 @@ struct OpenCodeMessageData {
     cost: f64,
     model_id: String,
     timestamp_ms: i64,
-    /// time.completed - time.created；离线回填只有整条消息的起止时间，
-    /// 没有首字时间，所以 latency 有值而 first_token_ms 恒为空
+    /// 耗时终点优先取 time.streamed（流式结束，不含工具执行），缺失或异常时
+    /// 退回 time.completed；离线回填只有整条消息的起止时间，没有首字时间，
+    /// 所以 latency 有值而 first_token_ms 恒为空
     latency_ms: i64,
 }
 
@@ -392,15 +393,23 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
 
+    // 耗时终点优先取 time.streamed（流式结束），它不含工具执行时间；
+    // 缺失或早于 created（时钟异常）时退回 time.completed（含工具执行，估速偏低）。
     // 调用方已过滤掉没有 time.completed 的未完成消息；这里再兜底：
     // created 缺失（timestamp_ms 回退为 0，差值会变成毫秒纪元值）或
-    // 时钟倒挂（completed 不晚于 created）时按 0 处理
-    let latency_ms = match value
-        .get("time")
+    // 时钟倒挂（终点不晚于 created）时按 0 处理
+    let time = value.get("time");
+    let streamed_ms = time
+        .and_then(|t| t.get("streamed"))
+        .and_then(|v| v.as_i64());
+    let completed_ms = time
         .and_then(|t| t.get("completed"))
-        .and_then(|v| v.as_i64())
-    {
-        Some(completed) if timestamp_ms > 0 && completed > timestamp_ms => completed - timestamp_ms,
+        .and_then(|v| v.as_i64());
+    let end_ms = streamed_ms
+        .filter(|&end| end > timestamp_ms)
+        .or(completed_ms);
+    let latency_ms = match end_ms {
+        Some(end) if timestamp_ms > 0 && end > timestamp_ms => end - timestamp_ms,
         _ => 0,
     };
 
@@ -758,6 +767,38 @@ mod tests {
         assert_eq!(data.input_tokens, 1373);
         assert_eq!(data.cache_read_tokens, 391040);
         assert_eq!(data.timestamp_ms, 1789945285532);
+        // 有 streamed 时终点取 streamed（流式结束），不含 completed 之后的收尾
+        assert_eq!(data.latency_ms, 1789945288379 - 1789945285532);
+    }
+
+    #[test]
+    fn test_parse_message_data_prefers_streamed_for_latency() {
+        // 同时有 streamed 和 completed：终点取 streamed，排除 completed 之后的工具执行时间
+        let with_streamed = serde_json::json!({
+            "tokens": { "input": 1000, "output": 674 },
+            "model": { "id": "m" },
+            "time": { "created": 1000i64, "streamed": 2000i64, "completed": 120000i64 }
+        });
+        let data = parse_message_data(&with_streamed).unwrap();
+        assert_eq!(data.latency_ms, 1000);
+
+        // 只有 completed：退回 completed
+        let only_completed = serde_json::json!({
+            "tokens": { "input": 1000, "output": 674 },
+            "model": { "id": "m" },
+            "time": { "created": 1000i64, "completed": 3000i64 }
+        });
+        let data = parse_message_data(&only_completed).unwrap();
+        assert_eq!(data.latency_ms, 2000);
+
+        // streamed 早于 created（时钟异常）：忽略 streamed，退回 completed
+        let skewed = serde_json::json!({
+            "tokens": { "input": 1000, "output": 674 },
+            "model": { "id": "m" },
+            "time": { "created": 5000i64, "streamed": 4000i64, "completed": 9000i64 }
+        });
+        let data = parse_message_data(&skewed).unwrap();
+        assert_eq!(data.latency_ms, 4000);
     }
 
     #[test]

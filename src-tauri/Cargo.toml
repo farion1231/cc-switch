@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "4.0.13"
+version = "4.0.20"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -27,7 +27,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
-tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png"] }
+tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
@@ -44,10 +44,11 @@ arboard = "3.6"
 flate2 = "1"
 brotli = "7"
 zstd = "0.13"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "process"] }
 futures = "0.3"
 async-stream = "0.3"
 bytes = "1.5"
+prost = "0.14"
 axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
@@ -101,8 +102,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Storage_FileSystem",
+    "Win32_Graphics_Gdi",
     "Win32_System_Threading",
     "Win32_UI_Shell",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
@@ -111,6 +115,10 @@ rquickjs = { version = "0.8", features = ["bindgen"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
+# 托盘面板的原生玻璃：NSGlassEffectView（macOS 26）/ NSVisualEffectView；0.2 那套没有前者
+objc2-06 = { package = "objc2", version = "0.6" }
+objc2-foundation-03 = { package = "objc2-foundation", version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSString"] }
+objc2-app-kit-03 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["std", "NSAppearance", "NSGlassEffectView", "NSGraphics", "NSResponder", "NSScreen", "NSView", "NSVisualEffectView", "NSWindow"] }
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]

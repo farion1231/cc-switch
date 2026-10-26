@@ -454,6 +454,20 @@ fn read_sqlite_cell(
     if !sqlite_allowed(provider_id, table, column) {
         return Err("不支持的内容引用".to_string());
     }
+    #[cfg(windows)]
+    if provider_id == "hermes" && crate::session_manager::hermes_wsl::is_wsl(db) {
+        let value = crate::session_manager::hermes_wsl::read(
+            db,
+            serde_json::json!({
+                "operation":"cell", "session_id":session_id, "id":id,
+                "column":column, "max_bytes":MAX_TEXT_BYTES,
+            }),
+        )?;
+        return value
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| NOT_TEXT.to_string());
+    }
     let conn = Connection::open_with_flags(
         db,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -631,7 +645,7 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
     }
 
     use super::providers::{
-        claude, codex, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi,
+        claude, codex, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
     };
     let sessions = match source.provider_id.as_str() {
         "codex" => codex::scan_sessions(),
@@ -643,6 +657,9 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "hermes" => hermes::scan_sessions(),
         "pi" => pi::scan_sessions(),
         "mcode" => mcode::scan_sessions(),
+        "kimi" => kimi::scan_sessions(),
+        "omp" => omp::scan_sessions(),
+        "agy" => super::providers::agy::scan_sessions(),
         _ => return None,
     };
     let project = sessions

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
-use super::validation::{extract_server_spec, validate_server_spec};
+use super::validation::{extract_server_spec, spec_transport_type, validate_server_spec};
 
 fn should_sync_codex_mcp() -> bool {
     // Codex 未安装/未初始化时：~/.codex 目录不存在。
@@ -248,6 +248,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         name: id.clone(),
                         server: spec_v,
                         apps: McpApps {
+                            agy: false,
                             claude: false,
                             codex: true,
                             gemini: false,
@@ -255,7 +256,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             opencode: false,
                             hermes: false,
                             mcode: false,
+                            kimi: false,
                             pi: false,
+                            omp: false,
                         },
                         description: None,
                         homepage: None,
@@ -615,25 +618,6 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
             None
         }
     }
-}
-
-/// 写出侧的传输类型，与导入侧 [`codex_entry_transport_type`] 对称。
-///
-/// 规范里可能没有 `type`（面板 JSON 模式粘贴 `{"url": …}`、deeplink 都不补），
-/// 此时不能一律当 stdio：那样会写出 `command = ""` 再带上 `url`，Codex 对这种
-/// 条目报 `url is not supported for stdio`，整份 config.toml 加载失败，其它
-/// 正常的 MCP 也跟着失效。显式写了 stdio 却只有 `url` 的规范同理。
-fn spec_transport_type(spec: &Value) -> &str {
-    let has = |key: &str| {
-        spec.get(key)
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| !s.trim().is_empty())
-    };
-    let explicit = spec.get("type").and_then(|v| v.as_str());
-    if matches!(explicit, None | Some("stdio")) && !has("command") && has("url") {
-        return "http";
-    }
-    explicit.unwrap_or("stdio")
 }
 
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table

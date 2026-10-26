@@ -87,7 +87,7 @@ const expectedChatPresets = new Map<
     "AtlasCloud",
     {
       baseUrl: "https://api.atlascloud.ai/v1",
-      contextWindows: { "zai-org/glm-5.2": 1048576 },
+      contextWindows: { "zai-org/glm-5.3": 1048576 },
     },
   ],
   [
@@ -101,7 +101,7 @@ const expectedChatPresets = new Map<
     "Nvidia",
     {
       baseUrl: "https://integrate.api.nvidia.com/v1",
-      contextWindows: { "moonshotai/kimi-k3": 1048576 },
+      contextWindows: { "moonshotai/kimi-k2.6": 262144 },
     },
   ],
   [
@@ -111,10 +111,10 @@ const expectedChatPresets = new Map<
       contextWindows: {
         "glm-5.3": 1000000,
         "glm-5.3-flash": 1000000,
-        "kimi-k3": 1048576,
+        "kimi-k3.1-pro": 1048576,
         "deepseek-v4-pro": 1048576,
-        "deepseek-v4-flash": 1048576,
-        "mimo-v2.5-pro": 1048576,
+        "deepseek-v4.1-flash": 1048576,
+        "mimo-v2.6-pro": 1048576,
       },
     },
   ],
@@ -222,7 +222,7 @@ describe("Codex Chat provider presets", () => {
       ["BytePlus", { contextWindows: { "ark-code-latest": 256000 } }],
       [
         "Volcengine Doubao",
-        { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
+        { contextWindows: { "doubao-seed-2-1-pro-260915": 262144 } },
       ],
       [
         "千问AI平台",
@@ -261,16 +261,25 @@ describe("Codex Chat provider presets", () => {
         "MiniMax",
         {
           baseUrl: "https://api.minimax.cn/v1",
-          contextWindows: { "MiniMax-M3": 1000000 },
+          contextWindows: {
+            "MiniMax-M3": 1000000,
+            "MiniMax-M3.1-Flash": 1000000,
+          },
         },
       ],
-      ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      [
+        "MiniMax en",
+        {
+          contextWindows: {
+            "MiniMax-M3": 1000000,
+            "MiniMax-M3.1-Flash": 1000000,
+          },
+        },
+      ],
       [
         "Xiaomi MiMo",
         {
           contextWindows: {
-            "mimo-v2.5-pro": 1048576,
-            "mimo-v2.5": 1048576,
             "mimo-v2.6-pro": 1048576,
             "mimo-v2.6-flash": 1048576,
             "mimo-v2.6-pro-ultraspeed": 1048576,
@@ -281,8 +290,6 @@ describe("Codex Chat provider presets", () => {
         "Xiaomi MiMo Token Plan (China)",
         {
           contextWindows: {
-            "mimo-v2.5-pro": 1048576,
-            "mimo-v2.5": 1048576,
             "mimo-v2.6-pro": 1048576,
             "mimo-v2.6-flash": 1048576,
           },
@@ -370,7 +377,7 @@ describe("Codex Chat provider presets", () => {
 
   it("ships per-model reasoningLevels for OpenCode Go mirroring models.dev", () => {
     // Zen 网关的合法 effort 档位是逐模型的（models.dev reasoning_options，
-    // 2026-09-10）：统一并集映射会把 high 发给仅声明 max 的 kimi-k3，
+    // 2026-09-10）：统一并集映射会把 high 发给仅声明 max 的 kimi-k3.1-pro（原 kimi-k3），
     // 此测试锁住逐模型表，防回退。
     const preset = codexProviderPresets.find(
       (item) => item.name === "OpenCode Go",
@@ -388,10 +395,10 @@ describe("Codex Chat provider presets", () => {
     ).toEqual({
       "glm-5.3": ["low", "high", "max"],
       "glm-5.3-flash": ["low", "high", "max"],
-      "kimi-k3": ["max"],
+      "kimi-k3.1-pro": ["max"],
       "deepseek-v4-pro": ["high", "max"],
-      "deepseek-v4-flash": ["low", "high", "max"],
-      "mimo-v2.5-pro": null,
+      "deepseek-v4.1-flash": ["low", "high", "max"],
+      "mimo-v2.6-pro": null,
     });
   });
 });

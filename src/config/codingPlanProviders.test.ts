@@ -84,6 +84,13 @@ describe("extractBaseUrlForUsageDetection", () => {
         baseUrl: "https://opencode.ai/zen/go/v1",
       }),
     ).toBe("https://opencode.ai/zen/go/v1");
+    // Oh My Pi reads the same camelCase field shape as Pi; without this case
+    // the dialog cannot auto-pick a template from an omp provider's base URL.
+    expect(
+      extractBaseUrlForUsageDetection("omp", {
+        baseUrl: "https://opencode.ai/zen/go/v1",
+      }),
+    ).toBe("https://opencode.ai/zen/go/v1");
   });
 
   it("reads the remaining apps' native base URL fields", () => {
@@ -195,6 +202,29 @@ describe("injectCodingPlanUsageScript", () => {
     expect(
       inject("opencode", { settingsConfig }).meta?.usage_script,
     ).toBeUndefined();
+  });
+
+  it("preselects Volcengine without enabling it (needs AccessKey first)", () => {
+    expect(
+      inject("opencode", {
+        settingsConfig: {
+          options: { baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3" },
+        },
+      }).meta?.usage_script,
+    ).toMatchObject({
+      enabled: false,
+      templateType: "token_plan",
+      codingPlanProvider: "volcengine",
+    });
+    expect(
+      inject("claude", {
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/coding",
+          },
+        },
+      }).meta?.usage_script,
+    ).toMatchObject({ enabled: false, codingPlanProvider: "volcengine" });
   });
 
   it("never overwrites an existing usage_script", () => {

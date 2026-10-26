@@ -1040,6 +1040,7 @@ fn model_pricing_seed_covers_deepseek_v41_flash_aliases() {
     // 查价前缀兜底是 LIKE '{id}-%'，只命中更长的行，任一行缺失都会静默按 0 计费。
     for model_id in [
         "deepseek-flash",
+        "deepseek-v4.1-flash",
         "deepseek-v4-flash",
         "deepseek-v4-flash-0731",
         "deepseek-v4-flash-vision-exp",
@@ -1271,6 +1272,32 @@ fn model_pricing_seed_includes_glm_5_3_flash() {
 }
 
 #[test]
+fn model_pricing_seed_includes_gemini_4_argon() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-4-argon'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 4 Argon price");
+
+    assert_eq!(
+        price,
+        (
+            "2.00".to_string(),
+            "10.00".to_string(),
+            "0.10".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_gemini_3_8_flash() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
@@ -1430,4 +1457,34 @@ fn incremental_vacuum_reclaims_entire_freelist() {
 
     Database::incremental_vacuum_on_conn(&conn).expect("incremental vacuum");
     assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
+}
+
+/// v22 已随 v4.0.19 发布：从它升级必须补上 `mcp_servers.enabled_omp`，否则读 MCP 列表报
+/// `no such column`。Skills 没有 omp 列（启用状态按原生目录现算）。
+#[test]
+fn migration_v22_to_v23_adds_enabled_omp_to_mcp_servers_only() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")
+        .expect("rewind mcp_servers to v22 shape");
+    conn.execute(
+        "INSERT INTO mcp_servers (id, name, server_config, enabled_pi) VALUES ('mcp-1', 'm', '{}', 1)",
+        [],
+    )
+    .expect("seed mcp row");
+    Database::set_user_version(&conn, 22).expect("set user_version=22");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp").unwrap());
+    assert!(!Database::has_column(&conn, "skills", "enabled_omp").unwrap());
+    let (pi, omp): (i64, i64) = conn
+        .query_row(
+            "SELECT enabled_pi, enabled_omp FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read mcp row");
+    assert_eq!((pi, omp), (1, 0));
 }
