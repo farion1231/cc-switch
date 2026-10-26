@@ -5,7 +5,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
  * 界面密度与缩放（设置 › 通用 › 外观）。只影响主窗口，存在 localStorage 里，和明暗一样不进后端设置。
  *
  * - 密度：写到 <html data-density>，src/index.css 按它换一组字号 / 控件高度变量。
- *   index.html 里有一段同步脚本先设好，首屏不会先闪一下紧凑再变舒适。
+ *   main.tsx 在渲染任何界面之前先调 initializeInterfacePrefs。不放进 index.html 的内联脚本：
+ *   tauri.conf.json 的 CSP 只按哈希放行明暗那一段内联脚本，新加的会被拦。
  * - 缩放：交给 webview 原生缩放（整页等比，弹层定位不受影响）；Ctrl / ⌘ + = − 0 也能调。
  */
 
