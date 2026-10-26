@@ -6454,7 +6454,16 @@ model_provider = "c"
         assert!(profile["inferenceGatewayBaseUrl"]
             .as_str()
             .is_some_and(|url| url.ends_with("/claude-desktop")));
-        assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
+        assert_eq!(
+            profile["inferenceModels"],
+            // 显式 Sonnet 档在前，缺失的 Opus / Fable / Haiku 档由发布层用 primary 补位
+            json!([
+                "claude-sonnet-5",
+                "claude-opus-5",
+                "claude-fable-5",
+                "claude-haiku-4-5"
+            ])
+        );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
 
         let result = ProviderService::switch(&state, desktop.clone(), "map").expect("same profile");
@@ -6614,7 +6623,15 @@ model_provider = "c"
             .expect("read updated Desktop card")
             .expect("updated Desktop card remains saved");
         let profile = desktop_profile();
-        assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([
+                "claude-sonnet-5",
+                "claude-opus-5",
+                "claude-fable-5",
+                "claude-haiku-4-5"
+            ])
+        );
         let mapped_request = crate::claude_desktop_config::map_proxy_request_model(
             json!({ "model": dated_native_model, "messages": [] }),
             &stored_mapping,
@@ -6672,7 +6689,8 @@ model_provider = "c"
         let profile = desktop_profile();
         let models = profile["inferenceModels"].as_array().expect("models");
         assert_eq!(models[0], json!("claude-sonnet-5"));
-        assert_eq!(models.len(), 2, "{models:?}");
+        // 路由那家显式 1 档 + 发布层补位 3 档，再加聚合成员发布的 1 个模型
+        assert_eq!(models.len(), 5, "{models:?}");
         let stacked = &models[1];
         assert!(stacked["name"]
             .as_str()
@@ -6711,7 +6729,15 @@ model_provider = "c"
             .await
             .expect("back to route");
         let profile = desktop_profile();
-        assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([
+                "claude-sonnet-5",
+                "claude-opus-5",
+                "claude-fable-5",
+                "claude-haiku-4-5"
+            ])
+        );
         assert_eq!(profile["modelDiscoveryEnabled"], json!(true));
         assert!(settled_stack(&desktop).unwrap().is_member("other"));
     }
