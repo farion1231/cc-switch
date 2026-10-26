@@ -3,6 +3,7 @@
 mod agy_account;
 mod auth;
 mod balance;
+mod claude_account;
 mod codebuddy_account;
 mod codex_oauth;
 mod coding_plan;
@@ -45,6 +46,7 @@ mod workspace;
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
+pub use claude_account::*;
 pub use codebuddy_account::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;

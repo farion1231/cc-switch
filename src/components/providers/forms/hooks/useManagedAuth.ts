@@ -84,12 +84,13 @@ export function useManagedAuth(
 
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      // Codex（设备码）、Antigravity（本机回调服务）、CodeBuddy（等凭据文件变化）在后端
-      // 记着这次登录，要通知取消
+      // Codex（设备码）、Antigravity（本机回调服务）、CodeBuddy（等凭据文件变化）和 Claude
+      // 官方账号（后台的 claude 进程）在后端记着这次登录，要通知取消
       if (
         (authProvider !== "codex_oauth" &&
           authProvider !== "agy_oauth" &&
-          authProvider !== "codebuddy_oauth") ||
+          authProvider !== "codebuddy_oauth" &&
+          authProvider !== "claude_official") ||
         !deviceCode
       )
         return true;
@@ -166,8 +167,9 @@ export function useManagedAuth(
       }
       if (request.generation !== flowGenerationRef.current) return;
 
-      // 终端登录（CodeBuddy）没有授权页，后端已经打开了终端
-      if (response.verification_uri) {
+      // 终端登录（CodeBuddy）没有授权页，后端已经打开了终端；Claude 官方账号在 Windows 上
+      // 由 Claude Code 自己打开了登录页
+      if (response.verification_uri && !response.browser_opened) {
         try {
           await settingsApi.openExternal(response.verification_uri);
         } catch (e) {

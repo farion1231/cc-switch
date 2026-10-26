@@ -220,8 +220,9 @@ describe("CodebuddyAccountSection", () => {
     mocks.live.mockResolvedValue(liveState("none"));
     render(<CodebuddyAccountSection />);
     await waitFor(() => expect(mocks.live).toHaveBeenCalled());
+    // 空状态不再有登录按钮，标题行的「添加账号」始终在
     await userEvent.click(
-      (await screen.findAllByRole("button", { name: /登录新账号/ }))[0],
+      await screen.findByRole("button", { name: /添加账号/ }),
     );
     expect(auth.addAccount).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

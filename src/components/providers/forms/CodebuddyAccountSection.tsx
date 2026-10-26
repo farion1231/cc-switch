@@ -169,7 +169,7 @@ export const CodebuddyAccountSection: React.FC<
       iconName="codebuddy"
       help={t("authCenter.group.codebuddyHelp", {
         defaultValue:
-          "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里给账号建一张「CodeBuddy 官方登录」卡并点「添加」。「登录新账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
+          "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里给账号建一张「CodeBuddy 官方登录」卡并点「添加」。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
       })}
       helpSide={helpSide}
       accounts={rows}
@@ -181,10 +181,7 @@ export const CodebuddyAccountSection: React.FC<
       notice={notice}
       emptyText={t("authCenter.codebuddy.empty", {
         defaultValue:
-          "还没有 CodeBuddy 账号。在终端里登录，或收录 CodeBuddy 当前登录的号。",
-      })}
-      loginLabel={t("authCenter.codebuddy.login", {
-        defaultValue: "登录新账号",
+          "还没有 CodeBuddy 账号。点「添加账号」登录，或收录 CodeBuddy 当前登录的号。",
       })}
       onAdd={() => login.requestLogin()}
       defaultLabel={t("authCenter.codebuddy.current", {
