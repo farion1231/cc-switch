@@ -1277,7 +1277,11 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     category: "third_party",
-    baseUrl: "https://opencode.ai/zen/go",
+    // 官方文档（https://opencode.ai/v2/docs/console/go）只列
+    // /inference/go/anthropic 这一 Anthropic 端基址。未文档化的旧入口
+    // /zen/go 只认 x-api-key，收到 Bearer 会报 "Go requires a credential"；
+    // 新入口两种头都认。
+    baseUrl: "https://opencode.ai/inference/go/anthropic",
     mode: "proxy",
     // Go 网关 /messages 收除 grok-4.5 外全部模型（Chat 组靠服务端转换），
     // anthropic 透传即可；上游只认 x-api-key，apiKey 直填默认即该头。
@@ -1291,7 +1295,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "deepseek-v4.1-flash",
       true,
     ),
-    endpointCandidates: ["https://opencode.ai/zen/go"],
+    endpointCandidates: ["https://opencode.ai/inference/go/anthropic"],
     icon: "opencode",
     iconColor: "#211E1E",
   },
