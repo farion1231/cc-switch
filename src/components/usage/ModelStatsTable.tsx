@@ -1,15 +1,19 @@
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { ArrowDown } from "lucide-react";
 import { useModelStats } from "@/lib/query/usage";
-import { fmtUsd } from "./format";
+import { TablePagination, useClientPagination } from "./TablePagination";
+import { cn } from "@/lib/utils";
+import {
+  fmtInt,
+  formatTokensCompact,
+  getLocaleFromLanguage,
+  getResolvedLang,
+} from "./format";
+import { usageTable } from "./usageTable";
+import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface ModelStatsTableProps {
   range: UsageRangeSelection;
@@ -26,7 +30,9 @@ export function ModelStatsTable({
   model,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { money, moneyTitle } = useMoneyFormat();
+  const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useModelStats(
     range,
     { appType, providerName, model },
@@ -35,63 +41,95 @@ export function ModelStatsTable({
     },
   );
 
+  const rows = useMemo(
+    () => [...(stats ?? [])].sort((a, b) => b.requestCount - a.requestCount),
+    [stats],
+  );
+  const pagination = useClientPagination(
+    rows,
+    JSON.stringify([range, appType, providerName, model]),
+  );
+
   if (isLoading) {
-    return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
+    return <div className={usageTable.skeleton} />;
   }
 
   return (
-    <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-hidden">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t("usage.model", "模型")}</TableHead>
-            <TableHead className="text-right">
-              {t("usage.requests", "请求数")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.tokens", "Tokens")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.totalCost", "总成本")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.avgCost", "平均成本")}
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {stats?.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={5}
-                className="text-center text-muted-foreground"
-              >
-                {t("usage.noData", "暂无数据")}
-              </TableCell>
-            </TableRow>
-          ) : (
-            stats?.map((stat) => (
-              <TableRow key={stat.model}>
-                <TableCell className="font-mono text-sm">
-                  {stat.model}
-                </TableCell>
-                <TableCell className="text-right">
-                  {stat.requestCount.toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  {stat.totalTokens.toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  {fmtUsd(stat.totalCost, 4)}
-                </TableCell>
-                <TableCell className="text-right">
-                  {fmtUsd(stat.avgCostPerRequest, 6)}
-                </TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+    <div className="flex flex-col">
+      <div className={usageTable.scroller}>
+        {/* 和请求日志同一套列组与取宽：按内容取宽、至少铺满面板，放不下横向滚动 */}
+        <table
+          className={cn(usageTable.table, "w-max min-w-full")}
+          aria-label={t("usage.modelStats")}
+        >
+          <thead>
+            <tr className={usageTable.headRow}>
+              <th className={usageTable.th}>{t("usage.model")}</th>
+              {/* 按请求数从多到少排：箭头就是排序说明，不另写文字 */}
+              <th className={usageTable.th} aria-sort="descending">
+                <span className="inline-flex items-center gap-1">
+                  {t("usage.requests")}
+                  <ArrowDown
+                    aria-hidden="true"
+                    className="h-3 w-3 text-fg-3"
+                    strokeWidth={2}
+                  />
+                </span>
+              </th>
+              <th className={cn(usageTable.th, usageTable.groupGap)}>
+                {t("usage.cost")}
+              </th>
+              <th className={cn(usageTable.th, usageTable.groupGap)}>
+                {t("usage.tokens")}
+              </th>
+              <PerformanceHeaders />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className={usageTable.empty}>
+                  {t("usage.noData")}
+                </td>
+              </tr>
+            ) : (
+              pagination.pageRows.map((stat) => (
+                <tr key={stat.model} className={usageTable.row}>
+                  <td className={cn(usageTable.td, usageTable.mono)}>
+                    <span title={stat.model}>{stat.model}</span>
+                  </td>
+                  <td className={usageTable.td}>
+                    {fmtInt(stat.requestCount, locale)}
+                  </td>
+                  <td
+                    className={cn(
+                      usageTable.td,
+                      usageTable.groupGap,
+                      "font-medium",
+                    )}
+                    title={`${moneyTitle(stat.totalCost, 6)} · ${t("usage.avgCost")} ${money(stat.avgCostPerRequest, 4)}`}
+                  >
+                    {money(stat.totalCost, 2)}
+                  </td>
+                  <td
+                    className={cn(usageTable.td, usageTable.groupGap)}
+                    title={fmtInt(stat.totalTokens, locale)}
+                  >
+                    {formatTokensCompact(stat.totalTokens, locale)}
+                  </td>
+                  <PerformanceCells stat={stat} />
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      <TablePagination
+        page={pagination.page}
+        totalPages={pagination.totalPages}
+        total={pagination.total}
+        onPageChange={pagination.setPage}
+      />
     </div>
   );
 }

@@ -1,17 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronDown,
-  ChevronRight,
-  Download,
-  Loader2,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Form,
   FormField,
@@ -21,6 +15,11 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Popover,
   PopoverAnchor,
@@ -37,15 +36,30 @@ import {
 } from "@/components/ui/select";
 import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import JsonEditor from "@/components/JsonEditor";
-import { BasicFormFields } from "./BasicFormFields";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { useProvidersQuery } from "@/lib/query/queries";
+import { cn } from "@/lib/utils";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
-import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  GptContextWindowHint,
+  ModelDropdown,
+} from "./shared";
 import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
+import {
+  ompProviderPresets,
+  type OmpProviderPreset,
+} from "@/config/ompProviderPresets";
 import {
   piProviderPresets,
   type PiApiFormat,
@@ -63,6 +77,17 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useLatestRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import type { KnownModelMetadata } from "@/lib/modelMetadata";
+import { piPresetModelSources } from "@/config/presetModelMetadata";
+import {
+  metadataFilledAnything,
+  type PiProviderProtocol,
+  piPresetThinkingFor,
+  piSendsReasoningEffort,
+  piThinkingLevelMapFromEfforts,
+} from "./modelMetadataFill";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
 import { translatePiProviderMutationError } from "@/utils/errorUtils";
@@ -84,6 +109,23 @@ const ROOT_CONTROLLED_KEYS = new Set([
   "compat",
   "models",
 ]);
+const OMP_ROOT_CONTROLLED_KEYS = new Set(
+  [...ROOT_CONTROLLED_KEYS].filter((key) => key !== "name"),
+);
+// omp 的 `discovery.type`（docs/models.md）：运行时从端点拉模型列表，可以不写 models。
+// proxy 每个模型自己判断接口格式，其余类型要求供应商级 api（后端校验）。
+// 值里有点号，不能直接当 i18n key，所以另配一个 key。
+const OMP_DISCOVERY_TYPES: ReadonlyArray<{ value: string; labelKey: string }> =
+  [
+    { value: "openai-models-list", labelKey: "openaiModelsList" },
+    { value: "proxy", labelKey: "proxy" },
+    { value: "ollama", labelKey: "ollama" },
+    { value: "llama.cpp", labelKey: "llamaCpp" },
+    { value: "lm-studio", labelKey: "lmStudio" },
+    { value: "litellm", labelKey: "litellm" },
+    { value: "apple-foundation-models", labelKey: "appleFoundationModels" },
+  ];
+const OMP_DISCOVERY_OFF = "__off__";
 const MODEL_CONTROLLED_KEYS = new Set([
   "id",
   "name",
@@ -287,6 +329,78 @@ function modelDraft(
   };
 }
 
+/** 这一行实际使用的协议：模型级的 `api`、`baseUrl`、`compat` 覆盖供应商级。 */
+function piModelProtocol(
+  model: PiModelDraft,
+  provider: PiProviderProtocol,
+): PiProviderProtocol {
+  const { passthrough } = model;
+  return {
+    ...provider,
+    api: optionalText(passthrough.api) || provider.api,
+    baseUrl: optionalText(passthrough.baseUrl) || provider.baseUrl,
+    compat: { ...provider.compat, ...asObject(passthrough.compat) },
+  };
+}
+
+/**
+ * 选中拉取到的模型后补上已知参数：数字只补空的，推理和图片输入只往「支持」补。
+ * `thinkingLevelMap` 只在模型还没有映射且支持推理时补：同地址 Pi 预设核对过的
+ * 映射优先，但只在协议相同、且预设依赖的 compat 不与用户已写的值冲突时采用，
+ * 缺的 compat 一并补进模型；否则仅当 Pi 会把档位原样作为 `reasoning_effort` 发出
+ * 时，按 Pi 官方规则从 effort 档位生成。
+ */
+function fillPiModelDraft(
+  model: PiModelDraft,
+  metadata: KnownModelMetadata,
+  provider: PiProviderProtocol,
+  allowPiThinking = true,
+): PiModelDraft {
+  const next = { ...model };
+  if (!model.contextWindow.trim() && metadata.contextWindow) {
+    next.contextWindow = String(metadata.contextWindow);
+    next.hasContextWindow = true;
+  }
+  if (!model.maxTokens.trim() && metadata.maxOutputTokens) {
+    next.maxTokens = String(metadata.maxOutputTokens);
+    next.hasMaxTokens = true;
+  }
+  if (metadata.reasoning === true && !model.reasoning) {
+    next.reasoning = true;
+    next.hasReasoning = true;
+  }
+  if (
+    metadata.inputModalities?.includes("image") &&
+    !supportsImageInput(model.input)
+  ) {
+    next.input = withImageInput(model.input, true);
+    next.hasInput = true;
+  }
+  if (allowPiThinking && !model.hasThinkingLevelMap && next.reasoning) {
+    const effective = piModelProtocol(model, provider);
+    const preset = piPresetThinkingFor(metadata.piThinking, effective);
+    const map =
+      preset?.map ??
+      (piSendsReasoningEffort(effective)
+        ? piThinkingLevelMapFromEfforts(metadata.reasoningEfforts)
+        : undefined);
+    if (map) {
+      next.thinkingLevelMap = map;
+      next.hasThinkingLevelMap = true;
+      if (preset && Object.keys(preset.missingCompat).length > 0) {
+        next.passthrough = {
+          ...model.passthrough,
+          compat: {
+            ...asObject(model.passthrough.compat),
+            ...preset.missingCompat,
+          },
+        };
+      }
+    }
+  }
+  return next;
+}
+
 function newModel(): PiModelDraft {
   return {
     key: crypto.randomUUID(),
@@ -317,7 +431,7 @@ function thinkingLevelMode(
   return map[level] === null ? "unsupported" : "value";
 }
 
-function modelPreview(model: PiModelDraft): Record<string, unknown> {
+function piModelPreview(model: PiModelDraft): Record<string, unknown> {
   const displayName = model.name.trim();
   const previewNumber = (value: string): number | string | undefined => {
     if (!value.trim()) return undefined;
@@ -383,6 +497,7 @@ function buildPiSettingsConfig({
 }
 
 export function PiProviderForm({
+  appId,
   providerId,
   submitLabel,
   onSubmit,
@@ -393,6 +508,16 @@ export function PiProviderForm({
   showButtons = true,
 }: ProviderFormProps) {
   const { t } = useTranslation();
+  const isOmp = appId === "omp";
+  const rootControlledKeys = isOmp
+    ? OMP_ROOT_CONTROLLED_KEYS
+    : ROOT_CONTROLLED_KEYS;
+  const presets = isOmp ? ompProviderPresets : piProviderPresets;
+  const modelPreview = (model: PiModelDraft) => {
+    const value = piModelPreview(model);
+    if (isOmp) delete value.thinkingLevelMap;
+    return value;
+  };
   const isDarkMode = useDarkMode();
   const initialConfig = useMemo(
     () => asObject(initialData?.settingsConfig),
@@ -404,9 +529,10 @@ export function PiProviderForm({
   const initialConfigHasNativeName = hasOwn(initialConfig, "name");
   const [nativeNameFollowsDisplay, setNativeNameFollowsDisplay] = useState(
     () =>
-      !isEdit ||
-      (initialConfigHasNativeName &&
-        initialNativeName === initialDisplayName.trim()),
+      !isOmp &&
+      (!isEdit ||
+        (initialConfigHasNativeName &&
+          initialNativeName === initialDisplayName.trim())),
   );
   const [nativeNameOverride, setNativeNameOverride] = useState<
     string | undefined
@@ -424,9 +550,7 @@ export function PiProviderForm({
   const initialPreset = useMemo(() => {
     if (!providerId) return null;
     const preset =
-      piProviderPresets.find(
-        (candidate) => candidate.providerKey === providerId,
-      ) ?? null;
+      presets.find((candidate) => candidate.providerKey === providerId) ?? null;
     if (!preset || !isEdit) return preset;
 
     return optionalText(initialConfig.baseUrl) ===
@@ -435,13 +559,22 @@ export function PiProviderForm({
       ? preset
       : null;
   }, [initialConfig.api, initialConfig.baseUrl, isEdit, providerId]);
-  const [selectedPreset, setSelectedPreset] = useState<PiProviderPreset | null>(
-    initialPreset,
-  );
+  const [selectedPreset, setSelectedPreset] = useState<
+    PiProviderPreset | OmpProviderPreset | null
+  >(initialPreset);
   const [category, setCategory] = useState<ProviderCategory>(
     initialData?.category ?? "custom",
   );
   const [providerKey, setProviderKey] = useState(providerId ?? "");
+  // Pi 和 omp 的供应商各管各的，查重只看当前应用。
+  const { data: existingProviders } = useProvidersQuery(isOmp ? "omp" : "pi");
+  // 预设自带标识；同一家加第二次时会撞上已有的卡，在字段下直接提示。
+  const isDuplicateProviderKey =
+    !isEdit &&
+    Object.prototype.hasOwnProperty.call(
+      existingProviders?.providers ?? {},
+      providerKey.trim(),
+    );
   const [baseUrl, setBaseUrl] = useState(optionalText(initialConfig.baseUrl));
   const [api, setApi] = useState(
     () => optionalText(initialConfig.api) || "openai-completions",
@@ -464,9 +597,11 @@ export function PiProviderForm({
   const includeCompatRef = useRef(hasOwn(initialConfig, "compat"));
   const [providerPassthrough, setProviderPassthrough] = useState<
     Record<string, unknown>
-  >(() => objectWithout(initialConfig, ROOT_CONTROLLED_KEYS));
+  >(() => objectWithout(initialConfig, rootControlledKeys));
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  // 请求头、自动发现和兼容性很少需要动，默认收起；预设填了值也不自动展开。
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const modelFetchGenerationRef = useRef(0);
   const [formError, setFormError] = useState<string | null>(null);
   const initialModels = useMemo<PiModelDraft[]>(() => {
@@ -499,7 +634,7 @@ export function PiProviderForm({
             }
           : buildPiSettingsConfig({
               passthrough: {},
-              nativeName: initialDisplayName.trim(),
+              nativeName: isOmp ? undefined : initialDisplayName.trim(),
               baseUrl: "",
               api: "openai-completions",
               includeApi: true,
@@ -609,7 +744,7 @@ export function PiProviderForm({
 
       setNativeNameOverride(nextNativeName);
       setNativeNameFollowsDisplay(
-        hasNativeName && nextNativeName === currentDisplayName,
+        !isOmp && hasNativeName && nextNativeName === currentDisplayName,
       );
       setBaseUrl(optionalText(config.baseUrl));
       const nextApi = optionalText(config.api) || "openai-completions";
@@ -619,7 +754,7 @@ export function PiProviderForm({
       setProviderHeaders(stringRecord(asObject(config.headers)));
       setProviderCompat(asObject(config.compat));
       includeCompatRef.current = hasOwn(config, "compat");
-      setProviderPassthrough(objectWithout(config, ROOT_CONTROLLED_KEYS));
+      setProviderPassthrough(objectWithout(config, rootControlledKeys));
       includeModelsRef.current = hasOwn(config, "models");
 
       const requestConfigChanged =
@@ -697,7 +832,13 @@ export function PiProviderForm({
         lastValidSettingsConfigRef.current = config;
       }
     },
-    [form, invalidateFetchedModels, replaceModelsState],
+    [
+      form,
+      invalidateFetchedModels,
+      isOmp,
+      replaceModelsState,
+      rootControlledKeys,
+    ],
   );
 
   const handleSettingsConfigChange = useCallback(
@@ -760,11 +901,11 @@ export function PiProviderForm({
 
   const presetEntries = useMemo(
     () =>
-      piProviderPresets.map((preset, index) => ({
+      presets.map((preset, index) => ({
         id: `pi-${index}`,
         preset,
       })),
-    [],
+    [presets],
   );
 
   const selectPreset = (id: string) => {
@@ -775,8 +916,8 @@ export function PiProviderForm({
       setSelectedPreset(null);
       setCategory("custom");
       setProviderKey("");
-      setNativeNameFollowsDisplay(true);
-      setNativeNameOverride(identityDefaults.name.trim());
+      setNativeNameFollowsDisplay(!isOmp);
+      setNativeNameOverride(isOmp ? undefined : identityDefaults.name.trim());
       displayNameBaselineRef.current = identityDefaults.name.trim();
       lastValidSettingsConfigRef.current =
         parseJsonObject(identityDefaults.settingsConfig) ?? {};
@@ -805,12 +946,14 @@ export function PiProviderForm({
     setSelectedPreset(preset);
     setCategory(preset.category ?? "custom");
     setProviderKey(preset.providerKey);
-    setNativeNameFollowsDisplay(true);
-    setNativeNameOverride(preset.settingsConfig.name);
-    displayNameBaselineRef.current = preset.settingsConfig.name.trim();
+    const presetName =
+      optionalText(asObject(preset.settingsConfig).name) || preset.name;
+    setNativeNameFollowsDisplay(!isOmp);
+    setNativeNameOverride(isOmp ? undefined : presetName);
+    displayNameBaselineRef.current = presetName.trim();
     lastValidSettingsConfigRef.current = presetConfig;
     form.reset({
-      name: preset.settingsConfig.name,
+      name: presetName,
       websiteUrl: preset.websiteUrl,
       notes: "",
       settingsConfig: JSON.stringify(presetConfig, null, 2),
@@ -825,7 +968,7 @@ export function PiProviderForm({
     setProviderHeaders(stringRecord(asObject(presetConfig.headers)));
     setProviderCompat(asObject(presetConfig.compat));
     includeCompatRef.current = hasOwn(presetConfig, "compat");
-    setProviderPassthrough(objectWithout(presetConfig, ROOT_CONTROLLED_KEYS));
+    setProviderPassthrough(objectWithout(presetConfig, rootControlledKeys));
     replaceModelsState(nextModels);
     setExpandedModelKeys(new Set());
     setExpandedThinkingMapKeys(new Set());
@@ -858,6 +1001,86 @@ export function PiProviderForm({
           : model,
       ),
     );
+  };
+
+  const commitModelsRef = useLatestRef(commitModels);
+  const protocolRef = useLatestRef<PiProviderProtocol>({
+    api,
+    baseUrl,
+    providerId: providerKey,
+    compat: providerCompat,
+  });
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: piPresetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+
+  // 补上模型已知的窗口、输出上限、推理、图片输入和思考档位。补全可能晚到：
+  // 读最新的模型行，确认这一行仍是这个模型再补。
+  const fillModelMetadataFor = (key: string, id: string, silent?: boolean) => {
+    const row = modelsRef.current.find((model) => model.key === key);
+    // 模型单独指向别的地址时，按它实际请求的地址查参数。
+    const rowBaseUrl = row && piModelProtocol(row, protocolRef.current).baseUrl;
+    fillModelMetadata(
+      id,
+      (metadata) => {
+        const current = modelsRef.current.find((model) => model.key === key);
+        if (current?.id !== id) return false;
+        const filled = fillPiModelDraft(
+          current,
+          metadata,
+          protocolRef.current,
+          !isOmp,
+        );
+        if (!metadataFilledAnything(current, filled)) return false;
+        return commitModelsRef.current(
+          modelsRef.current.map((model) =>
+            model.key === key ? filled : model,
+          ),
+        );
+      },
+      { baseUrl: rowBaseUrl, silent },
+    );
+  };
+
+  const selectFetchedModelId = (key: string, id: string) => {
+    changeModelId(key, id);
+    fillModelMetadataFor(key, id);
+  };
+
+  // 弹窗里勾选：去掉取消勾选的模型，追加新勾选的模型（已有同 ID 的行不重复加）。
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const removed = new Set(remove);
+    const removedKeys = new Set(
+      modelsRef.current
+        .filter((model) => removed.has(model.id))
+        .map((model) => model.key),
+    );
+    const kept = modelsRef.current.filter(
+      (model) => !removedKeys.has(model.key),
+    );
+    const configured = new Set(kept.map((model) => model.id));
+    const added = add
+      .filter((id) => !configured.has(id))
+      .map((id) => ({ ...newModel(), id, name: id }));
+    const previouslyIncluded = includeModelsRef.current;
+    if (added.length > 0) includeModelsRef.current = true;
+    if (!commitModels([...kept, ...added])) {
+      includeModelsRef.current = previouslyIncluded;
+      return;
+    }
+    if (removedKeys.size > 0) {
+      const prune = (current: Set<string>) =>
+        new Set([...current].filter((key) => !removedKeys.has(key)));
+      setExpandedModelKeys(prune);
+      setExpandedThinkingMapKeys(prune);
+      setEditingThinkingLevel((current) =>
+        current && removedKeys.has(current.modelKey) ? null : current,
+      );
+    }
+    // 弹窗里已经显示过这些参数，补完不再提示。
+    for (const model of added) fillModelMetadataFor(model.key, model.id, true);
   };
 
   const updateThinkingLevelMap = (
@@ -966,13 +1189,13 @@ export function PiProviderForm({
     )
       .then((result) => {
         if (modelFetchGenerationRef.current !== requestGeneration) return;
-        setFetchedModels(result);
-        if (result.length === 0) {
+        const models = [
+          ...new Map(result.map((model) => [model.id, model])).values(),
+        ];
+        setFetchedModels(models);
+        // 拉到模型时直接打开选择弹窗，不再提示成功。
+        if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: result.length }),
-          );
         }
       })
       .catch((error) => {
@@ -998,6 +1221,31 @@ export function PiProviderForm({
       setIncludeApi(true);
     },
     [invalidateFetchedModels, updateSettingsConfig],
+  );
+
+  // discovery 不受表单控制（在 passthrough 里），这里只改它的 type，其余子键原样保留。
+  // 例外是 injectV1：omp 只允许它出现在 openai-models-list 上，留着会让整份 models.yml 失效。
+  const ompDiscoveryType = optionalText(
+    asObject(providerPassthrough.discovery).type,
+  );
+  const handleOmpDiscoveryChange = useCallback(
+    (value: string) => {
+      // 下拉在 <form> 里随折叠区挂载，Radix 可能回报一次空串，不能当成「关闭」
+      if (!value) return;
+      const next = { ...providerPassthrough };
+      const { type: _previous, injectV1, ...extra } = asObject(next.discovery);
+      if (value === "openai-models-list" && injectV1 !== undefined) {
+        extra.injectV1 = injectV1;
+      }
+      if (value === OMP_DISCOVERY_OFF) delete next.discovery;
+      else next.discovery = { type: value, ...extra };
+      const applied = updateSettingsConfig((config) => {
+        if (next.discovery) config.discovery = next.discovery;
+        else delete config.discovery;
+      });
+      if (applied) setProviderPassthrough(next);
+    },
+    [providerPassthrough, updateSettingsConfig],
   );
 
   const handleApiKeyChange = useCallback(
@@ -1087,13 +1335,19 @@ export function PiProviderForm({
           "#pi-provider-key",
         );
       }
+      if (isDuplicateProviderKey) {
+        throw new PiFormValidationError(
+          t("pi.form.providerKeyDuplicate"),
+          "#pi-provider-key",
+        );
+      }
       if (!isEdit && selectedPreset && apiKey.length === 0) {
         throw new PiFormValidationError(
           t("pi.form.credentialRequired"),
           "#pi-api-key",
         );
       }
-      if (!isEdit && models.length === 0) {
+      if (!isEdit && models.length === 0 && !(isOmp && ompDiscoveryType)) {
         throw new PiFormValidationError(
           t("pi.form.modelRequired"),
           "#pi-add-model",
@@ -1154,6 +1408,7 @@ export function PiProviderForm({
             )
           : undefined;
         if (
+          !isOmp &&
           model.hasThinkingLevelMap &&
           !isPiThinkingLevelMap(model.thinkingLevelMap)
         ) {
@@ -1206,7 +1461,7 @@ export function PiProviderForm({
             : {}),
           ...(contextWindow !== undefined ? { contextWindow } : {}),
           ...(maxTokens !== undefined ? { maxTokens } : {}),
-          ...(model.hasThinkingLevelMap
+          ...(!isOmp && model.hasThinkingLevelMap
             ? { thinkingLevelMap: model.thinkingLevelMap }
             : {}),
         };
@@ -1227,7 +1482,7 @@ export function PiProviderForm({
 
       const settingsConfig = buildPiSettingsConfig({
         passthrough: providerPassthrough,
-        nativeName: resolveNativeName(trimmedName),
+        nativeName: isOmp ? undefined : resolveNativeName(trimmedName),
         baseUrl,
         api,
         includeApi,
@@ -1243,7 +1498,7 @@ export function PiProviderForm({
         websiteUrl: identity.websiteUrl?.trim() ?? "",
         notes: identity.notes?.trim() ?? "",
         settingsConfig: JSON.stringify(settingsConfig),
-        icon: identity.icon || selectedPreset?.icon || "pi",
+        icon: identity.icon || selectedPreset?.icon || "",
         iconColor: identity.iconColor || selectedPreset?.iconColor || "",
         providerKey: isEdit ? providerId : trimmedKey,
         presetId: selectedPresetId ?? undefined,
@@ -1311,7 +1566,7 @@ export function PiProviderForm({
         onChangeCapture={() => {
           if (formError) setFormError(null);
         }}
-        className="space-y-6 glass rounded-xl p-6 border border-white/10"
+        className="space-y-6"
       >
         {!isEdit && (
           <ProviderPresetSelector
@@ -1336,7 +1591,7 @@ export function PiProviderForm({
         {hasConfigurationSelection && !isSettingsConfigValid && (
           <p
             role="status"
-            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
+            className="rounded-lg border border-transparent bg-warning-soft px-4 py-3 text-sm text-warning-text"
           >
             {t("pi.form.fixJsonFirst")}
           </p>
@@ -1350,29 +1605,30 @@ export function PiProviderForm({
             <BasicFormFields
               form={form}
               beforeNameSlot={
-                isEdit || selectedPresetId === "custom" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="pi-provider-key">
-                      {t("pi.form.providerKey")}
-                      <span
-                        aria-hidden="true"
-                        className="text-destructive ml-1"
-                      >
-                        *
-                      </span>
-                    </Label>
-                    <Input
-                      id="pi-provider-key"
-                      value={providerKey}
-                      onChange={(event) =>
-                        handleProviderKeyChange(event.target.value)
-                      }
-                      disabled={isEdit}
-                      placeholder="my-provider"
-                      autoComplete="off"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {isEdit
+                <div className="space-y-2">
+                  <Label htmlFor="pi-provider-key" className={REQUIRED_LABEL}>
+                    {t("pi.form.providerKey")}
+                  </Label>
+                  <Input
+                    id="pi-provider-key"
+                    value={providerKey}
+                    onChange={(event) =>
+                      handleProviderKeyChange(event.target.value)
+                    }
+                    disabled={isEdit}
+                    placeholder="my-provider"
+                    autoComplete="off"
+                  />
+                  <p
+                    className={
+                      isDuplicateProviderKey
+                        ? "text-xs text-destructive"
+                        : "text-xs text-fg-2"
+                    }
+                  >
+                    {isDuplicateProviderKey
+                      ? t("pi.form.providerKeyDuplicate")
+                      : isEdit
                         ? t("opencode.providerKeyLockedHint", {
                             defaultValue:
                               "该供应商已添加到应用配置中，供应商标识不可修改",
@@ -1381,9 +1637,8 @@ export function PiProviderForm({
                             defaultValue:
                               "配置文件中的唯一标识符，只能使用小写字母、数字和连字符",
                           })}
-                    </p>
-                  </div>
-                ) : undefined
+                  </p>
+                </div>
               }
             />
 
@@ -1408,11 +1663,6 @@ export function PiProviderForm({
                   )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                {t("opencode.npmPackageHint", {
-                  defaultValue: "选择 AI 服务的 API 接口格式",
-                })}
-              </p>
             </Field>
 
             <ApiKeySection
@@ -1435,58 +1685,26 @@ export function PiProviderForm({
                 onChange={handleBaseUrlChange}
                 placeholder="https://api.example.com/v1"
               />
-              <p className="text-xs text-muted-foreground">
-                {t("opencode.baseUrlHint", {
-                  defaultValue: "自定义 API 端点地址",
-                })}
-              </p>
             </div>
-
-            <RequestHeadersEditor
-              headers={providerHeaders}
-              onHeadersChange={handleProviderHeadersChange}
-            />
-
-            <StructuredOptionsEditor
-              id="pi-provider-compat"
-              title={t("pi.form.compatibility")}
-              hint={t("pi.form.compatibilityHint")}
-              addLabel={t("pi.form.addCompatibilityOption")}
-              emptyLabel={t("pi.form.noCompatibilityOptions")}
-              keyLabel={t("pi.form.optionKey")}
-              valueLabel={t("pi.form.optionValue")}
-              keyPlaceholder="supportsDeveloperRole"
-              valuePlaceholder="false"
-              removeLabel={t("pi.form.removeCompatibilityOption")}
-              options={providerCompat}
-              onOptionsChange={handleProviderCompatChange}
-            />
 
             <div
               id="pi-models-section"
               tabIndex={-1}
-              className="space-y-3 border-l border-border-default pl-3 outline-none"
+              className="space-y-3 border-l border-border pl-3 outline-none"
             >
               <div className="flex items-center justify-between gap-3">
                 <FormLabel>
                   {t("opencode.models", { defaultValue: "模型配置" })}
                 </FormLabel>
                 <div className="flex gap-1">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleFetchModels}
-                    disabled={isFetchingModels}
-                    className="h-7 gap-1"
-                  >
-                    {isFetchingModels ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Download className="h-3.5 w-3.5" />
-                    )}
-                    {t("providerForm.fetchModels")}
-                  </Button>
+                  <FetchedModelPicker
+                    models={fetchedModels}
+                    configuredModelIds={models.map((model) => model.id)}
+                    onApply={handleApplyFetchedModels}
+                    onFetch={handleFetchModels}
+                    isFetching={isFetchingModels}
+                    metadataSource={{ baseUrl, presets: piPresetModelSources }}
+                  />
                   <Button
                     id="pi-add-model"
                     type="button"
@@ -1502,32 +1720,20 @@ export function PiProviderForm({
               </div>
 
               {models.length === 0 ? (
-                <p role="status" className="py-2 text-sm text-muted-foreground">
+                <p role="status" className="py-2 text-sm text-fg-2">
                   {t("pi.form.noModels", {
                     defaultValue: "暂无模型配置",
                   })}
                 </p>
               ) : (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
                     <span className="w-9" />
-                    <span className="flex-1">
+                    <span className={cn("flex-1", REQUIRED_LABEL)}>
                       {t("pi.form.modelId")}
-                      <span
-                        aria-hidden="true"
-                        className="ml-1 text-destructive"
-                      >
-                        *
-                      </span>
                     </span>
-                    <span className="flex-1">
+                    <span className={cn("flex-1", REQUIRED_LABEL)}>
                       {t("pi.form.modelName")}
-                      <span
-                        aria-hidden="true"
-                        className="ml-1 text-destructive"
-                      >
-                        *
-                      </span>
                     </span>
                     <span className="w-9" />
                   </div>
@@ -1578,7 +1784,9 @@ export function PiProviderForm({
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
                                 models={fetchedModels}
-                                onSelect={(id) => changeModelId(model.key, id)}
+                                onSelect={(id) =>
+                                  selectFetchedModelId(model.key, id)
+                                }
                               />
                             )}
                           </div>
@@ -1596,16 +1804,18 @@ export function PiProviderForm({
                             required={!isEdit || model.hasName}
                             className="min-w-0 flex-1"
                           />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => removeModel(model.key)}
-                            aria-label={t("pi.form.removeModel")}
-                            className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <HoverTip content={t("pi.form.removeModel")}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => removeModel(model.key)}
+                              aria-label={t("pi.form.removeModel")}
+                              className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </HoverTip>
                         </div>
 
                         {isExpanded && (
@@ -1652,17 +1862,8 @@ export function PiProviderForm({
                               </div>
                             </div>
                             <Field
-                              label={
-                                <>
-                                  {t("pi.form.contextWindow")}
-                                  <span
-                                    aria-hidden="true"
-                                    className="ml-1 text-destructive"
-                                  >
-                                    *
-                                  </span>
-                                </>
-                              }
+                              label={t("pi.form.contextWindow")}
+                              required
                               htmlFor={`pi-model-context-window-${model.key}`}
                             >
                               <Input
@@ -1682,19 +1883,14 @@ export function PiProviderForm({
                                 }
                                 placeholder="128000"
                               />
+                              <GptContextWindowHint
+                                modelId={model.id}
+                                contextWindow={model.contextWindow}
+                              />
                             </Field>
                             <Field
-                              label={
-                                <>
-                                  {t("pi.form.maxTokens")}
-                                  <span
-                                    aria-hidden="true"
-                                    className="ml-1 text-destructive"
-                                  >
-                                    *
-                                  </span>
-                                </>
-                              }
+                              label={t("pi.form.maxTokens")}
+                              required
                               htmlFor={`pi-model-max-tokens-${model.key}`}
                             >
                               <Input
@@ -1715,7 +1911,7 @@ export function PiProviderForm({
                                 placeholder="16384"
                               />
                             </Field>
-                            {model.reasoning === true && (
+                            {!isOmp && model.reasoning === true && (
                               <div
                                 id={`pi-model-thinking-levels-${model.key}`}
                                 tabIndex={-1}
@@ -1748,7 +1944,7 @@ export function PiProviderForm({
                                         : t("pi.form.customizeThinkingLevels")
                                     }
                                     aria-expanded={thinkingMapIsExpanded}
-                                    className="-ml-2 h-8 gap-1.5 px-2 text-foreground"
+                                    className="-ml-2 h-8 gap-1.5 px-2 text-fg-1"
                                   >
                                     <span>
                                       {t("pi.form.thinkingLevelsLabel")}
@@ -1765,7 +1961,7 @@ export function PiProviderForm({
 
                                 {thinkingMapIsExpanded &&
                                   editableThinkingLevelMap && (
-                                    <div className="overflow-hidden rounded-lg border border-border/70 bg-background/30">
+                                    <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">
                                       {PI_THINKING_LEVELS.map((level) => {
                                         const mode = thinkingLevelMode(
                                           editableThinkingLevelMap,
@@ -1803,7 +1999,7 @@ export function PiProviderForm({
                                                     ),
                                                   },
                                                 )}
-                                                className="group flex h-[42px] w-full items-center gap-3 border-b border-border/40 px-4 text-left text-sm transition-colors last:border-b-0 hover:bg-muted/40"
+                                                className="group flex h-[42px] w-full items-center gap-3 border-b border-border/40 px-4 text-left text-sm transition-colors last:border-b-0 hover:bg-subtle"
                                               >
                                                 <span className="flex-1">
                                                   {t(
@@ -1813,8 +2009,8 @@ export function PiProviderForm({
                                                 <span
                                                   className={
                                                     mode === "value"
-                                                      ? "max-w-[18rem] truncate text-right font-mono text-xs text-foreground"
-                                                      : "text-xs text-muted-foreground"
+                                                      ? "max-w-[18rem] truncate text-right font-mono text-xs text-fg-1"
+                                                      : "text-xs text-fg-2"
                                                   }
                                                 >
                                                   {mode === "default"
@@ -1832,7 +2028,7 @@ export function PiProviderForm({
                                                     className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-[color,background-color,transform] duration-200 ${
                                                       popoverOpen
                                                         ? "translate-x-0.5 bg-primary/10 text-primary"
-                                                        : "text-muted-foreground/50 group-hover:translate-x-0.5 group-hover:text-muted-foreground"
+                                                        : "text-fg-3 group-hover:translate-x-0.5 group-hover:text-fg-2"
                                                     }`}
                                                   >
                                                     <ChevronRight className="h-3.5 w-3.5" />
@@ -1865,7 +2061,7 @@ export function PiProviderForm({
                                                       "default",
                                                     )
                                                   }
-                                                  className="h-4 w-4 accent-primary"
+                                                  className="ui-radio"
                                                 />
                                                 {t(
                                                   "pi.form.thinkingLevelFollowDefault",
@@ -1887,7 +2083,7 @@ export function PiProviderForm({
                                                       "value",
                                                     )
                                                   }
-                                                  className="h-4 w-4 accent-primary"
+                                                  className="ui-radio"
                                                 />
                                                 <label
                                                   htmlFor={`pi-thinking-level-value-${model.key}-${level}`}
@@ -1947,7 +2143,7 @@ export function PiProviderForm({
                                                       "unsupported",
                                                     )
                                                   }
-                                                  className="h-4 w-4 accent-primary"
+                                                  className="ui-radio"
                                                 />
                                                 {t(
                                                   "pi.form.thinkingLevelMarkUnavailable",
@@ -1968,13 +2164,87 @@ export function PiProviderForm({
                   })}
                 </div>
               )}
-
-              <p className="text-xs text-muted-foreground">
-                {t("opencode.modelsHint", {
-                  defaultValue: "配置可用的模型及其显示名称。",
-                })}
-              </p>
             </div>
+
+            <Collapsible
+              open={advancedExpanded}
+              onOpenChange={setAdvancedExpanded}
+              className="rounded-lg border border-border p-4"
+            >
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant={null}
+                  size="sm"
+                  className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
+                >
+                  {advancedExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                  {t("providerForm.advancedOptionsToggle")}
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-6 pt-3">
+                <RequestHeadersEditor
+                  headers={providerHeaders}
+                  onHeadersChange={handleProviderHeadersChange}
+                />
+
+                {isOmp && (
+                  <Field
+                    label={t("omp.form.discoveryType")}
+                    htmlFor="omp-discovery-type"
+                  >
+                    <Select
+                      value={ompDiscoveryType || OMP_DISCOVERY_OFF}
+                      onValueChange={handleOmpDiscoveryChange}
+                    >
+                      <SelectTrigger id="omp-discovery-type" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={OMP_DISCOVERY_OFF}>
+                          {t("omp.form.discoveryOff")}
+                        </SelectItem>
+                        {OMP_DISCOVERY_TYPES.map(({ value, labelKey }) => (
+                          <SelectItem key={value} value={value}>
+                            {t(`omp.form.discoveryTypes.${labelKey}`)}
+                          </SelectItem>
+                        ))}
+                        {ompDiscoveryType &&
+                          !OMP_DISCOVERY_TYPES.some(
+                            ({ value }) => value === ompDiscoveryType,
+                          ) && (
+                            <SelectItem value={ompDiscoveryType}>
+                              {ompDiscoveryType}
+                            </SelectItem>
+                          )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {t("omp.form.discoveryHint")}
+                    </p>
+                  </Field>
+                )}
+
+                <StructuredOptionsEditor
+                  id="pi-provider-compat"
+                  title={t("pi.form.compatibility")}
+                  hint={t("pi.form.compatibilityHint")}
+                  addLabel={t("pi.form.addCompatibilityOption")}
+                  emptyLabel={t("pi.form.noCompatibilityOptions")}
+                  keyLabel={t("pi.form.optionKey")}
+                  valueLabel={t("pi.form.optionValue")}
+                  keyPlaceholder="supportsDeveloperRole"
+                  valuePlaceholder="false"
+                  removeLabel={t("pi.form.removeCompatibilityOption")}
+                  options={providerCompat}
+                  onOptionsChange={handleProviderCompatChange}
+                />
+              </CollapsibleContent>
+            </Collapsible>
           </fieldset>
         )}
 
@@ -2023,15 +2293,22 @@ export function PiProviderForm({
 function Field({
   label,
   htmlFor,
+  required,
   children,
 }: {
   label: React.ReactNode;
   htmlFor: string;
+  required?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-2">
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <Label
+        htmlFor={htmlFor}
+        className={required ? REQUIRED_LABEL : undefined}
+      >
+        {label}
+      </Label>
       {children}
     </div>
   );

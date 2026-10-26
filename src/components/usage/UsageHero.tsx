@@ -1,34 +1,26 @@
-import { cloneElement, isValidElement } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { motion } from "framer-motion";
-import { Card, CardContent } from "@/components/ui/card";
+import { ChevronDown } from "lucide-react";
 import { useUsageSummaryByApp } from "@/lib/query/usage";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
-import { APP_ICON_MAP } from "@/config/appConfig";
-import type { AppId } from "@/lib/api/types";
 import {
-  Activity,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Database,
-  Info,
-  Loader2,
-  Sparkles,
-  Zap,
-} from "lucide-react";
-import {
-  fmtUsd,
-  formatTokensShort,
+  fmtInt,
+  formatHitRatePercent,
+  formatTokensCompact,
+  getLocaleFromLanguage,
   getResolvedLang,
   parseFiniteNumber,
 } from "./format";
 import {
   getCacheWriteAvailability,
-  type AppType,
   type UsageRangeSelection,
   type UsageSummary,
   type UsageSummaryByApp,
 } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import type { UsageMetric } from "./rememberedChoice";
 
 interface UsageHeroProps {
   range: UsageRangeSelection;
@@ -36,44 +28,12 @@ interface UsageHeroProps {
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
+  /** 窄容器下指标排成两列 */
+  compact?: boolean;
+  /** 选中的指标就是下方趋势图 / 热力图画的指标 */
+  metric: UsageMetric;
+  onMetricChange: (metric: UsageMetric) => void;
 }
-
-interface TitleTheme {
-  /** Foreground color for the icon glyph (text-* class). */
-  accent: string;
-  /** Background tint for the icon square (bg-* class). */
-  iconBg: string;
-}
-
-const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
-  all: { accent: "text-primary", iconBg: "bg-primary/10" },
-  claude: {
-    accent: "text-amber-600 dark:text-amber-400",
-    iconBg: "bg-amber-500/10",
-  },
-  codex: {
-    // OpenAI/Codex 走黑白单色调；中性灰在深浅模式都能透出方块底色，
-    // 不像纯黑 bg-black/10 在深色背景下会糊掉。
-    accent: "text-neutral-700 dark:text-neutral-300",
-    iconBg: "bg-neutral-500/10",
-  },
-  gemini: {
-    accent: "text-sky-600 dark:text-sky-400",
-    iconBg: "bg-sky-500/10",
-  },
-  grokbuild: {
-    accent: "text-rose-600 dark:text-rose-400",
-    iconBg: "bg-rose-500/10",
-  },
-  opencode: {
-    accent: "text-purple-600 dark:text-purple-400",
-    iconBg: "bg-purple-500/10",
-  },
-  pi: {
-    accent: "text-fuchsia-600 dark:text-fuchsia-400",
-    iconBg: "bg-fuchsia-500/10",
-  },
-};
 
 /**
  * Combine per-app summaries into a single rolled-up summary.
@@ -83,7 +43,7 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
  * `cacheHitRate` and `successRate` must be re-derived from the summed counts
  * rather than averaged across rows.
  */
-function aggregateSummaries(items: UsageSummary[]): UsageSummary {
+export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
   let totalRequests = 0;
   let successCount = 0;
   let totalCostNum = 0;
@@ -128,35 +88,137 @@ function pickSummary(
 }
 
 /**
- * Hero 标题图标：选中具体应用时显示该应用的品牌图标，"全部"时回退到通用闪电。
- * 复用 APP_ICON_MAP（与侧边栏 / 应用切换器同一套图标），用 cloneElement 放大到
- * 与原闪电一致的 20px；品牌图标自带配色，外层方块仍按 titleTheme 主题色着色。
+ * 指标格：整格是一个按下态按钮（铺满整格、放在内容底下），内容层不接指针事件，
+ * 只有「?」接——按钮里不能再套按钮。选中的格子是实心底色，其余透明。
  */
-function AppGlyph({
-  appType,
-  accentClass,
+function MetricCell({
+  label,
+  help,
+  value,
+  title,
+  selected,
+  onSelect,
 }: {
-  appType?: string;
-  accentClass: string;
+  label: string;
+  help?: { title: string; body: string };
+  value: string;
+  title?: string;
+  selected: boolean;
+  onSelect: () => void;
 }) {
-  if (appType && appType in APP_ICON_MAP) {
-    const base = APP_ICON_MAP[appType as AppId].icon;
-    if (isValidElement<{ size?: number }>(base)) {
-      return cloneElement(base, { size: 20 });
-    }
-  }
-  return <Zap className={cn("h-5 w-5", accentClass)} />;
+  return (
+    <div className="group relative min-w-0 px-4 pb-3.5 pt-2.5">
+      <button
+        type="button"
+        aria-pressed={selected}
+        aria-label={`${label} ${value}`}
+        onClick={onSelect}
+        className={cn(
+          "absolute inset-0 transition-[background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          // 选中：底边一道 2px 正文色线，下半像素压住分隔线，和它在同一水平线上；不再用底色
+          // 悬停用 group：鼠标在数字上（数字接指针事件、显示完整值）时整格也要变色
+          selected
+            ? "shadow-[inset_0_-1px_0_var(--text-1),0_1px_0_var(--text-1)]"
+            : "group-hover:bg-sidebar",
+        )}
+      />
+      <div className="pointer-events-none relative flex min-w-0 flex-col gap-0.5">
+        <div className="flex h-[18px] min-w-0 items-center gap-0.5">
+          <span
+            className={cn(
+              "truncate text-caption",
+              selected ? "text-fg-1" : "text-fg-2",
+            )}
+          >
+            {label}
+          </span>
+          {help && (
+            // flex 包一层：行内 span 会让「?」按基线排、比文字低约 1px
+            <span className="pointer-events-auto flex">
+              <HelpTip title={help.title} align="end">
+                {help.body}
+              </HelpTip>
+            </span>
+          )}
+        </div>
+        {/* 完整数字的提示挂在数字上、往右弹：挂在整格上会弹到格子底下、盖住展开的第二行。
+            数字接指针事件才能悬停，点它同样是选这一格 */}
+        <HoverTip content={title} side="right">
+          <span
+            aria-hidden="true"
+            onClick={onSelect}
+            className={cn(
+              "max-w-full self-start truncate text-metric leading-7 tabular-nums",
+              title && "pointer-events-auto",
+              selected ? "text-fg-1" : "text-fg-2",
+            )}
+          >
+            {value}
+          </span>
+        </HoverTip>
+      </div>
+    </div>
+  );
 }
 
+/**
+ * Tokens 的一个组成部分：展开行里的一格，和上面的指标格同列、同内边距；
+ * 标签在上、数值在下，「?」跟在标签后面。数值不截断。
+ * 不加底色：灰底已经表示「选中」，这一行只靠更小的字号和灰字表示是二级指标。
+ */
+function SubMetric({
+  label,
+  value,
+  title,
+  muted,
+  help,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  muted?: boolean;
+  help?: { title: string; body: string };
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 px-4 py-2.5">
+      <span className="flex h-[18px] items-center gap-0.5 whitespace-nowrap text-caption text-fg-3">
+        {label}
+        {help && <HelpTip title={help.title}>{help.body}</HelpTip>}
+      </span>
+      <HoverTip content={title} side="right">
+        <span
+          className={cn(
+            "self-start whitespace-nowrap text-section tabular-nums",
+            muted ? "font-medium text-fg-3" : "text-fg-2",
+          )}
+        >
+          {value}
+        </span>
+      </HoverTip>
+    </div>
+  );
+}
+
+/**
+ * 指标条（概览面板顶部）：总成本、总请求数、真实消耗 Tokens、缓存命中率 4 格等宽，
+ * 点一格切换下方图表的指标。Tokens 的 4 个组成部分（新增输入、输出、缓存写入、缓存命中）
+ * 是可选的展示项：默认收起，点分隔线正中的箭头展开成第二行，和上面 4 列对齐。
+ */
 export function UsageHero({
   range,
   appType,
   providerName,
   model,
   refreshIntervalMs,
+  compact = false,
+  metric,
+  onMetricChange,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
-  const lang = getResolvedLang(i18n);
+  const { money, moneyTitle } = useMoneyFormat();
+  const locale = getLocaleFromLanguage(getResolvedLang(i18n));
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreId = useId();
 
   const { data, isLoading } = useUsageSummaryByApp(
     range,
@@ -166,18 +228,11 @@ export function UsageHero({
     },
   );
 
-  // No client-side filtering: Hero's totals must match the Trend/Logs/Stats
-  // below, which all go through the backend's full set of app_types. The
-  // KNOWN_APP_TYPES list only governs which filter buttons appear, not which
-  // rows participate in the "all" aggregate.
+  // No client-side filtering: totals must match the Trend/Logs/Stats below,
+  // which all go through the backend's full set of app_types. The
+  // KNOWN_APP_TYPES list only governs which filter chips appear.
   const allApps = data ?? [];
   const summary = pickSummary(allApps, appType);
-
-  const titleTheme =
-    TITLE_THEMES[(appType ?? "all") as keyof typeof TITLE_THEMES] ??
-    TITLE_THEMES.all;
-  const appLabel =
-    appType && appType in TITLE_THEMES ? t(`usage.appFilter.${appType}`) : null;
 
   const cacheWriteState = getCacheWriteAvailability(
     appType ? [appType] : allApps.map((a) => a.appType),
@@ -192,203 +247,141 @@ export function UsageHero({
   const totalCost = parseFiniteNumber(summary?.totalCost);
   const requests = summary?.totalRequests ?? 0;
 
-  const cacheWriteDisplay = {
-    value:
-      cacheWriteState === "na" ? "N/A" : formatTokensShort(cacheWrite, lang),
-    muted: cacheWriteState === "na",
-    tooltip:
-      cacheWriteState === "na"
-        ? t(
-            "usage.cacheWriteNotReported",
-            "OpenAI 协议不区分缓存写入，仅上报缓存命中",
-          )
-        : cacheWriteState === "partial"
-          ? t(
-              "usage.cacheWritePartial",
-              "部分协议（如 OpenAI）不上报缓存写入，数值可能偏低",
-            )
-          : undefined,
-  };
+  // 加载中写「…」；这段时间一条请求都没有时，各项都写「—」（和表格的空值一致），
+  // 不写 0 / 0.0%：那是「有数据、结果为零」的意思
+  const placeholder = isLoading ? "…" : requests === 0 ? "—" : undefined;
+  // 命中率的分母（新增输入 + 缓存写入 + 缓存命中）为 0 时没有意义，同样写「—」
+  const hitRateKnown = input + cacheWrite + cacheRead > 0;
+  const tokens = (value: number) => formatTokensCompact(value, locale);
+  // 悬停看完整数字；加载中、没有数据时格子里是「…」「—」，不提示
+  const exact = (text: string | undefined) => (placeholder ? undefined : text);
+  const columns = compact ? "grid-cols-2" : "grid-cols-4";
 
-  if (isLoading) {
-    return (
-      <Card className="border border-border/50 bg-card/40 backdrop-blur-sm">
-        <CardContent className="flex items-center justify-center min-h-[200px]">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/50" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const hitPercent = Math.max(0, Math.min(100, hitRate * 100));
-  const hitPercentLabel = hitPercent.toFixed(hitPercent >= 99.95 ? 0 : 1);
+  const cacheWriteHelp =
+    cacheWriteState === "na"
+      ? t("usage.cacheWriteNotReported")
+      : cacheWriteState === "partial"
+        ? t("usage.cacheWritePartial")
+        : undefined;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 5 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
+    <section
+      aria-label={t("usage.metrics.label")}
+      className="relative z-10 border-b border-border"
     >
-      <Card className="relative overflow-hidden border border-border/50 bg-card/60 backdrop-blur-xl shadow-sm">
-        <CardContent className="p-4 md:p-5">
-          <div className="flex flex-col gap-4">
-            {/* Top row: Main Token Count, Requests, Cost */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div
-                  className={cn(
-                    "p-2.5 rounded-xl bg-gradient-to-br shadow-sm",
-                    titleTheme.iconBg,
-                  )}
-                >
-                  <AppGlyph appType={appType} accentClass={titleTheme.accent} />
-                </div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mb-0.5">
-                    {appLabel && (
-                      <>
-                        <span
-                          className={cn("font-semibold", titleTheme.accent)}
-                        >
-                          {appLabel}
-                        </span>
-                        <span className="text-muted-foreground/30">•</span>
-                      </>
-                    )}
-                    {t("usage.realTotal", "真实消耗 Tokens")}
-                  </div>
-                  <div className="flex items-baseline gap-2">
-                    <span
-                      className="text-2xl md:text-3xl font-bold tabular-nums tracking-tight leading-none"
-                      title={realTotal.toLocaleString()}
-                    >
-                      {realTotal.toLocaleString()}
-                    </span>
-                    <span className="text-xs text-muted-foreground font-medium bg-muted/40 px-1.5 py-0.5 rounded-md">
-                      ≈ {formatTokensShort(realTotal, lang, 2)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-5 bg-background/50 px-4 py-2.5 rounded-xl border border-border/40 shadow-sm">
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                    {t("usage.totalRequests")}
-                  </span>
-                  <span className="font-semibold flex items-center gap-1.5 text-sm tabular-nums">
-                    <Activity className="h-3.5 w-3.5 text-blue-500" />
-                    {requests.toLocaleString()}
-                  </span>
-                </div>
-                <div className="w-px h-8 bg-border/60" />
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                    {t("usage.totalCost")}
-                  </span>
-                  <span className="font-semibold text-green-500 text-sm tabular-nums">
-                    {totalCost == null ? "--" : fmtUsd(totalCost, 4)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bottom row: Breakdown and Hit Rate */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-              <MiniStat
-                icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
-                label={t("usage.freshInput", "新增输入")}
-                value={formatTokensShort(input, lang)}
-                accent="text-blue-500"
-              />
-              <MiniStat
-                icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
-                label={t("usage.output")}
-                value={formatTokensShort(output, lang)}
-                accent="text-purple-500"
-              />
-              <MiniStat
-                icon={<Database className="h-3.5 w-3.5" />}
-                label={t("usage.cacheWrite", "缓存写入")}
-                value={cacheWriteDisplay.value}
-                accent="text-amber-500"
-                muted={cacheWriteDisplay.muted}
-                tooltip={cacheWriteDisplay.tooltip}
-              />
-              <MiniStat
-                icon={<Sparkles className="h-3.5 w-3.5" />}
-                label={t("usage.cacheRead", "缓存命中")}
-                value={formatTokensShort(cacheRead, lang)}
-                accent="text-emerald-500"
-              />
-
-              <div className="col-span-2 lg:col-span-1 flex flex-col justify-center rounded-xl border border-border/40 bg-background/40 p-3 shadow-sm">
-                <div className="flex items-center justify-between text-[11px] mb-2">
-                  <span className="text-muted-foreground font-medium">
-                    {t("usage.cacheHitRate", "缓存命中率")}
-                  </span>
-                  <span className="font-bold text-emerald-500 tabular-nums">
-                    {hitPercentLabel}%
-                  </span>
-                </div>
-                <div className="relative h-1.5 rounded-full bg-muted/60 overflow-hidden">
-                  <motion.div
-                    className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${hitPercent}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
-}
-
-interface MiniStatProps {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  accent: string;
-  /** Optional hover tooltip — used to flag protocol-level caveats. */
-  tooltip?: string;
-  /** Visually de-emphasize the value (e.g. for "N/A" cases). */
-  muted?: boolean;
-}
-
-function MiniStat({
-  icon,
-  label,
-  value,
-  accent,
-  tooltip,
-  muted,
-}: MiniStatProps) {
-  return (
-    <div
-      className="flex flex-col gap-1 rounded-xl border border-border/40 bg-background/40 p-3 shadow-sm"
-      title={tooltip}
-    >
-      <div
-        className={`flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground ${accent}`}
-      >
-        {icon}
-        <span className="text-foreground/70 tracking-wide">{label}</span>
-        {tooltip && (
-          <Info className="h-3 w-3 text-muted-foreground/60 shrink-0 ml-auto" />
-        )}
+      <div className={cn("grid", columns)}>
+        <MetricCell
+          label={t("usage.totalCost")}
+          value={placeholder ?? (totalCost == null ? "—" : money(totalCost, 2))}
+          title={
+            totalCost == null ? undefined : exact(moneyTitle(totalCost, 6))
+          }
+          selected={metric === "cost"}
+          onSelect={() => onMetricChange("cost")}
+        />
+        <MetricCell
+          label={t("usage.totalRequests")}
+          value={placeholder ?? fmtInt(requests, locale)}
+          selected={metric === "requests"}
+          onSelect={() => onMetricChange("requests")}
+        />
+        <MetricCell
+          label={t("usage.realTotal")}
+          help={{
+            title: t("usage.metrics.realTotalHelpTitle"),
+            body: t("usage.metrics.realTotalHelp"),
+          }}
+          value={placeholder ?? tokens(realTotal)}
+          title={exact(fmtInt(realTotal, locale))}
+          selected={metric === "tokens"}
+          onSelect={() => onMetricChange("tokens")}
+        />
+        <MetricCell
+          label={t("usage.cacheHitRate")}
+          help={{
+            title: t("usage.metrics.hitRateHelpTitle"),
+            body: t("usage.metrics.hitRateHelp"),
+          }}
+          value={
+            placeholder ?? (hitRateKnown ? formatHitRatePercent(hitRate) : "—")
+          }
+          selected={metric === "hitRate"}
+          onSelect={() => onMetricChange("hitRate")}
+        />
       </div>
+
+      {/* 展开 / 收起：0fr ↔ 1fr 过渡高度；收起时整行 inert，里面的「?」不进 Tab 顺序 */}
       <div
+        id={moreId}
         className={cn(
-          "text-sm font-semibold tabular-nums",
-          muted && "text-muted-foreground/70",
+          "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          moreOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
         )}
+        {...(moreOpen ? {} : { inert: "" })}
       >
-        {value}
+        <div className="min-h-0 overflow-hidden">
+          <div className={cn("grid border-t border-border", columns)}>
+            <SubMetric
+              label={t("usage.freshInput")}
+              value={placeholder ?? tokens(input)}
+              title={exact(fmtInt(input, locale))}
+            />
+            <SubMetric
+              label={t("usage.outputTokens")}
+              value={placeholder ?? tokens(output)}
+              title={exact(fmtInt(output, locale))}
+            />
+            <SubMetric
+              label={t("usage.logColumns.cacheWrite")}
+              value={
+                cacheWriteState === "na"
+                  ? "N/A"
+                  : (placeholder ?? tokens(cacheWrite))
+              }
+              title={
+                cacheWriteState === "na"
+                  ? undefined
+                  : exact(fmtInt(cacheWrite, locale))
+              }
+              muted={cacheWriteState === "na"}
+              help={
+                cacheWriteHelp
+                  ? {
+                      title: t("usage.logColumns.cacheWrite"),
+                      body: cacheWriteHelp,
+                    }
+                  : undefined
+              }
+            />
+            <SubMetric
+              label={t("usage.cacheReadTokens")}
+              value={placeholder ?? tokens(cacheRead)}
+              title={exact(fmtInt(cacheRead, locale))}
+            />
+          </div>
+        </div>
       </div>
-    </div>
+
+      {/* 展开按钮压在面板分隔线正中（24 见方的圆，上下各占 12）：上面的指标格底部留 14、下面的图表顶部留 20，都盖得住它；展开时子指标行不另留。
+          只有箭头，名字放 aria-label 和悬停提示 */}
+      <HoverTip content={t("usage.metrics.more")}>
+        <button
+          type="button"
+          aria-label={t("usage.metrics.more")}
+          aria-expanded={moreOpen}
+          aria-controls={moreId}
+          onClick={() => setMoreOpen((open) => !open)}
+          className="absolute bottom-0 left-1/2 inline-flex h-6 w-6 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full border border-border bg-surface text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronDown
+            aria-hidden="true"
+            className={cn(
+              "h-3.5 w-3.5 transition-transform duration-200 motion-reduce:transition-none",
+              moreOpen && "rotate-180",
+            )}
+          />
+        </button>
+      </HoverTip>
+    </section>
   );
 }

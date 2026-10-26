@@ -8,6 +8,11 @@ import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 const mocks = vi.hoisted(() => ({
   useCodexOauth: vi.fn(),
   renderAccountQuota: vi.fn(),
+  accountUsers: vi.fn(),
+}));
+
+vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
+  useManagedAccountUsers: () => mocks.accountUsers,
 }));
 
 vi.mock("@/components/providers/forms/hooks/useCodexOauth", () => ({
@@ -25,8 +30,16 @@ vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: () => <div />,
 }));
 
+vi.mock("@/components/providers/forms/ClaudeOfficialSection", () => ({
+  ClaudeOfficialSection: () => <div />,
+}));
+
 vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
   XaiOAuthSection: () => <div />,
+}));
+
+vi.mock("@/components/providers/KimiAccountLogin", () => ({
+  KimiAccountLogin: () => <div />,
 }));
 
 describe("CodexOAuthSection", () => {
@@ -41,6 +54,8 @@ describe("CodexOAuthSection", () => {
       configurable: true,
       value: vi.fn(),
     });
+    mocks.accountUsers.mockReset();
+    mocks.accountUsers.mockReturnValue([]);
     mocks.useCodexOauth.mockReturnValue({
       accounts: [
         {
@@ -117,6 +132,96 @@ describe("CodexOAuthSection", () => {
     ).toEqual(["account-1", "account-2"]);
   });
 
+  it("shows how many providers use each account", () => {
+    mocks.accountUsers.mockImplementation((ids: string[]) =>
+      ids.includes("account-1")
+        ? [
+            {
+              appId: "claude",
+              providerId: "p1",
+              name: "ChatGPT A",
+              viaDefault: false,
+            },
+            {
+              appId: "codex",
+              providerId: "p2",
+              name: "OpenAI Official",
+              viaDefault: false,
+            },
+          ]
+        : [],
+    );
+    render(<CodexOAuthSection />);
+
+    // 只有在用的账号才写，0 个不显示
+    expect(screen.getAllByText("2 个供应商在用")).toHaveLength(1);
+  });
+
+  it("asks before removing an account and names the affected providers", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    mocks.accountUsers.mockImplementation((ids: string[]) =>
+      ids.includes("account-1")
+        ? [
+            {
+              appId: "claude",
+              providerId: "p1",
+              name: "ChatGPT A",
+              viaDefault: false,
+            },
+            {
+              appId: "claude-desktop",
+              providerId: "p3",
+              name: "ChatGPT Desktop",
+              viaDefault: true,
+            },
+          ]
+        : [],
+    );
+    render(<CodexOAuthSection />);
+
+    // 删除收进账号行的 ⋯
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "删除账号…" }),
+    );
+    expect(authResult.removeAccount).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("删除账号「user@example.com」？");
+    // 指定了这个账号的会坏；跟着默认账号的（还有别的账号）改用新的默认账号
+    expect(dialog).toHaveTextContent(
+      "这些供应商会无法使用，直到重新登录或改选别的账号：",
+    );
+    expect(dialog).toHaveTextContent("Claude Code：ChatGPT A");
+    expect(dialog).toHaveTextContent(
+      "这些供应商用的是默认账号，删除后改用新的默认账号：",
+    );
+    expect(dialog).toHaveTextContent("Claude Desktop：ChatGPT Desktop");
+
+    const confirm = screen.getByRole("button", { name: "删除账号" });
+    expect(confirm.className).toContain("bg-danger");
+    await user.click(confirm);
+    expect(authResult.removeAccount).toHaveBeenCalledWith("account-1");
+  });
+
+  it("has no remove-all entry in the header with several accounts", () => {
+    render(<CodexOAuthSection />);
+
+    // 标题行只有「添加账号」，删账号只走每一行自己的 ⋯
+    expect(
+      screen.queryByRole("button", { name: /注销所有账号|删除全部/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "ChatGPT 的更多操作" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "添加账号" }),
+    ).toBeInTheDocument();
+  });
+
   it("reauthenticates the selected legacy account in place", async () => {
     const user = userEvent.setup();
     const authResult = mocks.useCodexOauth();
@@ -133,6 +238,9 @@ describe("CodexOAuthSection", () => {
     });
 
     render(<CodexOAuthSection />);
+    // 需要重新登录的账号：徽标 + 原因写在第二行，额度不显示
+    expect(screen.getByText("需要重新登录")).toBeInTheDocument();
+    expect(screen.getByText("id_token")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重新登录" }));
 
     expect(reauthAccount).toHaveBeenCalledWith("account-1");
@@ -150,9 +258,111 @@ describe("CodexOAuthSection", () => {
     });
 
     render(<CodexOAuthSection />);
-    await user.click(screen.getByRole("button", { name: "重新登录" }));
+    // 正常账号的「重新登录」在 ⋯ 里
+    expect(
+      screen.queryByRole("button", { name: "重新登录" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "重新登录" }));
 
     expect(reauthAccount).toHaveBeenCalledWith("account-1");
+  });
+
+  it("sets another account as default from its menu", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    render(<CodexOAuthSection />);
+
+    // 默认账号的 ⋯ 里没有「设为默认」
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "设为默认" }),
+    ).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(
+      screen.getByRole("button", { name: "second@example.com 的更多操作" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "设为默认" }));
+    expect(authResult.setDefaultAccount).toHaveBeenCalledWith("account-2");
+  });
+
+  it("shows the device code while waiting for authorization", () => {
+    const authResult = mocks.useCodexOauth();
+    mocks.useCodexOauth.mockReturnValue({
+      ...authResult,
+      pollingState: "polling",
+      isPolling: true,
+      isAddingAccount: true,
+      deviceCode: {
+        provider: "codex_oauth",
+        device_code: "dc",
+        user_code: "7KQP-3XRD",
+        verification_uri: "https://auth.openai.com/codex/device",
+        expires_in: 900,
+        interval: 5,
+      },
+    });
+    render(<CodexOAuthSection />);
+
+    expect(
+      screen.getByText("添加 ChatGPT 账号 · 等待授权中…"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("7KQP-3XRD")).toBeInTheDocument();
+    // 同一组正在登录时，「添加账号」不能再点，原因指向等待块
+    const add = screen.getByRole("button", { name: "添加账号" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAttribute("aria-describedby", "auth-pending-chatgpt");
+  });
+
+  it("reopens browser login without showing device-code controls", async () => {
+    const { settingsApi } = await import("@/lib/api");
+    const openExternal = vi
+      .spyOn(settingsApi, "openExternal")
+      .mockResolvedValue();
+    const authResult = mocks.useCodexOauth();
+    mocks.useCodexOauth.mockReturnValue({
+      ...authResult,
+      pollingState: "polling",
+      isPolling: true,
+      isAddingAccount: true,
+      deviceCode: {
+        provider: "codex_oauth",
+        device_code: "browser:flow",
+        user_code: "",
+        verification_uri:
+          "https://auth.openai.com/oauth/authorize?state=fixture",
+        expires_in: 900,
+        interval: 1,
+      },
+    });
+    try {
+      render(<CodexOAuthSection />);
+      expect(
+        screen.getByText(/已在浏览器打开 ChatGPT 的登录页/),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("在浏览器中输入验证码："),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "复制验证码" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getAllByRole("button", { name: "重新打开登录页" }),
+      ).toHaveLength(1);
+      await userEvent.click(
+        screen.getByRole("button", { name: "重新打开登录页" }),
+      );
+      expect(openExternal).toHaveBeenCalledWith(
+        "https://auth.openai.com/oauth/authorize?state=fixture",
+      );
+    } finally {
+      openExternal.mockRestore();
+    }
   });
 
   it("selects a specific account when multiple accounts are managed", async () => {
@@ -242,7 +452,7 @@ describe("CodexOAuthSection", () => {
     expect(accountPlaceholder.parentElement).toHaveClass(
       "text-sm",
       "font-normal",
-      "text-muted-foreground",
+      "text-fg-2",
     );
   });
 
@@ -466,6 +676,7 @@ describe("CodexOAuthSection", () => {
   });
 
   it("reports automatic invalidation separately from a user choice", async () => {
+    const user = userEvent.setup();
     const authResult = mocks.useCodexOauth();
     const onAccountSelect = vi.fn();
     const onSelectionConfirmed = vi.fn();
@@ -490,5 +701,13 @@ describe("CodexOAuthSection", () => {
     await waitFor(() => expect(onSelectionInvalidated).toHaveBeenCalledOnce());
     expect(onAccountSelect).toHaveBeenCalledWith(null);
     expect(onSelectionConfirmed).not.toHaveBeenCalled();
+
+    rerender(<CodexOAuthSection {...props} selectedAccountId={null} />);
+    await user.click(screen.getByRole("combobox"));
+    await user.click(
+      await screen.findByRole("option", { name: "second@example.com" }),
+    );
+    expect(onAccountSelect).toHaveBeenLastCalledWith("account-2");
+    expect(onSelectionConfirmed).toHaveBeenCalledOnce();
   });
 });

@@ -21,10 +21,10 @@ describe("xAI OAuth provider presets", () => {
     });
     expect((preset!.settingsConfig as any).env).toMatchObject({
       ANTHROPIC_BASE_URL: "https://api.x.ai/v1",
-      ANTHROPIC_MODEL: "grok-4.5",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "grok-4.5",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "grok-4.5",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "grok-4.5",
+      ANTHROPIC_MODEL: "grok-4.7",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "grok-4.7",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "grok-4.7",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "grok-4.7",
     });
     expect((preset!.settingsConfig as any).env).not.toHaveProperty(
       "ANTHROPIC_API_KEY",
@@ -49,7 +49,7 @@ describe("xAI OAuth provider presets", () => {
     });
     expect(preset!.modelRoutes).toEqual([
       expect.objectContaining({
-        upstreamModel: "grok-4.5",
+        upstreamModel: "grok-4.7",
         supports1m: false,
       }),
     ]);
@@ -72,6 +72,12 @@ describe("xAI OAuth provider presets", () => {
     expect(extractCodexWireApi(preset!.config)).toBe("responses");
     expect(extractCodexModelName(preset!.config)).toBe("grok-4.5");
     expect(preset!.modelCatalog).toEqual([
+      expect.objectContaining({
+        model: "grok-4.7",
+        contextWindow: 500000,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+      }),
       expect.objectContaining({
         model: "grok-4.5",
         contextWindow: 500000,

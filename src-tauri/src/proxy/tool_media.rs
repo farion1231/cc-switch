@@ -57,11 +57,25 @@ impl ToolMediaScope {
 /// Scalar strings remain scalar strings after replacement. This matters for a
 /// raw image data URL and for JSON encoded inside a tool-output string: adding
 /// another layer of JSON string quotes would change what the model sees.
-pub(crate) fn plan_chat_tool_output_media(mut output: Value) -> Option<ChatToolOutputMediaPlan> {
+///
+/// The placeholder says the media was "moved to the following user message".
+/// Callers that re-attach the extracted media inside the same message must use
+/// [`plan_chat_tool_output_media_with_marker`] so the placeholder matches where
+/// the media actually lands.
+pub(crate) fn plan_chat_tool_output_media(output: Value) -> Option<ChatToolOutputMediaPlan> {
+    plan_chat_tool_output_media_with_marker(output, TOOL_RESULT_MEDIA_MOVED_MARKER)
+}
+
+/// Same extraction as [`plan_chat_tool_output_media`], with a caller-chosen
+/// placeholder text for the stripped media blocks.
+pub(crate) fn plan_chat_tool_output_media_with_marker(
+    mut output: Value,
+    replacement_marker: &str,
+) -> Option<ChatToolOutputMediaPlan> {
     let output_was_string = output.is_string();
     let replacement_block = json!({
         "type": "text",
-        "text": TOOL_RESULT_MEDIA_MOVED_MARKER
+        "text": replacement_marker
     });
     let mut media_parts = Vec::new();
     let replaced = strip_and_clamp_media_from_tool_value(
@@ -69,7 +83,7 @@ pub(crate) fn plan_chat_tool_output_media(mut output: Value) -> Option<ChatToolO
         &mut media_parts,
         ToolMediaScope::AllSupported,
         &replacement_block,
-        TOOL_RESULT_MEDIA_MOVED_MARKER,
+        replacement_marker,
     );
     if replaced == 0 {
         return None;
@@ -579,6 +593,15 @@ fn merge_top_level_detail(part: &Value, image_url: &mut Map<String, Value>) {
             image_url.insert("detail".to_string(), detail.clone());
         }
     }
+
+    // OpenAI-compatible Chat gateways only accept `auto` / `low` / `high`
+    // here. Codex emits `original` (full-resolution) for models whose catalog
+    // advertises `supports_image_detail_original`, and strict gateways reject
+    // the entire request with `400 invalid_request_error`, param
+    // `messages.N.content`. Downgrade instead of forwarding it verbatim.
+    if image_url.get("detail").and_then(Value::as_str) == Some("original") {
+        image_url.insert("detail".to_string(), Value::String("auto".to_string()));
+    }
 }
 
 fn source_media_type_is_image(source: &Map<String, Value>) -> bool {
@@ -640,6 +663,19 @@ mod tests {
         assert_eq!(mapped["type"], "image_url");
         assert_eq!(mapped["image_url"]["url"], "https://example.com/image.png");
         assert_eq!(mapped["image_url"]["detail"], "high");
+    }
+
+    #[test]
+    fn downgrades_original_image_detail_for_chat_upstreams() {
+        let part = json!({
+            "type": "input_image",
+            "image_url": "https://example.com/image.png",
+            "detail": "original"
+        });
+
+        let mapped = chat_media_part_from_tool_part(&part, ToolMediaScope::AllSupported).unwrap();
+
+        assert_eq!(mapped["image_url"]["detail"], "auto");
     }
 
     #[test]

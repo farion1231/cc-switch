@@ -123,6 +123,7 @@ const createDirectorySettingsMock = (
   },
   isLoading: false,
   initialAppConfigDir: undefined,
+  commitAppConfigDir: vi.fn(),
   updateDirectory: vi.fn(),
   updateAppConfigDir: vi.fn(),
   browseDirectory: vi.fn(),
@@ -297,6 +298,10 @@ describe("useSettings hook", () => {
     });
 
     expect(saveResult).toEqual({ requiresRestart: true });
+    // 存完把基准值换成刚存的，保存按钮和下一次「需要重启」只跟新改动走
+    expect(directorySettingsMock.commitAppConfigDir).toHaveBeenCalledWith(
+      "/override/app",
+    );
     expect(mutateAsyncMock).toHaveBeenCalledTimes(1);
     const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
     expect(payload.claudeConfigDir).toBe("/custom/claude");
@@ -376,6 +381,37 @@ describe("useSettings hook", () => {
     expect(payload.piConfigDir).toBe("/custom/pi");
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
     expect(invalidatePiDirectoryCachesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-saves the persisted directory, not an unsaved draft", async () => {
+    // Directory rows only commit on the explicit Save button. An unrelated
+    // auto-save (a General tab toggle) must not smuggle the half-typed path in.
+    serverSettings = {
+      ...serverSettings,
+      ompConfigDir: "/server/omp",
+      hermesConfigDir: "/server/hermes",
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        ompConfigDir: "/draft/omp",
+        hermesConfigDir: "/draft/hermes",
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.autoSaveSettings({ launchOnStartup: true });
+    });
+
+    const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
+    expect(payload.ompConfigDir).toBe("/server/omp");
+    expect(payload.hermesConfigDir).toBe("/server/hermes");
   });
 
   it("shows toast when Claude plugin sync fails but continues flow", async () => {

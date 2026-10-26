@@ -100,6 +100,33 @@ describe("Pi provider presets", () => {
     expect(models.every((model) => model.contextWindow === 272_000)).toBe(true);
   });
 
+  // #7859: 官方 V4.1 Flash 识图；2026-10-25 起官方预设只留 Flash
+  it("declares image input for official DeepSeek V4.1 Flash", () => {
+    const models =
+      piProviderPresets.find((preset) => preset.name === "DeepSeek")
+        ?.settingsConfig.models ?? [];
+    const input = (id: string) =>
+      models.find((model) => model.id === id)?.input;
+
+    expect(models.map((model) => model.id)).toEqual(["deepseek-flash"]);
+    expect(input("deepseek-flash")).toEqual(["text", "image"]);
+  });
+
+  // #7956: 火山各套餐端点不同，Agent Plan 曾误用 Coding Plan 的端点
+  it("points each Volcengine plan at its own Ark endpoint", () => {
+    const endpoints = Object.fromEntries(
+      piProviderPresets
+        .filter((preset) => preset.family === "volcengine")
+        .map((preset) => [preset.planKey, preset.settingsConfig.baseUrl]),
+    );
+
+    expect(endpoints).toEqual({
+      agentPlan: "https://ark.cn-beijing.volces.com/api/plan/v3",
+      codingPlan: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      payg: "https://ark.cn-beijing.volces.com/api/v3",
+    });
+  });
+
   it("keeps provider-specific OpenAI compatibility metadata", () => {
     const preset = (name: string) => {
       const found = piProviderPresets.find((item) => item.name === name);
@@ -130,22 +157,41 @@ describe("Pi provider presets", () => {
       supportsDeveloperRole: false,
       maxTokensField: "max_tokens",
     };
-    expect(model("OpenCode Go", "glm-5.2").compat).toEqual(openCodeBase);
-    expect(model("OpenCode Go", "kimi-k2.7-code").compat).toEqual(openCodeBase);
-    expect(model("OpenCode Go", "mimo-v2.5-pro").compat).toEqual(openCodeBase);
-    for (const id of ["deepseek-v4-pro", "deepseek-v4-flash"]) {
-      expect(model("OpenCode Go", id).compat).toEqual({
-        ...openCodeBase,
+    expect(model("OpenCode Go", "glm-5.3").compat).toEqual(openCodeBase);
+    expect(model("OpenCode Go", "kimi-k3.1-pro").compat).toEqual(openCodeBase);
+    expect(model("OpenCode Go", "mimo-v2.6-pro").compat).toEqual(openCodeBase);
+    expect(model("OpenCode Go", "deepseek-v4.1-flash").compat).toEqual({
+      ...openCodeBase,
+      requiresReasoningContentOnAssistantMessages: true,
+      thinkingFormat: "deepseek",
+    });
+
+    for (const id of ["mimo-v2.6-pro", "mimo-v2.6-flash"]) {
+      expect(model("Xiaomi MiMo", id).compat).toEqual({
         requiresReasoningContentOnAssistantMessages: true,
         thinkingFormat: "deepseek",
       });
     }
 
-    for (const id of ["mimo-v2.5-pro", "mimo-v2.5"]) {
-      expect(model("Xiaomi MiMo", id).compat).toEqual({
-        requiresReasoningContentOnAssistantMessages: true,
-        thinkingFormat: "deepseek",
-      });
+    const qwenCompat = {
+      thinkingFormat: "qwen",
+      supportsDeveloperRole: false,
+    };
+    for (const name of [
+      "千问AI平台",
+      "千问AI平台 Token Plan",
+      "QwenCloud",
+      "QwenCloud Token Plan",
+    ]) {
+      const models = preset(name).settingsConfig.models;
+      expect(models.every((item) => item.reasoning)).toBe(true);
+      for (const item of models) {
+        expect(item.compat).toEqual(qwenCompat);
+      }
+    }
+
+    for (const item of preset("QwenCloud For Coding").settingsConfig.models) {
+      expect(item.compat).toBeUndefined();
     }
   });
 });

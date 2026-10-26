@@ -71,6 +71,26 @@ beforeEach(() => {
 });
 
 describe("useAddProviderMutation", () => {
+  it("adds an agy profile without silently activating it", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("agy"), {
+      wrapper,
+    });
+    await act(async () =>
+      result.current.mutateAsync({
+        name: "Relay",
+        settingsConfig: { env: { GEMINI_API_KEY: "fixture" } },
+        addToLive: false,
+      }),
+    );
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Relay" }),
+      "agy",
+      false,
+      undefined,
+    );
+  });
+
   it("duplicates Claude Desktop official providers with a fresh id", async () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(
@@ -95,6 +115,7 @@ describe("useAddProviderMutation", () => {
         category: "official",
       }),
       "claude-desktop",
+      undefined,
       undefined,
     );
     expect(duplicatedProvider.id).toBe("generated-uuid");
@@ -178,6 +199,7 @@ describe("useAddProviderMutation", () => {
       }),
       "codex",
       undefined,
+      undefined,
     );
     expect(persistedProvider).toEqual(
       expect.objectContaining({
@@ -227,6 +249,7 @@ describe("useAddProviderMutation", () => {
       }),
       "codex",
       undefined,
+      undefined,
     );
     expect(apiMocks.add).toHaveBeenNthCalledWith(
       2,
@@ -235,6 +258,7 @@ describe("useAddProviderMutation", () => {
         meta: { providerType: "codex_oauth" },
       }),
       "codex",
+      undefined,
       undefined,
     );
     expect(firstProvider.id).toBe("unbound-official-1");
@@ -264,6 +288,7 @@ describe("useAddProviderMutation", () => {
       expect.objectContaining({ id: "pi-provider" }),
       "pi",
       undefined,
+      undefined,
     );
     expect(provider.id).toBe("pi-provider");
   });
@@ -288,6 +313,7 @@ describe("useAddProviderMutation", () => {
     expect(apiMocks.add).toHaveBeenCalledWith(
       expect.objectContaining({ id: "pi-provider" }),
       "pi",
+      undefined,
       undefined,
     );
     expect(toastMocks.error).toHaveBeenCalled();

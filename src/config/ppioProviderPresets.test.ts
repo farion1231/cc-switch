@@ -6,6 +6,7 @@ import { codexProviderPresets } from "./codexProviderPresets";
 import { hermesProviderPresets } from "./hermesProviderPresets";
 import { openclawProviderPresets } from "./openclawProviderPresets";
 import { opencodeProviderPresets } from "./opencodeProviderPresets";
+import { piProviderPresets } from "./piProviderPresets";
 import { getIcon, getIconMetadata } from "../icons/extracted";
 
 const ppioPresetCollections = [
@@ -15,13 +16,15 @@ const ppioPresetCollections = [
   ["OpenCode", opencodeProviderPresets],
   ["OpenClaw", openclawProviderPresets],
   ["Hermes", hermesProviderPresets],
+  ["Pi", piProviderPresets],
 ] as const;
 
-const ppioModelId = "deepseek/deepseek-v4-flash-0731";
-const ppioModelName = "Deepseek V4 Flash 0731";
+const ppioModelId = "deepseek/deepseek-v4.1-flash";
+const ppioModelName = "DeepSeek V4.1 Flash";
 const ppioAnthropicEndpoint = "https://api.ppio.com/anthropic";
 const ppioOpenAiEndpoint = "https://api.ppio.com/openai/v1";
 const ppioChatCompletionsEndpoint = `${ppioOpenAiEndpoint}/chat/completions`;
+const ppioModelsEndpoint = `${ppioOpenAiEndpoint}/models`;
 const ppioBrandFields = {
   websiteUrl: "https://ppio.com",
   apiKeyUrl: "https://ppio.com/activity/ccswitch",
@@ -54,15 +57,15 @@ describe("PPIO provider presets", () => {
         env: {
           ANTHROPIC_BASE_URL: ppioAnthropicEndpoint,
           ANTHROPIC_AUTH_TOKEN: "",
-          ANTHROPIC_MODEL: ppioModelId,
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: ppioModelId,
-          ANTHROPIC_DEFAULT_SONNET_MODEL: ppioModelId,
-          ANTHROPIC_DEFAULT_OPUS_MODEL: ppioModelId,
+          ANTHROPIC_MODEL: `${ppioModelId}[1M]`,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: `${ppioModelId}[1M]`,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: `${ppioModelId}[1M]`,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: `${ppioModelId}[1M]`,
         },
       },
       endpointCandidates: [ppioAnthropicEndpoint],
+      modelsUrl: ppioModelsEndpoint,
     });
-    expect(claude).not.toHaveProperty("modelsUrl");
   });
 
   it("configures Claude Desktop with the native Anthropic endpoint", () => {
@@ -129,7 +132,11 @@ describe("PPIO provider presets", () => {
         apiKey: { label: "API Key", placeholder: "", editorValue: "" },
       },
     });
-    expect(Object.keys(opencode.settingsConfig.models)).toEqual([ppioModelId]);
+    expect(Object.keys(opencode.settingsConfig.models)).toEqual([
+      ppioModelId,
+      "moonshotai/kimi-k3.1-pro",
+      "zai-org/glm-5.3",
+    ]);
     expect(`${opencode.settingsConfig.options.baseURL}/chat/completions`).toBe(
       ppioChatCompletionsEndpoint,
     );
@@ -143,17 +150,6 @@ describe("PPIO provider presets", () => {
         baseUrl: ppioOpenAiEndpoint,
         apiKey: "",
         api: "openai-completions",
-        models: [
-          {
-            id: ppioModelId,
-            name: ppioModelName,
-            reasoning: true,
-            input: ["text"],
-            contextWindow: 1048576,
-            maxTokens: 393216,
-            cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
-          },
-        ],
       },
       templateValues: {
         apiKey: { label: "API Key", placeholder: "sk-...", editorValue: "" },
@@ -162,6 +158,26 @@ describe("PPIO provider presets", () => {
         model: { primary: `ppio/${ppioModelId}` },
         modelCatalog: { [`ppio/${ppioModelId}`]: { alias: ppioModelName } },
       },
+    });
+    expect(
+      (openclaw.settingsConfig.models ?? []).map((model) => model.id),
+    ).toEqual([
+      ppioModelId,
+      "moonshotai/kimi-k3.1-pro",
+      "zai-org/glm-5.3",
+      "xiaomimimo/mimo-v2.6-pro",
+      "qwen/qwen3.8-max",
+      "minimax/minimax-m3.1-flash",
+      "stepfun/step-5-preview",
+    ]);
+    expect(openclaw.settingsConfig.models?.[0]).toMatchObject({
+      id: ppioModelId,
+      name: ppioModelName,
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1048576,
+      maxTokens: 393216,
+      cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
     });
     expect(`${openclaw.settingsConfig.baseUrl}/chat/completions`).toBe(
       ppioChatCompletionsEndpoint,
@@ -183,6 +199,12 @@ describe("PPIO provider presets", () => {
             name: ppioModelName,
             context_length: 1048576,
           },
+          {
+            id: "moonshotai/kimi-k3.1-pro",
+            name: "Kimi K3.1 Pro",
+            context_length: 1048576,
+          },
+          { id: "zai-org/glm-5.3", name: "GLM-5.3", context_length: 1000000 },
         ],
       },
       suggestedDefaults: {
@@ -190,6 +212,50 @@ describe("PPIO provider presets", () => {
       },
     });
     expect(`${hermes.settingsConfig.base_url}/chat/completions`).toBe(
+      ppioChatCompletionsEndpoint,
+    );
+  });
+
+  it("configures Pi with a versioned OpenAI Chat base", () => {
+    const pi = getPpioPreset(piProviderPresets)!;
+    expect(pi).toMatchObject({
+      ...ppioBrandFields,
+      providerKey: "cc-switch-ppio",
+      settingsConfig: {
+        name: "PPIO",
+        baseUrl: ppioOpenAiEndpoint,
+        api: "openai-completions",
+        apiKey: "",
+      },
+    });
+    expect(pi.settingsConfig.models.map((model) => model.id)).toEqual([
+      ppioModelId,
+      "moonshotai/kimi-k3.1-pro",
+      "zai-org/glm-5.3",
+    ]);
+    expect(pi.settingsConfig.models[0]).toMatchObject({
+      id: ppioModelId,
+      name: ppioModelName,
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1048576,
+      maxTokens: 393216,
+      thinkingLevelMap: {
+        minimal: null,
+        low: null,
+        medium: null,
+        high: "high",
+        max: "max",
+      },
+      compat: {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        maxTokensField: "max_tokens",
+        requiresReasoningContentOnAssistantMessages: true,
+        thinkingFormat: "deepseek",
+      },
+    });
+    expect(`${pi.settingsConfig.baseUrl}/chat/completions`).toBe(
       ppioChatCompletionsEndpoint,
     );
   });

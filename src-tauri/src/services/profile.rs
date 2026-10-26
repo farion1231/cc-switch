@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::app_config::AppType;
 use crate::database::Profile;
 use crate::error::AppError;
+use crate::prompt::Prompt;
 use crate::services::{McpService, PromptService, ProviderService, SkillService};
 use crate::store::AppState;
 
@@ -84,6 +85,12 @@ impl ProfileScope {
     }
 }
 
+/// 提示词槽位的「拍到时没有启用中的提示词」标记（应用时停用当前启用项）。
+///
+/// 不能用 None 表示：None 已约定为「该侧从未拍过、不动」。提示词 id 不会是空串；
+/// 旧版读到它会当作已删除的提示词跳过并给提示，不会误改配置。
+pub const NO_ACTIVE_PROMPT: &str = "";
+
 /// 按 app 分槽的载荷容器；字段名与 AppType 的 serde 形式一致
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -128,7 +135,7 @@ pub struct ProfilePayload {
     pub mcp: PerApp<Option<Vec<String>>>,
     /// 每 app 启用的 Skill id 集合
     pub skills: PerApp<Option<Vec<String>>>,
-    /// 每 app 激活的 prompt id
+    /// 每 app 激活的 prompt id；Some([`NO_ACTIVE_PROMPT`]) = 拍到时没有启用项
     pub prompts: PerApp<Option<String>>,
 }
 
@@ -204,7 +211,12 @@ impl ProfileService {
 
         for app in scope.apps().iter() {
             if let Some(slot) = payload.providers.get_mut(app) {
-                *slot = crate::settings::get_effective_current_provider(&state.db, app)?;
+                // 和应用快照时一致：代理模式下记的是代理路由到的那家。
+                *slot = crate::mode::current::provider_for(
+                    &state.db,
+                    app,
+                    crate::mode::current::Purpose::InUse,
+                )?;
             }
             if let Some(slot) = payload.mcp.get_mut(app) {
                 *slot = Some(
@@ -225,12 +237,14 @@ impl ProfileService {
                 );
             }
             if let Some(slot) = payload.prompts.get_mut(app) {
-                *slot = state
-                    .db
-                    .get_prompts(app.as_str())?
-                    .values()
-                    .find(|p| p.enabled)
-                    .map(|p| p.id.clone());
+                *slot = Some(
+                    state
+                        .db
+                        .get_prompts(app.as_str())?
+                        .values()
+                        .find(|p| p.enabled)
+                        .map_or_else(|| NO_ACTIVE_PROMPT.to_string(), |p| p.id.clone()),
+                );
             }
         }
         Ok(payload)
@@ -324,14 +338,13 @@ impl ProfileService {
     ///
     /// 应用指定项目的快照到当前分组内的所有应用。
     ///
-    /// 返回 `(warnings, should_stop_proxy)`：当当前分组内所有接管都被关闭、且
-    /// 其它应用也没有接管时，建议调用者停止代理服务，以便 Claude Desktop 的
-    /// "本地路由"总开关同步显示为关闭。
+    /// 供应商按应用当前的模式切换：直连模式改直连指针，代理模式改代理路由；不再为了
+    /// 避开代理先退出代理模式。
     pub fn apply(
         state: &AppState,
         profile_id: &str,
         scope: ProfileScope,
-    ) -> Result<(Vec<String>, bool), AppError> {
+    ) -> Result<Vec<String>, AppError> {
         let mut warnings = Vec::new();
 
         // 自动保存旧项目当前状态（仅当前分组），失败不阻塞切换
@@ -362,16 +375,7 @@ impl ProfileService {
         for app in scope.apps().iter() {
             let app_str = app.as_str();
 
-            // 1. 切换项目前无条件关闭当前应用的代理接管。
-            // 接管态下 live 文件属于代理；用户希望切换工作目录时总是退出当前
-            // 代理环境，再按快照写入真实供应商配置。
-            if let Err(e) = state.proxy_service.disable_takeover_for_app_sync(app) {
-                warnings.push(format!(
-                    "[{app_str}] auto-disable proxy takeover before profile switch failed: {e}"
-                ));
-            }
-
-            // 2. 供应商
+            // 1. 供应商
             if let Some(Some(target_pid)) = payload.providers.get(app) {
                 let providers = state.db.get_all_providers(app_str)?;
                 if !providers.contains_key(target_pid) {
@@ -379,7 +383,11 @@ impl ProfileService {
                         "[{app_str}] provider '{target_pid}' no longer exists, skipped"
                     ));
                 } else {
-                    let current = crate::settings::get_effective_current_provider(&state.db, app)?;
+                    let current = crate::mode::current::provider_for(
+                        &state.db,
+                        app,
+                        crate::mode::current::Purpose::InUse,
+                    )?;
                     if current.as_deref() != Some(target_pid.as_str()) {
                         match ProviderService::switch(state, app.clone(), target_pid) {
                             Ok(result) => warnings.extend(result.warnings),
@@ -391,7 +399,7 @@ impl ProfileService {
                 }
             }
 
-            // 3. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
+            // 2. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
             if let Some(Some(target_ids)) = payload.mcp.get(app) {
                 let servers = state.db.get_all_mcp_servers()?;
                 let current: Vec<(String, bool)> = servers
@@ -411,7 +419,7 @@ impl ProfileService {
                 }
             }
 
-            // 4. Skills diff（SkillService 返回 anyhow::Result，收进 warning）
+            // 3. Skills diff（SkillService 返回 anyhow::Result，收进 warning）
             if let Some(Some(target_ids)) = payload.skills.get(app) {
                 let skills = state.db.get_all_installed_skills()?;
                 let current: Vec<(String, bool)> = skills
@@ -433,10 +441,16 @@ impl ProfileService {
                 }
             }
 
-            // 5. Prompt（None = 不动；已激活则幂等跳过，避免无谓的文件写与备份）
+            // 4. Prompt（None = 不动；NO_ACTIVE_PROMPT = 停用当前启用项；
+            //    已激活则幂等跳过，避免无谓的文件写与备份）
             if let Some(Some(target_prompt)) = payload.prompts.get(app) {
                 let prompts = state.db.get_prompts(app_str)?;
                 match prompts.get(target_prompt) {
+                    None if target_prompt == NO_ACTIVE_PROMPT => {
+                        if prompts.values().any(|p| p.enabled) {
+                            Self::disable_active_prompts(state, app, &mut warnings);
+                        }
+                    }
                     None => warnings.push(format!(
                         "[{app_str}] prompt '{target_prompt}' no longer exists, skipped"
                     )),
@@ -458,10 +472,31 @@ impl ProfileService {
             .db
             .set_current_profile_id(scope.as_str(), Some(profile_id))?;
 
-        // 当前分组内所有接管已关闭；若其它应用也无接管，可停止代理服务。
-        let should_stop_proxy = !state.db.is_live_takeover_active_sync();
+        Ok(warnings)
+    }
 
-        Ok((warnings, should_stop_proxy))
+    /// 停用应用当前启用的提示词（项目快照里该应用没有启用项时）。
+    ///
+    /// 先经 `PromptService::get_prompts` 把 live 文件里的外部编辑回填进启用项，
+    /// 再走与界面「停用」相同的 `upsert_prompt(enabled=false)`：停掉最后一条启用项时清空文件。
+    fn disable_active_prompts(state: &AppState, app: &AppType, warnings: &mut Vec<String>) {
+        let app_str = app.as_str();
+        let prompts = match PromptService::get_prompts(state, app.clone()) {
+            Ok(prompts) => prompts,
+            Err(e) => {
+                warnings.push(format!("[{app_str}] read prompts failed: {e}"));
+                return;
+            }
+        };
+        for (id, prompt) in prompts.into_iter().filter(|(_, p)| p.enabled) {
+            let disabled = Prompt {
+                enabled: false,
+                ..prompt
+            };
+            if let Err(e) = PromptService::upsert_prompt(state, app.clone(), &id, disabled) {
+                warnings.push(format!("[{app_str}] disable prompt '{id}' failed: {e}"));
+            }
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 //! 项目 Profile 管理命令
 
 use serde::Serialize;
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, State};
 
 use crate::database::Profile;
 use crate::services::profile::{ProfilePayload, ProfileScope, ProfileService};
@@ -68,11 +68,16 @@ pub fn emit_profile_apply_events(
 ) {
     for app_type in scope.apps().iter() {
         let app_str = app_type.as_str();
-        let (proxy_enabled, auto_failover_enabled) = state.db.get_proxy_flags_sync(app_str);
-        let provider_id = crate::settings::get_effective_current_provider(&state.db, app_type)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+        let (_, auto_failover_enabled) = state.db.get_proxy_flags_sync(app_str);
+        let proxy_enabled = crate::mode::current::is_proxy(app_type);
+        let provider_id = crate::mode::current::provider_for(
+            &state.db,
+            app_type,
+            crate::mode::current::Purpose::InUse,
+        )
+        .ok()
+        .flatten()
+        .unwrap_or_default();
         let event_data = serde_json::json!({
             "appType": app_str,
             "proxyEnabled": proxy_enabled,
@@ -170,26 +175,7 @@ pub fn apply_profile(
     scope: String,
 ) -> Result<Vec<String>, String> {
     let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
-    let (warnings, should_stop_proxy) =
-        ProfileService::apply(&state, &id, scope).map_err(|e| e.to_string())?;
-
-    if should_stop_proxy {
-        // sync 命令线程没有 Tokio runtime，无法直接 await stop()；
-        // 把停止服务放到 Tauri async runtime，停止后再补发事件刷新 UI。
-        let app_handle = app.clone();
-        let profile_id = id.clone();
-        let proxy_service = state.proxy_service.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = proxy_service.stop().await {
-                log::warn!("切换项目后停止代理服务失败: {e}");
-            }
-            if let Some(app_state) = app_handle.try_state::<AppState>() {
-                emit_profile_apply_events(&app_handle, app_state.inner(), &profile_id, scope);
-            }
-        });
-    } else {
-        emit_profile_apply_events(&app, &state, &id, scope);
-    }
-
+    let warnings = ProfileService::apply(&state, &id, scope).map_err(|e| e.to_string())?;
+    emit_profile_apply_events(&app, &state, &id, scope);
     Ok(warnings)
 }

@@ -1,10 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
-import type { ManagedAuthProvider } from "@/lib/api";
+import type { AuthCenterTarget } from "@/lib/api";
 
 interface AuthSettingsPanelProps {
-  target: ManagedAuthProvider | null;
+  target: AuthCenterTarget | null;
   onClose: () => void;
 }
 
@@ -15,7 +15,7 @@ export function AuthSettingsPanel({ target, onClose }: AuthSettingsPanelProps) {
   return (
     <FullScreenPanel
       isOpen={isOpen}
-      title={t("settings.tabAuth", { defaultValue: "认证" })}
+      title={t("nav.auth")}
       onClose={onClose}
       motionPreset="slide-from-right"
     >

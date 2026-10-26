@@ -1,0 +1,33 @@
+{
+  "version": "4.0.19",
+  "items": [
+    {
+      "type": "new",
+      "zh": "支持 Kimi Code，命令行版和桌面版都适用",
+      "zh-TW": "支援 Kimi Code，命令列版和桌面版都適用",
+      "en": "Kimi Code support, for both the CLI and the desktop app",
+      "ja": "Kimi Code に対応。CLI 版とデスクトップ版の両方で使えます"
+    },
+    {
+      "type": "new",
+      "zh": "授权中心可登录多个 Kimi 账号，显示昵称和额度",
+      "zh-TW": "授權中心可登入多個 Kimi 帳號，顯示暱稱和額度",
+      "en": "Sign in to several Kimi accounts in Accounts, each with its nickname and quota",
+      "ja": "「アカウント」で複数の Kimi アカウントにログインし、ニックネームと利用枠を表示"
+    },
+    {
+      "type": "improve",
+      "zh": "用量统计页重新排版，请求日志可选每页条数",
+      "zh-TW": "用量統計頁重新排版，請求日誌可選每頁筆數",
+      "en": "The usage page has a new layout, and request logs let you pick rows per page",
+      "ja": "使用量ページのレイアウトを刷新し、リクエストログの 1 ページの件数を選択可能に"
+    },
+    {
+      "type": "fix",
+      "zh": "修复聚合模式切换模型后 Codex 报 exec 不支持",
+      "zh-TW": "修正聚合模式切換模型後 Codex 報 exec 不支援",
+      "en": "Fixed Codex failing with unsupported call: exec after switching models in aggregation",
+      "ja": "集約モードでモデル切り替え後に Codex が exec 非対応になる問題を修正"
+    }
+  ]
+}
