@@ -374,7 +374,7 @@ pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
         .unwrap_or("");
     crate::codex_config::codex_published_models(&provider.settings_config, config)
         .unwrap_or_else(|error| {
-            // 写入目录时会返回错误；视图仍列出其余可用供应商。
+            // 和目录生成一样，只跳过这家，仍列出其余可用供应商。
             log::warn!("读取供应商 {} 的聚合模型失败: {error}", provider.name);
             Vec::new()
         })

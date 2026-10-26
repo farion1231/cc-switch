@@ -940,7 +940,8 @@ fn stack_catalog(
         })
     };
 
-    // 无法投影的配置行跳过。自管目录的读取和结构错误则在合并时返回，保留已发布的目录。
+    // 无法投影的配置行跳过；自管目录的读取和结构错误也只跳过对应供应商，
+    // 不能让一个外部文件出错阻断启动接上、切换路由或保存卡片。
     let inputs: Vec<_> = stack
         .iter()
         .filter_map(|member| match project(&member.provider) {

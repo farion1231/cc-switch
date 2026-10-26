@@ -2502,7 +2502,7 @@ fn custom_catalog_error(code: &str, context: Value) -> AppError {
 }
 
 /// 用户自管的目录只做拼接所需的结构校验，不补全或过滤模型能力字段。
-/// 相对路径和写给 Codex 的 config.toml 一样，以 Codex 配置目录为基准。
+/// 和 Codex 一样先展开主目录，再以 Codex 配置目录为基准解析相对路径。
 pub(crate) fn read_codex_custom_catalog_models(
     config_text: &str,
 ) -> Result<Option<Vec<Value>>, AppError> {
@@ -2512,7 +2512,23 @@ pub(crate) fn read_codex_custom_catalog_models(
     let Some(pointer) = crate::live::project::codex::foreign_catalog(&doc) else {
         return Ok(None);
     };
-    let path = get_codex_config_dir().join(pointer.as_str().expect("catalog path is a string"));
+    let raw = pointer.as_str().expect("catalog path is a string");
+    let home_relative = raw
+        .strip_prefix("~/")
+        .map(|rest| rest.trim_start_matches('/'))
+        .or_else(|| (raw == "~").then_some(""))
+        .or_else(|| {
+            if cfg!(windows) {
+                raw.strip_prefix("~\\")
+                    .map(|rest| rest.trim_start_matches('\\'))
+            } else {
+                None
+            }
+        });
+    let path = match home_relative {
+        Some(rest) => get_home_dir().join(rest),
+        None => get_codex_config_dir().join(raw),
+    };
     let invalid = |code: &str, mut context: Value| {
         context["path"] = json!(path.display().to_string());
         custom_catalog_error(code, context)
@@ -2753,8 +2769,15 @@ const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
 pub(crate) fn codex_stack_third_party_rows(
     row: &CodexCatalogRow<'_>,
 ) -> Result<Vec<Value>, AppError> {
-    if let Some(models) = read_codex_custom_catalog_models(row.config_text)? {
-        return Ok(models);
+    match read_codex_custom_catalog_models(row.config_text) {
+        Ok(Some(models)) => return Ok(models),
+        Ok(None) => {}
+        Err(error) => {
+            // 外部文件可能在加入聚合后被删除、损坏，或来自其他设备。
+            // 只跳过这家，避免启动接上、切换路由或保存卡片时整个写入失败。
+            log::warn!("Codex 自管模型目录不可用，这次不发布它: {error}");
+            return Ok(Vec::new());
+        }
     }
     let specs = codex_published_specs(row.settings, row.config_text);
     if specs.is_empty() {
@@ -3374,6 +3397,48 @@ mod tests {
             }
             let _ = crate::settings::reload_settings();
         }
+    }
+
+    #[test]
+    #[serial]
+    fn custom_catalog_paths_match_codex_home_expansion() {
+        let _home = CodexLiveTestHome::new();
+        let config_dir = get_codex_config_dir();
+        fs::create_dir_all(&config_dir).unwrap();
+        let home_catalog = get_home_dir().join("models.json");
+        fs::write(&home_catalog, r#"{"models":[{"slug":"home-model"}]}"#).unwrap();
+        fs::write(
+            config_dir.join("models.json"),
+            r#"{"models":[{"slug":"config-model"}]}"#,
+        )
+        .unwrap();
+        let mut cases = vec![
+            ("models.json".to_string(), "config-model"),
+            (home_catalog.to_str().unwrap().to_string(), "home-model"),
+            ("~/models.json".to_string(), "home-model"),
+            ("~//models.json".to_string(), "home-model"),
+        ];
+        if cfg!(windows) {
+            cases.push((r"~\models.json".to_string(), "home-model"));
+            cases.push((r"~\\models.json".to_string(), "home-model"));
+        }
+        for (raw, expected) in cases {
+            let config = format!("model_catalog_json = '{}'\n", raw);
+            let models = read_codex_custom_catalog_models(&config)
+                .unwrap_or_else(|error| panic!("{raw}: {error}"))
+                .unwrap();
+            assert_eq!(models[0]["slug"], expected, "{raw}");
+        }
+        // 单独的 ~ 指向主目录本身（不是 JSON 文件），错误中应保留展开后的路径。
+        let error = read_codex_custom_catalog_models("model_catalog_json = '~'\n")
+            .unwrap_err()
+            .to_string();
+        let (_, payload) = error.split_once("CC_SWITCH_CODEX_CATALOG_ERROR:").unwrap();
+        let payload: Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(
+            PathBuf::from(payload["context"]["path"].as_str().unwrap()),
+            get_home_dir()
+        );
     }
 
     #[derive(Debug, PartialEq)]

@@ -7743,18 +7743,18 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn codex_custom_catalog_errors_leave_published_files_unchanged() {
+    async fn codex_custom_catalog_errors_prevent_joining_without_changing_published_files() {
         let _home = Home::new();
         seed_codex("", None);
         let path = seed_custom_codex_catalog();
-        let [_, deepseek, zhipu] = codex_stack_rows();
-        let route = codex_native(
-            "a",
-            "https://a.example/v1",
+        let [route, _, _] = codex_stack_rows();
+        let member = codex_native(
+            "custom",
+            "https://custom.example/v1",
             "model_catalog_json = \"team-models.json\"\n",
             None,
         );
-        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        let state = state_with(AppType::Codex, &[route, member], "a").await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         let before = codex_text();
         let catalog_path = crate::codex_config::get_codex_model_catalog_path();
@@ -7766,7 +7766,7 @@ model_provider = "c"
             (r#"{"models": [{"slug": " "}]}"#, "invalidSlug"),
         ] {
             fs::write(&path, contents).unwrap();
-            let error = set_stack_member(&state, &AppType::Codex, "deepseek", true)
+            let error = set_stack_member(&state, &AppType::Codex, "custom", true)
                 .await
                 .unwrap_err();
             assert!(!error.partial, "{error:?}");
@@ -7782,30 +7782,115 @@ model_provider = "c"
             }
             assert_eq!(codex_text(), before);
             assert_eq!(fs::read(&catalog_path).ok(), before_catalog);
-            assert!(!stack_state_of(&AppType::Codex).is_member("deepseek"));
+            assert!(!stack_state_of(&AppType::Codex).is_member("custom"));
         }
         fs::remove_file(&path).unwrap();
-        let error = set_stack_member(&state, &AppType::Codex, "deepseek", true)
+        let error = set_stack_member(&state, &AppType::Codex, "custom", true)
             .await
             .unwrap_err();
         assert!(!error.partial);
         assert!(error.message.contains("\"code\":\"readFailed\""));
         assert_eq!(codex_text(), before);
-        // 无效文件也不能作为新成员加入名单。
-        let member = codex_native(
-            "broken",
-            "https://broken.example/v1",
-            "model_catalog_json = \"team-models.json\"\n",
-            None,
-        );
-        state.db.save_provider("codex", &member).unwrap();
-        let error = set_stack_member(&state, &AppType::Codex, "broken", true)
-            .await
-            .unwrap_err();
-        assert!(!error.partial && error.message.contains("BROKEN"));
+        assert_eq!(fs::read(&catalog_path).ok(), before_catalog);
+        assert!(!stack_state_of(&AppType::Codex).is_member("custom"));
         exit(&state, &AppType::Codex)
             .await
             .expect("exit even with missing custom file");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_custom_catalog_member_failure_does_not_break_writes_or_startup() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let path = seed_custom_codex_catalog();
+        let [route, deepseek, _] = codex_stack_rows();
+        let member = codex_native(
+            "custom",
+            "https://custom.example/v1",
+            "model_catalog_json = \"team-models.json\"\n",
+            Some(json!({"models": [{"model": "do-not-fall-back"}]})),
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, member], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "custom", true).await;
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(catalog_slugs().len(), 4);
+
+        for contents in [
+            "not JSON",
+            r#"{"models": {}}"#,
+            r#"{"models": [null]}"#,
+            r#"{"models": [{"slug": " "}]}"#,
+        ] {
+            fs::write(&path, contents).unwrap();
+            resync_codex_stack_catalog(&state).await.expect("resync");
+            assert_eq!(
+                catalog_slugs(),
+                vec!["gpt-a", "ccs-deepseek/deepseek-v4-pro"]
+            );
+            assert!(stack_state_of(&AppType::Codex).is_member("custom"));
+        }
+
+        // 作者的复现：关闭 CC Switch 后文件被删掉，下次启动不能退出路由。
+        detach_all(&state).await;
+        fs::remove_file(&path).unwrap();
+        startup(&state).await;
+        assert!(mode(&AppType::Codex).is_proxy());
+        assert!(mode(&AppType::Codex).attached);
+        assert_eq!(
+            catalog_slugs(),
+            vec!["gpt-a", "ccs-deepseek/deepseek-v4-pro"]
+        );
+        let route = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        ProviderService::update(&state, AppType::Codex, None, route)
+            .expect("save with a missing member catalog");
+        switch_route(&state, &AppType::Codex, "deepseek")
+            .await
+            .expect("switch with a missing member catalog");
+        assert_eq!(catalog_slugs(), vec!["deepseek-v4-pro", "ccs-a/gpt-a"]);
+
+        seed_custom_codex_catalog();
+        resync_codex_stack_catalog(&state).await.expect("recover");
+        assert_eq!(catalog_slugs().len(), 4);
+        exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_custom_catalog_route_failure_only_skips_its_models() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let path = seed_custom_codex_catalog();
+        let [_, deepseek, _] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "model_catalog_json = \"team-models.json\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+
+        fs::write(&path, "not JSON").unwrap();
+        resync_codex_stack_catalog(&state).await.expect("resync");
+        assert_eq!(catalog_slugs(), vec!["ccs-deepseek/deepseek-v4-pro"]);
+        let route = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        ProviderService::update(&state, AppType::Codex, None, route)
+            .expect("save with an invalid route catalog");
+
+        detach_all(&state).await;
+        fs::remove_file(&path).unwrap();
+        startup(&state).await;
+        assert!(mode(&AppType::Codex).is_proxy());
+        assert!(mode(&AppType::Codex).attached);
+        assert_eq!(catalog_slugs(), vec!["ccs-deepseek/deepseek-v4-pro"]);
+        switch_route(&state, &AppType::Codex, "deepseek")
+            .await
+            .expect("switch away from missing route catalog");
+        assert_eq!(catalog_slugs(), vec!["deepseek-v4-pro"]);
+        exit(&state, &AppType::Codex).await.expect("exit");
     }
 
     /// 假的进程表和时钟（见 `codex_client_catalog::Env`），结束时换回真的。
