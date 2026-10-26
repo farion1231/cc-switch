@@ -51,7 +51,9 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
-    #[serde(default)]
+    // 2afe8cdb 把 OMP 改成默认显示，但漏了这个字段缺省值；与 Default 实现和
+    // 前端 DEFAULT_VISIBLE_APPS 保持同口径，老配置升级后默认可见。
+    #[serde(default = "default_true")]
     pub omp: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
@@ -1667,6 +1669,21 @@ mod tests {
         .expect("visible apps");
 
         assert!(visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn visible_apps_old_settings_default_omp_visible_hermes_hidden() {
+        // Configs saved before the omp/hermes fields existed must deserialize
+        // to the same defaults as a fresh install: OMP visible (2afe8cdb),
+        // hermes still intentionally hidden.
+        let visible: VisibleApps = serde_json::from_value(serde_json::json!({
+            "claude": true,
+            "codex": true
+        }))
+        .expect("visible apps");
+
+        assert!(visible.is_visible(&AppType::Omp));
+        assert!(!visible.is_visible(&AppType::Hermes));
     }
 
     #[test]
