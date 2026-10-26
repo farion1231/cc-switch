@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom";
 import type { ComponentProps } from "react";
@@ -7,6 +13,12 @@ import { SettingsPage } from "@/components/settings/SettingsPage";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+
+const update = vi.hoisted(() => ({ hasUpdate: false }));
+
+vi.mock("@/contexts/UpdateContext", () => ({
+  useUpdate: () => ({ hasUpdate: update.hasUpdate, updateInfo: null }),
+}));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -164,6 +176,7 @@ const renderSettingsPage = (
   });
   const allProps = {
     section: "general" as const,
+    onSectionChange: vi.fn(),
     onOpenApps: vi.fn(),
     onOpenApp: vi.fn(),
     ...props,
@@ -208,16 +221,51 @@ describe("SettingsPage", () => {
     expect(document.querySelector(".animate-spin")).toBeInTheDocument();
   });
 
-  it("titles the page with the current section", () => {
-    renderSettingsPage({ section: "network" });
+  it("shows the current section as the selected tab", () => {
+    const { props } = renderSettingsPage({ section: "network" });
 
     expect(
-      screen.getByRole("heading", {
-        level: 1,
-        name: "settings.sections.network",
-      }),
+      screen.getByRole("heading", { level: 1, name: "nav.settings" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "settings.sections.network" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      "settings-tab-network",
+    );
     expect(screen.getByText("global-proxy-settings")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("tab", { name: "settings.sections.data" }),
+    );
+    expect(props.onSectionChange).toHaveBeenCalledWith("data");
+  });
+
+  // 和侧栏「设置」图标上的绿点同一个方向：都在右上角
+  it("puts a green dot at the top-right of the About tab when an update exists", () => {
+    update.hasUpdate = true;
+    try {
+      renderSettingsPage();
+      const aboutTab = screen.getByRole("tab", {
+        name: /^settings[.]sections[.]about/,
+      });
+      const dot = within(aboutTab).getByRole("img", {
+        name: "nav.settingsHasUpdate",
+      });
+      expect(dot).toHaveClass("absolute", "-top-0.5", "-end-2.5", "bg-success");
+    } finally {
+      update.hasUpdate = false;
+    }
+  });
+
+  it("shows no dot on the About tab without an update", () => {
+    renderSettingsPage();
+    expect(
+      within(
+        screen.getByRole("tab", { name: "settings.sections.about" }),
+      ).queryByRole("img"),
+    ).toBeNull();
   });
 
   it("saves general switches immediately and links to the Apps page", async () => {

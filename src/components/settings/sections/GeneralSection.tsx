@@ -11,7 +11,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isMac } from "@/lib/platform";
+import {
+  setDensity,
+  setZoom,
+  useInterfacePrefs,
+  ZOOM_LEVELS,
+  type Density,
+  type ZoomLevel,
+} from "@/lib/interfacePrefs";
 import { TerminalSelect } from "@/components/settings/TerminalSettings";
 import {
   SettingsBlock,
@@ -43,6 +51,7 @@ export function GeneralSection({
 }: GeneralSectionProps) {
   const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
+  const { density, zoom } = useInterfacePrefs();
 
   return (
     <>
@@ -58,7 +67,7 @@ export function GeneralSection({
                 }
               >
                 <SelectTrigger
-                  className="h-8 w-[160px]"
+                  className="w-[160px]"
                   aria-label={t("settings.language")}
                 >
                   <SelectValue />
@@ -128,6 +137,52 @@ export function GeneralSection({
               />
             }
           />
+          <SettingsRow
+            label={t("settings.general.density")}
+            help={{
+              title: t("settings.general.density"),
+              body: t("settings.general.densityHelp"),
+            }}
+            control={
+              <SegmentedControl<Density>
+                size="sm"
+                aria-label={t("settings.general.density")}
+                value={density}
+                onValueChange={setDensity}
+                items={[
+                  {
+                    value: "comfortable",
+                    label: t("settings.general.densityComfortable"),
+                  },
+                  {
+                    value: "compact",
+                    label: t("settings.general.densityCompact"),
+                  },
+                ]}
+              />
+            }
+          />
+          <SettingsRow
+            label={t("settings.general.zoom")}
+            help={{
+              title: t("settings.general.zoom"),
+              body: t("settings.general.zoomHelp", {
+                shortcut: isMac() ? "⌘" : "Ctrl",
+              }),
+            }}
+            control={
+              <SegmentedControl<`${ZoomLevel}`>
+                size="sm"
+                aria-label={t("settings.general.zoom")}
+                value={`${zoom}`}
+                onValueChange={(value) => setZoom(Number(value) as ZoomLevel)}
+                items={ZOOM_LEVELS.map((level) => ({
+                  value: `${level}` as const,
+                  label: `${Math.round(level * 100)}%`,
+                }))}
+              />
+            }
+          />
         </SettingsCard>
       </SettingsBlock>
 
@@ -144,24 +199,9 @@ export function GeneralSection({
           />
           <SettingsSwitchRow
             label={t("settings.appVisibility.showProfileSwitcher")}
-            help={{
-              title: t("settings.appVisibility.showProfileSwitcher"),
-              body: t("settings.appVisibility.showProfileSwitcherDescription"),
-            }}
             checked={settings.showProfileSwitcher ?? false}
             onCheckedChange={(value) =>
               void onAutoSave({ showProfileSwitcher: value })
-            }
-          />
-          <SettingsSwitchRow
-            label={t("settings.appVisibility.showProviderSearch")}
-            help={{
-              title: t("settings.appVisibility.showProviderSearch"),
-              body: t("settings.appVisibility.showProviderSearchDescription"),
-            }}
-            checked={settings.showProviderSearch ?? true}
-            onCheckedChange={(value) =>
-              void onAutoSave({ showProviderSearch: value })
             }
           />
         </SettingsCard>
@@ -195,10 +235,7 @@ export function GeneralSection({
           {settings.launchOnStartup && (
             <SettingsSwitchRow
               label={t("settings.silentStartup")}
-              help={{
-                title: t("settings.silentStartup"),
-                body: t("settings.silentStartupDescription"),
-              }}
+              summary={t("settings.silentStartupDescription")}
               checked={!!settings.silentStartup}
               onCheckedChange={(value) =>
                 void onAutoSave({ silentStartup: value })
@@ -249,10 +286,7 @@ export function GeneralSection({
           {isLinux() && (
             <SettingsSwitchRow
               label={t("settings.useAppWindowControls")}
-              help={{
-                title: t("settings.useAppWindowControls"),
-                body: t("settings.useAppWindowControlsDescription"),
-              }}
+              summary={t("settings.useAppWindowControlsSummary")}
               checked={!!settings.useAppWindowControls}
               onCheckedChange={(value) =>
                 void onAutoSave({ useAppWindowControls: value })

@@ -76,7 +76,8 @@
     --bg-card: #ffffff;
     --border-strong: #cfcfd6;
     --text-1: #18181b;
-    --text-2: #52525b;
+    /* 三级对选中底（--bg-selected）已贴着 4.5:1 的下限不能再浅，次级和三级的层次靠把次级加深拉开 */
+    --text-2: #45454d;
     --text-3: #65656e;
     --action-bg: #f97316;
     --action-fg: #ffffff;
@@ -161,7 +162,7 @@
     /* 三档文字都比纯白压低一截并拉开明度差：太亮时三档都贴近白色，整屏显得刺眼、层次压平。
        次级、三级对卡片底、选中底（--bg-card / --bg-selected）都 ≥ 4.5:1 */
     --text-1: #e4e4e7;
-    --text-2: #ababb3;
+    --text-2: #bcbcc4;
     --text-3: #9a9aa2;
     /* 深色模式：实心块压暗一档（大面积不刺眼）+ 白字；文字、焦点描边用亮一档的 #fb923c */
     --action-bg: #ea580c;
@@ -375,6 +376,59 @@
 [data-tauri-no-drag],
 [data-tauri-drag-region] .no-drag {
   -webkit-app-region: no-drag;
+}
+
+/* 界面密度（设置 › 通用 › 界面密度，src/lib/interfacePrefs.ts）。
+   不带 data-density 时是紧凑：托盘面板等小窗口沿用原来的尺寸；
+   主窗口默认在 <html> 上设 data-density="comfortable"，字号整体大一档、控件高 4px。 */
+:root {
+  --fs-badge: 11px;
+  --lh-badge: 16px;
+  --fs-caption: 12px;
+  --lh-caption: 18px;
+  --fs-body: 13px;
+  --lh-body: 20px;
+  --fs-strong: 14px;
+  --lh-strong: 20px;
+  --fs-section: 15px;
+  --lh-section: 22px;
+  --fs-title: 16px;
+  --lh-title: 24px;
+  --fs-page: 18px;
+  --lh-page: 26px;
+  --fs-xs: 12px;
+  --lh-xs: 16px;
+
+  --h-control: 32px;
+  --h-control-sm: 28px;
+  --h-nav-row: 28px;
+  --h-card: 58px;
+  --card-py: 10px;
+}
+
+html[data-density="comfortable"] {
+  --fs-badge: 12px;
+  --lh-badge: 16px;
+  --fs-caption: 13px;
+  --lh-caption: 18px;
+  --fs-body: 14px;
+  --lh-body: 22px;
+  --fs-strong: 15px;
+  --lh-strong: 22px;
+  --fs-section: 16px;
+  --lh-section: 24px;
+  --fs-title: 18px;
+  --lh-title: 26px;
+  --fs-page: 20px;
+  --lh-page: 28px;
+  --fs-xs: 13px;
+  --lh-xs: 18px;
+
+  --h-control: 36px;
+  --h-control-sm: 32px;
+  --h-nav-row: 34px;
+  --h-card: 68px;
+  --card-py: 14px;
 }
 
 * {

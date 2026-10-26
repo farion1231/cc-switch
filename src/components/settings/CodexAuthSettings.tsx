@@ -136,6 +136,7 @@ export function CodexAuthSettings({
     <>
       <SettingsSwitchRow
         label={t("settings.preserveCodexOfficialAuthOnSwitch")}
+        summary={t("settings.preserveCodexOfficialAuthOnSwitchSummary")}
         help={{
           title: t("settings.preserveCodexOfficialAuthOnSwitch"),
           body: t("settings.preserveCodexOfficialAuthOnSwitchDescription"),
@@ -148,6 +149,7 @@ export function CodexAuthSettings({
 
       <SettingsSwitchRow
         label={t("settings.unifyCodexSessionHistory")}
+        summary={t("settings.unifyCodexSessionHistorySummary")}
         help={{
           title: t("settings.unifyCodexSessionHistory"),
           body: t("settings.unifyCodexSessionHistoryDescription"),

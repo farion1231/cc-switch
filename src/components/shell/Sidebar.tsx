@@ -1,30 +1,22 @@
 import { useRef, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
-import { getVersion } from "@tauri-apps/api/app";
 import {
-  ArrowLeft,
   BookOpen,
   ChartColumn,
   ChevronsLeft,
   ChevronsRight,
-  Database,
-  Folder,
-  Globe,
   History,
-  Info,
   KeyRound,
   Layers,
   LayoutGrid,
   Route,
   Server,
   Settings,
-  SlidersHorizontal,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
 import { orderAppIds } from "@/config/appConfig";
-import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
+import type { GlobalPage, View } from "@/lib/navigation";
 import { isAppPage } from "@/lib/navigation";
 import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
@@ -55,11 +47,8 @@ interface SidebarProps {
   activeApp: AppId;
   view: View;
   visibleApps: VisibleApps;
-  settingsSection: SettingsSection;
   onSelectApp: (app: AppId) => void;
   onSelectPage: (page: GlobalPage | "settings") => void;
-  onSelectSettingsSection: (section: SettingsSection) => void;
-  onExitSettings: () => void;
   /** 打开了「启动时检查应用更新」并且查到了新版本 */
   appsUpdateAvailable?: boolean;
 }
@@ -68,7 +57,7 @@ type DirectoryProps = SidebarProps & { collapsed: boolean };
 
 /**
  * 主导航（v7）：顶条 44 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
- * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨；
+ * 进入设置时侧栏不换：设置的分组是内容区顶部的页签，应用和全局页一直点得到。收起时是 72px 的图标轨；
  * 展开 / 收起时宽度一步到位，边缘的滑动由盖板的 transform 动画画出（见 useSidebarCollapsed），文字不换行、被裁掉而不是挤成两行。
  * 收起时各行只剩图标，名字由 HoverTip 从右侧报；展开时文字可见，不再挂提示。
  */
@@ -76,8 +65,6 @@ export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
   const navRef = useRef<HTMLElement>(null);
   const { collapsed, toggle } = useSidebarCollapsed(navRef);
-  const { view } = props;
-  const inSettings = view === "settings";
 
   return (
     <nav
@@ -95,11 +82,7 @@ export function Sidebar(props: SidebarProps) {
         {t("nav.skipToContent")}
       </a>
       <SidebarTopBar collapsed={collapsed} onToggle={toggle} />
-      {inSettings ? (
-        <SettingsDirectory {...props} collapsed={collapsed} />
-      ) : (
-        <MainDirectory {...props} collapsed={collapsed} />
-      )}
+      <MainDirectory {...props} collapsed={collapsed} />
     </nav>
   );
 }
@@ -304,6 +287,7 @@ function MainDirectory({
           collapsed && "no-scrollbar",
         )}
       >
+        {!collapsed && <GroupLabel>{t("nav.appsGroup")}</GroupLabel>}
         <div
           role="group"
           aria-label={t("nav.appsGroup")}
@@ -329,7 +313,12 @@ function MainDirectory({
         )}
       />
 
-      <div className="flex shrink-0 flex-col">
+      {!collapsed && <GroupLabel>{t("nav.toolsGroup")}</GroupLabel>}
+      <div
+        role="group"
+        aria-label={t("nav.toolsGroup")}
+        className="flex shrink-0 flex-col"
+      >
         {globals.map((item) => (
           <NavItem
             key={item.page}
@@ -375,7 +364,7 @@ function MainDirectory({
         <NavItem
           collapsed={collapsed}
           compact={!collapsed}
-          selected={false}
+          selected={view === "settings"}
           icon={Settings}
           label={t("nav.settings")}
           title={hasUpdate ? t("nav.settingsHasUpdate") : t("nav.settings")}
@@ -482,7 +471,7 @@ function AppNavItem({
       onClick={onSelect}
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+        "mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
         selected && "bg-selected font-medium hover:bg-selected",
       )}
     >
@@ -540,7 +529,6 @@ function NavItem({
   alert,
   dot = false,
   dotTone = "neutral",
-  endDot = false,
   onClick,
 }: {
   collapsed: boolean;
@@ -560,8 +548,6 @@ function NavItem({
   dot?: boolean;
   /** 工具更新用中性色（很多人不想追新）；CC Switch 自己的更新用绿色，和工具更新分开 */
   dotTone?: "neutral" | "success";
-  /** 圆点放在行尾（设置目录里的「关于」），而不是图标角上 */
-  endDot?: boolean;
   onClick: () => void;
 }) {
   const ring = selected ? "border-selected" : "border-sidebar";
@@ -578,7 +564,7 @@ function NavItem({
   const glyph = (size: number) => (
     <span aria-hidden="true" className="relative flex shrink-0 text-fg-2">
       <Icon className={size === 20 ? "h-5 w-5" : "h-[18px] w-[18px]"} />
-      {dot && (collapsed || !endDot) && (
+      {dot && (
         <span
           className={cn(
             "absolute -end-1 -top-[3px] h-2.5 w-2.5 rounded-full border-2",
@@ -643,7 +629,7 @@ function NavItem({
         aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          "flex h-nav-row shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
           compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
           selected && "bg-selected font-medium hover:bg-selected",
         )}
@@ -653,7 +639,7 @@ function NavItem({
           <span className="min-w-0 flex-1 truncate">{label}</span>
         ) : (
           <>
-            {/* 有行尾小字时名字不让：放不下就让小字折行（两行正好塞进 28px 的行高） */}
+            {/* 有行尾小字时名字不让：放不下就让小字折行（两行正好塞进紧凑密度 28px 的行高） */}
             <span className="shrink-0 grow">{label}</span>
             <span className="min-w-0 text-end text-caption leading-[13px] tabular-nums text-fg-3">
               {trailingLines.map((line) => (
@@ -679,97 +665,16 @@ function NavItem({
             className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
           />
         )}
-        {dot && endDot && (
-          <span
-            aria-hidden="true"
-            className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotFill)}
-          />
-        )}
       </button>
     </HoverTip>
   );
 }
 
-// ─── 设置目录 ──────────────────────────────────────────────────────────────
-
-const SETTINGS_ITEMS: { section: SettingsSection; icon: IconComponent }[] = [
-  { section: "general", icon: SlidersHorizontal },
-  { section: "appConfig", icon: Folder },
-  { section: "routing", icon: Route },
-  { section: "network", icon: Globe },
-  { section: "data", icon: Database },
-  { section: "about", icon: Info },
-];
-
-function SettingsDirectory({
-  collapsed,
-  settingsSection,
-  onSelectSettingsSection,
-  onExitSettings,
-}: DirectoryProps) {
-  const { t } = useTranslation();
-  const { hasUpdate } = useUpdate();
-  const { data: version } = useQuery({
-    queryKey: ["app-version"],
-    queryFn: () => getVersion(),
-    staleTime: Infinity,
-  });
-
+function GroupLabel({ children }: { children: React.ReactNode }) {
   return (
-    <>
-      {collapsed ? (
-        <NavItem
-          collapsed
-          selected={false}
-          icon={ArrowLeft}
-          label={t("nav.back")}
-          onClick={onExitSettings}
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={onExitSettings}
-          className="mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
-        >
-          <ArrowLeft className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-          {t("nav.back")}
-        </button>
-      )}
-      {!collapsed && (
-        <div className="mt-3 px-4 pb-1 text-badge text-fg-3">
-          {t("nav.settings")}
-        </div>
-      )}
-      <div
-        role="group"
-        aria-label={t("nav.settings")}
-        className={cn("flex min-h-0 flex-1 flex-col", collapsed && "mt-2")}
-      >
-        {SETTINGS_ITEMS.map(({ section, icon }) => (
-          <NavItem
-            key={section}
-            collapsed={collapsed}
-            selected={settingsSection === section}
-            icon={icon}
-            label={t(`settings.sections.${section}`)}
-            dot={section === "about" && hasUpdate}
-            dotTone="success"
-            endDot
-            title={
-              section === "about" && hasUpdate
-                ? t("nav.settingsHasUpdate")
-                : undefined
-            }
-            onClick={() => onSelectSettingsSection(section)}
-          />
-        ))}
-      </div>
-      {!collapsed && version && (
-        <div className="shrink-0 px-4 pb-4 text-caption text-fg-3">
-          CC Switch v{version}
-        </div>
-      )}
-    </>
+    <div aria-hidden="true" className="px-4 pb-1 pt-2 text-badge text-fg-3">
+      {children}
+    </div>
   );
 }
 

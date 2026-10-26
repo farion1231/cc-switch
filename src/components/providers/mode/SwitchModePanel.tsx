@@ -1,7 +1,3 @@
-import { createPortal } from "react-dom";
-import { badgeVariants } from "@/components/ui/badge";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { cn } from "@/lib/utils";
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
@@ -44,7 +40,7 @@ import {
   queueMoveSortUpdates,
 } from "@/components/providers/presentation";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { ModeTabs, MODE_TONE } from "./ModeTabs";
+import { ModeTabs } from "./ModeTabs";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
 import {
   sameStackSubagent,
@@ -71,7 +67,6 @@ type ListCallbacks = Pick<
 
 interface SwitchModePanelProps extends ListCallbacks {
   app: ModeAppId;
-  statusSlot?: HTMLDivElement | null;
   providers: Record<string, Provider>;
   currentProviderId: string;
   isLoading: boolean;
@@ -99,7 +94,6 @@ const modesFor = (app: ModeAppId): AppMode[] =>
  * tab 只负责查看；要生效必须点写明后果的按钮（确认框），回到直连也一样。
  */
 export function SwitchModePanel({
-  statusSlot,
   app,
   providers,
   currentProviderId,
@@ -283,32 +277,6 @@ export function SwitchModePanel({
           : void rememberDefault(provider),
     },
   };
-
-  // 页头始终显示实际生效的连接，不跟随正在浏览的模式页签。
-  const routeTarget = failoverOn ? t("mode.status.byQueue") : nameOf(routeId);
-  const otherMembers = (stack?.members ?? []).filter(
-    (member) => member.providerId !== routeId,
-  );
-  const otherModels = otherMembers.reduce(
-    (sum, member) => sum + member.modelIds.length,
-    0,
-  );
-  const status =
-    active === "direct"
-      ? { lead: t("mode.status.directLead"), value: nameOf(directId) }
-      : active === "route"
-        ? {
-            lead: t("mode.status.routeLead"),
-            value: routeTarget,
-          }
-        : {
-            lead: t("mode.status.stackLead"),
-            value: t("mode.status.stackValue", {
-              name: nameOf(routeId),
-              count: otherMembers.length,
-              models: otherModels,
-            }),
-          };
 
   const handleFailoverChange = (enabled: boolean) => {
     if (enabled && !settings?.failoverConfirmed) {
@@ -540,45 +508,6 @@ export function SwitchModePanel({
 
   return (
     <>
-      {statusSlot &&
-        createPortal(
-          <HoverTip content={`${status.lead} ${status.value}`}>
-            <span
-              tabIndex={0}
-              aria-label={`${status.lead} ${status.value}`}
-              className={cn(
-                badgeVariants({ variant: "outline" }),
-                "max-w-full gap-1 border-border bg-surface px-2.5 py-1 text-body font-normal",
-              )}
-            >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "me-1 h-1.5 w-1.5 shrink-0 rounded-full",
-                  (
-                    active === "direct"
-                      ? Boolean(directId && providers[directId])
-                      : serviceRunning &&
-                        modeView?.attached &&
-                        Boolean(routeId && providers[routeId])
-                  )
-                    ? MODE_TONE[active].dot
-                    : "bg-fg-3",
-                )}
-              />
-              <span className="shrink-0 text-fg-2">
-                {t(`mode.names.${active}`)}
-              </span>
-              <span aria-hidden="true" className="text-fg-3">
-                ·
-              </span>
-              <span className="min-w-0 truncate font-medium text-fg-1">
-                {active === "stack" ? nameOf(routeId) : status.value}
-              </span>
-            </span>
-          </HoverTip>,
-          statusSlot,
-        )}
       <ModeTabs
         modes={modes}
         active={active}

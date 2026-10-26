@@ -28,6 +28,7 @@ import {
 } from "./lib/modelsDevAutoSync";
 import { initializeWindowActivity } from "@/lib/windowActivity";
 import { initializeInputModality } from "@/lib/inputModality";
+import { initializeInterfacePrefs } from "@/lib/interfacePrefs";
 
 installGlobalErrorHandlers();
 
@@ -121,6 +122,7 @@ async function bootstrap() {
 
   initializeWindowActivity();
   initializeInputModality();
+  initializeInterfacePrefs();
 
   // 首屏语言来自 localStorage 缓存；拿到后端保存的语言后再校正一次。
   // 与 useSettingsQuery 共用 ["settings"] 缓存，进设置页不会重复拉取。

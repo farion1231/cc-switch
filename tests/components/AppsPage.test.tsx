@@ -14,8 +14,10 @@ import {
   describe,
   expect,
   it,
+  onTestFinished,
   vi,
 } from "vitest";
+import i18n from "i18next";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   settingsApi,
@@ -653,6 +655,17 @@ describe("AppsPage concurrent CLI upgrades", () => {
 
   it("groups apps into installed and not installed sections", async () => {
     missing.add("codex");
+    // 测试环境没有加载文案，给未安装行的安装提示一条真实文字，才看得出它挂没挂悬停提示
+    i18n.addResource(
+      "zh",
+      "translation",
+      "appsPage.installHint.codex",
+      "通过 npm 安装",
+    );
+    onTestFinished(() => {
+      i18n.removeResourceBundle("zh", "translation");
+      i18n.addResourceBundle("zh", "translation", {});
+    });
     await renderApps();
     const installed = within(
       screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
@@ -665,6 +678,10 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(installed.queryByText("Codex")).toBeNull();
     expect(notInstalled.getByText("Codex")).toBeInTheDocument();
     expect(notInstalled.queryByText("Claude Code")).toBeNull();
+    // 未安装行下面的安装方式提示写全，不挂悬停提示
+    expect(notInstalled.getByText("通过 npm 安装")).not.toHaveAttribute(
+      "title",
+    );
   });
 
   it("groups Claude Desktop by whether it is installed, not whether it is connected", async () => {
@@ -2061,6 +2078,13 @@ describe("AppsPage concurrent CLI upgrades", () => {
         name: /appsPage\.otherInstalls/,
       }),
     ).toHaveAttribute("aria-expanded", "true");
+    // 路径写全、放不下折行，不挂悬停提示（行内路径和冲突列表里的路径都一样）
+    for (const path of card("Claude Code").getAllByText(
+      /^\/(usr\/local|opt\/homebrew)\/bin\/claude$/,
+    )) {
+      expect(path).not.toHaveAttribute("title");
+      expect(path).not.toHaveClass("truncate");
+    }
     expect(mocks.warning).toHaveBeenCalledWith(
       "settings.toolDiagnoseConflicts",
       expect.anything(),

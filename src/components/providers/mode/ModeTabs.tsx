@@ -4,7 +4,6 @@ import type { AppMode } from "@/types/proxy";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
-import { HoverTip } from "@/components/ui/hover-tip";
 import {
   SegmentThumb,
   useSlidingIndicator,
@@ -56,9 +55,9 @@ interface ModeTabsProps {
 }
 
 /**
- * 模式行：三段 tab 只负责查看。白底凸起只给正在看的那段；生效的那段只用模式色文字和圆点，
- * 不铺底（否则彩色那格比正在看的更抢眼）。组右边的「?」说明三种模式的区别。
- * 模式 tab 保留文字、不挂提示；右侧的故障转移、路由设置是纯图标 + HoverTip。
+ * 模式行：三段 tab 只负责查看。白底凸起只给正在看的那段；生效的那段用模式色文字加「生效中」小标签，
+ * 段本身不铺底（否则彩色那格比正在看的更抢眼）。组右边的「?」说明三种模式的区别。
+ * 右侧的故障转移开关、路由设置 / 聚合设置都直接写名字，不靠悬停提示。
  */
 export function ModeTabs({
   modes,
@@ -116,14 +115,16 @@ export function ModeTabs({
               />
               {t(`mode.names.${mode}`)}
               {isActive && (
+                // 生效的那段直接写「生效中」：只靠一个小圆点时，常被当成「点了页签就切过去了」
                 <span
-                  aria-label={t("mode.active")}
-                  role="img"
                   className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    MODE_TONE[mode].dot,
+                    "rounded-full px-1.5 text-badge leading-[18px]",
+                    MODE_TONE[mode].soft,
+                    MODE_TONE[mode].text,
                   )}
-                />
+                >
+                  {t("mode.active")}
+                </span>
               )}
             </button>
           );
@@ -146,47 +147,42 @@ export function ModeTabs({
       )}
 
       {failover && (
-        <HoverTip content={t("mode.failover")}>
-          <label className="flex shrink-0 cursor-pointer items-center gap-1.5">
-            <Shuffle
-              className="h-4 w-4 text-fg-2"
-              strokeWidth={1.5}
-              aria-hidden="true"
-            />
-            <Switch
-              checked={failover.enabled}
-              disabled={failover.disabled}
-              onCheckedChange={failover.onChange}
-              aria-label={t("mode.failover")}
-            />
-          </label>
-        </HoverTip>
+        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap text-body text-fg-1">
+          <Shuffle
+            className="h-4 w-4 text-fg-2"
+            strokeWidth={1.5}
+            aria-hidden="true"
+          />
+          {t("mode.failover")}
+          <Switch
+            checked={failover.enabled}
+            disabled={failover.disabled}
+            onCheckedChange={failover.onChange}
+            aria-label={t("mode.failover")}
+          />
+        </label>
       )}
       {onOpenRouteSettings && (
-        <HoverTip content={t("mode.routeSettings")}>
-          <Button
-            variant="quiet"
-            size="compact"
-            className="h-8 w-8 shrink-0 px-0"
-            aria-label={t("mode.routeSettings")}
-            onClick={onOpenRouteSettings}
-          >
-            <Settings2 className="h-4 w-4" strokeWidth={1.75} />
-          </Button>
-        </HoverTip>
+        <Button
+          variant="quiet"
+          size="compact"
+          className="shrink-0 px-2"
+          onClick={onOpenRouteSettings}
+        >
+          <Settings2 className="h-4 w-4" strokeWidth={1.75} />
+          {t("mode.routeSettings")}
+        </Button>
       )}
       {onOpenStackSettings && (
-        <HoverTip content={t("mode.stackSettings.title")}>
-          <Button
-            variant="quiet"
-            size="compact"
-            className="h-8 w-8 shrink-0 px-0"
-            aria-label={t("mode.stackSettings.title")}
-            onClick={onOpenStackSettings}
-          >
-            <Settings2 className="h-4 w-4" strokeWidth={1.75} />
-          </Button>
-        </HoverTip>
+        <Button
+          variant="quiet"
+          size="compact"
+          className="shrink-0 px-2"
+          onClick={onOpenStackSettings}
+        >
+          <Settings2 className="h-4 w-4" strokeWidth={1.75} />
+          {t("mode.stackSettings.title")}
+        </Button>
       )}
     </div>
   );
