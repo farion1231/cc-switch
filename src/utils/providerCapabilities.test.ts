@@ -5,6 +5,7 @@ import {
   providerNeedsRouting,
   resolveCodexOfficialIdentity,
   supportsOfficialProxyTakeover,
+  supportsConnectivityCheck,
   isOfficialAccount,
 } from "@/utils/providerCapabilities";
 
@@ -434,5 +435,37 @@ describe("providerNeedsRouting", () => {
         ).toBe(true);
       },
     );
+  });
+});
+
+describe("supportsConnectivityCheck", () => {
+  it("第三方 OpenCode 供应商可以检测连通", () => {
+    expect(
+      supportsConnectivityCheck(
+        "opencode",
+        mkProvider({
+          settingsConfig: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "http://127.0.0.1:8317/v1" },
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["official", "omo", "omo-slim"] as const)(
+    "%s 卡片没有可探测的上游地址",
+    (category) => {
+      expect(
+        supportsConnectivityCheck(
+          "opencode",
+          mkProvider({ category, settingsConfig: {} }),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["mcode", "kimi"] as const)("%s 不支持连通检测", (appId) => {
+    expect(supportsConnectivityCheck(appId, mkProvider())).toBe(false);
   });
 });

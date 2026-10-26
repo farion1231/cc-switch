@@ -136,7 +136,6 @@ describe("PPIO provider presets", () => {
       ppioModelId,
       "moonshotai/kimi-k3.1-pro",
       "zai-org/glm-5.3",
-      "deepseek/deepseek-v4-pro",
     ]);
     expect(`${opencode.settingsConfig.options.baseURL}/chat/completions`).toBe(
       ppioChatCompletionsEndpoint,
@@ -166,7 +165,6 @@ describe("PPIO provider presets", () => {
       ppioModelId,
       "moonshotai/kimi-k3.1-pro",
       "zai-org/glm-5.3",
-      "deepseek/deepseek-v4-pro",
       "xiaomimimo/mimo-v2.6-pro",
       "qwen/qwen3.8-max",
       "minimax/minimax-m3.1-flash",
@@ -207,11 +205,6 @@ describe("PPIO provider presets", () => {
             context_length: 1048576,
           },
           { id: "zai-org/glm-5.3", name: "GLM-5.3", context_length: 1000000 },
-          {
-            id: "deepseek/deepseek-v4-pro",
-            name: "DeepSeek V4 Pro",
-            context_length: 1000000,
-          },
         ],
       },
       suggestedDefaults: {

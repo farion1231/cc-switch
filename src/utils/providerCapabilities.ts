@@ -116,6 +116,27 @@ export function supportsFailover(
   return !supportsOfficialProxyTakeover(appId, provider);
 }
 
+/**
+ * 能否做「检测连通」（对 base_url 的可达性探测）。
+ *
+ * 探测需要一个真实的上游地址，所以两类卡片不参与：
+ * - 官方账号卡：base_url 故意留空，走客户端默认 / OAuth 端点；
+ * - OMO / OMO Slim：`settings_config` 里只有 agents / categories 的模型映射，
+ *   没有 `npm` 与 `options.baseURL`，后端无从解析探测目标。要测上游请到它引用的
+ *   OpenCode 供应商卡片上测。
+ */
+export function supportsConnectivityCheck(
+  appId: AppId,
+  provider: Pick<Provider, "category">,
+): boolean {
+  if (appId === "mcode" || appId === "kimi") return false;
+  return (
+    provider.category !== "official" &&
+    provider.category !== "omo" &&
+    provider.category !== "omo-slim"
+  );
+}
+
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
   appId: AppId,

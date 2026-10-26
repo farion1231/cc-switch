@@ -11,6 +11,7 @@ use super::codex_chat_common::{
 };
 use super::codex_compaction;
 use super::inline_think::split_leading_think_block;
+use super::transform::unwrap_chat_completion_envelope;
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -1929,6 +1930,7 @@ pub(crate) fn chat_completion_to_response_with_context(
     body: Value,
     tool_context: &CodexToolContext,
 ) -> Result<Value, ProxyError> {
+    let body = unwrap_chat_completion_envelope(body);
     let choices = body
         .get("choices")
         .and_then(|v| v.as_array())
@@ -4000,6 +4002,33 @@ mod tests {
             "Need to inspect the code."
         );
         assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_completion_to_response_unwraps_data_envelope() {
+        // #5658：ClinePass 把非流式 Chat 响应包在 data 里
+        let input = json!({
+            "success": true,
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "model": "cline-pass/deepseek-v4.1-flash",
+                "created": 1_700_000_000,
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "OK"}
+                }],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
+            }
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["model"], "cline-pass/deepseek-v4.1-flash");
+        assert_eq!(result["created_at"], 1_700_000_000);
+        assert_eq!(result["status"], "completed");
+        assert_eq!(result["output"][0]["content"][0]["text"], "OK");
+        assert_eq!(result["usage"]["input_tokens"], 12);
+        assert_eq!(result["usage"]["output_tokens"], 1);
     }
 
     #[test]
