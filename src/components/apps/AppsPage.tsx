@@ -669,8 +669,8 @@ function AppRow({
             </div>
             {meta && (
               // 名称下面的补充说明（安装路径、安装提示）：和设置项的说明同一种小字。
-              // 路径折行时「另有 N 处安装」跟第一行对齐
-              <div className="mt-1 flex min-w-0 items-baseline gap-1.5 text-hint text-fg-3">
+              // 放不下时「另有 N 处安装」整个换到下一行，路径保持一行；路径本身比整列还长才按字符折
+              <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-hint text-fg-3">
                 {meta}
               </div>
             )}
