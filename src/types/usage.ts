@@ -220,6 +220,9 @@ export interface UsageRangeSelection {
  * `opencode` and `pi` have no proxy handler; their usage reaches this
  * dashboard through session importers. `openclaw` / `hermes` appear only as
  * managed apps elsewhere.
+ * `dsh` (DeepSeek Harness) is the same shape as `opencode`/`pi` — session-log
+ * importer only — and is not a CC Switch managed app, so it has no provider
+ * cards, MCP or Skills entry.
  */
 export type AppType =
   | "claude"
@@ -230,7 +233,8 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
-  | "agy";
+  | "agy"
+  | "dsh";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -244,6 +248,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "mcode",
   "kimi",
   "agy",
+  "dsh",
 ];
 
 /**
@@ -267,10 +272,14 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
 // Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates
 // only by app type. Treat cache-write coverage as partial without changing
 // Pi's fresh-input token semantics.
+// DeepSeek Harness reports cacheWriteTokens too, but DeepSeek caches implicitly
+// and never bills a cache write, so the column stays 0 there — same "partial"
+// reading as the other session-only apps.
 const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "pi",
   "mcode",
   "kimi",
+  "dsh",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";
