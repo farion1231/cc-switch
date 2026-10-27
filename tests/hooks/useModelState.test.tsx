@@ -33,8 +33,10 @@ describe("useModelState", () => {
     expect(result.current.defaultSonnetModelName).toBe("DeepSeek V4 Pro");
     expect(result.current.defaultOpusModel).toBe("kimi-k2");
     expect(result.current.defaultOpusModelName).toBe("Kimi K2");
-    expect(result.current.defaultHaikuModel).toBe("legacy-small");
-    expect(result.current.defaultHaikuModelName).toBe("legacy-small");
+    // env 里没有 haiku 键：空串 + placeholder 提示运行时回落，不再回填
+    // SMALL_FAST 的值造成「已保存」的假象（issue #7456）。
+    expect(result.current.defaultHaikuModel).toBe("");
+    expect(result.current.defaultHaikuModelName).toBe("");
     expect(result.current.subagentModel).toBe("subagent-model[1M]");
   });
 
@@ -78,7 +80,7 @@ describe("useModelState", () => {
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME).toBeUndefined();
   });
 
-  it("keeps the 1M marker on request models but strips it from fallback display names", () => {
+  it("keeps the 1M marker on request models and leaves the missing name empty", () => {
     const settingsConfig = JSON.stringify({
       env: {
         ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1M]",
@@ -92,8 +94,10 @@ describe("useModelState", () => {
       }),
     );
 
+    // 请求模型保留 1M 标记；没有对应 NAME 键时显示名留空（placeholder 提示），
+    // 不再填剥掉标记的回落值（issue #7456）。
     expect(result.current.defaultSonnetModel).toBe("deepseek-v4-pro[1M]");
-    expect(result.current.defaultSonnetModelName).toBe("deepseek-v4-pro");
+    expect(result.current.defaultSonnetModelName).toBe("");
   });
 
   it("writes and clears the Claude Code subagent model env field", () => {
