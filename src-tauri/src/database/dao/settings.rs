@@ -282,6 +282,31 @@ impl Database {
         self.set_setting("optimizer_config", &json)
     }
 
+    // --- 隐私过滤器配置 ---
+
+    /// 获取隐私过滤器配置
+    ///
+    /// 返回配置，如果不存在则返回默认值（默认关闭）
+    pub fn get_privacy_filter_config(
+        &self,
+    ) -> Result<crate::proxy::types::PrivacyFilterConfig, AppError> {
+        match self.get_setting("privacy_filter_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析隐私过滤器配置失败: {e}"))),
+            None => Ok(crate::proxy::types::PrivacyFilterConfig::default()),
+        }
+    }
+
+    /// 更新隐私过滤器配置
+    pub fn set_privacy_filter_config(
+        &self,
+        config: &crate::proxy::types::PrivacyFilterConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化隐私过滤器配置失败: {e}")))?;
+        self.set_setting("privacy_filter_config", &json)
+    }
+
     // --- Copilot 优化器配置 ---
 
     /// 获取 Copilot 优化器配置

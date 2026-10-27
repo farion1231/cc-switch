@@ -520,6 +520,11 @@
         "mediaHeuristic": "纯文本模型预判",
         "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明"
       },
+      "privacyFilter": {
+        "title": "隐私过滤器",
+        "description": "开启后，代理转发请求前会把请求文本中的个人信息（邮箱、手机号、身份证、银行卡、IP）和密钥（API Key、Token、密码、私钥等）替换为 [邮箱]、[密钥] 等占位符，工具结果一并处理；关闭后请求原样转发。占位符跟随界面语言。本地规则匹配，替换不可逆，作用于路由和聚合模式；直连模式下请求不经过 CC Switch，不会被过滤。思考块、工具调用参数和图片不受影响。移植自 packyme/privacy-filter。",
+        "enabled": "启用隐私过滤"
+      },
       "optimizer": {
         "title": "Bedrock 请求优化器",
         "description": "在请求发送前自动优化 Thinking 和 Cache 配置（仅 Bedrock 供应商生效）",

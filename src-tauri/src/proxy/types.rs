@@ -270,6 +270,18 @@ impl Default for OptimizerConfig {
     }
 }
 
+/// 隐私过滤器配置
+///
+/// 存储在 settings 表中，key = "privacy_filter_config"
+/// 开启后代理在转发前脱敏请求文本里的 PII 与密钥（见 `proxy::privacy_filter`）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivacyFilterConfig {
+    /// 总开关（默认关闭，用户需手动启用）
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 /// Copilot 优化器配置
 ///
 /// 存储在 settings 表中，key = "copilot_optimizer_config"
