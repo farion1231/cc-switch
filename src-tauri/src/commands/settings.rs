@@ -205,6 +205,24 @@ pub async fn migrate_managed_codex_history(
     })
 }
 
+/// Confirmed repair; startup keeps the completion marker and never calls this action.
+#[tauri::command]
+pub async fn repair_legacy_official_codex_history(
+) -> Result<crate::codex_history_migration::CodexHistoryProviderBucketMigrationOutcome, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::codex_history_migration::repair_codex_legacy_official_history_to_openai_bucket()
+    })
+    .await
+    .map_err(|error| {
+        log::warn!("Codex legacy official history repair task failed: {error}");
+        error.to_string()
+    })?
+    .map_err(|error| {
+        log::warn!("Codex legacy official history repair failed: {error}");
+        error.to_string()
+    })
+}
+
 /// Codex 的 `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具
 /// （这时「经典子 agent 工具」开关不生效，界面上提示）。
 #[tauri::command]

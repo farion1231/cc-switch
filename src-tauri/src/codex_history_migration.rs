@@ -206,24 +206,7 @@ fn migrate_third_party_history(
         });
     }
     if include_managed_custom {
-        // Unknown index layouts need manual recovery; do not migrate files and
-        // only then discover that their corresponding rows cannot be verified.
-        for path in codex_state_db_paths(&codex_dir, &config_text) {
-            if !path.exists() {
-                continue;
-            }
-            let conn =
-                Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-            if !Database::table_exists(&conn, "threads")?
-                || !Database::has_column(&conn, "threads", "id")?
-                || !Database::has_column(&conn, "threads", "model_provider")?
-                || !Database::has_column(&conn, "threads", "rollout_path")?
-            {
-                return Err(AppError::Message(format!(
-                    "Codex index layout cannot be verified safely: {}. Restore the original provider definition instead", path.display()
-                )));
-            }
-        }
+        validate_history_index_layouts(&codex_dir, &config_text)?;
     }
     let backup_root = migration_backup_root(MIGRATION_NAME);
     let files = migrate_codex_jsonl_files_to(
@@ -425,10 +408,24 @@ fn codex_config_text_routes_custom(config_text: &str) -> bool {
 /// 不迁；state DB 打不开（WSL 路径）时不迁也不写标记，只改 jsonl 恢复时仍会报错。
 pub fn maybe_migrate_codex_legacy_official_history_to_openai_bucket(
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    migrate_codex_legacy_official_history(false)
+}
+
+/// Confirmed repair of leftover official ids, without clearing the startup marker.
+pub fn repair_codex_legacy_official_history_to_openai_bucket(
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    migrate_codex_legacy_official_history(true)
+}
+
+fn migrate_codex_legacy_official_history(
+    confirmed_retry: bool,
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
     let _op_guard = lock_codex_official_history_op();
     let codex_dir = get_codex_config_dir();
     let codex_dir_key = canonical_dir_string(&codex_dir);
-    if crate::settings::is_codex_legacy_official_history_bucket_migrated_for_dir(&codex_dir_key) {
+    if !confirmed_retry
+        && crate::settings::is_codex_legacy_official_history_bucket_migrated_for_dir(&codex_dir_key)
+    {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("already_migrated".to_string()),
             ..Default::default()
@@ -448,6 +445,10 @@ pub fn maybe_migrate_codex_legacy_official_history_to_openai_bucket(
             retry_pending: true,
             ..Default::default()
         });
+    }
+
+    if confirmed_retry {
+        validate_history_index_layouts(&codex_dir, &config_text)?;
     }
 
     let source_provider_ids: BTreeSet<String> =
@@ -1723,6 +1724,27 @@ fn read_history_config(codex_dir: &Path) -> Result<String, AppError> {
         ))
     })?;
     Ok(text)
+}
+
+/// Manual history writes require every existing index to support rollout verification.
+fn validate_history_index_layouts(codex_dir: &Path, config_text: &str) -> Result<(), AppError> {
+    for path in codex_state_db_paths(codex_dir, config_text) {
+        if !path.exists() {
+            continue;
+        }
+        let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        if !Database::table_exists(&conn, "threads")?
+            || !Database::has_column(&conn, "threads", "id")?
+            || !Database::has_column(&conn, "threads", "model_provider")?
+            || !Database::has_column(&conn, "threads", "rollout_path")?
+        {
+            return Err(AppError::Message(format!(
+                "Codex index layout cannot be verified safely: {}. Restore the original provider definition instead", path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn state_db_unavailable(codex_dir: &Path, config_text: &str) -> bool {
@@ -4699,6 +4721,337 @@ model_provider = "aihubmix"
         .unwrap();
         assert_eq!((report.migrated, report.skipped), (0, 0));
         assert!(!dir.path().join("backup").exists());
+    }
+
+    fn seed_legacy_repair_index(path: &Path, rows: &[(&str, &str, &str)]) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, rollout_path TEXT NOT NULL);").unwrap();
+        for (id, provider, rollout) in rows {
+            conn.execute(
+                "INSERT INTO threads VALUES (?1, ?2, ?3)",
+                [id, provider, rollout],
+            )
+            .unwrap();
+        }
+    }
+
+    fn mark_legacy_repair_completed(codex: &Path) {
+        crate::settings::mark_codex_legacy_official_history_bucket_migrated(
+            CodexLegacyOfficialHistoryBucketMigration {
+                completed_at: "previous-completion".into(),
+                target_provider_id: "openai".into(),
+                migrated_jsonl_files: 3,
+                migrated_state_rows: 3,
+                codex_config_dir: Some(canonical_dir_string(codex)),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_retries_completed_metadata_and_nested_indexes() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(codex.join("sqlite")).unwrap();
+        let config = "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://api.example/v1\"\n";
+        fs::write(codex.join("config.toml"), config).unwrap();
+        let auth = "{\"tokens\":{\"synthetic\":true}}";
+        fs::write(codex.join("auth.json"), auth).unwrap();
+        let plain = codex.join("sessions/plain.jsonl");
+        let original = session_meta_line("plain", "openai")
+            + &settings_event_line(Some("plain"), "cc-switch-official")
+            + "{\"type\":\"response_item\",\"payload\":{\"text\":\"cc-switch-official\",\"encrypted_content\":\"synthetic-ciphertext\"}}\n";
+        fs::write(&plain, &original).unwrap();
+        let compressed = codex.join("sessions/zstd.jsonl.zst");
+        let zstd_original = session_meta_line("zstd", "cc-switch-official")
+            + &settings_event_line(None, "cc-switch-official");
+        let zstd_raw = zstd::stream::encode_all(zstd_original.as_bytes(), 3).unwrap();
+        fs::write(&compressed, &zstd_raw).unwrap();
+        let untouched = codex.join("sessions/third-party.jsonl");
+        let third_party = session_meta_line("third-party", "legacy-relay");
+        fs::write(&untouched, &third_party).unwrap();
+        let root = codex.join(CODEX_STATE_DB_FILENAME);
+        let nested = codex.join("sqlite").join(CODEX_STATE_DB_FILENAME);
+        seed_legacy_repair_index(
+            &root,
+            &[
+                ("plain", "cc-switch-official", "sessions/plain.jsonl"),
+                ("third-party", "legacy-relay", "sessions/third-party.jsonl"),
+            ],
+        );
+        seed_legacy_repair_index(
+            &nested,
+            &[("zstd", "cc-switch-official", "sessions/zstd.jsonl.zst")],
+        );
+        mark_legacy_repair_completed(&codex);
+        let original_file = fs::File::open(&plain).unwrap();
+        let zstd_mtime = fs::metadata(&compressed).unwrap().modified().unwrap();
+        assert_eq!(
+            maybe_migrate_codex_legacy_official_history_to_openai_bucket()
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+        assert_eq!(fs::read_to_string(&plain).unwrap(), original);
+        let result = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        assert_eq!(
+            (result.migrated_jsonl_files, result.migrated_state_rows),
+            (2, 2)
+        );
+        assert_eq!(
+            (result.skipped_jsonl_files, result.skipped_state_rows),
+            (0, 0)
+        );
+        assert!(!result.retry_pending);
+        let next = fs::read_to_string(&plain).unwrap();
+        assert_eq!(next.len(), original.len());
+        assert!(next.contains("synthetic-ciphertext"));
+        assert!(next.contains("\"text\":\"cc-switch-official\""));
+        assert!(same_file_identity(
+            &original_file,
+            &fs::File::open(&plain).unwrap()
+        ));
+        let event: Value = serde_json::from_str(next.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(
+            event["payload"]["thread_settings"]["model_provider_id"],
+            "openai"
+        );
+        let raw = fs::read(&compressed).unwrap();
+        assert_eq!(&raw[..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+        let decoded = String::from_utf8(zstd::stream::decode_all(raw.as_slice()).unwrap()).unwrap();
+        assert_eq!(decoded.len(), zstd_original.len());
+        assert_eq!(
+            fs::metadata(&compressed).unwrap().modified().unwrap(),
+            zstd_mtime
+        );
+        assert_eq!(thread_provider(&root, "plain"), "openai");
+        assert_eq!(thread_provider(&nested, "zstd"), "openai");
+        assert_eq!(thread_provider(&root, "third-party"), "legacy-relay");
+        assert_eq!(fs::read_to_string(untouched).unwrap(), third_party);
+        assert_eq!(
+            fs::read_to_string(codex.join("config.toml")).unwrap(),
+            config
+        );
+        assert_eq!(fs::read_to_string(codex.join("auth.json")).unwrap(), auth);
+        let backups = get_app_config_dir().join("backups").join(MIGRATION_NAME);
+        let generations: Vec<_> = fs::read_dir(&backups)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(generations.len(), 1);
+        let backup = &generations[0];
+        assert_eq!(
+            fs::read_to_string(backup.join("jsonl/sessions/plain.jsonl")).unwrap(),
+            original
+        );
+        assert_eq!(
+            fs::read(backup.join("jsonl/sessions/zstd.jsonl.zst")).unwrap(),
+            zstd_raw
+        );
+        assert_eq!(
+            thread_provider(&backup.join("state").join(CODEX_STATE_DB_FILENAME), "plain"),
+            "cc-switch-official"
+        );
+        assert_eq!(
+            thread_provider(
+                &backup.join("state/sqlite").join(CODEX_STATE_DB_FILENAME),
+                "zstd"
+            ),
+            "cc-switch-official"
+        );
+        let repeated = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        assert_eq!(
+            (repeated.migrated_jsonl_files, repeated.migrated_state_rows),
+            (0, 0)
+        );
+        assert_eq!(fs::read_dir(backups).unwrap().count(), 1);
+        assert_eq!(
+            maybe_migrate_codex_legacy_official_history_to_openai_bucket()
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_preflights_all_indexes_before_changing_files() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(codex.join("sqlite")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
+        let plain = codex.join("sessions/official.jsonl");
+        let original = session_meta_line("official", "cc-switch-official");
+        fs::write(&plain, &original).unwrap();
+        let root = codex.join(CODEX_STATE_DB_FILENAME);
+        seed_legacy_repair_index(
+            &root,
+            &[("official", "cc-switch-official", "sessions/official.jsonl")],
+        );
+        Connection::open(codex.join("sqlite").join(CODEX_STATE_DB_FILENAME))
+            .unwrap()
+            .execute_batch("CREATE TABLE threads (id TEXT);")
+            .unwrap();
+        assert!(repair_codex_legacy_official_history_to_openai_bucket().is_err());
+        assert_eq!(fs::read_to_string(plain).unwrap(), original);
+        assert_eq!(thread_provider(&root, "official"), "cc-switch-official");
+        assert!(!get_app_config_dir()
+            .join("backups")
+            .join(MIGRATION_NAME)
+            .exists());
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_skips_bad_files_and_retries_missing_rollouts() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
+        let good = codex.join("sessions/good.jsonl");
+        fs::write(&good, session_meta_line("good", "cc-switch-official")).unwrap();
+        let bad = codex.join("sessions/bad.jsonl");
+        let malformed = "{\"type\":\"session_meta\",\"payload\":";
+        fs::write(&bad, malformed).unwrap();
+        let root = codex.join(CODEX_STATE_DB_FILENAME);
+        seed_legacy_repair_index(
+            &root,
+            &[
+                ("good", "cc-switch-official", "sessions/good.jsonl"),
+                ("bad", "cc-switch-official", "sessions/bad.jsonl"),
+                ("missing", "cc-switch-official", "sessions/missing.jsonl"),
+            ],
+        );
+        mark_legacy_repair_completed(&codex);
+        let result = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        assert_eq!(
+            (result.migrated_jsonl_files, result.migrated_state_rows),
+            (1, 1)
+        );
+        assert_eq!(
+            (result.skipped_jsonl_files, result.skipped_state_rows),
+            (1, 2)
+        );
+        assert!(result.retry_pending);
+        assert_eq!(thread_provider(&root, "bad"), "cc-switch-official");
+        assert_eq!(thread_provider(&root, "missing"), "cc-switch-official");
+        assert_eq!(fs::read_to_string(&bad).unwrap(), malformed);
+        assert_eq!(
+            maybe_migrate_codex_legacy_official_history_to_openai_bucket()
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+        fs::write(&bad, session_meta_line("bad", "cc-switch-official")).unwrap();
+        fs::write(
+            codex.join("sessions/missing.jsonl"),
+            session_meta_line("missing", "cc-switch-official"),
+        )
+        .unwrap();
+        let retried = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        assert_eq!(
+            (retried.migrated_jsonl_files, retried.migrated_state_rows),
+            (2, 2)
+        );
+        assert!(!retried.retry_pending);
+        assert_eq!(thread_provider(&root, "bad"), "openai");
+        assert_eq!(thread_provider(&root, "missing"), "openai");
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_defers_busy_index_and_preserves_backups() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
+        let path = codex.join("sessions/official.jsonl");
+        let original = session_meta_line("official", "cc-switch-official");
+        fs::write(&path, &original).unwrap();
+        let root = codex.join(CODEX_STATE_DB_FILENAME);
+        seed_legacy_repair_index(
+            &root,
+            &[("official", "cc-switch-official", "sessions/official.jsonl")],
+        );
+        mark_legacy_repair_completed(&codex);
+        let locked = Connection::open(&root).unwrap();
+        locked.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(repair_codex_legacy_official_history_to_openai_bucket().is_err());
+        assert_eq!(thread_provider(&root, "official"), "cc-switch-official");
+        let backups = get_app_config_dir().join("backups").join(MIGRATION_NAME);
+        let generation = fs::read_dir(&backups)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(
+            fs::read_to_string(generation.join("jsonl/sessions/official.jsonl")).unwrap(),
+            original
+        );
+        assert_eq!(
+            maybe_migrate_codex_legacy_official_history_to_openai_bucket()
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+        locked.execute_batch("ROLLBACK").unwrap();
+        let retry = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        // The prior safe file patch can be reused to verify the still-stale index.
+        assert_eq!(
+            (retry.migrated_jsonl_files, retry.migrated_state_rows),
+            (0, 1)
+        );
+        assert_eq!(thread_provider(&root, "official"), "openai");
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_keeps_active_profiles_and_rejects_invalid_config() {
+        for config in [
+            "model_provider = \"cc-switch-official\"\n",
+            "[profiles.legacy]\nmodel_provider = \"cc-switch-official\"\n",
+            "model_provider = [invalid",
+        ] {
+            let home = IsolatedHome::new();
+            let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+            let codex = home.codex_dir();
+            fs::create_dir_all(codex.join("sessions")).unwrap();
+            fs::write(codex.join("config.toml"), config).unwrap();
+            let path = codex.join("sessions/official.jsonl");
+            let original = session_meta_line("official", "cc-switch-official");
+            fs::write(&path, &original).unwrap();
+            mark_legacy_repair_completed(&codex);
+            let result = repair_codex_legacy_official_history_to_openai_bucket();
+            if config.ends_with("[invalid") {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(
+                    result.unwrap().skipped_reason.as_deref(),
+                    Some("legacy_route_in_use")
+                );
+            }
+            assert_eq!(fs::read_to_string(path).unwrap(), original);
+            assert_eq!(
+                fs::read_to_string(codex.join("config.toml")).unwrap(),
+                config
+            );
+            assert!(!get_app_config_dir()
+                .join("backups")
+                .join(MIGRATION_NAME)
+                .exists());
+        }
     }
 
     #[test]
