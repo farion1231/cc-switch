@@ -187,6 +187,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 2. **Fork and branch** — Create a feature branch from `main` (e.g., `feat/my-feature` or `fix/issue-123`).
 3. **Keep PRs focused** — One feature or fix per PR. Avoid unrelated changes.
 4. **Follow the PR template** — Fill in the summary, related issue, and checklist.
+5. **Leave the database version to maintainers** — Don't change `SCHEMA_VERSION`; such PRs from non-collaborators are closed automatically. If your change truly needs a schema change, mention any one maintainer (`@farion1231`, `@funkpopo`, `@YUZHEthefool`, `@Owlbay` or `@SaladDay`) in the PR to explain why.
 
 ### PR Checklist
 
@@ -219,6 +220,7 @@ By submitting a PR, you agree to the following:
 3. **PRs must be small and focused.** One issue, one PR. Large, sprawling, multi-topic PRs will be closed.
 4. **Open an issue first.** Drive-by PRs with no prior discussion — especially AI-generated ones — may be closed without review.
 5. **Maintainers may close without explanation.** PRs that appear to be unreviewed AI output — hallucinated fixes, unnecessary refactors, bulk changes with no context — may be closed at the maintainer's discretion.
+6. **Write the Human Note yourself.** The "Human Note / 本人说明" section of the PR template must say, in your own words, what you want to do. It must not be AI-generated. PRs that leave it empty or fill it with obviously AI-written text may be closed without review.
 
 **In short**: AI is a tool, not a substitute for understanding. Use it to help you contribute better, not to shift work onto maintainers.
 
@@ -444,6 +446,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 2. **Fork 并创建分支** — 从 `main` 创建功能分支（如 `feat/my-feature` 或 `fix/issue-123`）。
 3. **保持 PR 专注** — 每个 PR 只做一件事，避免无关改动。
 4. **遵循 PR 模板** — 填写概述、关联 Issue 和检查清单。
+5. **数据库版本交给维护者** — 请勿修改 `SCHEMA_VERSION`，非协作者的此类 PR 会被自动关闭。如确需改动数据库结构，请在 PR 中 @ 任意一位维护者（`@farion1231`、`@funkpopo`、`@YUZHEthefool`、`@Owlbay`、`@SaladDay`）说明原因。
 
 ### PR 检查清单
 
@@ -476,6 +479,7 @@ chore(deps): update dependencies
 3. **PR 必须小而聚焦。** 一个 Issue 对应一个 PR。大而散、跨多个主题的 PR 会被直接关闭。
 4. **先开 Issue 讨论。** 没有事先讨论的"路过式 PR"——尤其是 AI 生成的——可能会被直接关闭。
 5. **维护者可以直接关闭。** 看起来是未经审阅的 AI 产出的 PR——虚构的修复、不必要的重构、缺乏上下文的批量改动——维护者可自行决定关闭。
+6. **本人说明须亲自写。** PR 模板里的「Human Note / 本人说明」必须用你自己的话说清楚你想做什么，不允许 AI 生成。留空或明显由 AI 代写的 PR，可能会被直接关闭。
 
 **一句话总结**：AI 是工具，不是理解力的替代品。用它来帮助你更好地贡献，而不是把工作转移给维护者。
 
