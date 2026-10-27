@@ -47,6 +47,8 @@ mod settings;
 mod store;
 
 mod tray;
+#[cfg(target_os = "windows")]
+mod tray_compat;
 mod tray_panel;
 mod usage_events;
 mod usage_script;
@@ -86,7 +88,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::tray::TrayIconBuilder;
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
@@ -1206,46 +1208,7 @@ pub fn run() {
             let native_menu = tray_panel::uses_native_menu();
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button:
-                            button @ (tauri::tray::MouseButton::Left
-                            | tauri::tray::MouseButton::Right),
-                        button_state: tauri::tray::MouseButtonState::Up,
-                        rect,
-                        ..
-                    } = &event
-                    {
-                        if cfg!(target_os = "windows")
-                            && *button == tauri::tray::MouseButton::Left
-                        {
-                            tray_panel::hide_panel(tray.app_handle());
-                            tray::show_main_window(tray.app_handle());
-                        } else if !tray_panel::uses_native_menu() {
-                            tray_panel::toggle(tray.app_handle(), rect);
-                            return;
-                        } else {
-                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
-                            tray::mark_feedback_seen();
-                        }
-                    }
-                    match &event {
-                        // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
-                        // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
-                        // refresh_all_usage_in_tray 内部有 10 秒防抖。
-                        TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
-                            let app = tray.app_handle().clone();
-                            // 悬停时菜单还没打开：问题区该出现 / 消失了就趁这时重建。
-                            if matches!(event, TrayIconEvent::Enter { .. }) {
-                                tray::refresh_tray_if_problems_changed(&app);
-                            }
-                            tauri::async_runtime::spawn(async move {
-                                crate::tray::refresh_all_usage_in_tray(&app).await;
-                            });
-                        }
-                        _ => log::debug!("unhandled event {event:?}"),
-                    }
-                })
+                .on_tray_icon_event(tray::handle_tray_icon_event)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
@@ -1261,6 +1224,8 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+            #[cfg(target_os = "windows")]
+            tray_compat::install(app.handle());
             crate::services::webdav_auto_sync::start_worker(
                 app_state.db.clone(),
                 app.handle().clone(),
