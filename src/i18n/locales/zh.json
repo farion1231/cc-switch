@@ -1661,7 +1661,7 @@
       "alltokens_si": "AllTokens SI 秉持「稳定为基，真实为本」，是专为企业打造的 AI Token 中转与团队协作平台：成员、密钥、用量与余额统一纳入企业控制台，以清晰的权限与额度配置，让团队协作有据可查、安心可控。",
       "openmodel": "OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，即可享受首次充值九折优惠！",
       "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！",
-      "dit": "DIT.ai 是面向多供应商低价路由的 AI Token 交易市场：一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流模型，160 多条线路实时竞价，价格通常比官方低 30–70%。CC Switch 用户通过此链接注册并使用优惠码 \"ccswitch\"，可领取 5 美元新人券！",
+      "dit": "同样的模型，更低的账单，一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini 等 50 多个模型，并在 160 多家供应商之间路由到性价比最优的选项，价格通常比官方定价低 30–70%。只需更换 Base URL 和 API Key，即可在保留现有技术栈的情况下开始调用。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，新人首充可享 7 折！",
       "buytoken": "BuyToken 提供 Claude Code、Codex、DeepSeek 等各类中转服务，支持企业级并发、可极速开票，专注做稳定长久站。CC Switch 用户通过此链接注册可得 3 元体验额度，首充享 9 折！",
       "vapi": "V-API 是三年老品牌，为个人、开发者和企业提供稳定、快速、安全的高品质大语言模型 API 服务，支持合同签约、正规开票（普票 / 专票）。CC Switch 用户通过此链接注册，首单立减 2 元并享 9 折优惠！"
     },
