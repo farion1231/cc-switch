@@ -2095,6 +2095,25 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.tokenfactory.nebius.com"],
   },
   {
+    name: "ClinePass",
+    websiteUrl: "https://docs.cline.bot/getting-started/clinepass",
+    apiKeyUrl: "https://app.cline.bot",
+    category: "third_party",
+    icon: "cline",
+    // 同 Claude Code 预设：官方只有 OpenAI Chat 端点，走 openai_chat 路由；
+    // Kimi K3.1 Pro 与 GLM-5.3 Flash 窗口均为 1M（models.dev，2026-10-26）
+    baseUrl: "https://api.cline.bot/api/v1",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "cline-pass/kimi-k3.1-pro",
+      "cline-pass/kimi-k3.1-pro",
+      "cline-pass/glm-5.3-flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.cline.bot/api/v1"],
+  },
+  {
     name: "Groq",
     websiteUrl: "https://groq.com",
     apiKeyUrl: "https://console.groq.com/keys",

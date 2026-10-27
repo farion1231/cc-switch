@@ -1466,6 +1466,52 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "TeamoRouter Claude",
+    websiteUrl: "https://teamorouter.cn",
+    apiKeyUrl:
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "TeamoRouter Claude",
+      options: {
+        baseURL: "https://api.teamorouter.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PPIO",
     websiteUrl: "https://ppio.com",
     apiKeyUrl: "https://ppio.com/activity/ccswitch",
@@ -3865,6 +3911,106 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     category: "aggregator",
     icon: "novita",
     iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "ClinePass",
+    websiteUrl: "https://docs.cline.bot/getting-started/clinepass",
+    apiKeyUrl: "https://app.cline.bot",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "ClinePass",
+      // 官方只有 OpenAI Chat 端点（docs.cline.bot/getting-started/clinepass）。
+      // 阵容取 2026-10-26 官方公开列表 api.cline.bot/api/v1/ai/cline/
+      // recommended-models 的 clinePass 段，窗口与最大输出按 models.dev
+      options: {
+        baseURL: "https://api.cline.bot/api/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "cline-pass/kimi-k3.1-pro": {
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "cline-pass/glm-5.3-flash": {
+          name: "GLM-5.3 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/kimi-k3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/deepseek-v4-pro": {
+          name: "DeepSeek V4 Pro",
+          reasoning: true,
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "cline-pass/deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/qwen3.7-plus": {
+          name: "Qwen3.7 Plus",
+          reasoning: true,
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/minimax-m3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1048576, output: 512000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/minimax-m3.1-flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/mimo-v2.6-pro": {
+          name: "MiMo V2.6 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/mimo-v2.6-flash": {
+          name: "MiMo V2.6 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "third_party",
+    icon: "cline",
     templateValues: {
       apiKey: {
         label: "API Key",

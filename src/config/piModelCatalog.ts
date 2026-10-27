@@ -327,6 +327,15 @@ export const piModelCatalog = {
       maxTokens: 131_072,
     },
   },
+  "moonshotai/kimi-k3.1-pro-highspeed": {
+    capabilities: {
+      name: "Kimi K3.1 Pro HighSpeed",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
   "openai/gpt-5": {
     capabilities: {
       name: "GPT-5",
