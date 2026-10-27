@@ -14,7 +14,8 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::{claude_cache_creation_1h_tokens, TokenUsage};
 use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
+    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log,
+    is_placeholder_pricing_model, DedupKey,
 };
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
@@ -201,7 +202,13 @@ pub struct DataSourceSummary {
 #[derive(Debug)]
 struct ParsedAssistantUsage {
     message_id: String,
+    /// 日志里写的模型名；缺失、空串或占位值时为 `"unknown"`。跨源去重只用它：
+    /// 代理行记的是映射后的上游模型，会话级线索给出的是客户端请求的模型，
+    /// 两者对不上，空 model 的行必须保留 `unknown` 通配才能和代理行去重。
     model: String,
+    /// `model` 为 `"unknown"` 时，按整个文件的会话级线索推断出的模型（见
+    /// [`SessionModelHints`]）。只用于入库展示和定价，不参与去重。
+    attributed_model: Option<String>,
     input_tokens: u32,
     output_tokens: u32,
     cache_read_tokens: u32,
@@ -210,6 +217,83 @@ struct ParsedAssistantUsage {
     stop_reason: Option<String>,
     timestamp: Option<String>,
     session_id: Option<String>,
+}
+
+impl ParsedAssistantUsage {
+    /// 入库和定价用的模型名：日志里有真实模型就用它，否则用推断出的模型。
+    fn stored_model(&self) -> &str {
+        self.attributed_model.as_deref().unwrap_or(&self.model)
+    }
+}
+
+/// 会话日志里的占位模型名：定价侧的占位值（空、unknown 等），加上 Claude Code
+/// 给自己合成的消息（如中断提示）写的 `<synthetic>`。
+fn is_placeholder_session_model(model: &str) -> bool {
+    is_placeholder_pricing_model(model) || model.trim() == "<synthetic>"
+}
+
+/// 一个会话文件里出现过的真实模型，用来给 `model` 为空的行（部分 Anthropic
+/// 兼容网关在流式 `message_start` 里回显 `"model": ""`）推断模型。
+///
+/// 线索有两处：assistant 行的 `message.model`，和 cost-state 行 `modelUsage`
+/// 的键（Claude Code 自己记的会话级模型清单，会话结束时才写）。
+///
+/// 增量同步每轮只读游标之后新追加的部分，所以线索随游标一起存进
+/// `session_log_sync.model_hints`，每轮在已存的线索上累加，判断的始终是
+/// 「文件从头到当前游标」的全部线索。只有从字节 0 开始读过的文件线索才完整；
+/// 不完整时（升级前就有游标、旧行号游标、文件被外部重写）存 NULL，不做推断。
+///
+/// 只保留前两个不同的模型：出现第二个就说明会话里混用了多个模型，空 model
+/// 的行无法确定属于哪个，之后一律记 `unknown`。比较不分大小写，保存首次出现
+/// 时的原始写法。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct SessionModelHints {
+    models: Vec<String>,
+}
+
+impl SessionModelHints {
+    const MAX_DISTINCT: usize = 2;
+
+    /// 读取持久化的线索；NULL 或无法解析都视为线索不完整。
+    fn from_stored(raw: Option<&str>) -> Option<Self> {
+        let models: Vec<String> = serde_json::from_str(raw?).ok()?;
+        Some(Self { models })
+    }
+
+    fn to_stored(&self) -> String {
+        serde_json::to_string(&self.models).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn observe(&mut self, raw: &str) {
+        // cost-state 的键带 `[1m]` 上下文后缀，去掉后与 assistant 行的写法
+        // 对齐，免得同一个模型被当成两个
+        const CONTEXT_SUFFIX: &str = "[1m]";
+        let model = raw.trim();
+        let model = match model.len().checked_sub(CONTEXT_SUFFIX.len()) {
+            Some(idx)
+                if model.is_char_boundary(idx)
+                    && model[idx..].eq_ignore_ascii_case(CONTEXT_SUFFIX) =>
+            {
+                model[..idx].trim_end()
+            }
+            _ => model,
+        };
+        if is_placeholder_session_model(model)
+            || self.models.len() >= Self::MAX_DISTINCT
+            || self.models.iter().any(|m| m.eq_ignore_ascii_case(model))
+        {
+            return;
+        }
+        self.models.push(model.to_string());
+    }
+
+    /// 线索收敛到唯一模型时返回它。
+    fn single_model(&self) -> Option<&str> {
+        match self.models.as_slice() {
+            [only] => Some(only),
+            _ => None,
+        }
+    }
 }
 
 /// 估算出的请求耗时短于这个毫秒数就不要：真实请求不可能这么快，多半是起点取错了。
@@ -678,12 +762,14 @@ fn sync_single_file(
                 let tail = read_tail_before(&mut file, file_size)?;
                 let fingerprint = claude_tail_fingerprint(&tail);
                 let conn = lock_conn!(db.conn);
+                // 跳过的旧区间里的模型线索已无从得知，线索记为不完整
                 update_claude_sync_state_on_conn(
                     &conn,
                     &file_path_str,
                     file_modified,
                     file_size,
                     Some(fingerprint),
+                    None,
                 )?;
                 return Ok(ClaudeFileSync {
                     pinned_rewrite: Some(reason),
@@ -731,6 +817,10 @@ fn sync_single_file(
     let mut read_error: Option<String> = None;
     let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
     let mut current_session_id: Option<String> = None;
+    // 本轮读到的模型线索，入库前并入游标里存的线索（见 SessionModelHints）
+    let mut batch_hints = SessionModelHints::default();
+    // 从字节 0 开始解析的这一轮自己就覆盖了整个文件，不需要（也不该信）旧线索
+    let reads_whole_file = start_byte == 0 && legacy_lines == 0;
 
     loop {
         buf.clear();
@@ -771,6 +861,15 @@ fn sync_single_file(
         // 每一行都记进对话链，估算请求耗时时沿它找起点
         record_chain_node(&mut chain, &value);
 
+        if value.get("type").and_then(|t| t.as_str()) == Some("cost-state") {
+            if let Some(usage) = value.get("modelUsage").and_then(|v| v.as_object()) {
+                for model in usage.keys() {
+                    batch_hints.observe(model);
+                }
+            }
+            continue;
+        }
+
         // 只处理 assistant 类型的消息
         if value.get("type").and_then(|t| t.as_str()) != Some("assistant") {
             continue;
@@ -788,6 +887,16 @@ fn sync_single_file(
 
         record_block_timing(&mut timings, &value, &msg_id);
 
+        // 空串、纯空白与缺失同等对待：部分网关流式回显 "model": ""
+        let model = message
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|m| !is_placeholder_pricing_model(m));
+        if let Some(model) = model {
+            batch_hints.observe(model);
+        }
+
         let usage = match message.get("usage") {
             Some(u) => u,
             None => continue,
@@ -795,11 +904,8 @@ fn sync_single_file(
 
         let parsed = ParsedAssistantUsage {
             message_id: msg_id.clone(),
-            model: message
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
+            model: model.unwrap_or("unknown").to_string(),
+            attributed_model: None,
             input_tokens: usage
                 .get("input_tokens")
                 .and_then(|v| v.as_u64())
@@ -862,6 +968,29 @@ fn sync_single_file(
     // 只在这次持有连接锁的文件事务内复用定价（含未找到的模型）。
     // 下一文件/下一轮新建缓存，事务之间的定价更新或新增立即可见。
     let mut pricing_cache = SessionPricingCache::default();
+
+    // 把本轮线索并进文件已有的线索。已有线索在这里（已持锁）才读，不进
+    // 全表预取的游标：只有文件真的变了才需要它。
+    let file_hints = if reads_whole_file {
+        Some(batch_hints)
+    } else {
+        load_session_model_hints_on_conn(&tx, &file_path_str)?.map(|mut hints| {
+            for model in &batch_hints.models {
+                hints.observe(model);
+            }
+            hints
+        })
+    };
+    if let Some(model) = file_hints
+        .as_ref()
+        .and_then(SessionModelHints::single_model)
+    {
+        for msg in messages.values_mut() {
+            if msg.model == "unknown" {
+                msg.attributed_model = Some(model.to_string());
+            }
+        }
+    }
 
     for msg in messages.values() {
         // 只要产生了真实计费 token 就导入，不再强制要求 stop_reason 或 output>0。
@@ -935,6 +1064,7 @@ fn sync_single_file(
         stamped_modified,
         committed_offset,
         Some(fingerprint),
+        file_hints.as_ref(),
     )?;
     tx.commit()
         .map_err(|e| AppError::Database(format!("提交会话用量导入事务失败: {e}")))?;
@@ -949,13 +1079,15 @@ fn sync_single_file(
 }
 
 /// 写入 Claude 路径的字节游标。`last_line_offset` 固定写 0：字节游标语义
-/// 下行号不再维护，置 0 明确表示"行号游标不可用"。
+/// 下行号不再维护，置 0 明确表示"行号游标不可用"。`model_hints` 为 None
+/// 表示文件的模型线索不完整（见 [`SessionModelHints`]）。
 fn update_claude_sync_state_on_conn(
     conn: &rusqlite::Connection,
     file_path: &str,
     last_modified: i64,
     byte_offset: i64,
     tail_fingerprint: Option<i64>,
+    model_hints: Option<&SessionModelHints>,
 ) -> Result<(), AppError> {
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -965,8 +1097,8 @@ fn update_claude_sync_state_on_conn(
     conn.prepare_cached(
         "INSERT OR REPLACE INTO session_log_sync
              (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset,
-              last_tail_fingerprint)
-         VALUES (?1, ?2, 0, ?3, ?4, ?5)",
+              last_tail_fingerprint, model_hints)
+         VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6)",
     )
     .and_then(|mut stmt| {
         stmt.execute(rusqlite::params![
@@ -974,11 +1106,25 @@ fn update_claude_sync_state_on_conn(
             last_modified,
             now,
             byte_offset,
-            tail_fingerprint
+            tail_fingerprint,
+            model_hints.map(SessionModelHints::to_stored),
         ])
     })
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())
+}
+
+/// 读取文件已存的模型线索；没有游标行或线索不完整时为 None。
+fn load_session_model_hints_on_conn(
+    conn: &rusqlite::Connection,
+    file_path: &str,
+) -> Result<Option<SessionModelHints>, AppError> {
+    let raw: Option<String> = conn
+        .prepare_cached("SELECT model_hints FROM session_log_sync WHERE file_path = ?1")
+        .and_then(|mut stmt| stmt.query_row([file_path], |row| row.get(0)).optional())
+        .map_err(|e| AppError::Database(format!("读取会话模型线索失败: {e}")))?
+        .flatten();
+    Ok(SessionModelHints::from_stored(raw.as_deref()))
 }
 
 /// 获取 session_log_sync 表中某条目的同步进度。
@@ -1065,6 +1211,7 @@ pub(crate) struct EstimatedTiming {
 /// 已经在库里的那一行里，判断要不要补全用得到的几样。
 struct StoredSessionRow {
     data_source: String,
+    model: String,
     output_tokens: i64,
     latency_ms: i64,
     first_token_ms: Option<i64>,
@@ -1075,16 +1222,17 @@ fn find_stored_session_row(
     request_id: &str,
 ) -> Result<Option<StoredSessionRow>, AppError> {
     conn.prepare_cached(
-        "SELECT COALESCE(data_source, 'proxy'), output_tokens, latency_ms, first_token_ms
+        "SELECT COALESCE(data_source, 'proxy'), model, output_tokens, latency_ms, first_token_ms
          FROM proxy_request_logs WHERE request_id = ?1",
     )
     .and_then(|mut stmt| {
         stmt.query_row([request_id], |row| {
             Ok(StoredSessionRow {
                 data_source: row.get(0)?,
-                output_tokens: row.get(1)?,
-                latency_ms: row.get(2)?,
-                first_token_ms: row.get(3)?,
+                model: row.get(1)?,
+                output_tokens: row.get(2)?,
+                latency_ms: row.get(3)?,
+                first_token_ms: row.get(4)?,
             })
         })
         .optional()
@@ -1120,22 +1268,25 @@ impl SessionPricingCache {
     }
 }
 
-/// 一条回复按定价算出来的五项成本：输入、输出、缓存读、缓存写、合计。
+/// 一条回复按 `model` 的定价算出来的五项成本：输入、输出、缓存读、缓存写、合计。
+/// 输出 token 单独传入：补全时可能沿用库里已有的输出量。
 fn session_costs(
     conn: &rusqlite::Connection,
     msg: &ParsedAssistantUsage,
+    model: &str,
+    output_tokens: u32,
     pricing_cache: &mut SessionPricingCache,
 ) -> [String; 5] {
     let usage = TokenUsage {
         input_tokens: msg.input_tokens,
-        output_tokens: msg.output_tokens,
+        output_tokens,
         cache_read_tokens: msg.cache_read_tokens,
         cache_creation_tokens: msg.cache_creation_tokens,
         cache_creation_1h_tokens: msg.cache_creation_1h_tokens,
-        model: Some(msg.model.clone()),
+        model: Some(model.to_string()),
         message_id: None,
     };
-    match pricing_cache.get(conn, &msg.model) {
+    match pricing_cache.get(conn, model) {
         Some(pricing) => {
             let cost = CostCalculator::calculate(&usage, pricing, Decimal::from(1));
             [
@@ -1172,6 +1323,14 @@ fn refresh_session_log_entry_on_conn(
         return Ok(SessionRowOutcome::Skipped);
     }
     let output_grew = i64::from(msg.output_tokens) > stored.output_tokens;
+    // 先前按 unknown 入库、这次认出了模型的，要把模型名补上；反过来这次认
+    // 不出（比如会话后来混用了别的模型）不能把已入库的模型名降回 unknown
+    let model = if is_placeholder_session_model(msg.stored_model()) {
+        stored.model.as_str()
+    } else {
+        msg.stored_model()
+    };
+    let model_changed = model != stored.model;
     let latency_ms = timing.map_or(stored.latency_ms, |timing| {
         timing.latency_ms.max(stored.latency_ms)
     });
@@ -1179,11 +1338,15 @@ fn refresh_session_log_entry_on_conn(
     let first_token_ms = stored
         .first_token_ms
         .or(timing.and_then(|timing| timing.first_token_ms));
-    if !output_grew && latency_ms == stored.latency_ms && first_token_ms == stored.first_token_ms {
+    if !output_grew
+        && !model_changed
+        && latency_ms == stored.latency_ms
+        && first_token_ms == stored.first_token_ms
+    {
         return Ok(SessionRowOutcome::Skipped);
     }
 
-    if !output_grew {
+    if !output_grew && !model_changed {
         conn.execute(
             "UPDATE proxy_request_logs SET latency_ms = ?1, first_token_ms = ?2
              WHERE request_id = ?3",
@@ -1195,7 +1358,7 @@ fn refresh_session_log_entry_on_conn(
 
     // 入库时用量还是中间值，对不上路由服务记的那一行；补全后对上了，说明这次
     // 请求路由服务已经记过，先前入库的这一行是重复的
-    if has_matching_proxy_usage_log(conn, dedup_key)? {
+    if output_grew && has_matching_proxy_usage_log(conn, dedup_key)? {
         conn.execute(
             "DELETE FROM proxy_request_logs WHERE request_id = ?1",
             [request_id],
@@ -1204,18 +1367,24 @@ fn refresh_session_log_entry_on_conn(
         return Ok(SessionRowOutcome::Updated);
     }
 
+    // 只补模型名时输出量沿用库里的（这次读到的可能是更早的中间块）
+    let output_tokens = if output_grew {
+        msg.output_tokens
+    } else {
+        u32::try_from(stored.output_tokens).unwrap_or(msg.output_tokens)
+    };
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
-        session_costs(conn, msg, pricing_cache);
+        session_costs(conn, msg, model, output_tokens, pricing_cache);
     conn.execute(
         "UPDATE proxy_request_logs SET
             input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3,
             cache_creation_tokens = ?4, input_cost_usd = ?5, output_cost_usd = ?6,
             cache_read_cost_usd = ?7, cache_creation_cost_usd = ?8, total_cost_usd = ?9,
-            latency_ms = ?10, first_token_ms = ?11
+            latency_ms = ?10, first_token_ms = ?11, model = ?13, request_model = ?13
          WHERE request_id = ?12",
         rusqlite::params![
             msg.input_tokens,
-            msg.output_tokens,
+            output_tokens,
             msg.cache_read_tokens,
             msg.cache_creation_tokens,
             input_cost,
@@ -1226,6 +1395,7 @@ fn refresh_session_log_entry_on_conn(
             latency_ms,
             first_token_ms,
             request_id,
+            model,
         ],
     )
     .map_err(|e| AppError::Database(format!("补全会话日志失败: {e}")))?;
@@ -1259,6 +1429,8 @@ fn upsert_session_log_entry_on_conn(
                 .unwrap_or(0)
         });
 
+    // 去重用日志原样的模型名（空 model 为 unknown 通配），不用推断出的模型：
+    // 代理行记的是映射后的上游模型，推断出的是客户端请求的模型，二者对不上
     let dedup_key = DedupKey {
         app_type: "claude",
         model: &msg.model,
@@ -1283,8 +1455,9 @@ fn upsert_session_log_entry_on_conn(
         return Ok(SessionRowOutcome::Skipped);
     }
 
+    let model = msg.stored_model();
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
-        session_costs(conn, msg, pricing_cache);
+        session_costs(conn, msg, model, msg.output_tokens, pricing_cache);
 
     let inserted_rows = conn
         .execute(
@@ -1299,8 +1472,8 @@ fn upsert_session_log_entry_on_conn(
                 request_id,
                 "_session",         // provider_id: 标记为会话来源
                 "claude",           // app_type
-                msg.model,
-                msg.model,          // request_model = model
+                model,
+                model,              // request_model = model
                 msg.input_tokens,
                 msg.output_tokens,
                 msg.cache_read_tokens,
@@ -1379,6 +1552,7 @@ mod tests {
         ParsedAssistantUsage {
             message_id: "pricing-test".to_string(),
             model: model.to_string(),
+            attributed_model: None,
             input_tokens: 100,
             output_tokens: 20,
             cache_read_tokens: 10,
@@ -1442,7 +1616,8 @@ mod tests {
                 let msg = pricing_test_message(model);
                 // A fresh cache per response reproduces the old lookup frequency.
                 let mut uncached = SessionPricingCache::default();
-                let expected = session_costs(&tx, &msg, &mut uncached);
+                let expected =
+                    session_costs(&tx, &msg, &msg.model, msg.output_tokens, &mut uncached);
                 uncached_lookups += uncached.lookup_count;
                 if model_index < 2 {
                     assert_test_costs(&expected, model_index as u32 + 1, msg.output_tokens);
@@ -1511,9 +1686,25 @@ mod tests {
             let tx = conn.unchecked_transaction()?;
             let mut cache = SessionPricingCache::default();
             for _ in 0..2 {
-                assert_test_costs(&session_costs(&tx, &priced, &mut cache), 1, 20);
+                assert_test_costs(
+                    &session_costs(
+                        &tx,
+                        &priced,
+                        &priced.model,
+                        priced.output_tokens,
+                        &mut cache,
+                    ),
+                    1,
+                    20,
+                );
                 assert_eq!(
-                    session_costs(&tx, &missing, &mut cache),
+                    session_costs(
+                        &tx,
+                        &missing,
+                        &missing.model,
+                        missing.output_tokens,
+                        &mut cache
+                    ),
                     std::array::from_fn(|_| "0".to_string())
                 );
             }
@@ -1525,8 +1716,28 @@ mod tests {
         {
             let tx = conn.unchecked_transaction()?;
             let mut cache = SessionPricingCache::default();
-            assert_test_costs(&session_costs(&tx, &priced, &mut cache), 2, 20);
-            assert_test_costs(&session_costs(&tx, &missing, &mut cache), 3, 20);
+            assert_test_costs(
+                &session_costs(
+                    &tx,
+                    &priced,
+                    &priced.model,
+                    priced.output_tokens,
+                    &mut cache,
+                ),
+                2,
+                20,
+            );
+            assert_test_costs(
+                &session_costs(
+                    &tx,
+                    &missing,
+                    &missing.model,
+                    missing.output_tokens,
+                    &mut cache,
+                ),
+                3,
+                20,
+            );
             assert_eq!(cache.lookup_count, 2);
             tx.commit()?;
         }
@@ -1610,6 +1821,7 @@ mod tests {
         let intermediate = ParsedAssistantUsage {
             message_id: "msg_1".to_string(),
             model: "claude-opus-4-6".to_string(),
+            attributed_model: None,
             input_tokens: 3,
             output_tokens: 26,
             cache_read_tokens: 5000,
@@ -1625,6 +1837,7 @@ mod tests {
         let final_entry = ParsedAssistantUsage {
             message_id: "msg_1".to_string(),
             model: "claude-opus-4-6".to_string(),
+            attributed_model: None,
             input_tokens: 3,
             output_tokens: 1349,
             cache_read_tokens: 5000,
@@ -1677,6 +1890,7 @@ mod tests {
         let msg = ParsedAssistantUsage {
             message_id: "msg_1".to_string(),
             model: "claude-sonnet-4-5".to_string(),
+            attributed_model: None,
             input_tokens: 100,
             output_tokens: 20,
             cache_read_tokens: 10,
@@ -2590,6 +2804,254 @@ mod tests {
         })?;
         assert_eq!(count, 1);
         drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    // ---- model 为空的行：按整个文件的会话级线索推断模型 ----
+
+    /// 一行 assistant 用量，模型名可指定（"" 模拟网关流式回显空 model）
+    fn model_line(msg_id: &str, model: &str, output_tokens: u32, finished: bool) -> String {
+        let stop_reason = if finished { "\"end_turn\"" } else { "null" };
+        format!(
+            r#"{{"type":"assistant","message":{{"id":"{msg_id}","model":"{model}","usage":{{"input_tokens":10,"output_tokens":{output_tokens},"cache_read_input_tokens":1,"cache_creation_input_tokens":2}},"stop_reason":{stop_reason}}},"timestamp":"2026-09-06T08:00:00Z","sessionId":"session-m"}}"#
+        )
+    }
+
+    /// Claude Code 会话结束时写的 cost-state 行，`modelUsage` 的键是会话用过的模型
+    fn cost_state_line(models: &[&str]) -> String {
+        let usage = models
+            .iter()
+            .map(|m| format!(r#""{m}":{{"inputTokens":1,"outputTokens":1}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(r#"{{"type":"cost-state","sessionId":"session-m","modelUsage":{{{usage}}}}}"#)
+    }
+
+    /// (model, request_model)
+    fn stored_models(db: &Database, msg_id: &str) -> (String, String) {
+        let conn = db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT model, request_model FROM proxy_request_logs WHERE request_id = ?1",
+            [format!("session:{msg_id}")],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_empty_model_is_attributed_from_whole_file_hints() -> Result<(), AppError> {
+        // 唯一模型：cost-state 键带 [1m] 后缀，与 assistant 行写法不同但算同一个；
+        // cost-state 写在后面也算（线索覆盖整个文件，不只看当前行之前）
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        append_lines(
+            &file,
+            &[
+                model_line("msg_empty", "", 5, true),
+                model_line("msg_filled", "glm-5.3", 6, true),
+                cost_state_line(&["glm-5.3[1m]"]),
+            ],
+        );
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(
+            stored_models(&db, "msg_empty"),
+            ("glm-5.3".to_string(), "glm-5.3".to_string())
+        );
+        fs::remove_dir_all(&tmp).ok();
+
+        // 只有 cost-state 线索：保留原始大小写，不转小写
+        let (tmp, file) = temp_session_file();
+        append_lines(
+            &file,
+            &[
+                model_line("msg_case", "", 5, true),
+                cost_state_line(&["GLM-5.3[1M]"]),
+            ],
+        );
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(stored_models(&db, "msg_case").0, "GLM-5.3");
+        fs::remove_dir_all(&tmp).ok();
+
+        // 多个模型：无法确定，记 unknown
+        let (tmp, file) = temp_session_file();
+        append_lines(
+            &file,
+            &[
+                model_line("msg_b1", "glm-5.3", 6, true),
+                model_line("msg_b2", "kimi-k3", 6, true),
+                model_line("msg_multi", "", 5, true),
+            ],
+        );
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(stored_models(&db, "msg_multi").0, "unknown");
+        fs::remove_dir_all(&tmp).ok();
+
+        // 没有线索：记 unknown 而不是空串；<synthetic> 不算线索
+        let (tmp, file) = temp_session_file();
+        append_lines(
+            &file,
+            &[
+                model_line("msg_synthetic", "<synthetic>", 0, true),
+                model_line("msg_none", "  ", 5, true),
+            ],
+        );
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(stored_models(&db, "msg_none").0, "unknown");
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_model_hints_carry_across_incremental_syncs() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        append_lines(&file, &[model_line("msg_1", "glm-5.3", 6, true)]);
+        sync_with_cursor(&db, &file)?;
+
+        // 第二轮只读到新追加的空 model 行，线索来自上一轮
+        append_lines(&file, &[model_line("msg_2", "", 5, true)]);
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(stored_models(&db, "msg_2").0, "glm-5.3");
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_model_is_not_attributed_from_the_current_batch_alone() -> Result<(), AppError> {
+        // 第一轮导入 opus，之后追加 glm 和一条空 model 的行。第二轮只看本轮
+        // 会以为整个会话只用了 glm；并上第一轮的线索就知道会话混用了两个模型
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        append_lines(&file, &[model_line("msg_1", "claude-opus-4-8", 6, true)]);
+        sync_with_cursor(&db, &file)?;
+
+        append_lines(
+            &file,
+            &[
+                model_line("msg_2", "glm-5.3", 6, true),
+                model_line("msg_3", "", 5, true),
+            ],
+        );
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(stored_models(&db, "msg_3").0, "unknown");
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_model_is_not_attributed_when_hints_are_incomplete() -> Result<(), AppError> {
+        // 升级前就有的游标（model_hints 为 NULL）：游标之前读过的部分没留线索，
+        // 本轮只看到一个模型也不能断定整个会话只用了它
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        append_lines(&file, &[model_line("msg_1", "claude-opus-4-8", 6, true)]);
+        sync_with_cursor(&db, &file)?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("UPDATE session_log_sync SET model_hints = NULL", [])?;
+        }
+
+        append_lines(
+            &file,
+            &[
+                model_line("msg_2", "", 5, true),
+                cost_state_line(&["glm-5.3"]),
+            ],
+        );
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(stored_models(&db, "msg_2").0, "unknown");
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_attributed_empty_model_row_still_dedups_against_proxy_log() -> Result<(), AppError> {
+        // 走本地路由时上游流式回显 "model": ""：路由服务那一行记的是映射后的
+        // 上游模型（glm-5.3），cost-state 键是客户端请求的模型（claude-sonnet-5）。
+        // 去重必须按 unknown 通配，否则同一次请求会记两遍
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "proxy-id",
+                    "p1",
+                    "claude",
+                    "glm-5.3",
+                    "claude-sonnet-5",
+                    10,
+                    5,
+                    1,
+                    2,
+                    "0.10",
+                    3_000,
+                    200,
+                    parse_timestamp_millis("2026-09-06T08:00:00Z").unwrap() / 1000,
+                    "proxy"
+                ],
+            )?;
+        }
+        let (tmp, file) = temp_session_file();
+        append_lines(
+            &file,
+            &[
+                model_line("msg_dup", "", 5, true),
+                cost_state_line(&["claude-sonnet-5"]),
+            ],
+        );
+        sync_with_cursor(&db, &file)?;
+
+        assert_eq!(stored_row(&db, "msg_dup"), None);
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(count, 1);
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_completed_reply_writes_the_recovered_model() -> Result<(), AppError> {
+        // 回复先按中间块入库：那时还没有线索，记 unknown、成本为 0。之后最终块
+        // 和 cost-state 一起到达，补全时要把模型名和定价一起补上
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            seed_test_pricing(&conn, "glm-5.3", 1);
+        }
+        let (tmp, file) = temp_session_file();
+        append_lines(&file, &[model_line("msg_p", "", 1, false)]);
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(stored_models(&db, "msg_p").0, "unknown");
+
+        append_lines(
+            &file,
+            &[
+                model_line("msg_p", "", 5, true),
+                cost_state_line(&["glm-5.3"]),
+            ],
+        );
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(
+            stored_models(&db, "msg_p"),
+            ("glm-5.3".to_string(), "glm-5.3".to_string())
+        );
+        let (output_tokens, total_cost, _) = stored_row(&db, "msg_p").unwrap();
+        assert_eq!(output_tokens, 5);
+        assert_ne!(total_cost.parse::<f64>().unwrap(), 0.0);
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())
