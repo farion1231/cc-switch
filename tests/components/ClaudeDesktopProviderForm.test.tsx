@@ -190,7 +190,7 @@ describe("ClaudeDesktopProviderForm", () => {
           .getByText("copilot.automaticFormat")
           .closest("button");
         expect(formatControl).toBeDisabled();
-        expect(screen.getByText(/copilot.automaticFormatHint/)).toBeVisible();
+        expect(screen.getByText(/copilot\.automaticFormatHint/)).toBeVisible();
       }
     },
   );
@@ -214,7 +214,7 @@ describe("ClaudeDesktopProviderForm", () => {
         screen.queryByText("copilot.automaticFormat"),
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByText("copilot.automaticFormatHint"),
+        screen.queryByText(/copilot\.automaticFormatHint/),
       ).not.toBeInTheDocument();
       expect(
         screen.queryByTestId("copilot-auth-section"),
@@ -260,7 +260,7 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(
       screen.getByText("copilot.automaticFormat").closest("button"),
     ).toBeDisabled();
-    expect(screen.getByText("copilot.automaticFormatHint")).toBeVisible();
+    expect(screen.getByText(/copilot\.automaticFormatHint/)).toBeVisible();
     expect(screen.getByLabelText("API Key")).toBeVisible();
     expect(
       screen.queryByTestId("copilot-auth-section"),
@@ -339,7 +339,7 @@ describe("ClaudeDesktopProviderForm", () => {
       );
     expect(formatControl).toBeEnabled();
     expect(
-      screen.queryByText("copilot.automaticFormatHint"),
+      screen.queryByText(/copilot\.automaticFormatHint/),
     ).not.toBeInTheDocument();
 
     const endpoint = screen.getByLabelText("providerForm.apiEndpoint");
@@ -350,7 +350,7 @@ describe("ClaudeDesktopProviderForm", () => {
     await waitFor(() =>
       expect(formatControl).toHaveTextContent("copilot.automaticFormat"),
     );
-    expect(screen.getByText("copilot.automaticFormatHint")).toBeVisible();
+    expect(screen.getByText(/copilot\.automaticFormatHint/)).toBeVisible();
 
     fireEvent.change(endpoint, {
       target: { value: "https://api.example.com" },
@@ -360,7 +360,7 @@ describe("ClaudeDesktopProviderForm", () => {
       "OpenAI Chat Completions (需开启路由)",
     );
     expect(
-      screen.queryByText("copilot.automaticFormatHint"),
+      screen.queryByText(/copilot\.automaticFormatHint/),
     ).not.toBeInTheDocument();
   });
 
