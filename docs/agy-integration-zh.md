@@ -33,7 +33,7 @@
 
 这是 CCS 的存储结构，并不原样写入 agy。agy 的 `settings.json` 里 `model` 只认显示名（如 `Gemini 3.8 Flash (Low)`），写模型 ID 会被静默忽略并回落到默认模型，所以两种模式都存显示名。
 
-官方身份由分类或明确的官方预设标记决定；供应商名称含 Google 不会自动删除其 API Key。第三方供应商须兼容 Gemini 协议，不能将任意 OpenAI/Anthropic 端点直接当作 Gemini 使用。
+官方身份由分类或明确的官方预设标记决定；供应商名称含 Google 不会自动删除其 API Key。第三方供应商默认须兼容 Gemini 协议；也可以在卡片上把「上游 API 格式」选成 OpenAI Chat / Anthropic，此时 CC Switch 在「打开终端」时把 base_url 改指本地代理的 `/agy/<provider_id>` 命名空间，由代理完成协议转换（agy 进程发出的仍是 Gemini 协议请求）。转换需要填写上游 API 地址；agy 档案里的模型显示名上游通常不认识，再在「出站模型」里填上游实际可用的模型 ID，代理会用它替换发给上游的模型名。
 
 agy 只从进程环境读 Key 和端点，不读取任何文件里的 Key，`modelProvider` 又是全局开关：写进真实 `settings.json` 后，没有带 Key 启动的 agy 会直接报错。所以两种卡分开处理：
 
@@ -123,7 +123,7 @@ pnpm build:renderer
 
 统一入口是 `ccswitch://v1/import`，agy 使用独立的 `app=agy` / `apps=agy`：
 
-- **供应商**：`resource=provider&app=agy`，支持 `name`、`apiKey`、`endpoint`、`model`、`config` 与 `apiFormat=gemini_native`。不支持 OpenAI/Anthropic 协议。确认框关闭「导入后立即切换」时只保存数据库，不创建原生配置；开启时走正常供应商切换。带 Key 的供应商导入后经卡片「打开终端」使用。
+- **供应商**：`resource=provider&app=agy`，支持 `name`、`apiKey`、`endpoint`、`model`、`config` 与 `apiFormat=gemini_native|openai_chat|anthropic`（后两种由本地代理做协议转换，必须带 `endpoint` 指向上游）。确认框关闭「导入后立即切换」时只保存数据库，不创建原生配置；开启时走正常供应商切换。带 Key 的供应商导入后经卡片「打开终端」使用。
 - **内联配置**：`config` 是 Base64 编码 JSON，可用上文 CCS 的 `{env, config:{model:{name}}}` 结构，或扁平 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`（兼容 `GEMINI_BASE_URL`）、`GEMINI_MODEL`。模型优先级为 URL 的 `model` > `config.model.name` > `GEMINI_MODEL`。只提取密钥、地址、模型，其他环境变量与原生选项不导入；预览中的密钥打码。远程 `configUrl` 仍不支持。
 - **MCP**：`resource=mcp&apps=agy`；`apps=agy,codex` 可同时指定多个应用。`config` 为 Base64 编码的 `{"mcpServers":{...}}`。同 ID 已存在时保留数据库中的服务器定义，仅合并应用开关，再走统一 MCP 同步；agy 不支持的 SSE 会报告导入失败。
 - **Prompt**：`resource=prompt&app=agy`，`content` 为 Base64 Markdown，确认后保存到 agy 提示词列表；启用时使用既有 Prompt 路径解析和写入逻辑。

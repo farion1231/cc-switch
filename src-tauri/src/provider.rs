@@ -534,6 +534,12 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// 协议转换（Gemini / Antigravity 入口 → OpenAI Chat / Anthropic 上游）时的
+    /// 出站模型名覆盖：转换后发给上游的 `model` 替换成这个值，而不是客户端请求的
+    /// 模型名（客户端名可能是 agy 的显示名，上游并不认识）。不设置时按客户端请求的
+    /// 模型名原样发送。
+    #[serde(rename = "outboundModel", skip_serializing_if = "Option::is_none")]
+    pub outbound_model: Option<String>,
     /// Codex Copilot only: absent or auto prefers advertised Responses, then Chat.
     /// Legacy `apiFormat` does not imply an explicit Copilot protocol override.
     #[serde(

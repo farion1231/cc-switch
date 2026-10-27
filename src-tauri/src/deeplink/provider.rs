@@ -209,6 +209,9 @@ impl ApiFormat {
             (AppType::Claude, GeminiNative) => Some("gemini_native"),
             (AppType::Codex | AppType::GrokBuild, Anthropic) => Some("anthropic"),
             (AppType::Gemini | AppType::Agy, GeminiNative) => Some("gemini_native"),
+            // agy 的协议转换和 Gemini 一样由本地路由完成，格式记在 meta 上。
+            (AppType::Agy, OpenAiChat) => Some("openai_chat"),
+            (AppType::Agy, Anthropic) => Some("anthropic"),
             (AppType::OpenCode, Anthropic) => Some("@ai-sdk/anthropic"),
             (AppType::OpenCode, OpenAiChat) => Some("@ai-sdk/openai-compatible"),
             (AppType::OpenCode, OpenAiResponses) => Some("@ai-sdk/openai"),
@@ -376,9 +379,10 @@ pub(crate) fn build_provider_from_request(
     }
     // Claude Code、Codex、Grok Build 的格式记在 meta 上：非原生格式的卡片会带「需要路由」，
     // 切过去时由本地路由转换。链接没写时不加这个字段，和旧链接导入的行一致。
+    // Gemini / Antigravity 同理（协议转换由本地代理完成，格式同样记在 meta 上）。
     if matches!(
         app_type,
-        AppType::Claude | AppType::Codex | AppType::GrokBuild
+        AppType::Claude | AppType::Codex | AppType::GrokBuild | AppType::Gemini | AppType::Agy
     ) {
         if let Some(value) = api_format.and_then(|format| format.native_value(app_type)) {
             meta.get_or_insert_with(ProviderMeta::default).api_format = Some(value.to_string());

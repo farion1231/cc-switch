@@ -224,6 +224,67 @@ impl RequestContext {
         })
     }
 
+    /// 固定供应商的请求上下文：请求 URL 已指明用哪张卡（如 agy 的
+    /// `/agy/<provider_id>/...` 命名空间），不经路由选家、不做故障转移，
+    /// 超时与重试跟着关掉（见 `create_forwarder` 对 `auto_failover_enabled` 的处理）。
+    ///
+    /// 用量、日志、错误处理仍按正常的 `app_type_str` 归因。
+    pub async fn fixed_provider(
+        state: &ProxyState,
+        body: &serde_json::Value,
+        headers: &HeaderMap,
+        app_type: AppType,
+        tag: &'static str,
+        app_type_str: &'static str,
+        provider: Provider,
+    ) -> Result<Self, ProxyError> {
+        let start_time = Instant::now();
+        let mut app_config = state
+            .db
+            .get_proxy_config_for_app(app_type_str)
+            .await
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+        app_config.auto_failover_enabled = false;
+
+        let session_result = extract_session_id(headers, body, app_type_str);
+        let request_model = body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let current_provider_id = provider.id.clone();
+
+        log::debug!(
+            "[{}] Fixed provider: {}, model: {}, session: {}",
+            tag,
+            provider.name,
+            request_model,
+            session_result.session_id
+        );
+
+        Ok(Self {
+            start_time,
+            app_config,
+            provider: provider.clone(),
+            providers: vec![provider],
+            current_provider_id,
+            request_model,
+            outbound_model: None,
+            tag,
+            app_type_str,
+            app_type,
+            session_id: session_result.session_id,
+            session_client_provided: session_result.client_provided,
+            rectifier_config: state.db.get_rectifier_config().unwrap_or_default(),
+            optimizer_config: state.db.get_optimizer_config().unwrap_or_default(),
+            copilot_optimizer_config: state
+                .db
+                .get_copilot_optimizer_config()
+                .unwrap_or_default(),
+            is_stack: false,
+        })
+    }
+
     /// 从 URI 提取模型名称（Gemini 专用）
     ///
     /// Gemini API 的模型名称在 URI 中，格式如：

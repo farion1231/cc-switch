@@ -1749,6 +1749,14 @@ impl RequestForwarder {
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
                 rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+            } else if needs_transform && adapter.name() == "Gemini" {
+                // Gemini 入口 + 非 Gemini 协议上游（openai_chat / anthropic）：
+                // generateContent endpoint 重写为上游协议 endpoint，?key=/alt=sse 不透传
+                let api_format = super::providers::get_upstream_api_format(provider);
+                (
+                    super::providers::rewrite_gemini_transform_endpoint(endpoint, api_format),
+                    None,
+                )
             } else {
                 (
                     endpoint.to_string(),
