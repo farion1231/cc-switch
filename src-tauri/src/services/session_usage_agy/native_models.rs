@@ -168,7 +168,8 @@ fn read_native_generations(
             .ok()
             .and_then(|metadata| metadata.response)
             .and_then(|response| response.tokens)
-            .map(|tokens| (tokens.input_tokens, tokens.output_tokens, tokens.cache_read_tokens));
+            .map(|tokens| (tokens.input_tokens, tokens.output_tokens, tokens.cache_read_tokens))
+            .filter(|&(i, o, c)| i > 0 || o > 0 || c > 0);
         if model.is_some() || tokens.is_some() {
             generations.insert(step, NativeGenerationData { model, tokens });
         }
@@ -266,15 +267,17 @@ mod tests {
                 (1, 0, "gemini-4-argon"),
                 (2, 1, "gemini-3.8-flash-tiered"),
                 (3, 2, "claude-opus-5-5-medium"),
+                (4, 3, "gemini-3.8-flash-n"),
             ],
         );
         let mut tokens_and_model_id = test_tokens(150, 42, 30);
         tokens_and_model_id.extend_from_slice(&test_model_id("gemini-4-argon-high"));
         set_test_generation(&conn, 0, "gemini-4-argon", &tokens_and_model_id);
         set_test_generation(&conn, 1, "gemini-3.8-flash-tiered", &test_tokens(200, 50, 0));
+        set_test_generation(&conn, 3, "gemini-3.8-flash-n", &test_tokens(0, 0, 0));
 
-        let gens = read_native_generations(&path, &[1, 2, 3, 99]).unwrap();
-        assert_eq!(gens.len(), 3);
+        let gens = read_native_generations(&path, &[1, 2, 3, 4, 99]).unwrap();
+        assert_eq!(gens.len(), 4);
         assert_eq!(
             gens[&1],
             NativeGenerationData {
@@ -293,6 +296,13 @@ mod tests {
             gens[&3],
             NativeGenerationData {
                 model: Some("claude-opus-5-5-medium".into()),
+                tokens: None,
+            }
+        );
+        assert_eq!(
+            gens[&4],
+            NativeGenerationData {
+                model: Some("gemini-3.8-flash-n".into()),
                 tokens: None,
             }
         );
