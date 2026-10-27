@@ -1638,7 +1638,7 @@
       "alltokens_si": "AllTokens SI, istikrar ve güvenilirliği temel alan kurumsal bir yapay zekâ token aktarım ve ekip iş birliği platformudur. Üyeler, anahtarlar, kullanım ve bakiye tek bir şirket konsolunda yönetilir; açık izinler ve harcama sınırları ekip kullanımının izlenebilir ve denetimli olmasını sağlar.",
       "openmodel": "OpenModel, desteklenen modellerde Codex için %90'a, Claude Code için %60'a varan uygulamaya özel indirimler sunar. Bu bağlantıyla kaydolup \"cc-switch\" promosyon kodunu kullanan CC Switch kullanıcıları ilk yüklemelerinde %10 indirim kazanır!",
       "grooroute": "GrooRoute Pro; kullandıkça öde ve abonelik planlarıyla OpenAI, Claude, DeepSeek ve diğer yaygın modellere erişim sağlayan güvenilir bir yapay zekâ API aktarım hizmetidir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ¥5 deneme bakiyesi kazanır!",
-      "dit": "DIT.ai, birden fazla sağlayıcıya daha düşük maliyetle yönlendirme yapan bir yapay zekâ token borsasıdır. OpenAI uyumlu tek bir API üzerinden GPT, Claude, Gemini, DeepSeek, Grok ve Llama dahil 50'den fazla önde gelen modele erişilir; 160'tan fazla rotada sağlayıcılar rekabet eder ve fiyatlar genellikle resmî ücretlerden %30–70 daha düşüktür. CC Switch kullanıcıları bu bağlantıdan kaydolup \"ccswitch\" promosyon koduyla 5 ABD doları değerinde hoş geldin kuponu alabilir!",
+      "dit": "Aynı modeller, çoğu zaman çok daha düşük bir fatura. OpenAI uyumlu tek bir API ile GPT, Claude, Gemini ve daha fazlası dahil 50'den fazla modele erişin; istekler 160'tan fazla sağlayıcı arasında en iyi fiyat-kalite seçeneğine yönlendirilir ve fiyatlar genellikle resmî liste fiyatlarından %30–70 daha düşüktür. Base URL'nizi ve API anahtarınızı değiştirin, mevcut yığınınızı koruyun ve hemen çağırmaya başlayın. CC Switch kullanıcıları bu bağlantıdan kaydolup \"cc-switch\" koduyla hoş geldin yüklemesinde %30 indirim kazanır!",
       "buytoken": "BuyToken; Claude Code, Codex, DeepSeek ve daha fazlası için kurumsal düzeyde eşzamanlılık ve hızlı faturalandırma sunan, uzun süreli ve istikrarlı kullanım için tasarlanmış bir yönlendirme hizmetidir. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 3 ¥ deneme kredisi ve ilk yüklemelerinde %10 indirim kazanır.",
       "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için kararlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşmelerin yanı sıra genel ve özel KDV faturaları sağlar. Bu bağlantıdan kaydolan CC Switch kullanıcıları 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır!"
     },
@@ -5024,5 +5024,12 @@
       "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil.",
       "legacyModelsJson": "Oh My Pi'de eski biçimde bir models.json dosyası var. omp, sonraki açılışında bunu models.yml biçimine geçirir. omp'yi bir kez çalıştırın, ardından sağlayıcıyı yeniden ekleyin."
     }
+  },
+  "dsh": {
+    "empty": {
+      "title": "DeepSeek Harness sağlayıcısı ekle",
+      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
+    },
+    "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
   }
 }

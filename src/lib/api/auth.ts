@@ -149,8 +149,8 @@ export async function claudeAccountSubmitPaste(
 export interface ClaudeLoginSwitchStatus {
   /** 切到选了账号的官方卡时会切换登录（没被挡住） */
   active: boolean;
-  /** 不切换登录的原因：设了 Claude 配置目录覆盖 */
-  blocked: "overrideDir" | null;
+  /** 不切换登录的原因：配置目录在 WSL 里（账号功能不可用）；设了别的 Claude 配置目录覆盖 */
+  blocked: "wsl" | "overrideDir" | null;
   /** Claude Code 现在登录的账号 key */
   live: string | null;
 }
