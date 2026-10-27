@@ -39,6 +39,9 @@ const APP_ICON_NAME: Record<AppId, string> = {
   cursor: "cursor",
   pi: "pi",
   mcode: "minimax",
+  kimi: "kimi",
+  agy: "antigravity",
+  omp: "omp",
 };
 
 const APP_DISPLAY_NAME: Record<AppId, string> = {
@@ -53,6 +56,9 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   cursor: "Cursor",
   pi: "Pi",
   mcode: "MiniMax Code",
+  kimi: "Kimi Code",
+  agy: "Antigravity",
+  omp: "Oh My Pi",
 };
 
 /** 应用图标 + 角标（Claude Code / Desktop 用角标区分终端与桌面） */

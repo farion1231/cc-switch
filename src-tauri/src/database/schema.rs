@@ -1751,6 +1751,33 @@ impl Database {
             log::info!("Migration v25: Added enabled_cursor column to skills table");
         }
 
+        // 旧 cursor 线的库停在 v20 时，18→19（enabled_mcode）/19→20（enabled_pi）两臂已被跨过，
+        // 这两列会永久缺失；在链尾幂等补一次（全新库与上游线的库都是 no-op）。
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? && !column_exists(conn, table, "enabled_mcode")? {
+                conn.execute(
+                    &format!(
+                        "ALTER TABLE {table} ADD COLUMN enabled_mcode BOOLEAN NOT NULL DEFAULT 0"
+                    ),
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("添加 {table}.enabled_mcode 列失败: {e}"))
+                })?;
+                log::info!("Migration v24: Added enabled_mcode column to {table} table");
+            }
+        }
+        if Self::table_exists(conn, "mcp_servers")?
+            && !column_exists(conn, "mcp_servers", "enabled_pi")?
+        {
+            conn.execute(
+                "ALTER TABLE mcp_servers ADD COLUMN enabled_pi BOOLEAN NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("添加 mcp_servers.enabled_pi 列失败: {e}")))?;
+            log::info!("Migration v24: Added enabled_pi column to mcp_servers table");
+        }
+
         Ok(())
     }
 
