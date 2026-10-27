@@ -2499,4 +2499,72 @@ mod tests {
         assert_eq!(pi_ledger, 0);
         Ok(())
     }
+
+    /// 清空 PI_CODING_AGENT_SESSION_DIR 的测试期守卫：OMP 与 Pi 共用该变量，
+    /// 必须让 OMP 走默认的数据目录解析（drop 时还原原值）。
+    struct NoSessionDirEnv(Option<std::ffi::OsString>);
+    impl NoSessionDirEnv {
+        fn unset() -> Self {
+            let previous = std::env::var_os("PI_CODING_AGENT_SESSION_DIR");
+            std::env::remove_var("PI_CODING_AGENT_SESSION_DIR");
+            Self(previous)
+        }
+    }
+    impl Drop for NoSessionDirEnv {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.0 {
+                std::env::set_var("PI_CODING_AGENT_SESSION_DIR", previous);
+            } else {
+                std::env::remove_var("PI_CODING_AGENT_SESSION_DIR");
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn omp_usage_flows_from_real_discovery_to_dashboard_summary() -> Result<(), AppError> {
+        // End-to-end on the real path: a session file laid out the way Oh My Pi
+        // writes it, discovered by the OMP provider's own root resolution,
+        // imported by sync_omp_usage, and read back through the dashboard's
+        // summary/provider queries.
+        let _agent = crate::omp_config::test_support::TestAgentDir::new();
+        let _env = NoSessionDirEnv::unset();
+        let root = crate::session_manager::providers::omp::session_roots()
+            .into_iter()
+            .next()
+            .expect("OMP session root resolves under the test agent dir");
+        let session = root.join("demo-project").join("2023-11-14_omp-e2e.jsonl");
+        // 两条：带请求内 provider 标签的 assistant 行 + 无标签行（占位 provider，
+        // 供应商筛选里的 "Oh My Pi (Session)" 就是占位行的显示名）。
+        let bare = assistant_line("bare", "2023-11-14T22:13:22Z", 30)
+            .replace(r#""provider":"fixture-provider","#, "");
+        write_nested_lines(
+            &session,
+            &[
+                r#"{"type":"session","version":3,"id":"omp-e2e","timestamp":"2023-11-14T22:13:20Z","cwd":"/repo"}"#,
+                &assistant_line("e2e", "2023-11-14T22:13:21Z", 120),
+                &bare,
+            ],
+        );
+
+        let db = Database::memory()?;
+        let result = crate::services::session_usage_omp::sync_omp_usage(&db)?;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.imported, 2);
+
+        let summary = db.get_usage_summary(None, None, Some("omp"), None, None)?;
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.total_input_tokens, 120 + 30);
+        assert_eq!(summary.total_output_tokens, 2 + 2);
+        assert_eq!(summary.real_total_tokens, 150 + 4 + 10 + 4);
+        let stats = db.get_provider_stats(None, None, Some("omp"), None, None)?;
+        assert!(stats
+            .iter()
+            .any(|stat| stat.provider_name == "Oh My Pi (Session)"));
+
+        // Second sync over unchanged files is a no-op (cursor + ledger).
+        let repeat = crate::services::session_usage_omp::sync_omp_usage(&db)?;
+        assert_eq!(repeat.imported, 0);
+        Ok(())
+    }
 }
