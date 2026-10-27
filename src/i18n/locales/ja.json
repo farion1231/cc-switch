@@ -728,6 +728,15 @@
       "saved": "保存済み",
       "unsavedChanges": "先に設定を保存してください",
       "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
+      "clear": "設定をクリア",
+      "clearing": "クリア中...",
+      "clearSuccess": "この端末の WebDAV 設定をクリアしました",
+      "clearFailed": "設定のクリアに失敗しました：{{error}}",
+      "clearConfirm": {
+        "title": "WebDAV 設定をクリア",
+        "message": "この端末に保存されている WebDAV のアドレス、ユーザー名、パスワード、リモートフォルダを削除し、自動同期を停止します。サーバーにアップロード済みのデータは削除されません。",
+        "confirm": "クリア"
+      },
       "fetchingRemote": "リモート情報を取得中...",
       "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
       "confirmDownload": {

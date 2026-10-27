@@ -728,6 +728,15 @@
       "saved": "Saved",
       "unsavedChanges": "Please save config first",
       "saveBeforeSync": "Save configuration first to enable upload/download.",
+      "clear": "Clear config",
+      "clearing": "Clearing...",
+      "clearSuccess": "WebDAV config cleared on this device",
+      "clearFailed": "Failed to clear config: {{error}}",
+      "clearConfirm": {
+        "title": "Clear WebDAV config",
+        "message": "This removes the saved WebDAV URL, username, password and remote folder from this device and stops auto sync. Data already uploaded to the server is not deleted.",
+        "confirm": "Clear"
+      },
       "fetchingRemote": "Fetching remote info...",
       "fetchRemoteFailed": "Failed to fetch remote info. Please check configuration and network.",
       "confirmDownload": {

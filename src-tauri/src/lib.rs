@@ -1652,6 +1652,7 @@ pub fn run() {
             commands::webdav_sync_upload,
             commands::webdav_sync_download,
             commands::webdav_sync_save_settings,
+            commands::webdav_sync_clear_settings,
             commands::webdav_sync_fetch_remote_info,
             commands::s3_test_connection,
             commands::s3_sync_upload,

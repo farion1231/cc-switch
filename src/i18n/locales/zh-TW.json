@@ -728,6 +728,15 @@
       "saved": "已儲存",
       "unsavedChanges": "請先儲存設定",
       "saveBeforeSync": "請先儲存設定，再使用上傳/下載。",
+      "clear": "清除設定",
+      "clearing": "清除中...",
+      "clearSuccess": "已清除本機的 WebDAV 設定",
+      "clearFailed": "清除設定失敗：{{error}}",
+      "clearConfirm": {
+        "title": "清除 WebDAV 設定",
+        "message": "將從本機刪除已儲存的 WebDAV 位址、帳號、密碼和遠端目錄，並停止自動同步。雲端已上傳的資料不會被刪除。",
+        "confirm": "清除"
+      },
       "fetchingRemote": "取得遠端資訊...",
       "fetchRemoteFailed": "取得遠端資訊失敗，請檢查設定和網路後重試。",
       "confirmDownload": {
