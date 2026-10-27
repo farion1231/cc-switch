@@ -293,6 +293,30 @@ describe("useAddProviderMutation", () => {
     expect(provider.id).toBe("pi-provider");
   });
 
+  it("keeps the entered DeepSeek Harness provider key as its id", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("dsh"), {
+      wrapper,
+    });
+
+    const provider = await act(async () =>
+      result.current.mutateAsync({
+        name: "Gateway",
+        providerKey: "gateway",
+        settingsConfig: { api: "openai-responses", models: {} },
+      }),
+    );
+
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "gateway" }),
+      "dsh",
+      undefined,
+      undefined,
+    );
+    expect(provider.id).toBe("gateway");
+    expect(uuidMocks.generateUUID).not.toHaveBeenCalled();
+  });
+
   it("reports a Pi provider add failure", async () => {
     apiMocks.add.mockRejectedValueOnce(new Error("provider add failed"));
     const { wrapper } = createWrapper();

@@ -230,6 +230,17 @@ fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
     assert!(apps.claude && apps.pi && apps.mcode && apps.omp);
 }
 
+/// DeepSeek Harness 也是 MCP 目标：解析层和 parse_mcp_apps 都不能拦掉 `apps=dsh`
+#[test]
+fn test_parse_mcp_deeplink_accepts_dsh() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    let url = format!("ccswitch://v1/import?resource=mcp&apps=claude,dsh&config={config}");
+
+    let request = parse_deeplink_url(&url).expect("dsh is a valid MCP target");
+    let apps = parse_mcp_apps(request.apps.as_deref().unwrap()).unwrap();
+    assert!(apps.claude && apps.dsh);
+}
+
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_refuses_omp_with_guidance() {

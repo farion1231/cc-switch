@@ -1746,6 +1746,19 @@ enum ShellProbe {
 fn try_get_version(tool: &str) -> ShellProbe {
     use std::process::{Command, Stdio};
 
+    // A PATH-first DeepSeek Harness Desktop launcher is not the CLI; fall back to the scan.
+    if tool == "dsh"
+        && !matches!(
+            resolve_path_default(
+                tool,
+                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT))
+            ),
+            Ok(Some(_))
+        )
+    {
+        return ShellProbe::NotFound(NOT_INSTALLED.to_string());
+    }
+
     let output = {
         let shell = std::env::var("SHELL")
             .ok()
@@ -2296,6 +2309,10 @@ fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
 }
 
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
+    // DeepSeek Harness Desktop's own launcher belongs to the app, not to a CLI installation.
+    if tool == "dsh" && crate::dsh_config::is_desktop_cli_launcher(&dir.join(tool)) {
+        return Vec::new();
+    }
     #[cfg(target_os = "windows")]
     {
         let extensionless = dir.join(tool);
@@ -2452,7 +2469,7 @@ fn prepend_search_dir_to_path(dir: &Path, current_path: &std::ffi::OsStr) -> std
 /// Prefer process overrides, then the user and machine registry values. Registry
 /// values may reference other variables; unknown/cyclic references stay literal.
 #[cfg(target_os = "windows")]
-fn expand_env_chars(raw: &str) -> String {
+pub(crate) fn expand_env_chars(raw: &str) -> String {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     use winreg::RegKey;
 
@@ -3160,6 +3177,9 @@ fn resolve_path_default(
     let Some(first) = first_abs_path_line(&raw) else {
         return Ok(None);
     };
+    if tool == "dsh" && crate::dsh_config::is_desktop_cli_launcher(Path::new(first)) {
+        return Ok(None);
+    }
     Ok(std::fs::canonicalize(first).ok())
 }
 
@@ -3215,11 +3235,13 @@ fn resolve_path_default(
     // `Microsoft\WindowsApps`) — they launch the Store / a protocol handler,
     // are not CLIs we can `--version`-probe, and must not be treated as the
     // PATH default. Take the first remaining real entry.
+    // DeepSeek Harness Desktop's own launcher is skipped the same way: it belongs to the app.
     let resolved = raw.lines().map(str::trim).find(|line| {
         !line.is_empty()
             && !is_windows_app_execution_alias_dir(
                 Path::new(line).parent().unwrap_or(Path::new("")),
             )
+            && (tool != "dsh" || !crate::dsh_config::is_desktop_cli_launcher(Path::new(line)))
     });
     let Some(first) = resolved else {
         return Ok(None);
