@@ -74,16 +74,27 @@ impl QuotaRelay {
             }
         }
 
-        // 无窗口：仅当供应商配置了周期额度才建窗（未配置的不为记账查库/建状态）
-        let Some(config) = load_quota_cycle_config(&self.db, app_type, provider_id) else {
+        // 无窗口：仅当供应商配置了周期额度才建窗（未配置的不为记账查库/建状态）。
+        // 建窗预填要查库（明细 + 日汇总聚合），与用量写入同一理由（#7818）移到
+        // 阻塞线程池——代理请求的异步路径不能被磁盘 IO 卡住。
+        let db = self.db.clone();
+        let app = app_type.to_string();
+        let pid = provider_id.to_string();
+        let seeded = tokio::task::spawn_blocking(move || {
+            let config = load_quota_cycle_config(&db, &app, &pid)?;
+            if config.token_cap <= 0 || config.duration_hours <= 0 {
+                return None;
+            }
+            let window_start = config.window_start_at(chrono::Utc::now().timestamp());
+            let seeded = seed_used_tokens_from_logs(&db, &app, &pid, window_start);
+            Some((window_start, seeded))
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some((window_start, seeded)) = seeded else {
             return;
         };
-        if config.token_cap <= 0 || config.duration_hours <= 0 {
-            return;
-        }
-        let now = chrono::Utc::now().timestamp();
-        let window_start = config.window_start_at(now);
-        let seeded = seed_used_tokens_from_logs(&self.db, app_type, provider_id, window_start);
         log::debug!(
             "[{app_type}] [{}] provider={provider_id} 建窗预填: start={window_start}, used={seeded} tokens",
             log_qta::WINDOW_SEEDED,
@@ -97,6 +108,21 @@ impl QuotaRelay {
         // 竞态兜底：拿不到写锁期间别的调用可能已建窗（其预填可能已含本条日志行），
         // 再加一次增量最坏情况是单请求级别的瞬时高估，方向安全（宁可早切不漏切）。
         state.used_tokens = state.used_tokens.saturating_add(tokens);
+    }
+
+    /// 建窗/重置时的存量预填：从用量日志聚合 `[window_start, now)` 的真实消耗。
+    ///
+    /// 明细 + 日汇总互补计数（口径见 [`seed_used_tokens_from_logs`]）。查库，
+    /// 在阻塞线程池执行，调用方持状态写锁期间 await 它不会卡住 tokio worker。
+    async fn seed_window(&self, app_type: &str, provider_id: &str, window_start: i64) -> i64 {
+        let db = self.db.clone();
+        let app_type = app_type.to_string();
+        let provider_id = provider_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            seed_used_tokens_from_logs(&db, &app_type, &provider_id, window_start)
+        })
+        .await
+        .unwrap_or(0)
     }
 
     /// 判断供应商当前周期额度是否已用尽。
@@ -130,8 +156,7 @@ impl QuotaRelay {
                         log_qta::WINDOW_RESET,
                         state.window_started_at,
                     );
-                    let seeded =
-                        seed_used_tokens_from_logs(&self.db, app_type, provider_id, window_start);
+                    let seeded = self.seed_window(app_type, provider_id, window_start).await;
                     *state = QuotaWindowState {
                         window_started_at: window_start,
                         used_tokens: seeded,
@@ -139,8 +164,7 @@ impl QuotaRelay {
                     seeded
                 }
                 None => {
-                    let seeded =
-                        seed_used_tokens_from_logs(&self.db, app_type, provider_id, window_start);
+                    let seeded = self.seed_window(app_type, provider_id, window_start).await;
                     log::debug!(
                         "[{app_type}] [{}] provider={provider_id} 建窗预填: start={window_start}, used={seeded} tokens",
                         log_qta::WINDOW_SEEDED,
@@ -166,33 +190,42 @@ impl QuotaRelay {
     /// 提前预热：代理启动时一次扫出，避免重启后的第一个请求才补账。失败只影响精度，
     /// 不阻断启动。
     pub async fn prefill_all(&self) {
-        let configs = load_quota_cycle_configs(&self.db);
+        // 配置扫描与逐家预填都查库：外移到阻塞线程池（#7818 同款），拿状态写锁前
+        // 先把数据聚合完，避免持锁做磁盘 IO。
+        let db = self.db.clone();
+        let configs = tokio::task::spawn_blocking(move || load_quota_cycle_configs(&db))
+            .await
+            .unwrap_or_default();
         if configs.is_empty() {
             return;
         }
         let now = chrono::Utc::now().timestamp();
-        let mut states = self.states.write().await;
-        let mut seeded_count = 0usize;
+        let mut windows = Vec::with_capacity(configs.len());
         for (app_type, provider_id, config) in &configs {
             if config.token_cap <= 0 || config.duration_hours <= 0 {
                 continue;
             }
-            let key = quota_key(app_type, provider_id);
-            if let Some(state) = states.get(&key) {
-                // 已有未过期窗口（理论上启动时不会有）不重复预填
-                if now < state.window_started_at + config.duration_secs() {
-                    continue;
-                }
-            }
             let window_start = config.window_start_at(now);
-            let seeded = seed_used_tokens_from_logs(&self.db, app_type, provider_id, window_start);
-            states.insert(
-                key,
+            let seeded = self.seed_window(app_type, provider_id, window_start).await;
+            windows.push((
+                quota_key(app_type, provider_id),
                 QuotaWindowState {
                     window_started_at: window_start,
                     used_tokens: seeded,
                 },
-            );
+            ));
+        }
+        let mut states = self.states.write().await;
+        let mut seeded_count = 0usize;
+        for (key, state) in windows {
+            // 已存在同一窗口的状态（预填期间 record_usage 建的）保留：它含实时增量。
+            if states
+                .get(&key)
+                .is_some_and(|existing| existing.window_started_at == state.window_started_at)
+            {
+                continue;
+            }
+            states.insert(key, state);
             seeded_count += 1;
         }
         log::info!(
