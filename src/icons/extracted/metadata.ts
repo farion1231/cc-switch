@@ -343,13 +343,6 @@ export const iconMetadata: Record<string, IconMetadata> = {
     shape: "tile",
     keywords: ["claudecn", "claude", "enterprise"],
   },
-  cline: {
-    name: "cline",
-    displayName: "Cline",
-    category: "ai-provider",
-    keywords: ["cline", "agent", "cli"],
-    defaultColor: "currentColor",
-  },
   cloudflare: {
     name: "cloudflare",
     displayName: "Cloudflare",
@@ -1159,6 +1152,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     shape: "tile",
     keywords: ["vapi", "v-api", "gpt.ge", "relay", "aggregator"],
+    defaultColor: "currentColor",
+  },
+  cline: {
+    name: "cline",
+    displayName: "Cline",
+    category: "ai-provider",
+    keywords: ["cline", "clinepass", "cline pass", "agent", "cli"],
     defaultColor: "currentColor",
   },
   everyapi: {
