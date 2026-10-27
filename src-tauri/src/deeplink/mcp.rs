@@ -163,6 +163,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         mcode: false,
         kimi: false,
         qwen: false,
+        dsh: false,
         pi: false,
         omp: false,
     };

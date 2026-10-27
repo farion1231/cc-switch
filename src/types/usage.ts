@@ -231,6 +231,7 @@ export type AppType =
   | "mcode"
   | "kimi"
   | "qwen"
+  | "dsh"
   | "agy";
 
 export type AppTypeFilter = "all" | AppType;
@@ -245,6 +246,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "mcode",
   "kimi",
   "qwen",
+  "dsh",
   "agy",
 ];
 

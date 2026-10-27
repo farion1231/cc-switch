@@ -30,6 +30,7 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "qwen",
+  "dsh",
   "agy",
   "omp",
 ];
@@ -47,6 +48,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   qwen: true,
+  dsh: true,
   agy: true,
   omp: true,
 };
@@ -86,6 +88,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "qwen",
+  "dsh",
   "agy",
   "omp",
 ];
@@ -137,13 +140,22 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "qwen" | "omp"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "qwen"
+  | "dsh"
+  | "omp"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
   "qwen",
+  "dsh",
   "opencode",
   "openclaw",
   "hermes",
@@ -190,6 +202,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "mcode",
   "kimi",
   "qwen",
+  "dsh",
   "agy",
   "omp",
 ];
@@ -294,6 +307,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
     badgeClass:
       "bg-purple-500/10 text-purple-700 dark:text-purple-300 border-0 gap-1.5",
+  },
+  dsh: {
+    label: "DeepSeek Harness",
+    icon: <ProviderIcon icon="deepseek" name="DeepSeek Harness" size={14} />,
+    activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
   },
   kimi: {
     label: "Kimi Code",

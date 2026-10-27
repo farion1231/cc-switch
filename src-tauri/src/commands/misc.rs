@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 13] = [
+const VALID_TOOLS: [&str; 14] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "qwen", "agy", "omp",
+    "qwen", "dsh", "agy", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -630,6 +630,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
         "qwen" => "Qwen Code",
+        "dsh" => "DeepSeek Harness",
         "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
@@ -912,6 +913,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
         "qwen" => Some("npm i -g @qwen-code/qwen-code@latest"),
+        "dsh" => Some("npm i -g @deepseek-ai/dsh@latest --engine-strict"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -935,6 +937,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// 加双引号：逗号在 PowerShell 里会被当成数组分隔符，bash/cmd 都会剥掉这层引号。
 fn npm_install_extra_args(tool: &str) -> &'static str {
     match tool {
+        "dsh" => " --engine-strict",
         "claude" => {
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
         }
@@ -1348,6 +1351,7 @@ async fn get_single_tool_version_impl(
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "qwen" => fetch_npm_latest_for_tool(&client, "@qwen-code/qwen-code", tool, local).await,
+        "dsh" => fetch_npm_latest_for_tool(&client, "@deepseek-ai/dsh", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
@@ -3435,6 +3439,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "kimi" => Some("@moonshot-ai/kimi-code"),
         "qwen" => Some("@qwen-code/qwen-code"),
         "omp" => Some("@oh-my-pi/pi-coding-agent"),
+        "dsh" => Some("@deepseek-ai/dsh"),
         _ => None,
     }
 }
@@ -4943,6 +4948,19 @@ pub async fn list_tool_installations(
     tools: Vec<String>,
 ) -> Result<Vec<ToolInstallationReport>, String> {
     probe_tool_installations(tools).await
+}
+
+/// 这个工具的配置目录是不是指向 WSL（只有 Windows 上会是）。
+pub(crate) fn tool_runs_in_wsl(tool: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        wsl_distro_for_tool(tool).is_some()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = tool;
+        false
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -7370,6 +7388,31 @@ mod tests {
         assert!(build_tool_search_paths("qwen")
             .iter()
             .any(|path| path.ends_with(".local/bin")));
+    }
+
+    #[test]
+    fn dsh_lifecycle_uses_npm_and_keeps_engine_checks_for_anchored_updates() {
+        let expected = "npm i -g @deepseek-ai/dsh@latest --engine-strict";
+        assert_eq!(posix_install_command_for("dsh"), expected);
+        assert_eq!(npm_package_for("dsh"), Some("@deepseek-ai/dsh"));
+        for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
+            assert_eq!(
+                tool_action_shell_command_for_shell("dsh", action, LifecycleCommandShell::Posix)
+                    .as_deref(),
+                Some(expected)
+            );
+            assert_eq!(
+                tool_action_shell_command_for_shell(
+                    "dsh",
+                    action,
+                    LifecycleCommandShell::WindowsBatch
+                )
+                .as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(official_update_args("dsh"), None);
+        assert_eq!(npm_install_extra_args("dsh"), " --engine-strict");
     }
 
     #[test]

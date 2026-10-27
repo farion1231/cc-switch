@@ -465,7 +465,10 @@ describe("supportsConnectivityCheck", () => {
     },
   );
 
-  it.each(["mcode", "kimi", "qwen"] as const)("%s 不支持连通检测", (appId) => {
-    expect(supportsConnectivityCheck(appId, mkProvider())).toBe(false);
-  });
+  it.each(["mcode", "dsh", "kimi", "qwen"] as const)(
+    "%s 不支持连通检测",
+    (appId) => {
+      expect(supportsConnectivityCheck(appId, mkProvider())).toBe(false);
+    },
+  );
 });

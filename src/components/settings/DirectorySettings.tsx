@@ -10,7 +10,7 @@ import type { ResolvedDirectories } from "@/hooks/useSettings";
 
 export type DirectoryAppId = Exclude<
   AppId,
-  "claude-desktop" | "mcode" | "agy" | "kimi" | "qwen"
+  "claude-desktop" | "mcode" | "agy" | "kimi" | "qwen" | "dsh"
 >;
 
 interface DirectorySettingsProps {

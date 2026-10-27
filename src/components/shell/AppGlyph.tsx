@@ -17,6 +17,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
   qwen: "Qwen Code",
+  dsh: "DeepSeek Harness",
   agy: "Antigravity",
   omp: "Oh My Pi",
 };
@@ -34,6 +35,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   mcode: "minimax",
   kimi: "kimi",
   qwen: "qwen",
+  dsh: "deepseek",
   agy: "antigravity",
   omp: "omp",
 };
