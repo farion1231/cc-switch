@@ -79,6 +79,10 @@ export function AuthCenterPanel({
     // overflow-hidden 的 #content-area，把整块内容区横向/纵向带偏。只滚面板自己的正文。
     // 上面几组的账号是异步加载的，加载完会把目标挤下去：内容尺寸变化时重新对齐，
     // 直到用户自己滚动或操作。
+    // 对齐期间关掉正文的滚动锚定：否则上方分组变高时浏览器（Chromium / WebView2）
+    // 会自己改 scrollTop，被下面当成用户拖了滚动条而提前停止跟随。
+    const previousOverflowAnchor = container.style.overflowAnchor;
+    container.style.overflowAnchor = "none";
     const inputListeners = new AbortController();
     let resizeObserver: ResizeObserver | undefined;
     let frame = 0;
@@ -87,6 +91,7 @@ export function AuthCenterPanel({
       cancelAnimationFrame(frame);
       resizeObserver?.disconnect();
       inputListeners.abort();
+      container.style.overflowAnchor = previousOverflowAnchor;
     };
     const alignTarget = () => {
       // 位置已被外部改变（比如拖滚动条）：让出控制

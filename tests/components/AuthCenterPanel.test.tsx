@@ -115,4 +115,20 @@ describe("AuthCenterPanel scroll target", () => {
     resizeCallbacks.forEach((callback) => callback());
     expect(container.scrollTop).toBe(300);
   });
+
+  it("disables scroll anchoring while pinning and restores it afterwards", () => {
+    const { container, rerender, unmount } = renderInPanel();
+    placeCodexAt(container, () => 600);
+    retarget(rerender);
+    // 浏览器滚动锚定会自己改 scrollTop，被误判成用户接管
+    expect(container.style.overflowAnchor).toBe("none");
+
+    fireEvent.wheel(container);
+    expect(container.style.overflowAnchor).toBe("");
+
+    retarget(rerender);
+    expect(container.style.overflowAnchor).toBe("none");
+    unmount();
+    expect(container.style.overflowAnchor).toBe("");
+  });
 });
