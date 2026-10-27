@@ -341,6 +341,14 @@ export const settingsApi = {
     return await invoke("set_optimizer_config", { config });
   },
 
+  async getPrivacyFilterConfig(): Promise<PrivacyFilterConfig> {
+    return await invoke("get_privacy_filter_config");
+  },
+
+  async setPrivacyFilterConfig(config: PrivacyFilterConfig): Promise<boolean> {
+    return await invoke("set_privacy_filter_config", { config });
+  },
+
   async getLogConfig(): Promise<LogConfig> {
     return await invoke("get_log_config");
   },
@@ -407,6 +415,10 @@ export interface OptimizerConfig {
   enabled: boolean;
   thinkingOptimizer: boolean;
   cacheInjection: boolean;
+}
+
+export interface PrivacyFilterConfig {
+  enabled: boolean;
 }
 
 export interface LogConfig {

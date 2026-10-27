@@ -512,6 +512,11 @@
         "mediaHeuristic": "純文字模型預判",
         "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告"
       },
+      "privacyFilter": {
+        "title": "隱私過濾器",
+        "description": "開啟後，代理轉發請求前會把請求文字中的個人資訊（電子郵件、手機號碼、身分證、銀行卡、IP）和金鑰（API Key、Token、密碼、私鑰等）替換為 [電子郵件]、[金鑰] 等佔位符，工具結果一併處理；關閉後請求原樣轉發。佔位符跟隨介面語言。本機規則比對，替換不可逆，作用於路由和聚合模式；直連模式下請求不經過 CC Switch，不會被過濾。思考區塊、工具呼叫參數和圖片不受影響。移植自 packyme/privacy-filter。",
+        "enabled": "啟用隱私過濾"
+      },
       "optimizer": {
         "title": "Bedrock 請求最佳化工具",
         "description": "在請求發送前自動最佳化 Thinking 和 Cache 設定（僅 Bedrock 供應商生效）",
