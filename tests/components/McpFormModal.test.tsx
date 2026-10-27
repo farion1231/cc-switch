@@ -85,6 +85,78 @@ describe("McpFormModal (drawer)", () => {
     mocks.upsert.mockResolvedValue(undefined);
   });
 
+  it("checks SSE support using each application's effective configuration", async () => {
+    renderForm({
+      editingId: "remote",
+      visibleAppIds: ["claude", "codex", "pi"],
+      initialData: {
+        id: "remote",
+        name: "remote",
+        server: { type: "sse", url: "https://example.invalid/sse" },
+        appOverrides: {
+          claude: { command: "claude-tool" },
+          codex: { type: "http", url: "https://example.invalid/mcp" },
+          pi: { command: "pi-tool" },
+        },
+        apps: { claude: true, codex: true, pi: true } as McpServer["apps"],
+      },
+    });
+    expect(
+      screen.queryByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("mcpPage.drawer.sseRejectedTitle"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(scopeButton("Codex"));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "mcpPage.drawer.useAppConfig" }),
+    );
+    expect(
+      screen.getByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).toBeInTheDocument();
+    await userEvent.click(scopeButton("Claude Code"));
+    expect(
+      screen.getByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("mcpPage.drawer.sseRejectedTitle"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps hidden app SSE warnings while editing another app's JSON", async () => {
+    renderForm({
+      editingId: "remote",
+      visibleAppIds: ["claude", "codex"],
+      initialData: {
+        id: "remote",
+        name: "remote",
+        server: { command: "shared-tool" },
+        appOverrides: {
+          codex: { type: "sse", url: "https://example.invalid/codex-sse" },
+          pi: { type: "sse", url: "https://example.invalid/pi-sse" },
+        },
+        apps: { claude: true, codex: true, pi: true } as McpServer["apps"],
+      },
+    });
+    expect(
+      screen.getByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("mcpPage.drawer.sseRejectedTitle"),
+    ).toBeInTheDocument();
+    await userEvent.click(scopeButton("Codex"));
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    fireEvent.change(screen.getByLabelText("mcpPage.drawer.jsonLabel"), {
+      target: { value: '{"type":"http","url":"https://example.invalid/mcp"}' },
+    });
+    expect(
+      screen.queryByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("mcpPage.drawer.sseRejectedTitle"),
+    ).toBeInTheDocument();
+  });
+
   it.each(MCP_APP_IDS.filter((app) => app !== "claude" && app !== "codex"))(
     "supports an independent %s connection without replacing the default",
     async (app) => {
@@ -545,6 +617,49 @@ describe("McpFormModal (drawer)", () => {
       claude: true,
       hermes: true,
     });
+  });
+
+  it("warns when an SSE server is written to apps without SSE support", async () => {
+    renderForm({
+      editingId: "remote",
+      visibleAppIds: ["claude", "codex", "pi"],
+      initialData: {
+        id: "remote",
+        name: "remote",
+        server: { type: "sse", url: "http://127.0.0.1:60002/sse" },
+        apps: { claude: true, codex: true, pi: true } as McpServer["apps"],
+      },
+    });
+    expect(
+      screen.getByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("mcpPage.drawer.sseRejectedTitle"),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /Codex/ }));
+    expect(
+      screen.queryByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "HTTP" }));
+    expect(
+      screen.queryByText("mcpPage.drawer.sseRejectedTitle"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("follows the JSON tab when checking for SSE", async () => {
+    renderForm({ visibleAppIds: ["claude", "codex"] });
+    expect(
+      screen.queryByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    fireEvent.change(screen.getByLabelText("mcpPage.drawer.jsonLabel"), {
+      target: { value: '{"type":"sse","url":"http://127.0.0.1:60002/sse"}' },
+    });
+    expect(
+      screen.getByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).toBeInTheDocument();
   });
 
   it("reports a save failure and keeps the drawer open", async () => {

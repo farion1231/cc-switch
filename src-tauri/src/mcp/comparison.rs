@@ -34,7 +34,7 @@ fn native_connection(app: &AppType, spec: &Value) -> Option<Value> {
                 .or_insert_with(|| json!("stdio"));
             value
         }
-        AppType::Codex => table_value(super::codex::json_server_to_toml_table(spec).ok()?)?,
+        AppType::Codex => table_value(super::codex::json_server_to_codex_toml_table(spec).ok()?)?,
         AppType::GrokBuild => {
             table_value(super::grokbuild::json_server_to_grokbuild_toml_table(spec).ok()?)?
         }

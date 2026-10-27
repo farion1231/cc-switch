@@ -36,6 +36,85 @@ fn claude_server(home: &Path) -> Value {
     config["mcpServers"]["serena"].clone()
 }
 
+#[test]
+fn claude_override_is_mirrored_to_account_profiles_on_save_toggle_and_delete() {
+    let _guard = support::test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let home = prepare_home();
+    let data_dir = home.join(".cc-switch");
+    let local_id = "0123456789abcdef0123456789abcdef";
+    let config_dir = data_dir
+        .join("claude-accounts")
+        .join(local_id)
+        .join("config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        data_dir.join("claude_accounts.json"),
+        json!({"version":1,"accounts":{"fixture-account":{"localId":local_id,"addedAt":0}}})
+            .to_string(),
+    )
+    .unwrap();
+    let profile = config_dir.join(".claude.json");
+    fs::write(&profile, json!({"mcpServers":{"account-only":{"command":"keep"}},"oauthAccount":{"accountUuid":"synthetic"}}).to_string()).unwrap();
+    let read_profile =
+        || -> Value { serde_json::from_slice(&fs::read(&profile).unwrap()).unwrap() };
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    McpService::upsert_server(&state, independent_server()).unwrap();
+    assert_eq!(read_profile()["mcpServers"]["serena"], claude_server(home));
+    assert_eq!(
+        read_profile()["mcpServers"]["serena"]["command"],
+        "claude-command"
+    );
+    let mut server = independent_server();
+    server.app_overrides.claude.as_mut().unwrap()["command"] = json!("claude-updated");
+    McpService::upsert_server(&state, server).unwrap();
+    assert_eq!(
+        read_profile()["mcpServers"]["serena"]["command"],
+        "claude-updated"
+    );
+    McpService::toggle_app(&state, "serena", AppType::Claude, false).unwrap();
+    assert!(read_profile()["mcpServers"].get("serena").is_none());
+    McpService::toggle_app(&state, "serena", AppType::Claude, true).unwrap();
+    assert_eq!(
+        read_profile()["mcpServers"]["serena"]["command"],
+        "claude-updated"
+    );
+    McpService::delete_server(&state, "serena").unwrap();
+    assert!(read_profile()["mcpServers"].get("serena").is_none());
+    assert_eq!(
+        read_profile()["mcpServers"]["account-only"]["command"],
+        "keep"
+    );
+    assert_eq!(read_profile()["oauthAccount"]["accountUuid"], "synthetic");
+}
+
+#[test]
+fn codex_import_does_not_detach_defaults_after_filtering_foreign_fields() {
+    let _guard = support::test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let home = prepare_home();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let mut server = independent_server();
+    server.app_overrides = Default::default();
+    server.server = json!({"command":"shared-tool","timeout":900000,"autoApprove":["read"],"tool_timeout_sec":120});
+    McpService::upsert_server(&state, server.clone()).unwrap();
+    let native = codex_server(home);
+    assert!(native.get("timeout").is_none());
+    assert!(native.get("autoApprove").is_none());
+    assert_eq!(native["tool_timeout_sec"], 120);
+    McpService::import_from_codex(&state).unwrap();
+    McpService::import_from_codex(&state).unwrap();
+    let mut saved = McpService::get_all_servers(&state).unwrap()["serena"].clone();
+    assert!(saved.app_overrides.codex.is_none());
+    assert_eq!(saved.server, server.server);
+    saved.server["command"] = json!("shared-updated");
+    McpService::upsert_server(&state, saved).unwrap();
+    assert_eq!(codex_server(home)["command"], "shared-updated");
+    assert_eq!(codex_server(home)["tool_timeout_sec"], 120);
+}
+
 fn assert_invalid_restore_is_rejected(kind: &str) {
     let _guard = support::test_mutex()
         .lock()

@@ -18,6 +18,7 @@ use tauri::image::Image;
 use tauri::menu::{
     CheckMenuItem, Menu, MenuBuilder, MenuItem, MenuItemKind, Submenu, SubmenuBuilder,
 };
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconEvent};
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -2407,6 +2408,8 @@ pub fn create_tray_menu(
         };
     }
     let menu = builder.build().map_err(menu_error)?;
+    #[cfg(target_os = "windows")]
+    crate::tray_compat::remember_native_menu(&menu);
 
     *lock(&TRAY_SECTION_SUBMENUS) = handles;
     update_problem_indicator(app, &texts, &model.status.problems);
@@ -2636,6 +2639,44 @@ pub fn apply_tray_style(app: &tauri::AppHandle) {
         }
     }
     refresh_tray_menu(app);
+}
+
+/// 托盘图标的鼠标事件。Windows 第三方托盘下 `tray_compat` 补发的点击也走这里。
+pub fn handle_tray_icon_event(tray: &TrayIcon, event: TrayIconEvent) {
+    if let TrayIconEvent::Click {
+        button: button @ (MouseButton::Left | MouseButton::Right),
+        button_state: MouseButtonState::Up,
+        rect,
+        ..
+    } = &event
+    {
+        if cfg!(target_os = "windows") && *button == MouseButton::Left {
+            crate::tray_panel::hide_panel(tray.app_handle());
+            show_main_window(tray.app_handle());
+        } else if !crate::tray_panel::uses_native_menu() {
+            crate::tray_panel::toggle(tray.app_handle(), rect);
+            return;
+        } else {
+            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
+            mark_feedback_seen();
+        }
+    }
+    match &event {
+        // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+        // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+        // refresh_all_usage_in_tray 内部有 10 秒防抖。
+        TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+            let app = tray.app_handle().clone();
+            // 悬停时菜单还没打开：问题区该出现 / 消失了就趁这时重建。
+            if matches!(event, TrayIconEvent::Enter { .. }) {
+                refresh_tray_if_problems_changed(&app);
+            }
+            tauri::async_runtime::spawn(async move {
+                refresh_all_usage_in_tray(&app).await;
+            });
+        }
+        _ => log::debug!("unhandled event {event:?}"),
+    }
 }
 
 /// 左键是否直接出原生菜单：用面板时不出；Windows 的习惯是左键打开主界面、右键出菜单。

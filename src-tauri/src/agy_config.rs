@@ -263,13 +263,13 @@ fn link_shared_config(link: &Path, target: &Path) -> Result<(), AppError> {
 }
 
 #[cfg(unix)]
-fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
+pub(crate) fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
     std::os::unix::fs::symlink(target, link).map_err(|e| AppError::io(link, e))
 }
 
 /// Windows 建符号链接要开发者模式，失败时退回目录联接（junction），普通用户也能建。
 #[cfg(windows)]
-fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
+pub(crate) fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
     if std::os::windows::fs::symlink_dir(target, link).is_ok() {
         return Ok(());
     }
@@ -296,7 +296,7 @@ fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
     }
 }
 
-fn remove_link(link: &Path) -> Result<(), AppError> {
+pub(crate) fn remove_link(link: &Path) -> Result<(), AppError> {
     // Windows 上目录符号链接和 junction 要按目录删；Unix 上符号链接按文件删。
     fs::remove_file(link)
         .or_else(|_| fs::remove_dir(link))

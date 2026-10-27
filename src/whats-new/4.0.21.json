@@ -1,0 +1,33 @@
+{
+  "version": "4.0.21",
+  "items": [
+    {
+      "type": "new",
+      "zh": "Claude Code 可以在多个官方订阅账号之间切换，切卡即切号",
+      "zh-TW": "Claude Code 可以在多個官方訂閱帳號之間切換，切卡即切號",
+      "en": "Switch Claude Code between several official subscription accounts by switching cards",
+      "ja": "Claude Code で複数の公式サブスクアカウントを切り替え。カードの切り替えで切り替わります"
+    },
+    {
+      "type": "improve",
+      "zh": "绑了账号的 Claude 官方卡显示套餐和剩余额度",
+      "zh-TW": "綁了帳號的 Claude 官方卡顯示方案和剩餘額度",
+      "en": "Claude official cards with an account show its plan and remaining quota",
+      "ja": "アカウント付きの Claude 公式カードにプランと残りクォータを表示"
+    },
+    {
+      "type": "improve",
+      "zh": "「打开终端」挪到卡片上，Codex 模型列表可以拖动排序",
+      "zh-TW": "「開啟終端機」移到卡片上，Codex 模型清單可以拖動排序",
+      "en": "Open Terminal is now on the card; drag to reorder Codex model rows",
+      "ja": "「ターミナルを開く」をカードに移動。Codex のモデル一覧はドラッグで並べ替え"
+    },
+    {
+      "type": "fix",
+      "zh": "修复托管 ChatGPT 账号重启后误报登录过期",
+      "zh-TW": "修正託管 ChatGPT 帳號重新啟動後誤報登入過期",
+      "en": "Fixed managed ChatGPT accounts wrongly shown as expired after a restart",
+      "ja": "管理対象の ChatGPT アカウントが再起動後に期限切れと誤表示される問題を修正"
+    }
+  ]
+}
