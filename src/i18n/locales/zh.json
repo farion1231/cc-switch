@@ -1816,8 +1816,11 @@
     "directModeFormatSwitch": "直连模式下用不了这种格式，切到路由或聚合后才能用这张卡。"
   },
   "copilot": {
+    "autoModelHint": "Copilot Auto 是实验模型，由上游选择实际模型，仅支持 Chat Completions。",
+    "autoModelCodexHint": "使用 copilot-auto 时，上游格式需选「自动」或「Chat Completions」。",
     "automaticFormat": "由路由按模型自动选择",
     "automaticFormatHint": "Copilot 的上游格式由路由按模型自动选择，手选格式不生效。",
+    "autoModelFormatError": "copilot-auto 不支持 Responses。请将上游格式改为「自动」或「Chat Completions」，或移除 Auto 模型（含子代理和模型列表）。",
     "authSection": "GitHub Copilot 认证",
     "authStatus": "认证状态",
     "authenticated": "已认证: {{username}}",
