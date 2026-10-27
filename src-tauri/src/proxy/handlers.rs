@@ -98,12 +98,12 @@ pub async fn handle_models(
     State(state): State<ProxyState>,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
-) -> Result<Json<Value>, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     if is_claude_model_discovery(&uri, &headers) {
-        return Ok(Json(claude_model_discovery(&state)));
+        return Ok(Json(claude_model_discovery(&state)).into_response());
     }
-    if let Some(catalog) = forward_codex_official_models(&state, &uri, &headers).await? {
-        return Ok(Json(catalog));
+    if let Some(catalog_response) = forward_codex_official_models(&state, &uri, &headers).await? {
+        return Ok(catalog_response);
     }
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
@@ -131,7 +131,7 @@ pub async fn handle_models(
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    Ok(Json(catalog).into_response())
 }
 
 /// 官方目录转发会话的超时上限。与 `services::codex_oauth_models` 的取数一致。
@@ -152,7 +152,7 @@ async fn forward_codex_official_models(
     state: &ProxyState,
     uri: &axum::http::Uri,
     headers: &axum::http::HeaderMap,
-) -> Result<Option<Value>, ProxyError> {
+) -> Result<Option<axum::response::Response>, ProxyError> {
     // Codex 取目录时会带 `client_version` query 或官方 CLI 的身份头（`originator` /
     // `version`）；都没有的不当它是 Codex 目录请求（Claude 的发现已在上面分流）。
     let query = uri.query().unwrap_or_default();
@@ -249,6 +249,10 @@ async fn forward_codex_official_models(
         .await
         .map_err(|error| ProxyError::ForwardFailed(super::error::describe_reqwest_error(error)))?;
     let status = response.status();
+    // 上游的 ETag 要原样带回：Codex 从响应头读 ETag 做目录缓存，并在后续 responses
+    // 响应带 X-Models-Etag 时与缓存比较，不一致才重拉全量目录。丢掉它会让 Codex
+    // 每次采样都经代理同步重拉一遍几百 KB 的官方目录（farion1231 review #8922）。
+    let etag = response.headers().get(reqwest::header::ETAG).cloned();
     let body = response
         .text()
         .await
@@ -262,7 +266,13 @@ async fn forward_codex_official_models(
     }
     let catalog: Value = serde_json::from_str(&body)
         .map_err(|error| ProxyError::ForwardFailed(format!("官方模型目录响应解析失败: {error}")))?;
-    Ok(Some(catalog))
+    let mut catalog_response = Json(catalog).into_response();
+    if let Some(etag) = etag {
+        catalog_response
+            .headers_mut()
+            .insert(axum::http::header::ETAG, etag);
+    }
+    Ok(Some(catalog_response))
 }
 
 /// 从请求头取字符串值（去空白、丢弃空值）。
@@ -4773,13 +4783,19 @@ mod stack_tests {
     async fn claude_model_discovery_lists_nothing_outside_proxy_mode() {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
-        let Json(body) = handle_models(
+        let response = handle_models(
             State(proxy_state()),
             "/v1/models?limit=1000".parse().unwrap(),
             headers,
         )
         .await
         .expect("models");
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body, json!({ "data": [], "has_more": false }));
     }
 }
