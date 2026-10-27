@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Oh My Pi Native Providers and Global Models** (refs #8948): Native OAuth provider identifiers remain credential-neutral, with dedicated controls for the global default and every role/custom-role/worker reference, preserving aliases, thinking suffixes and candidate arrays. Assignment saves update only `config.yml`; separate parameter saves update only six `models.yml` override fields (`name`, `contextWindow`, `maxContextWindow`, `maxTokens`, `input`, `reasoning`). Cached/configured candidates show provenance without promising account entitlement, and healthy active sessions are not switched. Targeted YAML edits preserve unrelated fields/comments, merge disjoint changes and refuse detected entry/directory conflicts. Credentials/login remain OMP-owned, brokers suppress local login discovery, and genuine custom routes retain precedence.
+- **OMP v7-style Model Management** (refs #8948): Aligns provider cards and model management with v7's compact actions, selected model rows and settings controls. Models / Roles & Workers tabs share a fixed, file-specific save footer while retaining independent drafts.
 
 ## [4.0.21] - 2026-10-26
 

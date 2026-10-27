@@ -18,6 +18,7 @@ import {
   PowerOff,
   Route,
   SquareTerminal,
+  SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -99,21 +100,26 @@ export function ProviderCardActions({
   openTerminalIsolated,
 }: ProviderCardActionsProps) {
   const { t } = useTranslation();
-  if (presentation.readOnly)
-    return onManageModels ? (
-      <Button variant="outline" size="sm" onClick={onManageModels}>
-        {t("omp.management.manageProvider")}
+  const manageModels = onManageModels ? (
+    <HoverTip content={t("omp.management.manageProvider")}>
+      <Button
+        variant="quiet"
+        size="icon-compact"
+        aria-label={t("omp.management.manageProviderNamed", {
+          name: providerName,
+        })}
+        onClick={onManageModels}
+      >
+        <SlidersHorizontal className="h-4 w-4" strokeWidth={1.5} />
       </Button>
-    ) : null;
+    </HoverTip>
+  ) : null;
+  if (presentation.readOnly) return manageModels;
   const { status, buttons, move, menuItems = [] } = presentation;
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      {onManageModels && (
-        <Button variant="outline" size="sm" onClick={onManageModels}>
-          {t("omp.management.manageProvider")}
-        </Button>
-      )}
+      {manageModels}
       {/* 主操作位定宽：图标按钮和「● 使用中」这类状态文字宽度不同，不定宽的话
           切换后左边的用量会被推开、跟其他卡片对不齐。按最长的常见状态留宽，靠右对齐 */}
       <div className="flex min-w-20 items-center justify-end gap-1">

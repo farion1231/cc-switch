@@ -93,9 +93,19 @@ describe("OMP native login cards", () => {
     const nativeCard = within(card(native.name));
     expect(nativeCard.getByText("omp.nativeLogin.badge")).toBeInTheDocument();
     expect(
-      nativeCard.getByRole("button", { name: "omp.management.manageProvider" }),
+      nativeCard.getByRole("button", {
+        name: "omp.management.manageProviderNamed",
+      }),
     ).toBeInTheDocument();
-    expect(nativeCard.queryAllByRole("button")).toHaveLength(1);
+    for (const name of [
+      "providerCard.action.edit",
+      "providerCard.action.more",
+      "provider.dragHandle",
+    ]) {
+      expect(
+        nativeCard.queryByRole("button", { name }),
+      ).not.toBeInTheDocument();
+    }
 
     fireEvent.click(
       within(card(enabled.name)).getByRole("button", {

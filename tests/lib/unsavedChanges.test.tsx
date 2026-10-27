@@ -9,9 +9,15 @@ import {
   useUnsavedChangesTracker,
 } from "@/lib/unsavedChanges";
 
-function Editor({ enabled = true }: { enabled?: boolean }) {
+function Editor({
+  enabled = true,
+  isDirty,
+}: {
+  enabled?: boolean;
+  isDirty?: boolean;
+}) {
   return (
-    <div {...useUnsavedChangesTracker(enabled)}>
+    <div {...useUnsavedChangesTracker(enabled, isDirty)}>
       <input aria-label="name" />
       <button type="button" role="checkbox" aria-checked="false">
         claude
@@ -56,6 +62,42 @@ describe("unsaved changes tracker", () => {
     fireEvent.input(screen.getByRole("textbox", { name: "name" }));
     expect(hasUnsavedChanges()).toBe(true);
     view.rerender(<Editor enabled={false} />);
+    expect(hasUnsavedChanges()).toBe(false);
+  });
+
+  it("tracks explicit dirty state without events and removes it on reset or unmount", () => {
+    const view = render(<Editor isDirty={false} />);
+    fireEvent.input(screen.getByRole("textbox", { name: "name" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "claude" }));
+    expect(hasUnsavedChanges()).toBe(false);
+    view.rerender(<Editor isDirty />);
+    expect(hasUnsavedChanges()).toBe(true);
+    view.rerender(<Editor isDirty={false} />);
+    expect(hasUnsavedChanges()).toBe(false);
+    view.rerender(<Editor isDirty />);
+    view.unmount();
+    expect(hasUnsavedChanges()).toBe(false);
+  });
+
+  it("respects the enabled and open gates with explicit panel dirty state", () => {
+    const panel = (open: boolean, track: boolean, isDirty: boolean) => (
+      <FullScreenPanel
+        isOpen={open}
+        title="Edit"
+        onClose={() => undefined}
+        trackUnsavedChanges={track}
+        isDirty={isDirty}
+      >
+        <input aria-label="field" />
+      </FullScreenPanel>
+    );
+    const view = render(panel(true, true, true));
+    expect(hasUnsavedChanges()).toBe(true);
+    view.rerender(panel(true, false, true));
+    expect(hasUnsavedChanges()).toBe(false);
+    view.rerender(panel(true, true, true));
+    expect(hasUnsavedChanges()).toBe(true);
+    view.rerender(panel(false, true, true));
     expect(hasUnsavedChanges()).toBe(false);
   });
 

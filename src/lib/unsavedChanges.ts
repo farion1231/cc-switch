@@ -33,19 +33,21 @@ const EDIT_CONTROL_SELECTOR = [
  * 挂到编辑器内容区：文字输入、原生选择变化、以及点到上面那些控件时登记为有未保存改动。
  * React 的合成事件沿组件树冒泡，渲染到 body 的下拉选项也能收到。
  * `enabled` 为 false 时不登记（例如新增供应商还在选预设）。
+ * `isDirty` 显式传入时按实际状态登记，不再从控件事件推断。
  */
-export function useUnsavedChangesTracker(enabled = true) {
+export function useUnsavedChangesTracker(enabled = true, isDirty?: boolean) {
   const token = useRef({}).current;
   useEffect(() => {
-    if (!enabled) dirtyEditors.delete(token);
+    if (enabled && isDirty === true) dirtyEditors.add(token);
+    else if (!enabled || isDirty === false) dirtyEditors.delete(token);
     return () => {
       dirtyEditors.delete(token);
     };
-  }, [enabled, token]);
+  }, [enabled, isDirty, token]);
 
   const markDirty = useCallback(() => {
-    if (enabled) dirtyEditors.add(token);
-  }, [enabled, token]);
+    if (enabled && isDirty === undefined) dirtyEditors.add(token);
+  }, [enabled, isDirty, token]);
 
   const onClickCapture = useCallback(
     (event: SyntheticEvent) => {

@@ -59,7 +59,7 @@ export interface CardButton {
 }
 
 export interface CardPresentation {
-  /** 仅展示原生登录信息，不提供操作、额度查询或拖拽。 */
+  /** 原生登录卡片：只允许独立模型管理，不提供通用供应商/凭据操作、额度查询或拖拽。 */
   readOnly?: boolean;
   /** 当前那张：模式色边框 + 淡底；共存式应用的默认那家（OpenClaw / OpenCode / Kimi 默认、Hermes 当前）也用 direct */
   tone?: CardTone;

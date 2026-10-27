@@ -1,4 +1,5 @@
-import { Suspense, type ComponentType } from "react";
+import { Suspense } from "react";
+import type { ComponentProps, ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
@@ -8,6 +9,7 @@ import {
   fireEvent,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
@@ -20,6 +22,8 @@ import {
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
+import type { OmpModelManagementState } from "@/lib/api/omp";
+import type * as ProviderListModule from "@/components/providers/ProviderList";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -54,45 +58,61 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("@/components/providers/ProviderList", () => ({
-  ProviderList: ({
-    providers,
-    currentProviderId,
-    onSwitch,
-    onEdit,
-    onDuplicate,
-    onConfigureUsage,
-    onOpenWebsite,
-    onCreate,
-    onDelete,
-    onRemoveFromConfig,
-  }: any) => (
-    <div>
-      <div data-testid="provider-list">{JSON.stringify(providers)}</div>
-      <div data-testid="current-provider">{currentProviderId}</div>
-      <button onClick={() => onSwitch(providers[currentProviderId])}>
-        switch
-      </button>
-      <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
-      <button onClick={() => onDuplicate(providers[currentProviderId])}>
-        duplicate
-      </button>
-      <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
-        usage
-      </button>
-      <button onClick={() => onOpenWebsite("https://example.com")}>
-        open-website
-      </button>
-      <button onClick={() => onDelete(Object.values(providers)[0])}>
-        delete
-      </button>
-      <button onClick={() => onRemoveFromConfig?.(Object.values(providers)[0])}>
-        remove
-      </button>
-      <button onClick={() => onCreate?.()}>create</button>
-    </div>
-  ),
-}));
+vi.mock("@/components/providers/ProviderList", async (importOriginal) => {
+  const { ProviderList: ActualProviderList } =
+    await importOriginal<typeof ProviderListModule>();
+  return {
+    ProviderList: (
+      props: ComponentProps<typeof ProviderListModule.ProviderList>,
+    ) => {
+      if (props.appId === "omp") return <ActualProviderList {...props} />;
+      const {
+        providers,
+        currentProviderId,
+        onSwitch,
+        onEdit,
+        onDuplicate,
+        onConfigureUsage,
+        onOpenWebsite,
+        onCreate,
+        onDelete,
+        onRemoveFromConfig,
+      } = props;
+      return (
+        <div>
+          <div data-testid="provider-list">{JSON.stringify(providers)}</div>
+          <div data-testid="current-provider">{currentProviderId}</div>
+          <button onClick={() => onSwitch(providers[currentProviderId])}>
+            switch
+          </button>
+          <button onClick={() => onEdit(providers[currentProviderId])}>
+            edit
+          </button>
+          <button onClick={() => onDuplicate(providers[currentProviderId])}>
+            duplicate
+          </button>
+          <button
+            onClick={() => onConfigureUsage?.(providers[currentProviderId])}
+          >
+            usage
+          </button>
+          <button onClick={() => onOpenWebsite("https://example.com")}>
+            open-website
+          </button>
+          <button onClick={() => onDelete(Object.values(providers)[0])}>
+            delete
+          </button>
+          <button
+            onClick={() => onRemoveFromConfig?.(Object.values(providers)[0])}
+          >
+            remove
+          </button>
+          <button onClick={() => onCreate?.()}>create</button>
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock("@/components/providers/AddProviderDialog", () => ({
   AddProviderDialog: ({ open, onOpenChange, onSubmit, appId }: any) =>
@@ -466,6 +486,135 @@ describe("App integration with MSW", () => {
     expect(
       screen.queryByTestId("edit-provider-dialog"),
     ).not.toBeInTheDocument();
+  }, 10_000);
+
+  it("guards shell navigation after the first OMP popup choice and clears only after save", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    const writes: unknown[] = [];
+    const snapshot: OmpModelManagementState = {
+      scope: "global",
+      settingsPath: "config.yml",
+      modelsPath: "models.yml",
+      settingsRevision: "s1",
+      modelsRevision: "m1",
+      defaultModel: "cpa/old",
+      defaultThinkingLevel: null,
+      modelRoles: { default: "cpa/old" },
+      roleNames: ["default", "custom"],
+      agentModelOverrides: {},
+      modelOverrides: [],
+      catalogStatus: "ready",
+      catalogMessage: null,
+      models: [
+        {
+          provider: "openai-codex",
+          id: "qa-model",
+          kind: "chat",
+          name: "QA native model",
+          contextWindow: 128000,
+          maxContextWindow: null,
+          maxTokens: 8192,
+          input: ["text"],
+          reasoning: true,
+          thinking: null,
+          source: "nativeCache",
+          cacheUpdatedAt: 1000,
+        },
+      ],
+    };
+    server.use(
+      http.post("http://tauri.local/get_omp_model_management_state", () =>
+        HttpResponse.json(snapshot),
+      ),
+      http.post("http://tauri.local/get_omp_current_state", () =>
+        HttpResponse.json({ enabledProviderIds: [], defaultProviderId: null }),
+      ),
+      http.post(
+        "http://tauri.local/patch_omp_model_settings",
+        async ({ request }) => {
+          writes.push(await request.json());
+          return HttpResponse.json({
+            ...snapshot,
+            settingsRevision: "s2",
+            defaultModel: "openai-codex/qa-model",
+            modelRoles: { default: "openai-codex/qa-model" },
+          });
+        },
+      ),
+    );
+    localStorage.setItem("cc-switch-last-app", "omp");
+    // Load App after this test module's shell/component mocks are installed.
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    const welcome = await screen.findByRole("dialog", {
+      name: "firstRunNotice.title",
+    });
+    await user.click(
+      within(welcome).getByRole("button", { name: "firstRunNotice.confirm" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "firstRunNotice.title" }),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "omp.management.open" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "omp.management.assignmentsTab" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "omp.management.modelChoice omp.management.defaultReference",
+      }),
+    );
+    const picker = await screen.findByRole("dialog");
+    const search = within(picker).getByRole("combobox");
+    await user.type(search, "qa-model");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(
+      screen.getByLabelText("omp.management.defaultReference"),
+    ).toHaveValue("openai-codex/qa-model");
+    expect(writes).toEqual([]);
+    fireEvent.click(sidebarApp("nav.settings"));
+    expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
+      "common.unsavedLeaveMessage",
+    );
+    expect(screen.queryByTestId("settings-page")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("cancel-delete"));
+    expect(
+      screen.getByLabelText("omp.management.defaultReference"),
+    ).toHaveValue("openai-codex/qa-model");
+    fireEvent.click(
+      screen.getByRole("button", { name: "omp.management.saveSettings" }),
+    );
+    await waitFor(() =>
+      expect(writes).toEqual([
+        {
+          patch: {
+            expectedRevision: "s1",
+            expectedPath: "config.yml",
+            changes: [
+              {
+                section: "modelRoles",
+                key: "default",
+                expected: "cpa/old",
+                value: "openai-codex/qa-model",
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "omp.management.saveSettings" }),
+      ).toBeDisabled(),
+    );
+    fireEvent.click(sidebarApp("nav.settings"));
+    expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
   }, 10_000);
 
   it("keeps the unsaved guard when re-clicking the current page", async () => {
@@ -882,7 +1031,9 @@ describe("App integration with MSW", () => {
     await waitFor(() =>
       expect(toastErrorMock).toHaveBeenCalledWith(
         "notifications.removeFromConfigFailed",
-        expect.objectContaining({ description: "kimi.error.defaultModelInUse" }),
+        expect.objectContaining({
+          description: "kimi.error.defaultModelInUse",
+        }),
       ),
     );
     await waitFor(() =>

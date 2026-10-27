@@ -15,7 +15,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Search, X } from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
@@ -139,21 +139,23 @@ export function ProviderList({
     () => (ompManagement ? summarizeOmpReferences(ompManagement) : null),
     [ompManagement],
   );
-  const managementEntry =
+  const managementAction =
     appId === "omp" ? (
-      <>
-        <div className="flex justify-end">
-          <Button variant="outline" onClick={() => setManagementProvider("")}>
-            {t("omp.management.open")}
-          </Button>
-        </div>
-        {managementProvider !== null && (
-          <OmpModelManagement
-            initialProvider={managementProvider}
-            onClose={() => setManagementProvider(null)}
-          />
-        )}
-      </>
+      <Button
+        variant="quiet"
+        size="compact"
+        onClick={() => setManagementProvider("")}
+      >
+        <SlidersHorizontal className="h-4 w-4" strokeWidth={1.5} />
+        {t("omp.management.open")}
+      </Button>
+    ) : null;
+  const managementEntry =
+    appId === "omp" && managementProvider !== null ? (
+      <OmpModelManagement
+        initialProvider={managementProvider}
+        onClose={() => setManagementProvider(null)}
+      />
     ) : null;
   const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
@@ -471,6 +473,11 @@ export function ProviderList({
     return (
       <div className="space-y-2">
         {managementEntry}
+        {managementAction && (
+          <div className="flex min-h-8 items-center justify-end">
+            {managementAction}
+          </div>
+        )}
         {[0, 1, 2].map((index) => (
           <div
             key={index}
@@ -485,6 +492,14 @@ export function ProviderList({
     return (
       <div className="space-y-4">
         {managementEntry}
+        {managementAction && (
+          <div className="flex min-h-8 items-center justify-between">
+            <h2 className="text-caption font-semibold text-fg-2">
+              {t("omp.management.providers")}
+            </h2>
+            {managementAction}
+          </div>
+        )}
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
@@ -514,6 +529,8 @@ export function ProviderList({
   const renderCard = (provider: Provider, presentation: CardPresentation) => {
     const Card = presentation.readOnly ? ProviderCard : SortableProviderCard;
     const summary: string[] = [];
+    const details: string[] = [];
+    let cardPresentation = presentation;
     if (appId === "omp" && ompManagement && ompReferences) {
       const models = ompManagement.models.filter(
         (model) => model.provider === provider.id,
@@ -530,15 +547,25 @@ export function ProviderList({
       if (defaultEntry) {
         const direct =
           typeof rawDefault === "string" &&
-          models.some(
-            (model) =>
-              rawDefault.replace(
-                /:(off|minimal|low|medium|high|xhigh|max|auto|inherit)$/,
-                "",
-              ) === `${model.provider}/${model.id}`,
-          );
-        summary.push(
-          `${t(direct ? "omp.management.configuredDefault" : "omp.management.defaultConfigurationReference")}: ${Array.isArray(rawDefault) ? rawDefault.join(" | ") : rawDefault}`,
+          rawDefault.startsWith(`${provider.id}/`) &&
+          !rawDefault.includes(",");
+        if (direct) {
+          summary.push(rawDefault.slice(provider.id.length + 1));
+          cardPresentation = {
+            ...presentation,
+            chips: [
+              ...presentation.chips,
+              {
+                key: "omp-global-default",
+                label: t("omp.management.globalDefaultChip"),
+                tone: "outline",
+                title: t("omp.management.configuredDefault"),
+              },
+            ],
+          };
+        }
+        details.push(
+          `${t("omp.management.defaultConfigurationReference")}: ${Array.isArray(rawDefault) ? rawDefault.join(" | ") : rawDefault}`,
         );
       }
       const roles = references
@@ -549,30 +576,36 @@ export function ProviderList({
       const workers = references
         .filter((entry) => entry.section === "task.agentModelOverrides")
         .map((entry) => entry.key);
-      if (roles.length)
-        summary.push(`${t("omp.management.roles")}: ${roles.join(", ")}`);
-      if (workers.length)
-        summary.push(`${t("omp.management.workers")}: ${workers.join(", ")}`);
       if (models.length)
-        summary.push(
-          `${t("omp.management.modelList")}: ${models
-            .slice(0, 2)
-            .map((model) => model.id)
-            .join(", ")}${models.length > 2 ? ` (+${models.length - 2})` : ""}`,
+        summary.push(t("omp.management.modelCount", { count: models.length }));
+      if (roles.length) {
+        summary.push(t("omp.management.roleCount", { count: roles.length }));
+        details.push(
+          `${t("omp.management.roles")}: ${roles.map((key) => t(`omp.management.roleLabels.${key}`, { defaultValue: key })).join(", ")}`,
         );
+      }
+      if (workers.length) {
+        summary.push(
+          t("omp.management.workerCount", { count: workers.length }),
+        );
+        details.push(
+          `${t("omp.management.workers")}: ${workers.map((key) => t(`omp.management.workerLabels.${key}`, { defaultValue: key })).join(", ")}`,
+        );
+      }
     }
     return (
       <Card
         key={provider.id}
         provider={provider}
         appId={appId}
-        presentation={presentation}
+        presentation={cardPresentation}
         isCurrent={isCurrentFor(provider)}
         isInConfig={isInConfig(provider)}
         onManageModels={
           appId === "omp" ? () => setManagementProvider(provider.id) : undefined
         }
-        modelSummary={summary.length ? summary.join("\n") : undefined}
+        modelSummary={summary.length ? summary.join(" · ") : undefined}
+        modelDetails={details}
         onEdit={onEdit}
         onDelete={onDelete}
         onDuplicate={onDuplicate}
@@ -659,11 +692,12 @@ export function ProviderList({
   const hostedSearch = searchSlot !== undefined;
   const leadSection = sections[0];
   const liftLeadTitle =
-    !hostedSearch &&
+    (!hostedSearch || appId === "omp") &&
     Boolean(leadSection?.title) &&
     filteredProviders.length > 0;
   const showListHeader =
-    !hostedSearch && (Boolean(leadSection?.title) || isSearchOpen);
+    appId === "omp" ||
+    (!hostedSearch && (Boolean(leadSection?.title) || isSearchOpen));
 
   // 卡片列表铺满主区域，和页头同宽
   return (
@@ -681,7 +715,8 @@ export function ProviderList({
           <div className="min-w-0 flex-1">
             {liftLeadTitle && renderSectionTitle(leadSection)}
           </div>
-          {searchField}
+          {managementAction}
+          {!hostedSearch && searchField}
         </div>
       )}
 

@@ -1,12 +1,52 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import {
+  ChevronDown,
+  ListOrdered,
+  Loader2,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  SettingsBlock,
+  SettingsCard,
+  SettingsRow,
+} from "@/components/settings/SettingsLayout";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Notice } from "@/components/ui/notice";
+import { PageTabs } from "@/components/ui/page-tabs";
+import { SearchField } from "@/components/ui/search-field";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   ompApi,
   OMP_THINKING_LEVELS,
@@ -21,17 +61,56 @@ import {
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { cn } from "@/lib/utils";
 import { summarizeOmpReferences } from "./ompModelReferences";
 
 export const ompManagementKey = ["omp", "modelManagement"];
 const equal = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
-const selectorClass =
-  "h-9 rounded-md border border-input bg-background px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const refValid = (value: string) =>
-  value.length > 0 &&
-  value.trim().length > 0 &&
-  !/[\u0000-\u001f\u007f]/.test(value);
+  value.trim().length > 0 && !/[\u0000-\u001f\u007f]/.test(value);
+const parameterFields = [
+  "name",
+  "contextWindow",
+  "maxContextWindow",
+  "maxTokens",
+  "input",
+  "reasoning",
+] as const;
+const builtinRoles: Record<string, true> = {
+  default: true,
+  smol: true,
+  slow: true,
+  vision: true,
+  plan: true,
+  commit: true,
+  tiny: true,
+  memory: true,
+  task: true,
+  advisor: true,
+  widget: true,
+  image: true,
+  web: true,
+  speech: true,
+  dictation: true,
+  judge: true,
+};
+const builtinWorkers: Record<string, true> = {
+  task: true,
+  scout: true,
+  sonic: true,
+  "security-reviewer": true,
+};
+type Tab = "models" | "assignments";
+type ModelIdentity = Pick<OmpCatalogModel, "provider" | "id">;
+type EditorStatus = { dirty: boolean; invalid: boolean; conflict: boolean };
+const cleanStatus: EditorStatus = {
+  dirty: false,
+  invalid: false,
+  conflict: false,
+};
+type Guard = (action: () => void, dirty?: boolean) => void;
+const formId = (tab: Tab) => `omp-${tab}-form`;
 
 export function OmpModelManagement({
   initialProvider,
@@ -48,77 +127,168 @@ export function OmpModelManagement({
     refetchOnWindowFocus: false,
     retry: false,
   });
-  const [settingsDirty, setSettingsDirty] = useState(false);
-  const [parametersDirty, setParametersDirty] = useState(false);
+  const [tab, setTab] = useState<Tab>("models");
+  const [settings, setSettings] = useState(cleanStatus);
+  const [parameters, setParameters] = useState(cleanStatus);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<(() => void) | null>(null);
   const [generation, setGeneration] = useState(0);
-  const guard = (
-    action: () => void,
-    dirty = settingsDirty || parametersDirty,
-  ) => {
+  const dirty = settings.dirty || parameters.dirty;
+  const active = tab === "models" ? parameters : settings;
+  const otherDirty = tab === "models" ? settings.dirty : parameters.dirty;
+  const guard: Guard = (action, discard = dirty) => {
     if (busy) return;
-    if (dirty) setPending(() => action);
+    if (discard) setPending(() => action);
     else action();
   };
   const updated = (state: OmpModelManagementState) => {
     client.setQueryData(ompManagementKey, state);
     void invalidatePiProviderCaches(client, "omp");
   };
+  const reload = () =>
+    guard(() => {
+      setBusy(true);
+      void query
+        .refetch()
+        .then((result) => {
+          if (result.isSuccess) {
+            setGeneration((value) => value + 1);
+            setSettings(cleanStatus);
+            setParameters(cleanStatus);
+          }
+        })
+        .finally(() => setBusy(false));
+    });
   return (
     <FullScreenPanel
       isOpen
       title={t("omp.management.title")}
       subtitle="Oh My Pi"
       onClose={() => guard(onClose)}
-      trackUnsavedChanges={settingsDirty || parametersDirty}
+      trackUnsavedChanges={dirty}
+      isDirty={dirty}
+      contentClassName="space-y-4 pt-3"
+      actions={
+        <div className="flex items-center gap-2" data-unsaved-ignore>
+          <HelpTip title={t("omp.management.scopeTitle")}>
+            <div className="space-y-2">
+              <p>{t("omp.management.scope")}</p>
+              <p>{t("omp.management.cacheHint")}</p>
+              <code className="block break-all">
+                {query.data?.settingsPath}
+              </code>
+              <code className="block break-all">{query.data?.modelsPath}</code>
+            </div>
+          </HelpTip>
+          <HoverTip content={t("omp.management.reload")}>
+            <Button
+              variant="quiet"
+              size="icon-compact"
+              aria-label={t("omp.management.reload")}
+              disabled={busy || query.isFetching}
+              onClick={reload}
+            >
+              <RefreshCw className="h-4 w-4" strokeWidth={1.5} />
+            </Button>
+          </HoverTip>
+        </div>
+      }
+      footer={
+        query.data && (
+          <>
+            <div className="me-auto min-w-0 text-caption text-fg-2">
+              <span>
+                {(tab === "models"
+                  ? query.data.modelsPath
+                  : query.data.settingsPath
+                )
+                  .split(/[\\/]/)
+                  .pop()}
+              </span>
+              {otherDirty && (
+                <span role="status" className="ms-3">
+                  {t("omp.management.otherDraft")}
+                </span>
+              )}
+            </div>
+            <Button
+              variant="neutral"
+              size="regular"
+              type="reset"
+              form={formId(tab)}
+              disabled={busy || !active.dirty}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="solid"
+              size="regular"
+              type="submit"
+              form={formId(tab)}
+              disabled={
+                busy || !active.dirty || active.invalid || active.conflict
+              }
+            >
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t(
+                tab === "models"
+                  ? "omp.management.saveParameters"
+                  : "omp.management.saveSettings",
+              )}
+            </Button>
+          </>
+        )
+      }
     >
-      <Notice tone="neutral" title={t("omp.management.scope")} />
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <code className="break-all text-caption text-fg-2">
-          {query.data?.settingsPath}
-        </code>
-        <Button
-          variant="outline"
-          disabled={busy || query.isFetching}
-          onClick={() =>
-            guard(() => {
-              setBusy(true);
-              void query
-                .refetch()
-                .then((result) => {
-                  if (result.isSuccess) {
-                    setGeneration((v) => v + 1);
-                    setSettingsDirty(false);
-                    setParametersDirty(false);
-                  }
-                })
-                .finally(() => setBusy(false));
-            })
+      <div data-unsaved-ignore>
+        <PageTabs
+          items={[
+            {
+              value: "models",
+              label: t("omp.management.modelsTab"),
+              disabled: busy,
+            },
+            {
+              value: "assignments",
+              label: t("omp.management.assignmentsTab"),
+              disabled: busy,
+            },
+          ]}
+          value={tab}
+          onValueChange={setTab}
+          aria-label={t("omp.management.title")}
+          idPrefix="omp-management-tab"
+          controls="omp-management-content"
+          trailing={
+            <span className="text-caption text-fg-3">
+              {t("omp.management.globalConfig")}
+            </span>
           }
-        >
-          {t("omp.management.reload")}
-        </Button>
+        />
       </div>
       {query.isPending && <p role="status">{t("common.loading")}</p>}
       {query.error && (
-        <p role="alert" className="text-danger-text">
-          {translatePiProviderMutationError(
+        <Notice
+          tone="danger"
+          title={translatePiProviderMutationError(
             extractErrorMessage(query.error),
             t,
           )}
-        </p>
+        />
       )}
       {query.data && (
         <ManagementBody
           key={generation}
           state={query.data}
           initialProvider={initialProvider}
+          tab={tab}
+          setTab={setTab}
           updated={updated}
-          settingsDirty={setSettingsDirty}
-          parametersDirty={setParametersDirty}
-          setBusy={setBusy}
+          settingsStatus={setSettings}
+          parameterStatus={setParameters}
+          parameterDirty={parameters.dirty}
           busy={busy}
+          setBusy={setBusy}
           guard={guard}
         />
       )}
@@ -143,248 +313,299 @@ export function OmpModelManagement({
 function ManagementBody({
   state,
   initialProvider,
+  tab,
+  setTab,
   updated,
-  settingsDirty,
-  parametersDirty,
+  settingsStatus,
+  parameterStatus,
+  parameterDirty,
   busy,
   setBusy,
   guard,
 }: {
   state: OmpModelManagementState;
   initialProvider?: string;
+  tab: Tab;
+  setTab: (tab: Tab) => void;
   updated: (state: OmpModelManagementState) => void;
-  settingsDirty: (v: boolean) => void;
-  parametersDirty: (v: boolean) => void;
+  settingsStatus: (status: EditorStatus) => void;
+  parameterStatus: (status: EditorStatus) => void;
+  parameterDirty: boolean;
   busy: boolean;
-  setBusy: (v: boolean) => void;
-  guard: (action: () => void, dirty?: boolean) => void;
+  setBusy: (busy: boolean) => void;
+  guard: Guard;
 }) {
   const { t } = useTranslation();
   const [filter, setFilter] = useState(initialProvider ?? "");
-  const [selected, setSelected] = useState<Pick<
-    OmpCatalogModel,
-    "provider" | "id"
-  > | null>(
-    () =>
-      state.models.find((model) => model.provider === initialProvider) ??
-      (() => {
-        const override = state.modelOverrides.find(
-          (entry) => entry.provider === initialProvider,
-        );
-        return override
-          ? { provider: override.provider, id: override.modelId }
-          : null;
-      })(),
-  );
-  const [parameterDirty, setParameterDirty] = useState(false);
   const [visibleCount, setVisibleCount] = useState(50);
-  const models = state.models.filter((m) =>
-    `${m.provider}/${m.id} ${m.name}`
-      .toLowerCase()
-      .includes(filter.toLowerCase()),
+  const [selected, setSelected] = useState<ModelIdentity | null>(() => {
+    const model = state.models.find(
+      (entry) => entry.provider === initialProvider,
+    );
+    const override = state.modelOverrides.find(
+      (entry) => entry.provider === initialProvider,
+    );
+    return (
+      model ??
+      (override
+        ? { provider: override.provider, id: override.modelId }
+        : (state.models[0] ??
+          (state.modelOverrides[0]
+            ? {
+                provider: state.modelOverrides[0].provider,
+                id: state.modelOverrides[0].modelId,
+              }
+            : null)))
+    );
+  });
+  const known = useMemo(
+    () => new Set(state.models.map((model) => `${model.provider}/${model.id}`)),
+    [state.models],
   );
-  const uncatalogedOverrides = state.modelOverrides.filter(
-    (override) =>
-      !state.models.some(
-        (model) =>
-          model.provider === override.provider && model.id === override.modelId,
-      ) &&
-      `${override.provider}/${override.modelId}`
-        .toLowerCase()
-        .includes(filter.toLowerCase()),
+  const models = useMemo(
+    () =>
+      state.models.filter((model) =>
+        `${model.provider}/${model.id} ${model.name}`
+          .toLowerCase()
+          .includes(filter.toLowerCase()),
+      ),
+    [state.models, filter],
+  );
+  const uncataloged = useMemo(
+    () =>
+      state.modelOverrides.filter(
+        (entry) =>
+          !known.has(`${entry.provider}/${entry.modelId}`) &&
+          `${entry.provider}/${entry.modelId}`
+            .toLowerCase()
+            .includes(filter.toLowerCase()),
+      ),
+    [state.modelOverrides, known, filter],
   );
   const references = useMemo(() => summarizeOmpReferences(state), [state]);
+  const choose = (model: ModelIdentity) => {
+    if (model.provider === selected?.provider && model.id === selected.id)
+      return;
+    guard(() => {
+      parameterStatus(cleanStatus);
+      setSelected(model);
+    }, parameterDirty);
+  };
+  const renderModel = (
+    model: ModelIdentity,
+    catalog: OmpCatalogModel | null,
+  ) => {
+    const selectedRow =
+      selected?.provider === model.provider && selected.id === model.id;
+    const overridden = state.modelOverrides.some(
+      (entry) =>
+        entry.provider === model.provider && entry.modelId === model.id,
+    );
+    return (
+      <button
+        key={`${model.provider}/${model.id}`}
+        type="button"
+        aria-pressed={selectedRow}
+        aria-label={
+          catalog
+            ? `${catalog.name} ${model.provider}/${model.id}`
+            : `${model.provider}/${model.id}`
+        }
+        title={`${model.provider}/${model.id}`}
+        disabled={busy}
+        onClick={() => choose(model)}
+        className={cn(
+          "block w-full min-w-0 px-3.5 py-2.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          selectedRow ? "bg-selected" : "hover:bg-subtle",
+        )}
+      >
+        <span className="block truncate text-body font-medium text-fg-1">
+          {catalog?.name ?? model.id}
+        </span>
+        <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate font-mono text-caption text-fg-2">
+            {model.id}
+          </span>
+          {catalog && (
+            <Badge
+              variant="outline"
+              className="shrink-0 rounded-control px-1.5 py-0 text-badge font-medium text-fg-2"
+            >
+              {t(`omp.management.shortSource.${catalog.source}`)}
+            </Badge>
+          )}
+          {overridden && (
+            <Badge
+              variant="outline"
+              className="shrink-0 rounded-control px-1.5 py-0 text-badge font-medium text-fg-2"
+            >
+              {t("omp.management.overridden")}
+            </Badge>
+          )}
+        </span>
+      </button>
+    );
+  };
+  const catalog = selected
+    ? (state.models.find(
+        (model) =>
+          model.provider === selected.provider && model.id === selected.id,
+      ) ?? null)
+    : null;
   return (
-    <>
-      <SettingsEditor
-        state={state}
-        updated={updated}
-        dirtyChanged={settingsDirty}
-        busy={busy}
-        setBusy={setBusy}
-        guard={guard}
-      />
-      <section className="space-y-3" aria-label={t("omp.management.catalog")}>
-        <h2 className="text-section">{t("omp.management.catalog")}</h2>
-        <p className="text-caption text-fg-2">
-          {t("omp.management.cacheHint")}
-        </p>
+    <div
+      id="omp-management-content"
+      role="tabpanel"
+      aria-labelledby={`omp-management-tab-${tab}`}
+    >
+      <div hidden={tab !== "models"}>
+        <section aria-label={t("omp.management.catalog")} className="space-y-3">
+          {state.catalogStatus !== "ready" && (
+            <Notice
+              tone="warning"
+              title={t(`omp.management.catalogStatus.${state.catalogStatus}`)}
+            >
+              {state.catalogMessage ? t(state.catalogMessage) : undefined}
+            </Notice>
+          )}
+          <div className="flex items-center gap-3" data-unsaved-ignore>
+            <SearchField
+              value={filter}
+              onValueChange={(value) => {
+                setFilter(value);
+                setVisibleCount(50);
+              }}
+              clearLabel={t("common.clear")}
+              aria-label={t("omp.management.search")}
+              placeholder={t("omp.management.search")}
+              containerClassName="min-w-0 flex-1"
+            />
+            <span className="shrink-0 text-caption tabular-nums text-fg-3">
+              {t("omp.management.modelCount", { count: models.length })}
+            </span>
+          </div>
+          <div className="grid min-w-0 items-start gap-5 min-[900px]:grid-cols-[minmax(240px,290px)_minmax(0,1fr)]">
+            <div
+              className="max-h-[calc(100vh-250px)] min-h-32 overflow-y-auto rounded-panel border border-border bg-surface"
+              data-unsaved-ignore
+            >
+              <div className="divide-y divide-border">
+                {models
+                  .slice(0, visibleCount)
+                  .map((model) => renderModel(model, model))}
+              </div>
+              {models.length === 0 && (
+                <p className="px-3.5 py-6 text-body text-fg-2">
+                  {t("omp.management.emptyCatalog")}
+                </p>
+              )}
+              {models.length > visibleCount && (
+                <Button
+                  variant="quiet"
+                  className="w-full"
+                  onClick={() => setVisibleCount((value) => value + 50)}
+                >
+                  {t("omp.management.showMore")}
+                </Button>
+              )}
+              {uncataloged.length > 0 && (
+                <>
+                  <h3 className="border-y border-border bg-subtle px-3.5 py-2 text-caption font-medium text-fg-2">
+                    {t("omp.management.explicitRecords")}
+                  </h3>
+                  <div className="divide-y divide-border">
+                    {uncataloged
+                      .slice(0, visibleCount)
+                      .map((entry) =>
+                        renderModel(
+                          { provider: entry.provider, id: entry.modelId },
+                          null,
+                        ),
+                      )}
+                  </div>
+                  {uncataloged.length > visibleCount && (
+                    <Button
+                      variant="quiet"
+                      className="w-full"
+                      onClick={() => setVisibleCount((value) => value + 50)}
+                    >
+                      {t("omp.management.showMore")}
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+            {selected ? (
+              <ParameterEditor
+                key={`${selected.provider}/${selected.id}`}
+                state={state}
+                model={selected}
+                catalog={catalog}
+                updated={updated}
+                statusChanged={parameterStatus}
+                busy={busy}
+                setBusy={setBusy}
+                guard={guard}
+                onAssignments={() => setTab("assignments")}
+              />
+            ) : (
+              <p className="py-8 text-body text-fg-2">
+                {t("omp.management.selectModel")}
+              </p>
+            )}
+          </div>
+        </section>
+      </div>
+      <div hidden={tab !== "assignments"}>
+        <SettingsEditor
+          state={state}
+          updated={updated}
+          statusChanged={settingsStatus}
+          busy={busy}
+          setBusy={setBusy}
+          guard={guard}
+        />
         {references.unresolved.length > 0 && (
-          <details>
-            <summary>{t("omp.management.unresolved")}</summary>
-            <ul className="space-y-1 break-all font-mono text-caption">
+          <details className="mt-5 text-caption text-fg-2" data-unsaved-ignore>
+            <summary className="cursor-pointer">
+              {t("omp.management.unresolved")} ({references.unresolved.length})
+            </summary>
+            <ul className="mt-2 space-y-1 break-words">
               {references.unresolved.map((value) => (
                 <li key={value}>{value}</li>
               ))}
             </ul>
           </details>
         )}
-        {state.catalogStatus !== "ready" && (
-          <p role="status" className="text-warning-text">
-            {t(`omp.management.catalogStatus.${state.catalogStatus}`)}{" "}
-            {state.catalogMessage && t(state.catalogMessage)}
-          </p>
-        )}
-        <label className="block space-y-1">
-          <span>{t("omp.management.search")}</span>
-          <Input
-            value={filter}
-            onChange={(e) => {
-              setFilter(e.target.value);
-              setVisibleCount(50);
-            }}
-          />
-        </label>
-        <div className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_minmax(320px,2fr)]">
-          <div className="space-y-2">
-            {models.length === 0 && <p>{t("omp.management.emptyCatalog")}</p>}
-            {models.slice(0, visibleCount).map((model) => (
-              <div
-                key={`${model.provider}/${model.id}`}
-                className="rounded-panel border border-border p-3"
-              >
-                <Button
-                  variant="quiet"
-                  className="h-auto max-w-full whitespace-normal text-start"
-                  disabled={busy}
-                  onClick={() =>
-                    guard(() => {
-                      setSelected(model);
-                      setParameterDirty(false);
-                      parametersDirty(false);
-                    }, parameterDirty)
-                  }
-                >
-                  {model.name}
-                </Button>
-                <p className="break-all font-mono text-caption">
-                  {model.provider}/{model.id}
-                </p>
-                <p className="text-caption text-fg-2">
-                  {t(`omp.management.source.${model.source}`)}
-                  {model.cacheUpdatedAt !== null
-                    ? ` · ${new Date(model.cacheUpdatedAt).toLocaleString()}`
-                    : ""}
-                </p>
-                <p className="break-all text-caption text-fg-2">{model.kind}</p>
-                <p className="break-all text-caption text-fg-2">
-                  {(
-                    references.byModel.get(`${model.provider}/${model.id}`) ??
-                    []
-                  ).join(" · ")}
-                </p>
-              </div>
-            ))}
-            {models.length > visibleCount && (
-              <Button
-                variant="outline"
-                onClick={() => setVisibleCount((v) => v + 50)}
-              >
-                {t("omp.management.showMore")}
-              </Button>
-            )}
-            {uncatalogedOverrides.length > 0 && (
-              <section
-                className="space-y-2"
-                aria-label={t("omp.management.explicitRecords")}
-              >
-                <h3 className="text-strong">
-                  {t("omp.management.explicitRecords")}
-                </h3>
-                <p className="text-caption text-fg-2">
-                  {t("omp.management.noCatalogData")}
-                </p>
-                {uncatalogedOverrides.slice(0, visibleCount).map((override) => (
-                  <Button
-                    key={`${override.provider}/${override.modelId}`}
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() =>
-                      guard(() => {
-                        setSelected({
-                          provider: override.provider,
-                          id: override.modelId,
-                        });
-                        setParameterDirty(false);
-                        parametersDirty(false);
-                      }, parameterDirty)
-                    }
-                  >
-                    {override.provider}/{override.modelId}
-                  </Button>
-                ))}
-                {uncatalogedOverrides.length > visibleCount && (
-                  <Button
-                    variant="outline"
-                    onClick={() => setVisibleCount((v) => v + 50)}
-                  >
-                    {t("omp.management.showMore")}
-                  </Button>
-                )}
-              </section>
-            )}
-          </div>
-          {selected ? (
-            <ParameterEditor
-              key={`${selected.provider}/${selected.id}`}
-              state={state}
-              model={selected}
-              catalog={
-                state.models.find(
-                  (model) =>
-                    model.provider === selected.provider &&
-                    model.id === selected.id,
-                ) ?? null
-              }
-              updated={updated}
-              dirtyChanged={(v) => {
-                setParameterDirty(v);
-                parametersDirty(v);
-              }}
-              busy={busy}
-              setBusy={setBusy}
-              guard={guard}
-            />
-          ) : (
-            <p className="text-fg-2">{t("omp.management.selectModel")}</p>
-          )}
-        </div>
-      </section>
-    </>
+      </div>
+    </div>
   );
 }
 
 function SettingsEditor({
   state,
   updated,
-  dirtyChanged,
+  statusChanged,
   busy,
   setBusy,
   guard,
 }: {
   state: OmpModelManagementState;
-  updated: (s: OmpModelManagementState) => void;
-  dirtyChanged: (v: boolean) => void;
+  updated: (state: OmpModelManagementState) => void;
+  statusChanged: (status: EditorStatus) => void;
   busy: boolean;
-  setBusy: (v: boolean) => void;
-  guard: (action: () => void, dirty?: boolean) => void;
+  setBusy: (busy: boolean) => void;
+  guard: Guard;
 }) {
   const { t } = useTranslation();
   const [base, setBase] = useState(state);
-  const [roles, setRoles] = useState<Record<string, string | string[]>>({
-    ...state.modelRoles,
-  });
-  const [workers, setWorkers] = useState<Record<string, string | string[]>>({
-    ...state.agentModelOverrides,
-  });
-  const [thinking, setThinking] = useState<OmpThinkingLevel | "">(
-    state.defaultThinkingLevel ?? "",
-  );
-  const [reference, setReference] = useState(state.defaultModel ?? "");
-  const [modelChoice, setModelChoice] = useState("");
-  const [modelThinking, setModelThinking] = useState("");
-  const [newRole, setNewRole] = useState("");
-  const [newWorker, setNewWorker] = useState("");
+  const [roles, setRoles] = useState({ ...state.modelRoles });
+  const [workers, setWorkers] = useState({ ...state.agentModelOverrides });
+  const [thinking, setThinking] = useState<
+    Exclude<OmpThinkingLevel, "off"> | ""
+  >(state.defaultThinkingLevel ?? "");
+  const [kind, setKind] = useState<"roles" | "workers">("roles");
+  const [newKey, setNewKey] = useState("");
   const [error, setError] = useState("");
   const changes: OmpSettingsEntryPatch[] = [];
   for (const [section, before, after] of [
@@ -410,22 +631,27 @@ function SettingsEditor({
       value: thinking || null,
     });
   const invalid = changes.some(
-    (c) =>
-      c.value !== null &&
-      (Array.isArray(c.value)
-        ? c.value.length === 0 || c.value.some((v) => !refValid(v))
-        : !refValid(c.value)),
+    (change) =>
+      change.value !== null &&
+      (Array.isArray(change.value)
+        ? change.value.length === 0 ||
+          change.value.some((value) => !refValid(value))
+        : !refValid(change.value)),
   );
   const dirty = changes.length > 0;
-  useEffect(() => dirtyChanged(dirty), [dirty, dirtyChanged]);
+  const conflict = error.includes("omp.errors.externalChange");
+  useEffect(
+    () => statusChanged({ dirty, invalid, conflict }),
+    [dirty, invalid, conflict, statusChanged],
+  );
   const cancel = () => {
     setRoles({ ...base.modelRoles });
     setWorkers({ ...base.agentModelOverrides });
     setThinking(base.defaultThinkingLevel ?? "");
-    setReference(base.defaultModel ?? "");
     setError("");
   };
   const save = async () => {
+    if (busy || !dirty || invalid || conflict) return;
     setBusy(true);
     setError("");
     try {
@@ -438,282 +664,325 @@ function SettingsEditor({
       setRoles({ ...next.modelRoles });
       setWorkers({ ...next.agentModelOverrides });
       setThinking(next.defaultThinkingLevel ?? "");
-      setReference(next.defaultModel ?? "");
       updated(next);
-    } catch (e) {
-      setError(extractErrorMessage(e));
+    } catch (error) {
+      setError(extractErrorMessage(error));
     } finally {
       setBusy(false);
     }
   };
-  const chosen = state.models.find(
-    (m) => `${m.provider}/${m.id}` === modelChoice,
-  );
+  const roleNames = [...new Set([...state.roleNames, ...Object.keys(roles)])];
+  const referenceProps = { state, roleNames, disabled: busy };
+  const entries =
+    kind === "roles"
+      ? roleNames
+          .filter((key) => key !== "default")
+          .map((key) => [key, roles[key] ?? ""] as const)
+      : Object.entries(workers);
+  const current = kind === "roles" ? roles : workers;
+  const changeEntry = (key: string, value: string | string[]) =>
+    kind === "roles"
+      ? setRoles((entries) => ({ ...entries, [key]: value }))
+      : setWorkers((entries) => ({ ...entries, [key]: value }));
   return (
-    <section
-      className="space-y-4 rounded-panel border border-border p-4"
+    <form
+      id={formId("assignments")}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+      onReset={(event) => {
+        event.preventDefault();
+        guard(cancel, dirty);
+      }}
+      className="space-y-5"
       aria-label={t("omp.management.settings")}
     >
-      <datalist id="omp-reference-options">
-        {state.models.map((model) => (
-          <option
-            key={`${model.provider}/${model.id}`}
-            value={`${model.provider}/${model.id}`}
-          >
-            {model.name}
-          </option>
-        ))}
-        {[...new Set([...state.roleNames, ...Object.keys(roles)])].map(
-          (role) => (
-            <option key={`@${role}`} value={`@${role}`} />
-          ),
-        )}
-      </datalist>
-      <h2 className="text-section">{t("omp.management.settings")}</h2>
-      <p className="break-all text-caption text-fg-2">
-        {t("omp.management.configuredDefault")}:{" "}
-        <code>
-          {Array.isArray(roles.default)
-            ? roles.default.join(", ")
-            : roles.default || t("omp.management.inherit")}
-        </code>
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <label className="flex min-w-52 flex-1 flex-col gap-1">
-          <span>{t("omp.management.modelChoice")}</span>
-          <select
-            className={selectorClass}
-            value={modelChoice}
-            disabled={busy}
-            onChange={(e) => {
-              setModelChoice(e.target.value);
-              setReference(e.target.value);
-              setModelThinking("");
-            }}
-          >
-            <option value="">{t("omp.management.selectModel")}</option>
-            {state.models.map((m) => (
-              <option
-                key={`${m.provider}/${m.id}`}
-                value={`${m.provider}/${m.id}`}
-              >
-                {m.provider}/{m.id} — {m.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("omp.management.modelThinking")}</span>
-          <select
-            className={selectorClass}
-            value={modelThinking}
-            disabled={busy || !modelChoice}
-            onChange={(e) => {
-              setModelThinking(e.target.value);
-              setReference(
-                `${modelChoice}${e.target.value ? `:${e.target.value}` : ""}`,
-              );
-            }}
-          >
-            <option value="">{t("omp.management.inherit")}</option>
-            {[
-              "off",
-              "inherit",
-              "auto",
-              ...(chosen?.thinking?.efforts ?? []),
-            ].map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <label className="block space-y-1">
-        <span>{t("omp.management.defaultReference")}</span>
-        <Input
-          value={reference}
-          disabled={busy}
-          onChange={(e) => setReference(e.target.value)}
-        />
-      </label>
-      <Button
-        variant="outline"
-        disabled={busy || !refValid(reference)}
-        onClick={() => setRoles((v) => ({ ...v, default: reference }))}
+      <SettingsBlock
+        title={t("omp.management.configuredDefault")}
+        help={{
+          title: t("omp.management.referenceHelp"),
+          body: t("omp.management.referenceHint"),
+        }}
       >
-        {t("omp.management.setDefault")}
-      </Button>
-      <label className="flex flex-col gap-1">
-        <span>{t("omp.management.defaultThinking")}</span>
-        <select
-          className={selectorClass}
-          value={thinking}
-          disabled={busy}
-          onChange={(e) =>
-            setThinking(e.target.value as Exclude<OmpThinkingLevel, "off"> | "")
-          }
-        >
-          <option value="">{t("omp.management.inherit")}</option>
-          {OMP_THINKING_LEVELS.filter((level) => level !== "off").map(
-            (level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ),
-          )}
-        </select>
-      </label>
-      <p className="text-caption text-fg-2">
-        {t("omp.management.referenceHint")}
-      </p>
-      <details className="space-y-3">
-        <summary
-          role="button"
-          aria-label={t("omp.management.assignments")}
-          className="cursor-pointer text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {t("omp.management.roles")} / {t("omp.management.workers")}
-        </summary>
-        <fieldset disabled={busy} className="space-y-2">
-          <legend className="mb-2 text-strong">
-            {t("omp.management.roles")}
-          </legend>
-          {[...new Set([...state.roleNames, ...Object.keys(roles)])].map(
-            (key) => (
-              <ReferenceRow
-                key={key}
-                name={key}
-                value={roles[key] ?? ""}
-                onChange={(value) => setRoles((v) => ({ ...v, [key]: value }))}
-                onClear={() => setRoles((v) => ({ ...v, [key]: "" }))}
-              />
-            ),
-          )}
-          <div className="flex gap-2">
-            <Input
-              aria-label={t("omp.management.newRole")}
-              value={newRole}
-              onChange={(e) => setNewRole(e.target.value)}
-            />
-            <Button
-              variant="outline"
-              disabled={
-                !refValid(newRole) ||
-                Object.prototype.hasOwnProperty.call(roles, newRole)
+        <SettingsCard>
+          <div className="px-4 py-3">
+            <ReferenceField
+              {...referenceProps}
+              name={t("omp.management.defaultReference")}
+              value={roles.default ?? ""}
+              onChange={(value) =>
+                setRoles((entries) => ({ ...entries, default: value }))
               }
-              onClick={() => {
-                setRoles((v) => ({ ...v, [newRole]: "" }));
-                setNewRole("");
-              }}
-            >
-              {t("omp.management.addRole")}
-            </Button>
-          </div>
-        </fieldset>
-        <fieldset disabled={busy} className="space-y-2">
-          <legend className="mb-2 text-strong">
-            {t("omp.management.workers")}
-          </legend>
-          {Object.entries(workers).map(([key, value]) => (
-            <ReferenceRow
-              key={key}
-              name={key}
-              value={value}
-              onChange={(next) => setWorkers((v) => ({ ...v, [key]: next }))}
               onClear={() =>
-                setWorkers((v) => {
-                  const next = { ...v };
-                  delete next[key];
-                  return next;
-                })
+                setRoles((entries) => ({ ...entries, default: "" }))
               }
             />
+            <DefaultThinkingSuffix
+              state={state}
+              value={roles.default}
+              disabled={busy}
+              onChange={(value) =>
+                setRoles((entries) => ({ ...entries, default: value }))
+              }
+            />
+          </div>
+          <SettingsRow
+            label={t("omp.management.defaultThinking")}
+            control={
+              <Select
+                value={thinking || "__native"}
+                onValueChange={(value) =>
+                  setThinking(
+                    value === "__native"
+                      ? ""
+                      : (value as Exclude<OmpThinkingLevel, "off">),
+                  )
+                }
+                disabled={busy}
+              >
+                <SelectTrigger
+                  className="w-48"
+                  aria-label={t("omp.management.defaultThinking")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[
+                    "__native",
+                    ...OMP_THINKING_LEVELS.filter((value) => value !== "off"),
+                  ].map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {value === "__native"
+                        ? t("omp.management.usingNative")
+                        : value}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+        </SettingsCard>
+      </SettingsBlock>
+      <SettingsBlock
+        actions={
+          <div data-unsaved-ignore>
+            <SegmentedControl
+              size="sm"
+              value={kind}
+              onValueChange={(value) => {
+                setKind(value);
+                setNewKey("");
+              }}
+              aria-label={t("omp.management.assignments")}
+              items={[
+                { value: "roles", label: t("omp.management.roles") },
+                { value: "workers", label: t("omp.management.workers") },
+              ]}
+            />
+          </div>
+        }
+        title={t("omp.management.assignments")}
+      >
+        <SettingsCard>
+          {entries.map(([key, value]) => (
+            <div
+              key={`${kind}-${key}`}
+              className="flex min-w-0 items-start gap-4 px-4 py-3"
+            >
+              <div className="w-28 shrink-0 pt-1.5">
+                <div
+                  className="truncate text-body font-medium text-fg-1"
+                  title={key}
+                >
+                  {Object.prototype.hasOwnProperty.call(
+                    kind === "roles" ? builtinRoles : builtinWorkers,
+                    key,
+                  )
+                    ? t(
+                        `omp.management.${kind === "roles" ? "roleLabels" : "workerLabels"}.${key}`,
+                      )
+                    : key}
+                </div>
+                <code
+                  className="block truncate text-caption text-fg-3"
+                  title={key}
+                >
+                  {key}
+                </code>
+              </div>
+              <div className="min-w-0 flex-1">
+                <ReferenceField
+                  {...referenceProps}
+                  name={key}
+                  value={value}
+                  onChange={(next) => changeEntry(key, next)}
+                  onClear={() => {
+                    if (kind === "roles")
+                      setRoles((entries) => ({ ...entries, [key]: "" }));
+                    else
+                      setWorkers((entries) => {
+                        const next = { ...entries };
+                        delete next[key];
+                        return next;
+                      });
+                  }}
+                />
+              </div>
+            </div>
           ))}
-          <div className="flex gap-2">
+          <div className="flex min-w-0 items-center gap-2 px-4 py-3">
             <Input
-              aria-label={t("omp.management.newWorker")}
-              value={newWorker}
-              onChange={(e) => setNewWorker(e.target.value)}
+              aria-label={t(
+                kind === "roles"
+                  ? "omp.management.newRole"
+                  : "omp.management.newWorker",
+              )}
+              placeholder={t(
+                kind === "roles"
+                  ? "omp.management.newRole"
+                  : "omp.management.newWorker",
+              )}
+              value={newKey}
+              disabled={busy}
+              onChange={(event) => setNewKey(event.target.value)}
             />
             <Button
-              variant="outline"
+              type="button"
+              variant="neutral"
+              size="compact"
               disabled={
-                !refValid(newWorker) ||
-                Object.prototype.hasOwnProperty.call(workers, newWorker)
+                busy ||
+                !refValid(newKey) ||
+                Object.prototype.hasOwnProperty.call(current, newKey)
               }
               onClick={() => {
-                setWorkers((v) => ({ ...v, [newWorker]: "" }));
-                setNewWorker("");
+                changeEntry(newKey, "");
+                setNewKey("");
               }}
             >
-              {t("omp.management.addWorker")}
+              <Plus className="h-3.5 w-3.5" strokeWidth={1.5} />
+              {t(
+                kind === "roles"
+                  ? "omp.management.addRole"
+                  : "omp.management.addWorker",
+              )}
             </Button>
           </div>
-        </fieldset>
-      </details>
-      {invalid && <p role="alert">{t("omp.management.invalidReference")}</p>}
+        </SettingsCard>
+      </SettingsBlock>
+      {invalid && (
+        <p role="alert" className="text-body text-danger-text">
+          {t("omp.management.invalidReference")}
+        </p>
+      )}
       {error && (
-        <p role="alert" className="text-danger-text">
+        <p role="alert" className="text-body text-danger-text">
           {translatePiProviderMutationError(error, t)}
         </p>
       )}
-      <div className="flex justify-end gap-2">
-        <Button
-          variant="neutral"
-          disabled={busy || !dirty}
-          onClick={() => guard(cancel, dirty)}
-        >
-          {t("common.cancel")}
-        </Button>
-        <Button
-          variant="solid"
-          disabled={
-            busy ||
-            !dirty ||
-            invalid ||
-            error.includes("omp.errors.externalChange")
-          }
-          onClick={() => void save()}
-        >
-          {t("omp.management.saveSettings")}
-        </Button>
-      </div>
-    </section>
+    </form>
   );
 }
 
-const parameterFields = [
-  "name",
-  "contextWindow",
-  "maxContextWindow",
-  "maxTokens",
-  "input",
-  "reasoning",
-] as const;
+function DefaultThinkingSuffix({
+  state,
+  value,
+  disabled,
+  onChange,
+}: {
+  state: OmpModelManagementState;
+  value: string | string[] | undefined;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  const match =
+    typeof value === "string"
+      ? (state.models.find(
+          (model) => value === `${model.provider}/${model.id}`,
+        ) ??
+        state.models.find((model) =>
+          [...OMP_THINKING_LEVELS, "inherit"].some(
+            (level) => value === `${model.provider}/${model.id}:${level}`,
+          ),
+        ))
+      : undefined;
+  const selector = match ? `${match.provider}/${match.id}` : "";
+  const suffix =
+    match && value !== selector
+      ? (value as string).slice(selector.length + 1)
+      : "__native";
+  const levels = [
+    ...new Set([
+      "__native",
+      "off",
+      "inherit",
+      "auto",
+      ...(match?.thinking?.efforts ?? []),
+      suffix,
+    ]),
+  ];
+  return (
+    <div
+      className="mt-2 flex items-center justify-end gap-2"
+      data-unsaved-ignore
+    >
+      <span className="text-caption text-fg-2">
+        {t("omp.management.modelThinking")}
+      </span>
+      <Select
+        value={suffix}
+        disabled={disabled || !match}
+        onValueChange={(level) => {
+          if (disabled || !match || !level || !levels.includes(level)) return;
+          onChange(`${selector}${level === "__native" ? "" : `:${level}`}`);
+        }}
+      >
+        <SelectTrigger
+          className="w-48"
+          aria-label={t("omp.management.modelThinking")}
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {levels.map((level) => (
+            <SelectItem key={level} value={level}>
+              {level === "__native" ? t("omp.management.usingNative") : level}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 function ParameterEditor({
   state,
   model,
   catalog,
   updated,
-  dirtyChanged,
+  statusChanged,
   busy,
   setBusy,
   guard,
+  onAssignments,
 }: {
   state: OmpModelManagementState;
-  model: Pick<OmpCatalogModel, "provider" | "id">;
+  model: ModelIdentity;
   catalog: OmpCatalogModel | null;
-  updated: (s: OmpModelManagementState) => void;
-  dirtyChanged: (v: boolean) => void;
+  updated: (state: OmpModelManagementState) => void;
+  statusChanged: (status: EditorStatus) => void;
   busy: boolean;
-  setBusy: (v: boolean) => void;
-  guard: (action: () => void, dirty?: boolean) => void;
+  setBusy: (busy: boolean) => void;
+  guard: Guard;
+  onAssignments: () => void;
 }) {
   const { t } = useTranslation();
-  const getParameters = (s: OmpModelManagementState) =>
-    s.modelOverrides.find(
-      (o) => o.provider === model.provider && o.modelId === model.id,
+  const getParameters = (snapshot: OmpModelManagementState) =>
+    snapshot.modelOverrides.find(
+      (entry) =>
+        entry.provider === model.provider && entry.modelId === model.id,
     )?.parameters ?? {};
   const [base, setBase] = useState({
     revision: state.modelsRevision,
@@ -756,25 +1025,39 @@ function ParameterEditor({
       Number(draft.maxContextWindow) <
         Number(draft.contextWindow ?? catalog?.contextWindow ?? 0));
   const dirty = changes.length > 0;
-  useEffect(() => dirtyChanged(dirty), [dirty, dirtyChanged]);
+  const conflict = error.includes("omp.errors.externalChange");
+  useEffect(
+    () => statusChanged({ dirty, invalid, conflict }),
+    [dirty, invalid, conflict, statusChanged],
+  );
+  const reset = (field: string) =>
+    setDraft((entries) => {
+      const next = { ...entries };
+      delete next[field];
+      return next;
+    });
+  const set = (field: string, value: unknown) =>
+    setDraft((entries) => ({ ...entries, [field]: value }));
   const save = async () => {
+    if (busy || !dirty || invalid || conflict) return;
     setBusy(true);
     setError("");
     try {
-      const normalized = changes.map((c) => ({
-        ...c,
-        value:
-          c.value !== null &&
-          ["contextWindow", "maxContextWindow", "maxTokens"].includes(c.field)
-            ? Number(c.value)
-            : c.value,
-      }));
       const next = await ompApi.patchOverride({
         expectedRevision: base.revision,
         expectedPath: base.path,
         provider: model.provider,
         modelId: model.id,
-        changes: normalized,
+        changes: changes.map((change) => ({
+          ...change,
+          value:
+            change.value !== null &&
+            ["contextWindow", "maxContextWindow", "maxTokens"].includes(
+              change.field,
+            )
+              ? Number(change.value)
+              : change.value,
+        })),
       });
       const parameters = getParameters(next);
       setBase({
@@ -784,226 +1067,380 @@ function ParameterEditor({
       });
       setDraft({ ...parameters });
       updated(next);
-    } catch (e) {
-      setError(extractErrorMessage(e));
+    } catch (error) {
+      setError(extractErrorMessage(error));
     } finally {
       setBusy(false);
     }
   };
-  const set = (field: string, value: unknown) =>
-    setDraft((v) => ({ ...v, [field]: value }));
   return (
-    <section
+    <form
+      id={formId("models")}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+      onReset={(event) => {
+        event.preventDefault();
+        guard(() => {
+          setDraft({ ...base.parameters });
+          setError("");
+        }, dirty);
+      }}
       aria-label={t("omp.management.parameters")}
-      className="space-y-4 rounded-panel border border-border p-4"
+      className="min-w-0 space-y-4"
     >
-      <h3 className="break-all text-strong">
-        {model.provider}/{model.id} · {t("omp.management.parameters")}
-      </h3>
-      <p className="text-caption text-fg-2">
-        {t("omp.management.overrideHint")}
-      </p>
-      <code className="block break-all text-caption">{state.modelsPath}</code>
-      <fieldset disabled={busy} className="space-y-3">
-        {parameterFields.map((field) => (
-          <div key={field} className="space-y-1 border-b border-border pb-3">
-            <div className="flex justify-between gap-2">
-              <span className="font-mono text-body">{field}</span>
-              <span className="text-caption text-fg-2">
-                {draft[field] === undefined
-                  ? t("omp.management.noOverride")
-                  : t("omp.management.explicitOverride")}
-              </span>
-            </div>
-            <p className="break-all text-caption text-fg-2">
-              {t("omp.management.catalogValue")}:{" "}
-              {catalog
-                ? JSON.stringify(
-                    catalog[field as keyof OmpCatalogModel] ?? null,
-                  )
-                : t("omp.management.noCatalogData")}
-            </p>
-            {field === "reasoning" ? (
-              <label className="flex gap-2">
-                <span>{field}</span>
-                <select
-                  aria-label={field}
-                  className={selectorClass}
-                  value={draft[field] === undefined ? "" : String(draft[field])}
-                  onChange={(e) => {
-                    if (e.target.value === "")
-                      setDraft((v) => {
-                        const next = { ...v };
-                        delete next[field];
-                        return next;
-                      });
-                    else set(field, e.target.value === "true");
-                  }}
-                >
-                  <option value="">{t("omp.management.noOverride")}</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-            ) : field === "input" ? (
-              <div className="flex gap-4">
-                {["text", "image"].map((kind) => (
-                  <label key={kind} className="flex gap-2">
-                    <input
-                      type="checkbox"
-                      checked={
-                        Array.isArray(draft.input) && draft.input.includes(kind)
+      <div className="flex min-w-0 items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <h2
+            className="m-0 truncate text-section text-fg-1"
+            title={catalog?.name ?? model.id}
+          >
+            {catalog?.name ?? model.id}
+          </h2>
+          <p className="mt-1 break-all font-mono text-caption text-fg-2">
+            {model.provider}/{model.id}
+          </p>
+          <p className="mt-1 text-caption text-fg-3">
+            {catalog
+              ? t(`omp.management.source.${catalog.source}`)
+              : t("omp.management.noCatalogData")}
+            {catalog?.cacheUpdatedAt != null
+              ? ` · ${new Date(catalog.cacheUpdatedAt).toLocaleString()}`
+              : ""}
+          </p>
+        </div>
+        <HelpTip title={t("omp.management.parameters")}>
+          <div className="space-y-2">
+            <p>{t("omp.management.overrideHint")}</p>
+            <code className="break-all">{state.modelsPath}</code>
+          </div>
+        </HelpTip>
+      </div>
+      <SettingsCard>
+        {parameterFields.map((field) => {
+          const label = t(`omp.management.parameterLabels.${field}`);
+          const value =
+            draft[field] !== undefined
+              ? draft[field]
+              : (catalog?.[field] ?? undefined);
+          return (
+            <SettingsRow
+              key={field}
+              label={label}
+              htmlFor={field === "input" ? undefined : `omp-parameter-${field}`}
+              description={t(
+                draft[field] === undefined
+                  ? "omp.management.usingNative"
+                  : "omp.management.explicitOverride",
+              )}
+              control={
+                <>
+                  {field === "reasoning" ? (
+                    <Select
+                      value={
+                        draft.reasoning === undefined
+                          ? "__native"
+                          : String(draft.reasoning)
                       }
-                      onChange={(e) =>
+                      disabled={busy}
+                      onValueChange={(value) =>
+                        value === "__native"
+                          ? reset(field)
+                          : set(field, value === "true")
+                      }
+                    >
+                      <SelectTrigger
+                        id={`omp-parameter-${field}`}
+                        className="w-44"
+                        aria-label={label}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__native">
+                          {t("omp.management.usingNative")}
+                          {catalog
+                            ? ` · ${t(catalog.reasoning ? "omp.management.enabled" : "omp.management.disabled")}`
+                            : ""}
+                        </SelectItem>
+                        <SelectItem value="true">
+                          {t("omp.management.enabled")}
+                        </SelectItem>
+                        <SelectItem value="false">
+                          {t("omp.management.disabled")}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : field === "input" ? (
+                    <div
+                      role="group"
+                      aria-label={label}
+                      className="flex w-44 flex-wrap gap-x-3 gap-y-1"
+                    >
+                      {["text", "image"].map((input) => (
+                        <label
+                          key={input}
+                          className="flex items-center gap-1.5 text-caption text-fg-1"
+                        >
+                          <Switch
+                            aria-label={t(
+                              `omp.management.inputLabels.${input}`,
+                            )}
+                            checked={
+                              Array.isArray(value) && value.includes(input)
+                            }
+                            disabled={busy}
+                            onCheckedChange={(checked) => {
+                              const values = Array.isArray(value) ? value : [];
+                              set(
+                                "input",
+                                checked
+                                  ? [...values, input]
+                                  : values.filter((entry) => entry !== input),
+                              );
+                            }}
+                          />
+                          {t(`omp.management.inputLabels.${input}`)}
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <Input
+                      id={`omp-parameter-${field}`}
+                      aria-label={label}
+                      className="w-44"
+                      disabled={busy}
+                      type={field === "name" ? "text" : "number"}
+                      min={field === "name" ? undefined : 1}
+                      value={String(value ?? "")}
+                      placeholder={t("omp.management.unknownValue")}
+                      onChange={(event) =>
                         set(
-                          "input",
-                          e.target.checked
-                            ? [
-                                ...(Array.isArray(draft.input)
-                                  ? draft.input
-                                  : []),
-                                kind,
-                              ]
-                            : (Array.isArray(draft.input)
-                                ? draft.input
-                                : []
-                              ).filter((v) => v !== kind),
+                          field,
+                          field === "name"
+                            ? event.target.value
+                            : event.target.value === ""
+                              ? ""
+                              : Number(event.target.value),
                         )
                       }
                     />
-                    {kind}
-                  </label>
-                ))}
-              </div>
-            ) : (
-              <Input
-                aria-label={field}
-                type={field === "name" ? "text" : "number"}
-                value={String(draft[field] ?? "")}
-                min={field === "name" ? undefined : 1}
-                onChange={(e) =>
-                  set(
-                    field,
-                    field === "name"
-                      ? e.target.value
-                      : e.target.value === ""
-                        ? ""
-                        : Number(e.target.value),
-                  )
-                }
-              />
-            )}
-            <Button
-              variant="quiet"
-              disabled={draft[field] === undefined}
-              aria-label={`${t("omp.management.reset")} ${field}`}
-              onClick={() =>
-                setDraft((v) => {
-                  const next = { ...v };
-                  delete next[field];
-                  return next;
-                })
+                  )}
+                  <HoverTip content={t("omp.management.reset")}>
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="icon-compact"
+                      disabled={busy || draft[field] === undefined}
+                      aria-label={`${t("omp.management.reset")} ${label}`}
+                      onClick={() => reset(field)}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    </Button>
+                  </HoverTip>
+                </>
               }
-            >
-              {t("omp.management.reset")}
-            </Button>
-          </div>
-        ))}
-      </fieldset>
+            />
+          );
+        })}
+      </SettingsCard>
+      <Button
+        type="button"
+        variant="quiet"
+        size="compact"
+        onClick={onAssignments}
+        data-unsaved-ignore
+      >
+        {t("omp.management.configureAssignments")}
+      </Button>
       {invalid && (
-        <p role="alert" className="text-danger-text">
+        <p role="alert" className="text-body text-danger-text">
           {t("omp.management.invalidParameters")}
         </p>
       )}
       {error && (
-        <p role="alert" className="text-danger-text">
+        <p role="alert" className="text-body text-danger-text">
           {translatePiProviderMutationError(error, t)}
         </p>
       )}
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button
-          variant="neutral"
-          disabled={busy || !dirty}
-          onClick={() =>
-            guard(() => {
-              setDraft({ ...base.parameters });
-              setError("");
-            }, dirty)
-          }
-        >
-          {t("common.cancel")}
-        </Button>
-        <Button
-          variant="solid"
-          disabled={
-            busy ||
-            !dirty ||
-            invalid ||
-            error.includes("omp.errors.externalChange")
-          }
-          onClick={() => void save()}
-        >
-          {t("omp.management.saveParameters")}
-        </Button>
-      </div>
-    </section>
+    </form>
   );
 }
 
-function ReferenceRow({
+function ReferenceField({
   name,
   value,
+  state,
+  roleNames,
+  disabled,
   onChange,
   onClear,
 }: {
   name: string;
   value: string | string[];
-  onChange: (v: string | string[]) => void;
+  state: OmpModelManagementState;
+  roleNames: string[];
+  disabled: boolean;
+  onChange: (value: string | string[]) => void;
   onClear: () => void;
 }) {
   const { t } = useTranslation();
   return (
-    <div className="space-y-1 rounded-md bg-subtle p-3">
-      <label className="block space-y-1">
-        <span className="font-mono text-caption">{name}</span>
-        {Array.isArray(value) ? (
-          <Textarea
-            value={value.join("\n")}
-            onChange={(e) => onChange(e.target.value.split("\n"))}
-          />
-        ) : (
-          <Input
-            list="omp-reference-options"
-            value={value}
-            placeholder={t("omp.management.inherit")}
-            onChange={(e) => onChange(e.target.value)}
-          />
-        )}
-      </label>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <label className="flex gap-2 text-caption">
-          <input
-            type="checkbox"
-            checked={Array.isArray(value)}
-            disabled={Array.isArray(value) && value.length > 1}
-            onChange={(e) =>
-              onChange(
-                e.target.checked
-                  ? [value as string]
-                  : ((value as string[])[0] ?? ""),
-              )
-            }
-          />
-          {t("omp.management.candidateList")}
-        </label>
+    <div className="flex min-w-0 items-start gap-1.5">
+      {Array.isArray(value) ? (
+        <Textarea
+          aria-label={name}
+          value={value.join("\n")}
+          rows={Math.max(2, Math.min(4, value.length))}
+          disabled={disabled}
+          className="min-h-16 min-w-0 flex-1 text-body"
+          onChange={(event) => onChange(event.target.value.split("\n"))}
+        />
+      ) : (
+        <Input
+          aria-label={name}
+          value={value}
+          disabled={disabled}
+          className="min-w-0 flex-1"
+          placeholder={t("omp.management.usingNative")}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
+      {!Array.isArray(value) && (
+        <ReferencePicker
+          state={state}
+          roleNames={roleNames}
+          disabled={disabled}
+          name={name}
+          onSelect={onChange}
+        />
+      )}
+      <HoverTip content={t("omp.management.candidateList")}>
         <Button
+          type="button"
           variant="quiet"
+          size="icon-compact"
+          aria-label={`${t("omp.management.candidateList")} ${name}`}
+          aria-pressed={Array.isArray(value)}
+          disabled={disabled || (Array.isArray(value) && value.length > 1)}
+          onClick={() =>
+            onChange(Array.isArray(value) ? (value[0] ?? "") : [value])
+          }
+        >
+          <ListOrdered className="h-4 w-4" strokeWidth={1.5} />
+        </Button>
+      </HoverTip>
+      <HoverTip content={t("omp.management.clear")}>
+        <Button
+          type="button"
+          variant="quiet"
+          size="icon-compact"
           aria-label={`${t("omp.management.clear")} ${name}`}
+          disabled={disabled || value === ""}
           onClick={onClear}
         >
-          {t("omp.management.clear")}
+          <X className="h-3.5 w-3.5" strokeWidth={1.5} />
         </Button>
-      </div>
+      </HoverTip>
     </div>
+  );
+}
+
+function ReferencePicker({
+  state,
+  roleNames,
+  disabled,
+  name,
+  onSelect,
+}: {
+  state: OmpModelManagementState;
+  roleNames: string[];
+  disabled: boolean;
+  name: string;
+  onSelect: (selector: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const options = useMemo(
+    () => [
+      ...roleNames.map((role) => ({ value: `@${role}`, name: `@${role}` })),
+      ...state.models.map((model) => ({
+        value: `${model.provider}/${model.id}`,
+        name: model.name,
+      })),
+    ],
+    [roleNames, state.models],
+  );
+  const matches = options
+    .filter((option) =>
+      `${option.value} ${option.name}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+    )
+    .slice(0, 50);
+  return (
+    <Popover
+      modal
+      open={open}
+      onOpenChange={(value) => {
+        setOpen(value);
+        if (!value) setQuery("");
+      }}
+    >
+      <HoverTip content={t("omp.management.modelChoice")}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="neutral"
+            size="icon"
+            disabled={disabled}
+            aria-label={`${t("omp.management.modelChoice")} ${name}`}
+            data-unsaved-ignore
+          >
+            <ChevronDown className="h-4 w-4" strokeWidth={1.5} />
+          </Button>
+        </PopoverTrigger>
+      </HoverTip>
+      <PopoverContent
+        align="end"
+        className="z-[200] w-80 p-0"
+        data-unsaved-ignore
+      >
+        <Command shouldFilter={false} label={t("omp.management.modelChoice")}>
+          <CommandInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder={t("omp.management.search")}
+          />
+          <CommandList className="max-h-64">
+            <CommandEmpty>{t("omp.management.emptyCatalog")}</CommandEmpty>
+            {matches.map((option) => (
+              <CommandItem
+                key={option.value}
+                value={option.value}
+                onSelect={() => {
+                  onSelect(option.value);
+                  setOpen(false);
+                  setQuery("");
+                }}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-body">
+                    {option.name}
+                  </span>
+                  {option.value !== option.name && (
+                    <span className="block truncate font-mono text-caption text-fg-2">
+                      {option.value}
+                    </span>
+                  )}
+                </span>
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

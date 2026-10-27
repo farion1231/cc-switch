@@ -17,6 +17,11 @@ import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
@@ -64,6 +69,7 @@ interface ProviderCardProps {
   isInConfig?: boolean;
   onManageModels?: () => void;
   modelSummary?: string;
+  modelDetails?: string[];
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
@@ -191,6 +197,7 @@ export function ProviderCard({
   isInConfig = true,
   onManageModels,
   modelSummary,
+  modelDetails,
   onEdit,
   onDelete,
   onConfigureUsage,
@@ -357,6 +364,30 @@ export function ProviderCard({
     }
     onOpenWebsite(displayUrl);
   };
+  const modelSummaryView = modelSummary ? (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`${t("omp.management.referenceDetails")} ${provider.name}`}
+          className="inline-flex max-w-full items-center gap-1 text-start text-caption text-fg-2 hover:text-fg-1"
+        >
+          <span className="min-w-0 truncate">{modelSummary}</span>
+          <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={1.5} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80">
+        <h4 className="mb-2 text-body font-medium">
+          {t("omp.management.referenceDetails")}
+        </h4>
+        <ul className="space-y-2 break-words text-caption text-fg-2">
+          {modelDetails?.map((detail) => (
+            <li key={detail}>{detail}</li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  ) : null;
   return (
     <div
       className={cn(
@@ -423,13 +454,15 @@ export function ProviderCard({
           </div>
 
           {readOnly ? (
-            <div className="mt-0.5 flex min-w-0 items-center text-caption text-fg-2">
-              <span
-                className="min-w-0 whitespace-pre-line break-words"
-                title={modelSummary ?? t("omp.nativeLogin.hint")}
-              >
-                {modelSummary ?? t("omp.nativeLogin.hint")}
-              </span>
+            <div className="mt-0.5 min-w-0 text-caption text-fg-2">
+              {modelSummaryView ?? (
+                <span
+                  className="block truncate"
+                  title={t("omp.nativeLogin.hint")}
+                >
+                  {t("omp.nativeLogin.hint")}
+                </span>
+              )}
             </div>
           ) : codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
@@ -544,13 +577,8 @@ export function ProviderCard({
               <span className="min-w-0 truncate">{displayUrl}</span>
             </button>
           ) : null}
-          {!readOnly && modelSummary && (
-            <p
-              className="mt-0.5 whitespace-pre-line break-words text-caption text-fg-2"
-              title={modelSummary}
-            >
-              {modelSummary}
-            </p>
+          {!readOnly && modelSummaryView && (
+            <div className="mt-0.5 min-w-0">{modelSummaryView}</div>
           )}
         </div>
 
