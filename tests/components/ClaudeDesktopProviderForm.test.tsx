@@ -557,7 +557,7 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(screen.queryAllByPlaceholderText("DeepSeek V4 Pro")).toHaveLength(0);
   });
 
-  it("保存模型映射时补齐固定四档并把留空档回填为 Sonnet 模型", async () => {
+  it("保存模型映射时只落库显式配置的档位（留空档不落库）", async () => {
     const onSubmit = vi.fn();
     renderForm(
       {
@@ -584,28 +584,17 @@ describe("ClaudeDesktopProviderForm", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0][0];
-    // claude-old 迁移到 Sonnet；留空的 Opus / Fable / Haiku 回填为 Sonnet 的
-    // 上游模型，保证落库四档齐全，子 agent 调用的各档始终可解析。
-    expect(submitted.meta.claudeDesktopModelRoutes).toMatchObject({
+    // claude-old 迁移到 Sonnet；留空的 Opus / Fable / Haiku 不再落库——
+    // 发布层（route_profile）会用 primary 档补位，保证子 agent 各档可解析。
+    expect(submitted.meta.claudeDesktopModelRoutes).toEqual({
       "claude-sonnet-5": {
         model: "upstream-old",
         labelOverride: "upstream-old",
       },
-      "claude-opus-5": { model: "upstream-old" },
-      "claude-fable-5": { model: "upstream-old" },
-      "claude-haiku-4-5": { model: "upstream-old" },
     });
-    expect(Object.keys(submitted.meta.claudeDesktopModelRoutes).sort()).toEqual(
-      [
-        "claude-fable-5",
-        "claude-haiku-4-5",
-        "claude-opus-5",
-        "claude-sonnet-5",
-      ],
-    );
   });
 
-  it("回填空档时继承 Sonnet 的 1M 声明", async () => {
+  it("留空档不再继承 Sonnet 的 1M 声明（仅显式配置的档位保留）", async () => {
     const onSubmit = vi.fn();
     renderForm(
       {
@@ -630,19 +619,15 @@ describe("ClaudeDesktopProviderForm", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const routes = onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes;
-    // 留空的 Opus / Haiku 回填同一上游模型，1M 声明应与 Sonnet 一致。
+    // 显式配置的 Sonnet 档保留 1M 声明；留空的 Opus / Haiku 不落库。
     expect(routes["claude-sonnet-5"]).toMatchObject({
       model: "deepseek-v4-pro",
       supports1m: true,
     });
-    expect(routes["claude-opus-5"]).toMatchObject({
-      model: "deepseek-v4-pro",
-      supports1m: true,
-    });
-    expect(routes["claude-haiku-4-5"]).toMatchObject({
-      model: "deepseek-v4-pro",
-      supports1m: true,
-    });
+    // 留空的 Opus / Haiku 不再落库（发布层才补位）。
+    expect(routes["claude-opus-5"]).toBeUndefined();
+    expect(routes["claude-haiku-4-5"]).toBeUndefined();
+    expect(Object.keys(routes)).toEqual(["claude-sonnet-5"]);
   });
 
   it("保存直连模型列表时不会保留旧 route 作为隐藏映射目标", async () => {
