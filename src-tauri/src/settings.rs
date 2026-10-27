@@ -1687,6 +1687,42 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_from_pre_omp_settings_makes_omp_visible_via_real_load_path() {
+        // A settings.json as v4.0.19 would have written it: visibleApps exists
+        // (old app list only), no omp key. Loaded through the app's real
+        // lenient parser, OMP must come out visible, and the next save must
+        // persist the explicit value so the default never bites again.
+        let content = serde_json::json!({
+            "language": "zh",
+            "nativeTrayMenu": true,
+            "visibleApps": {
+                "claude": true,
+                "claude-desktop": true,
+                "codex": true,
+                "gemini": true,
+                "grokbuild": true,
+                "opencode": true,
+                "openclaw": false,
+                "hermes": true,
+                "pi": true,
+                "mcode": true,
+                "kimi": true,
+                "agy": true
+            }
+        })
+        .to_string();
+
+        let (settings, lossy) = parse_settings_lenient(&content);
+        assert!(!lossy);
+        let visible = settings.visible_apps.clone().expect("visible apps kept");
+        assert!(visible.is_visible(&AppType::Omp));
+        assert_eq!(
+            serde_json::to_value(&settings).expect("serialize settings")["visibleApps"]["omp"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
     fn visible_apps_accepts_claude_desktop_aliases() {
         let visible: VisibleApps = serde_json::from_value(serde_json::json!({
             "claude": true,
