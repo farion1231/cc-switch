@@ -230,6 +230,7 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
+  | "dsh"
   | "agy"
   | "copilot";
 
@@ -244,6 +245,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "pi",
   "mcode",
   "kimi",
+  "dsh",
   "agy",
   "copilot",
 ];

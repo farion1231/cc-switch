@@ -223,6 +223,10 @@ impl Provider {
                     ),
                 )
             }
+            AppType::Dsh => (
+                str_at(settings.pointer("/options/baseURL")),
+                str_at(settings.pointer("/options/apiKey")),
+            ),
             AppType::Kimi => (
                 str_at(settings.pointer("/provider/base_url")),
                 str_at(settings.pointer("/provider/api_key")),

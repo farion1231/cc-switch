@@ -106,13 +106,15 @@ export function SessionItem({
 
   const deleteReason = !deletable
     ? t(
-        session.providerId === "kimi"
-          ? "kimi.deleteSessionHint"
-          : session.providerId === "agy"
-            ? "sessionManager.agyDeleteHint"
-            : session.providerId === "copilot"
-              ? "sessionManager.copilotDeleteHint"
-              : "sessionManager.mcodeDeleteHint",
+        session.providerId === "dsh"
+          ? "dsh.deleteSessionHint"
+          : session.providerId === "kimi"
+            ? "kimi.deleteSessionHint"
+            : session.providerId === "agy"
+              ? "sessionManager.agyDeleteHint"
+              : session.providerId === "copilot"
+                ? "sessionManager.copilotDeleteHint"
+                : "sessionManager.mcodeDeleteHint",
         {
           defaultValue: "请在 MiniMax Code 中删除",
         },

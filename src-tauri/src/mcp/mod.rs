@@ -15,12 +15,13 @@
 pub mod agy;
 mod claude;
 mod codex;
+pub(crate) mod dsh;
 mod gemini;
 mod grokbuild;
 mod hermes;
 pub(crate) mod omp;
 mod opencode;
-mod validation;
+pub(crate) mod validation;
 
 // 重新导出公共 API
 pub use claude::{
