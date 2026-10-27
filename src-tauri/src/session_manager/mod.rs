@@ -14,7 +14,8 @@ use std::time::Instant;
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi, trae,
+    agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+    trae,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +95,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(mcode::scan_sessions());
     sessions.extend(kimi::scan_sessions());
     sessions.extend(trae::scan_sessions());
+    sessions.extend(dsh::scan_sessions());
     sessions.extend(agy::scan_sessions());
 
     sessions.sort_by(|a, b| {
@@ -131,6 +133,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "kimi" => kimi::load_messages(path),
         "trae" => trae::load_messages(path),
         "omp" => omp::load_messages(path),
+        "dsh" => dsh::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -182,6 +185,11 @@ fn delete_session_source(
         return Err(format!(
             "Delete this session with `traecli delete {session_id}` to keep TRAE CLI's thread index consistent"
         ));
+    }
+    if provider_id == "dsh" {
+        return Err(
+            "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
+        );
     }
     if provider_id == "kimi" {
         return Err(
@@ -258,6 +266,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "trae" => trae::session_roots(),
+        "dsh" => dsh::session_roots(),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),

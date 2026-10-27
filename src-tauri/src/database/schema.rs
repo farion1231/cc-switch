@@ -71,6 +71,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_trae BOOLEAN NOT NULL DEFAULT 0,
+            enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_omp BOOLEAN NOT NULL DEFAULT 0
@@ -106,6 +107,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_trae BOOLEAN NOT NULL DEFAULT 0,
+            enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -623,6 +625,19 @@ impl Database {
                         Self::set_user_version(conn, 23)?;
                     }
                     23 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_dsh",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 24)?;
+                    }
+                    24 => {
                         // TRAE：MCP 与 Skills 都存开关。
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
@@ -634,7 +649,7 @@ impl Database {
                                 )?;
                             }
                         }
-                        Self::set_user_version(conn, 24)?;
+                        Self::set_user_version(conn, 25)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3980,29 +3995,49 @@ mod tests {
 
     #[test]
     fn trae_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
-        // v23 → v24（main 的 v23 已含 enabled_omp），以及 v22 → v24 两条升级路径
-        for start in [23, 22] {
+        // v22 / v23 / v24 → v25：v23 补 enabled_omp，v24 补 enabled_dsh（main 的 DeepSeek Harness），
+        // v25 补 enabled_trae；已有开关保持不变，新开关默认关闭。
+        for start in [22, 23, 24] {
             let conn = Connection::open_in_memory()?;
-            // v23 的 mcp_servers 已有 enabled_omp；v22 没有，由 v22→v23 补上
-            let omp_column = if start == 23 {
-                ", enabled_omp BOOLEAN NOT NULL DEFAULT 0"
-            } else {
-                ""
-            };
-            conn.execute_batch(&format!("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN{omp_column}); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers (id, enabled_kimi) VALUES ('m',1); INSERT INTO skills VALUES ('s',1);"))?;
+            let mut mcp_extra = String::new();
+            let mut skill_extra = String::new();
+            if start >= 23 {
+                mcp_extra.push_str(", enabled_omp BOOLEAN NOT NULL DEFAULT 0");
+            }
+            if start >= 24 {
+                mcp_extra.push_str(", enabled_dsh BOOLEAN NOT NULL DEFAULT 0");
+                skill_extra.push_str(", enabled_dsh BOOLEAN NOT NULL DEFAULT 0");
+            }
+            conn.execute_batch(&format!("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN{mcp_extra}); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN{skill_extra}); INSERT INTO mcp_servers (id, enabled_kimi) VALUES ('m',1); INSERT INTO skills (id, enabled_kimi) VALUES ('s',1);"))?;
             Database::set_user_version(&conn, start)?;
             Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, 25);
             assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
             for table in ["mcp_servers", "skills"] {
                 let flags = conn.query_row(
-                    &format!("SELECT enabled_kimi, enabled_trae FROM {table}"),
+                    &format!("SELECT enabled_kimi, enabled_dsh, enabled_trae FROM {table}"),
                     [],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
                 )?;
-                assert_eq!(flags, (1, 0));
+                assert_eq!(flags, (1, 0, 0), "start={start} table={table}");
             }
             assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
             Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, 25);
+        }
+
+        // 全新安装：建表直接包含双方新增的列，无需迁移
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            assert!(Database::has_column(&conn, table, "enabled_dsh")?);
+            assert!(Database::has_column(&conn, table, "enabled_trae")?);
         }
         Ok(())
     }
@@ -4029,6 +4064,38 @@ mod tests {
         )?;
         let saved = db.get_installed_skill("s")?.unwrap();
         assert!(!saved.apps.trae && saved.apps.claude);
+        Ok(())
+    }
+
+    #[test]
+    fn dsh_migration_preserves_existing_flags_and_persists_mcp_and_skill_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for (table, flag) in [
+            ("mcp_servers", "enabled_kimi"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_dsh FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"node"}, "apps":{"dsh":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Dsh, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.dsh && saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "apps":{"dsh":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.dsh);
+        assert!(db.get_all_installed_skills()?["s"].apps.claude);
         Ok(())
     }
 

@@ -30,6 +30,9 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::Dsh => {
+            crate::dsh_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
@@ -308,6 +311,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Trae
+        | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
         | AppType::ClaudeDesktop => false,
@@ -388,6 +392,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Trae
+        | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
         | AppType::Omp => Ok(settings.clone()),
@@ -705,6 +710,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Dsh => {
+            crate::dsh_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -861,7 +869,12 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in AppType::all() {
         if matches!(
             app_type,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Trae | AppType::Omp
+            AppType::Pi
+                | AppType::Mcode
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Trae
+                | AppType::Omp
         ) {
             continue;
         }
@@ -1020,6 +1033,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Trae => Ok(json!(crate::trae_config::get_providers()?)),
+        AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1148,6 +1162,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Trae
+        | AppType::Dsh
         | AppType::Omp => {
             unreachable!("additive mode apps are handled by early return")
         }

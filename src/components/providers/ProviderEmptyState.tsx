@@ -26,6 +26,7 @@ export function ProviderEmptyState({
   const emptyCopyNs =
     appId === "pi" ||
     appId === "mcode" ||
+    appId === "dsh" ||
     appId === "kimi" ||
     appId === "trae" ||
     appId === "omp"

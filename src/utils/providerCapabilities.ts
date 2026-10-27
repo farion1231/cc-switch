@@ -131,7 +131,13 @@ export function supportsConnectivityCheck(
   appId: AppId,
   provider: Pick<Provider, "category">,
 ): boolean {
-  if (appId === "mcode" || appId === "kimi" || appId === "trae") return false;
+  if (
+    appId === "mcode" ||
+    appId === "dsh" ||
+    appId === "kimi" ||
+    appId === "trae"
+  )
+    return false;
   return (
     provider.category !== "official" &&
     provider.category !== "omo" &&
