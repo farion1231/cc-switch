@@ -569,10 +569,7 @@ mod tests {
         let path = dir.path().join("conversations/hist_session.db");
         let conn = native_models::write_test_database(
             &path,
-            &[
-                (1, 0, "gemini-4-argon"),
-                (2, 1, "gemini-3.8-flash-tiered"),
-            ],
+            &[(1, 0, "gemini-4-argon"), (2, 1, "gemini-3.8-flash-tiered")],
         );
         let mut tokens_and_model_id = native_models::test_tokens(500, 100, 50);
         tokens_and_model_id.extend_from_slice(&native_models::test_model_id("gemini-4-argon-high"));
@@ -615,13 +612,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             step1,
-            (
-                "gemini-4-argon-high".into(),
-                500,
-                100,
-                50,
-                step1.4.clone()
-            )
+            ("gemini-4-argon-high".into(), 500, 100, 50, step1.4.clone())
         );
         assert!(step1.4.parse::<f64>().unwrap() > 0.0);
 
