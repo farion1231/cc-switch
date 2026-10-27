@@ -660,7 +660,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::WorkBuddy => {}
+            AppType::ClaudeDesktop
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::WorkBuddy => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -712,6 +716,7 @@ impl SkillService {
 
         Ok(match app {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
+            AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
@@ -1080,6 +1085,7 @@ impl SkillService {
                         AppType::Mcode,
                         AppType::Agy,
                         AppType::Kimi,
+                        AppType::Dsh,
                         AppType::WorkBuddy,
                     ] {
                         if skill.apps.is_enabled_for(&app) {
@@ -1167,11 +1173,12 @@ impl SkillService {
                         if matches!(
                             app,
                             AppType::Pi
-                                | AppType::Omp
                                 | AppType::WorkBuddy
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
+                                | AppType::Dsh
+                                | AppType::Omp
                         ) {
                             continue;
                         }
@@ -1646,10 +1653,11 @@ impl SkillService {
         let mut deployments = Vec::new();
         for app in [
             AppType::Pi,
-            AppType::Omp,
             AppType::Mcode,
             AppType::Agy,
             AppType::Kimi,
+            AppType::Dsh,
+            AppType::Omp,
             AppType::WorkBuddy,
         ] {
             if skill.apps.is_enabled_for(&app) {
@@ -1666,7 +1674,12 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        if !(skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.workbuddy) {
+        if !(skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.workbuddy)
+        {
             if dest.exists() {
                 fs::remove_dir_all(&dest)?;
             }
@@ -1674,12 +1687,16 @@ impl SkillService {
         }
 
         // 计算新哈希 + 解析新元数据
-        let metadata_source =
-            if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.workbuddy {
-                &source
-            } else {
-                &dest
-            };
+        let metadata_source = if skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.workbuddy
+        {
+            &source
+        } else {
+            &dest
+        };
         let new_hash = Self::compute_dir_hash(metadata_source).ok();
         let skill_md = metadata_source.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
@@ -1707,41 +1724,46 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let mut updated_skill =
-            if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.workbuddy {
-                Self::update_managed_skill_files(
-                    &source,
+        let mut updated_skill = if skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.workbuddy
+        {
+            Self::update_managed_skill_files(
+                &source,
+                &dest,
+                &skill.directory,
+                &deployments,
+                &[
+                    AppType::Mcode,
+                    AppType::Agy,
+                    AppType::Kimi,
+                    AppType::Dsh,
+                    AppType::WorkBuddy,
+                ]
+                .iter()
+                .filter(|app| skill.apps.is_enabled_for(app))
+                .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
+                .collect::<Result<Vec<_>>>()?,
+                || {
+                    if !db.update_skill_metadata(&updated_metadata)? {
+                        return Err(anyhow!("Skill no longer installed: {}", skill.id));
+                    }
+                    Ok(updated_metadata)
+                },
+            )?
+        } else {
+            for (destination, deployment) in deployments {
+                Self::refresh_pi_skill_destination(
                     &dest,
-                    &skill.directory,
-                    &deployments,
-                    &[
-                        AppType::Mcode,
-                        AppType::Agy,
-                        AppType::Kimi,
-                        AppType::WorkBuddy,
-                    ]
-                    .iter()
-                    .filter(|app| skill.apps.is_enabled_for(app))
-                    .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
-                    .collect::<Result<Vec<_>>>()?,
-                    || {
-                        if !db.update_skill_metadata(&updated_metadata)? {
-                            return Err(anyhow!("Skill no longer installed: {}", skill.id));
-                        }
-                        Ok(updated_metadata)
-                    },
-                )?
-            } else {
-                for (destination, deployment) in deployments {
-                    Self::refresh_pi_skill_destination(
-                        &dest,
-                        &destination,
-                        &updated_metadata.directory,
-                        &deployment,
-                    )?;
-                }
-                Self::persist_updated_skill_metadata(db, &updated_metadata)?
-            };
+                    &destination,
+                    &updated_metadata.directory,
+                    &deployment,
+                )?;
+            }
+            Self::persist_updated_skill_metadata(db, &updated_metadata)?
+        };
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
         updated_skill.apps.omp = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Omp);
 
@@ -1750,11 +1772,12 @@ impl SkillService {
             if matches!(
                 app,
                 AppType::Pi
-                    | AppType::Omp
-                    | AppType::WorkBuddy
                     | AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Omp
+                    | AppType::WorkBuddy
             ) {
                 continue;
             }
@@ -1989,6 +2012,7 @@ impl SkillService {
                 AppType::Mcode,
                 AppType::Agy,
                 AppType::Kimi,
+                AppType::Dsh,
                 AppType::WorkBuddy,
             ] {
                 if skill.apps.is_enabled_for(&app) {
@@ -2219,7 +2243,10 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
-        if matches!(app, AppType::Agy | AppType::Kimi | AppType::WorkBuddy) {
+        if matches!(
+            app,
+            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::WorkBuddy
+        ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
             }
@@ -2436,6 +2463,7 @@ impl SkillService {
                 AppType::Mcode,
                 AppType::Agy,
                 AppType::Kimi,
+                AppType::Dsh,
                 AppType::WorkBuddy,
             ] {
                 if apps.is_enabled_for(&app) {
@@ -2482,11 +2510,12 @@ impl SkillService {
                 if matches!(
                     app,
                     AppType::Pi
-                        | AppType::Omp
-                        | AppType::WorkBuddy
                         | AppType::Mcode
                         | AppType::Agy
                         | AppType::Kimi
+                        | AppType::Dsh
+                        | AppType::Omp
+                        | AppType::WorkBuddy
                 ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
                 {
@@ -2594,11 +2623,12 @@ impl SkillService {
         if !matches!(
             app,
             AppType::Pi
-                | AppType::Omp
-                | AppType::WorkBuddy
                 | AppType::Mcode
                 | AppType::Agy
                 | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Omp
+                | AppType::WorkBuddy
         ) {
             return Ok(());
         }
@@ -2776,11 +2806,12 @@ impl SkillService {
         if matches!(
             app,
             AppType::Pi
-                | AppType::Omp
-                | AppType::WorkBuddy
                 | AppType::Mcode
                 | AppType::Agy
                 | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Omp
+                | AppType::WorkBuddy
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
@@ -2984,11 +3015,12 @@ impl SkillService {
             if matches!(
                 app,
                 AppType::Pi
-                    | AppType::Omp
-                    | AppType::WorkBuddy
                     | AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Omp
+                    | AppType::WorkBuddy
             ) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;
@@ -3063,7 +3095,7 @@ impl SkillService {
         if app_dir.exists()
             && !matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::WorkBuddy
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::WorkBuddy
             )
         {
             for entry in fs::read_dir(&app_dir)? {
@@ -4146,7 +4178,7 @@ impl SkillService {
         for app in AppType::all() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::WorkBuddy
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::WorkBuddy
             ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;
@@ -5890,7 +5922,12 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn agy_and_kimi_skill_toggle_rolls_back_on_database_failure() {
-        for app in [AppType::Agy, AppType::Kimi, AppType::WorkBuddy] {
+        for app in [
+            AppType::Agy,
+            AppType::Kimi,
+            AppType::Dsh,
+            AppType::WorkBuddy,
+        ] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
             let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
@@ -6144,6 +6181,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    dsh: false,
                     ..Default::default()
                 },
             }],
@@ -6173,6 +6211,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    dsh: false,
                     ..Default::default()
                 },
             }],
@@ -6209,6 +6248,7 @@ mod tests {
                     apps: SkillApps {
                         mcode: true,
                         kimi: false,
+                        dsh: false,
                         ..Default::default()
                     },
                 }],
@@ -6257,6 +6297,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    dsh: false,
                     ..Default::default()
                 },
             })
@@ -6668,7 +6709,12 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn mcode_and_kimi_uninstall_keep_modified_copy_and_record_until_cleanup_succeeds() {
-        for app in [AppType::Mcode, AppType::Kimi, AppType::WorkBuddy] {
+        for app in [
+            AppType::Mcode,
+            AppType::Kimi,
+            AppType::Dsh,
+            AppType::WorkBuddy,
+        ] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
             let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
@@ -6917,6 +6963,7 @@ mod tests {
         home: PathBuf,
         previous: Option<std::ffi::OsString>,
         previous_kimi_home: Option<std::ffi::OsString>,
+        previous_dsh_home: Option<std::ffi::OsString>,
     }
     impl TestHomeGuard {
         fn set(home: &Path) -> Self {
@@ -6924,7 +6971,9 @@ mod tests {
                 home: home.to_path_buf(),
                 previous: std::env::var_os("CC_SWITCH_TEST_HOME"),
                 previous_kimi_home: std::env::var_os("KIMI_CODE_HOME"),
+                previous_dsh_home: std::env::var_os("DSH_HOME"),
             };
+            std::env::set_var("DSH_HOME", home.join(".dsh"));
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
             std::env::set_var("KIMI_CODE_HOME", home.join(".kimi-code"));
             guard
@@ -6932,6 +6981,10 @@ mod tests {
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
+            match self.previous_dsh_home.take() {
+                Some(value) => std::env::set_var("DSH_HOME", value),
+                None => std::env::remove_var("DSH_HOME"),
+            }
             match self.previous_kimi_home.take() {
                 Some(value) => std::env::set_var("KIMI_CODE_HOME", value),
                 None => std::env::remove_var("KIMI_CODE_HOME"),
@@ -7327,6 +7380,7 @@ mod tests {
             AppType::Pi,
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Dsh,
             AppType::WorkBuddy,
         ] {
             let temp = tempdir().expect("tempdir");

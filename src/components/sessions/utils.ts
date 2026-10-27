@@ -18,6 +18,7 @@ export const SESSION_APP_IDS = [
   "openclaw",
   "mcode",
   "kimi",
+  "dsh",
   "agy",
   "workbuddy",
 ] as const satisfies readonly AppId[];
@@ -40,6 +41,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   omp: ["~/.omp/agent/sessions"],
   mcode: ["~/.minimax"],
   kimi: ["~/.kimi-code/sessions"],
+  dsh: ["~/.dsh/sessions/<project>/<session>/session.v*.jsonl[.zstd]"],
   workbuddy: ["~/.workbuddy/projects"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
@@ -51,6 +53,7 @@ const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   mcode: "sessionManager.mcodeDeleteHint",
   agy: "sessionManager.agyDeleteHint",
   kimi: "kimi.deleteSessionHint",
+  dsh: "dsh.deleteSessionHint",
   workbuddy: "workbuddy.deleteSessionHint",
 };
 

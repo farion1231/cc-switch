@@ -180,6 +180,7 @@ export function ProviderList({
     (provider: Provider): boolean => {
       switch (appId) {
         case "kimi":
+        case "dsh":
         case "mcode":
         case "workbuddy":
           return provider.meta?.liveConfigManaged === true;
@@ -472,6 +473,7 @@ export function ProviderList({
             isPiFamilyApp(appId) ||
             appId === "mcode" ||
             appId === "kimi" ||
+            appId === "dsh" ||
             appId === "workbuddy"
               ? undefined
               : () => importMutation.mutate()

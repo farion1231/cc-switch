@@ -352,7 +352,9 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
           {t("sessionManager.deleteEllipsis", { defaultValue: "删除…" })}
         </DropdownMenuItem>
         {!deletable &&
-          ["mcode", "kimi", "workbuddy"].includes(session.providerId) && (
+          ["mcode", "kimi", "dsh", "workbuddy"].includes(
+            session.providerId,
+          ) && (
             <p className="px-2.5 pb-1.5 text-caption text-fg-2">
               {t(
                 nativeDeleteHintKey(session.providerId) ??

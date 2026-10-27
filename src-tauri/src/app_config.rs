@@ -12,6 +12,8 @@ pub struct McpApps {
     #[serde(default)]
     pub kimi: bool,
     #[serde(default)]
+    pub dsh: bool,
+    #[serde(default)]
     pub workbuddy: bool,
     #[serde(default)]
     pub agy: bool,
@@ -46,6 +48,7 @@ impl McpApps {
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
@@ -66,6 +69,7 @@ impl McpApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
+            AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
@@ -94,6 +98,9 @@ impl McpApps {
         }
         if self.agy {
             apps.push(AppType::Agy);
+        }
+        if self.dsh {
+            apps.push(AppType::Dsh);
         }
         if self.kimi {
             apps.push(AppType::Kimi);
@@ -126,6 +133,7 @@ impl McpApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.dsh
             && !self.workbuddy
             && !self.mcode
             && !self.pi
@@ -140,6 +148,8 @@ pub struct SkillApps {
     pub mcode: bool,
     #[serde(default)]
     pub kimi: bool,
+    #[serde(default)]
+    pub dsh: bool,
     #[serde(default)]
     pub workbuddy: bool,
     #[serde(default)]
@@ -175,6 +185,7 @@ impl SkillApps {
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Dsh => self.dsh,
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
@@ -195,6 +206,7 @@ impl SkillApps {
             AppType::Pi => self.pi = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
+            AppType::Dsh => self.dsh = enabled,
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
@@ -223,6 +235,9 @@ impl SkillApps {
         }
         if self.agy {
             apps.push(AppType::Agy);
+        }
+        if self.dsh {
+            apps.push(AppType::Dsh);
         }
         if self.kimi {
             apps.push(AppType::Kimi);
@@ -255,6 +270,7 @@ impl SkillApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.dsh
             && !self.workbuddy
             && !self.mcode
             && !self.pi
@@ -480,6 +496,7 @@ pub enum AppType {
     Pi,
     Mcode,
     Kimi,
+    Dsh,
     Agy,
     Omp,
     #[serde(rename = "workbuddy", alias = "work-buddy")]
@@ -500,6 +517,7 @@ impl AppType {
             AppType::Pi => "pi",
             AppType::Mcode => "mcode",
             AppType::Kimi => "kimi",
+            AppType::Dsh => "dsh",
             AppType::Agy => "agy",
             AppType::Omp => "omp",
             AppType::WorkBuddy => "workbuddy",
@@ -520,6 +538,7 @@ impl AppType {
                 | AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi
+                | AppType::Dsh
                 | AppType::Omp
                 | AppType::WorkBuddy
         )
@@ -553,6 +572,7 @@ impl AppType {
             AppType::Pi,
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Dsh,
             AppType::Agy,
             AppType::Omp,
             AppType::WorkBuddy,
@@ -578,13 +598,14 @@ impl FromStr for AppType {
             "pi" => Ok(AppType::Pi),
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
+            "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, agy, omp, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, agy, omp, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, workbuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, workbuddy."),
             )),
         }
     }
@@ -627,6 +648,7 @@ impl CommonConfigSnippets {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Dsh
             | AppType::Agy
             | AppType::Omp
             | AppType::WorkBuddy => None,
@@ -647,6 +669,7 @@ impl CommonConfigSnippets {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Dsh
             | AppType::Agy
             | AppType::Omp
             | AppType::WorkBuddy => {}
@@ -979,6 +1002,7 @@ impl MultiAppConfig {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Dsh
             | AppType::Agy
             | AppType::Omp
             | AppType::WorkBuddy => return Ok(false),
@@ -1028,6 +1052,7 @@ impl MultiAppConfig {
                 AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi
+                | AppType::Dsh
                 | AppType::Agy
                 | AppType::Omp
                 | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip

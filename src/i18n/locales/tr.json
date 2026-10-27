@@ -5118,5 +5118,12 @@
       "onlyWhileRunning": "Kota yalnızca WorkBuddy çalışırken onun üzerinden sorgulanabilir",
       "unavailable": "Kota şu anda alınamıyor"
     }
+  },
+  "dsh": {
+    "empty": {
+      "title": "DeepSeek Harness sağlayıcısı ekle",
+      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
+    },
+    "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
   }
 }

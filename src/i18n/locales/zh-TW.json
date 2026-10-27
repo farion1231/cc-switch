@@ -240,10 +240,12 @@
         "missing": "不在這台電腦上的帳號",
         "manage": "新增或管理 Claude 帳號",
         "helpTerminal": "設定裡覆寫了 Claude 設定目錄，切到這張卡不會切換 Claude Code 的登入，請從卡片「開啟終端機」使用選取的帳號。",
-        "help": "切到這張卡後，Claude Code 的登入會換成選取的帳號，任何地方新啟動的 claude 都用它。想同時用幾個帳號，從卡片「開啟終端機」。",
+        "helpWsl": "Claude 設定目錄在 WSL 裡，暫不支援 Claude 帳號，切到這張卡不會切換 Claude Code 的登入。",
+        "help": "切到這張卡後，Claude Code 的登入會即時換成選取的帳號，正在執行的工作階段也一樣。想同時用幾個帳號，從卡片「開啟終端機」。",
         "claudeAccount": "Claude 帳號",
         "reauthBadge": "需要重新登入",
         "terminalHint": "從卡片開啟終端機使用",
+        "wslHint": "WSL 暫不支援",
         "plan": {
           "pro": "Pro",
           "max": "Max",
@@ -4961,8 +4963,9 @@
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
-      "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄（例如指向 WSL），切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
-      "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，新啟動的 claude 都用這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。"
+      "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
+      "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
+      "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，Claude Code 的登入會即時換成這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。"
     },
     "addAccount": "新增帳號",
     "accountMenu": "{{login}} 的更多操作",
@@ -5062,7 +5065,8 @@
       "loginMaybeExpired": "登入可能已過期，切換前請重新登入",
       "statusLoadFailed": "無法讀取 Claude 帳號，請重試。",
       "empty": "還沒有新增 Claude 帳號。要在多個訂閱帳號之間切換時在這裡登入。",
-      "removeNote": "只刪除 CC Switch 為這個帳號儲存的登入，不會讓它在其他地方登出；Claude Code 目前的登入（~/.claude）不受影響。綁定它的卡片會改用 Claude Code 目前的登入。"
+      "removeNote": "只刪除 CC Switch 為這個帳號儲存的登入，不會讓它在其他地方登出；Claude Code 目前的登入（~/.claude）不受影響。綁定它的卡片會改用 Claude Code 目前的登入。",
+      "wslUnsupported": "Claude 設定目錄在 WSL 裡，暫不支援新增和切換 Claude 帳號。"
     }
   },
   "kimi": {
@@ -5159,5 +5163,12 @@
       "providerMissing": "此 Oh My Pi 供應商已不在儲存的清單中。",
       "legacyModelsJson": "Oh My Pi 目錄裡仍是舊的 models.json，omp 會在下次啟動時將它遷移為 models.yml。請先執行一次 omp，再回來新增供應商。"
     }
+  },
+  "dsh": {
+    "empty": {
+      "title": "新增 DeepSeek Harness 供應商",
+      "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"
+    },
+    "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
   }
 }
