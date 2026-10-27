@@ -228,9 +228,6 @@ pub(crate) struct AuthInput<'a> {
     /// 切走的是没绑托管账号的官方卡（它的行 `auth`）：live 里没有登录，说明用户在
     /// Codex 里登出了，暂存里对应的登录也作废，免得切回来又登上。
     pub leaving_official: Option<&'a Value>,
-    /// 这次是分离（退出 CC Switch 时的临时指回，#8431）：官方卡的 API key 分支把接管期
-    /// 换下去的登录从暂存还回去。
-    pub detach: bool,
     pub target: AuthTarget<'a>,
     pub stash: LoginStash,
     /// 现在的 Unix 时间（秒），判断暂存的登录过没过期。
@@ -307,14 +304,9 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
             }
             Some(Some(auth.clone()))
         }
-        AuthTarget::Official { row_auth } => official(
-            row_auth,
-            native,
-            managed || taken_over,
-            taken_over && input.detach,
-            input.now,
-            &mut stash,
-        ),
+        AuthTarget::Official { row_auth } => {
+            official(row_auth, native, managed || taken_over, &mut stash)
+        }
     };
 
     // 只算 Codex 会拿来登录的东西（OAuth token、API Key 等），Bedrock 凭据和元数据不算。
@@ -335,33 +327,18 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
 }
 
 /// 切到没绑托管账号的官方卡。`clearable` 表示 live 里是要清掉的东西（托管账号的登录、
-/// CC Switch 写进来的纯 key 占位）。`restore_taken_over`：live 是纯 key 占位、而且这次是
-/// 分离（#8431 的临时指回）——暂存里还留着被接管换下去的登录就先还它。
+/// CC Switch 写进来的纯 key 占位）。行里存 API key 的官方卡照写行 key：那是这张卡自己
+/// 声明的凭据，「行 key 对得上 live」证明不了 live 是接管占位还是用户真心配置的 key，
+/// 不能拿暂存登录把它顶掉（farion1231 review #8929）。
 fn official(
     row_auth: &Value,
     native: Option<&Value>,
     clearable: bool,
-    restore_taken_over: bool,
-    now: i64,
     stash: &mut LoginStash,
 ) -> Option<Option<Value>> {
     if is_api_key_credential(row_auth) {
         if let Some(live) = native.filter(|live| *live != row_auth) {
             stash.put(live);
-        }
-        // 分离是临时的：接管期把原生登录换成行 key 时暂存了它（#8390），分离时还回去，
-        // 比把行 key 再写一遍更接近分离前的状态。暂存太久已经过期的登录不还：那是很久
-        // 没用过的旧暂存，还回去只会把这张卡声明的行 key 顶掉（#8573 同理）。
-        if restore_taken_over {
-            let eligible = stash.last.clone().filter(|id| {
-                stash
-                    .logins
-                    .get(id)
-                    .is_some_and(|auth| !access_token_expired(auth, now))
-            });
-            if let Some(saved) = eligible.and_then(|id| stash.take(&id)) {
-                return Some(Some(saved));
-            }
         }
         return Some(Some(row_auth.clone()));
     }
@@ -425,7 +402,6 @@ mod tests {
             third_party_keys: &[],
             official_keys: &[],
             leaving_official: None,
-            detach: false,
             target,
             stash,
             now: NOW,
@@ -727,10 +703,11 @@ mod tests {
         assert_eq!(kept.auth, None, "the user's own API key login stays");
     }
 
-    /// #8390：官方卡行里存着 API key 时，接管把它整份写进 auth.json、把原生登录暂存走；
-    /// 退出 CC Switch 的分离要把登录还回去，而不是把行 key 再写一遍。
+    /// #8929 review：行里存 API key 的官方卡（用户真配置的直连 key）分离时照写行 key。
+    /// 「live 的 key 对得上官方行」区分不了接管占位和用户配置的 key，不能用暂存登录
+    /// 把卡上声明的 key 顶掉；被接管换下去的登录留在暂存里。
     #[test]
-    fn detaching_from_an_api_key_official_card_restores_the_stashed_login() {
+    fn detaching_from_an_api_key_official_card_keeps_its_row_key() {
         let alice = login("alice");
         let row = json!({ "OPENAI_API_KEY": "wbk-seeded" });
         // 旧版整份写入的占位带空的 tokens 和 null 的 auth_mode，行 key 对得上官方行。
@@ -747,7 +724,6 @@ mod tests {
         let detach = plan(AuthInput {
             leaving_official: Some(&row),
             official_keys: &keys,
-            detach: true,
             ..input(
                 Some(&placeholder),
                 AuthTarget::Official { row_auth: &row },
@@ -756,12 +732,10 @@ mod tests {
         });
         assert_eq!(
             detach.auth,
-            Some(Some(alice.clone())),
-            "the login displaced by the takeover comes back"
+            Some(Some(row.clone())),
+            "the card's own key is what detach restores"
         );
-        assert!(detach.login_on_disk);
-        let after = detach.stash.expect("stash updated");
-        assert!(after.logins.is_empty() && after.last.is_none());
+        assert_eq!(detach.stash, None, "the stashed login stays stashed");
     }
 
     /// 暂存里没有可还原的登录：把行 key 写回去。不清空——行 key 是这张卡声明的凭据。
@@ -773,7 +747,6 @@ mod tests {
 
         let detach = plan(AuthInput {
             official_keys: &keys,
-            detach: true,
             ..input(
                 Some(&placeholder),
                 AuthTarget::Official { row_auth: &row },
@@ -782,29 +755,6 @@ mod tests {
         });
         assert_eq!(detach.auth, Some(Some(row)));
         assert_eq!(detach.stash, None);
-    }
-
-    /// 暂存太久已经过期的登录不还：还回去只会把这张卡声明的行 key 顶掉（#8573 同理）。
-    #[test]
-    fn detaching_does_not_restore_an_expired_stashed_login_over_the_row_key() {
-        let stale = with_access_exp(login("alice"), NOW - 60);
-        let row = json!({ "OPENAI_API_KEY": "wbk-seeded" });
-        let placeholder = json!({ "OPENAI_API_KEY": "wbk-seeded" });
-        let keys = vec!["wbk-seeded".to_string()];
-        let mut stash = ready();
-        stash.put(&stale);
-
-        let detach = plan(AuthInput {
-            official_keys: &keys,
-            detach: true,
-            ..input(
-                Some(&placeholder),
-                AuthTarget::Official { row_auth: &row },
-                stash,
-            )
-        });
-        assert_eq!(detach.auth, Some(Some(row)), "the row key stays");
-        assert_eq!(detach.stash, None, "the stale login stays stashed");
     }
 
     /// 行里没存登录的官方卡：key 占位同样不算原生登录，暂存还原照常走。
@@ -819,7 +769,6 @@ mod tests {
 
         let detach = plan(AuthInput {
             official_keys: &keys,
-            detach: true,
             ..input(
                 Some(&placeholder),
                 AuthTarget::Official { row_auth: &empty },
@@ -838,7 +787,6 @@ mod tests {
 
         let detach = plan(AuthInput {
             official_keys: &keys,
-            detach: true,
             ..input(Some(&own), AuthTarget::Official { row_auth: &row }, ready())
         });
         assert_eq!(

@@ -304,7 +304,6 @@ fn predicted_auth(
         official_keys: &planned.official_keys,
         leaving_official: planned.leaving_official.as_ref(),
         target: auth_target(&planned.auth, op::SWITCH),
-        detach: false,
         stash,
         now: chrono::Utc::now().timestamp(),
     });
@@ -1179,7 +1178,6 @@ pub(crate) fn run_with_edits(
         official_keys: &planned.official_keys,
         leaving_official: planned.leaving_official.as_ref(),
         target: auth_target(&planned.auth, op),
-        detach: op == crate::mode::state::op::DETACH,
         stash,
         now: chrono::Utc::now().timestamp(),
     });
