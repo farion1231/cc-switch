@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Oh My Pi Native OAuth Providers** (refs #8948): Locally stored OAuth channels such as `openai-codex` appear as read-only cards without copying credentials or saving synthetic providers. Existing explicit/saved providers take precedence, logged-out channels disappear on the next list refresh, and configured auth brokers suppress local discovery. Login, token validity and refresh, default models, and Pi remain managed as before.
+- **Oh My Pi Native Providers and Global Models** (refs #8948): Native OAuth provider identifiers remain credential-neutral, with dedicated controls for the global default and every role/custom-role/worker reference, preserving aliases, thinking suffixes and candidate arrays. Assignment saves update only `config.yml`; separate parameter saves update only six `models.yml` override fields (`name`, `contextWindow`, `maxContextWindow`, `maxTokens`, `input`, `reasoning`). Cached/configured candidates show provenance without promising account entitlement, and healthy active sessions are not switched. Targeted YAML edits preserve unrelated fields/comments, merge disjoint changes and refuse detected entry/directory conflicts. Credentials/login remain OMP-owned, brokers suppress local login discovery, and genuine custom routes retain precedence.
 
 ## [4.0.21] - 2026-10-26
 

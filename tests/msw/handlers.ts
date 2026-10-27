@@ -390,6 +390,25 @@ export const handlers = [
     }),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_omp_model_management_state`, () =>
+    success({
+      scope: "global",
+      settingsPath: "/mock/.omp/agent/config.yml",
+      modelsPath: "/mock/.omp/agent/models.yml",
+      settingsRevision: "settings-baseline",
+      modelsRevision: "models-baseline",
+      defaultModel: null,
+      defaultThinkingLevel: null,
+      modelRoles: {},
+      roleNames: ["default", "smol", "slow", "plan", "commit", "widget"],
+      agentModelOverrides: {},
+      modelOverrides: [],
+      catalogStatus: "ready",
+      catalogMessage: null,
+      models: [],
+    }),
+  ),
+
   // Proxy status (for SettingsPage / ProxyPanel hooks)
   http.post(`${TAURI_ENDPOINT}/get_proxy_status`, () =>
     success({

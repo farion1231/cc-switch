@@ -53,6 +53,9 @@ import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isPiFamilyApp } from "@/config/appConfig";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { OmpModelManagement, ompManagementKey } from "./OmpModelManagement";
+import { ompApi } from "@/lib/api/omp";
+import { summarizeOmpReferences } from "./ompModelReferences";
 import {
   buildAdditiveSections,
   buildLaunchSections,
@@ -123,6 +126,35 @@ export function ProviderList({
   searchSlot,
 }: ProviderListProps) {
   const { t } = useTranslation();
+  const [managementProvider, setManagementProvider] = useState<string | null>(
+    null,
+  );
+  const { data: ompManagement } = useQuery({
+    queryKey: ompManagementKey,
+    queryFn: ompApi.getState,
+    enabled: appId === "omp",
+    retry: false,
+  });
+  const ompReferences = useMemo(
+    () => (ompManagement ? summarizeOmpReferences(ompManagement) : null),
+    [ompManagement],
+  );
+  const managementEntry =
+    appId === "omp" ? (
+      <>
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={() => setManagementProvider("")}>
+            {t("omp.management.open")}
+          </Button>
+        </div>
+        {managementProvider !== null && (
+          <OmpModelManagement
+            initialProvider={managementProvider}
+            onClose={() => setManagementProvider(null)}
+          />
+        )}
+      </>
+    ) : null;
   const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
@@ -438,6 +470,7 @@ export function ProviderList({
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
+        {managementEntry}
         {[0, 1, 2].map((index) => (
           <div
             key={index}
@@ -451,6 +484,7 @@ export function ProviderList({
   if (sortedProviders.length === 0) {
     return (
       <div className="space-y-4">
+        {managementEntry}
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
@@ -479,6 +513,54 @@ export function ProviderList({
 
   const renderCard = (provider: Provider, presentation: CardPresentation) => {
     const Card = presentation.readOnly ? ProviderCard : SortableProviderCard;
+    const summary: string[] = [];
+    if (appId === "omp" && ompManagement && ompReferences) {
+      const models = ompManagement.models.filter(
+        (model) => model.provider === provider.id,
+      );
+      const references = ompReferences.entries.filter((entry) =>
+        entry.targets.some((target) =>
+          models.some((model) => target === `${model.provider}/${model.id}`),
+        ),
+      );
+      const defaultEntry = references.find(
+        (entry) => entry.section === "modelRoles" && entry.key === "default",
+      );
+      const rawDefault = ompManagement.modelRoles.default;
+      if (defaultEntry) {
+        const direct =
+          typeof rawDefault === "string" &&
+          models.some(
+            (model) =>
+              rawDefault.replace(
+                /:(off|minimal|low|medium|high|xhigh|max|auto|inherit)$/,
+                "",
+              ) === `${model.provider}/${model.id}`,
+          );
+        summary.push(
+          `${t(direct ? "omp.management.configuredDefault" : "omp.management.defaultConfigurationReference")}: ${Array.isArray(rawDefault) ? rawDefault.join(" | ") : rawDefault}`,
+        );
+      }
+      const roles = references
+        .filter(
+          (entry) => entry.section === "modelRoles" && entry.key !== "default",
+        )
+        .map((entry) => entry.key);
+      const workers = references
+        .filter((entry) => entry.section === "task.agentModelOverrides")
+        .map((entry) => entry.key);
+      if (roles.length)
+        summary.push(`${t("omp.management.roles")}: ${roles.join(", ")}`);
+      if (workers.length)
+        summary.push(`${t("omp.management.workers")}: ${workers.join(", ")}`);
+      if (models.length)
+        summary.push(
+          `${t("omp.management.modelList")}: ${models
+            .slice(0, 2)
+            .map((model) => model.id)
+            .join(", ")}${models.length > 2 ? ` (+${models.length - 2})` : ""}`,
+        );
+    }
     return (
       <Card
         key={provider.id}
@@ -487,6 +569,10 @@ export function ProviderList({
         presentation={presentation}
         isCurrent={isCurrentFor(provider)}
         isInConfig={isInConfig(provider)}
+        onManageModels={
+          appId === "omp" ? () => setManagementProvider(provider.id) : undefined
+        }
+        modelSummary={summary.length ? summary.join("\n") : undefined}
         onEdit={onEdit}
         onDelete={onDelete}
         onDuplicate={onDuplicate}
@@ -582,6 +668,7 @@ export function ProviderList({
   // 卡片列表铺满主区域，和页头同宽
   return (
     <div className="space-y-4">
+      {managementEntry}
       {piStateErrorNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (

@@ -62,6 +62,8 @@ interface ProviderCardProps {
   /** 用来决定额度是否自动查询（共存式应用看 isInConfig） */
   isCurrent: boolean;
   isInConfig?: boolean;
+  onManageModels?: () => void;
+  modelSummary?: string;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
@@ -187,6 +189,8 @@ export function ProviderCard({
   presentation,
   isCurrent,
   isInConfig = true,
+  onManageModels,
+  modelSummary,
   onEdit,
   onDelete,
   onConfigureUsage,
@@ -421,10 +425,10 @@ export function ProviderCard({
           {readOnly ? (
             <div className="mt-0.5 flex min-w-0 items-center text-caption text-fg-2">
               <span
-                className="min-w-0 truncate"
-                title={t("omp.nativeLogin.hint")}
+                className="min-w-0 whitespace-pre-line break-words"
+                title={modelSummary ?? t("omp.nativeLogin.hint")}
               >
-                {t("omp.nativeLogin.hint")}
+                {modelSummary ?? t("omp.nativeLogin.hint")}
               </span>
             </div>
           ) : codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
@@ -540,6 +544,14 @@ export function ProviderCard({
               <span className="min-w-0 truncate">{displayUrl}</span>
             </button>
           ) : null}
+          {!readOnly && modelSummary && (
+            <p
+              className="mt-0.5 whitespace-pre-line break-words text-caption text-fg-2"
+              title={modelSummary}
+            >
+              {modelSummary}
+            </p>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
@@ -654,6 +666,7 @@ export function ProviderCard({
           <ProviderCardActions
             providerName={provider.name}
             presentation={presentation}
+            onManageModels={onManageModels}
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={

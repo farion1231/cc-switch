@@ -20,6 +20,38 @@ fn prepare(provider: &mut Provider) -> Result<(), AppError> {
     Ok(())
 }
 
+// An override-only native node is model metadata, not a credential-owned custom route.
+// Do not import it into CC Switch's provider store merely because a parameter was edited.
+fn metadata_only(config: &serde_json::Value) -> bool {
+    config.as_object().is_some_and(|node| {
+        node.keys()
+            .all(|key| matches!(key.as_str(), "modelOverrides" | "auth"))
+            && node
+                .get("auth")
+                .is_none_or(|auth| auth.as_str() == Some("oauth"))
+            && node
+                .get("modelOverrides")
+                .is_some_and(serde_json::Value::is_object)
+    })
+}
+
+fn reject_metadata_record(state: &AppState, id: &str) -> Result<(), AppError> {
+    let metadata = state
+        .db
+        .get_provider_by_id(id, "omp")?
+        .is_some_and(|provider| metadata_only(&provider.settings_config));
+    if !metadata {
+        return Ok(());
+    }
+    if omp_config::get_native_oauth_provider_ids()?
+        .iter()
+        .any(|provider| provider == id)
+    {
+        return Err(AppError::Config("omp.errors.nativeLoginReadOnly".into()));
+    }
+    Ok(())
+}
+
 pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
     if let Err(error) = sync_native(state) {
@@ -29,7 +61,7 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     match omp_config::get_native_oauth_provider_ids() {
         Ok(ids) => {
             for id in ids {
-                providers.entry(id.clone()).or_insert_with(|| {
+                let provider = providers.entry(id.clone()).or_insert_with(|| {
                     let icon = if id == "openai-codex" {
                         "openai"
                     } else {
@@ -45,6 +77,14 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
                     });
                     provider
                 });
+                if metadata_only(&provider.settings_config) {
+                    // Decorate a returned copy only. A pre-existing saved record is never deleted.
+                    provider.settings_config = serde_json::json!({});
+                    provider
+                        .meta
+                        .get_or_insert_with(ProviderMeta::default)
+                        .native_login = Some(true);
+                }
             }
         }
         Err(error) => log::warn!("Failed to read Oh My Pi native login metadata: {error}"),
@@ -54,8 +94,19 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
 fn sync_native(state: &AppState) -> Result<usize, AppError> {
     let native = omp_config::get_providers()?;
     let saved = state.db.get_all_providers("omp")?;
+    let mut native_oauth = None;
     let mut changed = 0;
     for (id, config) in native {
+        if metadata_only(&config) {
+            match native_oauth.get_or_insert_with(omp_config::get_native_oauth_provider_ids) {
+                Ok(ids) if ids.contains(&id) => continue,
+                Err(error) => {
+                    log::warn!("Cannot classify Oh My Pi metadata-only provider {id}: {error}");
+                    continue;
+                }
+                _ => {}
+            }
+        }
         let mut provider = saved.get(&id).cloned().unwrap_or_else(|| {
             let name = config
                 .get("name")
@@ -113,6 +164,7 @@ pub(super) fn update(
     mut provider: Provider,
 ) -> Result<bool, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    reject_metadata_record(state, &provider.id)?;
     if original_id.is_some_and(|id| id != provider.id) {
         return Err(AppError::Config("omp.errors.renameProvider".into()));
     }
@@ -133,6 +185,7 @@ pub(super) fn update(
 }
 pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    reject_metadata_record(state, id)?;
     state
         .db
         .get_provider_by_id(id, "omp")?
@@ -143,6 +196,7 @@ pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
 }
 pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    reject_metadata_record(state, id)?;
     let mut provider = state
         .db
         .get_provider_by_id(id, "omp")?
@@ -157,6 +211,7 @@ pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
 }
 pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    reject_metadata_record(state, id)?;
     let mut provider = state
         .db
         .get_provider_by_id(id, "omp")?
@@ -347,6 +402,102 @@ mod tests {
         )
         .unwrap();
         conn
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_metadata_overrides_remain_native_and_are_not_imported_as_custom_providers() {
+        let _agent = TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let _conn = native_login_database();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let path = omp_config::get_omp_models_path().unwrap();
+        fs::write(&path, "providers:\n  openai-codex:\n    modelOverrides:\n      model:\n        contextWindow: 500000\n").unwrap();
+        let cards = list(&state).unwrap();
+        assert_eq!(
+            cards["openai-codex"]
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.native_login),
+            Some(true)
+        );
+        assert!(cards["openai-codex"]
+            .settings_config
+            .as_object()
+            .unwrap()
+            .is_empty());
+        assert!(state.db.get_all_providers("omp").unwrap().is_empty());
+
+        // A saved user-owned custom route with the same ID is not deleted or reclassified.
+        let mut saved = provider();
+        saved.id = "openai-codex".into();
+        saved.name = "My custom route".into();
+        state.db.save_provider("omp", &saved).unwrap();
+        let cards = list(&state).unwrap();
+        assert_eq!(cards["openai-codex"].settings_config, saved.settings_config);
+        assert_ne!(
+            cards["openai-codex"]
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.native_login),
+            Some(true)
+        );
+        assert_eq!(state.db.get_all_providers("omp").unwrap().len(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn non_oauth_override_only_provider_retains_explicit_import_and_management() {
+        let _agent = TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let _conn = native_login_database();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        fs::write(
+            omp_config::get_omp_models_path().unwrap(),
+            "providers:\n  openai:\n    modelOverrides:\n      model:\n        maxTokens: 4096\n",
+        )
+        .unwrap();
+        let cards = list(&state).unwrap();
+        let mut provider = cards["openai"].clone();
+        assert_ne!(
+            provider.meta.as_ref().and_then(|meta| meta.native_login),
+            Some(true)
+        );
+        assert!(state
+            .db
+            .get_all_providers("omp")
+            .unwrap()
+            .contains_key("openai"));
+        provider.settings_config["modelOverrides"]["model"]["maxTokens"] = serde_json::json!(8192);
+        update(&state, None, provider).unwrap();
+        assert_eq!(
+            omp_config::get_providers().unwrap()["openai"]["modelOverrides"]["model"]["maxTokens"],
+            8192
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ordinary_provider_sync_and_edits_do_not_depend_on_readable_native_auth() {
+        let _agent = TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let dir = omp_config::get_omp_agent_dir().unwrap();
+        fs::write(dir.join("agent.db"), b"not a database").unwrap();
+        // An uncertain metadata-only node must not stop a later ordinary custom route.
+        fs::write(dir.join("models.yml"), "providers:\n  openai-codex:\n    modelOverrides:\n      model:\n        maxTokens: 4096\n  custom:\n    baseUrl: https://example.com/v1\n    apiKey: '!custom helper'\n    api: openai-completions\n    models:\n      - id: model\n").unwrap();
+        assert_eq!(sync_native(&state).unwrap(), 1);
+        let saved = state.db.get_all_providers("omp").unwrap();
+        assert!(saved.contains_key("custom"));
+        assert!(!saved.contains_key("openai-codex"));
+        let mut custom = saved["custom"].clone();
+        custom.settings_config["models"][0]["id"] = json!("changed");
+        update(&state, None, custom).unwrap();
+        assert_eq!(
+            omp_config::get_providers().unwrap()["custom"]["models"][0]["id"],
+            "changed"
+        );
+        assert_eq!(fs::read(dir.join("agent.db")).unwrap(), b"not a database");
     }
 
     #[test]

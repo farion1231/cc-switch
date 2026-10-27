@@ -1617,6 +1617,9 @@ pub fn run() {
             commands::get_pi_session_discovery,
             // Oh My Pi native provider and session views
             commands::get_omp_current_state,
+            commands::get_omp_model_management_state,
+            commands::patch_omp_model_settings,
+            commands::patch_omp_model_override,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,

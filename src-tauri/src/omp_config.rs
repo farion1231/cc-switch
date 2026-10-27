@@ -1,11 +1,11 @@
-//! Oh My Pi (`omp`, can1357/oh-my-pi) owns its defaults and login. CC Switch manages only the
-//! explicit `providers` entries in `models.yml` and the MCP servers in `mcp.json`, and reads
-//! `config.yml` for the default model and auth-broker selection. Local OAuth provider IDs are
-//! read-only metadata from `agent.db`; native credentials remain owned by omp.
+//! Oh My Pi (`omp`, can1357/oh-my-pi) owns login and running-session model selection.
+//! CC Switch manages explicit providers and noncredential model overrides in `models.yml`,
+//! global role/worker references in `config.yml`, and MCP servers in `mcp.json`.
+//! Native OAuth IDs and the model cache are read-only metadata; credentials remain owned by omp.
 //!
 //! The agent dir is `~/.omp/agent`, or `~/.omp/profiles/<name>/agent` for a named profile.
-//! models.yml is edited as text: bytes outside the one entry CC Switch writes are never touched,
-//! and a document it can't edit safely (anchors, tags, flow style) is refused, not rewritten.
+//! YAML files are edited as text: bytes outside explicitly changed entries stay untouched.
+//! Layouts the targeted editor cannot safely splice are refused, not reserialized.
 
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
@@ -17,6 +17,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
+
+pub(crate) mod management;
 
 pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
 static MODELS_LOCK: Mutex<()> = Mutex::new(());
