@@ -11,6 +11,7 @@ interface CodexConfigEditorProps {
   providerName?: string;
 
   showRemoteCompaction?: boolean;
+  showStandaloneWebSearch?: boolean;
 
   isProxyTakeover?: boolean;
 
@@ -33,6 +34,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   configValue,
   providerName,
   showRemoteCompaction,
+  showStandaloneWebSearch,
   isProxyTakeover = false,
   onAuthChange,
   onConfigChange,
@@ -68,6 +70,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
         onChange={onConfigChange}
         providerName={providerName}
         showRemoteCompaction={showRemoteCompaction}
+        showStandaloneWebSearch={showStandaloneWebSearch}
         configError={configError}
         isProxyTakeover={isProxyTakeover}
         inactiveFields={inactiveFields}
