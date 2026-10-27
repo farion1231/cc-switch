@@ -14,6 +14,8 @@ pub struct McpApps {
     #[serde(default)]
     pub cline: bool,
     #[serde(default)]
+    pub dsh: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub claude: bool,
@@ -47,6 +49,7 @@ impl McpApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Cline => self.cline,
+            AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
@@ -67,6 +70,7 @@ impl McpApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Cline => self.cline = enabled,
+            AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
@@ -94,6 +98,9 @@ impl McpApps {
         }
         if self.agy {
             apps.push(AppType::Agy);
+        }
+        if self.dsh {
+            apps.push(AppType::Dsh);
         }
         if self.kimi {
             apps.push(AppType::Kimi);
@@ -127,6 +134,7 @@ impl McpApps {
             && !self.agy
             && !self.kimi
             && !self.cline
+            && !self.dsh
             && !self.mcode
             && !self.pi
             && !self.omp
@@ -142,6 +150,8 @@ pub struct SkillApps {
     pub kimi: bool,
     #[serde(default)]
     pub cline: bool,
+    #[serde(default)]
+    pub dsh: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -176,6 +186,7 @@ impl SkillApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Cline => self.cline,
+            AppType::Dsh => self.dsh,
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
@@ -196,6 +207,7 @@ impl SkillApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Cline => self.cline = enabled,
+            AppType::Dsh => self.dsh = enabled,
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
@@ -223,6 +235,9 @@ impl SkillApps {
         }
         if self.agy {
             apps.push(AppType::Agy);
+        }
+        if self.dsh {
+            apps.push(AppType::Dsh);
         }
         if self.kimi {
             apps.push(AppType::Kimi);
@@ -256,6 +271,7 @@ impl SkillApps {
             && !self.agy
             && !self.kimi
             && !self.cline
+            && !self.dsh
             && !self.mcode
             && !self.pi
             && !self.omp
@@ -480,6 +496,7 @@ pub enum AppType {
     Pi,
     Mcode,
     Kimi,
+    Dsh,
     Agy,
     Cline,
     Omp,
@@ -499,6 +516,7 @@ impl AppType {
             AppType::Pi => "pi",
             AppType::Mcode => "mcode",
             AppType::Kimi => "kimi",
+            AppType::Dsh => "dsh",
             AppType::Agy => "agy",
             AppType::Cline => "cline",
             AppType::Omp => "omp",
@@ -520,6 +538,7 @@ impl AppType {
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Cline
+                | AppType::Dsh
                 | AppType::Omp
         )
     }
@@ -552,6 +571,7 @@ impl AppType {
             AppType::Pi,
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Dsh,
             AppType::Agy,
             AppType::Cline,
             AppType::Omp,
@@ -577,13 +597,14 @@ impl FromStr for AppType {
             "pi" => Ok(AppType::Pi),
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
+            "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "cline" | "cline-cli" => Ok(AppType::Cline),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, agy, cline, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, agy, cline, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp."),
             )),
         }
     }
@@ -628,6 +649,7 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Agy
             | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp => None,
         }
     }
@@ -648,6 +670,7 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Agy
             | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp => {}
         }
     }
@@ -980,6 +1003,7 @@ impl MultiAppConfig {
             | AppType::Kimi
             | AppType::Agy
             | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp => return Ok(false),
         };
 
@@ -1029,6 +1053,7 @@ impl MultiAppConfig {
                 | AppType::Kimi
                 | AppType::Agy
                 | AppType::Cline
+                | AppType::Dsh
                 | AppType::Omp => continue, // Pi didn't exist in v3.6.x, skip
             };
 

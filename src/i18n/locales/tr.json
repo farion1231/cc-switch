@@ -5083,5 +5083,12 @@
       "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil.",
       "legacyModelsJson": "Oh My Pi'de eski biçimde bir models.json dosyası var. omp, sonraki açılışında bunu models.yml biçimine geçirir. omp'yi bir kez çalıştırın, ardından sağlayıcıyı yeniden ekleyin."
     }
+  },
+  "dsh": {
+    "empty": {
+      "title": "DeepSeek Harness sağlayıcısı ekle",
+      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
+    },
+    "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
   }
 }

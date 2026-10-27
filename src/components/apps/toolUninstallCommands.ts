@@ -23,6 +23,7 @@ type UninstallCommand = {
 
 const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
   npm: [
+    { tool: "dsh", command: "npm uninstall -g @deepseek-ai/dsh" },
     { tool: "claude", command: "npm uninstall -g @anthropic-ai/claude-code" },
     { tool: "codex", command: "npm uninstall -g @openai/codex" },
     { tool: "gemini", command: "npm uninstall -g @google/gemini-cli" },
