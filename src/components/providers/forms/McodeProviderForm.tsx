@@ -12,6 +12,7 @@ import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { OpenCodeModel, OpenCodeProviderOptions } from "@/types";
 import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
+import { dshProviderPresets } from "@/config/dshProviderPresets";
 import { mcodePresetModelSources } from "@/config/presetModelMetadata";
 import { BasicFormFields } from "./BasicFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
@@ -28,10 +29,6 @@ const API_FORMATS = [
   { value: "openai-completions", label: "OpenAI Chat Completions" },
   { value: "openai-responses", label: "OpenAI Responses" },
 ];
-const PRESET_ENTRIES = mcodeProviderPresets.map((preset, index) => ({
-  id: String(index),
-  preset,
-}));
 const configSchema = z
   .object({
     api: z.string().optional(),
@@ -69,6 +66,7 @@ const normalizeKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9-]/g, "");
 
 export function McodeProviderForm({
+  appId,
   providerId,
   initialData,
   onSubmit,
@@ -79,6 +77,11 @@ export function McodeProviderForm({
   onSubmitReadyChange,
 }: ProviderFormProps) {
   const { t } = useTranslation();
+  const presets = appId === "dsh" ? dshProviderPresets : mcodeProviderPresets;
+  const presetEntries = presets.map((preset, index) => ({
+    id: String(index),
+    preset,
+  }));
   const isDarkMode = useDarkMode();
   const [config, setConfig] = useState<McodeConfig>(
     initialData?.settingsConfig ?? {
@@ -92,8 +95,7 @@ export function McodeProviderForm({
   const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 2));
   const [jsonValid, setJsonValid] = useState(true);
   const [presetId, setPresetId] = useState("custom");
-  const preset =
-    presetId === "custom" ? undefined : mcodeProviderPresets[Number(presetId)];
+  const preset = presetId === "custom" ? undefined : presets[Number(presetId)];
   const category = initialData?.category ?? preset?.category ?? "custom";
   const [extraOptions, setExtraOptions] = useState(
     toOpencodeExtraOptions(config.options ?? {}),
@@ -104,7 +106,7 @@ export function McodeProviderForm({
   // references embed it, so it is fixed once the provider exists.
   const isEdit = Boolean(initialData);
   const [providerKey, setProviderKey] = useState(providerId ?? "");
-  const { data: existing } = useProvidersQuery("mcode");
+  const { data: existing } = useProvidersQuery(appId);
   const keyTaken =
     !isEdit &&
     Object.prototype.hasOwnProperty.call(
@@ -129,7 +131,8 @@ export function McodeProviderForm({
       name.trim() &&
       (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
       config.options?.baseURL?.trim() &&
-      config.options?.apiKey?.trim() &&
+      (config.options?.apiKey?.trim() ||
+        (appId === "dsh" && config.apiKeyEnv)) &&
       Object.keys(config.models ?? {}).length,
   );
   useEffect(() => {
@@ -144,8 +147,7 @@ export function McodeProviderForm({
     update({ ...config, options: { ...config.options, ...next } });
   const choosePreset = (id: string) => {
     setPresetId(id);
-    const selected =
-      id === "custom" ? undefined : mcodeProviderPresets[Number(id)];
+    const selected = id === "custom" ? undefined : presets[Number(id)];
     const next = selected?.settingsConfig ?? {
       kind: "custom",
       enabled: true,
@@ -206,7 +208,7 @@ export function McodeProviderForm({
         {!initialData && (
           <ProviderPresetSelector
             selectedPresetId={presetId}
-            presetEntries={PRESET_ENTRIES}
+            presetEntries={presetEntries}
             presetCategoryLabels={{
               custom: t("providerPreset.custom"),
               cn_official: t("providerForm.categoryCnOfficial"),
