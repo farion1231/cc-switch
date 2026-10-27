@@ -843,19 +843,161 @@ impl OmoService {
         }
     }
 
+    // Match Slim's presets.ts at a598a2621800c75ae444d8bdf9c9ec53aa2779e1.
+    // Permission map insertion order is significant: the last matching rule wins.
     fn merge_objects(
         base: &Map<String, Value>,
         override_: &Map<String, Value>,
     ) -> Map<String, Value> {
-        let mut merged = base.clone();
+        let mut merged = Map::new();
         for (key, override_value) in override_ {
-            let value = match (merged.get(key), override_value) {
+            let value = match (base.get(key), override_value) {
                 (Some(Value::Object(base)), Value::Object(override_)) => {
-                    Value::Object(Self::merge_objects(base, override_))
+                    Value::Object(if key == "permission" {
+                        Self::merge_permissions(base, override_)
+                    } else {
+                        Self::merge_objects(base, override_)
+                    })
                 }
                 _ => override_value.clone(),
             };
             merged.insert(key.clone(), value);
+        }
+        for (key, value) in base {
+            if !merged.contains_key(key) {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+        merged
+    }
+
+    fn permission_strictness(value: &Value) -> Option<usize> {
+        match value.as_str() {
+            Some("allow") => Some(0),
+            Some("ask") => Some(1),
+            Some("deny") => Some(2),
+            _ => None,
+        }
+    }
+
+    fn strict_permission(value: &Value, threshold: usize) -> Option<Value> {
+        if Self::permission_strictness(value).is_some_and(|n| n >= threshold) {
+            return Some(value.clone());
+        }
+        let patterns = value.as_object()?;
+        if !patterns
+            .values()
+            .any(|action| Self::permission_strictness(action).is_some_and(|n| n >= threshold))
+        {
+            return None;
+        }
+        Some(Value::Object(
+            patterns
+                .iter()
+                .map(|(pattern, action)| {
+                    let raised = if action.is_string()
+                        && Self::permission_strictness(action).is_none_or(|n| n < threshold)
+                    {
+                        Value::String(["allow", "ask", "deny"][threshold].to_string())
+                    } else {
+                        action.clone()
+                    };
+                    (pattern.clone(), raised)
+                })
+                .collect(),
+        ))
+    }
+
+    fn merge_permissions(
+        base: &Map<String, Value>,
+        override_: &Map<String, Value>,
+    ) -> Map<String, Value> {
+        let wildcard = override_.get("*").and_then(Self::permission_strictness);
+        let mut merged = Map::new();
+        let mut after = Map::new();
+        for (key, value) in base {
+            if override_.contains_key(key) {
+                continue;
+            }
+            let strict = if key == "*" {
+                None
+            } else {
+                Self::strict_permission(value, wildcard.unwrap_or(2))
+            };
+            if let Some(strict) = strict {
+                // A later wildcard cannot loosen an unnamed stricter rule.
+                // Move pattern maps whole to retain their internal precedence.
+                after.insert(
+                    key.clone(),
+                    if wildcard.is_some() {
+                        strict
+                    } else {
+                        value.clone()
+                    },
+                );
+            } else {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+        for (key, value) in override_ {
+            let value = match (base.get(key), value) {
+                (Some(Value::Object(base)), Value::Object(override_)) => {
+                    Value::Object(Self::merge_permissions(base, override_))
+                }
+                _ => value.clone(),
+            };
+            merged.insert(key.clone(), value);
+        }
+        merged.extend(after);
+        merged
+    }
+
+    fn canonical_agent_name(name: &str) -> &str {
+        match name {
+            "explore" | "librarian" => "explorer",
+            "frontend-ui-ux-engineer" => "designer",
+            _ => name,
+        }
+    }
+
+    fn canonicalize_agents(agents: &Map<String, Value>) -> Map<String, Value> {
+        let mut merged = Map::new();
+        // Canonical declarations win over aliases regardless of insertion order.
+        for (name, value) in agents.iter().chain(agents.iter().filter(|(name, _)| {
+            agents
+                .keys()
+                .any(|alias| alias != *name && Self::canonical_agent_name(alias) == *name)
+        })) {
+            let name = Self::canonical_agent_name(name);
+            let value = match (merged.get(name), value) {
+                (Some(Value::Object(base)), Value::Object(override_)) => {
+                    Value::Object(Self::merge_objects(base, override_))
+                }
+                _ => value.clone(),
+            };
+            merged.insert(name.to_string(), value);
+        }
+        merged
+    }
+
+    fn merge_agent_overrides(
+        base: &Map<String, Value>,
+        override_: &Map<String, Value>,
+    ) -> Map<String, Value> {
+        let base = Self::canonicalize_agents(base);
+        let canonical_override = Self::canonicalize_agents(override_);
+        let mut merged = Self::merge_objects(&base, &canonical_override);
+        for (name, value) in &canonical_override {
+            let canonical_directive = override_.get(name).is_some_and(|agent| {
+                agent.get("model").is_none() && agent.get("inheritModelFrom").is_some()
+            });
+            if canonical_directive
+                || (value.get("model").is_none() && value.get("inheritModelFrom").is_some())
+            {
+                if let Some(Value::Object(agent)) = merged.get_mut(name) {
+                    agent.shift_remove("model");
+                }
+            }
         }
         merged
     }
@@ -964,13 +1106,13 @@ impl OmoService {
                 .filter(|agents| agents.values().all(Self::is_preset_agent_override));
             let mut agents = preset.clone();
             if let Some(wrapped) = wrapped {
-                agents.remove("agents");
-                agents.remove("extends");
-                agents.remove("marketplace");
+                agents.shift_remove("agents");
+                agents.shift_remove("extends");
+                agents.shift_remove("marketplace");
                 agents = Self::merge_objects(&agents, wrapped);
             } else {
                 if preset.get("extends").is_some_and(Value::is_string) {
-                    agents.remove("extends");
+                    agents.shift_remove("extends");
                 }
                 // Flat presets may also contain a custom agent named marketplace.
                 if preset
@@ -982,10 +1124,10 @@ impl OmoService {
                             .any(|key| value.contains_key(*key))
                     })
                 {
-                    agents.remove("marketplace");
+                    agents.shift_remove("marketplace");
                 }
             }
-            resolved = Self::merge_objects(&resolved, &agents);
+            resolved = Self::merge_agent_overrides(&resolved, &agents);
         }
         Ok(resolved)
     }
@@ -1031,7 +1173,7 @@ impl OmoService {
         }
         let active = Self::resolve_preset_agents(presets, preset)?;
         let merged = root_agents
-            .map(|agents| Self::merge_objects(&active, agents))
+            .map(|agents| Self::merge_agent_overrides(&active, agents))
             .unwrap_or(active);
         Ok(Some(Value::Object(merged)))
     }
@@ -1911,7 +2053,7 @@ mod tests {
                     "oracle": {
                         "model": "preset/model",
                         "variant": "high",
-                        "permissions": { "read": true, "write": false }
+                        "permission": { "read": "allow", "edit": "deny" }
                     },
                     "explorer": { "model": "preset/explorer" }
                 }
@@ -1919,7 +2061,7 @@ mod tests {
             "agents": {
                 "oracle": {
                     "variant": "max",
-                    "permissions": { "write": true }
+                    "permission": { "edit": "allow" }
                 },
                 "fixer": { "model": "root/fixer" }
             }
@@ -1931,10 +2073,184 @@ mod tests {
 
         assert_eq!(agents["oracle"]["model"], "preset/model");
         assert_eq!(agents["oracle"]["variant"], "max");
-        assert_eq!(agents["oracle"]["permissions"]["read"], true);
-        assert_eq!(agents["oracle"]["permissions"]["write"], true);
+        assert_eq!(agents["oracle"]["permission"]["read"], "allow");
+        assert_eq!(agents["oracle"]["permission"]["edit"], "allow");
         assert_eq!(agents["explorer"]["model"], "preset/explorer");
         assert_eq!(agents["fixer"]["model"], "root/fixer");
+    }
+
+    #[test]
+    fn test_slim_import_preserves_semantics_when_written_back() {
+        let obj: Value = serde_json::from_str(
+            r#"{
+            "preset":"child",
+            "presets":{
+                "base":{"agents":{"oracle":{"model":"base/model","permission":{"*":"allow"}}}},
+                "middle":{"extends":"base","agents":{"oracle":{"inheritModelFrom":"session"}}},
+                "child":{"extends":"middle","agents":{"oracle":{"variant":"high"}}}
+            },
+            "agents":{"oracle":{"permission":{"read":"allow","*":"deny"}}}
+        }"#,
+        )
+        .unwrap();
+        let data = OmoService::build_local_file_data(
+            &SLIM,
+            obj.as_object().unwrap(),
+            "slim.json".to_string(),
+            None,
+        )
+        .unwrap();
+        let written = OmoService::build_config(
+            &SLIM,
+            Some(&(data.agents, data.categories, data.other_fields)),
+        );
+        let written: Value = serde_json::from_str(&written.to_string()).unwrap();
+        assert!(written["agents"]["oracle"].get("model").is_none());
+        assert_eq!(written["agents"]["oracle"]["inheritModelFrom"], "session");
+        assert_eq!(written["agents"]["oracle"]["variant"], "high");
+        assert_eq!(
+            written["agents"]["oracle"]["permission"].to_string(),
+            r#"{"read":"allow","*":"deny"}"#
+        );
+        assert_eq!(written["presets"], obj["presets"]);
+        // The flattened root overrides must remain stable on the next load.
+        let reloaded = OmoService::imported_agents(&SLIM, written.as_object().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(reloaded.to_string(), written["agents"].to_string());
+    }
+
+    // Exercise the same override at both boundaries where Slim uses
+    // mergeAgentOverrides: parent -> child preset and preset -> root agents.
+    fn import_slim_layers(base: Value, override_: Value, at_root: bool) -> Value {
+        let obj = if at_root {
+            serde_json::json!({
+                "preset": "base", "presets": {"base": {"agents": base}},
+                "agents": override_
+            })
+        } else {
+            serde_json::json!({
+                "preset": "child", "presets": {
+                    "base": {"agents": base},
+                    "child": {"extends": "base", "agents": override_}
+                }
+            })
+        };
+        OmoService::imported_agents(&SLIM, obj.as_object().unwrap())
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_slim_import_model_inheritance_at_each_layer() {
+        for at_root in [false, true] {
+            for source in ["session", "orchestrator"] {
+                let base = serde_json::json!({
+                    "oracle": {"model": "base/model", "temperature": 0.2},
+                    "fixer": {"model": "base/fixer"},
+                    "designer": {"model": "base/designer"}
+                });
+                let override_ = serde_json::json!({
+                    "oracle": {"inheritModelFrom": source},
+                    "fixer": {"inheritModelFrom": source, "model": "explicit/model"},
+                    "designer": {"variant": "high"}
+                });
+                let agents = import_slim_layers(base, override_, at_root);
+                assert!(agents["oracle"].get("model").is_none());
+                assert_eq!(agents["oracle"]["inheritModelFrom"], source);
+                assert_eq!(agents["oracle"]["temperature"], 0.2);
+                assert_eq!(agents["fixer"]["model"], "explicit/model");
+                assert_eq!(agents["designer"]["model"], "base/designer");
+            }
+        }
+    }
+
+    #[test]
+    fn test_slim_import_alias_inheritance_at_each_layer() {
+        for at_root in [false, true] {
+            for override_ in [
+                r#"{"explore":{"model":"alias/model","temperature":0.4},"explorer":{"inheritModelFrom":"session"}}"#,
+                r#"{"explorer":{"inheritModelFrom":"session"},"explore":{"model":"alias/model","temperature":0.4}}"#,
+            ] {
+                let agents = import_slim_layers(
+                    serde_json::json!({"librarian": {"model": "base/model", "variant": "high"}}),
+                    serde_json::from_str(override_).unwrap(),
+                    at_root,
+                );
+                assert!(agents.get("explore").is_none());
+                assert!(agents.get("librarian").is_none());
+                assert!(agents["explorer"].get("model").is_none());
+                assert_eq!(agents["explorer"]["temperature"], 0.4);
+                assert_eq!(agents["explorer"]["variant"], "high");
+            }
+        }
+    }
+
+    #[test]
+    fn test_standard_import_does_not_apply_slim_merge_rules() {
+        let obj: Value = serde_json::from_str(
+            r#"{
+            "preset":"active",
+            "presets":{"active":{"explorer":{"model":"preset/model"}}},
+            "agents":{"explore":{"model":"root/model","inheritModelFrom":"session",
+                "permission":{"read":"allow","*":"deny"}}}
+        }"#,
+        )
+        .unwrap();
+        let agents = OmoService::imported_agents(&STANDARD, obj.as_object().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(agents.to_string(), obj["agents"].to_string());
+    }
+
+    #[test]
+    fn test_slim_import_permission_precedence_at_each_layer() {
+        // Compare serialized maps: Value equality does not check rule order.
+        let cases = [
+            (
+                r#"{"*":"allow"}"#,
+                r#"{"read":"allow","*":"deny"}"#,
+                r#"{"read":"allow","*":"deny"}"#,
+            ),
+            (
+                r#"{"*":"deny","read":"deny","edit":"allow","bash":"ask"}"#,
+                r#"{"*":"ask"}"#,
+                r#"{"edit":"allow","*":"ask","read":"deny","bash":"ask"}"#,
+            ),
+            (
+                r#"{"read":"deny","edit":"allow"}"#,
+                r#"{"bash":"allow"}"#,
+                r#"{"edit":"allow","bash":"allow","read":"deny"}"#,
+            ),
+            (
+                r#"{"read":{"*":"allow","secret*":"deny","safe*":"allow"}}"#,
+                r#"{"*":"ask"}"#,
+                r#"{"*":"ask","read":{"*":"ask","secret*":"deny","safe*":"ask"}}"#,
+            ),
+            (
+                r#"{"read":{"*":"allow","secret*":"deny"}}"#,
+                r#"{"read":{"public*":"allow","*":"ask"}}"#,
+                r#"{"read":{"public*":"allow","*":"ask","secret*":"deny"}}"#,
+            ),
+            (
+                r#"{"read":"deny"}"#,
+                r#"{"read":"allow","*":"allow"}"#,
+                r#"{"read":"allow","*":"allow"}"#,
+            ),
+            (r#"{"read":"deny"}"#, r#""allow""#, r#""allow""#),
+        ];
+        for at_root in [false, true] {
+            for (base, override_, expected) in cases {
+                let base: Value = serde_json::from_str(base).unwrap();
+                let override_: Value = serde_json::from_str(override_).unwrap();
+                let agents = import_slim_layers(
+                    serde_json::json!({"oracle": {"permission": base}}),
+                    serde_json::json!({"oracle": {"permission": override_}}),
+                    at_root,
+                );
+                assert_eq!(agents["oracle"]["permission"].to_string(), expected);
+            }
+        }
     }
 
     #[test]
