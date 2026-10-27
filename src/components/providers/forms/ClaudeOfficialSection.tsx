@@ -11,6 +11,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -44,11 +45,14 @@ function useClaudeLoginSwitch() {
 }
 
 /**
- * 切卡不会换 Claude Code 的登录、只能从卡片「打开终端」用选中账号：设了 Claude 配置目录覆盖时。
+ * 切卡为什么不会换 Claude Code 的登录：
+ * - `"wsl"`：配置目录在 WSL 里，账号功能整体不可用（登录、终端都跑在 Windows 上）；
+ * - `"overrideDir"`：设了别的配置目录覆盖，只能从卡片「打开终端」用选中账号。
  */
-function useClaudeAccountTerminalOnly(): boolean {
+function useClaudeLoginBlocked(): "wsl" | "overrideDir" | null {
   const { data } = useClaudeLoginSwitch();
-  return data?.active === false;
+  if (data?.active !== false) return null;
+  return data.blocked === "wsl" ? "wsl" : "overrideDir";
 }
 
 /**
@@ -156,7 +160,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
   helpSide,
 }) => {
   const { t, i18n } = useTranslation();
-  const terminalOnly = useClaudeAccountTerminalOnly();
+  const blocked = useClaudeLoginBlocked();
   const {
     accounts,
     isStatusSuccess,
@@ -248,15 +252,20 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
       name={SERVICE_NAME}
       iconName="claude"
       help={
-        terminalOnly
-          ? t("authCenter.group.claudeHelpTerminal", {
+        blocked === "wsl"
+          ? t("authCenter.group.claudeHelpWsl", {
               defaultValue:
-                "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录（例如指向 WSL），切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
+                "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
             })
-          : t("authCenter.group.claudeHelp", {
-              defaultValue:
-                "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡时 Claude Code 的登录就换成这个号，之后终端、IDE 插件里新启动的 claude 都用它；想同时用几个号，从卡片「打开终端」。切换时会在 Claude Code 自己的登录位置之间搬动登录令牌：令牌只留在本机，不上传、不刷新、不登出。Anthropic 的条款不允许第三方工具存储会话令牌，这种用法处在灰色地带，请自行判断；不想切换，把卡片上的账号改回「默认登录」。第一次切换会把 Claude Code 现在登录的号自动收进来；切号后正在用的 Remote Control 会断开，第一条消息要重建提示缓存。",
-            })
+          : blocked === "overrideDir"
+            ? t("authCenter.group.claudeHelpTerminal", {
+                defaultValue:
+                  "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
+              })
+            : t("authCenter.group.claudeHelp", {
+                defaultValue:
+                  "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。",
+              })
       }
       helpSide={helpSide}
       accounts={rows}
@@ -269,6 +278,14 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         defaultValue:
           "还没有添加 Claude 账号。要在多个订阅账号之间切换时在这里登录。",
       })}
+      loginDisabledReason={
+        blocked === "wsl"
+          ? t("authCenter.claude.wslUnsupported", {
+              defaultValue:
+                "Claude 配置目录在 WSL 里，暂不支持添加和切换 Claude 账号。",
+            })
+          : undefined
+      }
       onAdd={addAccount}
       canReauth
       reauthOnlyWhenExpired
@@ -323,179 +340,163 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
 export default ClaudeOfficialSection;
 
 const DEFAULT_LOGIN = "__default__";
+const MANAGE_ACCOUNTS = "__manage_accounts__";
 
 interface ClaudeAccountSelectProps {
   value: string | null;
   onChange: (accountId: string | null) => void;
+  /** 打开授权中心添加或管理账号 */
+  onManageAccounts?: () => void;
 }
 
 /**
- * Claude 官方卡的账号：不选就是默认登录（~/.claude）。可以就地登录一个新账号，登录完自动选上。
+ * Claude 官方卡的登录方式，和 Codex 官方卡同一套写法：托管的账号在上，「添加或管理」打开授权
+ * 中心，最下面是跟随 Claude Code 登录（~/.claude，不绑号）。
  */
 export function ClaudeAccountSelect({
   value,
   onChange,
+  onManageAccounts,
 }: ClaudeAccountSelectProps) {
   const { t } = useTranslation();
-  const terminalOnly = useClaudeAccountTerminalOnly();
+  const blocked = useClaudeLoginBlocked();
   const { data } = useQuery({
     queryKey: ["managed-auth-status", "claude_official"],
     queryFn: () => authApi.authGetStatus("claude_official"),
     staleTime: 30000,
   });
   const accounts = data?.accounts ?? [];
-  // 绑的号不在这台电脑上（别的设备同步来的、或已删掉）时也要显示出来，别悄悄改成默认登录
-  const missing = value !== null && !accounts.some((a) => a.id === value);
-
-  const {
-    pollingState,
-    deviceCode,
-    error,
-    isPolling,
-    isAddingAccount,
-    addAccount,
-    cancelAuth,
-  } = useManagedAuth("claude_official");
-  const busy = isAddingAccount || isPolling;
-
-  // 就地登录成功后选上这个账号：等账号列表刷新出新的 id 再选；同一个号重新登录时 id 不变，
-  // 列表刷新完（状态回到 idle）还没有新 id，就选最近登录的那个
-  const pending = React.useRef<{
-    before: Set<string>;
-    succeeded: boolean;
-  } | null>(null);
-  React.useEffect(() => {
-    const current = pending.current;
-    if (!current) return;
-    if (pollingState === "success") current.succeeded = true;
-    if (pollingState === "error") {
-      pending.current = null;
-      return;
-    }
-    if (!current.succeeded) return;
-    const added = accounts.find((a) => !current.before.has(a.id));
-    if (added) {
-      pending.current = null;
-      onChange(added.id);
-      return;
-    }
-    if (pollingState === "idle") {
-      pending.current = null;
-      const latest = [...accounts].sort(
-        (a, b) => b.authenticated_at - a.authenticated_at,
-      )[0];
-      if (latest) onChange(latest.id);
-    }
-  }, [pollingState, accounts, onChange]);
-
-  const startLogin = () => {
-    pending.current = {
-      before: new Set(accounts.map((a) => a.id)),
-      succeeded: false,
-    };
-    addAccount();
-  };
+  const selected = accounts.find((a) => a.id === value);
+  // 绑的号不在这台电脑上（别的设备同步来的、或已删掉）时也要显示出来，别悄悄改成跟随登录
+  const missing = value !== null && !selected;
+  const followLabel = t("provider.form.claudeAccount.default", {
+    defaultValue: "跟随 Claude Code 登录",
+  });
+  const missingLabel = t("provider.form.claudeAccount.missing", {
+    defaultValue: "不在这台电脑上的账号",
+  });
+  const label = t("provider.form.claudeAccount.label", {
+    defaultValue: "登录方式",
+  });
+  const itemClass =
+    "min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden";
 
   return (
-    <div className="space-y-2">
-      <Label htmlFor="claude-official-account">
-        {t("provider.form.claudeAccount.label", { defaultValue: "账号" })}
-      </Label>
-      <div className="flex items-center gap-2">
-        <Select
-          value={value ?? DEFAULT_LOGIN}
-          onValueChange={(next) => {
-            // Radix Select 在表单里可能回报空串，忽略
-            if (!next) return;
-            onChange(next === DEFAULT_LOGIN ? null : next);
-          }}
+    <div className="space-y-2.5">
+      <Label className="text-sm font-medium text-fg-1">{label}</Label>
+      <Select
+        value={value ?? DEFAULT_LOGIN}
+        onValueChange={(next) => {
+          // Radix Select 在表单里可能回报空串，忽略
+          if (!next) return;
+          if (next === MANAGE_ACCOUNTS) {
+            onManageAccounts?.();
+            return;
+          }
+          onChange(next === DEFAULT_LOGIN ? null : next);
+        }}
+      >
+        <SelectTrigger
+          className="h-10 min-w-0 rounded-lg bg-surface px-3 shadow-sm"
+          aria-label={label}
         >
-          <SelectTrigger id="claude-official-account" className="flex-1">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={DEFAULT_LOGIN}>
-              {t("provider.form.claudeAccount.default", {
-                defaultValue: "默认登录（~/.claude）",
-              })}
-            </SelectItem>
-            {accounts.map((account) => (
+          <span
+            className="min-w-0 flex-1 truncate text-left text-sm font-medium tracking-tight"
+            title={selected?.login}
+          >
+            <SelectValue>
+              {value === null
+                ? followLabel
+                : (selected?.login ?? (data ? missingLabel : undefined))}
+            </SelectValue>
+          </span>
+        </SelectTrigger>
+        <SelectContent className="w-[var(--radix-select-trigger-width)] max-w-[var(--radix-select-content-available-width)]">
+          {accounts.map((account, index) => (
+            <React.Fragment key={account.id}>
               <SelectItem
-                key={account.id}
                 value={account.id}
                 disabled={account.requires_reauth}
+                className={itemClass}
               >
-                {account.login}
+                <div className="flex min-w-0 items-center gap-2">
+                  <span aria-hidden className="h-4 w-4 shrink-0" />
+                  <span
+                    className="min-w-0 truncate text-sm font-medium leading-5"
+                    title={account.login}
+                  >
+                    {account.login}
+                  </span>
+                  {account.requires_reauth && (
+                    <span className="ml-1 inline-flex shrink-0 items-center gap-1 text-xs text-warning-text">
+                      <AlertTriangle className="h-3 w-3" />
+                      {t("provider.form.claudeAccount.reauthBadge", {
+                        defaultValue: "需要重新登录",
+                      })}
+                    </span>
+                  )}
+                </div>
               </SelectItem>
-            ))}
-            {missing && (
-              <SelectItem value={value}>
-                {t("provider.form.claudeAccount.missing", {
-                  defaultValue: "不在这台电脑上的账号",
-                })}
-              </SelectItem>
-            )}
-          </SelectContent>
-        </Select>
-        <Button
-          type="button"
-          variant="neutral"
-          size="compact"
-          className="gap-1.5 pe-3 ps-2.5"
-          disabled={busy}
-          onClick={startLogin}
-        >
-          <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-          {t("provider.form.claudeAccount.add", {
-            defaultValue: "登录新账号",
-          })}
-        </Button>
-      </div>
-      {busy && (
-        <div className="flex flex-col gap-2 rounded-[8px] bg-subtle px-3.5 py-3">
-          <div className="flex items-center gap-2">
-            <Loader2
-              aria-hidden="true"
-              className="h-[15px] w-[15px] shrink-0 text-fg-2 motion-safe:animate-spin"
-            />
-            <span className="min-w-0 flex-1 text-caption text-fg-1">
-              {t("provider.form.claudeAccount.pending", {
-                defaultValue:
-                  "已在浏览器打开 Claude 的登录页，登录并授权后会自动选上这个账号。",
-              })}
-            </span>
-            <Button
-              type="button"
-              variant="neutral"
-              size="compact"
-              onClick={cancelAuth}
-            >
-              {t("common.cancel", { defaultValue: "取消" })}
-            </Button>
-          </div>
-          {deviceCode && (
-            <ClaudePasteCode
-              key={deviceCode.device_code}
-              flowId={deviceCode.device_code}
-            />
+              {(index < accounts.length - 1 || onManageAccounts) && (
+                <SelectSeparator className="mx-2 my-0 bg-border/60" />
+              )}
+            </React.Fragment>
+          ))}
+          {missing && (
+            <SelectItem value={value} className={itemClass}>
+              <div className="flex min-w-0 items-center gap-2">
+                <span aria-hidden className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 truncate text-sm font-medium leading-5 text-warning-text">
+                  {missingLabel}
+                </span>
+              </div>
+            </SelectItem>
           )}
-        </div>
-      )}
-      {!busy && pollingState === "error" && error && (
-        <p className="text-caption text-danger-text [overflow-wrap:anywhere]">
-          {error}
-        </p>
-      )}
+          {onManageAccounts && (
+            <SelectItem value={MANAGE_ACCOUNTS} className="py-2 pl-6">
+              <div className="flex items-center gap-2">
+                <Plus className="h-4 w-4 shrink-0 text-fg-2" />
+                <span className="truncate text-sm font-medium leading-5">
+                  {t("provider.form.claudeAccount.manage", {
+                    defaultValue: "添加或管理 Claude 账号",
+                  })}
+                </span>
+              </div>
+            </SelectItem>
+          )}
+          {(accounts.length > 0 || missing || onManageAccounts) && (
+            <SelectSeparator className="my-1.5 bg-border" />
+          )}
+          <SelectItem value={DEFAULT_LOGIN} className={itemClass}>
+            <div className="flex min-w-0 items-center gap-2">
+              <span aria-hidden className="h-4 w-4 shrink-0" />
+              <span className="shrink-0 text-sm font-medium leading-5">
+                {followLabel}
+              </span>
+              <span className="min-w-0 truncate text-sm leading-5 text-fg-2">
+                {t("provider.form.claudeAccount.defaultDescription", {
+                  defaultValue: "账号会随 Claude Code 当前登录变化",
+                })}
+              </span>
+            </div>
+          </SelectItem>
+        </SelectContent>
+      </Select>
       <p className="text-caption text-fg-2">
-        {terminalOnly
-          ? t("provider.form.claudeAccount.helpTerminal", {
+        {blocked === "wsl"
+          ? t("provider.form.claudeAccount.helpWsl", {
               defaultValue:
-                "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+                "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
             })
-          : t("provider.form.claudeAccount.help", {
-              defaultValue:
-                "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它。想同时用几个号，从卡片「打开终端」。",
-            })}
+          : blocked === "overrideDir"
+            ? t("provider.form.claudeAccount.helpTerminal", {
+                defaultValue:
+                  "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+              })
+            : t("provider.form.claudeAccount.help", {
+                defaultValue:
+                  "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
+              })}
       </p>
     </div>
   );
@@ -531,7 +532,7 @@ export function ClaudeBoundAccountLine({
   showPlan?: boolean;
 }) {
   const { t } = useTranslation();
-  const terminalOnly = useClaudeAccountTerminalOnly();
+  const blocked = useClaudeLoginBlocked();
   const { isSuccess, account } = useClaudeAccount(accountId);
   if (!isSuccess) return null;
   if (!account) {
@@ -574,7 +575,13 @@ export function ClaudeBoundAccountLine({
             defaultValue: "需要重新登录",
           })}
         </span>
-      ) : terminalOnly ? (
+      ) : blocked === "wsl" ? (
+        <span className="shrink-0">
+          {t("provider.form.claudeAccount.wslHint", {
+            defaultValue: "WSL 暂不支持",
+          })}
+        </span>
+      ) : blocked === "overrideDir" ? (
         <span className="shrink-0">
           {t("provider.form.claudeAccount.terminalHint", {
             defaultValue: "从卡片打开终端使用",

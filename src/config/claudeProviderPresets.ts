@@ -2344,6 +2344,34 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.tokenfactory.nebius.com"],
   },
   {
+    name: "ClinePass",
+    websiteUrl: "https://docs.cline.bot/getting-started/clinepass",
+    apiKeyUrl: "https://app.cline.bot",
+    // Cline 官方订阅（$9.99/月，开源权重模型）。官方文档
+    // docs.cline.bot/getting-started/clinepass 只给 OpenAI Chat 端点
+    // https://api.cline.bot/api/v1/chat/completions（Bearer），没有 Anthropic
+    // 端点，走 openai_chat 路由；base 带 /api/v1，适配器拼出的 /v1/v1 会被去重。
+    // 非流式响应包在 {data:{choices}} 里（#5658），转换层已兼容。模型 ID 取
+    // 2026-10-26 官方客户端用的公开列表 api.cline.bot/api/v1/ai/cline/
+    // recommended-models 的 clinePass 段：默认用最新的 Kimi K3.1 Pro，haiku 档
+    // GLM-5.3 Flash，窗口按 models.dev 均为 1M。/api/v1/models 不列 cline-pass
+    // 模型，拉取到的都是按量计费模型，勿据此换模型
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.cline.bot/api/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "cline-pass/kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "cline-pass/glm-5.3-flash[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "cline-pass/kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "cline-pass/kimi-k3.1-pro[1M]",
+      },
+    },
+    category: "third_party",
+    icon: "cline",
+    apiFormat: "openai_chat",
+    endpointCandidates: ["https://api.cline.bot/api/v1"],
+  },
+  {
     name: "Groq",
     websiteUrl: "https://groq.com",
     apiKeyUrl: "https://console.groq.com/keys",

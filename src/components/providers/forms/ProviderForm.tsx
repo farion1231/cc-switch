@@ -330,7 +330,8 @@ export interface ProviderFormProps {
 
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
-  if (props.appId === "mcode") return <McodeProviderForm {...props} />;
+  if (props.appId === "mcode" || props.appId === "dsh")
+    return <McodeProviderForm {...props} />;
   if (props.appId === "pi" || props.appId === "omp") {
     return <PiProviderForm {...props} />;
   }
@@ -2711,6 +2712,11 @@ function ProviderFormFull({
             <ClaudeAccountSelect
               value={selectedClaudeAccountId}
               onChange={setSelectedClaudeAccountId}
+              onManageAccounts={
+                onManageAuthAccounts
+                  ? () => onManageAuthAccounts("claude_official")
+                  : undefined
+              }
             />
           )}
 

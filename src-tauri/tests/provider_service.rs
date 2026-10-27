@@ -1,8 +1,9 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, import_default_config_test_hook, read_json_file,
+    write_codex_live_atomic, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider,
+    ProviderMeta, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -170,6 +171,7 @@ command = "say"
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                dsh: false,
                 pi: false,
                 omp: false,
             },
@@ -1583,6 +1585,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                dsh: false,
                 pi: false,
                 omp: false,
             },
@@ -1649,6 +1652,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                dsh: false,
                 pi: false,
                 omp: false,
             },
@@ -2278,6 +2282,41 @@ fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
             .and_then(|v| v.as_str()),
         Some("gemini-api-key"),
         "Partner meta should set security.auth.selectedType even without packy keywords"
+    );
+}
+
+#[test]
+fn switching_back_to_imported_gemini_default_keeps_an_export_line_key() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let env_path = ensure_test_home().join(".gemini").join(".env");
+    std::fs::create_dir_all(env_path.parent().expect("env dir")).expect("create ~/.gemini");
+    std::fs::write(&env_path, "export GEMINI_API_KEY=AIza-user-key\n").expect("write .env");
+
+    let state = create_test_state().expect("create test state");
+    import_default_config_test_hook(&state, AppType::Gemini).expect("import live .env");
+    let relay = Provider::with_id(
+        "relay".to_string(),
+        "Relay".to_string(),
+        json!({
+            "env": {
+                "GEMINI_API_KEY": "relay-key",
+                "GOOGLE_GEMINI_BASE_URL": "https://relay.example"
+            }
+        }),
+        None,
+    );
+    state
+        .db
+        .save_provider("gemini", &relay)
+        .expect("save relay");
+
+    ProviderService::switch(&state, AppType::Gemini, "relay").expect("switch to relay");
+    ProviderService::switch(&state, AppType::Gemini, "default").expect("switch back");
+
+    assert_eq!(
+        std::fs::read_to_string(&env_path).expect("read .env"),
+        "export GEMINI_API_KEY=AIza-user-key\n"
     );
 }
 

@@ -1008,6 +1008,42 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "TeamoRouter Claude",
+    websiteUrl: "https://teamorouter.cn",
+    apiKeyUrl:
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    settingsConfig: {
+      name: "teamorouter_claude",
+      base_url: "https://api.teamorouter.cn",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-fable-5-1",
+          name: "Claude Fable 5.1",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "teamorouter_claude" },
+    },
+  },
+  {
     name: "PPIO",
     websiteUrl: "https://ppio.com",
     apiKeyUrl: "https://ppio.com/activity/ccswitch",
@@ -3258,6 +3294,79 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "nebius",
     suggestedDefaults: {
       model: { default: "zai-org/GLM-5.3", provider: "nebius" },
+    },
+  },
+  {
+    name: "ClinePass",
+    websiteUrl: "https://docs.cline.bot/getting-started/clinepass",
+    apiKeyUrl: "https://app.cline.bot",
+    settingsConfig: {
+      name: "clinepass",
+      // 官方只有 OpenAI Chat 端点（docs.cline.bot/getting-started/clinepass），
+      // Bearer 鉴权。阵容取 2026-10-26 官方公开列表 api.cline.bot/api/v1/ai/
+      // cline/recommended-models 的 clinePass 段，窗口按 models.dev
+      base_url: "https://api.cline.bot/api/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "cline-pass/kimi-k3.1-pro",
+          name: "Kimi K3.1 Pro",
+          context_length: 1048576,
+        },
+        { id: "cline-pass/glm-5.3", name: "GLM-5.3", context_length: 1000000 },
+        {
+          id: "cline-pass/glm-5.3-flash",
+          name: "GLM-5.3 Flash",
+          context_length: 1000000,
+        },
+        { id: "cline-pass/kimi-k3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "cline-pass/deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          context_length: 1000000,
+        },
+        {
+          id: "cline-pass/deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1000000,
+        },
+        {
+          id: "cline-pass/qwen3.8-max",
+          name: "Qwen3.8 Max",
+          context_length: 1000000,
+        },
+        {
+          id: "cline-pass/qwen3.7-plus",
+          name: "Qwen3.7 Plus",
+          context_length: 1000000,
+        },
+        {
+          id: "cline-pass/minimax-m3",
+          name: "MiniMax M3",
+          context_length: 1048576,
+        },
+        {
+          id: "cline-pass/minimax-m3.1-flash",
+          name: "MiniMax M3.1 Flash",
+          context_length: 1000000,
+        },
+        {
+          id: "cline-pass/mimo-v2.6-pro",
+          name: "MiMo V2.6 Pro",
+          context_length: 1048576,
+        },
+        {
+          id: "cline-pass/mimo-v2.6-flash",
+          name: "MiMo V2.6 Flash",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "third_party",
+    icon: "cline",
+    suggestedDefaults: {
+      model: { default: "cline-pass/kimi-k3.1-pro", provider: "clinepass" },
     },
   },
   {

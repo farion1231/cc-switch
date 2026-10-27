@@ -70,6 +70,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_omp BOOLEAN NOT NULL DEFAULT 0
@@ -104,6 +105,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -642,7 +644,16 @@ impl Database {
                         Self::set_user_version(conn, 23)?;
                     }
                     23 => {
-                        Self::migrate_v23_to_v24(conn)?;
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_dsh",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
                         Self::set_user_version(conn, 24)?;
                     }
                     _ => {
@@ -653,6 +664,18 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+            // main 和 Codex 去重开发分支都曾使用 v24；按列补齐，兼容任一侧已升级的库。
+            for table in ["mcp_servers", "skills"] {
+                if Self::table_exists(conn, table)? {
+                    Self::add_column_if_missing(
+                        conn,
+                        table,
+                        "enabled_dsh",
+                        "BOOLEAN NOT NULL DEFAULT 0",
+                    )?;
+                }
+            }
+            Self::ensure_codex_usage_dedup_schema(conn)?;
             Ok(())
         })();
 
@@ -3784,7 +3807,7 @@ impl Database {
         Ok(())
     }
 
-    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+    fn ensure_codex_usage_dedup_schema(conn: &Connection) -> Result<(), AppError> {
         if !Self::table_exists(conn, "proxy_request_logs")? {
             return Ok(());
         }
@@ -4003,6 +4026,145 @@ mod tests {
     }
 
     #[test]
+    fn main_v24_database_gains_codex_dedup_schema_without_changing_history() -> Result<(), AppError>
+    {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "DROP INDEX idx_codex_session_matched_proxy;
+             DROP INDEX idx_codex_usage_response;
+             ALTER TABLE proxy_request_logs DROP COLUMN codex_dedup_version;
+             ALTER TABLE proxy_request_logs DROP COLUMN matched_proxy_request_id;
+             ALTER TABLE proxy_request_logs DROP COLUMN matched_proxy_cost_usd;
+             ALTER TABLE proxy_request_logs DROP COLUMN cache_write_known;
+             ALTER TABLE proxy_request_logs DROP COLUMN response_id;
+             INSERT INTO proxy_request_logs
+                 (request_id, provider_id, app_type, model, latency_ms, status_code,
+                  created_at, data_source, total_cost_usd)
+             VALUES ('historical', '_codex_session', 'codex', 'gpt-5', 1, 200,
+                     123, 'codex_session', '0.25');
+             INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
+             VALUES ('mcp', 'MCP', '{}', 1);
+             INSERT INTO skills (id, name, directory, enabled_dsh)
+             VALUES ('skill', 'Skill', 'skill', 1);",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+
+        for _ in 0..2 {
+            Database::create_tables_on_conn(&conn)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, 24);
+            let history: (
+                i64,
+                Option<String>,
+                Option<String>,
+                i64,
+                Option<String>,
+                String,
+            ) = conn.query_row(
+                "SELECT codex_dedup_version, matched_proxy_request_id,
+                            matched_proxy_cost_usd, cache_write_known, response_id, total_cost_usd
+                     FROM proxy_request_logs WHERE request_id = 'historical'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )?;
+            assert_eq!(history, (0, None, None, 0, None, "0.25".to_string()));
+            for table in ["mcp_servers", "skills"] {
+                let enabled: bool =
+                    conn.query_row(&format!("SELECT enabled_dsh FROM {table}"), [], |row| {
+                        row.get(0)
+                    })?;
+                assert!(enabled, "{table}");
+            }
+            for index in [
+                "idx_codex_session_matched_proxy",
+                "idx_codex_usage_response",
+            ] {
+                let exists: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+                    [index],
+                    |row| row.get(0),
+                )?;
+                assert!(exists, "{index}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn codex_dev_v24_database_gains_dsh_flags_without_changing_links() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "ALTER TABLE mcp_servers DROP COLUMN enabled_dsh;
+             ALTER TABLE skills DROP COLUMN enabled_dsh;
+             INSERT INTO mcp_servers (id, name, server_config, enabled_omp)
+             VALUES ('mcp', 'MCP', '{}', 1);
+             INSERT INTO skills (id, name, directory, enabled_kimi)
+             VALUES ('skill', 'Skill', 'skill', 1);
+             INSERT INTO proxy_request_logs
+                 (request_id, provider_id, app_type, model, latency_ms, status_code,
+                  created_at, data_source, codex_dedup_version, matched_proxy_request_id,
+                  matched_proxy_cost_usd, cache_write_known, response_id)
+             VALUES ('linked', '_codex_session', 'codex', 'gpt-5', 1, 200,
+                     123, 'codex_session', 1, 'proxy', '0.25', 1, 'resp-1');",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+
+        for enabled_dsh in [false, true] {
+            Database::create_tables_on_conn(&conn)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, 24);
+            for (table, existing_flag) in
+                [("mcp_servers", "enabled_omp"), ("skills", "enabled_kimi")]
+            {
+                let flags: (bool, bool) = conn.query_row(
+                    &format!("SELECT {existing_flag}, enabled_dsh FROM {table}"),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                assert_eq!(flags, (true, enabled_dsh), "{table}");
+                conn.execute(&format!("UPDATE {table} SET enabled_dsh = 1"), [])?;
+            }
+            let link: (i64, String, String, i64, String) = conn.query_row(
+                "SELECT codex_dedup_version, matched_proxy_request_id, matched_proxy_cost_usd,
+                        cache_write_known, response_id
+                 FROM proxy_request_logs WHERE request_id = 'linked'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )?;
+            assert_eq!(
+                link,
+                (
+                    1,
+                    "proxy".to_string(),
+                    "0.25".to_string(),
+                    1,
+                    "resp-1".to_string()
+                )
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
@@ -4066,6 +4228,38 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn dsh_migration_preserves_existing_flags_and_persists_mcp_and_skill_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for (table, flag) in [
+            ("mcp_servers", "enabled_kimi"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_dsh FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"node"}, "apps":{"dsh":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Dsh, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.dsh && saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "apps":{"dsh":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.dsh);
+        assert!(db.get_all_installed_skills()?["s"].apps.claude);
         Ok(())
     }
 
