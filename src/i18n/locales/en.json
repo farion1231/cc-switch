@@ -240,10 +240,12 @@
         "missing": "Account not on this computer",
         "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
-        "help": "Switching to this card signs Claude Code in to the selected account, and claude started anywhere afterwards uses it. To use several accounts at once, use Open Terminal on the card.",
+        "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
+        "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
         "reauthBadge": "Re-login required",
         "terminalHint": "Use via Open Terminal",
+        "wslHint": "Not supported in WSL",
         "plan": {
           "pro": "Pro",
           "max": "Max",
@@ -1659,7 +1661,7 @@
       "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!",
-      "dit": "DIT.ai is an AI token exchange for lower-cost multi-provider routing: one OpenAI-compatible API reaches 50+ leading models including GPT, Claude, Gemini, DeepSeek, Grok, and Llama, with providers competing across 160+ routes, typically 30–70% below official pricing. CC Switch users can register via this link and use promo code \"ccswitch\" to claim a $5 welcome coupon!",
+      "dit": "Same models. Often a much lower bill. One OpenAI-compatible API for 50+ models: GPT, Claude, Gemini, and more, with routing across 160+ providers to the best available price-to-quality option, typically 30–70% below official list pricing. Change your base URL and API key, keep your stack, and start calling. CC Switch users: register via this link and use code \"cc-switch\" for 30% off your welcome top-up.",
       "buytoken": "BuyToken offers relay access for Claude Code, Codex, DeepSeek, and more, with enterprise-grade concurrency and fast invoicing, built to be a stable, long-running service. CC Switch users who register via this link get ¥3 in trial credit and 10% off their first top-up!",
       "vapi": "V-API is a three-year-old brand offering stable, fast, and secure high-quality LLM API services for individuals, developers, and businesses, with formal contracts and official invoices (general / special VAT). CC Switch users who register via this link get ¥2 off and 10% off their first order!"
     },
@@ -4901,8 +4903,9 @@
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
-      "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings (for example, to WSL), so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
-      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, every newly started claude uses it. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
+      "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
+      "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
     },
     "addAccount": "Add account",
     "accountMenu": "More actions for {{login}}",
@@ -4967,7 +4970,8 @@
       "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
       "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
       "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
-      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in."
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
+      "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
     }
   },
   "kimi": {
@@ -5064,5 +5068,12 @@
       "providerMissing": "This Oh My Pi provider is no longer saved.",
       "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
     }
+  },
+  "dsh": {
+    "empty": {
+      "title": "Add a DeepSeek Harness provider",
+      "description": "Configure an endpoint, API key and models. Existing custom providers appear here automatically."
+    },
+    "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
   }
 }

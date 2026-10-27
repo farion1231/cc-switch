@@ -240,10 +240,12 @@
         "missing": "不在这台电脑上的账号",
         "manage": "添加或管理 Claude 账号",
         "helpTerminal": "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
-        "help": "切到这张卡后，Claude Code 的登录会换成选中的账号，任何地方新启动的 claude 都用它。想同时用几个号，从卡片「打开终端」。",
+        "helpWsl": "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
+        "help": "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
         "claudeAccount": "Claude 账号",
         "reauthBadge": "需要重新登录",
         "terminalHint": "从卡片打开终端使用",
+        "wslHint": "WSL 暂不支持",
         "plan": {
           "pro": "Pro",
           "max": "Max",
@@ -1659,7 +1661,7 @@
       "alltokens_si": "AllTokens SI 秉持「稳定为基，真实为本」，是专为企业打造的 AI Token 中转与团队协作平台：成员、密钥、用量与余额统一纳入企业控制台，以清晰的权限与额度配置，让团队协作有据可查、安心可控。",
       "openmodel": "OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，即可享受首次充值九折优惠！",
       "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！",
-      "dit": "DIT.ai 是面向多供应商低价路由的 AI Token 交易市场：一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流模型，160 多条线路实时竞价，价格通常比官方低 30–70%。CC Switch 用户通过此链接注册并使用优惠码 \"ccswitch\"，可领取 5 美元新人券！",
+      "dit": "同样的模型，更低的账单，一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini 等 50 多个模型，并在 160 多家供应商之间路由到性价比最优的选项，价格通常比官方定价低 30–70%。只需更换 Base URL 和 API Key，即可在保留现有技术栈的情况下开始调用。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，新人首充可享 7 折！",
       "buytoken": "BuyToken 提供 Claude Code、Codex、DeepSeek 等各类中转服务，支持企业级并发、可极速开票，专注做稳定长久站。CC Switch 用户通过此链接注册可得 3 元体验额度，首充享 9 折！",
       "vapi": "V-API 是三年老品牌，为个人、开发者和企业提供稳定、快速、安全的高品质大语言模型 API 服务，支持合同签约、正规开票（普票 / 专票）。CC Switch 用户通过此链接注册，首单立减 2 元并享 9 折优惠！"
     },
@@ -4901,8 +4903,9 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
-      "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录（例如指向 WSL），切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
-      "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，新启动的 claude 都用这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。"
+      "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
+      "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
+      "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。"
     },
     "addAccount": "添加账号",
     "accountMenu": "{{login}} 的更多操作",
@@ -4967,7 +4970,8 @@
       "loginMaybeExpired": "登录可能已过期，切换前请重新登录",
       "statusLoadFailed": "无法读取 Claude 账号，请重试。",
       "empty": "还没有添加 Claude 账号。要在多个订阅账号之间切换时在这里登录。",
-      "removeNote": "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。"
+      "removeNote": "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。",
+      "wslUnsupported": "Claude 配置目录在 WSL 里，暂不支持添加和切换 Claude 账号。"
     }
   },
   "kimi": {
@@ -5064,5 +5068,12 @@
       "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。",
       "legacyModelsJson": "Oh My Pi 目录里还是旧的 models.json，omp 会在下次启动时把它迁移成 models.yml。请先运行一次 omp，再回来添加供应商。"
     }
+  },
+  "dsh": {
+    "empty": {
+      "title": "添加 DeepSeek Harness 供应商",
+      "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"
+    },
+    "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
   }
 }
