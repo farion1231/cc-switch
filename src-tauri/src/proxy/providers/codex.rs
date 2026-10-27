@@ -84,6 +84,28 @@ pub fn is_codex_responses_endpoint(endpoint: &str) -> bool {
     )
 }
 
+/// DeepSeek's native Responses endpoint requires every tool output to be
+/// adjacent to its call. Codex can interleave hook or reasoning items between
+/// them, so this provider needs a request-boundary reorder.
+pub fn codex_provider_needs_native_responses_tool_pairing_repair(provider: &Provider) -> bool {
+    let base_url = provider
+        .settings_config
+        .get("base_url")
+        .or_else(|| provider.settings_config.get("baseURL"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(|value| value.as_str())
+                .and_then(extract_codex_base_url_from_toml)
+        });
+    base_url.is_some_and(|url| {
+        crate::codex_config::codex_url_host_matches_any(&url, &["api.deepseek.com"])
+    })
+}
+
 pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
     is_codex_responses_endpoint(endpoint) && codex_provider_uses_chat_completions(provider)
 }
@@ -1319,6 +1341,30 @@ wire_api = "responses"
             "/v1/responses/compact?client_version=0.149"
         ));
         assert!(!is_codex_responses_endpoint("/alpha/search"));
+    }
+
+    #[test]
+    fn native_deepseek_responses_needs_tool_pairing_repair() {
+        let deepseek = create_provider(json!({
+            "config": r#"
+model = "deepseek-flash"
+model_provider = "deepseek"
+
+[model_providers.deepseek]
+base_url = "https://api.deepseek.com"
+wire_api = "responses"
+"#
+        }));
+        assert!(codex_provider_needs_native_responses_tool_pairing_repair(
+            &deepseek
+        ));
+
+        let other = create_provider(json!({
+            "base_url": "https://example.com/v1"
+        }));
+        assert!(!codex_provider_needs_native_responses_tool_pairing_repair(
+            &other
+        ));
     }
 
     #[test]
