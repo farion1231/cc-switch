@@ -99,6 +99,9 @@ libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
+# 与 tauri→wry 依赖树里锁定的版本一致（Cargo.lock），用于直接复用其 COM 绑定；
+# 锁版本升级时此处须同步，否则会拉起第二份 webview2-com。
+webview2-com = "=0.38.2"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
