@@ -4894,6 +4894,19 @@ pub async fn list_tool_installations(
     probe_tool_installations(tools).await
 }
 
+/// 这个工具的配置目录是不是指向 WSL（只有 Windows 上会是）。
+pub(crate) fn tool_runs_in_wsl(tool: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        wsl_distro_for_tool(tool).is_some()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = tool;
+        false
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     let override_dir = match tool {
