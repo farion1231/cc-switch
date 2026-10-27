@@ -176,16 +176,11 @@ impl CodexToolContext {
         });
         let spec = CodexToolSpec {
             // A `custom` child inside a namespace carrier (issue #7565) keeps
-            // the custom input encoding on the chat side, but is registered
-            // with namespace-function semantics: `custom_tool_call` carries no
-            // verified `namespace` field, while `function_call` + `namespace`
-            // is the shape the function children of the same carriers already
-            // round-trip through.
-            kind: if namespace.is_some() {
-                CodexToolKind::Namespace
-            } else {
-                CodexToolKind::Custom
-            },
+            // the custom kind end-to-end: `custom_tool_call` in the Codex
+            // protocol carries a `namespace` field (ResponseItem::CustomToolCall),
+            // so the chat side only borrows the flattened name while the item
+            // stays `custom_tool_call` with the raw-string input.
+            kind: CodexToolKind::Custom,
             name,
             namespace: namespace.map(ToString::to_string),
         };
@@ -856,7 +851,7 @@ fn append_responses_item_as_chat_message(
         }
         Some("custom_tool_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            let mut tool_call = responses_custom_tool_call_to_chat_tool_call(item);
+            let mut tool_call = responses_custom_tool_call_to_chat_tool_call(item, tool_context);
             copy_tool_call_extra_content(&mut tool_call, item);
             register_known_tool_call_id(known_tool_call_ids, &tool_call);
             pending_tool_calls.push(tool_call);
@@ -1862,20 +1857,27 @@ fn responses_function_call_to_chat_tool_call(
     })
 }
 
-fn responses_custom_tool_call_to_chat_tool_call(item: &Value) -> Value {
+fn responses_custom_tool_call_to_chat_tool_call(
+    item: &Value,
+    tool_context: &CodexToolContext,
+) -> Value {
     let call_id = item
         .get("call_id")
         .or_else(|| item.get("id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let namespace = item.get("namespace").and_then(|v| v.as_str());
+    // 历史里带 namespace 的 custom_tool_call 要和本轮声明用同一个拍平名
+    // （functions__exec），否则上游看到的历史工具名对不上。
+    let chat_name = tool_context.chat_name_for_response_function(name, namespace);
     let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
 
     json!({
         "id": call_id,
         "type": "function",
         "function": {
-            "name": name,
+            "name": chat_name,
             "arguments": canonical_json_string(&json!({ CUSTOM_TOOL_INPUT_FIELD: input }))
         }
     })
@@ -1925,10 +1927,12 @@ fn responses_tool_choice_to_chat(tool_choice: &Value, tool_context: &CodexToolCo
         }
         Value::Object(obj) if obj.get("type").and_then(|v| v.as_str()) == Some("custom") => {
             let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let namespace = obj.get("namespace").and_then(|v| v.as_str());
+            let chat_name = tool_context.chat_name_for_response_function(name, namespace);
             json!({
                 "type": "function",
                 "function": {
-                    "name": name
+                    "name": chat_name
                 }
             })
         }
@@ -2278,7 +2282,13 @@ pub(crate) fn response_tool_call_item_from_chat_name(
             response_tool_search_call_item(call_id, status, arguments, reasoning)
         }
         Some(spec) if spec.kind == CodexToolKind::Custom => response_custom_tool_call_item(
-            item_id, status, call_id, &spec.name, arguments, reasoning,
+            item_id,
+            status,
+            call_id,
+            &spec.name,
+            spec.namespace.as_deref(),
+            arguments,
+            reasoning,
         ),
         Some(spec) => response_function_call_item_with_namespace(
             item_id,
@@ -2318,6 +2328,7 @@ fn response_custom_tool_call_item(
     status: &str,
     call_id: &str,
     name: &str,
+    namespace: Option<&str>,
     arguments: &str,
     reasoning: Option<&str>,
 ) -> Value {
@@ -2330,6 +2341,11 @@ fn response_custom_tool_call_item(
         "name": name,
         "input": input
     });
+    // Codex 按 (name, namespace) 拼工具名并校验载荷类型；省略 namespace 时
+    // `functions` 是默认命名空间也能匹配，但显式写上更直观。
+    if let Some(namespace) = namespace.filter(|value| !value.is_empty()) {
+        item["namespace"] = json!(namespace);
+    }
     super::codex_chat_common::attach_optional_reasoning_content_field(&mut item, reasoning);
     item
 }
@@ -4194,14 +4210,13 @@ mod tests {
     }
 
     #[test]
-    fn additional_tools_namespace_custom_child_is_lifted_and_round_trips_as_function() {
+    fn additional_tools_namespace_custom_child_is_lifted_and_round_trips_as_custom() {
         // No real capture of a `custom` child inside a namespace carrier is
-        // available (issue #7565), so the lift is deliberate: the chat side
-        // keeps the custom input encoding under the flattened namespace name,
-        // and the call comes back as `function_call` + `namespace` — the shape
-        // the function children of the same carriers already round-trip
-        // through — instead of `custom_tool_call` with an unverified
-        // `namespace` field.
+        // available (issue #7565), but the Codex protocol's
+        // `ResponseItem::CustomToolCall` carries a `namespace` field, so the
+        // call round-trips as `custom_tool_call` + `namespace` with the
+        // raw-string input — registering it as a function payload would make
+        // Codex reject the invocation as an incompatible payload.
         let request = json!({
             "model": "m",
             "input": [
@@ -4238,6 +4253,8 @@ mod tests {
         );
 
         let context = build_codex_tool_context_from_request(&request);
+        // 流式路径与非流式共用同一注册表：拍平名必须按 custom 载荷分发。
+        assert!(context.is_custom_tool_chat_name("functions__exec"));
         let chat = json!({
             "id": "chatcmpl_custom_ns",
             "object": "chat.completion",
@@ -4260,9 +4277,75 @@ mod tests {
         });
 
         let restored = chat_completion_to_response_with_context(chat, &context).unwrap();
-        assert_eq!(restored["output"][0]["type"], "function_call");
+        assert_eq!(restored["output"][0]["type"], "custom_tool_call");
         assert_eq!(restored["output"][0]["namespace"], "functions");
         assert_eq!(restored["output"][0]["name"], "exec");
+        // input 回原始字符串，不再包 {"input": ...}。
+        assert_eq!(restored["output"][0]["input"], "print(1)");
+    }
+
+    #[test]
+    fn namespaced_custom_tool_call_history_replays_with_flattened_chat_name() {
+        let request = json!({
+            "model": "m",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "tools": [
+                                {"type": "custom", "name": "exec", "description": "Run raw code."}
+                            ]
+                        }
+                    ]
+                },
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+        let context = build_codex_tool_context_from_request(&request);
+
+        let history = json!({
+            "model": "m",
+            "tools": [],
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {
+                    "type": "custom_tool_call",
+                    "id": "ctc_exec",
+                    "call_id": "call_exec",
+                    "status": "completed",
+                    "name": "exec",
+                    "namespace": "functions",
+                    "input": "print(1)"
+                },
+                {"type": "custom_tool_call_output", "call_id": "call_exec", "output": "ok"}
+            ]
+        });
+
+        let chat = {
+            let mut messages = Vec::new();
+            append_responses_input_as_chat_messages(
+                history.get("input").unwrap(),
+                &mut messages,
+                &context,
+            )
+            .unwrap();
+            messages
+        };
+        let assistant_tool_calls = chat[1]["tool_calls"]
+            .as_array()
+            .expect("history custom_tool_call replays as a chat tool call");
+        assert_eq!(
+            assistant_tool_calls[0]["function"]["name"],
+            "functions__exec"
+        );
+        assert_eq!(
+            assistant_tool_calls[0]["function"]["arguments"],
+            json!("{\"input\":\"print(1)\"}")
+        );
     }
 
     #[test]
