@@ -698,7 +698,7 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
                 supports_1m: false,
             })
             .collect::<Vec<_>>();
-        routes.sort_by(|a, b| a.route_id.cmp(&b.route_id));
+        routes.sort_by_key(|route| (claude_role_rank(&route.route_id), route.route_id.clone()));
         return Ok(routes);
     }
 
@@ -2096,10 +2096,10 @@ mod tests {
             assert_eq!(
                 profile["inferenceModels"],
                 json!([
-                    "claude-fable-5",
-                    "claude-haiku-4-5",
+                    "claude-sonnet-5",
                     "claude-opus-5",
-                    "claude-sonnet-5"
+                    "claude-fable-5",
+                    "claude-haiku-4-5"
                 ])
             );
             let models = model_list_response(&provider).expect("local model discovery");
@@ -2136,6 +2136,25 @@ mod tests {
         }
         map_proxy_request_model(json!({"model": "unconfigured-model"}), &provider)
             .expect_err("default native routes must not accept arbitrary model names");
+    }
+
+    #[test]
+    fn claude_desktop_native_default_routes_follow_tier_order() {
+        let provider = direct_provider("native");
+        let route_ids: Vec<String> = proxy_model_routes(&provider)
+            .expect("native default routes")
+            .into_iter()
+            .map(|route| route.route_id)
+            .collect();
+        assert_eq!(
+            route_ids,
+            [
+                "claude-sonnet-5",
+                CURRENT_OPUS_ROUTE_ID,
+                "claude-fable-5",
+                "claude-haiku-4-5",
+            ]
+        );
     }
 
     #[test]
@@ -2270,7 +2289,7 @@ mod tests {
         };
         assert_eq!(
             names(&provider),
-            ["claude-haiku-4-5", "claude-opus-5-5", "claude-sonnet-5-5"]
+            ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5"]
         );
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
@@ -2302,10 +2321,10 @@ mod tests {
         assert_eq!(
             names(&provider),
             [
-                "claude-haiku-4-5",
+                "claude-sonnet-5-5",
                 "claude-opus-5",
                 "claude-opus-5-5",
-                "claude-sonnet-5-5"
+                "claude-haiku-4-5"
             ]
         );
         let mapped = map_proxy_request_model(json!({ "model": "claude-opus-5" }), &provider)
