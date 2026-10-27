@@ -94,9 +94,15 @@ const COMMIT_DEADLINE: Duration = Duration::from_secs(30);
 /// 同一进程里的切换串行。
 static SWITCH: Mutex<()> = Mutex::new(());
 
-/// 切卡时为什么不能切换登录：设了 Claude 配置目录覆盖（默认槽位不在 `~/.claude`，例如指向
-/// WSL）。这时绑号卡只能从卡片「打开终端」使用。
+/// 切卡时为什么不能切换登录：
+/// - `"wsl"`：Claude 配置目录指向 WSL（Windows）。登录、查额度、打开终端都跑在 Windows 上，
+///   用不到 WSL 里的 Claude Code，账号功能整体不可用。
+/// - `"overrideDir"`：设了别的 Claude 配置目录覆盖（默认槽位不在 `~/.claude`）。这时绑号卡
+///   只能从卡片「打开终端」使用。
 pub fn blocked_reason() -> Option<&'static str> {
+    if crate::commands::tool_runs_in_wsl("claude") {
+        return Some("wsl");
+    }
     crate::settings::get_claude_override_dir().map(|_| "overrideDir")
 }
 
