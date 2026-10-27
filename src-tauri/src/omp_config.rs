@@ -741,11 +741,28 @@ fn mapping_key(line: &str) -> Result<String, AppError> {
 /// Anchors, aliases, tags and merge keys can't be edited as text without breaking a
 /// reference elsewhere; refuse them before writing.
 fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
+    if has_yaml_reference_tokens(line) {
+        return Err(manual_edit());
+    }
+    Ok(())
+}
+
+/// Whether a YAML line has an anchor, alias, tag or merge key outside quotes and comments.
+/// `&`, `*` and `!` are only YAML indicators where a node starts: inside a plain scalar
+/// (`name: Search & Fetch`, which serde_yaml and Bun both write unquoted) they are
+/// ordinary text.
+pub(crate) fn has_yaml_reference_tokens(line: &str) -> bool {
     let mut quote = None;
     let mut escaped = false;
-    let mut boundary = true;
+    // A node may start here: line start, after `:`, a flow opener or `,`, and after a
+    // `- `/`? ` entry marker that itself sits where a node starts. Whitespace keeps the
+    // state; any other character is node content.
+    let mut node_start = true;
+    // `#` starts a comment only at line start or after whitespace.
+    let mut after_space = true;
     let mut previous = [' '; 2];
-    for c in line.chars() {
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
         if escaped {
             escaped = false;
             continue;
@@ -754,27 +771,39 @@ fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
             escaped = true;
             continue;
         }
+        if quote == Some('\'') && c == '\'' && chars.peek() == Some(&'\'') {
+            // `''` is an escaped quote inside a single-quoted scalar.
+            chars.next();
+            continue;
+        }
         if quote == Some(c) {
             quote = None;
-            boundary = false;
+            node_start = false;
+            after_space = false;
             continue;
         }
         if quote.is_some() {
             continue;
         }
         if c == ':' && previous == ['<', '<'] {
-            return Err(manual_edit());
+            return true;
         }
         match c {
-            '"' | '\'' if boundary => quote = Some(c),
-            '#' if boundary => break,
-            '&' | '*' | '!' if boundary => return Err(manual_edit()),
+            '#' if after_space => break,
+            '"' | '\'' if node_start => quote = Some(c),
+            '&' | '*' | '!' if node_start => return true,
             _ => {}
         }
         previous = [previous[1], c];
-        boundary = c.is_whitespace() || matches!(c, ':' | '[' | '{' | ',');
+        after_space = c.is_whitespace();
+        if !c.is_whitespace() {
+            let entry_marker = node_start
+                && matches!(c, '-' | '?')
+                && chars.peek().is_none_or(|next| next.is_whitespace());
+            node_start = entry_marker || matches!(c, ':' | '[' | '{' | ',');
+        }
     }
-    Ok(())
+    false
 }
 
 #[derive(Clone, Copy)]
@@ -1124,6 +1153,35 @@ mod tests {
             "[]\n",
             "providers: 42\n",
             "---\nproviders:\n...\n",
+        ] {
+            assert!(
+                edit_provider(text, "p", Some(&provider())).is_err(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn edits_plain_scalars_that_contain_indicator_characters() {
+        // Bun's YAML.stringify (omp's models.json migration) and serde_yaml both leave
+        // these unquoted; they are text, not anchors, aliases or tags.
+        let text = "providers:\n  other:\n    baseUrl: https://x.example/v1?a=1&b=2\n    models:\n      - id: m\n        name: Search & Fetch * x\n        note: Claude! a-b 'n # c *d\n        tip: 'it''s \"quoted: * text\"'\n        why: What?! a-!b\n        flag: -!important\n  p:\n    apiKey: old\n";
+        let after = edit_provider(text, "p", Some(&provider())).unwrap();
+        assert_eq!(providers(&parse(&after).unwrap()).unwrap()["p"], provider());
+
+        let mut named = provider();
+        named["models"][0]["name"] = json!("Search & Fetch * x ! What?! a-!b");
+        let once = edit_provider("", "p", Some(&named)).unwrap();
+        let twice = edit_provider(&once, "p", Some(&provider())).unwrap();
+        assert_eq!(providers(&parse(&twice).unwrap()).unwrap()["p"], provider());
+
+        for text in [
+            "providers:\n  p:\n    apiKey: a\n    headers: [*anchor]\n",
+            "providers:\n  p:\n    models:\n      - &m {id: a}\n",
+            "providers:\n  p:\n    apiKey: key\n    compat: {a: !!str b}\n",
+            "providers:\n  p:\n    apiKey: key\n    headers: {'a'' \"x:\"': &a hello}\n",
+            "providers:\n  p:\n    apiKey: key\n    headers: {X: -'abc, Y: &a b}\n",
+            "providers:\n  p:\n    models:\n      - - *anchor\n",
         ] {
             assert!(
                 edit_provider(text, "p", Some(&provider())).is_err(),

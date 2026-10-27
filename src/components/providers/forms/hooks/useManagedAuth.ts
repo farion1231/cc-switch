@@ -71,9 +71,12 @@ export function useManagedAuth(
 
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      // 只有 Codex（设备码）和 Antigravity（本机回调服务）在后端占着资源，要通知取消
+      // Codex（设备码）、Antigravity（本机回调服务）和 Claude 官方账号（后台的 claude 进程）
+      // 在后端占着资源，要通知取消
       if (
-        (authProvider !== "codex_oauth" && authProvider !== "agy_oauth") ||
+        (authProvider !== "codex_oauth" &&
+          authProvider !== "agy_oauth" &&
+          authProvider !== "claude_official") ||
         !deviceCode
       )
         return true;
@@ -150,10 +153,12 @@ export function useManagedAuth(
       }
       if (request.generation !== flowGenerationRef.current) return;
 
-      try {
-        await settingsApi.openExternal(response.verification_uri);
-      } catch (e) {
-        console.debug("[ManagedAuth] Failed to open browser:", e);
+      if (!response.browser_opened) {
+        try {
+          await settingsApi.openExternal(response.verification_uri);
+        } catch (e) {
+          console.debug("[ManagedAuth] Failed to open browser:", e);
+        }
       }
       if (request.generation !== flowGenerationRef.current) return;
 
