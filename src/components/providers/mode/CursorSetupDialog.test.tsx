@@ -638,6 +638,8 @@ function renderPanel(
           onDelete: vi.fn(),
           onDuplicate: vi.fn(),
           onOpenWebsite: vi.fn(),
+          // 上游 v7 把生效状态徽标改成 portal 到页头槽位；测试里挂到 body，供 findByLabelText 等查询
+          statusSlot: document.body,
         }),
       ),
     ),
@@ -836,7 +838,8 @@ describe("SwitchModePanel — 进入路由 / 回到直连并使用 也要过接�
     });
 
     // 等模式读到再切到「直连」页签：卡片上的「回到直连并使用」才会渲染
-    await screen.findByText("→ Kimi");
+    // 页头始终显示当前生效连接（上游 v7 改版后不再拼「→ 」前缀）
+    await screen.findByLabelText("mode.status.routeLead Kimi");
     fireEvent.click(
       screen.getByRole("button", { name: /mode\.names\.direct/ }),
     );
@@ -901,12 +904,13 @@ describe("SwitchModePanel — 进入路由 / 回到直连并使用 也要过接�
             stack: false,
             error: "attach 失败",
           },
+          statusSlot: document.body,
         }),
       ),
     );
 
     // 等模式读到（routeId 有了）再点重试：重试要按当前路由目标那家过闸
-    await screen.findByText("→ Other");
+    await screen.findByLabelText("mode.status.routeLead Other");
     fireEvent.click(
       await screen.findByRole("button", { name: "common.retry" }),
     );

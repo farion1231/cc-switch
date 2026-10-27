@@ -386,6 +386,7 @@ describe("UsageDashboard", () => {
         opencode: false,
         openclaw: true,
         hermes: true,
+        cursor: false,
         pi: false,
         mcode: false,
         kimi: false,
