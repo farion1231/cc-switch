@@ -26,6 +26,7 @@ const getCompressionMock = vi.fn();
 const setCompressionMock = vi.fn();
 const diskUsageMock = vi.fn();
 const migrateManagedMock = vi.fn();
+const repairLegacyOfficialMock = vi.fn();
 const restoreHistoryMock = vi.fn();
 const hasBackupMock = vi.fn().mockResolvedValue(false);
 const historyToastError = vi.fn();
@@ -45,6 +46,7 @@ vi.mock("@/lib/api", () => ({
     hasCodexUnifyHistoryBackup: () => hasBackupMock(),
     restoreCodexUnifiedHistory: () => restoreHistoryMock(),
     migrateManagedCodexHistory: () => migrateManagedMock(),
+    repairLegacyOfficialCodexHistory: () => repairLegacyOfficialMock(),
     getCodexSessionCompression: () => getCompressionMock(),
     setCodexSessionCompression: (enabled: boolean) =>
       setCompressionMock(enabled),
@@ -388,5 +390,203 @@ describe("Codex managed history migration consent", () => {
     expect(
       screen.getByRole("switch", { name: "settings.unifyCodexSessionHistory" }),
     ).toHaveAttribute("aria-checked", "false");
+  });
+});
+
+describe("Codex legacy official history repair consent", () => {
+  beforeEach(() => {
+    hasBackupMock.mockReset().mockResolvedValue(false);
+    repairLegacyOfficialMock.mockReset();
+    historyToastError.mockReset();
+    historyToastWarning.mockReset();
+    historyToastSuccess.mockReset();
+    getCompressionMock.mockResolvedValue(false);
+    diskUsageMock.mockResolvedValue(0);
+  });
+
+  it("offers repair while unification is off and requires explicit confirmation", async () => {
+    repairLegacyOfficialMock.mockResolvedValue({
+      migratedJsonlFiles: 1,
+      migratedStateRows: 1,
+      skippedJsonlFiles: 0,
+      skippedStateRows: 0,
+      retryPending: false,
+    });
+    const onChange = await renderWith(false);
+    expect(repairLegacyOfficialMock).not.toHaveBeenCalled();
+    const open = () =>
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "settings.codexLegacyOfficialHistoryAction",
+        }),
+      );
+    open();
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "common.cancel",
+      }),
+    );
+    expect(repairLegacyOfficialMock).not.toHaveBeenCalled();
+    open();
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    await waitFor(() =>
+      expect(repairLegacyOfficialMock).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() => expect(historyToastSuccess).toHaveBeenCalled());
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["legacy_route_in_use", "settings.codexLegacyOfficialHistoryInUse"],
+    ["state_db_unlockable", "settings.codexHistoryStateUnavailable"],
+  ])("reports %s without claiming success", async (skippedReason, message) => {
+    repairLegacyOfficialMock.mockResolvedValue({
+      migratedJsonlFiles: 0,
+      migratedStateRows: 0,
+      skippedJsonlFiles: 0,
+      skippedStateRows: 0,
+      retryPending: true,
+      skippedReason,
+    });
+    await renderWith(false);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    await waitFor(() =>
+      expect(historyToastWarning).toHaveBeenCalledWith(
+        message,
+        expect.anything(),
+      ),
+    );
+    expect(historyToastSuccess).not.toHaveBeenCalled();
+    expect(historyToastError).not.toHaveBeenCalled();
+  });
+
+  it("reports partial counts and leaves retries to the user", async () => {
+    repairLegacyOfficialMock.mockResolvedValue({
+      migratedJsonlFiles: 1,
+      migratedStateRows: 2,
+      skippedJsonlFiles: 3,
+      skippedStateRows: 4,
+      retryPending: true,
+    });
+    await renderWith(false);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    await waitFor(() =>
+      expect(historyToastWarning).toHaveBeenCalledWith(
+        "settings.codexLegacyOfficialHistoryPartial:1/2/3/4 settings.codexHistoryRetryPending",
+        expect.anything(),
+      ),
+    );
+    expect(repairLegacyOfficialMock).toHaveBeenCalledTimes(1);
+    expect(historyToastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("reports a repair failure without automatic retry or changing settings", async () => {
+    repairLegacyOfficialMock.mockRejectedValue(new Error("index busy"));
+    const onChange = await renderWith(false);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    await waitFor(() =>
+      expect(historyToastError).toHaveBeenCalledWith(
+        "settings.codexHistoryMigrationFailed",
+        expect.objectContaining({
+          description: "settings.codexHistoryMigrationRecovery",
+        }),
+      ),
+    );
+    expect(repairLegacyOfficialMock).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(historyToastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("blocks conflicting history actions while repair is pending", async () => {
+    let finish!: (value: unknown) => void;
+    repairLegacyOfficialMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await act(async () => {
+      render(
+        <CodexAuthSettings
+          settings={{ unifyCodexSessionHistory: true } as SettingsFormState}
+          onChange={vi.fn()}
+        />,
+      );
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "common.cancel" }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", {
+        name: "settings.codexLegacyOfficialHistoryAction",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("switch", {
+        name: "settings.unifyCodexSessionHistory",
+        hidden: true,
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: "settings.codexManagedHistoryAction",
+        hidden: true,
+      }),
+    ).toBeDisabled();
+    await act(async () =>
+      finish({
+        migratedJsonlFiles: 0,
+        migratedStateRows: 0,
+        skippedJsonlFiles: 0,
+        skippedStateRows: 0,
+        retryPending: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(repairLegacyOfficialMock).toHaveBeenCalledTimes(1);
   });
 });

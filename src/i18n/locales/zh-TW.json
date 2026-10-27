@@ -414,6 +414,9 @@
       "migrateExisting": "同時遷入現有官方會話歷史",
       "confirm": "我已了解，繼續開啟"
     },
+    "codexLegacyOfficialHistory": {
+      "message": "請先退出 Codex。將殘留的 cc-switch-official 舊官方聊天修回內建官方連線（openai），即使先前已完成遷移也可再次檢查。統一歷史開啟時，修復後的聊天仍使用官方連線。\n\n先備份原件，再修復可核驗的聊天及索引；無法安全處理的項目會略過並計數。不變更第三方聊天、訊息、加密內容、目前連線設定或登入資訊。完成後請自行重新開啟聊天。"
+    },
     "codexManagedHistory": {
       "message": "請先結束 Codex。此操作會備份並將 CC Switch 卡片中有定義的第三方舊連線識別碼遷入共用連線，之後這些對話將使用目前選取的連線。不會遷移未受管理的連線，也不會改寫訊息或加密內容。無法安全處理的檔案將略過並計數，其餘檔案繼續遷移；請查看日誌，自行核對舊設定和備份後重試。"
     },
@@ -903,6 +906,11 @@
     "codexManagedHistoryAction": "遷入舊對話",
     "codexManagedHistoryCompleted": "已檢查第三方舊對話，遷移 {{files}} 個檔案、{{rows}} 筆索引記錄。請重新開啟對話載入連線；若仍使用舊設定，請自行重新啟動 Codex。",
     "codexManagedHistoryPartial": "已遷移 {{files}} 個檔案、{{rows}} 筆索引記錄；略過 {{skippedFiles}} 個檔案、{{skippedRows}} 筆索引記錄。請查看 CC Switch 日誌，依原連線設定手動處理略過項目。",
+    "codexLegacyOfficialHistory": "修復舊官方聊天連線",
+    "codexLegacyOfficialHistoryAction": "檢查並修復",
+    "codexLegacyOfficialHistoryCompleted": "舊官方聊天已檢查：修復 {{files}} 個檔案、{{rows}} 筆索引。請重新開啟聊天；已修復的聊天使用官方連線。",
+    "codexLegacyOfficialHistoryPartial": "修復 {{files}} 個檔案、{{rows}} 筆索引；略過 {{skippedFiles}} 個檔案、{{skippedRows}} 筆索引。請查看 CC Switch 日誌，處理原因後再次確認修復。",
+    "codexLegacyOfficialHistoryInUse": "目前設定或 profile 仍在使用舊官方連線。本次未修改歷史；請先切換離開該連線或修正 profile，再重試。",
     "codexHistoryStateUnavailable": "無法安全鎖定 Codex 工作階段索引，本次未修改歷史。請在 Codex 用戶端所在環境操作。",
     "codexHistoryRetryPending": "部分檔案暫時無法使用，請結束 Codex 後重試。",
     "unifyCodexHistoryRestorePartial": "已還原 {{files}} 個檔案與 {{rows}} 筆索引；略過 {{skippedFiles}} 個檔案與 {{skippedRows}} 筆索引。請查看 CC Switch 記錄，結束 Codex 後重試或依原連線設定手動處理。",

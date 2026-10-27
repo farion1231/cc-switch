@@ -31,6 +31,9 @@ export function CodexAuthSettings({
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
   const [showManagedConfirm, setShowManagedConfirm] = useState(false);
   const [migratingManaged, setMigratingManaged] = useState(false);
+  const [showLegacyOfficialConfirm, setShowLegacyOfficialConfirm] =
+    useState(false);
+  const [repairingLegacyOfficial, setRepairingLegacyOfficial] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [restoringHistory, setRestoringHistory] = useState(false);
@@ -163,6 +166,58 @@ export function CodexAuthSettings({
   const showRestoreOption =
     hasUnifyBackup || (settings.unifyCodexMigrateExisting ?? false);
 
+  const handleLegacyOfficialRepair = async () => {
+    if (repairingLegacyOfficial || migratingManaged || restoringHistory) return;
+    setRepairingLegacyOfficial(true);
+    try {
+      const result = await settingsApi.repairLegacyOfficialCodexHistory();
+      setShowLegacyOfficialConfirm(false);
+      if (result.skippedReason === "legacy_route_in_use") {
+        toast.warning(t("settings.codexLegacyOfficialHistoryInUse"), {
+          closeButton: true,
+        });
+      } else if (result.skippedReason === "state_db_unlockable") {
+        toast.warning(t("settings.codexHistoryStateUnavailable"), {
+          closeButton: true,
+        });
+      } else if (
+        result.skippedJsonlFiles > 0 ||
+        result.skippedStateRows > 0 ||
+        result.retryPending
+      ) {
+        toast.warning(
+          t("settings.codexLegacyOfficialHistoryPartial", {
+            files: result.migratedJsonlFiles,
+            rows: result.migratedStateRows,
+            skippedFiles: result.skippedJsonlFiles,
+            skippedRows: result.skippedStateRows,
+          }) +
+            (result.retryPending
+              ? " " + t("settings.codexHistoryRetryPending")
+              : ""),
+          { closeButton: true },
+        );
+      } else {
+        toast.success(
+          t("settings.codexLegacyOfficialHistoryCompleted", {
+            files: result.migratedJsonlFiles,
+            rows: result.migratedStateRows,
+          }),
+        );
+      }
+    } catch (error) {
+      setShowLegacyOfficialConfirm(false);
+      toast.error(t("settings.codexHistoryMigrationFailed"), {
+        description: t("settings.codexHistoryMigrationRecovery"),
+        closeButton: true,
+        duration: Infinity,
+      });
+      console.error("Failed to repair legacy official Codex history:", error);
+    } finally {
+      setRepairingLegacyOfficial(false);
+    }
+  };
+
   const handleRestoreHistory = async () => {
     setShowRestoreConfirm(false);
     setRestoringHistory(true);
@@ -248,7 +303,9 @@ export function CodexAuthSettings({
           body: t("settings.unifyCodexSessionHistoryDescription"),
         }}
         checked={settings.unifyCodexSessionHistory ?? false}
-        disabled={restoringHistory || migratingManaged}
+        disabled={
+          restoringHistory || migratingManaged || repairingLegacyOfficial
+        }
         onCheckedChange={handleUnifyHistoryChange}
       />
 
@@ -259,7 +316,9 @@ export function CodexAuthSettings({
             <Button
               variant="outline"
               size="sm"
-              disabled={restoringHistory}
+              disabled={
+                restoringHistory || migratingManaged || repairingLegacyOfficial
+              }
               onClick={() => setShowRestoreConfirm(true)}
             >
               {t("settings.unifyCodexHistoryRestoreAction")}
@@ -279,7 +338,9 @@ export function CodexAuthSettings({
             <Button
               variant="outline"
               size="sm"
-              disabled={migratingManaged}
+              disabled={
+                migratingManaged || restoringHistory || repairingLegacyOfficial
+              }
               onClick={() => setShowManagedConfirm(true)}
             >
               {t("settings.codexManagedHistoryAction")}
@@ -287,6 +348,26 @@ export function CodexAuthSettings({
           }
         />
       )}
+
+      <SettingsRow
+        label={t("settings.codexLegacyOfficialHistory")}
+        help={{
+          title: t("settings.codexLegacyOfficialHistory"),
+          body: t("confirm.codexLegacyOfficialHistory.message"),
+        }}
+        control={
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={
+              repairingLegacyOfficial || migratingManaged || restoringHistory
+            }
+            onClick={() => setShowLegacyOfficialConfirm(true)}
+          >
+            {t("settings.codexLegacyOfficialHistoryAction")}
+          </Button>
+        }
+      />
 
       <SettingsSwitchRow
         label={t("settings.codexSessionCompression")}
@@ -326,6 +407,17 @@ export function CodexAuthSettings({
         pending={migratingManaged}
         onConfirm={() => void handleManagedMigration()}
         onCancel={() => setShowManagedConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showLegacyOfficialConfirm}
+        title={t("settings.codexLegacyOfficialHistory")}
+        message={t("confirm.codexLegacyOfficialHistory.message")}
+        confirmText={t("settings.codexLegacyOfficialHistoryAction")}
+        variant="info"
+        pending={repairingLegacyOfficial}
+        onConfirm={() => void handleLegacyOfficialRepair()}
+        onCancel={() => setShowLegacyOfficialConfirm(false)}
       />
 
       <ConfirmDialog

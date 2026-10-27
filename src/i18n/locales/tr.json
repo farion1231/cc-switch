@@ -408,6 +408,9 @@
       "migrateExisting": "Ayrıca mevcut resmi oturum geçmişini taşıyın",
       "confirm": "Anladım, etkinleştir"
     },
+    "codexLegacyOfficialHistory": {
+      "message": "Önce Codex’ten çıkın. Önceki geçiş tamamlanmış olsa bile kalan cc-switch-official sohbetlerini yerleşik resmi bağlantıya (openai) onarın. Birleşik geçmiş açıkken de onarılan sohbetler resmi bağlantıyı kullanır.\n\nDoğrulanabilen sohbetler ve indeks satırları onarılmadan önce orijinaller yedeklenir. Güvenli işlenemeyen öğeler atlanır ve sayılır. Üçüncü taraf sohbetleri, mesajlar, şifreli içerik, mevcut bağlantı yapılandırması ve giriş bilgileri değişmez. İşlemden sonra sohbetleri yeniden açın."
+    },
     "codexManagedHistory": {
       "message": "Önce Codex uygulamasından çıkın. CC Switch kartlarında tanımlı eski üçüncü taraf bağlantı kimlikleri yedeklenerek ortak bağlantıya taşınır. Bu sohbetler seçili bağlantıyı kullanır. Yönetilmeyen bağlantılar, mesajlar ve şifreli içerik değiştirilmez. Güvenle işlenemeyen dosyalar atlanıp sayılır, diğerleri taşınmaya devam eder. Yeniden denemeden önce günlükleri, eski yapılandırmayı ve yedekleri kontrol edin."
     },
@@ -888,6 +891,11 @@
     "codexManagedHistoryAction": "Eski sohbetleri taşı",
     "codexManagedHistoryCompleted": "Eski üçüncü taraf sohbetleri kontrol edildi: {{files}} dosya ve {{rows}} dizin kaydı taşındı. Sohbetleri yeniden açın; eski ayarlar kullanılıyorsa Codex uygulamasını kendiniz yeniden başlatın.",
     "codexManagedHistoryPartial": "{{files}} dosya ve {{rows}} dizin kaydı taşındı; {{skippedFiles}} dosya ve {{skippedRows}} dizin kaydı atlandı. CC Switch günlüklerini kontrol edin ve atlanan öğeleri eski bağlantı yapılandırmasıyla elle işleyin.",
+    "codexLegacyOfficialHistory": "Eski resmi sohbet bağlantılarını onar",
+    "codexLegacyOfficialHistoryAction": "Kontrol et ve onar",
+    "codexLegacyOfficialHistoryCompleted": "Eski resmi sohbetler kontrol edildi: {{files}} dosya ve {{rows}} indeks satırı onarıldı. Sohbetleri yeniden açın; onarılan sohbetler resmi bağlantıyı kullanır.",
+    "codexLegacyOfficialHistoryPartial": "{{files}} dosya ve {{rows}} indeks satırı onarıldı; {{skippedFiles}} dosya ve {{skippedRows}} indeks satırı atlandı. CC Switch günlüklerinden nedeni kontrol edin, sorunu giderin ve onarımı tekrar onaylayın.",
+    "codexLegacyOfficialHistoryInUse": "Mevcut yapılandırma veya bir profil hâlâ eski resmi bağlantıyı kullanıyor. Geçmiş değiştirilmedi. Başka bağlantıya geçin veya profili düzeltin, sonra tekrar deneyin.",
     "codexHistoryStateUnavailable": "Codex geçmiş dizini burada güvenli biçimde kilitlenemiyor. Geçmiş değiştirilmedi. Bu işlemi Codex istemcisinin kendi ortamında çalıştırın.",
     "codexHistoryRetryPending": "Bazı dosyalar geçici olarak kullanılamıyor. Codex’i kapatıp yeniden deneyin.",
     "unifyCodexHistoryRestorePartial": "{{files}} dosya ve {{rows}} dizin satırı geri yüklendi; {{skippedFiles}} dosya ve {{skippedRows}} dizin satırı atlandı. CC Switch günlüklerini kontrol edin, Codex’i kapatıp yeniden deneyin veya atlanan öğeleri özgün bağlantı ayarlarıyla elle işleyin.",

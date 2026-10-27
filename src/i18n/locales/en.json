@@ -414,6 +414,9 @@
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
+    "codexLegacyOfficialHistory": {
+      "message": "Quit Codex first. Repair leftover cc-switch-official chats to the built-in official connection (openai), even if a previous migration completed. Repaired chats use the official connection even when unified history is on.\n\nOriginals are backed up before verified chats and index rows are repaired. Items that cannot be safely processed are skipped and counted. Third-party chats, messages, encrypted content, the current connection config and login information remain unchanged. Reopen chats yourself afterward."
+    },
     "codexManagedHistory": {
       "message": "Quit Codex first. This backs up and moves legacy third-party connection IDs defined in CC Switch cards to the shared connection. These chats will then use the currently selected connection. Unmanaged connections, messages, and encrypted content are left untouched. Files that cannot be safely patched are skipped and counted while other files continue. Check the logs, original configuration, and backups before retrying."
     },
@@ -903,6 +906,11 @@
     "codexManagedHistoryAction": "Migrate old chats",
     "codexManagedHistoryCompleted": "Legacy third-party chats checked: {{files}} files and {{rows}} index rows migrated. Reopen chats to load the connection; restart Codex yourself if it still uses old settings.",
     "codexManagedHistoryPartial": "Migrated {{files}} files and {{rows}} index rows; skipped {{skippedFiles}} files and {{skippedRows}} index rows. Check the CC Switch logs and handle skipped items manually with their original connection configuration.",
+    "codexLegacyOfficialHistory": "Repair legacy official chat connections",
+    "codexLegacyOfficialHistoryAction": "Check and repair",
+    "codexLegacyOfficialHistoryCompleted": "Legacy official chats checked: repaired {{files}} files and {{rows}} index rows. Reopen chats; repaired chats use the official connection.",
+    "codexLegacyOfficialHistoryPartial": "Repaired {{files}} files and {{rows}} index rows; skipped {{skippedFiles}} files and {{skippedRows}} index rows. Check the CC Switch logs, resolve the cause and confirm repair again.",
+    "codexLegacyOfficialHistoryInUse": "The current config or a profile still uses the legacy official connection. No history was changed. Switch away from it or update the profile, then retry.",
     "codexHistoryStateUnavailable": "The Codex history index cannot be safely locked here. No history was changed. Run this action in the Codex client’s own environment.",
     "codexHistoryRetryPending": "Some files are temporarily unavailable. Quit Codex and retry.",
     "unifyCodexHistoryRestorePartial": "Restored {{files}} files and {{rows}} index rows; skipped {{skippedFiles}} files and {{skippedRows}} index rows. Check the CC Switch logs, quit Codex and retry, or handle skipped items manually with their original connection configuration.",

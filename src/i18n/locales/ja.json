@@ -414,6 +414,9 @@
       "migrateExisting": "既存の公式セッション履歴も移行する",
       "confirm": "理解しました、オンにする"
     },
+    "codexLegacyOfficialHistory": {
+      "message": "先に Codex を終了してください。残っている cc-switch-official の旧公式チャットを内蔵公式接続（openai）に修復します。以前の移行が完了していても再確認できます。履歴の統一が有効でも、修復後のチャットは公式接続を使用します。\n\n元のファイルをバックアップしてから、確認できたチャットとインデックスを修復します。安全に処理できない項目はスキップして件数を表示します。第三者のチャット、メッセージ、暗号化内容、現在の接続設定やログイン情報は変更しません。完了後にチャットを開き直してください。"
+    },
     "codexManagedHistory": {
       "message": "先に Codex を終了してください。CC Switch カードで定義された以前のサードパーティ接続 ID をバックアップして共有接続に移行します。移行後のチャットは現在選択中の接続を使用します。管理対象外の接続、メッセージ、暗号化された内容は変更しません。安全に処理できないファイルはスキップして件数を報告し、他のファイルの移行を続けます。ログ、元の設定とバックアップを確認してから再試行してください。"
     },
@@ -903,6 +906,11 @@
     "codexManagedHistoryAction": "以前のチャットを移行",
     "codexManagedHistoryCompleted": "以前のサードパーティチャットを確認し、{{files}} ファイル、{{rows}} 件のインデックスを移行しました。チャットを開き直してください。以前の設定が使われる場合は、ご自身で Codex を再起動してください。",
     "codexManagedHistoryPartial": "{{files}} ファイル、{{rows}} 件のインデックスを移行しました。{{skippedFiles}} ファイル、{{skippedRows}} 件のインデックスはスキップしました。CC Switch ログを確認し、元の接続設定でスキップ項目を手動で処理してください。",
+    "codexLegacyOfficialHistory": "旧公式チャットの接続を修復",
+    "codexLegacyOfficialHistoryAction": "確認して修復",
+    "codexLegacyOfficialHistoryCompleted": "旧公式チャットを確認しました：{{files}} 個のファイル、{{rows}} 件のインデックスを修復しました。チャットを開き直してください。修復後は公式接続を使用します。",
+    "codexLegacyOfficialHistoryPartial": "{{files}} 個のファイル、{{rows}} 件のインデックスを修復し、{{skippedFiles}} 個のファイル、{{skippedRows}} 件のインデックスをスキップしました。CC Switch のログで原因を確認し、対処後に再度修復してください。",
+    "codexLegacyOfficialHistoryInUse": "現在の設定または profile が旧公式接続を使用しています。履歴は変更していません。接続を切り替えるか profile を修正してから再試行してください。",
     "codexHistoryStateUnavailable": "この環境では Codex の履歴インデックスを安全にロックできません。履歴は変更されていません。Codex クライアントと同じ環境で操作してください。",
     "codexHistoryRetryPending": "一部のファイルは一時的に利用できません。Codex を終了して再試行してください。",
     "unifyCodexHistoryRestorePartial": "{{files}} 件のファイルと {{rows}} 件のインデックス行を復元し、{{skippedFiles}} 件のファイルと {{skippedRows}} 件のインデックス行をスキップしました。CC Switch のログを確認し、Codex を終了して再試行するか、元の接続設定で手動対応してください。",

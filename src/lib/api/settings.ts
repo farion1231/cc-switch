@@ -60,6 +60,11 @@ export const settingsApi = {
     return await invoke("migrate_managed_codex_history");
   },
 
+  /** Repair leftover legacy official ids after explicit confirmation, regardless of unification. */
+  async repairLegacyOfficialCodexHistory(): Promise<CodexHistoryMigrationResult> {
+    return await invoke("repair_legacy_official_codex_history");
+  },
+
   /** Codex 的 config.toml 是否用 [features] multi_agent_v2 强制了新版子 agent 工具 */
   async codexForcesMultiAgentV2(): Promise<boolean> {
     return await invoke("codex_forces_multi_agent_v2");
