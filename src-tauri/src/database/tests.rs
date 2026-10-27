@@ -1488,3 +1488,46 @@ fn migration_v22_to_v23_adds_enabled_omp_to_mcp_servers_only() {
         .expect("read mcp row");
     assert_eq!((pi, omp), (1, 0));
 }
+
+#[test]
+fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_dsh;
+         ALTER TABLE skills DROP COLUMN enabled_dsh;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_omp)
+         VALUES ('shared', 'Shared MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_kimi)
+         VALUES ('skill', 'Skill', 'skill', 1);",
+    )
+    .expect("seed v23 database");
+    Database::set_user_version(&conn, 23).expect("set user_version=23");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v23 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    let mcp_flags: (bool, bool) = conn
+        .query_row(
+            "SELECT enabled_omp, enabled_dsh FROM mcp_servers WHERE id = 'shared'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read migrated MCP flags");
+    let skill_flags: (bool, bool) = conn
+        .query_row(
+            "SELECT enabled_kimi, enabled_dsh FROM skills WHERE id = 'skill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read migrated skill flags");
+    assert_eq!(mcp_flags, (true, false));
+    assert_eq!(skill_flags, (true, false));
+
+    conn.execute("UPDATE mcp_servers SET enabled_dsh = 1", [])
+        .unwrap();
+    Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
+    assert!(conn
+        .query_row("SELECT enabled_dsh FROM mcp_servers", [], |row| row
+            .get::<_, bool>(0))
+        .unwrap());
+}
