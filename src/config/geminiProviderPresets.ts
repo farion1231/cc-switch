@@ -60,11 +60,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://www.packyapi.ai",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://www.packyapi.ai",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "PackyCode",
     category: "third_party",
     isPartner: true,
@@ -85,11 +85,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://apinebula.ai",
         GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://apinebula.ai",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "APINebula",
     category: "third_party",
     isPartner: true,
@@ -104,11 +104,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aicodemirror.ai/api/gemini",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://api.aicodemirror.ai/api/gemini",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "AICodeMirror",
     category: "third_party",
     isPartner: true,
@@ -124,11 +124,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.openmodel.ai",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-4-argon",
       },
     },
     baseURL: "https://api.openmodel.ai",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-4-argon",
     description: "OpenModel",
     category: "aggregator",
     isPartner: true,
@@ -193,11 +193,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://router.shengsuanyun.com/api",
-        GEMINI_MODEL: "google/gemini-3.6-flash",
+        GEMINI_MODEL: "google/gemini-3.8-flash",
       },
     },
     baseURL: "https://router.shengsuanyun.com/api",
-    model: "google/gemini-3.6-flash",
+    model: "google/gemini-3.8-flash",
     description: "Shengsuanyun",
     category: "aggregator",
     isPartner: true,
@@ -211,11 +211,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.dev",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://api.aigocode.dev",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "AIGoCode",
     category: "third_party",
     isPartner: true,
@@ -235,11 +235,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://api.qnaigc.com/bypass/vertex",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "Qiniu",
     category: "aggregator",
     isPartner: true,
@@ -257,11 +257,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aicoding.inc",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://api.aicoding.inc",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "AICoding",
     category: "third_party",
     isPartner: true,
@@ -277,11 +277,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://subrouter.ai/v1beta",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://subrouter.ai/v1beta",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "SubRouter",
     category: "aggregator",
     isPartner: true,
@@ -317,11 +317,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.apikey.fan",
         GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://api.apikey.fan",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "APIKEY.FUN",
     category: "third_party",
     isPartner: true,
@@ -341,11 +341,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://9527.codes",
         GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://9527.codes",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "9527CODE",
     category: "aggregator",
     isPartner: true,
@@ -364,11 +364,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://code0.ai",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://code0.ai",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "Code0",
     category: "aggregator",
     icon: "code0",
@@ -380,11 +380,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.a6api.com",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://api.a6api.com",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "A6API",
     category: "aggregator",
     isPartner: true,
@@ -398,11 +398,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://node-hk.sssaicodeapi.com/api",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://node-hk.sssaicodeapi.com/api",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "SSSAiCode",
     category: "third_party",
     isPartner: true,
@@ -442,11 +442,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.cubence.com",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://api.cubence.com",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "Cubence",
     category: "third_party",
     isPartner: true,
@@ -467,11 +467,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://cn.crazyrouter.com",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://cn.crazyrouter.com",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "CrazyRouter",
     category: "third_party",
     isPartner: true,
@@ -488,11 +488,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://sudocode.us",
         GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.1-flash-lite",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://sudocode.us",
-    model: "gemini-3.1-flash-lite",
+    model: "gemini-3.8-flash",
     description: "SudoCode.us",
     category: "third_party",
     isPartner: true,
@@ -507,11 +507,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://apicdn.xycai.us",
         GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://apicdn.xycai.us",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "XycAi",
     category: "aggregator",
     isPartner: true,
@@ -531,11 +531,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://modelflare.dev",
         GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://modelflare.dev",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "Modelflare",
     category: "aggregator",
     isPartner: true,
@@ -619,7 +619,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://e-flowcode.cc",
         GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
       config: {
         general: {
@@ -639,7 +639,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       },
     },
     baseURL: "https://e-flowcode.cc",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "E-FlowCode",
     category: "third_party",
     endpointCandidates: ["https://e-flowcode.cc"],
@@ -654,11 +654,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://open.cherryin.net",
         GEMINI_API_KEY: "",
-        GEMINI_MODEL: "google/gemini-3.6-flash",
+        GEMINI_MODEL: "google/gemini-3.8-flash",
       },
     },
     baseURL: "https://open.cherryin.net",
-    model: "google/gemini-3.6-flash",
+    model: "google/gemini-3.8-flash",
     description: "CherryIN",
     category: "aggregator",
     endpointCandidates: ["https://open.cherryin.net"],
@@ -671,11 +671,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://openrouter.ai/api",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://openrouter.ai/api",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "OpenRouter",
     category: "aggregator",
     icon: "openrouter",
@@ -688,11 +688,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.therouter.ai",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://api.therouter.ai",
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
@@ -705,11 +705,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aicodewith.ai/gemini_cli",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-4-argon",
       },
     },
     baseURL: "https://api.aicodewith.ai/gemini_cli",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-4-argon",
     description: "AICodeWith",
     category: "aggregator",
     endpointCandidates: ["https://api.aicodewith.ai/gemini_cli"],
@@ -723,11 +723,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://ai.soruxgpt.com",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-4-argon",
       },
     },
     baseURL: "https://ai.soruxgpt.com",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-4-argon",
     description: "SoruxGPT",
     category: "aggregator",
     endpointCandidates: [
@@ -746,11 +746,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.ikuncode.ai",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-4-argon",
       },
     },
     baseURL: "https://api.ikuncode.ai",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-4-argon",
     description: "IKunCode",
     category: "aggregator",
     endpointCandidates: ["https://api.ikuncode.ai", "https://api.ikuncode.cc"],
@@ -763,11 +763,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://www.runtoken.ai",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-4-argon",
       },
     },
     baseURL: "https://www.runtoken.ai",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-4-argon",
     description: "RunToken",
     category: "aggregator",
     endpointCandidates: ["https://www.runtoken.ai", "https://fast.runtoken.ai"],
@@ -781,11 +781,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://app.yylx.io",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://app.yylx.io",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3.8-flash",
     description: "YYLX",
     category: "aggregator",
     endpointCandidates: [
@@ -802,11 +802,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://tokenflux.dev",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
     baseURL: "https://tokenflux.dev",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.8-flash",
     description: "TokenFlux",
     category: "aggregator",
     icon: "tokenflux",
@@ -818,11 +818,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aicoming.top",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-4-argon",
       },
     },
     baseURL: "https://api.aicoming.top",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-4-argon",
     description: "AIComing",
     category: "aggregator",
     icon: "aicoming",

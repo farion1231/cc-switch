@@ -2,6 +2,7 @@ import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
+import { isPiFamilyApp } from "@/config/appConfig";
 import {
   isOfficialAccount,
   providerNeedsRouting,
@@ -696,7 +697,7 @@ export interface AdditiveInput {
   /** Hermes：model.provider 指向的那家 */
   hermesCurrentId?: string | null;
   isHermesManaged?: (provider: Provider) => boolean;
-  /** Pi：读不到当前配置时一律不能改 */
+  /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
   /** Kimi / TRAE CLI：原生配置当前选中的供应商（Kimi 的 default_model、TRAE 的 model_provider）。 */
   kimiCurrentId?: string | null;
@@ -713,8 +714,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
   const piBlocked =
-    app === "pi" && input.piStateUnavailable
-      ? t("pi.current.stateUnavailableHint")
+    isPiFamilyApp(app) && input.piStateUnavailable
+      ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
   for (const p of providers) {
@@ -725,10 +726,12 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           ? isOfficialAccount(app, p)
           : p.id === TRAE_OFFICIAL_PROVIDER_ID;
       const live = input.isInConfig(p);
-      const officialReason = official
-        ? t(app === "kimi" ? "kimi.oauth.managedHint" : "trae.officialHint")
-        : undefined;
-      const protectedReason = live ? officialReason : undefined;
+      // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
+      // 官方卡不能直接删，删号在授权中心（连登录一起删）
+      const deleteProtectedReason =
+        official && live
+          ? t(app === "kimi" ? "kimi.oauth.managedHint" : "trae.officialHint")
+          : undefined;
       if (official) {
         chips.push({
           key: "official",
@@ -768,11 +771,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         buttons.push({
           key: "remove",
           label: t("providerCard.action.remove"),
-          disabledReason:
-            protectedReason ??
-            (current
-              ? t("providerCard.reason.currentCannotRemove")
-              : undefined),
+          disabledReason: current
+            ? t("providerCard.reason.defaultCannotRemove")
+            : undefined,
           onClick: () => actions.remove(p),
         });
       }
@@ -786,9 +787,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           chips,
           buttons,
           menuItems: menuItems.length ? menuItems : undefined,
-          editDisabledReason: officialReason,
           deleteDisabledReason:
-            protectedReason ??
+            deleteProtectedReason ??
             (current ? t("providerCard.reason.inUseCannotDelete") : undefined),
         },
       });
@@ -861,10 +861,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           buttons: [
             {
               key: "add",
-              label:
-                app === "pi"
-                  ? t("providerCard.action.enable")
-                  : t("providerCard.action.add"),
+              label: isPiFamilyApp(app)
+                ? t("providerCard.action.enable")
+                : t("providerCard.action.add"),
               onClick: () => actions.add(p),
               disabledReason: piBlocked,
             },
@@ -925,16 +924,18 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       }
     }
 
+    // Hermes 跟 OpenClaw / OpenCode 一样是累加式：model.provider 只是默认那家，
+    // 「设为默认」收在「更多」菜单里，主操作位只留「移除」
     if (app === "hermes") {
       if (p.id === input.hermesCurrentId) {
         isDefault = true;
-        status = { label: t("providerCard.status.current"), dot: "direct" };
-        removeReason = t("providerCard.reason.currentCannotRemove");
+        status = { label: t("providerCard.status.default"), dot: "direct" };
+        removeReason = t("providerCard.reason.defaultCannotRemove");
       } else {
-        buttons.push({
-          key: "use",
-          label: t("providerCard.action.enable"),
-          onClick: () => actions.setDefault(p),
+        menuItems.push({
+          key: "setDefault",
+          label: t("providerCard.action.setDefault"),
+          onSelect: () => actions.setDefault(p),
           disabledReason: readOnlyReason,
         });
       }

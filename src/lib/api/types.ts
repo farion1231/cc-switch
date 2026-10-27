@@ -12,4 +12,5 @@ export type AppId =
   | "kimi"
   | "trae"
   | "mcode"
-  | "agy";
+  | "agy"
+  | "omp";

@@ -78,6 +78,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   kimi: {},
   trae: {},
   agy: {},
+  omp: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -94,6 +95,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   kimi: "",
   trae: "",
   agy: "",
+  omp: "",
 });
 
 let providers = createDefaultProviders();
@@ -212,6 +214,7 @@ let mcpConfigs: McpConfigState = {
   kimi: {},
   trae: {},
   agy: {},
+  omp: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -342,6 +345,7 @@ export const resetProviderState = () => {
     kimi: {},
     trae: {},
     agy: {},
+    omp: {},
   };
 };
 
