@@ -244,7 +244,10 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT owner, name, branch, enabled FROM skill_repos ORDER BY owner ASC, name ASC",
+                "SELECT r.owner, r.name, r.branch, r.enabled, r.private, c.credential_id
+                 FROM skill_repos r
+                 LEFT JOIN skill_repo_credentials c ON c.owner = r.owner AND c.name = r.name
+                 ORDER BY r.owner ASC, r.name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -255,6 +258,8 @@ impl Database {
                     name: row.get(1)?,
                     branch: row.get(2)?,
                     enabled: row.get(3)?,
+                    private: row.get(4)?,
+                    credential_id: row.get(5)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -266,25 +271,102 @@ impl Database {
         Ok(repos)
     }
 
+    /// 按坐标取单个 Skill 仓库。
+    ///
+    /// 检查更新、更新、安装这几条路是从「已安装技能」里重建仓库的，只带
+    /// owner / name / branch；私有标记只能回到这里查。
+    pub fn get_skill_repo(&self, owner: &str, name: &str) -> Result<Option<SkillRepo>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT r.owner, r.name, r.branch, r.enabled, r.private, c.credential_id
+                 FROM skill_repos r
+                 LEFT JOIN skill_repo_credentials c ON c.owner = r.owner AND c.name = r.name
+                 WHERE r.owner = ?1 AND r.name = ?2",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut rows = stmt
+            .query_map(params![owner, name], |row| {
+                Ok(SkillRepo {
+                    owner: row.get(0)?,
+                    name: row.get(1)?,
+                    branch: row.get(2)?,
+                    enabled: row.get(3)?,
+                    private: row.get(4)?,
+                    credential_id: row.get(5)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        match rows.next() {
+            Some(repo) => Ok(Some(repo.map_err(|e| AppError::Database(e.to_string()))?)),
+            None => Ok(None),
+        }
+    }
+
     /// 保存 Skill 仓库
+    ///
+    /// 仓库本身和「用哪一枚令牌」分两处写：前者随 WebDAV/S3 同步走，后者是设备
+    /// 本地的（另一台机器解析不出这个 id）。两条语句放一个事务里，不会出现
+    /// 仓库换了绑定没换、或者绑定悬空的中间状态。
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        conn.execute(
-            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
-            params![repo.owner, repo.name, repo.branch, repo.enabled],
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Database(format!("开启仓库写入事务失败: {e}")))?;
+        tx.execute(
+            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled, private) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                repo.owner,
+                repo.name,
+                repo.branch,
+                repo.enabled,
+                repo.private
+            ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        match repo.credential_id.as_deref() {
+            Some(credential_id) if !credential_id.is_empty() => {
+                tx.execute(
+                    "INSERT OR REPLACE INTO skill_repo_credentials (owner, name, credential_id) VALUES (?1, ?2, ?3)",
+                    params![repo.owner, repo.name, credential_id],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+            _ => {
+                tx.execute(
+                    "DELETE FROM skill_repo_credentials WHERE owner = ?1 AND name = ?2",
+                    params![repo.owner, repo.name],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交仓库写入事务失败: {e}")))?;
         Ok(())
     }
 
-    /// 删除 Skill 仓库
+    /// 删除 Skill 仓库（连同它的令牌绑定）
     pub fn delete_skill_repo(&self, owner: &str, name: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        conn.execute(
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Database(format!("开启仓库删除事务失败: {e}")))?;
+        tx.execute(
+            "DELETE FROM skill_repo_credentials WHERE owner = ?1 AND name = ?2",
+            params![owner, name],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
             "DELETE FROM skill_repos WHERE owner = ?1 AND name = ?2",
             params![owner, name],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交仓库删除事务失败: {e}")))?;
         Ok(())
     }
 

@@ -8,6 +8,7 @@ pub mod coding_plan;
 pub mod config;
 pub mod env_checker;
 pub mod env_manager;
+pub mod git_credential;
 pub mod kimi_oauth;
 pub mod mcp;
 pub mod model_fetch;
