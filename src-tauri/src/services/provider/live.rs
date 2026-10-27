@@ -11,7 +11,7 @@ use toml_edit::{DocumentMut, Item, TableLike};
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file};
 use crate::error::AppError;
-use crate::provider::Provider;
+use crate::provider::{Provider, ZCodeProviderConfig};
 use crate::proxy::providers::codex_oauth_auth::{CodexLiveAuthSwitchGuard, CodexOAuthManager};
 use crate::services::mcp::McpService;
 use crate::store::AppState;
@@ -36,6 +36,8 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
+        AppType::ZCode => crate::zcode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -308,6 +310,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Kimi
         | AppType::Agy
         | AppType::Omp
+        | AppType::ZCode
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -385,9 +388,10 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
-        | AppType::ClaudeDesktop
         | AppType::Agy
-        | AppType::Omp => Ok(settings.clone()),
+        | AppType::Omp
+        | AppType::ZCode
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -723,6 +727,44 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Oh My Pi providers use the Oh My Pi provider service".to_string(),
             ));
         }
+        AppType::ZCode => {
+            // ZCode uses additive mode - write provider to config (~/.zcode/v2/provider_config.json)
+            use crate::provider::ZCodeProviderConfig;
+            use crate::zcode_config;
+
+            // Convert settings_config to ZCodeProviderConfig
+            let zcode_config_result =
+                serde_json::from_value::<ZCodeProviderConfig>(provider.settings_config.clone());
+
+            match zcode_config_result {
+                Ok(config) => {
+                    zcode_config::set_typed_provider(&provider.id, &config)?;
+                    log::info!("ZCode provider '{}' written to live config", provider.id);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse ZCode provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    // Fallback: write as raw JSON if it looks like a valid provider fragment
+                    if provider.settings_config.get("options").is_some()
+                        || provider.settings_config.get("kind").is_some()
+                    {
+                        zcode_config::set_provider(&provider.id, provider.settings_config.clone())?;
+                        log::info!(
+                            "ZCode provider '{}' written as raw JSON to live config",
+                            provider.id
+                        );
+                    } else {
+                        return Err(AppError::Message(format!(
+                            "ZCode provider '{}' has invalid config structure for live config (must contain 'kind' or 'options')",
+                            provider.id
+                        )));
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1020,6 +1062,23 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Omp => Err(AppError::InvalidInput(
             "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
         )),
+        AppType::ZCode => {
+            use crate::zcode_config::{
+                get_zcode_provider_config_path, read_zcode_provider_config,
+            };
+
+            let config_path = get_zcode_provider_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "zcode.config.missing",
+                    "ZCode 配置文件不存在",
+                    "ZCode configuration file not found",
+                ));
+            }
+
+            let config = read_zcode_provider_config()?;
+            Ok(config)
+        }
     }
 }
 
@@ -1133,14 +1192,15 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             live
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
+        // OpenCode, OpenClaw, Hermes, Pi, Mcode and ZCode use additive mode and are handled by early return above
         AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
-        | AppType::Omp => {
+        | AppType::Omp
+        | AppType::ZCode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1529,10 +1589,225 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
     Ok(())
 }
 
+/// Remove a ZCode provider from the live configuration
+///
+/// This is specific to ZCode's additive mode - removing a provider
+/// from the ~/.zcode/v2/provider_config.json file.
+pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::zcode_config;
+
+    // ZCode 自管的节点（builtin:/account: 套餐与模板 id 连接）不归 CC Switch 管，拒绝删除
+    if crate::zcode_config::is_zcode_managed_provider_id(provider_id) {
+        return Err(AppError::InvalidInput(format!(
+            "ZCode built-in provider '{provider_id}' is managed by ZCode itself"
+        )));
+    }
+
+    // Check if ZCode config directory exists
+    if !zcode_config::get_zcode_dir().exists() {
+        log::debug!("ZCode config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    zcode_config::remove_provider(provider_id)?;
+    log::info!("ZCode provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import all providers from ZCode live config to database
+///
+/// This imports existing providers from ~/.zcode/v2/provider_config.json
+/// into the CC Switch database. Each provider found will be added to the
+/// database with is_current set to false.
+fn merge_zcode_live_config(
+    existing_value: &Value,
+    live: &ZCodeProviderConfig,
+    live_value: &Value,
+) -> Value {
+    let Ok(mut existing) = serde_json::from_value::<ZCodeProviderConfig>(existing_value.clone())
+    else {
+        return live_value.clone();
+    };
+
+    if live.name.is_some() {
+        existing.name = live.name.clone();
+    }
+    if !live.kind.trim().is_empty() {
+        existing.kind = live.kind.clone();
+    }
+    existing.options.base_url = live.options.base_url.clone();
+    existing.options.api_key = live.options.api_key.clone();
+    existing.options.extra.extend(live.options.extra.clone());
+    if live.enabled.is_some() {
+        existing.enabled = live.enabled;
+    }
+    if live.source.is_some() {
+        existing.source = live.source.clone();
+    }
+    existing.extra.extend(live.extra.clone());
+
+    let mut merged_models = indexmap::IndexMap::new();
+    for (model_id, live_model) in &live.models {
+        let mut model = existing
+            .models
+            .shift_remove(model_id)
+            .unwrap_or_else(|| live_model.clone());
+        if live_model.limit.is_some() {
+            model.limit = live_model.limit.clone();
+        }
+        if live_model.modalities.is_some() {
+            model.modalities = live_model.modalities.clone();
+        }
+        if live_model.reasoning.is_some() {
+            model.reasoning = live_model.reasoning.clone();
+        }
+        model.extra.extend(live_model.extra.clone());
+        merged_models.insert(model_id.clone(), model);
+    }
+    existing.models = merged_models;
+
+    serde_json::to_value(existing).unwrap_or_else(|error| {
+        log::warn!("Failed to merge imported ZCode provider metadata: {error}");
+        live_value.clone()
+    })
+}
+
+pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::zcode_config;
+
+    let providers = zcode_config::get_typed_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("zcode")?;
+
+    for (id, config) in providers {
+        // ZCode 自管的节点（builtin:/account: 套餐，以及用户在 ZCode 内按模板
+        // id 建号的连接如 bigmodel-api / deepseek）不归 CC Switch 管：
+        // 不导入，也不允许从 CC Switch 删除。
+        if crate::zcode_config::is_zcode_managed_provider_id(&id) {
+            log::debug!("Skipping ZCode built-in provider '{id}'");
+            continue;
+        }
+        // Convert to Value for settings_config
+        let settings_config = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Failed to serialize ZCode provider '{id}': {e}");
+                continue;
+            }
+        };
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "zcode") {
+                Ok(Some(existing)) => {
+                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
+                    let merged_settings_config = merge_zcode_live_config(
+                        &existing.settings_config,
+                        &config,
+                        &settings_config,
+                    );
+                    if existing.settings_config != merged_settings_config
+                        || existing.name != display_name
+                    {
+                        let mut provider = existing;
+                        provider.name = display_name;
+                        provider.settings_config = merged_settings_config;
+                        if let Err(e) = state.db.save_provider("zcode", &provider) {
+                            log::warn!(
+                                "Failed to update ZCode provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated ZCode provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("ZCode provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up ZCode provider '{id}': {e}"),
+            }
+            continue;
+        }
+
+        // Create provider
+        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
+        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        // Save to database
+        if let Err(e) = state.db.save_provider("zcode", &provider) {
+            log::warn!("Failed to import ZCode provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported ZCode provider '{id}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn zcode_live_import_preserves_rich_model_metadata_and_source() {
+        let existing = json!({
+            "name": "Old name",
+            "kind": "anthropic",
+            "source": "custom",
+            "options": {
+                "baseURL": "https://old.example",
+                "apiKey": "old-key",
+                "headers": {"X-Test": "keep"}
+            },
+            "models": {
+                "shared": {
+                    "limit": {"context": 200000, "output": 32000},
+                    "reasoning": {"enabled": true}
+                },
+                "removed-live": {"limit": {"context": 1}}
+            }
+        });
+        let live_value = json!({
+            "name": "Live name",
+            "kind": "anthropic",
+            "options": {
+                "baseURL": "https://live.example",
+                "apiKey": "live-key"
+            },
+            "enabled": false,
+            "models": {"shared": {}, "new-live": {}}
+        });
+        let live: ZCodeProviderConfig = serde_json::from_value(live_value.clone()).unwrap();
+
+        let merged = merge_zcode_live_config(&existing, &live, &live_value);
+
+        assert_eq!(merged["name"], json!("Live name"));
+        assert_eq!(merged["source"], json!("custom"));
+        assert_eq!(merged["enabled"], json!(false));
+        assert_eq!(merged["options"]["baseURL"], json!("https://live.example"));
+        assert_eq!(merged["options"]["apiKey"], json!("live-key"));
+        assert_eq!(merged["options"]["headers"], json!({"X-Test": "keep"}));
+        assert_eq!(
+            merged["models"]["shared"]["limit"],
+            json!({"context": 200000, "output": 32000})
+        );
+        assert!(merged["models"]["shared"].get("reasoning").is_some());
+        assert!(merged["models"].get("new-live").is_some());
+        assert!(merged["models"].get("removed-live").is_none());
+    }
 
     #[test]
     fn claude_common_config_remove_strips_what_old_versions_merged() {

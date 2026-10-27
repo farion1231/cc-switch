@@ -1434,6 +1434,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     const { AppsPage } = await import("@/components/apps/AppsPage");
     const { TOOL_NAMES } = await import("@/components/apps/useToolManagement");
     const view = mountApps(AppsPage);
+    // TOOL_NAMES 里包含 ZCode 后探测数 = 工具数，断言从常量派生避免硬编码
     await waitFor(() =>
       expect(mocks.getToolVersions).toHaveBeenCalledTimes(TOOL_NAMES.length),
     );

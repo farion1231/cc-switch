@@ -14,6 +14,7 @@ import {
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
+import { invalidateZcodeProviderCaches } from "@/hooks/useZcode";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
@@ -73,7 +74,8 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "pi" ||
         appId === "mcode" ||
         appId === "kimi" ||
-        appId === "omp"
+        appId === "omp" ||
+        appId === "zcode"
       ) {
         if (
           providerInput.category === "omo" ||
@@ -128,6 +130,11 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+
+      if (appId === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -208,6 +215,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -283,6 +293,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+
+      if (appId === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -383,6 +398,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+
+      if (appId === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {

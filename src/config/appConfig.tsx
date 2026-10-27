@@ -31,6 +31,7 @@ export const APP_IDS: AppId[] = [
   "kimi",
   "agy",
   "omp",
+  "zcode",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -47,6 +48,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   kimi: true,
   agy: true,
   omp: true,
+  zcode: true,
 };
 
 /**
@@ -85,6 +87,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "kimi",
   "agy",
   "omp",
+  "zcode",
 ];
 
 export type ProxyAppId = Extract<
@@ -134,7 +137,7 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "omp"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "omp" | "zcode"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -145,6 +148,7 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "hermes",
   "pi",
   "omp",
+  "zcode",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
@@ -173,7 +177,7 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
+/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`）；ZCode 同步标准 stdio MCP 到 `cli/config.json` */
 export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
@@ -187,6 +191,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "kimi",
   "agy",
   "omp",
+  "zcode",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -329,6 +334,16 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
     badgeClass:
       "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
+  },
+  zcode: {
+    label: "ZCode",
+    icon: (
+      <ProviderIcon icon="zcode" name="ZCode" size={14} showFallback={false} />
+    ),
+    activeClass:
+      "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5",
   },
 };
 

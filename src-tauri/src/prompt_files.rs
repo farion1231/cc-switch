@@ -7,6 +7,7 @@ use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
 use crate::openclaw_config::get_openclaw_dir;
 use crate::opencode_config::get_opencode_dir;
+use crate::zcode_config::get_zcode_dir;
 
 pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<(), AppError> {
     if matches!(app, AppType::Mcode) && content.len() > 32 * 1024 {
@@ -43,6 +44,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Agy => crate::agy_config::customizations_dir(),
         // omp 只读按 profile 切换的 agent 目录里的 AGENTS.md（上游 discovery/builtin.ts）
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
+        AppType::ZCode => get_zcode_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -52,7 +54,12 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
-        AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Omp => "AGENTS.md",
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Agy
+        | AppType::Kimi
+        | AppType::Omp
+        | AppType::ZCode => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

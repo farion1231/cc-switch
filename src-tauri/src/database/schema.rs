@@ -72,7 +72,8 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
-            enabled_omp BOOLEAN NOT NULL DEFAULT 0
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
+            enabled_zcode BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -105,6 +106,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_zcode BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -619,6 +621,13 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        log::info!("迁移数据库从 v23 到 v24（MCP/Skills 添加 ZCode 支持）");
+                        // add_column_if_missing 全部幂等：从 v4.0.16 合流期带 zcode 的
+                        // 中间版本升上来的库可能缺 agy/kimi/omp 列，这里一并兜底补齐。
+                        Self::migrate_v23_to_v24(conn)?;
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1665,6 +1674,47 @@ impl Database {
                 "session_log_sync",
                 "last_tail_fingerprint",
                 "INTEGER",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// v23 -> v24: persist ZCode enablement for unified Skills and MCP.
+    /// Both columns must be added here: databases already at v15+ ran
+    /// migrate_v14_to_v15 before ZCode existed, so only this migration
+    /// can add `enabled_zcode` for existing users. The agy/kimi/omp adds
+    /// are idempotent backfills for databases that skipped the arms that
+    /// introduced those columns (e.g. forks that carried an earlier
+    /// zcode-only schema bump).
+    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_agy",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_kimi",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_zcode",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_omp",
+                "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }
         Ok(())
@@ -4112,6 +4162,56 @@ mod tests {
         )?;
         assert_eq!(mcp_values, (1, 0));
         assert_eq!(skill_values, (1, 0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v23_to_v24_adds_enabled_zcode_to_skills_and_mcp() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0
+            );",
+        )?;
+        conn.execute(
+            "INSERT INTO skills (id, enabled_codex) VALUES ('skill-1', 1)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO mcp_servers (id, enabled_codex) VALUES ('mcp-1', 1)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 23)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(&conn, "skills", "enabled_zcode")?);
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_zcode")?);
+        // 兜底补齐：从早前 zcode-only 中间版本升上来的库在这里补回 agy/kimi/omp 列。
+        assert!(Database::has_column(&conn, "skills", "enabled_agy")?);
+        assert!(Database::has_column(&conn, "skills", "enabled_kimi")?);
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_agy")?);
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_kimi")?);
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+        let values: (i64, i64) = conn.query_row(
+            "SELECT enabled_codex, enabled_zcode FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(values, (1, 0));
+        let mcp_values: (i64, i64) = conn.query_row(
+            "SELECT enabled_codex, enabled_zcode FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(mcp_values, (1, 0));
 
         Ok(())
     }

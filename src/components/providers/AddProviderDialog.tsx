@@ -72,6 +72,7 @@ export function AddProviderDialog({
     appId !== "omp" &&
     appId !== "mcode" &&
     appId !== "kimi" &&
+    appId !== "zcode" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   // 两步：先选预设，再填写（每次打开都从第 1 步开始）
@@ -288,6 +289,7 @@ export function AddProviderDialog({
 
       // Apps whose native catalog has a stable provider key use it as the
       // managed provider identity.
+      // OpenCode/OpenClaw/Hermes/ZCode: pass providerKey for ID generation
       if (
         (appId === "opencode" ||
           appId === "openclaw" ||
@@ -295,7 +297,8 @@ export function AddProviderDialog({
           appId === "pi" ||
           appId === "mcode" ||
           appId === "kimi" ||
-          appId === "omp") &&
+          appId === "omp" ||
+          appId === "zcode") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

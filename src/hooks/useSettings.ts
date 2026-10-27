@@ -135,6 +135,7 @@ export function useSettings(): UseSettingsResult {
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
       omp: sanitizeDir(data?.ompConfigDir),
+      zcode: sanitizeDir(data?.zcodeConfigDir),
     });
     setRequiresRestart(false);
   }, [

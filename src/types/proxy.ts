@@ -50,6 +50,7 @@ export interface ProxyTakeoverStatus {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  zcode?: boolean;
 }
 
 /** Applied under the backend switch lock, not inferred from a possibly stale UI mode. */

@@ -2,7 +2,12 @@
 // 统一规则：只补空着的字段，用户填过的值一律不动；布尔和模态只往「支持」方向补。
 
 import type { KnownModelMetadata } from "@/lib/modelMetadata";
-import type { CodexCatalogModel, OpenClawModel, OpenCodeModel } from "@/types";
+import type {
+  CodexCatalogModel,
+  OpenClawModel,
+  OpenCodeModel,
+  ZCodeModel,
+} from "@/types";
 import type { HermesModel } from "@/config/hermesProviderPresets";
 import type { KimiProviderConfig } from "@/config/kimiProviderPresets";
 import {
@@ -122,6 +127,36 @@ export function fillOpenCodeModel(
   // 写 false 会盖住 models.dev 同名条目，用户明确写的 false 也不动。
   if (model.reasoning === undefined && metadata.reasoning === true) {
     next.reasoning = true;
+  }
+  return next;
+}
+
+/**
+ * ZCode 的模型结构与 OpenCode 同形（limit/modalities），reasoning 是带
+ * `enabled` 的对象。规则同全局：只补空字段；reasoning 只往「支持」方向补，
+ * 用户明确写的 false 不动。
+ */
+export function fillZCodeModel(
+  model: ZCodeModel,
+  metadata: KnownModelMetadata,
+): ZCodeModel {
+  const next = { ...model };
+  const limit = { ...(model.limit ?? {}) };
+  if (isBlank(limit.context) && metadata.contextWindow) {
+    limit.context = metadata.contextWindow;
+  }
+  if (isBlank(limit.output) && metadata.maxOutputTokens) {
+    limit.output = metadata.maxOutputTokens;
+  }
+  if (Object.keys(limit).length > 0) next.limit = limit;
+  if (model.modalities === undefined && metadata.inputModalities) {
+    next.modalities = {
+      input: metadata.inputModalities,
+      output: metadata.outputModalities ?? ["text"],
+    };
+  }
+  if (model.reasoning === undefined && metadata.reasoning === true) {
+    next.reasoning = { enabled: true };
   }
   return next;
 }

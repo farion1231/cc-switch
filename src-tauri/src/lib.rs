@@ -45,6 +45,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod zcode_config;
 
 mod tray;
 #[cfg(target_os = "windows")]
@@ -981,6 +982,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
             }
+            match crate::services::provider::import_zcode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} ZCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No ZCode provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import ZCode providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1084,6 +1092,14 @@ pub fn run() {
                     Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
                 }
+
+                match crate::services::mcp::McpService::import_from_zcode(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from ZCode");
+                    }
+                    Ok(_) => log::debug!("○ No ZCode MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import ZCode MCP: {e}"),
+                }
             }
 
             // 4. 导入提示词文件（表空时触发）
@@ -1100,6 +1116,7 @@ pub fn run() {
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
+                    crate::app_config::AppType::ZCode,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1846,6 +1863,9 @@ pub fn run() {
             commands::set_hermes_memory,
             commands::get_hermes_memory_limits,
             commands::set_hermes_memory_enabled,
+            // ZCode specific
+            commands::import_zcode_providers_from_live,
+            commands::get_zcode_live_provider_ids,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,

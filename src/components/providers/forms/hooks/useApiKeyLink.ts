@@ -5,6 +5,7 @@ import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
 import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
+import type { ZCodeProviderPreset } from "@/config/zcodeProviderPresets";
 import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
 import { extractBaseUrlForUsageDetection } from "@/config/codingPlanProviders";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
@@ -16,6 +17,7 @@ type PresetEntry = {
     | CodexProviderPreset
     | GeminiProviderPreset
     | OpenCodeProviderPreset
+    | ZCodeProviderPreset
     | ClaudeDesktopProviderPreset;
 };
 
@@ -140,7 +142,8 @@ export function useApiKeyLink({
       appId === "agy" ||
       appId === "opencode" ||
       appId === "openclaw" ||
-      appId === "hermes"
+      appId === "hermes" ||
+      appId === "zcode"
         ? shouldShowApiKeyLink
         : false,
     websiteUrl: getWebsiteUrl,

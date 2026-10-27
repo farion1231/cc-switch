@@ -51,6 +51,7 @@ export const TOOL_NAMES = [
   "kimi",
   "agy",
   "omp",
+  "zcode",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -58,6 +59,12 @@ export type ToolLifecycleAction = "install" | "update" | "uninstall";
 export function hermesUninstallMayLeaveFiles(plan: ToolUninstallPlan) {
   return isWindows() && plan.tool === "hermes" && !plan.wsl_distro;
 }
+
+/**
+ * 只有桌面分发、没有 CLI 安装包的工具：不提供安装/升级按钮（应用自带更新器），
+ * 未安装时行内给官网下载链接。后端 probe 对它们走专属探测（版本来自安装目录）。
+ */
+export const DESKTOP_ONLY_TOOLS: ReadonlySet<ToolName> = new Set(["zcode"]);
 
 interface PendingUpgrade {
   toolNames: ToolName[];
@@ -175,7 +182,8 @@ ${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
 # Antigravity CLI
 ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent@latest`;
+bun install -g @oh-my-pi/pi-coding-agent@latest
+# ZCode: desktop app, download from https://dev.zcode.app`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -200,7 +208,8 @@ ${KIMI_WINDOWS_INSTALL_COMMAND}
 # Antigravity CLI
 ${AGY_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent@latest`;
+bun install -g @oh-my-pi/pi-coding-agent@latest
+# ZCode: desktop app, download from https://dev.zcode.app`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -219,6 +228,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   kimi: "Kimi Code",
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
+  zcode: "ZCode",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -240,6 +250,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   kimi: "kimi",
   agy: "agy",
   omp: "omp",
+  zcode: "zcode",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

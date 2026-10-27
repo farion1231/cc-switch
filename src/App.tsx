@@ -126,6 +126,7 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import { invalidateZcodeProviderCaches, zcodeKeys } from "@/hooks/useZcode";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -1014,6 +1015,8 @@ function App() {
       ]);
     } else if (app === "mcode" || app === "kimi") {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+    } else if (app === "zcode") {
+      await invalidateZcodeProviderCaches(queryClient);
     }
   };
 
@@ -1131,7 +1134,8 @@ function App() {
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
       activeApp === "pi" ||
-      activeApp === "omp"
+      activeApp === "omp" ||
+      activeApp === "zcode"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -1151,15 +1155,20 @@ function App() {
                     queryKey: hermesKeys.liveProviderIds,
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
-                : (
-                    await queryClient.ensureQueryData({
-                      queryKey: [activeApp, "currentState"],
-                      queryFn: () =>
-                        piApi.getCurrentState(
-                          activeApp === "omp" ? "omp" : "pi",
-                        ),
-                    })
-                  ).enabledProviderIds;
+                : activeApp === "zcode"
+                  ? ((await queryClient.ensureQueryData({
+                      queryKey: zcodeKeys.liveProviderIds,
+                      queryFn: () => providersApi.getZCodeLiveProviderIds(),
+                    })) as string[])
+                  : (
+                      await queryClient.ensureQueryData({
+                        queryKey: [activeApp, "currentState"],
+                        queryFn: () =>
+                          piApi.getCurrentState(
+                            activeApp === "omp" ? "omp" : "pi",
+                          ),
+                      })
+                    ).enabledProviderIds;
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",

@@ -29,6 +29,7 @@ const DIRECTORY_FIELD: Record<DirectoryAppId, keyof Settings> = {
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
   omp: "ompConfigDir",
+  zcode: "zcodeConfigDir",
 };
 
 const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
@@ -41,6 +42,7 @@ const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
   hermes: "settings.browsePlaceholderHermes",
   pi: "settings.browsePlaceholderPi",
   omp: "settings.browsePlaceholderOmp",
+  zcode: "settings.browsePlaceholderZcode",
 };
 
 const DIRECTORY_APPS: DirectoryAppId[] = [
@@ -53,6 +55,7 @@ const DIRECTORY_APPS: DirectoryAppId[] = [
   "hermes",
   "pi",
   "omp",
+  "zcode",
 ];
 
 const normalizeDir = (value: unknown) =>
