@@ -1993,9 +1993,12 @@ impl RequestForwarder {
             let moved = super::providers::transform_codex_responses_tool_history::repair_interleaved_tool_turns(
                 &mut request_body,
             );
-            if moved > 0 {
+            let synthesized = super::providers::transform_codex_responses_tool_history::synthesize_missing_tool_outputs(
+                &mut request_body,
+            );
+            if moved > 0 || synthesized > 0 {
                 log::debug!(
-                    "[Codex] Moved {moved} interleaved context item(s) after tool outputs for DeepSeek (provider={})",
+                    "[Codex] Repaired DeepSeek tool history: moved={moved}, synthesized={synthesized} (provider={})",
                     provider.id
                 );
             }
