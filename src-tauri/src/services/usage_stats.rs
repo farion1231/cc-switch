@@ -2745,6 +2745,9 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
         if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
             queue.push(stripped);
         }
+        if let Some(stripped) = strip_context_window_suffix(&candidate) {
+            queue.push(stripped);
+        }
         if candidate.starts_with("claude-") && candidate.contains('.') {
             queue.push(candidate.replace('.', "-"));
         }
@@ -2761,13 +2764,53 @@ fn clean_model_id_for_pricing(model_id: &str) -> String {
         .next()
         .unwrap_or(model_id)
         .trim()
-        .replace('@', "-")
         .to_ascii_lowercase();
 
-    normalized
-        .trim_end_matches(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
+    // 上下文窗口标记要在 @ → - 之前剥：@272k 一旦变成 -272k，就和 gpt-4-32k
+    // 这类按上下文独立计价的型号分不开了。
+    strip_context_window_marker(&normalized)
         .trim()
-        .to_string()
+        .replace('@', "-")
+}
+
+/// 剥掉末尾的上下文窗口标记：Claude Code 的 [1m]，magpie / Cursor 的 @1m、@272k。
+/// 窗口大小不改变单价，与 [1m] 一样直接去掉；@20260527（Vertex 日期）、
+/// @low（effort）不是窗口大小，原样保留给后续规则。
+fn strip_context_window_marker(model_id: &str) -> &str {
+    if let Some((base, size)) = model_id
+        .strip_suffix(']')
+        .and_then(|rest| rest.rsplit_once('['))
+    {
+        if is_context_window_size(size) {
+            return base;
+        }
+    }
+    if let Some((base, size)) = model_id.rsplit_once('@') {
+        if is_context_window_size(size) {
+            return base;
+        }
+    }
+    model_id
+}
+
+/// 网关拼进 ID 的 -1m（WorkBuddy 的 claude-opus-4.8-1m）。只认 m：-32k、-128k
+/// 常是独立计价的型号（gpt-4-32k、moonshot-v1-128k），不能当装饰剥。
+fn strip_context_window_suffix(model_id: &str) -> Option<String> {
+    let (base, size) = model_id.rsplit_once('-')?;
+    (!base.is_empty() && size.ends_with('m') && is_context_window_size(size))
+        .then(|| base.to_string())
+}
+
+/// 上下文窗口大小的写法：数字（可带小数）加 k / m，如 1m、272k、1.5m。
+fn is_context_window_size(token: &str) -> bool {
+    let Some(number) = token.strip_suffix(['k', 'm']) else {
+        return false;
+    };
+    let (int, frac) = number.split_once('.').unwrap_or((number, "0"));
+    !int.is_empty()
+        && !frac.is_empty()
+        && int.chars().all(|c| c.is_ascii_digit())
+        && frac.chars().all(|c| c.is_ascii_digit())
 }
 
 fn push_unique_candidate(candidates: &mut Vec<String>, candidate: String) -> bool {
@@ -2893,7 +2936,10 @@ fn strip_model_date_suffix(model_id: &str) -> Option<String> {
 }
 
 fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
-    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
+    // OpenAI 档位 none…xhigh，Anthropic 档位 low…max；Cursor 等网关会把它拼进 ID
+    for suffix in [
+        "-none", "-minimal", "-low", "-medium", "-high", "-xhigh", "-max",
+    ] {
         if let Some(stripped) = model_id.strip_suffix(suffix) {
             if !stripped.is_empty() {
                 return Some(stripped.to_string());
@@ -3508,6 +3554,57 @@ mod tests {
         assert_eq!(input_cost, "5.000000");
         assert_eq!(output_cost, "30.000000");
         assert_eq!(total_cost, "35.000000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_for_base_model_prices_rows_with_decorated_ids() -> Result<(), AppError> {
+        // 已按未定价落库的 claude-opus-5-5@1m / claude-opus-5-5-max 行，
+        // 在 claude-opus-5-5 定价更新后的精准回填里也要被算上
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            for (request_id, model) in [
+                ("opus-1m-zero-cost", "claude-opus-5-5@1m"),
+                ("opus-max-zero-cost", "claude-opus-5-5-max"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    request_id,
+                    "claude",
+                    "_claude_session",
+                    model,
+                    "session_log",
+                    1000,
+                    1_000_000,
+                    1_000_000,
+                    0,
+                    0,
+                    200,
+                    "0",
+                )?;
+            }
+        }
+
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("claude-opus-5-5")?,
+            2
+        );
+
+        let conn = lock_conn!(db.conn);
+        for request_id in ["opus-1m-zero-cost", "opus-max-zero-cost"] {
+            let total_cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                total_cost, "24.000000",
+                "{request_id} 应按 claude-opus-5-5 回填"
+            );
+        }
 
         Ok(())
     }
@@ -5770,6 +5867,42 @@ mod tests {
     }
 
     #[test]
+    fn test_context_window_decorations_are_recognized_only_as_sizes() {
+        // [n] / @n 形式的窗口标记直接剥掉，大小写法不限于 1m
+        assert_eq!(
+            strip_context_window_marker("claude-sonnet-4-5[1m]"),
+            "claude-sonnet-4-5"
+        );
+        assert_eq!(
+            strip_context_window_marker("claude-opus-5-5@1m"),
+            "claude-opus-5-5"
+        );
+        assert_eq!(
+            strip_context_window_marker("gpt-5.6-sol@272k"),
+            "gpt-5.6-sol"
+        );
+        assert_eq!(strip_context_window_marker("model[1.5m]"), "model");
+        // @ 后不是窗口大小的（Vertex 日期、effort）留给后续规则
+        for kept in [
+            "claude-opus-4-8@20260527",
+            "gpt-5.2-codex@low",
+            "model@m",
+            "model@.5m",
+        ] {
+            assert_eq!(strip_context_window_marker(kept), kept);
+        }
+
+        // -n 形式只认百万级，-32k 这类可能是独立计价型号
+        assert_eq!(
+            strip_context_window_suffix("claude-opus-4.8-1m").as_deref(),
+            Some("claude-opus-4.8")
+        );
+        assert_eq!(strip_context_window_suffix("gpt-4-32k"), None);
+        assert_eq!(strip_context_window_suffix("moonshot-v1-128k"), None);
+        assert_eq!(strip_context_window_suffix("-1m"), None);
+    }
+
+    #[test]
     fn test_strip_model_date_suffix_handles_six_digit_yymmdd() {
         // 火山方舟 6 位 YYMMDD 后缀应被剥离（doubao 全系都用这种格式）。
         assert_eq!(
@@ -5864,6 +5997,75 @@ mod tests {
             result.is_none(),
             "缺少 gpt-5 基础定价时，不应前缀误匹配到 gpt-5-mini/gpt-5-pro"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pricing_ignores_effort_and_context_window_decorations() -> Result<(), AppError> {
+        // 回归：网关把推理强度、上下文窗口拼进模型 ID（Cursor 的 claude-opus-5-5-max，
+        // magpie 的 claude-opus-5-5@1m / gpt-5.6-sol@272k，WorkBuddy 的 claude-opus-4.8-1m）。
+        // 这些装饰不改变单价，缺专门定价时必须回退到基础模型，否则整行显示未定价。
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        for (model_id, expected_input) in [
+            ("claude-opus-5-5-max", "4"),
+            ("cursor/claude-opus-5-5-max", "4"),
+            ("gpt-5.5-none", "5"),
+            ("claude-opus-5-5@1m", "4"),
+            ("claude-opus-5-5@1M", "4"),
+            ("claude-opus-5-5-max[1m]", "4"),
+            ("gpt-5.6-sol-high@272k", "4"),
+            ("grok-4.7@256k", "2"),
+            ("claude-opus-4.8-1m", "5"),
+        ] {
+            let input = find_model_pricing_row(&conn, model_id)?.map(|(input, ..)| input);
+            assert_eq!(
+                input.as_deref(),
+                Some(expected_input),
+                "{model_id} 应回退到基础模型定价"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pricing_decoration_fallback_keeps_exact_and_sized_model_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        // -32k / -128k 常是按上下文独立计价的型号（gpt-4-32k、moonshot-v1-128k），
+        // 不能当上下文装饰剥掉、回退到短名的价格。
+        conn.execute(
+            "DELETE FROM model_pricing WHERE model_id LIKE 'gpt-4-32k%'",
+            [],
+        )?;
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing (
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+            ) VALUES ('gpt-4', 'GPT-4', '30', '60', '0', '0')",
+            [],
+        )?;
+        assert!(
+            find_model_pricing_row(&conn, "gpt-4-32k")?.is_none(),
+            "gpt-4-32k 缺定价时不应回退到 gpt-4"
+        );
+
+        // 带装饰的专门定价优先：用户给 claude-opus-5-5-max 单独定价时按它计，不回退基础模型
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing (
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+            ) VALUES ('claude-opus-5-5-max', 'Claude Opus 5.5 Max', '9', '45', '0', '0')",
+            [],
+        )?;
+        for model_id in ["claude-opus-5-5-max", "cursor/claude-opus-5-5-max@1m"] {
+            let input = find_model_pricing_row(&conn, model_id)?.map(|(input, ..)| input);
+            assert_eq!(input.as_deref(), Some("9"), "{model_id} 应命中专门定价");
+        }
 
         Ok(())
     }
