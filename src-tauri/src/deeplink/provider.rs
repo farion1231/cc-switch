@@ -340,6 +340,11 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
+        AppType::Dsh => {
+            return Err(AppError::InvalidInput(
+                "Add DeepSeek Harness providers from the DeepSeek Harness page".into(),
+            ));
+        }
         AppType::Kimi => {
             return Err(AppError::InvalidInput(
                 "Add Kimi Code providers from the Kimi Code page".into(),
@@ -497,7 +502,7 @@ fn build_provider_meta(
 
     // 套餐地址且没带脚本：和在应用里新建一样，按套餐额度查询并默认启用
     // （链接写了 `usageEnabled` 仍照办）。额度走后端固定端点，不执行任何脚本。
-    // 火山例外：查额度要账号级 AccessKey，链接里没有，默认启用只会显示「额度没查到」，
+    // 火山例外：查额度要账号级 AccessKey，链接里没有，默认启用只会显示「额度查询失败」，
     // 所以只预选套餐不启用（前端 `codingPlanEnabledByDefault` 与此一致）。
     if let (Some(provider_id), true) = (coding_plan_provider, code.is_empty()) {
         return Ok(Some(ProviderMeta {
