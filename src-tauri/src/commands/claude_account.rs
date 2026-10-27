@@ -47,7 +47,8 @@ pub async fn get_claude_default_plan(
 pub struct ClaudeLoginSwitchStatus {
     /// 切到绑号卡时会切换登录（没被挡住）
     pub active: bool,
-    /// 不切换登录的原因：`"overrideDir"`（设了 Claude 配置目录覆盖）
+    /// 不切换登录的原因：`"wsl"`（Claude 配置目录在 WSL 里，账号功能不可用）或
+    /// `"overrideDir"`（设了别的 Claude 配置目录覆盖）
     pub blocked: Option<String>,
     /// Claude Code 现在登录的账号 key（按 `~/.claude.json` 的资料）
     pub live: Option<String>,
