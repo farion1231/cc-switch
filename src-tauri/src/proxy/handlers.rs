@@ -53,6 +53,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use subtle::ConstantTimeEq;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -426,19 +427,32 @@ fn validate_claude_desktop_gateway_auth(
     state: &ProxyState,
     headers: &axum::http::HeaderMap,
 ) -> Result<(), ProxyError> {
-    let expected = crate::claude_desktop_config::get_or_create_gateway_token(state.db.as_ref())
+    validate_claude_desktop_gateway_auth_for_db(state.db.as_ref(), headers)
+}
+
+fn validate_claude_desktop_gateway_auth_for_db(
+    db: &crate::database::Database,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), ProxyError> {
+    let expected = crate::claude_desktop_config::get_or_create_gateway_token(db)
         .map_err(|e| ProxyError::AuthError(e.to_string()))?;
 
-    let token = extract_gateway_token(headers).ok_or_else(|| {
-        ProxyError::AuthError(
-            "Claude Desktop gateway 缺少 Authorization / x-api-key 头".to_string(),
-        )
-    })?;
-    if token != expected {
-        return Err(ProxyError::AuthError(
-            "Claude Desktop gateway token 无效".to_string(),
-        ));
+    validate_claude_desktop_gateway_token(headers, &expected)
+}
+
+fn validate_claude_desktop_gateway_token(
+    headers: &axum::http::HeaderMap,
+    expected: &str,
+) -> Result<(), ProxyError> {
+    let auth_error =
+        || ProxyError::AuthError("Claude Desktop gateway authentication failed".to_string());
+    let token = extract_gateway_token(headers).ok_or_else(auth_error)?;
+
+    // The token length is not secret; `ct_eq` hides where the contents differ.
+    if token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1 {
+        return Err(auth_error());
     }
+
     Ok(())
 }
 
@@ -3340,9 +3354,16 @@ mod tests {
         codex_proxy_error_json, extract_gateway_token, responses_sse_stream_to_anthropic_message,
         responses_sse_to_response_value, rewritten_sse_response_builder,
         should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        validate_claude_desktop_gateway_auth_for_db, validate_claude_desktop_gateway_token,
     };
+    use crate::database::Database;
     use crate::proxy::ProxyError;
+    use axum::{
+        http::{header::AUTHORIZATION, HeaderMap, HeaderValue, StatusCode},
+        response::IntoResponse,
+    };
     use bytes::Bytes;
+    use http_body_util::BodyExt;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -3371,6 +3392,139 @@ mod tests {
         assert!(headers.get(header::CONNECTION).is_none());
         assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
         assert_eq!(headers["x-request-id"], "req_1");
+    }
+
+    const TEST_GATEWAY_TOKEN: &str = "ccs-0123456789abcdef0123456789abcdef";
+
+    fn authorization_headers(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_str(value).unwrap());
+        headers
+    }
+
+    fn assert_gateway_auth_rejected(result: Result<(), ProxyError>) {
+        assert!(
+            matches!(result, Err(ProxyError::AuthError(message)) if message == "Claude Desktop gateway authentication failed")
+        );
+    }
+
+    #[test]
+    fn claude_desktop_gateway_auth_accepts_exact_token() {
+        let headers = authorization_headers(&format!("Bearer {TEST_GATEWAY_TOKEN}"));
+        assert!(validate_claude_desktop_gateway_token(&headers, TEST_GATEWAY_TOKEN).is_ok());
+
+        let mut api_key = HeaderMap::new();
+        api_key.insert("x-api-key", HeaderValue::from_static(TEST_GATEWAY_TOKEN));
+        assert!(validate_claude_desktop_gateway_token(&api_key, TEST_GATEWAY_TOKEN).is_ok());
+        api_key.insert("x-api-key", HeaderValue::from_static("wrong-token"));
+        assert_gateway_auth_rejected(validate_claude_desktop_gateway_token(
+            &api_key,
+            TEST_GATEWAY_TOKEN,
+        ));
+    }
+
+    #[test]
+    fn claude_desktop_gateway_auth_rejects_wrong_prefix_and_length() {
+        let prefix = &TEST_GATEWAY_TOKEN[..TEST_GATEWAY_TOKEN.len() / 2];
+        let shorter = &TEST_GATEWAY_TOKEN[..TEST_GATEWAY_TOKEN.len() - 1];
+        let longer = format!("{TEST_GATEWAY_TOKEN}0");
+
+        for token in ["wrong-token", prefix, shorter, longer.as_str()] {
+            let headers = authorization_headers(&format!("Bearer {token}"));
+            assert_gateway_auth_rejected(validate_claude_desktop_gateway_token(
+                &headers,
+                TEST_GATEWAY_TOKEN,
+            ));
+        }
+    }
+
+    #[test]
+    fn claude_desktop_gateway_auth_rejects_missing_malformed_and_non_utf8_headers() {
+        assert_gateway_auth_rejected(validate_claude_desktop_gateway_token(
+            &HeaderMap::new(),
+            TEST_GATEWAY_TOKEN,
+        ));
+
+        for value in ["", "Basic abc", "Bearer", "Bearer wrong-token"] {
+            assert_gateway_auth_rejected(validate_claude_desktop_gateway_token(
+                &authorization_headers(value),
+                TEST_GATEWAY_TOKEN,
+            ));
+        }
+
+        let mut non_utf8 = HeaderMap::new();
+        non_utf8.insert(AUTHORIZATION, HeaderValue::from_bytes(b"\xff").unwrap());
+        assert_gateway_auth_rejected(validate_claude_desktop_gateway_token(
+            &non_utf8,
+            TEST_GATEWAY_TOKEN,
+        ));
+    }
+
+    #[test]
+    fn claude_desktop_gateway_auth_preserves_bearer_case_and_whitespace_behavior() {
+        for value in [
+            format!("bearer {TEST_GATEWAY_TOKEN}"),
+            format!("Bearer   {TEST_GATEWAY_TOKEN}  "),
+        ] {
+            assert!(validate_claude_desktop_gateway_token(
+                &authorization_headers(&value),
+                TEST_GATEWAY_TOKEN
+            )
+            .is_ok());
+        }
+
+        assert_gateway_auth_rejected(validate_claude_desktop_gateway_token(
+            &authorization_headers(&format!("BEARER {TEST_GATEWAY_TOKEN}")),
+            TEST_GATEWAY_TOKEN,
+        ));
+    }
+
+    #[tokio::test]
+    async fn claude_desktop_gateway_auth_entry_uses_uniform_401_response() {
+        let db = Database::memory().expect("in-memory database");
+        db.set_setting("claude_desktop_gateway_token", TEST_GATEWAY_TOKEN)
+            .expect("seed gateway token");
+
+        assert!(validate_claude_desktop_gateway_auth_for_db(
+            &db,
+            &authorization_headers(&format!("Bearer {TEST_GATEWAY_TOKEN}"))
+        )
+        .is_ok());
+
+        let mut non_utf8 = HeaderMap::new();
+        non_utf8.insert(AUTHORIZATION, HeaderValue::from_bytes(b"\xff").unwrap());
+
+        let invalid_headers = [
+            HeaderMap::new(),
+            authorization_headers(""),
+            authorization_headers("Basic abc"),
+            authorization_headers("Bearer wrong-token"),
+            authorization_headers(&format!("Bearer {}", &TEST_GATEWAY_TOKEN[..4])),
+            non_utf8,
+        ];
+
+        let mut expected_body = None;
+        for headers in invalid_headers {
+            let response = validate_claude_desktop_gateway_auth_for_db(&db, &headers)
+                .expect_err("invalid authentication must fail")
+                .into_response();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+            let body = response
+                .into_body()
+                .collect()
+                .await
+                .expect("collect error response body")
+                .to_bytes();
+            let body: serde_json::Value =
+                serde_json::from_slice(&body).expect("parse error response body");
+            assert!(!body.to_string().contains(TEST_GATEWAY_TOKEN));
+            if let Some(expected_body) = &expected_body {
+                assert_eq!(&body, expected_body);
+            } else {
+                expected_body = Some(body);
+            }
+        }
     }
 
     #[test]
