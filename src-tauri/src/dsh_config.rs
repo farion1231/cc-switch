@@ -1599,18 +1599,31 @@ mod tests {
 
     #[test]
     fn recognizes_the_desktop_launcher_wherever_the_app_is_installed() {
-        for path in [
-            r"C:\Users\76760\AppData\Local\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd",
-            r"E:\Apps\DSH Desktop\resources\runtime\cli\bin\dsh.cmd",
-            "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
-        ] {
+        // Backslash-separated samples only parse as paths on Windows; on Unix
+        // `file_stem()` would see the whole string as one component.
+        let launchers: &[&str] = if cfg!(windows) {
+            &[
+                r"C:\Users\alice\AppData\Local\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd",
+                r"E:\Apps\DSH Desktop\resources\runtime\cli\bin\dsh.cmd",
+            ]
+        } else {
+            &["/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"]
+        };
+        for path in launchers {
             assert!(is_desktop_cli_launcher(Path::new(path)), "{path}");
         }
-        for path in [
-            r"D:\nodejs\node_global\dsh.cmd",
-            "/usr/local/bin/dsh",
-            r"C:\Programs\DeepSeek Harness\resources\runtime\cli\bin\node.cmd",
-        ] {
+        let non_launchers: &[&str] = if cfg!(windows) {
+            &[
+                r"D:\nodejs\node_global\dsh.cmd",
+                r"C:\Programs\DeepSeek Harness\resources\runtime\cli\bin\node.cmd",
+            ]
+        } else {
+            &[
+                "/usr/local/bin/dsh",
+                "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/node",
+            ]
+        };
+        for path in non_launchers {
             assert!(!is_desktop_cli_launcher(Path::new(path)), "{path}");
         }
     }
