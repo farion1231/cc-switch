@@ -2163,6 +2163,7 @@ describe("AppsPage visibility column", () => {
           "pi",
           "mcode",
           "kimi",
+          "dsh",
           "agy",
           "omp",
         ].map((app) => [app, false]),

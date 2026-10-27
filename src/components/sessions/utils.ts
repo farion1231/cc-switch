@@ -19,6 +19,7 @@ export const SESSION_APP_IDS = [
   "mcode",
   "kimi",
   "codebuddy",
+  "dsh",
   "agy",
 ] as const satisfies readonly AppId[];
 
@@ -41,6 +42,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   mcode: ["~/.minimax"],
   kimi: ["~/.kimi-code/sessions"],
   codebuddy: ["~/.codebuddy/projects"],
+  dsh: ["~/.dsh/sessions/<project>/<session>/session.v*.jsonl[.zstd]"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
   ],
@@ -49,7 +51,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
 /** MiniMax Code、Antigravity、Kimi Code、CodeBuddy Code 的会话只能在原应用里管理（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "kimi", "codebuddy"].includes(session.providerId);
+  !["mcode", "agy", "kimi", "dsh", "codebuddy"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

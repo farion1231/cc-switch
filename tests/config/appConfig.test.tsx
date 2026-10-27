@@ -17,6 +17,8 @@ describe("appConfig provider lifecycle", () => {
     "mcode",
     "kimi",
     "codebuddy",
+    "dsh",
+    "omp",
   ])("classifies %s as additive", (appId) => {
     expect(isAdditiveAppId(appId)).toBe(true);
   });

@@ -316,6 +316,7 @@ export interface VisibleApps {
   pi: boolean;
   mcode: boolean;
   kimi: boolean;
+  dsh?: boolean;
   agy: boolean;
   omp: boolean;
   codebuddy: boolean;
@@ -773,6 +774,7 @@ export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
   codebuddy?: boolean;
+  dsh?: boolean;
   agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;

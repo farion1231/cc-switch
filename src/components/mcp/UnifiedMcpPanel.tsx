@@ -89,6 +89,7 @@ const IMPORT_SOURCE_FILES: Record<
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
   agy: { file: "~/.gemini/config/mcp_config.json" },
+  dsh: { file: "~/.dsh/profiles/web/cordis.patch.yml" },
   kimi: { file: "~/.kimi-code/mcp.json" },
   codebuddy: {
     file: "~/.codebuddy/.mcp.json",
@@ -103,6 +104,7 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "kimi",
   "codebuddy",
+  "dsh",
   "pi",
   "agy",
   "omp",

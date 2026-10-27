@@ -17,3 +17,5 @@ mod utils;
 pub mod codebuddy;
 pub mod kimi;
 pub mod mcode;
+
+pub mod dsh;

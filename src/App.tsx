@@ -782,6 +782,7 @@ function App() {
       try {
         if (
           activeApp === "mcode" ||
+          activeApp === "dsh" ||
           activeApp === "kimi" ||
           activeApp === "agy" ||
           activeApp === "codebuddy"
@@ -1013,7 +1014,12 @@ function App() {
         queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
         queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
       ]);
-    } else if (app === "mcode" || app === "kimi" || app === "codebuddy") {
+    } else if (
+      app === "mcode" ||
+      app === "dsh" ||
+      app === "kimi" ||
+      app === "codebuddy"
+    ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
   };
@@ -1184,6 +1190,7 @@ function App() {
       duplicatedProvider.addToLive = false;
     } else if (
       activeApp === "mcode" ||
+      activeApp === "dsh" ||
       activeApp === "kimi" ||
       activeApp === "codebuddy"
     ) {
@@ -1390,6 +1397,7 @@ function App() {
         <>
           {currentView === "providers" &&
             activeApp !== "mcode" &&
+            activeApp !== "dsh" &&
             activeApp !== "kimi" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
@@ -1557,6 +1565,7 @@ function App() {
               activeApp === "pi" ||
               activeApp === "mcode" ||
               activeApp === "kimi" ||
+              activeApp === "dsh" ||
               activeApp === "omp" ||
               activeApp === "codebuddy"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
