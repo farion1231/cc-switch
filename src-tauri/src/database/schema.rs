@@ -70,6 +70,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_omp BOOLEAN NOT NULL DEFAULT 0
@@ -104,6 +105,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -678,9 +680,22 @@ impl Database {
                         Self::set_user_version(conn, 23)?;
                     }
                     23 => {
-                        log::info!("迁移数据库从 v23 到 v24（用量多维归属）");
-                        Self::migrate_v23_to_v24(conn)?;
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_dsh",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
                         Self::set_user_version(conn, 24)?;
+                    }
+                    24 => {
+                        log::info!("迁移数据库从 v24 到 v25（用量多维归属）");
+                        Self::migrate_v24_to_v25(conn)?;
+                        Self::set_user_version(conn, 25)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -707,14 +722,15 @@ impl Database {
         }
     }
 
-    /// v23 -> v24 迁移：用量多维归属基础设施。
+    /// v24 -> v25 迁移：用量多维归属基础设施。
     ///
     /// 新增供应商激活时间线与会话项目索引，给代理明细和日汇总增加项目维度、
     /// 归属证据与供应商名称快照；存量会话行统一标记为未识别，避免被列默认的
     /// `proxy/exact` 误标。日汇总重建主键以纳入 `project_key`。
-    /// 早期 PR 构建曾使用 v21/v23，已有归属证据和汇总分组必须原样保留。
-    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
-        // 早期 PR 的 v23 尚无上游 Oh My Pi 开关，不能只依赖 v22 -> v23。
+    /// 早期 PR 构建曾使用 v21/v23/v24，已有归属证据和汇总分组必须原样保留。
+    fn migrate_v24_to_v25(conn: &Connection) -> Result<(), AppError> {
+        // 早期 PR 的 v23 尚无上游 Oh My Pi 开关，v24 尚无上游 DeepSeek Harness 开关，
+        // 不能只依赖上游迁移步骤。
         if Self::table_exists(conn, "mcp_servers")? {
             Self::add_column_if_missing(
                 conn,
@@ -722,6 +738,16 @@ impl Database {
                 "enabled_omp",
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
+        }
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_dsh",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
         }
         // 1. 供应商激活时间线（切换式客户端直连归属证据）
         conn.execute_batch(
@@ -739,7 +765,7 @@ impl Database {
                 ON provider_activations(app_type, effective_at_ms);",
         )
         .map_err(|e| {
-            AppError::Database(format!("v23 -> v24 创建 provider_activations 失败: {e}"))
+            AppError::Database(format!("v24 -> v25 创建 provider_activations 失败: {e}"))
         })?;
 
         // 2. 会话项目索引（项目键与会话键的关联）
@@ -757,7 +783,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_session_projects_project
                 ON session_projects(project_key);",
         )
-        .map_err(|e| AppError::Database(format!("v23 -> v24 创建 session_projects 失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("v24 -> v25 创建 session_projects 失败: {e}")))?;
 
         // 3. 代理明细新增项目、归属证据与名称快照列
         if Self::table_exists(conn, "proxy_request_logs")? {
@@ -791,7 +817,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v23 -> v24 回填存量会话行归属失败: {e}"))
+                    AppError::Database(format!("v24 -> v25 回填存量会话行归属失败: {e}"))
                 })?;
             }
 
@@ -809,7 +835,7 @@ impl Database {
                      CREATE INDEX IF NOT EXISTS idx_request_logs_session_key
                          ON proxy_request_logs(app_type, session_key);",
                 )
-                .map_err(|e| AppError::Database(format!("v23 -> v24 创建项目维度索引失败: {e}")))?;
+                .map_err(|e| AppError::Database(format!("v24 -> v25 创建项目维度索引失败: {e}")))?;
             }
         }
 
@@ -881,7 +907,7 @@ impl Database {
                      DROP TABLE usage_daily_rollups_v22;",
                 ))
                 .map_err(|e| {
-                    AppError::Database(format!("v23 -> v24 重建 usage_daily_rollups 失败: {e}"))
+                    AppError::Database(format!("v24 -> v25 重建 usage_daily_rollups 失败: {e}"))
                 })?;
             } else {
                 for (column, definition) in [
@@ -918,7 +944,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v23 -> v24 回填代理明细供应商名称快照失败: {e}"))
+                    AppError::Database(format!("v24 -> v25 回填代理明细供应商名称快照失败: {e}"))
                 })?;
             }
             if Self::table_exists(conn, "usage_daily_rollups")?
@@ -937,7 +963,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v23 -> v24 回填日汇总供应商名称快照失败: {e}"))
+                    AppError::Database(format!("v24 -> v25 回填日汇总供应商名称快照失败: {e}"))
                 })?;
             }
         }
@@ -4263,6 +4289,38 @@ mod tests {
     }
 
     #[test]
+    fn dsh_migration_preserves_existing_flags_and_persists_mcp_and_skill_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for (table, flag) in [
+            ("mcp_servers", "enabled_kimi"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_dsh FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"node"}, "apps":{"dsh":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Dsh, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.dsh && saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "apps":{"dsh":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.dsh);
+        assert!(db.get_all_installed_skills()?["s"].apps.claude);
+        Ok(())
+    }
+
+    #[test]
     fn kimi_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
@@ -4533,6 +4591,11 @@ mod tests {
     #[test]
     fn multidim_migration_upgrades_main_v23() -> Result<(), AppError> {
         assert_multidim_migration(23, false)
+    }
+
+    #[test]
+    fn multidim_migration_upgrades_main_v24() -> Result<(), AppError> {
+        assert_multidim_migration(24, false)
     }
 
     #[test]
