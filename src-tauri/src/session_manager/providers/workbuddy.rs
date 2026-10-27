@@ -4,7 +4,10 @@
 //! `sessionId` / `cwd`：
 //! - `message`：`role` 为 user / assistant，`content` 是 `{type, text}` 数组
 //!   （`input_text` / `output_text`）；用户消息把真实提问包在 `<user_query>` 里，前面是
-//!   引擎注入的上下文。assistant 消息的 `providerData` 带模型和用量。
+//!   引擎注入的上下文。
+//! - 每次模型请求的 `providerData.rawUsage`（模型和用量）记在该请求的最后一个事件上：
+//!   assistant `message` 或 `function_call`；同一请求的事件共享 `providerData.messageId`。
+//! - 子代理的记录在 `<sessionId>/subagents/agent-*.jsonl`，用量算父会话的。
 //! - `reasoning`：`rawContent` 数组里是思考文本。
 //! - `function_call`：`callId` / `name` / `arguments`（JSON 字符串）。
 //! - `function_call_result`：`callId` / `status` / `output{type,text}`。
@@ -53,6 +56,45 @@ pub(crate) fn session_files(projects: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
                 files.push(path);
+            }
+        }
+    }
+    files
+}
+
+/// 导入用量要读的文件：顶层会话文件，加上 `<sessionId>/subagents/*.jsonl`。
+/// 子代理不是独立会话，但它的请求算在父会话头上；返回 `(文件, 父会话 ID)`，
+/// 顶层文件的父会话 ID 为 `None`（用记录里的 `sessionId`）。
+pub(crate) fn usage_files(projects: &Path) -> Vec<(PathBuf, Option<String>)> {
+    let mut files: Vec<_> = session_files(projects)
+        .into_iter()
+        .map(|path| (path, None))
+        .collect();
+    let Ok(projects) = fs::read_dir(projects) else {
+        return files;
+    };
+    for project in projects.flatten() {
+        let Ok(sessions) = fs::read_dir(project.path()) else {
+            continue;
+        };
+        for session in sessions.flatten() {
+            let session_dir = session.path();
+            let Some(parent_id) = session_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Ok(entries) = fs::read_dir(session_dir.join("subagents")) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                {
+                    files.push((path, Some(parent_id.clone())));
+                }
             }
         }
     }
@@ -212,9 +254,13 @@ fn strip_custom_prefix(model: &str) -> &str {
     }
 }
 
-/// 从 assistant `message` 事件里取用量；没有任何用量字段时返回 `None`。
+/// 从模型产出的事件里取用量；没有任何用量字段时返回 `None`。
+///
+/// 一次请求的 `rawUsage` 记在这次请求的最后一个事件上：只回文本时是 assistant
+/// `message`，调用工具时是最后一个 `function_call`（实际日志里大部分 token 在这里），
+/// 所以只要带 `rawUsage` 就算，不看事件类型。
 pub(crate) fn assistant_usage(record: &Value) -> Option<Usage> {
-    if kind(record) != "message" || role(record) != "assistant" {
+    if role(record) == "user" {
         return None;
     }
     let data = record.get("providerData");
@@ -253,7 +299,10 @@ pub(crate) fn assistant_usage(record: &Value) -> Option<Usage> {
             reasoning,
         });
     }
-    // 没有 rawUsage 时退回 agents SDK 的 usage（同样是含缓存的输入）。
+    // 没有 rawUsage 时退回 agents SDK 的 usage（同样是含缓存的输入），只认 assistant 消息。
+    if kind(record) != "message" || role(record) != "assistant" {
+        return None;
+    }
     let usage = data.and_then(|data| data.get("usage"))?;
     let cache_read = usage
         .get("inputTokensDetails")
@@ -527,6 +576,57 @@ mod tests {
         );
         let user = serde_json::json!({"type": "message", "role": "user"});
         assert!(assistant_usage(&user).is_none());
+        // SDK usage 只认 assistant 消息。
+        let call =
+            serde_json::json!({"type": "function_call", "providerData": record["providerData"]});
+        assert!(assistant_usage(&call).is_none());
+    }
+
+    #[test]
+    fn workbuddy_usage_reads_raw_usage_on_function_calls() {
+        let record = serde_json::json!({
+            "type": "function_call", "name": "Read", "callId": "c1",
+            "providerData": {"model": "hy4-preview", "messageId": "m1", "rawUsage": {
+                "prompt_tokens": 32302, "completion_tokens": 505,
+                "prompt_cache_hit_tokens": 11968, "prompt_cache_miss_tokens": 20334
+            }}
+        });
+        let usage = assistant_usage(&record).unwrap();
+        assert_eq!(
+            (usage.fresh_input, usage.cache_read, usage.output),
+            (20334, 11968, 505)
+        );
+        let bare = serde_json::json!({"type": "function_call", "providerData": {"model": "m"}});
+        assert!(assistant_usage(&bare).is_none());
+    }
+
+    #[test]
+    fn workbuddy_usage_files_include_subagents_under_their_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("Users-me-proj");
+        let subagents = project.join("parent-1").join("subagents");
+        fs::create_dir_all(subagents.join("agent-a")).unwrap();
+        fs::write(project.join("parent-1.jsonl"), "").unwrap();
+        fs::write(subagents.join("agent-a.jsonl"), "").unwrap();
+        fs::write(subagents.join("agent-a").join("note.txt"), "").unwrap();
+
+        let mut files = usage_files(dir.path());
+        files.sort();
+        assert_eq!(
+            files,
+            vec![
+                (
+                    subagents.join("agent-a.jsonl"),
+                    Some("parent-1".to_string())
+                ),
+                (project.join("parent-1.jsonl"), None),
+            ]
+        );
+        // 会话列表仍只有父会话。
+        assert_eq!(
+            session_files(dir.path()),
+            vec![project.join("parent-1.jsonl")]
+        );
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! 从 WorkBuddy 的会话日志导入用量：`<data dir>/projects/<cwd>/<sessionId>.jsonl`。
 //!
-//! 每条 assistant `message` 事件对应一次模型请求，`providerData.rawUsage` 是上游返回的
-//! OpenAI 口径用量：`prompt_tokens` 已含缓存命中（`prompt_cache_hit_tokens +
+//! 每次模型请求的 `providerData.rawUsage` 记在这次请求的最后一个事件上（assistant
+//! `message` 或 `function_call`），按事件 `id` 去重；子代理
+//! `<sessionId>/subagents/*.jsonl` 的请求算父会话的。`rawUsage` 是上游返回的 OpenAI 口径用量：`prompt_tokens` 已含缓存命中（`prompt_cache_hit_tokens +
 //! prompt_cache_miss_tokens == prompt_tokens`），`completion_tokens` 已含思考 token。
 //! 入库时把缓存读写从输入里扣掉，按「新输入」口径存（`input_token_semantics = FRESH`），
 //! 计费时输入、缓存读、缓存写、输出各按各的单价算。`rawUsage.credit` 是 WorkBuddy 积分，
@@ -29,6 +30,9 @@ use std::{
 };
 
 const DATA_SOURCE: &str = "workbuddy_session";
+/// 游标键前缀。改了「哪些记录算请求」时递增，让已同步过的文件从头重读；
+/// 已入库的请求由 `session_usage_dedup` 回执挡住，只补新认出的。
+const CURSOR_PREFIX: &str = "workbuddy:v2:";
 
 pub fn sync_workbuddy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     sync_projects(db, &workbuddy::projects_dir())
@@ -36,17 +40,17 @@ pub fn sync_workbuddy_usage(db: &Database) -> Result<SessionSyncResult, AppError
 
 fn sync_projects(db: &Database, projects: &Path) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let files = workbuddy::session_files(projects);
+    let files = workbuddy::usage_files(projects);
     if files.is_empty() {
         return Ok(result);
     }
     let cursors = load_sync_cursors(db)?;
-    for path in files {
+    for (path, parent_session) in files {
         let Ok(meta) = fs::metadata(&path) else {
             continue;
         };
         let modified = metadata_modified_nanos(&meta);
-        let key = format!("workbuddy:{}", path.to_string_lossy());
+        let key = format!("{CURSOR_PREFIX}{}", path.to_string_lossy());
         let cursor = cursors.get(&key);
         if cursor
             .is_some_and(|c| c.last_modified == modified && c.last_line_offset == meta.len() as i64)
@@ -57,7 +61,7 @@ fn sync_projects(db: &Database, projects: &Path) -> Result<SessionSyncResult, Ap
             .map(|c| c.last_line_offset)
             .filter(|offset| *offset >= 0 && *offset <= meta.len() as i64)
             .unwrap_or(0);
-        match sync_file(db, &path, &key, modified, offset) {
+        match sync_file(db, &path, parent_session.as_deref(), &key, modified, offset) {
             Ok(part) => result.merge(part),
             Err(error) => result
                 .errors
@@ -75,15 +79,16 @@ struct Entry {
     created_ms: i64,
 }
 
-fn entry(record: &Value) -> Option<Entry> {
+/// `parent_session`：子代理文件所属的父会话；记录里的 `sessionId` 是子代理自己的。
+fn entry(record: &Value, parent_session: Option<&str>) -> Option<Entry> {
     let usage = workbuddy::assistant_usage(record)?;
     if usage.is_empty() {
         return None;
     }
+    // 一次请求只有一个事件带 rawUsage，事件 id 就是请求 id（和 v1 入库的行一致，重读不会重复）。
     let id = record.get("id").and_then(Value::as_str)?;
-    let session_id = record
-        .get("sessionId")
-        .and_then(Value::as_str)
+    let session_id = parent_session
+        .or_else(|| record.get("sessionId").and_then(Value::as_str))
         .unwrap_or("unknown")
         .to_string();
     let model = usage.model.clone().unwrap_or_else(|| "unknown".into());
@@ -108,6 +113,7 @@ fn entry(record: &Value) -> Option<Entry> {
 fn sync_file(
     db: &Database,
     path: &Path,
+    parent_session: Option<&str>,
     key: &str,
     modified: i64,
     offset: i64,
@@ -132,7 +138,7 @@ fn sync_file(
         if let Some(entry) = serde_json::from_slice::<Value>(&buffer)
             .ok()
             .as_ref()
-            .and_then(entry)
+            .and_then(|record| entry(record, parent_session))
         {
             entries.push(entry);
         }
@@ -319,6 +325,79 @@ mod tests {
             .unwrap();
         assert_eq!(sync_projects(&db, dir.path()).unwrap().imported, 0);
         assert_eq!(rows(&db).len(), 1);
+    }
+
+    #[test]
+    fn workbuddy_usage_counts_tool_calls_and_subagents_and_rereads_v1_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = session_file(dir.path());
+        let message = assistant("a1", "m", 300, 0, 0, 5);
+        let call = |id: &str, session: &str| {
+            serde_json::json!({
+                "id": id, "timestamp": 1792764380000_i64, "type": "function_call",
+                "name": "Read", "callId": "c", "sessionId": session,
+                "providerData": {"model": "m", "messageId": format!("msg-{id}"), "rawUsage": {
+                    "prompt_tokens": 1000, "completion_tokens": 20,
+                    "prompt_cache_hit_tokens": 900, "prompt_cache_miss_tokens": 100
+                }}
+            })
+            .to_string()
+        };
+        // 同一请求里先出现、不带 rawUsage 的 function_call 不算。
+        let empty_call = r#"{"id":"c0","timestamp":1792764380000,"type":"function_call","name":"Glob","sessionId":"s1","providerData":{"model":"m"}}"#;
+        fs::write(
+            &path,
+            format!("{message}\n{empty_call}\n{}\n", call("c1", "s1")),
+        )
+        .unwrap();
+        let subagents = path.with_extension("").join("subagents");
+        fs::create_dir_all(&subagents).unwrap();
+        fs::write(
+            subagents.join("agent-x.jsonl"),
+            format!("{}\n", call("c2", "agent-own-id")),
+        )
+        .unwrap();
+
+        let db = Database::memory().unwrap();
+        // 模拟 v1：只导过 assistant message，游标已到文件末尾。
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id) VALUES (?1, 'workbuddy:s1:a1', 'workbuddy:s1:a1', 1)",
+                [DATA_SOURCE],
+            )
+            .unwrap();
+            let meta = fs::metadata(&path).unwrap();
+            update_sync_state_on_conn(
+                &conn,
+                &format!("workbuddy:{}", path.to_string_lossy()),
+                metadata_modified_nanos(&meta),
+                meta.len() as i64,
+            )
+            .unwrap();
+        }
+
+        let result = sync_projects(&db, dir.path()).unwrap();
+        assert_eq!((result.imported, result.skipped), (2, 1));
+        let conn = db.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT request_id, session_id, input_tokens, cache_read_tokens FROM proxy_request_logs WHERE app_type = 'workbuddy' ORDER BY request_id")
+            .unwrap();
+        let imported: Vec<(String, String, i64, i64)> = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            imported,
+            vec![
+                ("workbuddy:s1:c1".into(), "s1".into(), 100, 900),
+                // 子代理的请求记在父会话 s1 名下，不用子代理自己的 sessionId。
+                ("workbuddy:s1:c2".into(), "s1".into(), 100, 900),
+            ]
+        );
     }
 
     #[test]
