@@ -487,10 +487,15 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolCon
                 let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
                 json!({ "type": "tool", "name": upstream_name })
             }
-            Some("custom") => json!({
-                "type": "tool",
-                "name": obj.get("name").and_then(|value| value.as_str()).unwrap_or("")
-            }),
+            Some("custom") => {
+                let name = obj
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let namespace = obj.get("namespace").and_then(|value| value.as_str());
+                let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
+                json!({ "type": "tool", "name": upstream_name })
+            }
             Some("tool_search") => {
                 json!({ "type": "tool", "name": TOOL_SEARCH_PROXY_NAME })
             }
@@ -581,6 +586,10 @@ fn convert_input_to_messages(
                     .get("name")
                     .and_then(|value| value.as_str())
                     .unwrap_or("");
+                // 历史 custom_tool_call 带 namespace 时映射回本轮声明的拍平名
+                // （functions__exec），与 function_call 分支同一套映射。
+                let namespace = item.get("namespace").and_then(|value| value.as_str());
+                let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
                 let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
                 push_block(
                     &mut messages,
@@ -588,7 +597,7 @@ fn convert_input_to_messages(
                     json!({
                         "type": "tool_use",
                         "id": call_id,
-                        "name": name,
+                        "name": upstream_name,
                         "input": { "input": input }
                     }),
                 );
@@ -1646,6 +1655,57 @@ mod tests {
     use super::*;
 
     // ==================== Request: Responses → Anthropic ====================
+
+    #[test]
+    fn namespaced_custom_tool_replays_and_is_forced_by_flattened_chat_name() {
+        // issue #7565: a custom child inside the additional_tools namespace
+        // carrier is declared as functions__exec on the Anthropic side too,
+        // so both the replayed custom_tool_call history and a tool_choice
+        // selecting it must use the flattened name (not the bare "exec").
+        let input = json!({
+            "model": "m",
+            "tool_choice": { "type": "custom", "name": "exec", "namespace": "functions" },
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "tools": [
+                                { "type": "custom", "name": "exec", "description": "Run raw code." }
+                            ]
+                        }
+                    ]
+                },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                {
+                    "type": "custom_tool_call",
+                    "id": "ctc_exec",
+                    "call_id": "call_exec",
+                    "status": "completed",
+                    "name": "exec",
+                    "namespace": "functions",
+                    "input": "print(1)"
+                },
+                { "type": "custom_tool_call_output", "call_id": "call_exec", "output": "ok" }
+            ]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["tool_choice"]["type"], "tool");
+        assert_eq!(result["tool_choice"]["name"], "functions__exec");
+
+        let messages = result["messages"].as_array().unwrap();
+        let tool_use = messages
+            .iter()
+            .flat_map(|m| m["content"].as_array().unwrap().iter())
+            .find(|b| b["type"] == "tool_use")
+            .expect("namespaced custom_tool_call replays as tool_use");
+        assert_eq!(tool_use["name"], "functions__exec");
+        assert_eq!(tool_use["input"], json!({ "input": "print(1)" }));
+    }
 
     #[test]
     fn test_request_simple_text() {
