@@ -198,6 +198,7 @@ export function ProviderCard({
   dragHandleProps,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const readOnly = presentation.readOnly === true;
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
   const managedCodexAccountId = resolveManagedAccountId(
     provider.meta,
@@ -211,6 +212,7 @@ export function ProviderCard({
     queryKey: ["managed-auth-status", "codex_oauth"],
     queryFn: () => authApi.authGetStatus("codex_oauth"),
     enabled:
+      !readOnly &&
       codexOfficialIdentity === "managed_account" &&
       Boolean(managedCodexAccountId),
     staleTime: 30_000,
@@ -229,7 +231,7 @@ export function ProviderCard({
   const { data: health } = useProviderHealth(
     provider.id,
     appId,
-    Boolean(presentation.showHealth) && isProxyAppId(appId),
+    !readOnly && Boolean(presentation.showHealth) && isProxyAppId(appId),
   );
 
   const fallbackUrlText = t("provider.notConfigured", {
@@ -265,8 +267,9 @@ export function ProviderCard({
       : null;
   // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
   const usageEnabled =
-    provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    !readOnly &&
+    (provider.meta?.usage_script?.enabled ??
+      (isBoundCodexOfficial || Boolean(claudeBoundAccountId)));
   const supportsOfficialSubscription =
     isOfficial &&
     ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
@@ -308,7 +311,8 @@ export function ProviderCard({
       : null;
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
-  const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
+  const shouldAutoQuery =
+    !readOnly && (isAdditiveAppId(appId) ? isInConfig : isCurrent);
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -356,11 +360,13 @@ export function ProviderCard({
         presentation.tone
           ? TONE_CLASS[presentation.tone]
           : "border-border bg-surface hover:border-border-strong hover:shadow-v7-sm",
-        dragHandleProps?.isDragging && "cursor-grabbing shadow-v7-md",
+        !readOnly &&
+          dragHandleProps?.isDragging &&
+          "cursor-grabbing shadow-v7-md",
       )}
     >
       <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
-        {dragHandleProps ? (
+        {!readOnly && dragHandleProps ? (
           <button
             type="button"
             className={cn(
@@ -404,7 +410,7 @@ export function ProviderCard({
             {presentation.chips.map((chip) => (
               <CardChipBadge key={chip.key} chip={chip} />
             ))}
-            {presentation.showHealth && health && (
+            {!readOnly && presentation.showHealth && health && (
               <HealthChip
                 consecutiveFailures={health.consecutive_failures}
                 isHealthy={health.is_healthy}
@@ -412,7 +418,16 @@ export function ProviderCard({
             )}
           </div>
 
-          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+          {readOnly ? (
+            <div className="mt-0.5 flex min-w-0 items-center text-caption text-fg-2">
+              <span
+                className="min-w-0 truncate"
+                title={t("omp.nativeLogin.hint")}
+              >
+                {t("omp.nativeLogin.hint")}
+              </span>
+            </div>
+          ) : codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               {codexOfficialIdentity === "native_login" ? (
                 <span className="min-w-0 truncate" title={manualNote}>
@@ -531,7 +546,7 @@ export function ProviderCard({
           {/* 额度列 136 宽，带重置倒计时时 194 宽（见 QuotaLines） */}
           <div className="max-w-[208px] text-end">
             <div className="flex items-center justify-end gap-1">
-              {isCopilot ? (
+              {readOnly ? null : isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
                   inline={true}

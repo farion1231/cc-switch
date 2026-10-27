@@ -59,6 +59,8 @@ export interface CardButton {
 }
 
 export interface CardPresentation {
+  /** 仅展示原生登录信息，不提供操作、额度查询或拖拽。 */
+  readOnly?: boolean;
   /** 当前那张：模式色边框 + 淡底；共存式应用的默认那家（OpenClaw / OpenCode / Kimi 默认、Hermes 当前）也用 direct */
   tone?: CardTone;
   /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…） */
@@ -718,6 +720,24 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       : undefined;
 
   for (const p of providers) {
+    if (app === "omp" && p.meta?.nativeLogin) {
+      added.push({
+        provider: p,
+        presentation: {
+          readOnly: true,
+          chips: [
+            {
+              key: "nativeLogin",
+              label: t("omp.nativeLogin.badge"),
+              title: t("omp.nativeLogin.hint"),
+              tone: "outline",
+            },
+          ],
+          buttons: [],
+        },
+      });
+      continue;
+    }
     const chips: CardChip[] = [];
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);

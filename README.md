@@ -358,6 +358,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 | Oh My Pi | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
 
 - **Switch**: only one provider is active at a time; **Coexist**: multiple providers are written into the tool's own config at the same time, and you pick one inside the tool.
+- **Oh My Pi native OAuth**: The provider list also shows local OAuth channels from the selected profile's `agent.db` as read-only cards. Refresh/reopen the page after `/login` or `/logout`; existing explicit/saved providers take precedence. Credentials are not imported or validated, and no login, quota, or model settings are changed. A broker URL in the process environment, agent/config-root/home `.env`, or `config.yml` disables local discovery; remote broker credentials and project-specific authentication are not inspected.
 - **Local Routing**: CC Switch forwards requests on your machine and converts API formats; see [Local Routing & Failover](#local-routing--failover) below. Claude Desktop providers can use "Direct" or "Model Mapping"; with "Model Mapping", requests go through local routing.
 - **Aggregation**: Puts models from several providers into one model list and sends each request to the provider of the model you pick; see [Aggregation Mode](#aggregation-mode) below.
 - **Sessions**: Browse and search conversation history, open the reading view, and copy a resume command to continue a conversation (resuming OpenClaw and Hermes sessions isn't supported yet). Hermes shows only the 500 most recent sessions.

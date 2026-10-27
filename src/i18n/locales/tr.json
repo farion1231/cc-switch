@@ -4984,6 +4984,10 @@
     }
   },
   "omp": {
+    "nativeLogin": {
+      "badge": "Yerel OAuth",
+      "hint": "Yerel OMP OAuth yapılandırması algılandı. Oturumu OMP'de /login veya /logout ile yönetin; kimlik bilgilerinin geçerliliği burada doğrulanmaz."
+    },
     "empty": {
       "title": "Henüz API anahtarı sağlayıcısı yok",
       "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın."

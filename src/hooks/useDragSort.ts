@@ -58,10 +58,14 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         return;
       }
 
-      const oldIndex = sortedProviders.findIndex(
+      const sortableProviders =
+        appId === "omp"
+          ? sortedProviders.filter((provider) => !provider.meta?.nativeLogin)
+          : sortedProviders;
+      const oldIndex = sortableProviders.findIndex(
         (provider) => provider.id === active.id,
       );
-      const newIndex = sortedProviders.findIndex(
+      const newIndex = sortableProviders.findIndex(
         (provider) => provider.id === over.id,
       );
 
@@ -69,7 +73,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         return;
       }
 
-      const reordered = arrayMove(sortedProviders, oldIndex, newIndex);
+      const reordered = arrayMove(sortableProviders, oldIndex, newIndex);
       const updates = reordered.map((provider, index) => ({
         id: provider.id,
         sortIndex: index,

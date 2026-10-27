@@ -1,6 +1,7 @@
 //! Oh My Pi (`omp`, can1357/oh-my-pi) owns its defaults and login. CC Switch manages only the
 //! explicit `providers` entries in `models.yml` and the MCP servers in `mcp.json`, and reads
-//! `config.yml` for the default model.
+//! `config.yml` for the default model and auth-broker selection. Local OAuth provider IDs are
+//! read-only metadata from `agent.db`; native credentials remain owned by omp.
 //!
 //! The agent dir is `~/.omp/agent`, or `~/.omp/profiles/<name>/agent` for a named profile.
 //! models.yml is edited as text: bytes outside the one entry CC Switch writes are never touched,
@@ -9,11 +10,13 @@
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 use indexmap::IndexMap;
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::Value;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
 static MODELS_LOCK: Mutex<()> = Mutex::new(());
@@ -286,12 +289,71 @@ fn providers(document: &serde_yaml::Value) -> Result<IndexMap<String, Value>, Ap
 }
 
 // ============================================================================
-// Providers (models.yml)
+// Providers (models.yml and read-only native OAuth metadata)
 // ============================================================================
 
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = MODELS_LOCK.lock()?;
     providers(&parse(&read_text(&get_omp_models_path()?)?.1)?)
+}
+
+/// Discover local native login provider IDs without reading credential payloads or changing
+/// omp's database. A selected auth broker owns credentials remotely, not in this local store.
+pub(crate) fn get_native_oauth_provider_ids() -> Result<Vec<String>, AppError> {
+    if std::env::var_os("OMP_AUTH_BROKER_URL").is_some_and(|url| !url.is_empty())
+        || [get_omp_agent_dir()?, get_omp_config_root()?, get_home_dir()]
+            .iter()
+            .any(|dir| dotenv_value(&dir.join(".env"), "OMP_AUTH_BROKER_URL").is_some())
+    {
+        return Ok(Vec::new());
+    }
+    let document = parse(&read_text(&get_omp_settings_path()?)?.1)?;
+    let broker_url = document
+        .get("auth")
+        .and_then(|auth| auth.get("broker"))
+        .and_then(|broker| broker.get("url"))
+        .or_else(|| document.get("auth.broker.url"));
+    if broker_url
+        .and_then(serde_yaml::Value::as_str)
+        .is_some_and(|url| !url.is_empty())
+    {
+        return Ok(Vec::new());
+    }
+
+    let path = get_omp_data_dir()?.join("agent.db");
+    match fs::metadata(&path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(AppError::io(&path, error)),
+    }
+    let connection = Connection::open_with_flags(
+        &path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    // Match native_models: do not wait for a native writer, and keep WAL visibility.
+    connection.busy_timeout(Duration::ZERO)?;
+    let table_kind: Option<String> = connection
+        .query_row(
+            "SELECT type FROM sqlite_master WHERE name = 'auth_credentials'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match table_kind.as_deref() {
+        None => return Ok(Vec::new()),
+        Some("table") => {}
+        Some(_) => {
+            return Err(AppError::Config(
+                "Oh My Pi auth_credentials is not a table".into(),
+            ))
+        }
+    }
+    let mut statement = connection.prepare(
+        "SELECT DISTINCT provider FROM auth_credentials
+         WHERE credential_type = 'oauth' AND disabled_cause IS NULL ORDER BY provider",
+    )?;
+    let providers = statement.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(providers.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 /// `api` on a provider node, as omp v18.12's models.yml schema enumerates it.
@@ -983,6 +1045,46 @@ pub(crate) fn update_omp_mcp_document(
 pub(crate) mod test_support {
     use std::path::{Path, PathBuf};
 
+    pub(crate) struct BrokerUrlEnv {
+        broker: Option<std::ffi::OsString>,
+        home: Option<std::ffi::OsString>,
+        config_dir: Option<std::ffi::OsString>,
+        _home: tempfile::TempDir,
+    }
+
+    impl BrokerUrlEnv {
+        pub(crate) fn set(value: Option<&str>) -> Self {
+            let home = tempfile::tempdir().expect("create isolated OAuth test home");
+            let guard = Self {
+                broker: std::env::var_os("OMP_AUTH_BROKER_URL"),
+                home: std::env::var_os("CC_SWITCH_TEST_HOME"),
+                config_dir: std::env::var_os("PI_CONFIG_DIR"),
+                _home: home,
+            };
+            std::env::set_var("CC_SWITCH_TEST_HOME", guard._home.path());
+            std::env::remove_var("PI_CONFIG_DIR");
+            match value {
+                Some(value) => std::env::set_var("OMP_AUTH_BROKER_URL", value),
+                None => std::env::remove_var("OMP_AUTH_BROKER_URL"),
+            }
+            guard
+        }
+    }
+
+    impl Drop for BrokerUrlEnv {
+        fn drop(&mut self) {
+            for (key, previous) in [
+                ("OMP_AUTH_BROKER_URL", self.broker.take()),
+                ("CC_SWITCH_TEST_HOME", self.home.take()),
+                ("PI_CONFIG_DIR", self.config_dir.take()),
+            ] {
+                match previous {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
     pub(crate) struct TestAgentDir {
         _dir: Option<tempfile::TempDir>,
         previous: Option<PathBuf>,
@@ -1024,11 +1126,306 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::BrokerUrlEnv;
     use super::*;
     use serde_json::json;
 
     fn provider() -> Value {
         json!({"baseUrl":"https://example.com/v1", "apiKey":"LITERAL_KEY", "api":"openai-completions", "models":[{"id":"model-a"}]})
+    }
+
+    fn native_auth_database() -> rusqlite::Connection {
+        let connection =
+            rusqlite::Connection::open(get_omp_data_dir().unwrap().join("agent.db")).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE auth_credentials (
+                    id INTEGER PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    credential_type TEXT NOT NULL,
+                    data TEXT NOT NULL,
+                    disabled_cause TEXT,
+                    identity_key TEXT,
+                    created_at INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL DEFAULT 0
+                );",
+            )
+            .unwrap();
+        connection
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_provider_ids_only_include_active_oauth_and_deduplicate_accounts() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let connection = native_auth_database();
+        // Deliberately invalid JSON: discovery must never parse credential payloads.
+        connection
+            .execute_batch(
+                "INSERT INTO auth_credentials (provider, credential_type, data, disabled_cause)
+                 VALUES ('openai-codex', 'oauth', 'not-json', NULL),
+                        ('anthropic', 'oauth', 'not-json', NULL),
+                        ('openai-codex', 'oauth', 'not-json', NULL),
+                        ('disabled-provider', 'oauth', 'not-json', 'logout'),
+                        ('empty-disabled-cause', 'oauth', 'not-json', ''),
+                        ('api-key-provider', 'api_key', 'not-json', NULL);",
+            )
+            .unwrap();
+
+        assert_eq!(
+            get_native_oauth_provider_ids().unwrap(),
+            vec!["anthropic", "openai-codex"]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_does_not_create_a_missing_database_or_config() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let database = get_omp_data_dir().unwrap().join("agent.db");
+        let config = get_omp_settings_path().unwrap();
+
+        assert!(get_native_oauth_provider_ids().unwrap().is_empty());
+        assert!(!database.exists());
+        assert!(!config.exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_does_not_create_a_missing_credentials_table() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let database = get_omp_data_dir().unwrap().join("agent.db");
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection
+            .execute_batch("CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT);")
+            .unwrap();
+        let before = fs::read(&database).unwrap();
+
+        assert!(get_native_oauth_provider_ids().unwrap().is_empty());
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name = 'auth_credentials'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_reports_unreadable_or_unsupported_databases_without_repair() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let database = get_omp_data_dir().unwrap().join("agent.db");
+        fs::create_dir(&database).unwrap();
+        assert!(get_native_oauth_provider_ids().is_err());
+        fs::remove_dir(&database).unwrap();
+
+        fs::write(&database, b"not a SQLite database").unwrap();
+        assert!(get_native_oauth_provider_ids().is_err());
+        assert_eq!(fs::read(&database).unwrap(), b"not a SQLite database");
+        fs::remove_file(&database).unwrap();
+
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE auth_credentials (
+                    provider TEXT NOT NULL,
+                    credential_type TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        let before = fs::read(&database).unwrap();
+        assert!(get_native_oauth_provider_ids().is_err());
+        assert_eq!(fs::read(&database).unwrap(), before);
+
+        connection
+            .execute_batch(
+                "DROP TABLE auth_credentials;
+                 CREATE VIEW auth_credentials AS
+                 SELECT 'openai-codex' AS provider, 'oauth' AS credential_type,
+                        NULL AS disabled_cause;",
+            )
+            .unwrap();
+        let before = fs::read(&database).unwrap();
+        assert!(get_native_oauth_provider_ids().is_err());
+        assert_eq!(fs::read(&database).unwrap(), before);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_reports_a_busy_native_writer_without_repair() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let connection = native_auth_database();
+        connection.execute_batch("BEGIN EXCLUSIVE;").unwrap();
+
+        assert!(matches!(
+            get_native_oauth_provider_ids(),
+            Err(AppError::Database(_))
+        ));
+        connection.execute_batch("ROLLBACK;").unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_reads_live_wal_login_and_logout_changes() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let connection = native_auth_database();
+        connection
+            .execute_batch("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;")
+            .unwrap();
+        let database = get_omp_data_dir().unwrap().join("agent.db");
+        let before = fs::read(&database).unwrap();
+        assert!(get_native_oauth_provider_ids().unwrap().is_empty());
+
+        connection
+            .execute_batch(
+                "INSERT INTO auth_credentials (provider, credential_type, data)
+                 VALUES ('openai-codex', 'oauth', 'not-json');",
+            )
+            .unwrap();
+        assert!(
+            fs::metadata(database.with_extension("db-wal"))
+                .unwrap()
+                .len()
+                > 0
+        );
+        assert_eq!(
+            get_native_oauth_provider_ids().unwrap(),
+            vec!["openai-codex"]
+        );
+
+        connection
+            .execute_batch(
+                "UPDATE auth_credentials SET disabled_cause = 'logout'
+                 WHERE provider = 'openai-codex';",
+            )
+            .unwrap();
+        assert!(get_native_oauth_provider_ids().unwrap().is_empty());
+
+        connection
+            .execute_batch(
+                "INSERT INTO auth_credentials (provider, credential_type, data)
+                 VALUES ('anthropic', 'oauth', 'not-json');",
+            )
+            .unwrap();
+        assert_eq!(get_native_oauth_provider_ids().unwrap(), vec!["anthropic"]);
+        connection
+            .execute_batch("DELETE FROM auth_credentials WHERE provider = 'anthropic';")
+            .unwrap();
+        assert!(get_native_oauth_provider_ids().unwrap().is_empty());
+        assert_eq!(fs::read(&database).unwrap(), before);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_skips_stale_local_credentials_when_broker_is_configured() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let connection = native_auth_database();
+        connection
+            .execute_batch(
+                "INSERT INTO auth_credentials (provider, credential_type, data)
+                 VALUES ('openai-codex', 'oauth', 'not-json');",
+            )
+            .unwrap();
+        let config = get_omp_agent_dir().unwrap().join("config.yaml");
+        for text in [
+            "auth:\n  broker:\n    url: https://broker.example\n",
+            "auth.broker.url: https://broker.example\n",
+            "auth.broker.url: BROKER_URL_WITHOUT_RESOLUTION\n",
+            "auth.broker.url: '!do-not-run'\n",
+        ] {
+            fs::write(&config, text).unwrap();
+            assert!(
+                get_native_oauth_provider_ids().unwrap().is_empty(),
+                "{text}"
+            );
+            assert_eq!(fs::read_to_string(&config).unwrap(), text);
+        }
+
+        // An empty nested key takes precedence over a nonempty literal-dot key.
+        for text in [
+            "auth.broker.url: ''\n",
+            "auth.broker.url: https://flat.example\nauth:\n  broker:\n    url: ''\n",
+        ] {
+            fs::write(&config, text).unwrap();
+            assert_eq!(
+                get_native_oauth_provider_ids().unwrap(),
+                vec!["openai-codex"],
+                "{text}"
+            );
+        }
+
+        fs::write(&config, "auth.broker.url: https://broker.example\n").unwrap();
+        fs::write(config.with_extension("yml"), "{}\n").unwrap();
+        assert_eq!(
+            get_native_oauth_provider_ids().unwrap(),
+            vec!["openai-codex"]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_does_not_read_local_files_when_broker_env_is_selected() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(Some("https://broker.example"));
+        let database = get_omp_data_dir().unwrap().join("agent.db");
+        let config = get_omp_settings_path().unwrap();
+        fs::write(&database, b"not a SQLite database").unwrap();
+        fs::write(&config, "auth: [\n").unwrap();
+
+        assert!(get_native_oauth_provider_ids().unwrap().is_empty());
+        assert_eq!(fs::read(&database).unwrap(), b"not a SQLite database");
+        assert_eq!(fs::read_to_string(&config).unwrap(), "auth: [\n");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_reports_invalid_broker_config_without_rewriting_it() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let config = get_omp_settings_path().unwrap();
+        fs::write(&config, "auth: [\n").unwrap();
+
+        assert!(matches!(
+            get_native_oauth_provider_ids(),
+            Err(AppError::Config(key)) if key == "omp.errors.invalidYaml"
+        ));
+        assert_eq!(fs::read_to_string(&config).unwrap(), "auth: [\n");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_discovery_honors_agent_dotenv_broker_selection() {
+        let _agent = test_support::TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let connection = native_auth_database();
+        connection.execute(
+            "INSERT INTO auth_credentials (provider, credential_type, data) VALUES ('openai-codex', 'oauth', '{}')",
+            [],
+        ).unwrap();
+        let dotenv = get_omp_agent_dir().unwrap().join(".env");
+        fs::write(
+            &dotenv,
+            "export OMP_AUTH_BROKER_URL=https://broker.example\n",
+        )
+        .unwrap();
+        assert!(get_native_oauth_provider_ids().unwrap().is_empty());
+        fs::write(&dotenv, "OMP_AUTH_BROKER_URL=\n").unwrap();
+        assert_eq!(
+            get_native_oauth_provider_ids().unwrap(),
+            vec!["openai-codex"]
+        );
     }
 
     #[test]

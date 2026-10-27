@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Oh My Pi Native OAuth Providers** (refs #8948): Locally stored OAuth channels such as `openai-codex` appear as read-only cards without copying credentials or saving synthetic providers. Existing explicit/saved providers take precedence, logged-out channels disappear on the next list refresh, and configured auth brokers suppress local discovery. Login, token validity and refresh, default models, and Pi remain managed as before.
+
 ## [4.0.21] - 2026-10-26
 
 This release lets Claude Code switch between several official Claude subscription accounts: accounts are added in the Auth Center through Claude Code's own `claude auth login`, an official card picks one, switching to that card moves its login into Claude Code's default sign-in, and Open Terminal on the card starts `claude` pinned to that account. Bound cards and the Auth Center show each account's plan and remaining quota. Open Terminal becomes a button on the card, Codex model rows can be dragged into order, and lightweight mode survives a restart. Fixes cover managed ChatGPT accounts shown as expired after a restart, Codex routing to the wrong `base_url`, Codex MCP entries carrying `timeout` / `autoApprove`, OpenCode and Grok Build installs under npm 12, Kimi Code usage times, and `models.yml` values with `&`, `*` or `!` refused for Oh My Pi.

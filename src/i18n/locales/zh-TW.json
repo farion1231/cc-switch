@@ -5025,6 +5025,10 @@
     }
   },
   "omp": {
+    "nativeLogin": {
+      "badge": "本機 OAuth",
+      "hint": "偵測到 OMP 本機 OAuth 設定。請在 OMP 中透過 /login 或 /logout 管理登入；此處不驗證憑證有效性。"
+    },
     "empty": {
       "title": "尚未新增 API Key 供應商",
       "description": "點擊右上角的 +，從預設或自訂設定新增供應商。"

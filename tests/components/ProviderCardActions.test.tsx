@@ -117,6 +117,36 @@ describe("ProviderCardActions — mode items in the more menu", () => {
   });
 });
 
+describe("ProviderCardActions — read-only native login", () => {
+  it("hides every control even when all action callbacks are provided", () => {
+    const action = vi.fn();
+    render(
+      <ProviderCardActions
+        providerName="openai-codex"
+        presentation={{
+          readOnly: true,
+          chips: [],
+          status: { label: "Local OAuth", dot: "muted" },
+          buttons: [{ key: "remove", label: "Remove", onClick: action }],
+          menuItems: [
+            { key: "setDefault", label: "Set default", onSelect: action },
+          ],
+          move: { onUp: action, onDown: action },
+        }}
+        onEdit={action}
+        onDelete={action}
+        onDuplicate={action}
+        onTest={action}
+        onConfigureUsage={action}
+        onOpenTerminal={action}
+      />,
+    );
+
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+  });
+});
+
 describe("ProviderCardActions — open terminal", () => {
   it("is a button on the card, not an item in the more menu", async () => {
     const user = userEvent.setup();

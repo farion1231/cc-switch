@@ -481,6 +481,13 @@ impl LocalProxyRequestOverrides {
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
+    /// Response-only native login projection; never accepted from editor or database input.
+    #[serde(
+        rename = "nativeLogin",
+        skip_deserializing,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub native_login: Option<bool>,
     /// 自定义端点列表（按 URL 去重存储）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,

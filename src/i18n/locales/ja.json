@@ -5024,6 +5024,10 @@
     }
   },
   "omp": {
+    "nativeLogin": {
+      "badge": "ローカル OAuth",
+      "hint": "OMP のローカル OAuth 設定を検出しました。ログインは OMP の /login または /logout で管理してください。ここでは認証情報の有効性は検証しません。"
+    },
     "empty": {
       "title": "API キープロバイダーはまだありません",
       "description": "右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"

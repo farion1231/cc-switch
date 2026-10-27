@@ -477,27 +477,30 @@ export function ProviderList({
     return provider.id === currentProviderId;
   };
 
-  const renderCard = (provider: Provider, presentation: CardPresentation) => (
-    <SortableProviderCard
-      key={provider.id}
-      provider={provider}
-      appId={appId}
-      presentation={presentation}
-      isCurrent={isCurrentFor(provider)}
-      isInConfig={isInConfig(provider)}
-      onEdit={onEdit}
-      onDelete={onDelete}
-      onDuplicate={onDuplicate}
-      onConfigureUsage={
-        onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
-      }
-      onOpenWebsite={onOpenWebsite}
-      // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
-      onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
-      onTest={handleTest}
-      isTesting={isChecking(provider.id)}
-    />
-  );
+  const renderCard = (provider: Provider, presentation: CardPresentation) => {
+    const Card = presentation.readOnly ? ProviderCard : SortableProviderCard;
+    return (
+      <Card
+        key={provider.id}
+        provider={provider}
+        appId={appId}
+        presentation={presentation}
+        isCurrent={isCurrentFor(provider)}
+        isInConfig={isInConfig(provider)}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onDuplicate={onDuplicate}
+        onConfigureUsage={
+          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
+        }
+        onOpenWebsite={onOpenWebsite}
+        // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
+        onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
+        onTest={handleTest}
+        isTesting={isChecking(provider.id)}
+      />
+    );
+  };
 
   // 搜索框放在列表上方第一行的最右端，不盖住卡片、打开时卡片也不下移
   const searchField = (
@@ -619,7 +622,9 @@ export function ProviderList({
                 </div>
               ) : (
                 <SortableContext
-                  items={section.items.map((item) => item.provider.id)}
+                  items={section.items
+                    .filter((item) => !item.presentation.readOnly)
+                    .map((item) => item.provider.id)}
                   strategy={verticalListSortingStrategy}
                 >
                   <div className="space-y-2">

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { DragEndEvent } from "@dnd-kit/core";
 import { renderHook, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach, afterAll } from "vitest";
@@ -60,6 +61,25 @@ const mockProviders: Record<string, Provider> = {
   },
 };
 
+function dragEvent(activeId: string, overId: string): DragEndEvent {
+  return {
+    activatorEvent: new Event("pointerup"),
+    active: {
+      id: activeId,
+      data: { current: {} },
+      rect: { current: { initial: null, translated: null } },
+    },
+    over: {
+      id: overId,
+      data: { current: {} },
+      rect: { top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0 },
+      disabled: false,
+    },
+    collisions: null,
+    delta: { x: 0, y: 0 },
+  };
+}
+
 describe("useDragSort", () => {
   beforeEach(() => {
     updateSortOrderMock.mockReset();
@@ -117,6 +137,88 @@ describe("useDragSort", () => {
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
+
+  it("persists only saved OMP providers when native login cards are displayed", async () => {
+    updateSortOrderMock.mockResolvedValue(true);
+    const { wrapper } = createWrapper();
+    const native: Provider = {
+      id: "openai-codex",
+      name: "openai-codex",
+      settingsConfig: {},
+      sortIndex: -1,
+      meta: { nativeLogin: true },
+    };
+    const { result } = renderHook(
+      () => useDragSort({ ...mockProviders, [native.id]: native }, "omp"),
+      { wrapper },
+    );
+
+    expect(result.current.sortedProviders.map((item) => item.id)).toEqual([
+      "openai-codex",
+      "b",
+      "a",
+      "c",
+    ]);
+    await act(async () => {
+      await result.current.handleDragEnd(dragEvent("b", "a"));
+    });
+
+    expect(updateSortOrderMock).toHaveBeenCalledWith(
+      [
+        { id: "a", sortIndex: 0 },
+        { id: "b", sortIndex: 1 },
+        { id: "c", sortIndex: 2 },
+      ],
+      "omp",
+    );
+  });
+
+  it.each([
+    ["openai-codex", "a"],
+    ["a", "openai-codex"],
+  ])("ignores OMP dragging from %s to %s", async (active, over) => {
+    const { wrapper } = createWrapper();
+    const native: Provider = {
+      id: "openai-codex",
+      name: "openai-codex",
+      settingsConfig: {},
+      meta: { nativeLogin: true },
+    };
+    const { result } = renderHook(
+      () => useDragSort({ ...mockProviders, [native.id]: native }, "omp"),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.handleDragEnd(dragEvent(active, over));
+    });
+
+    expect(updateSortOrderMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["pi", "hermes"] as const)(
+    "preserves ordinary %s drag persistence",
+    async (appId) => {
+      updateSortOrderMock.mockResolvedValue(true);
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(() => useDragSort(mockProviders, appId), {
+        wrapper,
+      });
+
+      await act(async () => {
+        await result.current.handleDragEnd(dragEvent("b", "a"));
+      });
+
+      expect(updateSortOrderMock).toHaveBeenCalledWith(
+        [
+          { id: "a", sortIndex: 0 },
+          { id: "b", sortIndex: 1 },
+          { id: "c", sortIndex: 2 },
+        ],
+        appId,
+      );
+    },
+  );
 
   it("should show error toast when drag operation fails", async () => {
     updateSortOrderMock.mockRejectedValue(new Error("network"));

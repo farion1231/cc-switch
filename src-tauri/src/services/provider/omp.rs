@@ -25,7 +25,31 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     if let Err(error) = sync_native(state) {
         log::warn!("Failed to read Oh My Pi providers; showing saved catalog: {error}");
     }
-    state.db.get_all_providers("omp")
+    let mut providers = state.db.get_all_providers("omp")?;
+    match omp_config::get_native_oauth_provider_ids() {
+        Ok(ids) => {
+            for id in ids {
+                providers.entry(id.clone()).or_insert_with(|| {
+                    let icon = if id == "openai-codex" {
+                        "openai"
+                    } else {
+                        "omp"
+                    };
+                    let mut provider =
+                        Provider::with_id(id.clone(), id, serde_json::json!({}), None);
+                    provider.category = Some("official".into());
+                    provider.icon = Some(icon.into());
+                    provider.meta = Some(ProviderMeta {
+                        native_login: Some(true),
+                        ..Default::default()
+                    });
+                    provider
+                });
+            }
+        }
+        Err(error) => log::warn!("Failed to read Oh My Pi native login metadata: {error}"),
+    }
+    Ok(providers)
 }
 fn sync_native(state: &AppState) -> Result<usize, AppError> {
     let native = omp_config::get_providers()?;
@@ -109,6 +133,10 @@ pub(super) fn update(
 }
 pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    state
+        .db
+        .get_provider_by_id(id, "omp")?
+        .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
     omp_config::change_and_commit(id, None, Change::Remove, |_| {
         state.db.delete_provider("omp", id)
     })
@@ -147,7 +175,10 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{database::Database, omp_config::test_support::TestAgentDir};
+    use crate::{
+        database::Database,
+        omp_config::test_support::{BrokerUrlEnv, TestAgentDir},
+    };
     use serde_json::json;
     use std::{fs, sync::Arc};
     fn provider() -> Provider {
@@ -291,5 +322,116 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert!(delete(&state, "cc-switch-test").is_err());
         assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    fn native_login_database() -> rusqlite::Connection {
+        let path = omp_config::get_omp_data_dir().unwrap().join("agent.db");
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE auth_credentials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                credential_type TEXT NOT NULL,
+                data TEXT NOT NULL,
+                disabled_cause TEXT DEFAULT NULL,
+                identity_key TEXT DEFAULT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO auth_credentials (provider, credential_type, data) VALUES
+                ('openai-codex', 'oauth', '{\"refresh\":\"private-oauth-token\"}'),
+                ('openai-codex', 'oauth', '{\"refresh\":\"other-private-token\"}'),
+                ('deepseek', 'api_key', '{\"key\":\"private-api-key\"}');
+            INSERT INTO auth_credentials (provider, credential_type, data, disabled_cause)
+                VALUES ('anthropic', 'oauth', '{}', 'deleted by user');",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_cards_follow_logout_without_persisting_credentials() {
+        let _agent = TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let conn = native_login_database();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        add(&state, provider(), true).unwrap();
+        let models_path = omp_config::get_omp_models_path().unwrap();
+        let models_before = fs::read(&models_path).unwrap();
+        let auth_path = omp_config::get_omp_data_dir().unwrap().join("agent.db");
+        let auth_before = fs::read(&auth_path).unwrap();
+
+        let cards = ProviderService::list(&state, AppType::Omp).unwrap();
+        assert_eq!(
+            cards.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["cc-switch-test", "openai-codex"]
+        );
+        let card = serde_json::to_value(&cards["openai-codex"]).unwrap();
+        assert_eq!(card["meta"]["nativeLogin"], true);
+        assert_eq!(card["settingsConfig"], json!({}));
+        let response = serde_json::to_string(&cards).unwrap();
+        assert!(!response.contains("private-oauth-token"));
+        assert!(!response.contains("other-private-token"));
+        assert!(!response.contains("private-api-key"));
+        assert!(state
+            .db
+            .get_provider_by_id("openai-codex", "omp")
+            .unwrap()
+            .is_none());
+        assert_eq!(list(&state).unwrap().len(), 2);
+        assert_eq!(fs::read(&models_path).unwrap(), models_before);
+        assert_eq!(fs::read(&auth_path).unwrap(), auth_before);
+
+        conn.execute(
+            "UPDATE auth_credentials SET disabled_cause = 'deleted by user' WHERE provider = 'openai-codex'",
+            [],
+        )
+        .unwrap();
+        let cards = list(&state).unwrap();
+        assert!(!cards.contains_key("openai-codex"));
+        assert!(cards.contains_key("cc-switch-test"));
+        assert_eq!(fs::read(models_path).unwrap(), models_before);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_oauth_does_not_replace_saved_or_explicit_configuration() {
+        let _agent = TestAgentDir::new();
+        let _broker = BrokerUrlEnv::set(None);
+        let _conn = native_login_database();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let mut saved = provider();
+        saved.id = "openai-codex".into();
+        saved.name = "My custom Codex".into();
+        add(&state, saved.clone(), false).unwrap();
+
+        let cards = list(&state).unwrap();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards["openai-codex"].name, "My custom Codex");
+        assert_eq!(cards["openai-codex"].settings_config, saved.settings_config);
+        assert!(
+            serde_json::to_value(&cards["openai-codex"]).unwrap()["meta"]["nativeLogin"].is_null()
+        );
+
+        enable(&state, "openai-codex").unwrap();
+        let mut edited = saved.clone();
+        edited.settings_config["models"][0]["id"] = json!("edited");
+        update(&state, None, edited.clone()).unwrap();
+        assert_eq!(
+            list(&state).unwrap()["openai-codex"].settings_config,
+            edited.settings_config
+        );
+        delete(&state, "openai-codex").unwrap();
+        let projected = list(&state).unwrap();
+        assert_eq!(
+            serde_json::to_value(&projected["openai-codex"]).unwrap()["meta"]["nativeLogin"],
+            true
+        );
+        assert!(delete(&state, "openai-codex").is_err());
+        assert!(enable(&state, "openai-codex").is_err());
+        assert!(remove(&state, "openai-codex").is_err());
+        assert!(update(&state, None, saved).is_err());
+        assert!(state.db.get_all_providers("omp").unwrap().is_empty());
     }
 }

@@ -5024,6 +5024,10 @@
     }
   },
   "omp": {
+    "nativeLogin": {
+      "badge": "Local OAuth",
+      "hint": "Local OMP OAuth configuration detected. Manage sign-in with OMP /login or /logout; credentials are not validated here."
+    },
     "empty": {
       "title": "No API key providers yet",
       "description": "Use the + button in the top-right corner to add a preset or custom provider."

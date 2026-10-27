@@ -97,6 +97,7 @@ export function ProviderCardActions({
   openTerminalIsolated,
 }: ProviderCardActionsProps) {
   const { t } = useTranslation();
+  if (presentation.readOnly) return null;
   const { status, buttons, move, menuItems = [] } = presentation;
 
   return (
