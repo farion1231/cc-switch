@@ -204,6 +204,20 @@ pub async fn open_cc_switch_skills_dir(handle: AppHandle) -> Result<bool, String
     Ok(true)
 }
 
+/// 在系统文件管理器里打开某个已安装 Skill 的主副本目录
+#[tauri::command]
+pub async fn open_skill_dir(handle: AppHandle, directory: String) -> Result<bool, String> {
+    let dir = SkillService::get_installed_skill_dir(&directory).map_err(|e| e.to_string())?;
+    if !dir.is_dir() {
+        return Err(format!("目录不存在: {}", dir.display()));
+    }
+    handle
+        .opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("打开文件夹失败: {e}"))?;
+    Ok(true)
+}
+
 /// 搜索 skills.sh 公共目录
 #[tauri::command]
 pub async fn search_skills_sh(
