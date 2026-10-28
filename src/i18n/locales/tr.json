@@ -258,7 +258,8 @@
         "unparsable": "Sağlayıcı yapılandırması okunamadı. Kopyalamadan önce düzeltin.",
         "noPlainKey": "Bu kartta kopyalanabilecek düz metin API anahtarı yok (resmi giriş, ortam değişkeni veya proxy yer tutucusu kullanıyor olabilir). Kimlik doğrulamayı hedef uygulamada yapılandırın.",
         "managedEndpoint": "Bu uç nokta yönetilen hesap kimlik doğrulaması kullanıyor. Hedef uygulamada ilgili hesabı seçin; API anahtarı kartı olarak kopyalanamaz.",
-        "unsupportedTarget": "Bu hedef uygulama desteklenmiyor."
+        "unsupportedTarget": "Bu hedef uygulama desteklenmiyor.",
+        "modelConnectionOverride": "Bu kartta tek bağlantılı kopyalama ile korunamayan model düzeyinde uç nokta veya protokol geçersiz kılmaları var. Hedef uygulamada elle yapılandırın."
       },
       "warnings": {
         "presetEndpoint": "Hedef uygulamanın eşleşen plan ön ayarındaki uç nokta kullanıldı: {{url}}. Bu anahtarın bu uç noktada çalıştığından emin olun.",

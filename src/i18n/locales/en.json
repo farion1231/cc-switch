@@ -281,7 +281,8 @@
         "unparsable": "The provider configuration could not be read. Fix it before copying.",
         "noPlainKey": "This card has no plain-text API key to copy (it may use an official sign-in, an environment variable, or a proxy placeholder). Configure authentication in the target app.",
         "managedEndpoint": "This endpoint uses managed account authentication. Choose the matching account in the target app; it cannot be copied as an API key card.",
-        "unsupportedTarget": "This target app is not supported."
+        "unsupportedTarget": "This target app is not supported.",
+        "modelConnectionOverride": "This card has model-level endpoint or protocol overrides that cannot be preserved by a single-connection copy. Configure it manually in the target app."
       },
       "warnings": {
         "presetEndpoint": "Using the endpoint from the target app's matching plan preset: {{url}}. Make sure this key works with it.",

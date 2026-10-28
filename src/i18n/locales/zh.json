@@ -281,7 +281,8 @@
         "unparsable": "供应商配置无法解析，请先修复配置再复制。",
         "noPlainKey": "此卡没有可复制的明文 API Key（可能使用官方登录、环境变量或代理占位凭据）。请在目标应用配置认证。",
         "managedEndpoint": "此端点使用托管账号认证，请在目标应用选择对应账号，不能复制为 API Key 卡。",
-        "unsupportedTarget": "不支持的目标应用。"
+        "unsupportedTarget": "不支持的目标应用。",
+        "modelConnectionOverride": "此卡包含模型级接口地址或协议覆盖，无法用单一连接的复制配置保留。请在目标应用手动配置。"
       },
       "warnings": {
         "presetEndpoint": "已使用目标应用同套餐预设的接口地址：{{url}}。请确认此密钥可用于该端点。",

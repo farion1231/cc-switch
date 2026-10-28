@@ -100,6 +100,17 @@ const PRESETS = [
   })),
 ];
 
+function uniqueKimiModelKey(
+  models: KimiProviderConfig["models"],
+  prefix: string,
+  id: string,
+) {
+  let key = `${prefix}/${id}`;
+  for (let index = 2; Object.prototype.hasOwnProperty.call(models, key); )
+    key = `${prefix}/${id}-${index++}`;
+  return key;
+}
+
 export function KimiProviderForm({
   providerId,
   draftProviderKey,
@@ -116,9 +127,19 @@ export function KimiProviderForm({
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const darkMode = useDarkMode();
-  const [config, setConfig] = useState<KimiProviderConfig>(() =>
-    kimiConfigSchema.parse(initialData?.settingsConfig ?? emptyKimiConfig()),
-  );
+  const [config, setConfig] = useState<KimiProviderConfig>(() => {
+    const initial = kimiConfigSchema.parse(
+      initialData?.settingsConfig ?? emptyKimiConfig(),
+    );
+    if (!initialDataIsDraft) return initial;
+    // New copies need the same global model namespace as fetched/manual models.
+    // Existing cards keep their aliases untouched.
+    const prefix = (providerId ?? draftProviderKey) || "custom";
+    const models: KimiProviderConfig["models"] = {};
+    for (const model of Object.values(initial.models))
+      models[uniqueKimiModelKey(models, prefix, model.model)] = model;
+    return { ...initial, models };
+  });
   const [text, setText] = useState(JSON.stringify(config, null, 2));
   const [jsonValid, setJsonValid] = useState(true);
   const [providerKey, setProviderKey] = useState(
@@ -220,12 +241,8 @@ export function KimiProviderForm({
       : undefined;
   const isOfficial = Boolean(officialSlot);
   const modelKeyPrefix = officialSlot || providerKey || "custom";
-  const uniqueModelKey = (models: KimiProviderConfig["models"], id: string) => {
-    let key = `${modelKeyPrefix}/${id}`;
-    for (let index = 2; Object.prototype.hasOwnProperty.call(models, key); )
-      key = `${modelKeyPrefix}/${id}-${index++}`;
-    return key;
-  };
+  const uniqueModelKey = (models: KimiProviderConfig["models"], id: string) =>
+    uniqueKimiModelKey(models, modelKeyPrefix, id);
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);

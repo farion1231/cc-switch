@@ -281,7 +281,8 @@
         "unparsable": "供應商設定無法解析，請先修正設定再複製。",
         "noPlainKey": "此卡沒有可複製的明文 API Key（可能使用官方登入、環境變數或代理佔位憑證）。請在目標應用設定認證。",
         "managedEndpoint": "此端點使用託管帳號認證，請在目標應用選擇對應帳號，不能複製為 API Key 卡。",
-        "unsupportedTarget": "不支援的目標應用。"
+        "unsupportedTarget": "不支援的目標應用。",
+        "modelConnectionOverride": "此卡包含模型層級的介面位址或協定覆寫，無法以單一連線的複製設定保留。請在目標應用手動設定。"
       },
       "warnings": {
         "presetEndpoint": "已使用目標應用同方案預設的介面位址：{{url}}。請確認此金鑰可用於該端點。",

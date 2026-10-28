@@ -93,7 +93,7 @@ const transferSchema = z.object({
   models: z
     .array(
       z.object({
-        id: transferText.trim().min(1),
+        id: transferText.min(1).refine((value) => value.trim().length > 0),
         name: transferText.optional(),
         role: z.enum(["sonnet", "opus", "fable", "haiku"]).optional(),
         primary: z.boolean().optional(),
@@ -190,12 +190,18 @@ const npmFormat = (npm: string): Format | undefined => {
 function model(
   id: unknown,
   extra: Partial<ProviderTransferModel> = {},
+  claudeEnv = false,
 ): ProviderTransferModel | undefined {
-  const raw = text(id);
-  if (!raw) return undefined;
-  const marked = /\[1m\]$/i.test(raw);
+  const raw = typeof id === "string" ? id : "";
+  if (!raw.trim()) return undefined;
+  const marked = claudeEnv && /\[1m\]$/i.test(raw.trim());
   return {
-    id: raw.replace(/\[1m\]$/i, "").trim(),
+    id: claudeEnv
+      ? raw
+          .trim()
+          .replace(/\[1m\]$/i, "")
+          .trim()
+      : raw,
     ...extra,
     ...(marked ? { supports1m: true } : {}),
   };
@@ -217,7 +223,7 @@ function readFields(
   let apiFormat = meta?.apiFormat;
   const models: ProviderTransferModel[] = [];
   const add = (id: unknown, extra?: Partial<ProviderTransferModel>) => {
-    const value = model(id, extra);
+    const value = model(id, extra, sourceApp === "claude");
     if (value?.id) models.push(value);
   };
   switch (sourceApp) {
@@ -398,6 +404,21 @@ export function extractProviderTransferFields(
     )
   )
     fail("cloudAuth");
+  if (["pi", "omp", "openclaw"].includes(sourceApp)) {
+    const entries = Array.isArray(config.models)
+      ? config.models
+      : Object.values(record(config.models));
+    if (
+      entries.some((entry) => {
+        const row = record(entry);
+        return (
+          (text(row.api) && text(row.api) !== text(config.api)) ||
+          (text(row.baseUrl) && text(row.baseUrl) !== text(config.baseUrl))
+        );
+      })
+    )
+      fail("modelConnectionOverride");
+  }
   let common: ReturnType<typeof readFields>;
   try {
     common = readFields(provider, sourceApp);
@@ -1100,19 +1121,36 @@ export async function prepareProviderTransfer(
         api_key: fields.apiKey,
       };
       applyHeaders(config.provider, "custom_headers");
+      const targetModels = new Map(
+        Object.values(record(config.models)).map((value) => {
+          const row = record(value);
+          return [row.model, row] as const;
+        }),
+      );
+      let usedPlaceholder = false;
       if (models.length)
         config.models = Object.fromEntries(
-          uniqueModels.map((entry) => [
-            entry.id,
-            {
-              model: entry.id,
-              display_name: entry.name,
-              max_context_size:
-                entry.contextWindow ?? (entry.supports1m ? 1_000_000 : 262144),
-            },
-          ]),
+          uniqueModels.map((entry) => {
+            const defaults = targetModels.get(entry.id) ?? {};
+            const context =
+              entry.contextWindow ??
+              (entry.supports1m
+                ? 1_000_000
+                : positive(defaults.max_context_size));
+            if (!context) usedPlaceholder = true;
+            const { provider: _provider, ...modelDefaults } = defaults;
+            return [
+              entry.id,
+              {
+                ...modelDefaults,
+                model: entry.id,
+                display_name: entry.name ?? defaults.display_name,
+                max_context_size: context ?? 262144,
+              },
+            ];
+          }),
         );
-      if (models.some((entry) => !entry.contextWindow && !entry.supports1m))
+      if (usedPlaceholder)
         warnings.push(tr("warnings.kimiContext", { size: 262144 }));
       break;
     }
