@@ -16,6 +16,7 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   piKeys,
   useDeleteSessionMutation,
@@ -233,15 +234,18 @@ export function SessionManagerPage({
     sessions: scopedSessions,
     providerFilter: appFilter,
   });
-  const trimmedQuery = query.trim();
+  const debouncedQuery = useDebouncedValue(query, 300, {
+    immediateIf: (v) => !v.trim(),
+  });
+  const trimmedQuery = debouncedQuery.trim();
   // 搜索时全部展开，否则匹配到的会话会藏在收起的项目里
   const isGroupOpen = useCallback(
     (key: string) => trimmedQuery !== "" || expanded.has(key),
     [trimmedQuery, expanded],
   );
   const matches = useMemo(
-    () => sortSessionsByTime(searchSessions(query)),
-    [searchSessions, query],
+    () => sortSessionsByTime(searchSessions(debouncedQuery)),
+    [searchSessions, debouncedQuery],
   );
 
   const unknownLabel = t("sessionManager.unknownDirectory", {
