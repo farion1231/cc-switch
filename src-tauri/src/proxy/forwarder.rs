@@ -1986,6 +1986,10 @@ impl RequestForwarder {
             && super::providers::is_codex_responses_endpoint(endpoint)
         {
             super::providers::apply_native_responses_api_version(provider, &mut request_body);
+            super::providers::normalize_native_responses_encrypted_include(
+                provider,
+                &mut request_body,
+            );
         }
 
         // Native Responses namespace compatibility for strict gateways (xAI / explicitly configured gateways).
@@ -7090,28 +7094,36 @@ mod tests {
             let upstream = upstream().await;
             let mut configured = provider(&upstream, "openai_responses");
             configured.settings_config["responsesCompatibility"] = json!({
-                "apiVersions": { "listed": "2025-03-01-preview" }
+                "apiVersions": { "listed": "2025-03-01-preview" },
+                "normalizeEncryptedInclude": true
             });
+            let mut request = body("listed", json!([]));
+            request["include"] = json!(["output.encrypted_content"]);
 
             let responses = send(
                 &forwarder(false),
                 &upstream,
                 configured.clone(),
                 "/v1/responses",
-                body("listed", json!([])),
+                request.clone(),
             )
             .await;
             assert_eq!(responses.body["api_version"], "2025-03-01-preview");
+            assert_eq!(
+                responses.body["include"],
+                json!(["reasoning.encrypted_content"])
+            );
 
             let chat = send(
                 &forwarder(false),
                 &upstream,
                 configured,
                 "/v1/chat/completions",
-                body("listed", json!([])),
+                request,
             )
             .await;
             assert!(chat.body.get("api_version").is_none());
+            assert_eq!(chat.body["include"], json!(["output.encrypted_content"]));
         }
 
         #[tokio::test]
