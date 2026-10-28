@@ -5,6 +5,13 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Oh My Pi Native Providers and Global Models** (refs #8948): Native OAuth provider identifiers remain credential-neutral, with dedicated controls for the global default and every role/custom-role/worker reference, preserving aliases, thinking suffixes and candidate arrays. Assignment saves update only `config.yml`; separate parameter saves update only six `models.yml` override fields (`name`, `contextWindow`, `maxContextWindow`, `maxTokens`, `input`, `reasoning`). Cached/configured candidates show provenance without promising account entitlement, and healthy active sessions are not switched. Targeted YAML edits preserve unrelated fields/comments, merge disjoint changes and refuse detected entry/directory conflicts. Credentials/login remain OMP-owned, brokers suppress local login discovery, and genuine custom routes retain precedence.
+- **OMP v7-style Model Management** (refs #8948): Aligns provider cards and model management with v7's compact actions, selected model rows and settings controls. Models / Roles & Workers tabs share a fixed, file-specific save footer while retaining independent drafts.
+
 ## [4.0.21] - 2026-10-26
 
 This release lets Claude Code switch between several official Claude subscription accounts: accounts are added in the Auth Center through Claude Code's own `claude auth login`, an official card picks one, switching to that card moves its login into Claude Code's default sign-in, and Open Terminal on the card starts `claude` pinned to that account. Bound cards and the Auth Center show each account's plan and remaining quota. Open Terminal becomes a button on the card, Codex model rows can be dragged into order, and lightweight mode survives a restart. Fixes cover managed ChatGPT accounts shown as expired after a restart, Codex routing to the wrong `base_url`, Codex MCP entries carrying `timeout` / `autoApprove`, OpenCode and Grok Build installs under npm 12, Kimi Code usage times, and `models.yml` values with `&`, `*` or `!` refused for Oh My Pi.

@@ -24,6 +24,32 @@ pub(crate) fn get_omp_current_state(state: State<'_, AppState>) -> Result<PiCurr
     current_state(state.inner()).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+pub(crate) fn get_omp_model_management_state(
+    state: State<'_, AppState>,
+) -> Result<crate::omp_config::management::ModelManagementState, String> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    crate::omp_config::management::get_state().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn patch_omp_model_settings(
+    state: State<'_, AppState>,
+    patch: crate::omp_config::management::SettingsPatch,
+) -> Result<crate::omp_config::management::ModelManagementState, String> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    crate::omp_config::management::patch_settings(patch).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn patch_omp_model_override(
+    state: State<'_, AppState>,
+    patch: crate::omp_config::management::ModelOverridePatch,
+) -> Result<crate::omp_config::management::ModelManagementState, String> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    crate::omp_config::management::patch_override(patch).map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

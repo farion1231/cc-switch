@@ -18,6 +18,7 @@ import {
   PowerOff,
   Route,
   SquareTerminal,
+  SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,7 @@ const BUTTON_ICON: Record<string, LucideIcon> = {
 interface ProviderCardActionsProps {
   providerName: string;
   presentation: CardPresentation;
+  onManageModels?: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onDuplicate?: () => void;
@@ -87,6 +89,7 @@ interface ProviderCardActionsProps {
 export function ProviderCardActions({
   providerName,
   presentation,
+  onManageModels,
   onEdit,
   onDelete,
   onDuplicate,
@@ -97,10 +100,26 @@ export function ProviderCardActions({
   openTerminalIsolated,
 }: ProviderCardActionsProps) {
   const { t } = useTranslation();
+  const manageModels = onManageModels ? (
+    <HoverTip content={t("omp.management.manageProvider")}>
+      <Button
+        variant="quiet"
+        size="icon-compact"
+        aria-label={t("omp.management.manageProviderNamed", {
+          name: providerName,
+        })}
+        onClick={onManageModels}
+      >
+        <SlidersHorizontal className="h-4 w-4" strokeWidth={1.5} />
+      </Button>
+    </HoverTip>
+  ) : null;
+  if (presentation.readOnly) return manageModels;
   const { status, buttons, move, menuItems = [] } = presentation;
 
   return (
     <div className="flex shrink-0 items-center gap-2">
+      {manageModels}
       {/* 主操作位定宽：图标按钮和「● 使用中」这类状态文字宽度不同，不定宽的话
           切换后左边的用量会被推开、跟其他卡片对不齐。按最长的常见状态留宽，靠右对齐 */}
       <div className="flex min-w-20 items-center justify-end gap-1">

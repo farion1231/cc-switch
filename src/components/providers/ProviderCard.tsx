@@ -17,6 +17,11 @@ import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
@@ -62,6 +67,9 @@ interface ProviderCardProps {
   /** 用来决定额度是否自动查询（共存式应用看 isInConfig） */
   isCurrent: boolean;
   isInConfig?: boolean;
+  onManageModels?: () => void;
+  modelSummary?: string;
+  modelDetails?: string[];
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
@@ -187,6 +195,9 @@ export function ProviderCard({
   presentation,
   isCurrent,
   isInConfig = true,
+  onManageModels,
+  modelSummary,
+  modelDetails,
   onEdit,
   onDelete,
   onConfigureUsage,
@@ -198,6 +209,7 @@ export function ProviderCard({
   dragHandleProps,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const readOnly = presentation.readOnly === true;
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
   const managedCodexAccountId = resolveManagedAccountId(
     provider.meta,
@@ -211,6 +223,7 @@ export function ProviderCard({
     queryKey: ["managed-auth-status", "codex_oauth"],
     queryFn: () => authApi.authGetStatus("codex_oauth"),
     enabled:
+      !readOnly &&
       codexOfficialIdentity === "managed_account" &&
       Boolean(managedCodexAccountId),
     staleTime: 30_000,
@@ -229,7 +242,7 @@ export function ProviderCard({
   const { data: health } = useProviderHealth(
     provider.id,
     appId,
-    Boolean(presentation.showHealth) && isProxyAppId(appId),
+    !readOnly && Boolean(presentation.showHealth) && isProxyAppId(appId),
   );
 
   const fallbackUrlText = t("provider.notConfigured", {
@@ -265,8 +278,9 @@ export function ProviderCard({
       : null;
   // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
   const usageEnabled =
-    provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    !readOnly &&
+    (provider.meta?.usage_script?.enabled ??
+      (isBoundCodexOfficial || Boolean(claudeBoundAccountId)));
   const supportsOfficialSubscription =
     isOfficial &&
     ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
@@ -308,7 +322,8 @@ export function ProviderCard({
       : null;
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
-  const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
+  const shouldAutoQuery =
+    !readOnly && (isAdditiveAppId(appId) ? isInConfig : isCurrent);
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -349,6 +364,30 @@ export function ProviderCard({
     }
     onOpenWebsite(displayUrl);
   };
+  const modelSummaryView = modelSummary ? (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`${t("omp.management.referenceDetails")} ${provider.name}`}
+          className="inline-flex max-w-full items-center gap-1 text-start text-caption text-fg-2 hover:text-fg-1"
+        >
+          <span className="min-w-0 truncate">{modelSummary}</span>
+          <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={1.5} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80">
+        <h4 className="mb-2 text-body font-medium">
+          {t("omp.management.referenceDetails")}
+        </h4>
+        <ul className="space-y-2 break-words text-caption text-fg-2">
+          {modelDetails?.map((detail) => (
+            <li key={detail}>{detail}</li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  ) : null;
   return (
     <div
       className={cn(
@@ -356,11 +395,13 @@ export function ProviderCard({
         presentation.tone
           ? TONE_CLASS[presentation.tone]
           : "border-border bg-surface hover:border-border-strong hover:shadow-v7-sm",
-        dragHandleProps?.isDragging && "cursor-grabbing shadow-v7-md",
+        !readOnly &&
+          dragHandleProps?.isDragging &&
+          "cursor-grabbing shadow-v7-md",
       )}
     >
       <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
-        {dragHandleProps ? (
+        {!readOnly && dragHandleProps ? (
           <button
             type="button"
             className={cn(
@@ -404,7 +445,7 @@ export function ProviderCard({
             {presentation.chips.map((chip) => (
               <CardChipBadge key={chip.key} chip={chip} />
             ))}
-            {presentation.showHealth && health && (
+            {!readOnly && presentation.showHealth && health && (
               <HealthChip
                 consecutiveFailures={health.consecutive_failures}
                 isHealthy={health.is_healthy}
@@ -412,7 +453,18 @@ export function ProviderCard({
             )}
           </div>
 
-          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+          {readOnly ? (
+            <div className="mt-0.5 min-w-0 text-caption text-fg-2">
+              {modelSummaryView ?? (
+                <span
+                  className="block truncate"
+                  title={t("omp.nativeLogin.hint")}
+                >
+                  {t("omp.nativeLogin.hint")}
+                </span>
+              )}
+            </div>
+          ) : codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               {codexOfficialIdentity === "native_login" ? (
                 <span className="min-w-0 truncate" title={manualNote}>
@@ -525,13 +577,16 @@ export function ProviderCard({
               <span className="min-w-0 truncate">{displayUrl}</span>
             </button>
           ) : null}
+          {!readOnly && modelSummaryView && (
+            <div className="mt-0.5 min-w-0">{modelSummaryView}</div>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
           {/* 额度列 136 宽，带重置倒计时时 194 宽（见 QuotaLines） */}
           <div className="max-w-[208px] text-end">
             <div className="flex items-center justify-end gap-1">
-              {isCopilot ? (
+              {readOnly ? null : isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
                   inline={true}
@@ -639,6 +694,7 @@ export function ProviderCard({
           <ProviderCardActions
             providerName={provider.name}
             presentation={presentation}
+            onManageModels={onManageModels}
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={

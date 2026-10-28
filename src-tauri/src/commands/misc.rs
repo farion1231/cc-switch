@@ -5008,6 +5008,11 @@ pub async fn open_provider_terminal(
     let provider = providers
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
+    if app_type == AppType::Omp
+        && provider.meta.as_ref().and_then(|meta| meta.native_login) == Some(true)
+    {
+        return Err("OMP native login cards are read-only; manage login in OMP".into());
+    }
 
     let launch = match app_type {
         AppType::Agy => {

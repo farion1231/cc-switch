@@ -15,7 +15,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Search, X } from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
@@ -53,6 +53,9 @@ import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isPiFamilyApp } from "@/config/appConfig";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { OmpModelManagement, ompManagementKey } from "./OmpModelManagement";
+import { ompApi } from "@/lib/api/omp";
+import { summarizeOmpReferences } from "./ompModelReferences";
 import {
   buildAdditiveSections,
   buildLaunchSections,
@@ -123,6 +126,37 @@ export function ProviderList({
   searchSlot,
 }: ProviderListProps) {
   const { t } = useTranslation();
+  const [managementProvider, setManagementProvider] = useState<string | null>(
+    null,
+  );
+  const { data: ompManagement } = useQuery({
+    queryKey: ompManagementKey,
+    queryFn: ompApi.getState,
+    enabled: appId === "omp",
+    retry: false,
+  });
+  const ompReferences = useMemo(
+    () => (ompManagement ? summarizeOmpReferences(ompManagement) : null),
+    [ompManagement],
+  );
+  const managementAction =
+    appId === "omp" ? (
+      <Button
+        variant="quiet"
+        size="compact"
+        onClick={() => setManagementProvider("")}
+      >
+        <SlidersHorizontal className="h-4 w-4" strokeWidth={1.5} />
+        {t("omp.management.open")}
+      </Button>
+    ) : null;
+  const managementEntry =
+    appId === "omp" && managementProvider !== null ? (
+      <OmpModelManagement
+        initialProvider={managementProvider}
+        onClose={() => setManagementProvider(null)}
+      />
+    ) : null;
   const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
@@ -439,6 +473,12 @@ export function ProviderList({
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
+        {managementEntry}
+        {managementAction && (
+          <div className="flex min-h-8 items-center justify-end">
+            {managementAction}
+          </div>
+        )}
         {[0, 1, 2].map((index) => (
           <div
             key={index}
@@ -452,6 +492,15 @@ export function ProviderList({
   if (sortedProviders.length === 0) {
     return (
       <div className="space-y-4">
+        {managementEntry}
+        {managementAction && (
+          <div className="flex min-h-8 items-center justify-between">
+            <h2 className="text-caption font-semibold text-fg-2">
+              {t("omp.management.providers")}
+            </h2>
+            {managementAction}
+          </div>
+        )}
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
@@ -481,27 +530,100 @@ export function ProviderList({
     return provider.id === currentProviderId;
   };
 
-  const renderCard = (provider: Provider, presentation: CardPresentation) => (
-    <SortableProviderCard
-      key={provider.id}
-      provider={provider}
-      appId={appId}
-      presentation={presentation}
-      isCurrent={isCurrentFor(provider)}
-      isInConfig={isInConfig(provider)}
-      onEdit={onEdit}
-      onDelete={onDelete}
-      onDuplicate={onDuplicate}
-      onConfigureUsage={
-        onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
+  const renderCard = (provider: Provider, presentation: CardPresentation) => {
+    const Card = presentation.readOnly ? ProviderCard : SortableProviderCard;
+    const summary: string[] = [];
+    const details: string[] = [];
+    let cardPresentation = presentation;
+    if (appId === "omp" && ompManagement && ompReferences) {
+      const models = ompManagement.models.filter(
+        (model) => model.provider === provider.id,
+      );
+      const references = ompReferences.entries.filter((entry) =>
+        entry.targets.some((target) =>
+          models.some((model) => target === `${model.provider}/${model.id}`),
+        ),
+      );
+      const defaultEntry = references.find(
+        (entry) => entry.section === "modelRoles" && entry.key === "default",
+      );
+      const rawDefault = ompManagement.modelRoles.default;
+      if (defaultEntry) {
+        const direct =
+          typeof rawDefault === "string" &&
+          rawDefault.startsWith(`${provider.id}/`) &&
+          !rawDefault.includes(",");
+        if (direct) {
+          summary.push(rawDefault.slice(provider.id.length + 1));
+          cardPresentation = {
+            ...presentation,
+            chips: [
+              ...presentation.chips,
+              {
+                key: "omp-global-default",
+                label: t("omp.management.globalDefaultChip"),
+                tone: "outline",
+                title: t("omp.management.configuredDefault"),
+              },
+            ],
+          };
+        }
+        details.push(
+          `${t("omp.management.defaultConfigurationReference")}: ${Array.isArray(rawDefault) ? rawDefault.join(" | ") : rawDefault}`,
+        );
       }
-      onOpenWebsite={onOpenWebsite}
-      // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
-      onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
-      onTest={handleTest}
-      isTesting={isChecking(provider.id)}
-    />
-  );
+      const roles = references
+        .filter(
+          (entry) => entry.section === "modelRoles" && entry.key !== "default",
+        )
+        .map((entry) => entry.key);
+      const workers = references
+        .filter((entry) => entry.section === "task.agentModelOverrides")
+        .map((entry) => entry.key);
+      if (models.length)
+        summary.push(t("omp.management.modelCount", { count: models.length }));
+      if (roles.length) {
+        summary.push(t("omp.management.roleCount", { count: roles.length }));
+        details.push(
+          `${t("omp.management.roles")}: ${roles.map((key) => t(`omp.management.roleLabels.${key}`, { defaultValue: key })).join(", ")}`,
+        );
+      }
+      if (workers.length) {
+        summary.push(
+          t("omp.management.workerCount", { count: workers.length }),
+        );
+        details.push(
+          `${t("omp.management.workers")}: ${workers.map((key) => t(`omp.management.workerLabels.${key}`, { defaultValue: key })).join(", ")}`,
+        );
+      }
+    }
+    return (
+      <Card
+        key={provider.id}
+        provider={provider}
+        appId={appId}
+        presentation={cardPresentation}
+        isCurrent={isCurrentFor(provider)}
+        isInConfig={isInConfig(provider)}
+        onManageModels={
+          appId === "omp" ? () => setManagementProvider(provider.id) : undefined
+        }
+        modelSummary={summary.length ? summary.join(" · ") : undefined}
+        modelDetails={details}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onDuplicate={onDuplicate}
+        onConfigureUsage={
+          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
+        }
+        onOpenWebsite={onOpenWebsite}
+        // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
+        onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
+        onTest={handleTest}
+        isTesting={isChecking(provider.id)}
+      />
+    );
+  };
 
   // 搜索框放在列表上方第一行的最右端，不盖住卡片、打开时卡片也不下移
   const searchField = (
@@ -574,15 +696,17 @@ export function ProviderList({
   const hostedSearch = searchSlot !== undefined;
   const leadSection = sections[0];
   const liftLeadTitle =
-    !hostedSearch &&
+    (!hostedSearch || appId === "omp") &&
     Boolean(leadSection?.title) &&
     filteredProviders.length > 0;
   const showListHeader =
-    !hostedSearch && (Boolean(leadSection?.title) || isSearchOpen);
+    appId === "omp" ||
+    (!hostedSearch && (Boolean(leadSection?.title) || isSearchOpen));
 
   // 卡片列表铺满主区域，和页头同宽
   return (
     <div className="space-y-4">
+      {managementEntry}
       {piStateErrorNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
@@ -595,7 +719,8 @@ export function ProviderList({
           <div className="min-w-0 flex-1">
             {liftLeadTitle && renderSectionTitle(leadSection)}
           </div>
-          {searchField}
+          {managementAction}
+          {!hostedSearch && searchField}
         </div>
       )}
 
@@ -623,7 +748,9 @@ export function ProviderList({
                 </div>
               ) : (
                 <SortableContext
-                  items={section.items.map((item) => item.provider.id)}
+                  items={section.items
+                    .filter((item) => !item.presentation.readOnly)
+                    .map((item) => item.provider.id)}
                   strategy={verticalListSortingStrategy}
                 >
                   <div className="space-y-2">
