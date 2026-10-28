@@ -644,6 +644,12 @@ impl SkillService {
         Ok(dir)
     }
 
+    /// 已安装 Skill 在 SSOT 目录下的主副本路径（目录名先过路径穿越校验）
+    pub fn get_installed_skill_dir(directory: &str) -> Result<PathBuf> {
+        let directory = Self::require_valid_directory(directory)?;
+        Ok(Self::get_ssot_dir()?.join(directory))
+    }
+
     /// 获取 Skill 卸载备份目录（~/.cc-switch/skill-backups/）
     fn get_backup_dir() -> Result<PathBuf> {
         let dir = get_app_config_dir().join("skill-backups");
