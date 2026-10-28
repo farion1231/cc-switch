@@ -700,6 +700,9 @@ pub struct AppSettings {
     /// Maximum number of backup files to retain (default 10)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup_retain_count: Option<u32>,
+    /// Total size limit for the backups directory in MB (default unset, 0 = unlimited)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_max_total_mb: Option<u32>,
 
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
@@ -800,6 +803,7 @@ impl Default for AppSettings {
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
+            backup_max_total_mb: None,
             preferred_terminal: None,
             local_migrations: None,
         }
@@ -1591,6 +1595,17 @@ pub fn effective_backup_retain_count() -> usize {
         .backup_retain_count
         .map(|n| (n as usize).max(1))
         .unwrap_or(10)
+}
+
+/// Get the total size limit for the backups directory in bytes.
+///
+/// `None` (unlimited) unless the user picked a limit: an upgrade alone must
+/// never start deleting existing restore points.
+pub fn effective_backup_max_total_bytes() -> Option<u64> {
+    read_settings()
+        .backup_max_total_mb
+        .filter(|mb| *mb > 0)
+        .map(|mb| u64::from(mb) * 1024 * 1024)
 }
 
 // ===== 终端设置管理函数 =====
