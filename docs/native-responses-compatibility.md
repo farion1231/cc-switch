@@ -9,6 +9,7 @@ CC Switch can apply provider-neutral compatibility settings to the native Codex 
   "baseURL": "https://provider.example/v1",
   "responsesCompatibility": {
     "flattenNamespaces": true,
+    "normalizeEncryptedInclude": true,
     "apiVersions": {
       "model-b": "2025-03-01-preview",
       "model-c": "2025-03-01-preview"
@@ -30,5 +31,9 @@ The generic opt-in does not enable xAI-only schema or numeric-argument rewrites.
 `apiVersions` maps exact resolved upstream model names to version strings. A missing mapping, empty string, or invalid value leaves the request unchanged. A request that already contains `api_version` retains that value. Existing provider-level request-body overrides are applied later and can override this default.
 
 No gateway host, model alias, or API-version string is hardcoded for the generic path. Confirm with your gateway which version it accepts; `2025-03-01-preview` is an example verified in the reported Azure-backed scenarios, not a universal recommendation for every deployment.
+
+## Encrypted-content include selector
+
+`normalizeEncryptedInclude: true` changes the unsupported `output.encrypted_content` selector to `reasoning.encrypted_content` before forwarding. It retains all other `include` entries, removes duplicates, and leaves requests that already use only supported selectors unchanged. This setting is useful for Azure-backed Responses gateways that reject `output.encrypted_content` with HTTP 400. It is opt-in because different gateways may expose different schemas.
 
 These options run on native Responses forwarding, not on Responses-to-Chat or Responses-to-Anthropic conversion. They do not provision an Azure hosted image deployment. Successful returned function calls do not themselves execute image generation.
