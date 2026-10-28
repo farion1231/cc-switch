@@ -14,7 +14,7 @@ use std::time::Instant;
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+    agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,6 +93,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r9);
     sessions.extend(mcode::scan_sessions());
     sessions.extend(kimi::scan_sessions());
+    sessions.extend(dsh::scan_sessions());
     sessions.extend(agy::scan_sessions());
 
     sessions.sort_by(|a, b| {
@@ -129,6 +130,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
         "omp" => omp::load_messages(path),
+        "dsh" => dsh::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -176,6 +178,11 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    if provider_id == "dsh" {
+        return Err(
+            "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
+        );
+    }
     if provider_id == "kimi" {
         return Err(
             "Delete this session in Kimi Code to keep its session index and history consistent"
@@ -250,6 +257,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
+        "dsh" => dsh::session_roots(),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
