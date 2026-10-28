@@ -484,6 +484,8 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     format!(
         "NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            AND {log_alias}.status_code >= 200
+            AND {log_alias}.status_code < 300
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -526,7 +528,7 @@ const DEDUP_SESSION_SOURCES_SQL: &str =
 /// Dashboard 读路径用的去重条件：语义和 [`effective_usage_log_filter`] 完全一致，
 /// 只是先看时间窗口里两类日志各有多少，再挑便宜的写法。
 ///
-/// - 窗口里没有成功的代理日志、或没有会话日志：不可能有重复，直接不加条件。
+/// - 窗口里没有成功的代理日志、或没有成功的会话日志：不可能有重复，直接不加条件。
 /// - 代理日志更少：先从代理日志出发找出重复的会话行（一次性子查询），
 ///   主查询只做 `rowid NOT IN`，不再逐行关联。会话日志占绝大多数时快很多。
 /// - 会话日志更少：保留原来的逐行 `EXISTS`。
@@ -552,6 +554,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
                 COALESCE(SUM(CASE WHEN {data_source} = 'proxy'
                     AND c.status_code >= 200 AND c.status_code < 300 THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN {data_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+                    AND c.status_code >= 200 AND c.status_code < 300
                     THEN 1 ELSE 0 END), 0)
              FROM proxy_request_logs c
              WHERE c.created_at BETWEEN ?1 AND ?2"
@@ -579,6 +582,8 @@ pub(crate) fn effective_usage_log_filter_for_range(
                      CASE WHEN dedup_p.app_type = 'claude-desktop' THEN 'claude' ELSE dedup_p.app_type END
                  )
              AND {ds_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+             AND dedup_s.status_code >= 200
+             AND dedup_s.status_code < 300
              AND dedup_s.input_tokens = dedup_p.input_tokens
              AND dedup_s.output_tokens = dedup_p.output_tokens
              AND dedup_s.cache_read_tokens = dedup_p.cache_read_tokens
@@ -3393,6 +3398,58 @@ mod tests {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(request_ids, vec!["desktop-proxy"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filters_keep_failed_session_even_when_tokens_match_proxy(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        for (request_id, data_source, status_code, created_at, input_tokens) in [
+            ("proxy-zero", "proxy", 200, 1_000, 0),
+            // Claude 非代理 API 错误通常四项 token 都为 0；不能被相邻的成功
+            // proxy 零 token 行当作跨源重复而隐藏。
+            ("session-error", "session_log", 403, 1_060, 0),
+            // 让优化路径选择 rowid NOT IN，覆盖两种过滤器的同一语义。
+            ("session-success-unrelated", "session_log", 200, 2_000, 1),
+        ] {
+            insert_usage_log(
+                &conn,
+                request_id,
+                "claude",
+                if data_source == "proxy" {
+                    "anthropic"
+                } else {
+                    "_session"
+                },
+                "claude-sonnet-4-5",
+                data_source,
+                created_at,
+                input_tokens,
+                0,
+                0,
+                0,
+                status_code,
+                "0",
+            )?;
+        }
+
+        let ranged = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        assert!(ranged.contains("NOT IN"));
+        for filter in [effective_usage_log_filter("l"), ranged] {
+            let ids = conn
+                .prepare(&format!(
+                    "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+                ))?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                ids,
+                ["proxy-zero", "session-error", "session-success-unrelated"]
+            );
+        }
 
         Ok(())
     }

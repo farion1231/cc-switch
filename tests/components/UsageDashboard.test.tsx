@@ -581,10 +581,10 @@ describe("UsageDashboard", () => {
         name: "usage.statusCode: usage.statusFilter.all",
       }),
     );
-    await user.click(await screen.findByRole("menuitem", { name: "429" }));
+    await user.click(await screen.findByRole("menuitem", { name: "403" }));
     await waitFor(() =>
       expect(requestLogTableMock).toHaveBeenLastCalledWith(
-        expect.objectContaining({ statusCode: 429 }),
+        expect.objectContaining({ statusCode: 403 }),
       ),
     );
 

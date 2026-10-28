@@ -210,6 +210,109 @@ struct ParsedAssistantUsage {
     stop_reason: Option<String>,
     timestamp: Option<String>,
     session_id: Option<String>,
+    /// Claude Code 在非代理会话里把 API 错误写在 assistant 行的顶层；
+    /// 有这个状态码时，即使所有 token 都是 0 也必须保留。
+    api_error_status: Option<u16>,
+    error_message: Option<String>,
+}
+
+impl ParsedAssistantUsage {
+    fn is_api_error(&self) -> bool {
+        self.api_error_status.is_some()
+    }
+
+    fn status_code(&self) -> i64 {
+        self.api_error_status.map_or(200, i64::from)
+    }
+}
+
+/// 只接受 Claude Code 明确标记的 HTTP API 错误。状态字段损坏时不把普通的
+/// 全 0 assistant 占位行误判成失败请求。
+fn parse_api_error_fields(value: &serde_json::Value) -> (Option<u16>, Option<String>) {
+    if value.get("isApiErrorMessage").and_then(|v| v.as_bool()) != Some(true) {
+        return (None, None);
+    }
+    let status = value
+        .get("apiErrorStatus")
+        .and_then(|v| v.as_u64())
+        .and_then(|v| u16::try_from(v).ok())
+        .filter(|status| (400..=599).contains(status));
+    let error_message = status.and_then(|_| {
+        value
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+    });
+    (status, error_message)
+}
+
+fn parse_assistant_usage(
+    value: &serde_json::Value,
+    session_id: Option<&str>,
+) -> Option<ParsedAssistantUsage> {
+    if value.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+        return None;
+    }
+    let message = value.get("message")?;
+    let message_id = message.get("id")?.as_str()?.to_string();
+    let usage = message.get("usage")?;
+    let (api_error_status, error_message) = parse_api_error_fields(value);
+    Some(ParsedAssistantUsage {
+        message_id,
+        model: message
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        input_tokens: usage
+            .get("input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        output_tokens: usage
+            .get("output_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        cache_read_tokens: usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        cache_creation_tokens: usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        cache_creation_1h_tokens: claude_cache_creation_1h_tokens(usage),
+        stop_reason: message
+            .get("stop_reason")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        timestamp: value
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        session_id: session_id.map(str::to_owned),
+        api_error_status,
+        error_message,
+    })
+}
+
+/// 同一 message.id 的普通流式块与结构化错误偶尔会并存。错误记录是请求的
+/// 最终结局，必须优先于有 token/stop_reason 的普通块；其余沿用原来的选择规则。
+fn should_replace_assistant_usage(
+    existing: &ParsedAssistantUsage,
+    candidate: &ParsedAssistantUsage,
+) -> bool {
+    match (existing.is_api_error(), candidate.is_api_error()) {
+        (false, true) => return true,
+        (true, false) => return false,
+        _ => {}
+    }
+    if candidate.stop_reason.is_some() && existing.stop_reason.is_none() {
+        true
+    } else if candidate.stop_reason.is_some() == existing.stop_reason.is_some() {
+        candidate.output_tokens > existing.output_tokens
+    } else {
+        false
+    }
 }
 
 /// 估算出的请求耗时短于这个毫秒数就不要：真实请求不可能这么快，多半是起点取错了。
@@ -435,7 +538,9 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
         result.files_scanned += 1;
 
         let cursor = cursors.get(file_path.to_string_lossy().as_ref());
-        match sync_single_file(db, file_path, cursor) {
+        let api_error_backfill_completed =
+            cursors.contains_key(&claude_api_error_backfill_key(file_path));
+        match sync_single_file(db, file_path, cursor, api_error_backfill_completed) {
             Ok(file_sync) => {
                 result.imported += file_sync.imported;
                 result.skipped += file_sync.skipped;
@@ -606,6 +711,120 @@ fn push_committed_tail(tail_buf: &mut Vec<u8>, bytes: &[u8]) {
     }
 }
 
+/// 版本放进现有 `session_log_sync.file_path` 的哨兵键里：不用改 schema，也不会
+/// 和正常文件游标混在一起。以后解析规则若再变化，提升版本即可安全重跑。
+const CLAUDE_API_ERROR_BACKFILL_SUFFIX: &str = "#api-errors-v1";
+
+fn claude_api_error_backfill_key(file_path: &Path) -> String {
+    format!(
+        "{}{CLAUDE_API_ERROR_BACKFILL_SUFFIX}",
+        file_path.to_string_lossy()
+    )
+}
+
+#[derive(Debug, Default)]
+struct ClaudeApiErrorBackfill {
+    imported: u32,
+    skipped: u32,
+    incomplete_tail: bool,
+    /// 新文件没有被旧游标越过的历史，直接走正常增量扫描；成功提交时顺便
+    /// 写哨兵，避免为了“回填”先把同一文件额外全扫一遍。
+    mark_after_incremental: bool,
+}
+
+/// 旧游标已经越过的结构化错误不会再经过增量解析，因此每个文件要做一次只针对
+/// API 错误的全量回填。只重放错误（不重放成功用量），避免已 rollup 的历史成功
+/// 记录被二次计数；错误行和版本哨兵在同一事务提交，失败后可安全重试。
+fn backfill_claude_api_errors_once(
+    db: &Database,
+    file_path: &Path,
+    already_completed: bool,
+    has_existing_cursor: bool,
+) -> Result<ClaudeApiErrorBackfill, AppError> {
+    if already_completed {
+        return Ok(ClaudeApiErrorBackfill::default());
+    }
+    if !has_existing_cursor {
+        return Ok(ClaudeApiErrorBackfill {
+            mark_after_incremental: true,
+            ..Default::default()
+        });
+    }
+
+    let file = fs::File::open(file_path)
+        .map_err(|e| AppError::Config(format!("无法打开 API 错误回填文件: {e}")))?;
+    let mut reader = BufReader::new(file);
+    let mut buf = Vec::new();
+    let mut current_session_id: Option<String> = None;
+    let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
+    let mut incomplete_tail = false;
+
+    loop {
+        buf.clear();
+        let read = reader
+            .read_until(b'\n', &mut buf)
+            .map_err(|e| AppError::Config(format!("扫描历史 API 错误失败: {e}")))?;
+        if read == 0 {
+            break;
+        }
+        if !buf.ends_with(b"\n") {
+            incomplete_tail = true;
+        }
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buf) else {
+            continue;
+        };
+        if current_session_id.is_none() {
+            current_session_id = value
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
+        }
+        let Some(parsed) = parse_assistant_usage(&value, current_session_id.as_deref()) else {
+            continue;
+        };
+        if !parsed.is_api_error() {
+            continue;
+        }
+        let should_replace = messages
+            .get(&parsed.message_id)
+            .is_none_or(|existing| should_replace_assistant_usage(existing, &parsed));
+        if should_replace {
+            messages.insert(parsed.message_id.clone(), parsed);
+        }
+    }
+
+    let conn = lock_conn!(db.conn);
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database(format!("启动历史 API 错误回填事务失败: {e}")))?;
+    let mut pricing_cache = SessionPricingCache::default();
+    let mut imported = 0u32;
+    let mut skipped = 0u32;
+    for msg in messages.values() {
+        let request_id = format!(
+            "{}{}",
+            crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX,
+            msg.message_id
+        );
+        match upsert_session_log_entry_on_conn(&tx, &request_id, msg, None, &mut pricing_cache)? {
+            SessionRowOutcome::Inserted | SessionRowOutcome::Updated => imported += 1,
+            SessionRowOutcome::Skipped => skipped += 1,
+        }
+    }
+    if !incomplete_tail {
+        update_sync_state_on_conn(&tx, &claude_api_error_backfill_key(file_path), 0, 0)?;
+    }
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交历史 API 错误回填事务失败: {e}")))?;
+
+    Ok(ClaudeApiErrorBackfill {
+        imported,
+        skipped,
+        incomplete_tail,
+        mark_after_incremental: false,
+    })
+}
+
 /// 同步单个 JSONL 文件。
 ///
 /// 增量语义：游标是字节偏移（`last_byte_offset`），文件追加时 seek 到
@@ -628,6 +847,7 @@ fn sync_single_file(
     db: &Database,
     file_path: &Path,
     cursor: Option<&SyncCursor>,
+    api_error_backfill_completed: bool,
 ) -> Result<ClaudeFileSync, AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
@@ -637,13 +857,26 @@ fn sync_single_file(
     let file_modified = metadata_modified_nanos(&metadata);
     let file_size = metadata.len() as i64;
 
+    // 必须先于 mtime 快路径：升级前的游标通常已经在 EOF，文件不会再变化。
+    let backfill = backfill_claude_api_errors_once(
+        db,
+        file_path,
+        api_error_backfill_completed,
+        cursor.is_some(),
+    )?;
+
     let last_modified = cursor.map_or(0, |c| c.last_modified);
     let last_byte_offset = cursor.and_then(|c| c.last_byte_offset);
     let last_fingerprint = cursor.and_then(|c| c.last_tail_fingerprint);
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
-        return Ok(ClaudeFileSync::default());
+        return Ok(ClaudeFileSync {
+            imported: backfill.imported,
+            skipped: backfill.skipped,
+            incomplete_tail: backfill.incomplete_tail,
+            ..Default::default()
+        });
     }
 
     let mut file =
@@ -686,6 +919,9 @@ fn sync_single_file(
                     Some(fingerprint),
                 )?;
                 return Ok(ClaudeFileSync {
+                    imported: backfill.imported,
+                    skipped: backfill.skipped,
+                    incomplete_tail: backfill.incomplete_tail,
                     pinned_rewrite: Some(reason),
                     ..Default::default()
                 });
@@ -705,7 +941,7 @@ fn sync_single_file(
 
     // 游标只推进到最后一个完整行之后
     let mut committed_offset = start_byte;
-    let mut incomplete_tail = false;
+    let mut incomplete_tail = backfill.incomplete_tail;
     let mut buf: Vec<u8> = Vec::new();
 
     // 旧行号 → 字节位置转换：只数字节不解析不导入。旧 `lines()` 把无换行
@@ -776,74 +1012,16 @@ fn sync_single_file(
             continue;
         }
 
-        let message = match value.get("message") {
-            Some(m) => m,
-            None => continue,
+        let Some(parsed) = parse_assistant_usage(&value, current_session_id.as_deref()) else {
+            continue;
         };
-
-        let msg_id = match message.get("id").and_then(|v| v.as_str()) {
-            Some(id) => id.to_string(),
-            None => continue,
-        };
+        let msg_id = parsed.message_id.clone();
 
         record_block_timing(&mut timings, &value, &msg_id);
 
-        let usage = match message.get("usage") {
-            Some(u) => u,
-            None => continue,
-        };
-
-        let parsed = ParsedAssistantUsage {
-            message_id: msg_id.clone(),
-            model: message
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            input_tokens: usage
-                .get("input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            output_tokens: usage
-                .get("output_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            cache_read_tokens: usage
-                .get("cache_read_input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            cache_creation_tokens: usage
-                .get("cache_creation_input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            cache_creation_1h_tokens: claude_cache_creation_1h_tokens(usage),
-            stop_reason: message
-                .get("stop_reason")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            timestamp: value
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            session_id: current_session_id.clone(),
-        };
-
-        // 按 message.id 去重：优先保留有 stop_reason 的条目，否则保留最新的
-        let should_replace = match messages.get(&msg_id) {
-            None => true,
-            Some(existing) => {
-                // 新条目有 stop_reason 而旧条目没有 → 替换
-                if parsed.stop_reason.is_some() && existing.stop_reason.is_none() {
-                    true
-                }
-                // 两个都有或都没有 stop_reason → 取 output_tokens 更大的
-                else if parsed.stop_reason.is_some() == existing.stop_reason.is_some() {
-                    parsed.output_tokens > existing.output_tokens
-                } else {
-                    false
-                }
-            }
-        };
+        let should_replace = messages
+            .get(&msg_id)
+            .is_none_or(|existing| should_replace_assistant_usage(existing, &parsed));
 
         if should_replace {
             messages.insert(msg_id, parsed);
@@ -852,8 +1030,8 @@ fn sync_single_file(
 
     // 写入数据库：单次取锁 + 事务，插入与游标推进原子提交，
     // 避免逐条插入时反复抢占连接锁
-    let mut imported: u32 = 0;
-    let mut skipped: u32 = 0;
+    let mut imported = backfill.imported;
+    let mut skipped = backfill.skipped;
 
     let conn = lock_conn!(db.conn);
     let tx = conn
@@ -880,7 +1058,7 @@ fn sync_single_file(
             || msg.output_tokens > 0
             || msg.cache_read_tokens > 0
             || msg.cache_creation_tokens > 0;
-        if !has_billable_tokens {
+        if !has_billable_tokens && !msg.is_api_error() {
             continue;
         }
 
@@ -912,6 +1090,11 @@ fn sync_single_file(
             Ok(SessionRowOutcome::Inserted | SessionRowOutcome::Updated) => imported += 1,
             Ok(SessionRowOutcome::Skipped) => skipped += 1,
             Err(e) => {
+                // 错误记录不能静默丢弃后再推进游标；返回会回滚本文件事务，
+                // 下一轮仍从原 checkpoint 重试。普通用量保持既有容错语义。
+                if msg.is_api_error() {
+                    return Err(e);
+                }
                 log::warn!("[SESSION-SYNC] 插入失败 ({}): {e}", msg.message_id);
                 skipped += 1;
             }
@@ -929,6 +1112,9 @@ fn sync_single_file(
     // tail_buf 始终恰好是 committed_offset 前的末段字节：增量路径以边界
     // seed 起始，之后只在游标推进（完整行）时追加
     let fingerprint = claude_tail_fingerprint(&tail_buf);
+    if backfill.mark_after_incremental {
+        update_sync_state_on_conn(&tx, &claude_api_error_backfill_key(file_path), 0, 0)?;
+    }
     update_claude_sync_state_on_conn(
         &tx,
         &file_path_str,
@@ -1068,6 +1254,8 @@ struct StoredSessionRow {
     output_tokens: i64,
     latency_ms: i64,
     first_token_ms: Option<i64>,
+    status_code: i64,
+    error_message: Option<String>,
 }
 
 fn find_stored_session_row(
@@ -1075,7 +1263,8 @@ fn find_stored_session_row(
     request_id: &str,
 ) -> Result<Option<StoredSessionRow>, AppError> {
     conn.prepare_cached(
-        "SELECT COALESCE(data_source, 'proxy'), output_tokens, latency_ms, first_token_ms
+        "SELECT COALESCE(data_source, 'proxy'), output_tokens, latency_ms, first_token_ms,
+                status_code, error_message
          FROM proxy_request_logs WHERE request_id = ?1",
     )
     .and_then(|mut stmt| {
@@ -1085,6 +1274,8 @@ fn find_stored_session_row(
                 output_tokens: row.get(1)?,
                 latency_ms: row.get(2)?,
                 first_token_ms: row.get(3)?,
+                status_code: row.get(4)?,
+                error_message: row.get(5)?,
             })
         })
         .optional()
@@ -1171,6 +1362,11 @@ fn refresh_session_log_entry_on_conn(
     if stored.data_source != "session_log" {
         return Ok(SessionRowOutcome::Skipped);
     }
+    // 结构化错误是这个 message.id 的最终结局；后续若又看到普通流式块，
+    // 不得把历史回填的真实失败状态恢复成 200。
+    if stored.status_code >= 400 && !msg.is_api_error() {
+        return Ok(SessionRowOutcome::Skipped);
+    }
     let output_grew = i64::from(msg.output_tokens) > stored.output_tokens;
     let latency_ms = timing.map_or(stored.latency_ms, |timing| {
         timing.latency_ms.max(stored.latency_ms)
@@ -1179,23 +1375,36 @@ fn refresh_session_log_entry_on_conn(
     let first_token_ms = stored
         .first_token_ms
         .or(timing.and_then(|timing| timing.first_token_ms));
-    if !output_grew && latency_ms == stored.latency_ms && first_token_ms == stored.first_token_ms {
+    let status_changed = stored.status_code != msg.status_code()
+        || stored.error_message.as_deref() != msg.error_message.as_deref();
+    if !output_grew
+        && latency_ms == stored.latency_ms
+        && first_token_ms == stored.first_token_ms
+        && !status_changed
+    {
         return Ok(SessionRowOutcome::Skipped);
     }
 
     if !output_grew {
         conn.execute(
-            "UPDATE proxy_request_logs SET latency_ms = ?1, first_token_ms = ?2
-             WHERE request_id = ?3",
-            rusqlite::params![latency_ms, first_token_ms, request_id],
+            "UPDATE proxy_request_logs SET latency_ms = ?1, first_token_ms = ?2,
+                    status_code = ?3, error_message = ?4
+             WHERE request_id = ?5",
+            rusqlite::params![
+                latency_ms,
+                first_token_ms,
+                msg.status_code(),
+                msg.error_message,
+                request_id
+            ],
         )
-        .map_err(|e| AppError::Database(format!("更新会话日志耗时失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("更新会话日志失败: {e}")))?;
         return Ok(SessionRowOutcome::Updated);
     }
 
     // 入库时用量还是中间值，对不上路由服务记的那一行；补全后对上了，说明这次
     // 请求路由服务已经记过，先前入库的这一行是重复的
-    if has_matching_proxy_usage_log(conn, dedup_key)? {
+    if !msg.is_api_error() && has_matching_proxy_usage_log(conn, dedup_key)? {
         conn.execute(
             "DELETE FROM proxy_request_logs WHERE request_id = ?1",
             [request_id],
@@ -1211,8 +1420,8 @@ fn refresh_session_log_entry_on_conn(
             input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3,
             cache_creation_tokens = ?4, input_cost_usd = ?5, output_cost_usd = ?6,
             cache_read_cost_usd = ?7, cache_creation_cost_usd = ?8, total_cost_usd = ?9,
-            latency_ms = ?10, first_token_ms = ?11
-         WHERE request_id = ?12",
+            latency_ms = ?10, first_token_ms = ?11, status_code = ?12, error_message = ?13
+         WHERE request_id = ?14",
         rusqlite::params![
             msg.input_tokens,
             msg.output_tokens,
@@ -1225,6 +1434,8 @@ fn refresh_session_log_entry_on_conn(
             total_cost,
             latency_ms,
             first_token_ms,
+            msg.status_code(),
+            msg.error_message,
             request_id,
         ],
     )
@@ -1279,7 +1490,7 @@ fn upsert_session_log_entry_on_conn(
             pricing_cache,
         );
     }
-    if has_matching_proxy_usage_log(conn, &dedup_key)? {
+    if !msg.is_api_error() && has_matching_proxy_usage_log(conn, &dedup_key)? {
         return Ok(SessionRowOutcome::Skipped);
     }
 
@@ -1312,8 +1523,8 @@ fn upsert_session_log_entry_on_conn(
                 total_cost,
                 timing.map_or(0, |t| t.latency_ms), // latency_ms: 按时间戳估算，0 = 没有计时
                 timing.and_then(|t| t.first_token_ms), // first_token_ms: 按时间戳估算，推不出来为 NULL
-                200i64,             // status_code: 会话日志中的请求只要产生计费 token 即视为成功
-                Option::<String>::None, // error_message
+                msg.status_code(),  // status_code: 结构化 API 错误保留真实 HTTP 状态
+                msg.error_message,  // error_message: Claude Code 顶层 error
                 msg.session_id,
                 Some("session_log"), // provider_type
                 1i64,               // is_streaming: Claude Code 通常使用流式
@@ -1387,6 +1598,8 @@ mod tests {
             stop_reason: Some("end_turn".to_string()),
             timestamp: Some("2026-06-07T13:01:23Z".to_string()),
             session_id: Some("pricing-session".to_string()),
+            api_error_status: None,
+            error_message: None,
         }
     }
 
@@ -1618,6 +1831,8 @@ mod tests {
             stop_reason: None,
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
+            api_error_status: None,
+            error_message: None,
         };
         messages.insert("msg_1".to_string(), intermediate);
 
@@ -1633,6 +1848,8 @@ mod tests {
             stop_reason: Some("end_turn".to_string()),
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
+            api_error_status: None,
+            error_message: None,
         };
 
         // 应该替换
@@ -1685,6 +1902,8 @@ mod tests {
             stop_reason: Some("end_turn".to_string()),
             timestamp: Some("1970-01-01T00:16:45Z".to_string()),
             session_id: Some("session-1".to_string()),
+            api_error_status: None,
+            error_message: None,
         };
 
         let outcome = {
@@ -1773,6 +1992,14 @@ mod tests {
         )
     }
 
+    /// Issue #6424 中 Claude Code 非代理会话的真实结构：错误字段在 message 外层，
+    /// message usage 四项全为 0。
+    fn api_error_line(msg_id: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"id":"{msg_id}","model":"<synthetic>","usage":{{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}},"isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed","timestamp":"2026-06-07T13:01:23Z","sessionId":"session-error"}}"#
+        )
+    }
+
     fn byte_cursor(db: &Database, path: &Path) -> Option<i64> {
         load_sync_cursors(db)
             .unwrap()
@@ -1783,7 +2010,9 @@ mod tests {
     fn sync_with_cursor(db: &Database, path: &Path) -> Result<ClaudeFileSync, AppError> {
         let cursors = load_sync_cursors(db)?;
         let cursor = cursors.get(path.to_string_lossy().as_ref()).copied();
-        sync_single_file(db, path, cursor.as_ref())
+        let api_error_backfill_completed =
+            cursors.contains_key(&claude_api_error_backfill_key(path));
+        sync_single_file(db, path, cursor.as_ref(), api_error_backfill_completed)
     }
 
     fn bump_mtime(path: &Path) {
@@ -2131,7 +2360,7 @@ mod tests {
         let empty = r#"{"type":"assistant","message":{"id":"msg_empty","model":"claude-opus-4-8","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-07T13:01:24Z","sessionId":"session-wf"}"#;
         fs::write(&file, format!("{billable}\n{empty}\n")).unwrap();
 
-        let file_sync = sync_single_file(&db, &file, None)?;
+        let file_sync = sync_single_file(&db, &file, None, false)?;
         assert_eq!(
             file_sync.imported, 1,
             "有 cache 成本但无 stop_reason 的 message 必须被导入"
@@ -2157,6 +2386,137 @@ mod tests {
     }
 
     #[test]
+    fn test_sync_imports_zero_token_structured_api_error() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        fs::write(&file, format!("{}\n", api_error_line("msg_error"))).unwrap();
+
+        let result = sync_with_cursor(&db, &file)?;
+        assert_eq!((result.imported, result.skipped), (1, 0));
+        let conn = lock_conn!(db.conn);
+        let stored: (i64, Option<String>, i64, i64, String, String) = conn.query_row(
+            "SELECT status_code, error_message, input_tokens, output_tokens, model, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'session:msg_error'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        assert_eq!(
+            stored,
+            (
+                403,
+                Some("authentication_failed".to_string()),
+                0,
+                0,
+                "<synthetic>".to_string(),
+                "0".to_string(),
+            )
+        );
+        drop(conn);
+        assert!(load_sync_cursors(&db)?.contains_key(&claude_api_error_backfill_key(&file)));
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_api_error_backfill_runs_past_cursor_once_and_is_idempotent() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        fs::write(&file, format!("{}\n", api_error_line("msg_history"))).unwrap();
+
+        // 模拟旧版本已经把文件游标推进到 EOF，但因全 0 token 漏掉了错误行。
+        let metadata = fs::metadata(&file).unwrap();
+        let size = metadata.len() as i64;
+        let modified = metadata_modified_nanos(&metadata);
+        let mut source = fs::File::open(&file).unwrap();
+        let fingerprint = claude_tail_fingerprint(&read_tail_before(&mut source, size)?);
+        {
+            let conn = lock_conn!(db.conn);
+            update_claude_sync_state_on_conn(
+                &conn,
+                file.to_string_lossy().as_ref(),
+                modified,
+                size,
+                Some(fingerprint),
+            )?;
+        }
+
+        let first = sync_with_cursor(&db, &file)?;
+        assert_eq!((first.imported, first.skipped), (1, 0));
+        let cursors = load_sync_cursors(&db)?;
+        assert!(cursors.contains_key(&claude_api_error_backfill_key(&file)));
+
+        let second = sync_with_cursor(&db, &file)?;
+        assert_eq!((second.imported, second.skipped), (0, 0));
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'session:msg_history'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 1);
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_api_error_insert_failure_does_not_advance_file_cursor() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        fs::write(&file, format!("{}\n", api_error_line("msg_retry"))).unwrap();
+
+        // 标记历史回填已完成，直接覆盖当前增量 upsert + checkpoint 的原子性。
+        {
+            let conn = lock_conn!(db.conn);
+            update_sync_state_on_conn(&conn, &claude_api_error_backfill_key(&file), 0, 0)?;
+            conn.execute_batch(
+                "CREATE TRIGGER fail_claude_api_error
+                 BEFORE INSERT ON proxy_request_logs
+                 WHEN NEW.status_code = 403
+                 BEGIN
+                   SELECT RAISE(ABORT, 'forced API error insert failure');
+                 END;",
+            )?;
+        }
+
+        let error = sync_with_cursor(&db, &file).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("forced API error insert failure"));
+        assert_eq!(byte_cursor(&db, &file), None, "失败时不得提前 checkpoint");
+        {
+            let conn = lock_conn!(db.conn);
+            let count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(count, 0);
+            conn.execute_batch("DROP TRIGGER fail_claude_api_error;")?;
+        }
+
+        let retry = sync_with_cursor(&db, &file)?;
+        assert_eq!(retry.imported, 1);
+        assert_eq!(
+            byte_cursor(&db, &file),
+            Some(fs::metadata(&file).unwrap().len() as i64)
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
     fn test_sync_bills_1h_cache_writes_at_1h_rate() -> Result<(), AppError> {
         let db = Database::memory()?;
         let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
@@ -2166,7 +2526,7 @@ mod tests {
         // cache_creation_input_tokens = 5m 写入 + 1h 写入
         let line = r#"{"type":"assistant","message":{"id":"msg_1h","model":"claude-opus-4-8","usage":{"input_tokens":2,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":400,"ephemeral_1h_input_tokens":600}},"stop_reason":"end_turn"},"timestamp":"2026-06-07T13:01:23Z","sessionId":"session-1h"}"#;
         fs::write(&file, format!("{line}\n")).unwrap();
-        assert_eq!(sync_single_file(&db, &file, None)?.imported, 1);
+        assert_eq!(sync_single_file(&db, &file, None, false)?.imported, 1);
 
         let conn = lock_conn!(db.conn);
         let cache_creation_cost: String = conn.query_row(
@@ -2310,7 +2670,7 @@ mod tests {
         ];
         fs::write(&file, lines.join("\n") + "\n").unwrap();
 
-        let file_sync = sync_single_file(&db, &file, None)?;
+        let file_sync = sync_single_file(&db, &file, None, false)?;
         assert_eq!(file_sync.imported, 1);
         assert_eq!(latency_of(&db, "msg_t"), 12_500);
 
@@ -2336,7 +2696,7 @@ mod tests {
         ];
         fs::write(&file, lines.join("\n") + "\n").unwrap();
 
-        sync_single_file(&db, &file, None)?;
+        sync_single_file(&db, &file, None, false)?;
         assert_eq!(latency_of(&db, "msg_think"), 9_000);
         assert_eq!(first_token_of(&db, "msg_think"), Some(2_000));
         assert_eq!(latency_of(&db, "msg_tool"), 4_000);
@@ -2435,7 +2795,7 @@ mod tests {
         ];
         fs::write(&file, lines.join("\n") + "\n").unwrap();
 
-        let file_sync = sync_single_file(&db, &file, None)?;
+        let file_sync = sync_single_file(&db, &file, None, false)?;
         assert_eq!(file_sync.imported, 3);
         assert_eq!(latency_of(&db, "msg_no_first"), 0);
         assert_eq!(latency_of(&db, "msg_orphan"), 0);
