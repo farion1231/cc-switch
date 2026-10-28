@@ -15,6 +15,7 @@ mod commands;
 mod config;
 mod database;
 mod deeplink;
+mod dsh_config;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
@@ -1695,6 +1696,7 @@ pub fn run() {
             commands::migrate_skill_storage,
             commands::get_cc_switch_skills_dir,
             commands::open_cc_switch_skills_dir,
+            commands::open_skill_dir,
             commands::search_skills_sh,
             // Skill management (legacy API compatibility)
             commands::get_skills,

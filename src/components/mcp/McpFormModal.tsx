@@ -66,7 +66,7 @@ type ConnectionDrafts = { default: McpDraftConnection } & Partial<
  * 写入直接拒绝 SSE（`mcp/pi.rs`、`mcp/agy.rs`）。
  */
 const SSE_AS_HTTP_APPS: readonly McpAppId[] = ["codex"];
-const SSE_REJECTED_APPS: readonly McpAppId[] = ["pi", "agy"];
+const SSE_REJECTED_APPS: readonly McpAppId[] = ["pi", "agy", "dsh"];
 
 interface MetaDraft {
   name: string;

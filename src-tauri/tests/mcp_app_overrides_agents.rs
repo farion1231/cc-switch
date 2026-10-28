@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-fn apps() -> [AppType; 11] {
+fn apps() -> [AppType; 12] {
     [
         AppType::Claude,
         AppType::Codex,
@@ -23,6 +23,7 @@ fn apps() -> [AppType; 11] {
         AppType::Pi,
         AppType::Mcode,
         AppType::Kimi,
+        AppType::Dsh,
         AppType::Agy,
         AppType::Omp,
     ]
@@ -37,18 +38,19 @@ impl Fixture {
     fn new() -> Self {
         support::reset_test_fs();
         let home = support::ensure_test_home();
-        for directory in [".hermes", ".pi", ".omp", ".minimax", ".kimi-code"] {
+        for directory in [".hermes", ".pi", ".omp", ".minimax", ".kimi-code", ".dsh"] {
             let path = home.join(directory);
             if path.exists() {
                 fs::remove_dir_all(path).unwrap();
             }
         }
-        let env = ["KIMI_CODE_HOME", "MINIMAX_DATA_DIR"]
+        let env = ["KIMI_CODE_HOME", "MINIMAX_DATA_DIR", "DSH_HOME"]
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
             .collect();
         std::env::set_var("KIMI_CODE_HOME", home.join(".kimi-code"));
         std::env::set_var("MINIMAX_DATA_DIR", home.join(".minimax"));
+        std::env::set_var("DSH_HOME", home.join(".dsh"));
         update_settings(AppSettings {
             pi_config_dir: Some(home.join(".pi/agent").to_string_lossy().into_owned()),
             omp_config_dir: Some(home.join(".omp/agent").to_string_lossy().into_owned()),
@@ -76,6 +78,7 @@ impl Fixture {
             AppType::Pi => ".pi/agent/mcp.json",
             AppType::Mcode => ".minimax/mcp.json",
             AppType::Kimi => ".kimi-code/mcp.json",
+            AppType::Dsh => ".dsh/profiles/web/cordis.patch.yml",
             AppType::Agy => ".gemini/config/mcp_config.json",
             AppType::Omp => ".omp/agent/mcp.json",
             _ => unreachable!(),
@@ -88,9 +91,21 @@ impl Fixture {
             AppType::Codex | AppType::GrokBuild => {
                 serde_json::to_value(toml::from_str::<toml::Value>(&text).unwrap()).unwrap()
             }
-            AppType::Hermes => serde_yaml::from_str(&text).unwrap(),
+            AppType::Hermes | AppType::Dsh => serde_yaml::from_str(&text).unwrap(),
             _ => serde_json::from_str(&text).unwrap(),
         };
+        if *app == AppType::Dsh {
+            return document
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|entry| {
+                    std::iter::once(entry).chain(entry["insert"].as_array().into_iter().flatten())
+                })
+                .find(|entry| entry["config"]["serverName"] == "shared")
+                .map(|entry| entry["config"].clone())
+                .unwrap_or(Value::Null);
+        }
         let map = match app {
             AppType::Codex | AppType::GrokBuild | AppType::Hermes => "mcp_servers",
             AppType::OpenCode => "mcp",
@@ -109,6 +124,12 @@ impl Fixture {
                 spec.as_object_mut().unwrap().remove("type");
                 json!({"mcp_servers":{"shared":spec}})
             }
+            AppType::Dsh => {
+                spec.as_object_mut().unwrap().remove("type");
+                spec["serverName"] = json!("shared");
+                spec["transport"] = json!("stdio");
+                json!([{"id":"native-shared","name":"@deepseek-ai/dsh-mcp-client","config":spec}])
+            }
             AppType::Kimi => {
                 spec.as_object_mut().unwrap().remove("type");
                 spec["transport"] = json!("stdio");
@@ -118,7 +139,7 @@ impl Fixture {
         };
         let text = match app {
             AppType::Codex | AppType::GrokBuild => toml::to_string(&document).unwrap(),
-            AppType::Hermes => serde_yaml::to_string(&document).unwrap(),
+            AppType::Hermes | AppType::Dsh => serde_yaml::to_string(&document).unwrap(),
             _ => document.to_string(),
         };
         fs::write(self.path(app), text).unwrap();
@@ -453,6 +474,7 @@ fn importing_changed_native_options_updates_the_restorable_app_spec() {
     for app in [
         AppType::Mcode,
         AppType::Kimi,
+        AppType::Dsh,
         AppType::Agy,
         AppType::Pi,
         AppType::Omp,
@@ -463,9 +485,27 @@ fn importing_changed_native_options_updates_the_restorable_app_spec() {
         raw["appOverrides"][app.as_str()]["timeout"] = json!(5000);
         McpService::upsert_server(&state, serde_json::from_value(raw).unwrap()).unwrap();
         let path = fixture.path(&app);
-        let mut native: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        native["mcpServers"]["shared"]["timeout"] = json!(9000);
-        fs::write(&path, native.to_string()).unwrap();
+        if app == AppType::Dsh {
+            let mut native: Value =
+                serde_yaml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            for patch in native.as_array_mut().unwrap() {
+                if let Some(inserted) = patch.get_mut("insert").and_then(Value::as_array_mut) {
+                    for entry in inserted {
+                        if entry["config"]["serverName"] == "shared" {
+                            entry["config"]["timeout"] = json!(9000);
+                        }
+                    }
+                } else if patch["config"]["serverName"] == "shared" {
+                    patch["config"]["timeout"] = json!(9000);
+                }
+            }
+            fs::write(&path, serde_yaml::to_string(&native).unwrap()).unwrap();
+        } else {
+            let mut native: Value =
+                serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            native["mcpServers"]["shared"]["timeout"] = json!(9000);
+            fs::write(&path, native.to_string()).unwrap();
+        }
         McpService::import_from_all_apps(&state).unwrap();
         let saved = McpService::get_all_servers(&state).unwrap()["shared"].clone();
         if saved.server_for_app(&app)["timeout"] != 9000 {

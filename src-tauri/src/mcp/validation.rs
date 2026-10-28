@@ -18,6 +18,7 @@ pub(crate) fn validate_app_overrides(
         (AppType::Pi, "mcp.error.invalidOverridePi"),
         (AppType::Mcode, "mcp.error.invalidOverrideMcode"),
         (AppType::Kimi, "mcp.error.invalidOverrideKimi"),
+        (AppType::Dsh, "mcp.error.invalidOverrideDsh"),
         (AppType::Agy, "mcp.error.invalidOverrideAgy"),
         (AppType::Omp, "mcp.error.invalidOverrideOmp"),
     ] {
@@ -31,7 +32,7 @@ pub(crate) fn validate_app_overrides(
         // Validate the spec that will actually be written. In particular, an
         // explicit stdio transport without a command cannot masquerade as HTTP.
         validate_server_spec(spec).map_err(|_| invalid())?;
-        if matches!(app, AppType::Pi | AppType::Agy) && spec["type"] == "sse" {
+        if matches!(app, AppType::Pi | AppType::Agy | AppType::Dsh) && spec["type"] == "sse" {
             return Err(invalid());
         }
         if spec.get("args").is_some_and(|v| {

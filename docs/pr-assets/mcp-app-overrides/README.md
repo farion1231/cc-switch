@@ -1,6 +1,6 @@
 # Per-app MCP connections — evidence for #7997
 
-One logical MCP ID can retain a shared default and complete independent connection configurations for the 11 clients currently managed by CC Switch: Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Antigravity and Oh My Pi.
+One logical MCP ID can retain a shared default and complete independent connection configurations for the 12 clients currently managed by CC Switch: Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, DeepSeek Harness, Antigravity and Oh My Pi.
 
 ## Before and after
 
@@ -8,7 +8,7 @@ One logical MCP ID can retain a shared default and complete independent connecti
 |---|---|
 | ![Before](before.png) | ![After](after.png) |
 
-[All 11 application scopes and their native-file samples](agents.png).
+[The original 11 application scopes and their native-file samples](agents.png). This historical image predates DeepSeek Harness; its coverage is recorded separately below.
 
 The before component comes from `c72c82cfbed609fc672dbeac2f369a81c83ff331`. The screenshots render actual React components with controlled Tauri IPC fixtures. The file results beside them come from real isolated Rust/SQLite tests. All commands, paths and values are synthetic. No actual Agent process or real MCP service was started; these are not packaged native-app or live-service screenshots.
 
@@ -29,7 +29,7 @@ The implementation was assisted by AI and reviewed in separate agent passes for 
 
 An override replaces the shared connection rather than merging fields. Native-owned options retain their existing adapter rules. Claude Desktop and OpenClaw remain outside CC Switch's MCP management. Standard `mcpServers` JSON copying exports the default; database backup/sync retains independent configurations.
 
-The database migration is v23 → v24. Older clients cannot open the new schema; retain the existing pre-migration backup for downgrade. This change does not introduce a transaction spanning all applications' files. Local validation is on macOS ARM64; Windows/Linux runtime and real Agent interoperability are not claimed.
+The database migration is now v24 → v25, following upstream's v23 → v24 DeepSeek Harness migration. It also accepts the earlier PR build's v24 layout, preserving existing independent connections while adding the DeepSeek Harness flags. Older clients cannot open the new schema; retain the existing pre-migration backup for downgrade. This change does not introduce a transaction spanning all applications' files. Local validation is on macOS ARM64; Windows/Linux runtime and real Agent interoperability are not claimed.
 
 ## Local verification — 2026-10-25
 
@@ -39,3 +39,9 @@ Based on v4.0.20 (`85ad496`), macOS ARM64, Node 22.22.2 and Rust 1.95.
 - Backend with `test-hooks`: 4,060 unit + 231 integration = 4,291 passed; 11 existing ignores.
 - TypeScript, formatting, renderer build and strict Clippy passed. Browser save/reopen and all 11 scope selections passed with no page errors.
 - The PR records an initial midnight-sensitive session fixture and parallel UI test timeouts; isolated checks and the final full serial suite passed without changing or skipping tests.
+
+## Upstream integration — 2026-10-28
+
+Integration base: `6d6b716` from upstream main. DeepSeek Harness now uses the same independent-connection selection for saves, toggles, resync, imports and restore as the other managed applications. Its existing stdio/Streamable HTTP transport boundary remains; SSE overrides are rejected before any application file is changed and the form identifies the unsupported transport.
+
+The native matrix now covers 12 clients, including DeepSeek Harness YAML plugin entries and native options. The migration regression covers both upstream v24 databases and the earlier PR's v24 databases, preserving connection JSON, overrides and enabled flags across repeated migration. Historical screenshots and test totals above retain their original versions and scope.

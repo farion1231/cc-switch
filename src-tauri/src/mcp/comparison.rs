@@ -69,6 +69,18 @@ fn native_connection(app: &AppType, spec: &Value) -> Option<Value> {
             }
             value
         }
+        AppType::Dsh => {
+            let mut value = spec.clone();
+            value.as_object_mut()?.insert(
+                "type".into(),
+                json!(if spec.get("url").is_some() {
+                    "http"
+                } else {
+                    "stdio"
+                }),
+            );
+            value
+        }
         AppType::ClaudeDesktop | AppType::OpenClaw => return None,
     };
     Some(without_empty_collections(native))

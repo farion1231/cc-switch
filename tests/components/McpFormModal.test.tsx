@@ -123,6 +123,30 @@ describe("McpFormModal (drawer)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("warns about a DeepSeek Harness SSE override and preserves it independently", async () => {
+    renderForm({
+      editingId: "remote",
+      visibleAppIds: ["claude", "dsh"],
+      initialData: {
+        id: "remote",
+        name: "remote",
+        server: { command: "shared-tool" },
+        appOverrides: { dsh: { type: "sse", url: "https://example.invalid/sse" } },
+        apps: { claude: true, dsh: true } as McpServer["apps"],
+      },
+    });
+    expect(screen.getByText("mcpPage.drawer.sseRejectedTitle")).toBeInTheDocument();
+    await userEvent.click(scopeButton("DeepSeek Harness"));
+    await userEvent.click(screen.getByRole("button", { name: "HTTP" }));
+    expect(screen.queryByText("mcpPage.drawer.sseRejectedTitle")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(mocks.upsert).toHaveBeenCalled());
+    expect(mocks.upsert.mock.calls[0][0]).toMatchObject({
+      server: { command: "shared-tool" },
+      appOverrides: { dsh: { type: "http", url: "https://example.invalid/sse" } },
+    });
+  });
+
   it("keeps hidden app SSE warnings while editing another app's JSON", async () => {
     renderForm({
       editingId: "remote",
