@@ -1092,6 +1092,21 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         }
     }
 
+    let config_text = crate::codex_config::read_codex_config_text().unwrap_or_default();
+    for state_db in crate::codex_state_db::codex_state_db_paths(&codex_dir, &config_text) {
+        if !state_db.exists() || !crate::codex_state_db::codex_state_db_is_lockable(&state_db) {
+            continue;
+        }
+        match backfill_deleted_thread_reasoning_effort(db, &state_db, &rollout_index) {
+            Ok(0) => {}
+            Ok(_) => crate::usage_events::notify_log_recorded(),
+            Err(e) => log::warn!(
+                "[CODEX-SYNC] 线程级思考强度补录失败 {}: {e}",
+                state_db.display()
+            ),
+        }
+    }
+
     if result.imported > 0 || result.deferred_files > 0 {
         log::info!(
             "[CODEX-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, deferred {} 个, 扫描 {} 个文件",
@@ -1103,6 +1118,70 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     Ok(result)
+}
+
+/// rollout 已被删除的线程无法逐轮回填，只剩 state DB 记的线程级强度（该线程
+/// 最后使用的档位）。仅补这些线程里仍为空的明细；rollout 还在的线程由逐轮
+/// 回填负责，不能用线程级值覆盖。每个 state DB 只跑一次。
+fn backfill_deleted_thread_reasoning_effort(
+    db: &Database,
+    state_db: &Path,
+    rollout_index: &RolloutIndex,
+) -> Result<usize, AppError> {
+    use rusqlite::OptionalExtension;
+
+    let marker = format!("codex_state_effort:{}", state_db.display());
+    let done: Option<bool> = lock_conn!(db.conn)
+        .query_row(
+            "SELECT reasoning_effort_synced FROM session_log_sync WHERE file_path = ?1",
+            [&marker],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if done == Some(true) {
+        return Ok(0);
+    }
+    let source = rusqlite::Connection::open_with_flags(
+        state_db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    // 旧版 state DB 没有该列：视同无可补数据，照样记完成。
+    let threads: Vec<(String, String)> =
+        if sqlite_column_exists(&source, "threads", "reasoning_effort")? {
+            source
+                .prepare(
+                    "SELECT id, reasoning_effort FROM threads
+                 WHERE reasoning_effort IS NOT NULL AND TRIM(reasoning_effort) != ''",
+                )?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?
+        } else {
+            Vec::new()
+        };
+    drop(source);
+    let conn = lock_conn!(db.conn);
+    let tx = conn.unchecked_transaction()?;
+    let mut updated = 0;
+    for (thread_id, effort) in threads {
+        if rollout_index.contains_key(&thread_id) {
+            continue;
+        }
+        // `:` 之后紧接 `;`：用主键范围扫描取该线程的全部请求。
+        updated += tx.execute(
+            "UPDATE proxy_request_logs SET reasoning_effort = ?1
+             WHERE request_id > ?2 AND request_id < ?3
+               AND data_source = 'codex_session' AND reasoning_effort IS NULL",
+            rusqlite::params![
+                effort.trim().to_ascii_lowercase(),
+                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{thread_id}:"),
+                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{thread_id};"),
+            ],
+        )?;
+    }
+    update_sync_state_on_conn(&tx, &marker, 0, 0)?;
+    mark_reasoning_effort_synced(&tx, &marker)?;
+    tx.commit()?;
+    Ok(updated)
 }
 
 /// 收集所有 Codex 会话 JSONL 文件
@@ -3953,6 +4032,81 @@ mod tests {
         assert_eq!(new_cursor.last_modified, cursor.last_modified);
         assert_eq!(new_cursor.last_line_offset, cursor.last_line_offset);
         assert_eq!(new_cursor.last_byte_offset, cursor.last_byte_offset);
+        Ok(())
+    }
+
+    #[test]
+    fn test_thread_level_effort_fills_only_threads_whose_rollout_is_gone() -> Result<(), AppError> {
+        const GONE: &str = "01a17b43-43f7-7320-996e-d1be97354a0e";
+        const KEPT: &str = "01a17b42-02e3-7612-8940-23e29165f5d5";
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (request_id, effort) in [
+                (format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{GONE}:1"), None),
+                (
+                    format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{GONE}:2"),
+                    Some("low"),
+                ),
+                (format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{KEPT}:1"), None),
+                // 前缀相同的另一线程 ID 不能被范围扫描带上
+                (format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{GONE}0:1"), None),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens,
+                        total_cost_usd, latency_ms, status_code, session_id,
+                        created_at, data_source, reasoning_effort
+                    ) VALUES (?1, '_codex_session', 'codex', 'gpt-5', 'gpt-5', 1, 1, 0,
+                              '0', 0, 200, 's', 1, 'codex_session', ?2)",
+                    rusqlite::params![request_id, effort],
+                )?;
+            }
+        }
+        let temp = tempdir().unwrap();
+        let state_db = temp
+            .path()
+            .join(crate::codex_state_db::CODEX_STATE_DB_FILENAME);
+        rusqlite::Connection::open(&state_db)?.execute_batch(&format!(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, reasoning_effort TEXT);
+             INSERT INTO threads VALUES ('{GONE}', 'XHigh'), ('{KEPT}', 'high'), ('{GONE}0', NULL);"
+        ))?;
+        let rollout_index = build_rollout_index(&[temp.path().join(format!(
+            "sessions/2026/10/27/rollout-2026-10-27T10-48-06-{KEPT}.jsonl"
+        ))]);
+
+        assert_eq!(
+            backfill_deleted_thread_reasoning_effort(&db, &state_db, &rollout_index)?,
+            1
+        );
+        let efforts: Vec<(String, Option<String>)> = {
+            let conn = lock_conn!(db.conn);
+            let mut stmt = conn.prepare(
+                "SELECT request_id, reasoning_effort FROM proxy_request_logs ORDER BY request_id",
+            )?;
+            let rows = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            rows
+        };
+        let effort = |id: &str| {
+            efforts
+                .iter()
+                .find(|(request_id, _)| request_id.ends_with(id))
+                .and_then(|(_, effort)| effort.clone())
+        };
+        assert_eq!(effort(&format!("{GONE}:1")).as_deref(), Some("xhigh"));
+        assert_eq!(effort(&format!("{GONE}:2")).as_deref(), Some("low"));
+        assert_eq!(effort(&format!("{KEPT}:1")), None);
+        assert_eq!(effort(&format!("{GONE}0:1")), None);
+
+        // 只跑一次
+        lock_conn!(db.conn).execute("UPDATE proxy_request_logs SET reasoning_effort = NULL", [])?;
+        assert_eq!(
+            backfill_deleted_thread_reasoning_effort(&db, &state_db, &rollout_index)?,
+            0
+        );
         Ok(())
     }
 
