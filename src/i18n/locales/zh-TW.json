@@ -5098,7 +5098,6 @@
       "balance": "餘額 {{amount}}",
       "bonus": "贈金 {{amount}}",
       "balanceFailed": "暫時查不到餘額",
-      "topUp": "儲值",
       "refresh": "重新整理餘額",
       "noticeSignedOutTitle": "未登入 DeepSeek 帳號",
       "noticeSignedOut": "在授權中心或 DeepSeek Harness 裡以瀏覽器登入 DeepSeek 帳號後，可直接使用帳號下的模型；Web 和 Desktop 共用這份登入。",

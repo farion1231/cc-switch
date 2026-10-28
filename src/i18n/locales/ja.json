@@ -5097,7 +5097,6 @@
       "balance": "残高 {{amount}}",
       "bonus": "ボーナス {{amount}}",
       "balanceFailed": "現在残高を取得できません",
-      "topUp": "チャージ",
       "refresh": "残高を更新",
       "noticeSignedOutTitle": "DeepSeek アカウントにログインしていません",
       "noticeSignedOut": "認証センターまたは DeepSeek Harness でブラウザから DeepSeek アカウントにログインすると、アカウントのモデルをそのまま使えます。Web と Desktop はこのログインを共有します。",

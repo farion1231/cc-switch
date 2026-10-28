@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,10 @@ function accountName(status: DshAccountStatus, fallback: string): string {
   return status.profile?.name ?? status.profile?.contact ?? fallback;
 }
 
-/** 充值余额一行、赠金一行（DeepSeek Harness 也分开显示，免得把赠金当成充值）。 */
+/**
+ * 右侧额度列：余额一行、赠金一行（DeepSeek Harness 也分开显示，免得把赠金当成充值），
+ * 刷新按钮在它们右边、垂直居中。
+ */
 function DshBalance({
   status,
   loading,
@@ -57,48 +60,37 @@ function DshBalance({
   const wallets = status.wallets.map(formatWallet).join(" · ");
   const bonus = status.bonusWallets.map(formatWallet).join(" · ");
   return (
-    <div className="auth-quota-col flex shrink-0 flex-col items-end gap-0.5 text-caption">
-      {status.error ? (
-        <span className="text-fg-3">{t("dsh.account.balanceFailed")}</span>
-      ) : (
-        <>
-          <span className="text-fg-1 tabular-nums">
-            {t("dsh.account.balance", { amount: wallets || "—" })}
-          </span>
-          {bonus && (
-            <span className="text-fg-2 tabular-nums">
-              {t("dsh.account.bonus", { amount: bonus })}
+    <div className="auth-quota-col flex shrink-0 items-center gap-1.5 text-caption">
+      <div className="flex flex-col items-end gap-0.5">
+        {status.error ? (
+          <span className="text-fg-3">{t("dsh.account.balanceFailed")}</span>
+        ) : (
+          <>
+            <span className="text-fg-1 tabular-nums">
+              {t("dsh.account.balance", { amount: wallets || "—" })}
             </span>
-          )}
-        </>
-      )}
-      <div className="flex items-center gap-1">
-        {status.topUpUrl && (
-          <Button
-            type="button"
-            variant="quiet"
-            size="compact"
-            onClick={() => void settingsApi.openExternal(status.topUpUrl!)}
-          >
-            {t("dsh.account.topUp")}
-            <ExternalLink className="h-3 w-3" />
-          </Button>
+            {bonus && (
+              <span className="text-fg-2 tabular-nums">
+                {t("dsh.account.bonus", { amount: bonus })}
+              </span>
+            )}
+          </>
         )}
-        <Button
-          type="button"
-          variant="quiet"
-          size="compact"
-          aria-label={t("dsh.account.refresh")}
-          disabled={loading}
-          onClick={onRefresh}
-        >
-          {loading ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3 w-3" />
-          )}
-        </Button>
       </div>
+      <Button
+        type="button"
+        variant="quiet"
+        size="compact"
+        aria-label={t("dsh.account.refresh")}
+        disabled={loading}
+        onClick={onRefresh}
+      >
+        {loading ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <RefreshCw className="h-3 w-3" />
+        )}
+      </Button>
     </div>
   );
 }
