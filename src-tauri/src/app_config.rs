@@ -566,6 +566,16 @@ impl AppType {
         ]
         .into_iter()
     }
+
+    /// Applications that own their own native files and database rows.
+    ///
+    /// `DshDesktop` is deliberately absent: it shares DeepSeekRuntime's providers, MCP servers,
+    /// skills and prompts and has no switches or rows of its own. Every per-application loop uses
+    /// this instead of [`AppType::all`] so that adding another shared shell cannot silently make a
+    /// loop treat it as an independent app.
+    pub fn independent() -> impl Iterator<Item = AppType> {
+        Self::all().filter(|app| *app != AppType::DshDesktop)
+    }
 }
 
 impl FromStr for AppType {

@@ -33,7 +33,7 @@ use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::{
     session_usage::{
         estimated_first_token_ms, estimated_latency_ms, load_sync_cursors, metadata_modified_nanos,
-        update_sync_state_on_conn, SessionSyncResult, SyncCursor,
+        SessionSyncResult, SyncCursor,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -45,6 +45,7 @@ use std::{
     collections::HashMap,
     ffi::OsStr,
     fs,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -151,6 +152,16 @@ fn is_session_log(path: &Path) -> bool {
     name.starts_with("session.") && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zstd"))
 }
 
+/// 一次同步从会话日志里读到的增量。
+struct SessionChunk {
+    /// 只含完整帧（`.zstd`）或完整行（纯 JSONL）的 JSONL 文本。
+    text: Vec<u8>,
+    /// 每个完整帧/行在 `text` 里的结束位置，以及它在文件里的绝对结束位置。
+    boundaries: Vec<(usize, i64)>,
+    /// 续读起点是否落在合法边界上；不是说明文件被重写过，需要从头重扫。
+    boundary_ok: bool,
+}
+
 fn sync_file(
     db: &Database,
     path: &Path,
@@ -161,29 +172,42 @@ fn sync_file(
     let metadata = fs::metadata(path).map_err(|error| AppError::io(path, error))?;
     let modified = metadata_modified_nanos(&metadata);
     let size = metadata.len() as i64;
-    // 没变过的文件直接跳过：会话日志只会追加，mtime + 长度能可靠识别“这一轮没新内容”。
-    if cursors
-        .get(key)
-        .is_some_and(|cursor| cursor.last_modified == modified && cursor.last_line_offset == size)
-    {
+    let cursor = cursors.get(key);
+    // 上次已经处理到文件末尾、文件也没变：直接跳过。
+    if cursor.is_some_and(|cursor| {
+        cursor.last_modified == modified && cursor.last_byte_offset == Some(size)
+    }) {
         return Ok(SessionSyncResult::default());
     }
 
-    let bytes = fs::read(path).map_err(|error| AppError::io(path, error))?;
-    let text = if path.extension().and_then(OsStr::to_str) == Some("zstd") {
-        decode_zstd_session(&bytes, path)?
-    } else {
-        bytes
-    };
-    // 还没有完整帧（刚创建、正在写第一帧）或整个文件是空的：这一轮先不记游标，
-    // 下一轮再看，别把它当成同步错误。
-    if text.is_empty() {
+    // 从上次处理到的字节位置续读。会话日志只会追加，整份重读/重解压是 O(文件长度) 的
+    // 无谓开销：一个长会话每次同步都要把所有历史重新解一遍。
+    let mut start = cursor
+        .and_then(|cursor| cursor.last_byte_offset)
+        .filter(|offset| (0..=size).contains(offset))
+        .unwrap_or(0);
+    let mut chunk = read_chunk(path, start)?;
+    if !chunk.boundary_ok {
+        // 续读点不在帧头说明文件被重写过，从头重扫（去重账本保证不会重复入库）。
+        start = 0;
+        chunk = read_chunk(path, 0)?;
+    }
+    // 还没有完整帧（刚创建、正在写第一帧）或没有新内容：这一轮先不动游标，下一轮再看，
+    // 别把它当成同步错误。
+    if chunk.text.is_empty() {
         return Ok(SessionSyncResult {
             files_scanned: 1,
             ..Default::default()
         });
     }
-    let pending = collect_requests(&text, session_id);
+    let pending = collect_requests(&chunk.text, session_id);
+    // 游标推进到这批增量最后一个完整帧的末尾：下一轮只读新追加的部分。测试与真实日志里
+    // 一次 append 就是一帧，所以窗口边界永远落在帧边界上。
+    let next_offset = chunk
+        .boundaries
+        .last()
+        .map(|(_, file_end)| *file_end)
+        .unwrap_or(start);
 
     let mut result = SessionSyncResult {
         files_scanned: 1,
@@ -250,34 +274,96 @@ fn sync_file(
         )?;
         result.imported += 1;
     }
-    update_sync_state_on_conn(&tx, key, modified, size)?;
+    update_dsh_sync_state(&tx, key, modified, size, next_offset)?;
     tx.commit()?;
     Ok(result)
 }
 
-/// 把整个 `.zstd` 会话日志解压成 JSONL 字节：逐帧解码，忽略末尾写了一半的帧。
-///
-/// DSH 的 `.zstd` 是“帧的拼接”，`zstd::stream::decode_all` 一次只解一帧，
-/// 所以先按帧结构切分再逐帧解。写了一半的尾帧不能算损坏——那正是正在运行的
-/// 会话在追加内容，跳过它，下一轮同步再读完整的那一帧。
-fn decode_zstd_session(bytes: &[u8], path: &Path) -> Result<Vec<u8>, AppError> {
-    let (frames, _torn) = scan_zstd_frames(bytes);
-    if frames.is_empty() {
-        // 空文件或只写了个帧头：不是损坏，等下一次同步。
-        return Ok(Vec::new());
+/// 游标同时记下文件大小（判断“这一轮没新内容”）和已处理到的字节位置（下一轮从这里续读）。
+fn update_dsh_sync_state(
+    conn: &rusqlite::Connection,
+    file_path: &str,
+    last_modified: i64,
+    file_size: i64,
+    byte_offset: i64,
+) -> Result<(), AppError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    conn.prepare_cached(
+        "INSERT OR REPLACE INTO session_log_sync
+             (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            file_path,
+            last_modified,
+            file_size,
+            now,
+            byte_offset
+        ])
+    })
+    .map_err(|error| AppError::Database(format!("更新同步状态失败: {error}")))?;
+    Ok(())
+}
+
+/// 从 `start` 读到文件末尾，只留下完整的帧或完整的行。
+fn read_chunk(path: &Path, start: i64) -> Result<SessionChunk, AppError> {
+    let mut file = fs::File::open(path).map_err(|error| AppError::io(path, error))?;
+    if start > 0 {
+        file.seek(SeekFrom::Start(start as u64))
+            .map_err(|error| AppError::io(path, error))?;
     }
-    let mut out = Vec::new();
-    for (start, end) in frames {
-        let decoded = zstd::stream::decode_all(&bytes[start..end]).map_err(|error| {
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail)
+        .map_err(|error| AppError::io(path, error))?;
+    if path.extension().and_then(OsStr::to_str) == Some("zstd") {
+        decode_zstd_frames(&tail, start, path)
+    } else {
+        Ok(complete_lines(&tail, start))
+    }
+}
+
+/// 逐帧解压拼接的 zstd 流：只在解出完整帧时前移，末尾写了一半的帧留给下一轮。
+fn decode_zstd_frames(tail: &[u8], start: i64, path: &Path) -> Result<SessionChunk, AppError> {
+    let boundary_ok =
+        tail.len() < 4 || u32::from_le_bytes([tail[0], tail[1], tail[2], tail[3]]) == ZSTD_MAGIC;
+    let (frames, _torn) = scan_zstd_frames(tail);
+    let mut text = Vec::new();
+    let mut boundaries = Vec::with_capacity(frames.len());
+    for (frame_start, frame_end) in frames {
+        let decoded = zstd::stream::decode_all(&tail[frame_start..frame_end]).map_err(|error| {
             AppError::Message(format!(
                 "解压 DSH 会话日志帧失败（{} 第 {} 字节处）: {error}",
                 path.display(),
-                start
+                start + frame_start as i64
             ))
         })?;
-        out.extend_from_slice(&decoded);
+        text.extend_from_slice(&decoded);
+        boundaries.push((text.len(), start + frame_end as i64));
     }
-    Ok(out)
+    Ok(SessionChunk {
+        text,
+        boundaries,
+        boundary_ok,
+    })
+}
+
+/// 纯 JSONL：只取到最后一个换行符，没写完的那一行留给下一轮。
+fn complete_lines(tail: &[u8], start: i64) -> SessionChunk {
+    let end = tail
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let text = tail[..end].to_vec();
+    SessionChunk {
+        text,
+        boundaries: vec![(end, start + end as i64)],
+        boundary_ok: true,
+    }
 }
 
 /// 按 zstd 帧结构扫描拼接流，返回完整帧的字节区间和可能存在的残缺尾帧起点。
@@ -766,7 +852,8 @@ mod tests {
         write_lines(&path, &events);
         let second = sync_dsh_usage_from(&db, dir.path()).unwrap();
         assert_eq!(second.imported, 1);
-        assert_eq!(second.skipped, 1);
+        // 续读只读追加的那一段，之前那条根本不会被再读一遍，因此不会算作 skipped
+        assert_eq!(second.skipped, 0);
         assert_eq!(row_count(&db), 2);
     }
 
@@ -833,7 +920,8 @@ mod tests {
         fs::write(&path, &bytes).unwrap();
         let complete = sync_dsh_usage_from(&db, dir.path()).unwrap();
         assert_eq!(complete.imported, 1);
-        assert_eq!(complete.skipped, 2);
+        // 前两帧上一轮已经处理过，这一轮从游标续读，不会再解一遍
+        assert_eq!(complete.skipped, 0);
         assert_eq!(row_count(&db), 3);
     }
 
@@ -1047,6 +1135,208 @@ mod tests {
             .unwrap();
         assert_eq!(pricing_model.as_deref(), Some("brand-new-model"));
         assert_eq!(total, "2.000000");
+    }
+
+    /// 同步游标记下的字节位置，用来断言“这一轮到底从哪里续读”。
+    fn cursor_byte_offset(db: &Database, path: &Path) -> Option<i64> {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT last_byte_offset FROM session_log_sync WHERE file_path = ?1",
+                rusqlite::params![format!("dsh:{}", path.to_string_lossy())],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap()
+    }
+
+    /// 追加一条之后只读追加的那一段：把去重账本清空再同步，仍然只导入 1 条。
+    /// （整份重读的话，账本一空就会把历史那几条再导一遍。）
+    #[test]
+    fn dsh_usage_resumes_from_the_cursor_instead_of_rescanning() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("--proj--")
+            .join("session-test")
+            .join("session.v4.jsonl.zstd");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        let mut bytes = frame(&[
+            header(),
+            step_start(1, 1, 1_700_000_000_000),
+            assistant_message(
+                1,
+                1,
+                "m1",
+                1_700_000_003_000,
+                "deepseek-flash",
+                100,
+                50,
+                900,
+                1_700_000_000_200,
+            ),
+        ]);
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(sync_dsh_usage_from(&db, dir.path()).unwrap().imported, 1);
+        assert_eq!(
+            cursor_byte_offset(&db, &path),
+            Some(bytes.len() as i64),
+            "同步完整帧后游标应当停在文件末尾"
+        );
+
+        // 追加一帧，并把去重账本清空：只有真正只读增量时才仍然只导 1 条
+        bytes.extend_from_slice(&frame(&[assistant_message(
+            1,
+            2,
+            "m2",
+            1_700_000_012_500,
+            "deepseek-flash",
+            20,
+            10,
+            1_000,
+            1_700_000_010_300,
+        )]));
+        fs::write(&path, &bytes).unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM session_usage_dedup", [])
+            .unwrap();
+
+        let second = sync_dsh_usage_from(&db, dir.path()).unwrap();
+        assert_eq!(second.imported, 1, "只应导入追加的那一条");
+        assert_eq!(row_count(&db), 2);
+        assert_eq!(
+            cursor_byte_offset(&db, &path),
+            Some(bytes.len() as i64),
+            "游标应当推进到新的文件末尾"
+        );
+    }
+
+    /// 末尾写了一半的帧不能让游标越过它，否则那一帧永远不会被读。
+    #[test]
+    fn dsh_usage_cursor_stops_before_a_torn_tail_frame() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("--proj--")
+            .join("session-test")
+            .join("session.v4.jsonl.zstd");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        let complete = frame(&[
+            header(),
+            step_start(1, 1, 1_700_000_000_000),
+            assistant_message(
+                1,
+                1,
+                "m1",
+                1_700_000_003_000,
+                "deepseek-flash",
+                100,
+                50,
+                900,
+                1_700_000_000_200,
+            ),
+        ]);
+        let pending = frame(&[assistant_message(
+            1,
+            2,
+            "m2",
+            1_700_000_012_500,
+            "deepseek-flash",
+            20,
+            10,
+            1_000,
+            1_700_000_010_300,
+        )]);
+        let mut bytes = complete.clone();
+        bytes.extend_from_slice(&pending[..pending.len() / 2]);
+        fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(sync_dsh_usage_from(&db, dir.path()).unwrap().imported, 1);
+        assert_eq!(
+            cursor_byte_offset(&db, &path),
+            Some(complete.len() as i64),
+            "游标必须停在完整帧的末尾"
+        );
+
+        // 半帧写完后接着读，导入新的一条
+        bytes.extend_from_slice(&pending[pending.len() / 2..]);
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(sync_dsh_usage_from(&db, dir.path()).unwrap().imported, 1);
+        assert_eq!(row_count(&db), 2);
+    }
+
+    /// 日志被重写（变短）时从头重扫，且不会把已经入过库的请求再导一遍。
+    #[test]
+    fn dsh_usage_rescans_a_truncated_log_without_duplicates() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("--proj--")
+            .join("session-test")
+            .join("session.v4.jsonl");
+        let header_event = header();
+        write_lines(
+            &path,
+            &[
+                header_event.clone(),
+                step_start(1, 1, 1_700_000_000_000),
+                assistant_message(
+                    1,
+                    1,
+                    "m1",
+                    1_700_000_003_000,
+                    "deepseek-flash",
+                    100,
+                    50,
+                    900,
+                    1_700_000_000_200,
+                ),
+                step_start(1, 2, 1_700_000_010_000),
+                assistant_message(
+                    1,
+                    2,
+                    "m2",
+                    1_700_000_012_500,
+                    "deepseek-flash",
+                    20,
+                    10,
+                    1_000,
+                    1_700_000_010_300,
+                ),
+            ],
+        );
+        assert_eq!(sync_dsh_usage_from(&db, dir.path()).unwrap().imported, 2);
+
+        // 用户把日志重写成更短的一份：保留 m1，去掉 m2
+        write_lines(
+            &path,
+            &[
+                header_event,
+                step_start(1, 1, 1_700_000_000_000),
+                assistant_message(
+                    1,
+                    1,
+                    "m1",
+                    1_700_000_003_000,
+                    "deepseek-flash",
+                    100,
+                    50,
+                    900,
+                    1_700_000_000_200,
+                ),
+            ],
+        );
+        let rewritten = sync_dsh_usage_from(&db, dir.path()).unwrap();
+        assert_eq!(rewritten.imported, 0, "重写后不该重复导入");
+        assert_eq!(rewritten.skipped, 1);
+        assert_eq!(row_count(&db), 2);
     }
 
     #[test]

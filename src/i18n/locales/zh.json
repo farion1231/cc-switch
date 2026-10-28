@@ -5085,7 +5085,7 @@
     },
     "sharedProviders": "Web、Desktop 共用这份供应商列表：添加、编辑、移除会一起写入所有已初始化的 profile（web、desktop、headless、acp），不会替还没启动过的 Desktop 新建 profile。",
     "account": {
-      "help": "DeepSeek 账号用浏览器登录（OAuth），可以在这里登录，也可以在 DeepSeek Harness 里登录。登录信息保存在 ~/.dsh/.credentials.yaml，DeepSeek Harness 的 Web 和 Desktop 共用：任一处登录或退出，两端同时生效，运行中的 DeepSeek Harness 会自动重新读取。账号路由的模型用量在用量页单独显示为「DeepSeek 账号（OAuth）」。",
+      "help": "DeepSeek 账号用浏览器登录（OAuth），可以在这里登录，也可以在 DeepSeek Harness 里登录。登录信息保存在 $DSH_HOME/.credentials.yaml（默认 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一处登录或退出，两端同时生效，运行中的 DeepSeek Harness 会自动重新读取。账号路由的模型用量在用量页单独显示为「DeepSeek 账号（OAuth）」。",
       "statusFailed": "无法读取 DeepSeek 账号的登录状态",
       "empty": "未登录 DeepSeek 账号",
       "unnamed": "DeepSeek 账号",

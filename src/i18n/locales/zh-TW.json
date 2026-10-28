@@ -5086,7 +5086,7 @@
     },
     "sharedProviders": "Web、Desktop 共用這份供應商列表：新增、編輯、移除會一起寫入所有已初始化的 profile（web、desktop、headless、acp），不會替尚未啟動過的 Desktop 新建 profile。",
     "account": {
-      "help": "DeepSeek 帳號以瀏覽器登入（OAuth），可以在這裡登入，也可以在 DeepSeek Harness 裡登入。登入資訊儲存在 ~/.dsh/.credentials.yaml，DeepSeek Harness 的 Web 和 Desktop 共用：任一處登入或登出，兩端同時生效，執行中的 DeepSeek Harness 會自動重新讀取。帳號路由的模型用量在用量頁單獨顯示為「DeepSeek 帳號（OAuth）」。",
+      "help": "DeepSeek 帳號以瀏覽器登入（OAuth），可以在這裡登入，也可以在 DeepSeek Harness 裡登入。登入資訊儲存在 $DSH_HOME/.credentials.yaml（預設 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一處登入或登出，兩端同時生效，執行中的 DeepSeek Harness 會自動重新讀取。帳號路由的模型用量在用量頁單獨顯示為「DeepSeek 帳號（OAuth）」。",
       "statusFailed": "無法讀取 DeepSeek 帳號的登入狀態",
       "empty": "未登入 DeepSeek 帳號",
       "unnamed": "DeepSeek 帳號",

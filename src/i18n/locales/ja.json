@@ -5085,7 +5085,7 @@
     },
     "sharedProviders": "Web と Desktop はこのプロバイダー一覧を共有します。追加・編集・削除は初期化済みのすべての profile（web、desktop、headless、acp）にまとめて書き込まれ、まだ起動していない Desktop の profile は作成しません。",
     "account": {
-      "help": "DeepSeek アカウントはブラウザでログインします（OAuth）。ここでも DeepSeek Harness でもログインできます。ログイン情報は ~/.dsh/.credentials.yaml に保存され、DeepSeek Harness の Web と Desktop で共有されます。どこでログイン・ログアウトしても両方に反映され、実行中の DeepSeek Harness は自動で読み直します。アカウント経由のモデルの使用量は、使用量ページで「DeepSeek アカウント（OAuth）」として別に表示されます。",
+      "help": "DeepSeek アカウントはブラウザでログインします（OAuth）。ここでも DeepSeek Harness でもログインできます。ログイン情報は $DSH_HOME/.credentials.yaml（既定は ~/.dsh/.credentials.yaml） に保存され、DeepSeek Harness の Web と Desktop で共有されます。どこでログイン・ログアウトしても両方に反映され、実行中の DeepSeek Harness は自動で読み直します。アカウント経由のモデルの使用量は、使用量ページで「DeepSeek アカウント（OAuth）」として別に表示されます。",
       "statusFailed": "DeepSeek アカウントのログイン状態を読み取れません",
       "empty": "DeepSeek アカウントにログインしていません",
       "unnamed": "DeepSeek アカウント",

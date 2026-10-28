@@ -598,7 +598,7 @@ impl Default for SkillService {
 /// `$DSH_HOME/skills`，没有自己的开关；把它当成独立应用遍历，会以「未启用」为由删掉 DSH
 /// 已启用的技能，或者把同一个目录重复扫描一遍。
 fn skill_app_types() -> impl Iterator<Item = AppType> {
-    AppType::all().filter(|app| *app != AppType::DshDesktop)
+    AppType::independent()
 }
 
 impl SkillService {

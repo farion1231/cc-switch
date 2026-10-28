@@ -5085,7 +5085,7 @@
     },
     "sharedProviders": "Web and Desktop share this provider list: adding, editing and removing write to every initialized profile (web, desktop, headless, acp). No profile is created for a Desktop app that hasn't been launched yet.",
     "account": {
-      "help": "The DeepSeek account signs in through the browser (OAuth), here or in DeepSeek Harness. The sign-in is stored in ~/.dsh/.credentials.yaml and shared by DeepSeek Harness Web and Desktop: signing in or out anywhere applies to both, and a running DeepSeek Harness reloads it automatically. Usage of the account's models appears separately on the Usage page as \"DeepSeek account (OAuth)\".",
+      "help": "The DeepSeek account signs in through the browser (OAuth), here or in DeepSeek Harness. The sign-in is stored in $DSH_HOME/.credentials.yaml (default ~/.dsh/.credentials.yaml) and shared by DeepSeek Harness Web and Desktop: signing in or out anywhere applies to both, and a running DeepSeek Harness reloads it automatically. Usage of the account's models appears separately on the Usage page as \"DeepSeek account (OAuth)\".",
       "statusFailed": "Couldn't read the DeepSeek account sign-in",
       "empty": "Not signed in to a DeepSeek account",
       "unnamed": "DeepSeek account",

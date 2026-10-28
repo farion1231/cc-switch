@@ -48,7 +48,8 @@ pub(crate) fn target_paths() -> Vec<PathBuf> {
     }
 }
 
-/// The profile providers and MCP are read from: `web`, else `desktop`, else the first target.
+/// The authoritative profile providers and MCP are read from first: `web`, else `desktop`, else
+/// the first target. Writes go to every target, so [`read_paths`] also lists the rest.
 pub(crate) fn config_path() -> PathBuf {
     DISPLAY_PROFILES
         .iter()
@@ -57,9 +58,49 @@ pub(crate) fn config_path() -> PathBuf {
         .unwrap_or_else(|| target_paths().swap_remove(0))
 }
 
+/// Every profile whose providers and MCP are shown, authoritative profile first.
+///
+/// Providers and MCP are written to all initialized profiles, so a server or provider that only
+/// exists in one of them (added natively in DSH, or written before another profile was
+/// initialized) must still be listed: hiding it while [`provider_key_exists`] reports it as taken
+/// leaves the user with no way to see or resolve the collision.
+pub(crate) fn read_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let authoritative = config_path();
+    for path in std::iter::once(authoritative.clone()).chain(target_paths()) {
+        if (path == authoritative || path.exists()) && !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
+        paths.push(authoritative);
+    }
+    paths
+}
+
+/// Profile directory name of a `profiles/<name>/cordis.patch.yml` path, for error messages.
+fn profile_name(path: &Path) -> String {
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or("profile")
+        .to_owned()
+}
+
 /// `$DSH_HOME/cordis.patch.yml`, applied after every profile.
 pub(crate) fn home_patch_path() -> PathBuf {
     data_dir().join("cordis.patch.yml")
+}
+
+/// 「打开配置目录」用的路径：Desktop 的 profile 还没初始化时退回 DSH home，免得为了开一个
+/// 目录先造出空的 `profiles/desktop`（[`target_paths`] 只看 `cordis.patch.yml`，但空目录
+/// 会让用户以为 Desktop 已经被接管）。
+pub(crate) fn desktop_config_dir() -> PathBuf {
+    if profile_path("desktop").exists() {
+        profile_dir("desktop")
+    } else {
+        data_dir()
+    }
 }
 
 pub(crate) fn credentials_path() -> PathBuf {
@@ -78,21 +119,41 @@ pub struct DesktopStatus {
     pub profile_path: String,
 }
 
-/// Electron's `userData` (`@deepseek-ai/dsh-desktop`) and the app bundle. The Desktop profile
-/// itself is not evidence: CC Switch may create it before the app's first launch.
+/// Electron's `userData` directory and the installed app bundle. The Desktop profile itself is
+/// not evidence: CC Switch may create it before the app's first launch.
+///
+/// The packaged app is `DeepSeekRuntime` (`productName`) while its package name is
+/// `@deepseek-ai/dsh-desktop`, and Electron derives `userData` from whichever of the two it
+/// resolved as the app name, so every spelling is checked instead of betting on one.
 fn desktop_install_candidates() -> Vec<PathBuf> {
-    let mut candidates = vec![];
+    const USER_DATA_NAMES: [&str; 3] =
+        ["@deepseek-ai/dsh-desktop", "DeepSeekRuntime", "dsh-desktop"];
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let mut add = |candidate: PathBuf| {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    };
     if cfg!(target_os = "macos") {
         let home = get_home_dir();
-        candidates.push(home.join("Library/Application Support/@deepseek-ai/dsh-desktop"));
-        candidates.push(PathBuf::from("/Applications/DeepSeek Harness.app"));
-        candidates.push(home.join("Applications/DeepSeek Harness.app"));
+        for name in USER_DATA_NAMES {
+            add(home.join("Library/Application Support").join(name));
+        }
+        add(PathBuf::from("/Applications/DeepSeekRuntime.app"));
+        add(home.join("Applications/DeepSeekRuntime.app"));
     } else if cfg!(windows) {
         if let Some(roaming) = dirs::config_dir() {
-            candidates.push(roaming.join("@deepseek-ai").join("dsh-desktop"));
+            add(roaming.join("@deepseek-ai").join("dsh-desktop"));
+            for name in &USER_DATA_NAMES[1..] {
+                add(roaming.join(name));
+            }
         }
         if let Some(local) = dirs::data_local_dir() {
-            candidates.push(local.join("Programs").join("DeepSeek Harness"));
+            add(local.join("Programs").join("DeepSeekRuntime"));
+            add(local
+                .join("Programs")
+                .join("@deepseek-ai")
+                .join("dsh-desktop"));
         }
     }
     candidates
@@ -258,20 +319,31 @@ impl FileLock {
             fs::create_dir_all(parent).map_err(|error| AppError::io(parent, error))?;
         }
         let lock = PathBuf::from(format!("{}.lock", path.display()));
+        match Self::create(&lock) {
+            Ok(guard) => Ok(guard),
+            Err(AppError::Conflict(_)) if clear_stale_lock(&lock) => {
+                // 上一次写入的进程已经不在了，锁是残留：清掉后重试一次。
+                Self::create(&lock)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn create(lock: &Path) -> Result<Self, AppError> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&lock)
+            .open(lock)
             .map_err(|error| {
                 if error.kind() == std::io::ErrorKind::AlreadyExists {
                     AppError::Conflict(
-                        "DeepSeek Harness is saving its configuration; retry shortly".into(),
+                        "DeepSeekRuntime is saving its configuration; retry shortly".into(),
                     )
                 } else {
-                    AppError::io(&lock, error)
+                    AppError::io(lock, error)
                 }
             })?;
-        let guard = Self(lock);
+        let guard = Self(lock.to_path_buf());
         writeln!(file, "{}", std::process::id()).map_err(|error| AppError::io(&guard.0, error))?;
         Ok(guard)
     }
@@ -280,6 +352,36 @@ impl Drop for FileLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
+}
+
+/// 崩溃残留的 `<file>.lock` 会把之后的写入永久卡住（DSH 原生协议只做 create_new）。
+/// 只有在能证明锁的主人已经不在时才删除：Unix 用 `kill(pid, 0)` 判活，两个平台都用修改
+/// 时间兜底（一次写入的锁不可能留 10 分钟）。
+const STALE_LOCK_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+fn clear_stale_lock(lock: &Path) -> bool {
+    let owner_gone = fs::read_to_string(lock)
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+        .is_some_and(|pid| !process_is_alive(pid));
+    let too_old = fs::metadata(lock)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age > STALE_LOCK_AGE);
+    (owner_gone || too_old) && fs::remove_file(lock).is_ok()
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    // SAFETY: kill(2) 只读内核状态；pid 0 代表进程组，已排除。
+    pid > 0 && unsafe { libc::kill(pid as libc::pid_t, 0) } == 0
+}
+
+/// Windows 上没有零依赖的判活方式，交给 mtime 兜底（见 [`STALE_LOCK_AGE`]）。
+#[cfg(not(unix))]
+fn process_is_alive(_pid: u32) -> bool {
+    true
 }
 
 fn restore(path: &Path, previous: Option<Vec<u8>>) -> Result<(), AppError> {
@@ -301,9 +403,13 @@ fn edit_files_and_commit<T>(
     plan: impl FnOnce(&[String]) -> Result<Vec<String>, AppError>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
+    // 固定加锁顺序（按路径排序），避免两个并发写入以不同顺序拿锁时互相等死；
+    // 调用方传进来的顺序只决定 plan 的下标语义，这里按排序后的顺序加锁。
+    let mut lock_order: Vec<usize> = (0..paths.len()).collect();
+    lock_order.sort_by(|left, right| paths[*left].cmp(&paths[*right]));
     let mut _guards = Vec::with_capacity(paths.len());
-    for path in paths {
-        _guards.push(FileLock::acquire(path)?);
+    for index in &lock_order {
+        _guards.push(FileLock::acquire(&paths[*index])?);
     }
     let mut previous = Vec::with_capacity(paths.len());
     let mut current = Vec::with_capacity(paths.len());
@@ -316,7 +422,14 @@ fn edit_files_and_commit<T>(
         current.push(read_text(path)?);
     }
     let next = plan(&current)?;
-    debug_assert_eq!(next.len(), paths.len());
+    // plan 少给或多给一个文件都意味着某一处改动会被静默丢掉：宁可整体失败。
+    if next.len() != paths.len() {
+        return Err(AppError::Message(format!(
+            "DeepSeekRuntime write plan returned {} file(s) for {} file(s); nothing was written",
+            next.len(),
+            paths.len()
+        )));
+    }
     let mut written = vec![];
     let result = paths
         .iter()
@@ -507,9 +620,31 @@ pub(crate) fn remove_account_grant() -> Result<Option<(String, String)>, AppErro
     Ok(grant)
 }
 
-/// Providers as shown in CC Switch, read from the display profile ([`config_path`]).
+/// Providers as shown in CC Switch: every initialized profile ([`read_paths`]), authoritative
+/// profile first, first occurrence of a key winning.
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
-    get_providers_from(&config_path(), &credentials_path())
+    let credentials = credentials_path();
+    let authoritative = config_path();
+    let mut merged: IndexMap<String, Value> = IndexMap::new();
+    for path in read_paths() {
+        let providers = match get_providers_from(&path, &credentials) {
+            Ok(providers) => providers,
+            // 权威 profile 读不出来时照旧报错；其余 profile 只跳过并记日志，别让一个写坏的
+            // profile 把整张供应商列表变成错误页。
+            Err(error) if path != authoritative => {
+                log::warn!(
+                    "跳过无法解析的 DeepSeekRuntime profile {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        for (id, provider) in providers {
+            merged.entry(id).or_insert(provider);
+        }
+    }
+    Ok(merged)
 }
 
 /// An `llm-pi-ai` config in the home patch is applied after every profile, so providers CC Switch
@@ -726,9 +861,12 @@ fn save_paths_and_commit<T>(
         if existing.is_empty() {
             return commit();
         }
+        // 删除也只和“真正存在的这些文件”比，索引必须按这批文件重算
+        let authoritative = authoritative_index(&existing);
         return edit_files_and_commit(
             &existing,
             |texts| {
+                ensure_provider_copies_agree(&existing, authoritative, texts, id)?;
                 texts
                     .iter()
                     .map(|text| update_provider(text, id, None, false))
@@ -739,17 +877,191 @@ fn save_paths_and_commit<T>(
     };
     let mut files = vec![credentials_path.to_path_buf()];
     files.extend(paths.iter().cloned());
+    let authoritative = authoritative_index(paths);
     edit_files_and_commit(
         &files,
         |texts| {
+            let profile_texts = &texts[1..];
+            if create {
+                ensure_provider_key_is_free(paths, profile_texts, id)?;
+            } else {
+                ensure_provider_copies_agree(paths, authoritative, profile_texts, id)?;
+            }
             let (credentials, native) = native_provider(id, &config, &texts[0])?;
             let mut next = vec![credentials];
-            for text in &texts[1..] {
+            for text in profile_texts {
                 next.push(update_provider(text, id, Some(native.clone()), create)?);
             }
             Ok(next)
         },
         commit,
+    )
+}
+
+/// Position of the authoritative profile ([`config_path`]) among `paths`.
+///
+/// Every target profile is written, but only the authoritative one defines what CC Switch shows,
+/// so its copy is the reference the others are compared against. Tests that pass a single
+/// arbitrary path fall back to it.
+fn authoritative_index(paths: &[PathBuf]) -> usize {
+    let authoritative = config_path();
+    paths
+        .iter()
+        .position(|path| *path == authoritative)
+        .unwrap_or(0)
+}
+
+/// The `llm-pi-ai` provider node stored under `id` in one profile, if any.
+fn existing_provider_node(text: &str, id: &str) -> Result<Option<Yaml>, AppError> {
+    Ok(provider_entry(text)?["config"]["providers"]
+        .get(id)
+        .cloned())
+}
+
+/// Refuse to write when another profile holds a *different* version of the same provider.
+///
+/// CC Switch only knows the authoritative copy, so rewriting the others would silently discard
+/// whatever the user changed natively in DSH (a different endpoint, models or credential
+/// reference). Refuse instead, and name the profile that has to be reconciled.
+fn ensure_provider_copies_agree(
+    paths: &[PathBuf],
+    authoritative: usize,
+    texts: &[String],
+    id: &str,
+) -> Result<(), AppError> {
+    let Some(source) = texts
+        .get(authoritative)
+        .map(|text| existing_provider_node(text, id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(());
+    };
+    for (index, text) in texts.iter().enumerate() {
+        if index == authoritative {
+            continue;
+        }
+        if existing_provider_node(text, id)?.is_some_and(|copy| copy != source) {
+            return Err(diverged_provider_error(
+                id,
+                paths.get(index),
+                paths.get(authoritative),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn diverged_provider_error(
+    id: &str,
+    other: Option<&PathBuf>,
+    source: Option<&PathBuf>,
+) -> AppError {
+    let other = other.map(|path| profile_name(path)).unwrap_or_default();
+    let source = source.map(|path| profile_name(path)).unwrap_or_default();
+    AppError::localized(
+        "dsh.provider_diverged",
+        format!(
+            "供应商 '{id}' 在 profile '{other}' 里的内容与 '{source}' 不同；CC Switch 只认得 '{source}' 的那份，改写会覆盖你在 DeepSeekRuntime 里对 '{other}' 做的修改。请先在 DeepSeekRuntime 里把两者改成一致，或手动编辑 profiles/{other}/cordis.patch.yml。"
+        ),
+        format!(
+            "Provider '{id}' differs between the '{other}' and '{source}' profiles; CC Switch only knows the '{source}' copy, so writing would discard your changes in '{other}'. Make them identical in DeepSeekRuntime, or edit profiles/{other}/cordis.patch.yml directly."
+        ),
+    )
+}
+
+/// Refuse to add a provider whose key is already used by any profile, naming which one.
+fn ensure_provider_key_is_free(
+    paths: &[PathBuf],
+    texts: &[String],
+    id: &str,
+) -> Result<(), AppError> {
+    for (index, text) in texts.iter().enumerate() {
+        if existing_provider_node(text, id)?.is_some() {
+            let name = paths
+                .get(index)
+                .map(|path| profile_name(path))
+                .unwrap_or_default();
+            return Err(AppError::localized(
+                "dsh.provider_key_taken",
+                format!("供应商 key '{id}' 已经在 profile '{name}' 里被占用；请改用一个新 key，或先在那个 profile 里移除它。"),
+                format!("Provider key '{id}' is already used by the '{name}' profile; choose another key, or remove it from that profile first."),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The MCP client plugin entry on a profile for server `id`, if any.
+fn existing_mcp_entry(text: &str, id: &str) -> Result<Option<Yaml>, AppError> {
+    let all_entries = entries(text)?;
+    let found = plugin_entries(&all_entries)
+        .filter(|(_, _, entry)| {
+            entry["name"].as_str() == Some("@deepseek-ai/dsh-mcp-client")
+                && entry["config"]["serverName"].as_str() == Some(id)
+        })
+        .map(|(_, _, entry)| entry.clone())
+        .next();
+    Ok(found)
+}
+
+/// One MCP server's copies across profiles must agree with the authoritative profile.
+///
+/// A server that only a non-authoritative profile carries was added natively inside DSH, and
+/// writing the CC Switch spec there would silently replace it; a copy that differs from the
+/// authoritative one is a native edit that a rewrite would discard. Both are refused and the
+/// profile is named. A target profile that simply lacks the server is fine: CC Switch writes it
+/// everywhere.
+fn ensure_mcp_copies_agree(
+    paths: &[PathBuf],
+    authoritative: usize,
+    texts: &[String],
+    id: &str,
+) -> Result<(), AppError> {
+    let source = texts
+        .get(authoritative)
+        .map(|text| existing_mcp_entry(text, id))
+        .transpose()?
+        .flatten();
+    let Some(source) = source else {
+        // 优先 profile 里没有：别的 profile 里既然有，就是别处原生加的
+        for (index, text) in texts.iter().enumerate() {
+            if index != authoritative && existing_mcp_entry(text, id)?.is_some() {
+                return Err(diverged_mcp_error(
+                    id,
+                    paths.get(index),
+                    paths.get(authoritative),
+                ));
+            }
+        }
+        return Ok(());
+    };
+    for (index, text) in texts.iter().enumerate() {
+        if index == authoritative {
+            continue;
+        }
+        if existing_mcp_entry(text, id)?.is_some_and(|copy| copy != source) {
+            return Err(diverged_mcp_error(
+                id,
+                paths.get(index),
+                paths.get(authoritative),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn diverged_mcp_error(id: &str, other: Option<&PathBuf>, source: Option<&PathBuf>) -> AppError {
+    let other = other.map(|path| profile_name(path)).unwrap_or_default();
+    let source = source.map(|path| profile_name(path)).unwrap_or_default();
+    AppError::localized(
+        "dsh.mcp_diverged",
+        format!(
+            "MCP 服务器 '{id}' 在 profile '{other}' 里的配置与 '{source}' 不同；改写会覆盖你在 DeepSeekRuntime 里对 '{other}' 做的修改。请先在 DeepSeekRuntime 里把两者改成一致，或手动编辑 profiles/{other}/cordis.patch.yml。"
+        ),
+        format!(
+            "MCP server '{id}' differs between the '{other}' and '{source}' profiles; writing would discard your changes in '{other}'. Make them identical in DeepSeekRuntime, or edit profiles/{other}/cordis.patch.yml directly."
+        ),
     )
 }
 
@@ -865,8 +1177,38 @@ pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
 }
 
 /// MCP servers as shown in CC Switch, read from the display profile ([`config_path`]).
+/// MCP servers as shown in CC Switch: every initialized profile, authoritative profile first,
+/// one entry per server name.
 pub(crate) fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
-    mcp_entries_from(&read_text(&config_path())?)
+    let authoritative = config_path();
+    let mut merged: Vec<Yaml> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    for path in read_paths() {
+        let entries = match mcp_entries_from(&read_text(&path)?) {
+            Ok(entries) => entries,
+            // 权威 profile 读不出来时照旧报错；其余 profile 只跳过并记日志。
+            Err(error) if path != authoritative => {
+                log::warn!(
+                    "跳过无法解析的 DeepSeekRuntime profile {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let name = entry["config"]["serverName"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{entry:?}"));
+            if names.contains(&name) {
+                continue;
+            }
+            names.push(name);
+            merged.push(entry);
+        }
+    }
+    Ok(merged)
 }
 
 fn mcp_entries_from(text: &str) -> Result<Vec<Yaml>, AppError> {
@@ -940,7 +1282,11 @@ fn sync_mcp_files_and_commit<T>(
     }
     edit_files_and_commit(
         &paths,
-        |texts| texts.iter().map(|text| mcp_edit(text, id, spec)).collect(),
+        |texts| {
+            let authoritative = authoritative_index(&paths);
+            ensure_mcp_copies_agree(&paths, authoritative, texts, id)?;
+            texts.iter().map(|text| mcp_edit(text, id, spec)).collect()
+        },
         commit,
     )
 }
@@ -1650,6 +1996,175 @@ mod tests {
 
         sync_mcp_and_commit("memory", None, || Ok(())).unwrap();
         assert!(mcp_entries().unwrap().is_empty());
+    }
+
+    /// 用户在 DSH 原生界面里加的一条供应商：只写进 headless 的 profile。
+    const NATIVE_HEADLESS_PROVIDER: &str = "---\n- id: llm-pi-ai\n  config:\n    providers:\n      native-headless:\n        displayName: Native Headless Route\n        api: openai-completions\n        baseURL: https://native-headless.example/v1\n        apiKeyEnv: NATIVE_HEADLESS_KEY\n        models:\n          - id: native-model\n            contextWindow: 128000\n";
+
+    /// 只写进某个 profile 的供应商也要出现在列表里：否则列表看不到它、`provider_key_exists`
+    /// 又把它算成已占用，用户既加不进去也找不到，无法自救。
+    #[test]
+    #[serial_test::serial]
+    fn providers_that_only_exist_in_another_profile_are_listed() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "headless"]);
+        fs::write(
+            root.join("profiles/headless/cordis.patch.yml"),
+            NATIVE_HEADLESS_PROVIDER,
+        )
+        .unwrap();
+
+        let listed = get_providers().unwrap();
+        assert!(
+            listed.contains_key("native-headless"),
+            "headless 里的供应商应当出现在列表里: {:?}",
+            listed.keys().collect::<Vec<_>>()
+        );
+        // 列表与 key 占用检查给出同一个结论
+        assert!(provider_key_exists("native-headless").unwrap());
+        assert_eq!(
+            listed["native-headless"]["options"]["baseURL"],
+            "https://native-headless.example/v1"
+        );
+
+        // 权威 profile（web）里的供应商仍然优先显示
+        set_provider("gateway", editor_config()).unwrap();
+        let listed = get_providers().unwrap();
+        assert!(listed.contains_key("gateway") && listed.contains_key("native-headless"));
+        assert_eq!(
+            listed["gateway"]["options"]["baseURL"],
+            "https://gateway.example/v1"
+        );
+    }
+
+    /// 同名节点在别的 profile 里被原生改过时，改写会把那份修改静默抹掉：宁可拒绝并指名。
+    #[test]
+    #[serial_test::serial]
+    fn editing_a_provider_is_refused_when_another_profile_differs() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "desktop"]);
+        set_provider("gateway", editor_config()).unwrap();
+
+        // 用户在 DSH Desktop 原生界面里把这个 key 的 endpoint 改成了别处
+        let desktop_path = root.join("profiles/desktop/cordis.patch.yml");
+        let edited = profile_text(root, "desktop")
+            .unwrap()
+            .replace("https://gateway.example/v1", "https://desktop.example/v1");
+        fs::write(&desktop_path, &edited).unwrap();
+        let web_before = profile_text(root, "web").unwrap();
+
+        let mut renamed = editor_config();
+        renamed["name"] = json!("Renamed");
+        let error = set_provider("gateway", renamed).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("desktop"), "{message}");
+        assert!(message.contains("gateway"), "{message}");
+        // 一个字节都没写
+        assert_eq!(profile_text(root, "desktop").unwrap(), edited);
+        assert_eq!(profile_text(root, "web").unwrap(), web_before);
+        assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
+
+        // 删除同理：不能把 diverged 的那份一起删掉
+        let error = remove_provider("gateway").unwrap_err();
+        assert!(error.to_string().contains("desktop"));
+        assert_eq!(profile_text(root, "desktop").unwrap(), edited);
+
+        // 把两边改回一致后照常可写
+        fs::write(&desktop_path, &web_before).unwrap();
+        set_provider("gateway", editor_config()).unwrap();
+    }
+
+    /// 添加时若 key 已被别的 profile 占用，报错要指名是哪个 profile。
+    #[test]
+    #[serial_test::serial]
+    fn adding_a_key_that_another_profile_uses_names_that_profile() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "headless"]);
+        fs::write(
+            root.join("profiles/headless/cordis.patch.yml"),
+            NATIVE_HEADLESS_PROVIDER,
+        )
+        .unwrap();
+        let before = profile_text(root, "headless").unwrap();
+
+        let mut config = editor_config();
+        config["name"] = json!("Native Headless");
+        let error = save_and_commit("native-headless", Some(config), true, || Ok(())).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("headless"), "{message}");
+        assert_eq!(profile_text(root, "headless").unwrap(), before);
+    }
+
+    /// MCP 同款：别的 profile 里的同名服务器内容不同就拒绝改写。
+    #[test]
+    #[serial_test::serial]
+    fn mcp_edit_is_refused_when_another_profile_differs() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "desktop"]);
+        let spec = json!({"type":"stdio","command":"node","args":["server.js"]});
+        sync_mcp_and_commit("memory", Some(&spec), || Ok(())).unwrap();
+
+        let desktop_path = root.join("profiles/desktop/cordis.patch.yml");
+        let edited = profile_text(root, "desktop")
+            .unwrap()
+            .replace("command: node", "command: python3");
+        fs::write(&desktop_path, &edited).unwrap();
+
+        let error = sync_mcp_and_commit("memory", Some(&spec), || Ok(())).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("desktop"), "{message}");
+        assert_eq!(profile_text(root, "desktop").unwrap(), edited);
+    }
+
+    /// 只在别的 profile 里存在的 MCP（用户在 DSH 原生界面里加的）不能被 CC Switch 覆盖。
+    #[test]
+    #[serial_test::serial]
+    fn mcp_added_natively_in_another_profile_is_refused() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "desktop"]);
+        let native = "---\n- insert:\n    - id: native-desktop-mcp\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: memory\n        transport: stdio\n        command: python-native\n";
+        fs::write(root.join("profiles/desktop/cordis.patch.yml"), native).unwrap();
+
+        let spec = json!({"type":"stdio","command":"npx","args":["-y","mock-mcp"]});
+        let error = sync_mcp_and_commit("memory", Some(&spec), || Ok(())).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("desktop"), "{message}");
+        assert_eq!(
+            profile_text(root, "desktop").unwrap(),
+            native,
+            "原生节点必须原样保留"
+        );
+        assert!(!profile_text(root, "web").unwrap().contains("mock-mcp"));
+    }
+
+    /// 崩溃留下的 `<file>.lock` 不该把之后的写入永久卡死，但活着的写入方仍然要被尊重。
+    #[test]
+    #[serial_test::serial]
+    fn a_stale_lock_file_does_not_block_writes() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+
+        // 主人已经不在了：接管
+        let stale = root.join("profiles/web/cordis.patch.yml.lock");
+        fs::write(&stale, "4194303\n").unwrap();
+        set_provider("gateway", editor_config()).unwrap();
+        assert!(!stale.exists(), "残留锁应当被清掉");
+
+        // 主人就是自己：仍然当冲突处理
+        fs::write(&stale, format!("{}\n", std::process::id())).unwrap();
+        let error = set_provider("other", editor_config()).unwrap_err();
+        assert!(
+            error.to_string().contains("saving its configuration"),
+            "{error}"
+        );
+        fs::remove_file(&stale).unwrap();
+        set_provider("other", editor_config()).unwrap();
     }
 
     #[test]

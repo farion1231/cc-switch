@@ -13,6 +13,7 @@
 //! `x-dsh-auth-token` (no Bearer prefix), only to the grant's issuer, without following
 //! redirects; responses are `{code: 0, data: {biz_code, biz_data}}`.
 
+use crate::error::AppError;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -290,10 +291,23 @@ async fn platform_call(method: &str, body: Value) -> Result<Value, PlatformError
     .await
 }
 
+/// 面向用户的登录错误文案跟随界面语言，不把英文串硬塞进中文界面。
+fn login_error(key: &'static str, zh: impl Into<String>, en: impl Into<String>) -> String {
+    AppError::localized(key, zh, en).to_string()
+}
+
 fn platform_error(error: PlatformError) -> String {
     match error {
-        PlatformError::Unauthorized => "DeepSeek sign-in: unauthorized".into(),
-        PlatformError::Failed(error) => format!("DeepSeek sign-in: {error}"),
+        PlatformError::Unauthorized => login_error(
+            "dsh.account.error_unauthorized",
+            "DeepSeek 登录失败：平台拒绝了该账号令牌",
+            "DeepSeek sign-in failed: the platform rejected this account token",
+        ),
+        PlatformError::Failed(error) => login_error(
+            "dsh.account.error_platform",
+            format!("DeepSeek 登录失败：{error}"),
+            format!("DeepSeek sign-in failed: {error}"),
+        ),
     }
 }
 
@@ -384,12 +398,24 @@ pub async fn start_login() -> Result<DshLoginStart, String> {
     let auth_url = init["authorize_url"]
         .as_str()
         .and_then(|url| platform_page(url, "/dsh/authorize"))
-        .ok_or("DeepSeek sign-in: unexpected authorization page")?
+        .ok_or_else(|| {
+            login_error(
+                "dsh.account.error_authorize_page",
+                "DeepSeek 登录失败：平台返回了非预期的授权地址",
+                "DeepSeek sign-in failed: the platform returned an unexpected authorization URL",
+            )
+        })?
         .to_string();
     let authorize_id = init["authorize_id"]
         .as_str()
         .filter(|id| !id.is_empty())
-        .ok_or("DeepSeek sign-in: missing authorization id")?
+        .ok_or_else(|| {
+            login_error(
+                "dsh.account.error_authorize_id",
+                "DeepSeek 登录失败：平台没有返回授权 id",
+                "DeepSeek sign-in failed: the platform returned no authorization id",
+            )
+        })?
         .to_owned();
     let timeout = init["expires_in"]
         .as_f64()
@@ -406,7 +432,13 @@ pub async fn start_login() -> Result<DshLoginStart, String> {
             finish_login(listener, &state, &verifier, &redirect_uri),
         )
         .await
-        .unwrap_or_else(|_| Err("DeepSeek sign-in expired".into()));
+        .unwrap_or_else(|_| {
+            Err(login_error(
+                "dsh.account.error_expired",
+                "DeepSeek 登录超时，请重新登录",
+                "DeepSeek sign-in timed out; start again",
+            ))
+        });
         let _ = sender.send(outcome);
     });
 
@@ -455,7 +487,13 @@ async fn finish_login(
         let token = exchange["token"]
             .as_str()
             .filter(|token| !token.is_empty() && token.bytes().all(|b| (0x21..=0x7e).contains(&b)))
-            .ok_or("DeepSeek sign-in: missing token")?;
+            .ok_or_else(|| {
+                login_error(
+                    "dsh.account.error_missing_token",
+                    "DeepSeek 登录失败：平台没有返回令牌",
+                    "DeepSeek sign-in failed: the platform returned no token",
+                )
+            })?;
         let completion = exchange["authorized_url"]
             .as_str()
             .and_then(|url| platform_page(url, "/dsh/authorized"))
@@ -579,13 +617,21 @@ const PAGE_FAILED: &str = "<!doctype html><meta charset=utf-8><title>CC Switch</
 pub fn poll_login(flow_id: &str) -> Result<bool, String> {
     let mut pending = PENDING.lock().unwrap();
     let Some(login) = pending.as_mut().filter(|login| login.flow_id == flow_id) else {
-        return Err("This DeepSeek sign-in has ended; start again".into());
+        return Err(login_error(
+            "dsh.account.error_flow_ended",
+            "这次 DeepSeek 登录已经结束，请重新开始",
+            "This DeepSeek sign-in has ended; start again",
+        ));
     };
     match login.result.try_recv() {
         Err(oneshot::error::TryRecvError::Empty) => Ok(false),
         Err(oneshot::error::TryRecvError::Closed) => {
             pending.take();
-            Err("DeepSeek sign-in was interrupted".into())
+            Err(login_error(
+                "dsh.account.error_flow_interrupted",
+                "DeepSeek 登录被中断",
+                "DeepSeek sign-in was interrupted",
+            ))
         }
         Ok(outcome) => {
             pending.take();

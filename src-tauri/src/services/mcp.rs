@@ -444,7 +444,8 @@ impl McpService {
         let servers = Self::get_all_servers(state)?;
 
         let mut failures: Vec<String> = Vec::new();
-        for app in AppType::all() {
+        // DeepSeekRuntime Desktop 没有自己的 MCP 开关，DSH 的写入已经覆盖它的 profile
+        for app in AppType::independent() {
             if let Err(err) = Self::project_servers_to_app(state, &servers, &app) {
                 log::warn!("同步 MCP 到 {app:?} 失败: {err}");
                 failures.push(format!("{}: {err}", app.as_str()));
@@ -471,13 +472,8 @@ impl McpService {
 
     /// 由 CC Switch 管理 MCP 的应用（Claude Desktop、OpenClaw 不支持；DSH Desktop 跟随 DSH）
     pub fn live_sync_apps() -> Vec<AppType> {
-        AppType::all()
-            .filter(|app| {
-                !matches!(
-                    app,
-                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::DshDesktop
-                )
-            })
+        AppType::independent()
+            .filter(|app| !matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop))
             .collect()
     }
 
