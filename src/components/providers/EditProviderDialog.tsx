@@ -26,7 +26,7 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
+import { isDshApp, isPiFamilyApp, usesEditorView } from "@/config/appConfig";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -197,7 +197,7 @@ export function EditProviderDialog({
         appId === "pi" ||
         appId === "mcode" ||
         appId === "kimi" ||
-        appId === "dsh" ||
+        isDshApp(appId) ||
         appId === "omp"
       ) {
         if (!cancelled) {

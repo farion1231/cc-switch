@@ -317,6 +317,7 @@ export interface VisibleApps {
   mcode: boolean;
   kimi: boolean;
   dsh?: boolean;
+  "dsh-desktop"?: boolean;
   agy: boolean;
   omp: boolean;
 }
@@ -773,6 +774,8 @@ export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
   dsh?: boolean;
+  /** DSH 的 MCP 同时写进 Desktop profile，Desktop 没有单独的开关 */
+  "dsh-desktop"?: boolean;
   agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;

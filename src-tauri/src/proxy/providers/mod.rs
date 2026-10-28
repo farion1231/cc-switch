@@ -219,6 +219,7 @@ impl ProviderType {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::DshDesktop
             | AppType::Omp
             | AppType::Agy => return None,
         };
@@ -280,6 +281,7 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
+        | AppType::DshDesktop
         | AppType::Omp
         | AppType::Agy => return None,
     })

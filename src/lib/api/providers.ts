@@ -74,13 +74,21 @@ export interface ClaudeDesktopDefaultRoute {
   supports1m: boolean;
 }
 
+/**
+ * DeepSeek Harness Desktop 没有自己的供应商列表：CC Switch 把同一份 DeepSeek Harness 供应商写进
+ * 所有已初始化的 profile（web、desktop、headless、acp），所以 Desktop 页面读写的就是 `dsh`。
+ */
+function providerApp(appId: AppId): AppId {
+  return appId === "dsh-desktop" ? "dsh" : appId;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
-    return await invoke("get_providers", { app: appId });
+    return await invoke("get_providers", { app: providerApp(appId) });
   },
 
   async getCurrent(appId: AppId): Promise<string> {
-    return await invoke("get_current_provider", { app: appId });
+    return await invoke("get_current_provider", { app: providerApp(appId) });
   },
 
   async add(
@@ -91,7 +99,7 @@ export const providersApi = {
   ): Promise<boolean> {
     return await invoke("add_provider", {
       provider,
-      app: appId,
+      app: providerApp(appId),
       addToLive,
       ...(editorSave ? { editorSave } : {}),
     });
@@ -105,7 +113,7 @@ export const providersApi = {
   ): Promise<boolean> {
     return await invoke("update_provider", {
       provider,
-      app: appId,
+      app: providerApp(appId),
       originalId,
       ...(editorSave ? { editorSave } : {}),
     });
@@ -123,7 +131,7 @@ export const providersApi = {
     meta?: ProviderMeta,
   ): Promise<ProviderEditorView> {
     return await invoke("get_provider_editor_view", {
-      app: appId,
+      app: providerApp(appId),
       settingsConfig,
       ...(category ? { category } : {}),
       ...(providerId ? { providerId } : {}),
@@ -132,12 +140,15 @@ export const providersApi = {
   },
 
   async delete(id: string, appId: AppId): Promise<boolean> {
-    return await invoke("delete_provider", { id, app: appId });
+    return await invoke("delete_provider", { id, app: providerApp(appId) });
   },
 
   /** Kimi「添加」：写进 config.toml 但不改默认模型（「切换」才改） */
   async addToLiveConfig(id: string, appId: AppId): Promise<boolean> {
-    return await invoke("add_provider_to_live_config", { id, app: appId });
+    return await invoke("add_provider_to_live_config", {
+      id,
+      app: providerApp(appId),
+    });
   },
 
   /**
@@ -145,15 +156,18 @@ export const providersApi = {
    * Does NOT delete from database - provider remains in the list
    */
   async removeFromLiveConfig(id: string, appId: AppId): Promise<boolean> {
-    return await invoke("remove_provider_from_live_config", { id, app: appId });
+    return await invoke("remove_provider_from_live_config", {
+      id,
+      app: providerApp(appId),
+    });
   },
 
   async switch(id: string, appId: AppId): Promise<SwitchResult> {
-    return await invoke("switch_provider", { id, app: appId });
+    return await invoke("switch_provider", { id, app: providerApp(appId) });
   },
 
   async importDefault(appId: AppId): Promise<boolean> {
-    return await invoke("import_default_config", { app: appId });
+    return await invoke("import_default_config", { app: providerApp(appId) });
   },
 
   async importClaudeDesktopFromClaude(): Promise<number> {
@@ -188,7 +202,10 @@ export const providersApi = {
     updates: ProviderSortUpdate[],
     appId: AppId,
   ): Promise<boolean> {
-    return await invoke("update_providers_sort_order", { updates, app: appId });
+    return await invoke("update_providers_sort_order", {
+      updates,
+      app: providerApp(appId),
+    });
   },
 
   async onSwitched(
@@ -213,7 +230,7 @@ export const providersApi = {
     const { cwd } = options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
-      app: appId,
+      app: providerApp(appId),
       cwd,
     });
   },

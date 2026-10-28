@@ -102,7 +102,8 @@ impl Database {
             AppType::Dsh => Some("enabled_dsh"),
             AppType::Pi => Some("enabled_pi"),
             AppType::Omp => Some("enabled_omp"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            // DSH Desktop has no flag: DSH's MCP is mirrored into the Desktop profile.
+            AppType::ClaudeDesktop | AppType::DshDesktop | AppType::OpenClaw => None,
             AppType::Agy => Some("enabled_agy"),
         };
 

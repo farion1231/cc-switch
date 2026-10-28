@@ -44,12 +44,23 @@ const mocks = vi.hoisted(() => ({
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
+  dshDesktopStatus: {
+    supported: true,
+    installed: true,
+    configured: true,
+    profilePath: "",
+  },
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopStatus: async () => mocks.desktopStatus,
+  },
+}));
+vi.mock("@/lib/api/dsh", () => ({
+  dshApi: {
+    getDesktopStatus: async () => mocks.dshDesktopStatus,
   },
 }));
 vi.mock("@/hooks/useSettings", () => ({
@@ -239,6 +250,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
       supported: true,
       installed: true,
       configured: true,
+    };
+    mocks.dshDesktopStatus = {
+      supported: true,
+      installed: true,
+      configured: true,
+      profilePath: "",
     };
     mocks.updateSettings.mockReset();
     mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
@@ -688,6 +705,21 @@ describe("AppsPage concurrent CLI upgrades", () => {
     };
     await renderApps();
     expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["claude-desktop"]);
+  });
+
+  it("shows DeepSeek Harness Desktop as a desktop app that can't be installed here", async () => {
+    mocks.dshDesktopStatus = {
+      supported: true,
+      installed: false,
+      configured: false,
+      profilePath: "",
+    };
+    await renderApps();
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["dsh-desktop"]);
+    const row = card("DeepSeek Harness Desktop");
+    expect(row.getByText("appsPage.desktopNotConnected")).toBeInTheDocument();
+    // 桌面应用没有安装 / 升级按钮
+    expect(row.queryByRole("button", { name: /install|upgrade/i })).toBeNull();
   });
 
   it("orders rows by the saved app order within each section", async () => {

@@ -32,6 +32,8 @@ export interface SkillApps {
   mcode?: boolean;
   kimi?: boolean;
   dsh?: boolean;
+  /** DSH Desktop 和 DSH 共用 `$DSH_HOME/skills`，没有单独的开关 */
+  "dsh-desktop"?: boolean;
   agy?: boolean;
   omp?: boolean;
 }

@@ -230,6 +230,21 @@ fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
     assert!(apps.claude && apps.pi && apps.mcode && apps.omp);
 }
 
+/// DeepSeek Harness 的 MCP 写进所有 profile；Desktop 没有单独的开关，`dsh-desktop` 落到同一个标记
+#[test]
+fn test_parse_mcp_deeplink_accepts_dsh_and_dsh_desktop() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    for apps in ["dsh", "dsh-desktop", "claude,dsh"] {
+        let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
+        let request = parse_deeplink_url(&url).expect("dsh is a valid MCP target");
+        assert!(
+            parse_mcp_apps(request.apps.as_deref().unwrap())
+                .unwrap()
+                .dsh
+        );
+    }
+}
+
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_refuses_omp_with_guidance() {

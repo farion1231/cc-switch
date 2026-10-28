@@ -77,6 +77,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   mcode: {},
   kimi: {},
   dsh: {},
+  "dsh-desktop": {},
   agy: {},
   omp: {},
 });
@@ -94,6 +95,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   mcode: "",
   kimi: "",
   dsh: "",
+  "dsh-desktop": "",
   agy: "",
   omp: "",
 });
@@ -213,6 +215,7 @@ let mcpConfigs: McpConfigState = {
   mcode: {},
   kimi: {},
   dsh: {},
+  "dsh-desktop": {},
   agy: {},
   omp: {},
 };
@@ -344,6 +347,7 @@ export const resetProviderState = () => {
     mcode: {},
     kimi: {},
     dsh: {},
+    "dsh-desktop": {},
     agy: {},
     omp: {},
   };

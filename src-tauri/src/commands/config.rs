@@ -138,8 +138,12 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
-        AppType::Dsh => {
-            let file = crate::dsh_config::config_path();
+        app_type @ (AppType::Dsh | AppType::DshDesktop) => {
+            let file = if app_type == AppType::DshDesktop {
+                crate::dsh_config::profile_path("desktop")
+            } else {
+                crate::dsh_config::config_path()
+            };
             Ok(ConfigStatus {
                 exists: file.exists(),
                 path: file.to_string_lossy().to_string(),
@@ -212,6 +216,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
         AppType::Dsh => crate::dsh_config::data_dir(),
+        AppType::DshDesktop => crate::dsh_config::profile_dir("desktop"),
         AppType::Kimi => crate::kimi_config::data_dir(),
         AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
@@ -239,6 +244,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
         AppType::Dsh => crate::dsh_config::data_dir(),
+        AppType::DshDesktop => crate::dsh_config::profile_dir("desktop"),
         AppType::Kimi => crate::kimi_config::data_dir(),
         AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()

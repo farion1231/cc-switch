@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
+import { isDshApp, isPiFamilyApp, usesEditorView } from "@/config/appConfig";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -71,7 +71,7 @@ export function AddProviderDialog({
     appId !== "pi" &&
     appId !== "omp" &&
     appId !== "mcode" &&
-    appId !== "dsh" &&
+    !isDshApp(appId) &&
     appId !== "kimi" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
@@ -296,7 +296,7 @@ export function AddProviderDialog({
           appId === "pi" ||
           appId === "mcode" ||
           appId === "kimi" ||
-          appId === "dsh" ||
+          isDshApp(appId) ||
           appId === "omp") &&
         values.providerKey
       ) {

@@ -1,4 +1,7 @@
-//! DeepSeek Harness' standard `web` profile. Other profiles remain native-owned.
+//! DeepSeek Harness' standard profiles. CC Switch keeps one provider and MCP set in every
+//! profile DSH has initialized among `web`, `desktop` (owned by DeepSeek Harness Desktop),
+//! `headless` and `acp`; `sdk` / `sdk-minimal` are for embedding and stay native-owned. All
+//! profiles share `$DSH_HOME`'s credentials, sessions, skills and `AGENTS.md`.
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 use indexmap::IndexMap;
@@ -17,8 +20,99 @@ pub(crate) fn data_dir() -> PathBuf {
         .unwrap_or_else(|| get_home_dir().join(".dsh"))
 }
 
+/// Profiles CC Switch writes, in this order, when DSH has already initialized them.
+const TARGET_PROFILES: [&str; 4] = ["web", "desktop", "headless", "acp"];
+/// Providers and MCP are shown from the first of these that exists.
+const DISPLAY_PROFILES: [&str; 2] = ["web", "desktop"];
+
+pub(crate) fn profile_dir(name: &str) -> PathBuf {
+    data_dir().join("profiles").join(name)
+}
+
+pub(crate) fn profile_path(name: &str) -> PathBuf {
+    profile_dir(name).join("cordis.patch.yml")
+}
+
+/// Every initialized target profile. A missing profile (e.g. Desktop before its first launch) is
+/// never created; only when DSH has no profile at all does CC Switch start the `web` one.
+pub(crate) fn target_paths() -> Vec<PathBuf> {
+    let existing: Vec<_> = TARGET_PROFILES
+        .iter()
+        .map(|name| profile_path(name))
+        .filter(|path| path.exists())
+        .collect();
+    if existing.is_empty() {
+        vec![profile_path("web")]
+    } else {
+        existing
+    }
+}
+
+/// The profile providers and MCP are read from: `web`, else `desktop`, else the first target.
 pub(crate) fn config_path() -> PathBuf {
-    data_dir().join("profiles/web/cordis.patch.yml")
+    DISPLAY_PROFILES
+        .iter()
+        .map(|name| profile_path(name))
+        .find(|path| path.exists())
+        .unwrap_or_else(|| target_paths().swap_remove(0))
+}
+
+/// `$DSH_HOME/cordis.patch.yml`, applied after every profile.
+pub(crate) fn home_patch_path() -> PathBuf {
+    data_dir().join("cordis.patch.yml")
+}
+
+pub(crate) fn credentials_path() -> PathBuf {
+    data_dir().join(".credentials.yaml")
+}
+
+/// DeepSeek Harness Desktop as shown on the Apps page.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopStatus {
+    /// Desktop ships for macOS and Windows only.
+    pub supported: bool,
+    pub installed: bool,
+    /// The Desktop profile has at least one provider in `llm-pi-ai`.
+    pub configured: bool,
+    pub profile_path: String,
+}
+
+/// Electron's `userData` (`@deepseek-ai/dsh-desktop`) and the app bundle. The Desktop profile
+/// itself is not evidence: CC Switch may create it before the app's first launch.
+fn desktop_install_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![];
+    if cfg!(target_os = "macos") {
+        let home = get_home_dir();
+        candidates.push(home.join("Library/Application Support/@deepseek-ai/dsh-desktop"));
+        candidates.push(PathBuf::from("/Applications/DeepSeek Harness.app"));
+        candidates.push(home.join("Applications/DeepSeek Harness.app"));
+    } else if cfg!(windows) {
+        if let Some(roaming) = dirs::config_dir() {
+            candidates.push(roaming.join("@deepseek-ai").join("dsh-desktop"));
+        }
+        if let Some(local) = dirs::data_local_dir() {
+            candidates.push(local.join("Programs").join("DeepSeek Harness"));
+        }
+    }
+    candidates
+}
+
+pub(crate) fn desktop_status() -> DesktopStatus {
+    let supported = cfg!(any(target_os = "macos", windows));
+    let path = profile_path("desktop");
+    let configured = path.exists()
+        && get_providers_from(&path, &credentials_path())
+            .is_ok_and(|providers| !providers.is_empty());
+    DesktopStatus {
+        supported,
+        installed: supported
+            && desktop_install_candidates()
+                .iter()
+                .any(|candidate| candidate.exists()),
+        configured,
+        profile_path: path.to_string_lossy().into_owned(),
+    }
 }
 
 fn read_text(path: &Path) -> Result<String, AppError> {
@@ -61,6 +155,23 @@ fn replace_entry(text: &str, id: &str, entry: Option<Yaml>) -> Result<String, Ap
 
 /// Edit a top-level patch, including an insert list without its own plugin id.
 fn replace_patch(
+    text: &str,
+    parsed: &[Yaml],
+    index: Option<usize>,
+    entry: Option<Yaml>,
+) -> Result<String, AppError> {
+    let next = splice_patch(text, parsed, index, entry)?;
+    // Removing or rewriting an entry can strand an alias whose anchor lived in it; refuse rather
+    // than write a profile DSH can no longer load.
+    entries(&next).map_err(|_| {
+        AppError::Config(
+            "This change would leave a YAML alias without its anchor; edit cordis.patch.yml directly".into(),
+        )
+    })?;
+    Ok(next)
+}
+
+fn splice_patch(
     text: &str,
     parsed: &[Yaml],
     index: Option<usize>,
@@ -182,31 +293,78 @@ fn restore(path: &Path, previous: Option<Vec<u8>>) -> Result<(), AppError> {
     }
 }
 
-/// Hold the native writer lock through the database commit, rolling back on failure.
+/// Edit several native files as one change: each file holds its own DSH `<file>.lock` through
+/// the database commit. `plan` maps every file's current text to its next text, so an invalid
+/// edit writes nothing; a failed write or commit restores every file already written.
+fn edit_files_and_commit<T>(
+    paths: &[PathBuf],
+    plan: impl FnOnce(&[String]) -> Result<Vec<String>, AppError>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let mut _guards = Vec::with_capacity(paths.len());
+    for path in paths {
+        _guards.push(FileLock::acquire(path)?);
+    }
+    let mut previous = Vec::with_capacity(paths.len());
+    let mut current = Vec::with_capacity(paths.len());
+    for path in paths {
+        previous.push(if path.exists() {
+            Some(fs::read(path).map_err(|error| AppError::io(path, error))?)
+        } else {
+            None
+        });
+        current.push(read_text(path)?);
+    }
+    let next = plan(&current)?;
+    debug_assert_eq!(next.len(), paths.len());
+    let mut written = vec![];
+    let result = paths
+        .iter()
+        .zip(&current)
+        .zip(&next)
+        .enumerate()
+        .filter(|(_, ((_, current), next))| current != next)
+        .try_for_each(|(index, ((path, _), next))| {
+            atomic_write_private(path, next.as_bytes())?;
+            written.push(index);
+            Ok(())
+        })
+        .and_then(|()| commit());
+    match result {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            let failures: Vec<_> = written
+                .into_iter()
+                .rev()
+                .filter_map(|index| {
+                    restore(&paths[index], previous[index].take())
+                        .err()
+                        .map(|rollback| rollback.to_string())
+                })
+                .collect();
+            if failures.is_empty() {
+                Err(error)
+            } else {
+                Err(AppError::Message(format!(
+                    "{error}; restoring DeepSeek Harness configuration failed: {}",
+                    failures.join("; ")
+                )))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 fn edit_path_and_commit<T>(
     path: &Path,
     edit: impl FnOnce(&str) -> Result<String, AppError>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = FileLock::acquire(path)?;
-    let previous = if path.exists() {
-        Some(fs::read(path).map_err(|error| AppError::io(path, error))?)
-    } else {
-        None
-    };
-    let next = edit(&read_text(path)?)?;
-    atomic_write_private(path, next.as_bytes())?;
-    match commit() {
-        Ok(result) => Ok(result),
-        Err(error) => {
-            restore(path, previous).map_err(|rollback| {
-                AppError::Message(format!(
-                    "{error}; restoring DeepSeek Harness configuration failed: {rollback}"
-                ))
-            })?;
-            Err(error)
-        }
-    }
+    edit_files_and_commit(
+        &[path.to_path_buf()],
+        |texts| Ok(vec![edit(&texts[0])?]),
+        commit,
+    )
 }
 
 fn provider_entry(text: &str) -> Result<Yaml, AppError> {
@@ -240,11 +398,14 @@ fn provider_entry(text: &str) -> Result<Yaml, AppError> {
 }
 
 fn credential_document(path: &Path) -> Result<Yaml, AppError> {
-    let text = read_text(path)?;
+    credential_document_from(&read_text(path)?)
+}
+
+fn credential_document_from(text: &str) -> Result<Yaml, AppError> {
     if text.trim().is_empty() {
         return Ok(serde_yaml::to_value(json!({"version":1,"refs":{},"records":{}})).unwrap());
     }
-    let document: Yaml = serde_yaml::from_str(&text)
+    let document: Yaml = serde_yaml::from_str(text)
         .map_err(|_| AppError::Config("Invalid DeepSeek Harness credentials YAML".into()))?;
     if document["version"].as_u64() != Some(1)
         || (!document["refs"].is_null() && !document["refs"].is_mapping())
@@ -254,8 +415,122 @@ fn credential_document(path: &Path) -> Result<Yaml, AppError> {
     Ok(document)
 }
 
+/// Key of the DeepSeek account login written by DSH's `deepseek-account-platform` provider.
+pub(crate) const ACCOUNT_RECORD: &str = "deepseek-account-platform/default";
+const ACCOUNT_DEVICE_RECORD: &str = "deepseek-account-platform/device";
+
+/// The shared DeepSeek account grant (`{version: 1, token, issuer}`), if signed in.
+pub(crate) fn account_grant() -> Result<Option<(String, String)>, AppError> {
+    let document = credential_document(&credentials_path())?;
+    let record = &document["records"][ACCOUNT_RECORD];
+    if record.is_null() {
+        return Ok(None);
+    }
+    let payload = &record["payload"];
+    match (
+        record["kind"].as_str(),
+        payload["token"].as_str(),
+        payload["issuer"].as_str(),
+    ) {
+        (Some("grant"), Some(token), Some(issuer)) if !token.is_empty() => {
+            Ok(Some((token.to_owned(), issuer.to_owned())))
+        }
+        _ => Err(AppError::Config(
+            "Unrecognized DeepSeek account login in .credentials.yaml".into(),
+        )),
+    }
+}
+
+/// DSH's per-install device id (`deepseek-account-platform/device`), created on first login
+/// exactly like DSH does so CC Switch and DSH report the same device to Platform.
+pub(crate) fn account_device_id() -> Result<String, AppError> {
+    let path = credentials_path();
+    let _lock = FileLock::acquire(&path)?;
+    let mut document = credential_document(&path)?;
+    if let Some(id) = document["records"][ACCOUNT_DEVICE_RECORD]["payload"]["id"].as_str() {
+        if uuid::Uuid::parse_str(id).is_ok() {
+            return Ok(id.to_owned());
+        }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    set_record(
+        &mut document,
+        ACCOUNT_DEVICE_RECORD,
+        json!({"kind":"grant","payload":{"id":id}}),
+    )?;
+    write_credentials(&path, &document)?;
+    Ok(id)
+}
+
+/// Store a DeepSeek account login for both DSH Web and Desktop (DSH reloads the file).
+pub(crate) fn store_account_grant(token: &str, issuer: &str) -> Result<(), AppError> {
+    let path = credentials_path();
+    let _lock = FileLock::acquire(&path)?;
+    let mut document = credential_document(&path)?;
+    set_record(
+        &mut document,
+        ACCOUNT_RECORD,
+        json!({"kind":"grant","payload":{"version":1,"token":token,"issuer":issuer}}),
+    )?;
+    write_credentials(&path, &document)
+}
+
+fn set_record(document: &mut Yaml, key: &str, record: Value) -> Result<(), AppError> {
+    if !document["records"].is_mapping() {
+        document["records"] = Yaml::Mapping(Default::default());
+    }
+    document["records"][key] =
+        serde_yaml::to_value(record).map_err(|error| AppError::Config(error.to_string()))?;
+    Ok(())
+}
+
+fn write_credentials(path: &Path, document: &Yaml) -> Result<(), AppError> {
+    let yaml =
+        serde_yaml::to_string(document).map_err(|error| AppError::Config(error.to_string()))?;
+    atomic_write_private(path, yaml.as_bytes())
+}
+
+/// Sign out locally for Web and Desktop alike, under DSH's credentials lock. Returns the
+/// removed grant so the caller can revoke it remotely, as DSH does.
+pub(crate) fn remove_account_grant() -> Result<Option<(String, String)>, AppError> {
+    let path = credentials_path();
+    let _lock = FileLock::acquire(&path)?;
+    let grant = account_grant()?;
+    if grant.is_none() {
+        return Ok(None);
+    }
+    let mut document = credential_document(&path)?;
+    if let Some(records) = document["records"].as_mapping_mut() {
+        records.remove(Yaml::from(ACCOUNT_RECORD));
+    }
+    write_credentials(&path, &document)?;
+    Ok(grant)
+}
+
+/// Providers as shown in CC Switch, read from the display profile ([`config_path`]).
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
-    get_providers_from(&config_path(), &data_dir().join(".credentials.yaml"))
+    get_providers_from(&config_path(), &credentials_path())
+}
+
+/// An `llm-pi-ai` config in the home patch is applied after every profile, so providers CC Switch
+/// writes into the profiles would never take effect.
+fn ensure_providers_not_shadowed(home: &Path) -> Result<(), AppError> {
+    let text = read_text(home)?;
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    let shadowed = entries(&text)?
+        .iter()
+        .any(|entry| entry["id"].as_str() == Some("llm-pi-ai") && !entry["config"].is_null());
+    if shadowed {
+        let path = home.display();
+        return Err(AppError::localized(
+            "dsh.providers_shadowed_by_home",
+            format!("供应商被 home 级补丁覆盖，请先在该文件里移除 llm-pi-ai 的 config：{path}"),
+            format!("Providers are overridden by the home-level patch; remove the llm-pi-ai config from that file first: {path}"),
+        ));
+    }
+    Ok(())
 }
 
 fn get_providers_from(
@@ -419,15 +694,18 @@ fn update_provider(
     replace_entry(text, "llm-pi-ai", Some(entry))
 }
 
+/// Add, edit or remove one provider in every target profile together with its credential, as
+/// one change ([`edit_files_and_commit`]).
 pub(crate) fn save_and_commit<T>(
     id: &str,
     config: Option<Value>,
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
+    ensure_providers_not_shadowed(&home_patch_path())?;
     save_paths_and_commit(
-        &config_path(),
-        &data_dir().join(".credentials.yaml"),
+        &target_paths(),
+        &credentials_path(),
         id,
         config,
         create,
@@ -436,25 +714,55 @@ pub(crate) fn save_and_commit<T>(
 }
 
 fn save_paths_and_commit<T>(
-    path: &Path,
+    paths: &[PathBuf],
     credentials_path: &Path,
     id: &str,
     config: Option<Value>,
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    if config.is_none() && !path.exists() {
-        return commit();
-    }
-    let _credentials_lock = FileLock::acquire(credentials_path)?;
-    let previous_credentials = if credentials_path.exists() {
-        Some(fs::read(credentials_path).map_err(|error| AppError::io(credentials_path, error))?)
-    } else {
-        None
+    let Some(config) = config else {
+        let existing: Vec<_> = paths.iter().filter(|path| path.exists()).cloned().collect();
+        if existing.is_empty() {
+            return commit();
+        }
+        return edit_files_and_commit(
+            &existing,
+            |texts| {
+                texts
+                    .iter()
+                    .map(|text| update_provider(text, id, None, false))
+                    .collect()
+            },
+            commit,
+        );
     };
-    let mut changed_credentials = false;
-    let native = if let Some(config) = config {
-        validate_provider(id, &config)?;
+    let mut files = vec![credentials_path.to_path_buf()];
+    files.extend(paths.iter().cloned());
+    edit_files_and_commit(
+        &files,
+        |texts| {
+            let (credentials, native) = native_provider(id, &config, &texts[0])?;
+            let mut next = vec![credentials];
+            for text in &texts[1..] {
+                next.push(update_provider(text, id, Some(native.clone()), create)?);
+            }
+            Ok(next)
+        },
+        commit,
+    )
+}
+
+/// The native `llm-pi-ai` provider node for an editor config, and the credentials text with a new
+/// key stored under CC Switch's reference (unchanged when the key is unchanged).
+fn native_provider(
+    id: &str,
+    config: &Value,
+    credentials_text: &str,
+) -> Result<(String, Value), AppError> {
+    let mut credentials_next = credentials_text.to_owned();
+    let native = {
+        validate_provider(id, config)?;
         let mut native = config.clone();
         let object = native.as_object_mut().unwrap();
         object.remove("name");
@@ -512,7 +820,7 @@ fn save_paths_and_commit<T>(
                 "CC_SWITCH_DSH_{}",
                 id.replace('-', "_").to_ascii_uppercase()
             );
-            let mut credentials = credential_document(credentials_path)?;
+            let mut credentials = credential_document_from(credentials_text)?;
             let unchanged_key =
                 config
                     .get("apiKeyEnv")
@@ -526,26 +834,14 @@ fn save_paths_and_commit<T>(
                     credentials["refs"] = Yaml::Mapping(Default::default());
                 }
                 credentials["refs"][&reference] = Yaml::from(key);
-                let yaml = serde_yaml::to_string(&credentials)
+                credentials_next = serde_yaml::to_string(&credentials)
                     .map_err(|error| AppError::Config(error.to_string()))?;
-                atomic_write_private(credentials_path, yaml.as_bytes())?;
-                changed_credentials = true;
                 object.insert("apiKeyEnv".into(), json!(reference));
             }
         }
-        Some(native)
-    } else {
-        None
+        native
     };
-    let result = edit_path_and_commit(
-        path,
-        |text| update_provider(text, id, native, create),
-        commit,
-    );
-    if result.is_err() && changed_credentials {
-        restore(credentials_path, previous_credentials)?;
-    }
-    result
+    Ok((credentials_next, native))
 }
 
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
@@ -554,10 +850,21 @@ pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
 pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
     save_and_commit(id, None, false, || Ok(()))
 }
+/// A key is taken when any target profile already has it (CC Switch never overwrites a node).
 pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
-    Ok(get_providers()?.contains_key(id))
+    for path in target_paths() {
+        let entry = provider_entry(&read_text(&path)?)?;
+        if entry["config"]["providers"]
+            .as_mapping()
+            .is_some_and(|providers| providers.contains_key(Yaml::from(id)))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
+/// MCP servers as shown in CC Switch, read from the display profile ([`config_path`]).
 pub(crate) fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
     mcp_entries_from(&read_text(&config_path())?)
 }
@@ -582,21 +889,37 @@ fn plugin_entries(patches: &[Yaml]) -> impl Iterator<Item = (usize, Option<usize
     })
 }
 
+/// Write one MCP server into every target profile as one change ([`edit_files_and_commit`]).
 pub(crate) fn sync_mcp_and_commit<T>(
     id: &str,
     spec: Option<&Value>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    sync_mcp_file_and_commit(&config_path(), id, spec, commit)
+    sync_mcp_files_and_commit(&target_paths(), id, spec, commit)
 }
 
+#[cfg(test)]
 fn sync_mcp_file_and_commit<T>(
     path: &Path,
     id: &str,
     spec: Option<&Value>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    if spec.is_none() && !path.exists() {
+    sync_mcp_files_and_commit(&[path.to_path_buf()], id, spec, commit)
+}
+
+fn sync_mcp_files_and_commit<T>(
+    paths: &[PathBuf],
+    id: &str,
+    spec: Option<&Value>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let paths: Vec<_> = if spec.is_none() {
+        paths.iter().filter(|path| path.exists()).cloned().collect()
+    } else {
+        paths.to_vec()
+    };
+    if paths.is_empty() {
         return commit();
     }
     if let Some(spec) = spec {
@@ -615,124 +938,129 @@ fn sync_mcp_file_and_commit<T>(
             ));
         }
     }
-    edit_path_and_commit(
-        path,
-        |text| {
-            let all_entries = entries(text)?;
-            let matches: Vec<_> = plugin_entries(&all_entries)
-                .filter(|(_, _, entry)| {
-                    entry["name"].as_str() == Some("@deepseek-ai/dsh-mcp-client")
-                        && entry["config"]["serverName"].as_str() == Some(id)
-                })
-                .collect();
-            if matches.len() > 1 {
-                return Err(AppError::Config(format!(
-                    "Duplicate DeepSeek Harness MCP server '{id}'"
-                )));
-            }
-            let location = matches.into_iter().next();
-            let existing = location.map(|(_, _, entry)| entry.clone());
-            if existing.is_none() && spec.is_none() {
-                return Ok(text.to_owned());
-            }
-            let plugin_id = existing
-                .as_ref()
-                .and_then(|entry| entry["id"].as_str())
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("cc-switch-mcp-{id}"));
-            if existing.is_some()
-                && existing
-                    .as_ref()
-                    .and_then(|entry| entry["id"].as_str())
-                    .is_none()
-            {
-                return Err(AppError::Config(
-                    "Assign an id to this native MCP entry before editing it in CC Switch".into(),
-                ));
-            }
-            let id_matches = plugin_entries(&all_entries)
-                .filter(|(_, _, entry)| entry["id"].as_str() == Some(&plugin_id))
-                .count();
-            if id_matches > usize::from(existing.is_some()) {
-                return Err(AppError::Conflict(format!(
-                    "DeepSeek Harness plugin id '{plugin_id}' is already in use"
-                )));
-            }
-            let next = if let Some(spec) = spec {
-                let mut entry = existing.unwrap_or(
-                    serde_yaml::to_value(
-                        json!({"id":plugin_id,"name":"@deepseek-ai/dsh-mcp-client","config":{}}),
-                    )
-                    .unwrap(),
-                );
-                entry
-                    .as_mapping_mut()
-                    .unwrap()
-                    .remove(Yaml::from("disabled"));
-                let config = entry["config"].as_mapping_mut().ok_or_else(|| {
-                    AppError::Config("Invalid DeepSeek Harness MCP configuration".into())
-                })?;
-                for field in [
-                    "command",
-                    "args",
-                    "env",
-                    "cwd",
-                    "url",
-                    "headers",
-                    "transport",
-                ] {
-                    config.remove(Yaml::from(field));
-                }
-                for (key, value) in spec.as_object().unwrap() {
-                    if key != "type" {
-                        config.insert(key.as_str().into(), serde_yaml::to_value(value).unwrap());
-                    }
-                }
-                config.insert("serverName".into(), id.into());
-                config.insert(
-                    "transport".into(),
-                    if spec.get("url").is_some() {
-                        "streamable-http"
-                    } else {
-                        "stdio"
-                    }
-                    .into(),
-                );
-                Some(entry)
-            } else {
-                None
-            };
-            match location {
-                Some((index, Some(insert_index), _)) => {
-                    let mut patch = all_entries[index].clone();
-                    let inserted = patch["insert"].as_sequence_mut().unwrap();
-                    if let Some(next) = next {
-                        inserted[insert_index] = next;
-                    } else {
-                        inserted.remove(insert_index);
-                    }
-                    let next = if inserted.is_empty() {
-                        None
-                    } else {
-                        Some(patch)
-                    };
-                    replace_patch(text, &all_entries, Some(index), next)
-                }
-                Some((index, None, _)) => replace_patch(text, &all_entries, Some(index), next),
-                None => replace_patch(
-                    text,
-                    &all_entries,
-                    None,
-                    next.map(|entry| {
-                        let mut patch = serde_yaml::Mapping::new();
-                        patch.insert("insert".into(), Yaml::Sequence(vec![entry]));
-                        Yaml::Mapping(patch)
-                    }),
-                ),
-            }
-        },
+    edit_files_and_commit(
+        &paths,
+        |texts| texts.iter().map(|text| mcp_edit(text, id, spec)).collect(),
         commit,
     )
+}
+
+/// One profile's text with MCP server `id` added, replaced or (when `spec` is `None`) removed.
+fn mcp_edit(text: &str, id: &str, spec: Option<&Value>) -> Result<String, AppError> {
+    {
+        let all_entries = entries(text)?;
+        let matches: Vec<_> = plugin_entries(&all_entries)
+            .filter(|(_, _, entry)| {
+                entry["name"].as_str() == Some("@deepseek-ai/dsh-mcp-client")
+                    && entry["config"]["serverName"].as_str() == Some(id)
+            })
+            .collect();
+        if matches.len() > 1 {
+            return Err(AppError::Config(format!(
+                "Duplicate DeepSeek Harness MCP server '{id}'"
+            )));
+        }
+        let location = matches.into_iter().next();
+        let existing = location.map(|(_, _, entry)| entry.clone());
+        if existing.is_none() && spec.is_none() {
+            return Ok(text.to_owned());
+        }
+        let plugin_id = existing
+            .as_ref()
+            .and_then(|entry| entry["id"].as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("cc-switch-mcp-{id}"));
+        if existing.is_some()
+            && existing
+                .as_ref()
+                .and_then(|entry| entry["id"].as_str())
+                .is_none()
+        {
+            return Err(AppError::Config(
+                "Assign an id to this native MCP entry before editing it in CC Switch".into(),
+            ));
+        }
+        let id_matches = plugin_entries(&all_entries)
+            .filter(|(_, _, entry)| entry["id"].as_str() == Some(&plugin_id))
+            .count();
+        if id_matches > usize::from(existing.is_some()) {
+            return Err(AppError::Conflict(format!(
+                "DeepSeek Harness plugin id '{plugin_id}' is already in use"
+            )));
+        }
+        let next = if let Some(spec) = spec {
+            let mut entry = existing.unwrap_or(
+                serde_yaml::to_value(
+                    json!({"id":plugin_id,"name":"@deepseek-ai/dsh-mcp-client","config":{}}),
+                )
+                .unwrap(),
+            );
+            entry
+                .as_mapping_mut()
+                .unwrap()
+                .remove(Yaml::from("disabled"));
+            let config = entry["config"].as_mapping_mut().ok_or_else(|| {
+                AppError::Config("Invalid DeepSeek Harness MCP configuration".into())
+            })?;
+            for field in [
+                "command",
+                "args",
+                "env",
+                "cwd",
+                "url",
+                "headers",
+                "transport",
+            ] {
+                config.remove(Yaml::from(field));
+            }
+            for (key, value) in spec.as_object().unwrap() {
+                if key != "type" {
+                    config.insert(key.as_str().into(), serde_yaml::to_value(value).unwrap());
+                }
+            }
+            config.insert("serverName".into(), id.into());
+            config.insert(
+                "transport".into(),
+                if spec.get("url").is_some() {
+                    "streamable-http"
+                } else {
+                    "stdio"
+                }
+                .into(),
+            );
+            Some(entry)
+        } else {
+            None
+        };
+        match location {
+            Some((index, Some(insert_index), _)) => {
+                let mut patch = all_entries[index].clone();
+                let inserted = patch["insert"].as_sequence_mut().unwrap();
+                if let Some(next) = next {
+                    inserted[insert_index] = next;
+                } else {
+                    inserted.remove(insert_index);
+                }
+                let next = if inserted.is_empty() {
+                    None
+                } else {
+                    Some(patch)
+                };
+                replace_patch(text, &all_entries, Some(index), next)
+            }
+            Some((index, None, _)) => replace_patch(text, &all_entries, Some(index), next),
+            None => replace_patch(
+                text,
+                &all_entries,
+                None,
+                next.map(|entry| {
+                    let mut patch = serde_yaml::Mapping::new();
+                    patch.insert("insert".into(), Yaml::Sequence(vec![entry]));
+                    Yaml::Mapping(patch)
+                }),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -753,7 +1081,7 @@ mod tests {
         let credentials = temp.path().join(".credentials.yaml");
         fs::write(&path, FACTORY_PROFILE).unwrap();
         save_paths_and_commit(
-            &path,
+            std::slice::from_ref(&path),
             &credentials,
             "gateway",
             Some(editor_config()),
@@ -836,7 +1164,7 @@ mod tests {
             assert_eq!(get_providers_from(&path, &credentials).unwrap().len(), 1);
             assert_eq!(read_text(&credentials).unwrap(), original);
             save_paths_and_commit(
-                &path,
+                std::slice::from_ref(&path),
                 &credentials,
                 "gateway",
                 Some(editor_config()),
@@ -877,7 +1205,7 @@ mod tests {
         )
         .unwrap();
         save_paths_and_commit(
-            &path,
+            std::slice::from_ref(&path),
             &credentials,
             "gateway",
             Some(editor_config()),
@@ -898,16 +1226,29 @@ mod tests {
         let previous_credentials = fs::read(&credentials).unwrap();
         let mut edited = imported["gateway"].clone();
         edited["name"] = json!("Renamed");
-        save_paths_and_commit(&path, &credentials, "gateway", Some(edited), false, || {
-            Ok(())
-        })
+        save_paths_and_commit(
+            std::slice::from_ref(&path),
+            &credentials,
+            "gateway",
+            Some(edited),
+            false,
+            || Ok(()),
+        )
         .unwrap();
         assert_eq!(fs::read(&credentials).unwrap(), previous_credentials);
         assert_eq!(
             credential_document(&credentials).unwrap()["refs"]["OTHER_KEY"],
             "other"
         );
-        save_paths_and_commit(&path, &credentials, "gateway", None, false, || Ok(())).unwrap();
+        save_paths_and_commit(
+            std::slice::from_ref(&path),
+            &credentials,
+            "gateway",
+            None,
+            false,
+            || Ok(()),
+        )
+        .unwrap();
         assert!(get_providers_from(&path, &credentials).unwrap().is_empty());
         assert_eq!(fs::read(&credentials).unwrap(), previous_credentials);
     }
@@ -920,7 +1261,7 @@ mod tests {
         fs::write(&path, "- id: other\n").unwrap();
         let fail = || Err::<(), _>(AppError::Database("injected failure".into()));
         assert!(save_paths_and_commit(
-            &path,
+            std::slice::from_ref(&path),
             &credentials,
             "gateway",
             Some(editor_config()),
@@ -932,7 +1273,7 @@ mod tests {
         assert!(!credentials.exists());
         let _guard = FileLock::acquire(&path).unwrap();
         assert!(save_paths_and_commit(
-            &path,
+            std::slice::from_ref(&path),
             &credentials,
             "gateway",
             Some(editor_config()),
@@ -1127,5 +1468,233 @@ mod tests {
         assert!(edit_path_and_commit(&path, |_| Ok(String::new()), || Ok(())).is_err());
         drop(guard);
         assert!(!path.with_extension("yml.lock").exists());
+    }
+
+    /// Points `DSH_HOME` at a temporary directory for one test and restores it afterwards.
+    struct DshHome {
+        dir: tempfile::TempDir,
+        previous: Option<std::ffi::OsString>,
+    }
+    impl DshHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let previous = std::env::var_os("DSH_HOME");
+            std::env::set_var("DSH_HOME", dir.path());
+            Self { dir, previous }
+        }
+    }
+    impl Drop for DshHome {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("DSH_HOME", value),
+                None => std::env::remove_var("DSH_HOME"),
+            }
+        }
+    }
+
+    fn init_profiles(home: &Path, names: &[&str]) {
+        for name in names {
+            let path = home.join("profiles").join(name).join("cordis.patch.yml");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, FACTORY_PROFILE).unwrap();
+        }
+    }
+
+    fn profile_text(home: &Path, name: &str) -> Option<String> {
+        fs::read_to_string(home.join("profiles").join(name).join("cordis.patch.yml")).ok()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn providers_are_written_to_every_initialized_profile_without_creating_missing_ones() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "headless"]);
+        // sdk profiles are for embedding and stay native-owned
+        init_profiles(root, &["sdk"]);
+
+        set_provider("gateway", editor_config()).unwrap();
+        for name in ["web", "headless"] {
+            assert!(profile_text(root, name)
+                .unwrap()
+                .contains("apiKeyEnv: CC_SWITCH_DSH_GATEWAY"));
+        }
+        assert_eq!(profile_text(root, "sdk").unwrap(), FACTORY_PROFILE);
+        assert!(!root.join("profiles/desktop").exists());
+        assert!(!root.join("profiles/acp").exists());
+        assert!(provider_key_exists("gateway").unwrap());
+        assert_eq!(
+            get_providers().unwrap()["gateway"]["options"]["apiKey"],
+            "test-value"
+        );
+
+        remove_provider("gateway").unwrap();
+        for name in ["web", "headless"] {
+            assert!(!profile_text(root, name).unwrap().contains("gateway"));
+        }
+        assert!(!root.join("profiles/desktop").exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn display_source_prefers_web_then_desktop() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        assert_eq!(config_path(), root.join("profiles/web/cordis.patch.yml"));
+        init_profiles(root, &["headless"]);
+        assert_eq!(
+            config_path(),
+            root.join("profiles/headless/cordis.patch.yml")
+        );
+        init_profiles(root, &["desktop"]);
+        assert_eq!(
+            config_path(),
+            root.join("profiles/desktop/cordis.patch.yml")
+        );
+        init_profiles(root, &["web"]);
+        assert_eq!(config_path(), root.join("profiles/web/cordis.patch.yml"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn multi_profile_provider_write_rolls_back_every_file() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "desktop"]);
+        let credentials = root.join(".credentials.yaml");
+        fs::write(&credentials, "version: 1\nrefs:\n  OTHER: kept\n").unwrap();
+        let before = |name| profile_text(root, name).unwrap();
+        let (web, desktop) = (before("web"), before("desktop"));
+
+        // A failed database commit restores both profiles and the credentials.
+        let failed: Result<(), AppError> =
+            save_and_commit("gateway", Some(editor_config()), true, || {
+                Err(AppError::Database("injected failure".into()))
+            });
+        assert!(failed.is_err());
+        assert_eq!(profile_text(root, "web").unwrap(), web);
+        assert_eq!(profile_text(root, "desktop").unwrap(), desktop);
+        assert_eq!(
+            fs::read_to_string(&credentials).unwrap(),
+            "version: 1\nrefs:\n  OTHER: kept\n"
+        );
+
+        // An edit one profile refuses writes nothing anywhere.
+        let tagged = "- id: llm-pi-ai\n  config:\n    providers:\n      native: !!js \"x\"\n";
+        fs::write(root.join("profiles/desktop/cordis.patch.yml"), tagged).unwrap();
+        assert!(set_provider("gateway", editor_config()).is_err());
+        assert_eq!(profile_text(root, "web").unwrap(), web);
+        assert_eq!(profile_text(root, "desktop").unwrap(), tagged);
+        assert!(!fs::read_to_string(&credentials)
+            .unwrap()
+            .contains("CC_SWITCH_DSH_GATEWAY"));
+        assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
+        assert!(!root.join(".credentials.yaml.lock").exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn home_patch_llm_pi_ai_config_blocks_provider_writes() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+        fs::write(
+            root.join("cordis.patch.yml"),
+            "- id: other\n  config: {}\n- id: llm-pi-ai\n  disabled: false\n",
+        )
+        .unwrap();
+        set_provider("gateway", editor_config()).unwrap();
+        let written = profile_text(root, "web").unwrap();
+
+        fs::write(
+            root.join("cordis.patch.yml"),
+            "- id: llm-pi-ai\n  config:\n    providers: {}\n",
+        )
+        .unwrap();
+        let error = set_provider("gateway", editor_config()).unwrap_err();
+        assert!(error.to_string().contains("cordis.patch.yml"), "{error}");
+        assert!(remove_provider("gateway").is_err());
+        assert_eq!(profile_text(root, "web").unwrap(), written);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn mcp_is_written_to_every_initialized_profile_and_rolls_back_together() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "acp"]);
+        let spec = json!({"type":"stdio","command":"node","args":["server.js"]});
+
+        sync_mcp_and_commit("memory", Some(&spec), || Ok(())).unwrap();
+        for name in ["web", "acp"] {
+            assert_eq!(
+                mcp_entries_from(&profile_text(root, name).unwrap())
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        assert!(!root.join("profiles/desktop").exists());
+        assert_eq!(mcp_entries().unwrap().len(), 1);
+
+        let (web, acp) = (
+            profile_text(root, "web").unwrap(),
+            profile_text(root, "acp").unwrap(),
+        );
+        let failed: Result<(), AppError> = sync_mcp_and_commit("memory", None, || {
+            Err(AppError::Database("injected failure".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(profile_text(root, "web").unwrap(), web);
+        assert_eq!(profile_text(root, "acp").unwrap(), acp);
+
+        sync_mcp_and_commit("memory", None, || Ok(())).unwrap();
+        assert!(mcp_entries().unwrap().is_empty());
+    }
+
+    #[test]
+    fn removing_an_entry_refuses_to_strand_an_alias() {
+        let text = "- id: a\n  config: &shared\n    x: 1\n- id: b\n  config: *shared\n";
+        assert!(replace_entry(text, "a", None).is_err());
+        assert!(replace_entry(text, "b", None).is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn shared_account_grant_is_read_and_removed_without_touching_api_keys() {
+        let home = DshHome::new();
+        assert_eq!(account_grant().unwrap(), None);
+        let credentials = home.dir.path().join(".credentials.yaml");
+        fs::write(
+            &credentials,
+            concat!(
+                "version: 1\n",
+                "refs:\n",
+                "  DEEPSEEK_API_KEY: sk-test\n",
+                "records:\n",
+                "  deepseek-account-platform/default:\n",
+                "    kind: grant\n",
+                "    payload: {version: 1, token: tok, issuer: 'https://platform.deepseek.com'}\n",
+                "  deepseek-account-platform/device:\n",
+                "    kind: grant\n",
+                "    payload: {id: 00000000-0000-4000-8000-000000000000}\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            account_grant().unwrap(),
+            Some(("tok".into(), "https://platform.deepseek.com".into()))
+        );
+
+        assert_eq!(
+            remove_account_grant().unwrap(),
+            Some(("tok".into(), "https://platform.deepseek.com".into()))
+        );
+        assert_eq!(account_grant().unwrap(), None);
+        let document: Yaml =
+            serde_yaml::from_str(&fs::read_to_string(&credentials).unwrap()).unwrap();
+        assert_eq!(document["refs"]["DEEPSEEK_API_KEY"], Yaml::from("sk-test"));
+        assert!(!document["records"]["deepseek-account-platform/device"].is_null());
+        assert_eq!(remove_account_grant().unwrap(), None);
     }
 }

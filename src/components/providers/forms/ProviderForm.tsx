@@ -43,7 +43,7 @@ import {
   geminiProviderPresets,
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
-import { usesGeminiStyleForm } from "@/config/appConfig";
+import { isDshApp, usesGeminiStyleForm } from "@/config/appConfig";
 import {
   opencodeProviderPresets,
   type OpenCodeProviderPreset,
@@ -330,7 +330,7 @@ export interface ProviderFormProps {
 
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
-  if (props.appId === "mcode" || props.appId === "dsh")
+  if (props.appId === "mcode" || isDshApp(props.appId))
     return <McodeProviderForm {...props} />;
   if (props.appId === "pi" || props.appId === "omp") {
     return <PiProviderForm {...props} />;

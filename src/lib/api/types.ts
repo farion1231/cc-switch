@@ -11,6 +11,7 @@ export type AppId =
   | "pi"
   | "kimi"
   | "dsh"
+  | "dsh-desktop"
   | "mcode"
   | "agy"
   | "omp";

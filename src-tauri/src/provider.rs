@@ -213,7 +213,7 @@ impl Provider {
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
-            AppType::Dsh => (
+            AppType::Dsh | AppType::DshDesktop => (
                 str_at(settings.pointer("/options/baseURL")),
                 str_at(settings.pointer("/options/apiKey")),
             ),

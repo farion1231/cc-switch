@@ -140,7 +140,12 @@ export function normalizeSettingsSection(
   }
 }
 
-/** 提示词、会话页在 Claude Desktop 上看的是 Claude Code 的内容（两者共用）。 */
+/**
+ * 提示词、会话页在 Claude Desktop 上看的是 Claude Code 的内容（两者共用）；
+ * DeepSeek Harness Desktop 和 Web 共用 `$DSH_HOME` 的会话与 AGENTS.md，看 DeepSeek Harness 的。
+ */
 export function sharedFeatureAppOf(app: AppId): AppId {
-  return app === "claude-desktop" ? "claude" : app;
+  if (app === "claude-desktop") return "claude";
+  if (app === "dsh-desktop") return "dsh";
+  return app;
 }

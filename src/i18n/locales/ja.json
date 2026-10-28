@@ -1352,6 +1352,7 @@
     "groupByTime": "時間順",
     "groupByProject": "プロジェクト別",
     "desktopNote": "Claude Desktop には独自のセッション記録がないため、Claude Code のセッションを表示しています。",
+    "dshMergedNote": "DeepSeek Harness の Web と Desktop は同じセッション記録を共有しているため、ここではまとめて表示します。",
     "matchCount": "一致 {{count}} 件",
     "totalCount": "全 {{count}} 件",
     "selectAllMatches": "一致したものをすべて選択",
@@ -2244,6 +2245,11 @@
       "short": "セッションログ",
       "label": "{{app}} · セッションログ",
       "hint": "ルーティングがオフの間はクライアントのセッションログから読み取るため、どのプロバイダーかは区別できません"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek アカウント",
+      "label": "{{app}} · DeepSeek アカウント（OAuth）",
+      "hint": "セッションログから読み取った、DeepSeek アカウントのログインを使ったリクエストです。Web と Desktop はこのログインを共有するため、使用量はまとめて集計されます"
     },
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
@@ -4217,6 +4223,7 @@
     "columnVisible": "表示",
     "visibleHelp": "オフにすると、このアプリはサイドバー、トレイメニュー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。表示しないだけで、プロバイダーや MCP などの設定はそのまま残り、アプリ自身の設定ファイルも変更されません。",
     "desktopHelp": "Claude Desktop はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch は設定ファイル経由で接続します。",
+    "dshDesktopHelp": "DeepSeek Harness Desktop はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch は設定ファイル経由で接続します。",
     "desktopUnsupported": "このシステムには対応していません",
     "desktopConnected": "接続済み",
     "desktopNotConnected": "未接続",
@@ -4601,6 +4608,7 @@
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
       "claudeNote": "（トップレベルの mcpServers）",
+      "dshNote": "（初期化済みのすべての profile に書き込みます：web、desktop、headless、acp）",
       "ok": "OK"
     },
     "templateLabels": {
@@ -5074,6 +5082,30 @@
     "empty": {
       "title": "DeepSeek Harness プロバイダーを追加",
       "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
+    },
+    "sharedProviders": "Web と Desktop はこのプロバイダー一覧を共有します。追加・編集・削除は初期化済みのすべての profile（web、desktop、headless、acp）にまとめて書き込まれ、まだ起動していない Desktop の profile は作成しません。",
+    "account": {
+      "help": "DeepSeek アカウントはブラウザでログインします（OAuth）。ここでも DeepSeek Harness でもログインできます。ログイン情報は ~/.dsh/.credentials.yaml に保存され、DeepSeek Harness の Web と Desktop で共有されます。どこでログイン・ログアウトしても両方に反映され、実行中の DeepSeek Harness は自動で読み直します。アカウント経由のモデルの使用量は、使用量ページで「DeepSeek アカウント（OAuth）」として別に表示されます。",
+      "statusFailed": "DeepSeek アカウントのログイン状態を読み取れません",
+      "empty": "DeepSeek アカウントにログインしていません",
+      "unnamed": "DeepSeek アカウント",
+      "expired": "ログインの有効期限が切れました。再ログインしてください",
+      "shared": "Web と Desktop で共有",
+      "signOut": "ログアウト",
+      "signOutConfirm": "DeepSeek アカウント「{{name}}」からログアウトしますか？DeepSeek Harness の Web と Desktop の両方がログアウトされます。API キーのプロバイダーには影響しません。",
+      "signOutFailed": "DeepSeek アカウントからログアウトできませんでした",
+      "balance": "残高 {{amount}}",
+      "bonus": "ボーナス {{amount}}",
+      "balanceFailed": "現在残高を取得できません",
+      "topUp": "チャージ",
+      "refresh": "残高を更新",
+      "noticeSignedOutTitle": "DeepSeek アカウントにログインしていません",
+      "noticeSignedOut": "認証センターまたは DeepSeek Harness でブラウザから DeepSeek アカウントにログインすると、アカウントのモデルをそのまま使えます。Web と Desktop はこのログインを共有します。",
+      "noticeExpiredTitle": "DeepSeek アカウントのログインが無効です",
+      "noticeExpired": "認証センターまたは DeepSeek Harness で再ログインしてください。Web と Desktop の両方が復旧します。",
+      "noticeSignedIn": "DeepSeek アカウント：{{name}}",
+      "signedIn": "DeepSeek アカウントにログインしました（Web と Desktop の両方で使えます）",
+      "signInFailed": "DeepSeek アカウントにログインできませんでした"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
   }

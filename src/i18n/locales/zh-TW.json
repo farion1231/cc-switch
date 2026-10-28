@@ -1353,6 +1353,7 @@
     "groupByTime": "按時間",
     "groupByProject": "按專案",
     "desktopNote": "Claude Desktop 沒有單獨的工作階段記錄，這裡顯示 Claude Code 的工作階段。",
+    "dshMergedNote": "DeepSeek Harness 的 Web 和 Desktop 共用同一份工作階段記錄，這裡合併顯示。",
     "matchCount": "符合 {{count}} 個工作階段",
     "totalCount": "共 {{count}} 個工作階段",
     "selectAllMatches": "全選符合結果",
@@ -2245,6 +2246,11 @@
       "short": "工作階段日誌",
       "label": "{{app}} · 工作階段日誌",
       "hint": "未開啟路由時從用戶端的工作階段日誌讀取，無法區分是哪家供應商"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek 帳號",
+      "label": "{{app}} · DeepSeek 帳號（OAuth）",
+      "hint": "從工作階段記錄讀取，使用的是 DeepSeek 帳號登入；Web 和 Desktop 共用這份登入，用量合併統計"
     },
     "stream": "串流",
     "nonStream": "非串流",
@@ -4218,6 +4224,7 @@
     "columnVisible": "顯示",
     "visibleHelp": "關掉後，這個應用不再出現在側欄、系統匣選單、MCP / Skills 的應用欄，以及提示詞和工作階段的應用下拉選單裡。只是不顯示：它的供應商、MCP 等設定都還在，它自己的設定檔也不會被改動。",
     "desktopHelp": "Claude Desktop 是桌面應用，不能在這裡安裝或升級；CC Switch 透過它的設定檔接入。",
+    "dshDesktopHelp": "DeepSeek Harness Desktop 是桌面應用，不能在這裡安裝或升級；CC Switch 透過它的設定檔接入。",
     "desktopUnsupported": "目前系統不支援",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
@@ -4602,6 +4609,7 @@
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
       "claudeNote": "（頂層 mcpServers）",
+      "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -5075,6 +5083,30 @@
     "empty": {
       "title": "新增 DeepSeek Harness 供應商",
       "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"
+    },
+    "sharedProviders": "Web、Desktop 共用這份供應商列表：新增、編輯、移除會一起寫入所有已初始化的 profile（web、desktop、headless、acp），不會替尚未啟動過的 Desktop 新建 profile。",
+    "account": {
+      "help": "DeepSeek 帳號以瀏覽器登入（OAuth），可以在這裡登入，也可以在 DeepSeek Harness 裡登入。登入資訊儲存在 ~/.dsh/.credentials.yaml，DeepSeek Harness 的 Web 和 Desktop 共用：任一處登入或登出，兩端同時生效，執行中的 DeepSeek Harness 會自動重新讀取。帳號路由的模型用量在用量頁單獨顯示為「DeepSeek 帳號（OAuth）」。",
+      "statusFailed": "無法讀取 DeepSeek 帳號的登入狀態",
+      "empty": "未登入 DeepSeek 帳號",
+      "unnamed": "DeepSeek 帳號",
+      "expired": "登入已失效，請重新登入",
+      "shared": "Web 與 Desktop 共用",
+      "signOut": "登出",
+      "signOutConfirm": "登出 DeepSeek 帳號「{{name}}」？DeepSeek Harness 的 Web 和 Desktop 會同時登出，API Key 供應商不受影響。",
+      "signOutFailed": "登出 DeepSeek 帳號失敗",
+      "balance": "餘額 {{amount}}",
+      "bonus": "贈金 {{amount}}",
+      "balanceFailed": "暫時查不到餘額",
+      "topUp": "儲值",
+      "refresh": "重新整理餘額",
+      "noticeSignedOutTitle": "未登入 DeepSeek 帳號",
+      "noticeSignedOut": "在授權中心或 DeepSeek Harness 裡以瀏覽器登入 DeepSeek 帳號後，可直接使用帳號下的模型；Web 和 Desktop 共用這份登入。",
+      "noticeExpiredTitle": "DeepSeek 帳號登入已失效",
+      "noticeExpired": "請在授權中心或 DeepSeek Harness 裡重新登入，Web 和 Desktop 會一起恢復。",
+      "noticeSignedIn": "DeepSeek 帳號：{{name}}",
+      "signedIn": "DeepSeek 帳號已登入，Web 和 Desktop 都可以使用",
+      "signInFailed": "DeepSeek 帳號登入失敗"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
   }

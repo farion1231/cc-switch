@@ -13,6 +13,7 @@ import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { OpenCodeModel, OpenCodeProviderOptions } from "@/types";
 import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
 import { dshProviderPresets } from "@/config/dshProviderPresets";
+import { isDshApp } from "@/config/appConfig";
 import { mcodePresetModelSources } from "@/config/presetModelMetadata";
 import { BasicFormFields } from "./BasicFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
@@ -77,7 +78,7 @@ export function McodeProviderForm({
   onSubmitReadyChange,
 }: ProviderFormProps) {
   const { t } = useTranslation();
-  const presets = appId === "dsh" ? dshProviderPresets : mcodeProviderPresets;
+  const presets = isDshApp(appId) ? dshProviderPresets : mcodeProviderPresets;
   const presetEntries = presets.map((preset, index) => ({
     id: String(index),
     preset,
@@ -132,7 +133,7 @@ export function McodeProviderForm({
       (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
       config.options?.baseURL?.trim() &&
       (config.options?.apiKey?.trim() ||
-        (appId === "dsh" && config.apiKeyEnv)) &&
+        (isDshApp(appId) && config.apiKeyEnv)) &&
       Object.keys(config.models ?? {}).length,
   );
   useEffect(() => {

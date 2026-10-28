@@ -73,6 +73,8 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "pi" ||
         appId === "mcode" ||
         appId === "kimi" ||
+        appId === "dsh" ||
+        appId === "dsh-desktop" ||
         appId === "omp"
       ) {
         if (
