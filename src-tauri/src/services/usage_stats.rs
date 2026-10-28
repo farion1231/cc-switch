@@ -2724,6 +2724,10 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
 
     let mut candidates = Vec::new();
     let mut queue = vec![cleaned];
+    // 后入栈的先查：带网关窗口标记的完整 ID 排在去掉标记的 ID 前面
+    if let Some(marked) = marked_model_id_for_pricing(model_id) {
+        queue.push(marked);
+    }
 
     while let Some(candidate) = queue.pop() {
         if !push_unique_candidate(&mut candidates, candidate.clone()) {
@@ -2756,15 +2760,19 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
     candidates
 }
 
-fn clean_model_id_for_pricing(model_id: &str) -> String {
-    let normalized = model_id
+fn normalize_model_id_for_pricing(model_id: &str) -> String {
+    model_id
         .rsplit_once('/')
         .map_or(model_id, |(_, r)| r)
         .split(':')
         .next()
         .unwrap_or(model_id)
         .trim()
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+fn clean_model_id_for_pricing(model_id: &str) -> String {
+    let normalized = normalize_model_id_for_pricing(model_id);
 
     // 上下文窗口标记要在 @ → - 之前剥：@272k 一旦变成 -272k，就和 gpt-4-32k
     // 这类按上下文独立计价的型号分不开了。
@@ -2773,9 +2781,20 @@ fn clean_model_id_for_pricing(model_id: &str) -> String {
         .replace('@', "-")
 }
 
+/// 带网关窗口标记（@1m、@272k）的 ID 保留标记、只把 @ 换成 -（claude-opus-5-5-1m），
+/// 查价时排在去掉标记的 ID 前面，用户给这个变体单独配的价格才能生效。没有这种标记返回 None。
+fn marked_model_id_for_pricing(model_id: &str) -> Option<String> {
+    let normalized = normalize_model_id_for_pricing(model_id);
+    let base = strip_context_window_marker(&normalized);
+    normalized[base.len()..]
+        .starts_with('@')
+        .then(|| normalized.replace('@', "-"))
+}
+
 /// 剥掉末尾的上下文窗口标记：Claude Code 的 [1m]，magpie / Cursor 的 @1m、@272k。
-/// 窗口大小不改变单价，与 [1m] 一样直接去掉；@20260527（Vertex 日期）、
-/// @low（effort）不是窗口大小，原样保留给后续规则。
+/// 窗口大小一般不改变单价，去掉后按基础模型查；网关的 @ 标记会先按完整 ID 查一次，
+/// 见 marked_model_id_for_pricing。@20260527（Vertex 日期）、@low（effort）
+/// 不是窗口大小，原样保留给后续规则。
 fn strip_context_window_marker(model_id: &str) -> &str {
     if let Some((base, size)) = model_id
         .strip_suffix(']')
@@ -3605,6 +3624,54 @@ mod tests {
                 "{request_id} 应按 claude-opus-5-5 回填"
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_for_gateway_marker_row_uses_its_own_price() -> Result<(), AppError> {
+        // 用户给 claude-opus-5-5@1m 单独加了定价（key 写 claude-opus-5-5-1m）后，
+        // 已按未定价落库的 @1m 行要按这个专门定价回填，而不是基础模型的价
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES ('claude-opus-5-5-1m', 'Claude Opus 5.5 (1M)', '9', '45', '0', '0')",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "opus-1m-zero-cost",
+                "claude",
+                "_claude_session",
+                "claude-opus-5-5@1m",
+                "session_log",
+                1000,
+                1_000_000,
+                1_000_000,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("claude-opus-5-5-1m")?,
+            1
+        );
+
+        let conn = lock_conn!(db.conn);
+        let total_cost: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'opus-1m-zero-cost'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total_cost, "54.000000");
 
         Ok(())
     }
@@ -6065,6 +6132,40 @@ mod tests {
         for model_id in ["claude-opus-5-5-max", "cursor/claude-opus-5-5-max@1m"] {
             let input = find_model_pricing_row(&conn, model_id)?.map(|(input, ..)| input);
             assert_eq!(input.as_deref(), Some("9"), "{model_id} 应命中专门定价");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pricing_prefers_exact_row_for_gateway_context_marker() -> Result<(), AppError> {
+        // 网关的 @1m / @272k 先按带标记的完整 ID 查：用户给这个变体单独定了价
+        // （key 里 @ 写成 -，和其余带 @ 的 ID 一样）就按它计，没有才回退到基础模型。
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        for (model_id, display_name) in [
+            ("claude-opus-5-5-1m", "Claude Opus 5.5 (1M)"),
+            ("gpt-5.6-sol-272k", "GPT-5.6 Sol (272K)"),
+        ] {
+            conn.execute(
+                "INSERT OR REPLACE INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES (?1, ?2, '9', '45', '0', '0')",
+                [model_id, display_name],
+            )?;
+        }
+
+        for (model_id, expected_input) in [
+            ("claude-opus-5-5@1m", "9"),
+            ("cursor/claude-opus-5-5@1M", "9"),
+            ("gpt-5.6-sol@272k", "9"),
+            // 只有这个变体有专门定价，别的窗口大小照旧回退到基础模型
+            ("claude-opus-5-5@2m", "4"),
+        ] {
+            let input = find_model_pricing_row(&conn, model_id)?.map(|(input, ..)| input);
+            assert_eq!(input.as_deref(), Some(expected_input), "{model_id}");
         }
 
         Ok(())
