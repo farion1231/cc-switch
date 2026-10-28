@@ -107,7 +107,7 @@
     "noProvidersDescriptionKeyFields": "공급자 전환은 키, 엔드포인트 및 모델만 대체합니다. 플러그인 및 기타 설정은 설정 파일에 유지되며 모든 공급자에 적용됩니다.",
     "importCurrent": "현재 설정 가져오기",
     "importFromClaude": "Claude Code에서 기존 공급자 가져오기",
-    "importCurrentDescription": "현재 적용 중인 설정을 기본 공급자로 가져오기",
+    "importCurrentDescription": "현재 적용 중인 설정을 기본 공급자로 가져왔습니다",
     "currentlyUsing": "현재 사용 중",
     "enable": "활성화",
     "inUse": "사용 중",
@@ -240,10 +240,12 @@
         "missing": "이 컴퓨터에 없는 계정",
         "manage": "Claude 계정 추가 또는 관리",
         "helpTerminal": "설정에서 Claude 설정 디렉터리를 별도로 지정했으므로 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. 선택한 계정을 사용하려면 카드의 ‘터미널 열기’를 이용하세요.",
-        "help": "이 카드로 전환하면 Claude Code의 로그인 계정이 선택한 계정으로 바뀌며, 이후 어디서든 새로 실행하는 claude는 해당 계정을 사용합니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요.",
+        "helpWsl": "Claude 설정 디렉터리가 WSL에 있으면 아직 Claude 계정 기능을 사용할 수 없습니다. 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다.",
+        "help": "이 카드로 전환하면 Claude Code의 로그인 계정이 즉시 선택한 계정으로 바뀝니다. 실행 중인 세션에도 적용됩니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요.",
         "claudeAccount": "Claude 계정",
         "reauthBadge": "다시 로그인 필요",
         "terminalHint": "카드의 ‘터미널 열기’로 사용",
+        "wslHint": "WSL에서는 아직 지원되지 않음",
         "plan": {
           "pro": "Pro",
           "max": "Max",
@@ -1266,8 +1268,8 @@
       "deleteFile": "파일 삭제",
       "appendDeleted": "APPEND_SYSTEM.md가 삭제되었습니다. Pi는 더 이상 추가하지 않습니다.",
       "overrideDeleted": "SYSTEM.md가 삭제되었습니다. Pi가 내장된 기본 프롬프트로 돌아왔습니다.",
-      "deletedUndoable": "실행 취소하면 파일을 원래 내용으로 복원합니다.",
-      "deletedBlank": "파일이 원래 비어 있었으므로 이 작업은 실행 취소할 수 없습니다.",
+      "deletedUndoable": "실행 취소하면 파일을 원래 내용으로 복원합니다. ",
+      "deletedBlank": "파일이 원래 비어 있었으므로 이 작업은 실행 취소할 수 없습니다. ",
       "fileRestored": "~/.pi/agent/{{filename}}에 원래 내용을 복원했습니다.",
       "templateSlugRequired": "명령 이름을 입력하세요 (예: review)",
       "templateSaveTo": "저장 위치: {{path}}",
@@ -1660,7 +1662,7 @@
       "alltokens_si": "AllTokens SI는 안정성과 정직성을 바탕으로 구축되었으며 기업용 AI 토큰 릴레이 및 팀 협업 플랫폼입니다. 구성원, 키, 사용량 및 잔액은 모두 하나의 회사 콘솔에 있으며 명확한 권한과 지출 한도를 통해 팀 사용량을 추적하고 제어할 수 있습니다.",
       "openmodel": "OpenModel은 지원되는 모델 전반에 걸쳐 Codex의 경우 최대 90%, Claude Code의 경우 최대 60%의 클라이언트별 할인을 제공합니다. 이 링크를 통해 등록하고 프로모션 코드 \"cc-switch\"를 사용하는 CC Switch 사용자는 첫 충전 시 10% 할인을 받습니다!",
       "grooroute": "GrooRoute Pro는 OpenAI, Claude, DeepSeek 등 주요 모델을 지원하는 안정적인 AI API 중계 플랫폼으로, 종량제와 구독 요금제를 제공합니다. CC Switch 사용자는 이 링크로 가입하면 체험 크레딧 5위안을 무료로 받을 수 있습니다!",
-      "dit": "DIT.ai는 여러 공급자의 저렴한 경로를 이용할 수 있는 AI 토큰 거래소입니다. OpenAI 호환 API 하나로 GPT, Claude, Gemini, DeepSeek, Grok, Llama 등 50개 이상의 주요 모델을 사용할 수 있습니다. 공급자들이 160개 이상의 경로에서 경쟁하며, 요금은 일반적으로 공식 가격보다 30~70% 저렴합니다. CC Switch 사용자는 이 링크로 가입하고 프로모션 코드 \"ccswitch\"를 사용하면 $5 웰컴 쿠폰을 받을 수 있습니다!",
+      "dit": "같은 모델을 더 저렴하게 이용하세요. OpenAI 호환 API 하나로 GPT, Claude, Gemini 등 50개 이상의 모델을 호출하고, 160개 이상의 공급자 중 가격 대비 성능이 가장 좋은 곳으로 요청을 보냅니다. 요금은 일반적으로 공식 가격보다 30~70% 저렴합니다. Base URL과 API Key만 바꾸면 기존 기술 스택을 그대로 유지하면서 사용할 수 있습니다. CC Switch 사용자는 이 링크로 가입하고 프로모션 코드 \"cc-switch\"를 사용하면 신규 가입 후 첫 충전 시 30% 할인을 받을 수 있습니다!",
       "buytoken": "BuyToken은 Claude Code, Codex, DeepSeek 등의 중계 서비스를 제공하며 기업용 동시 처리와 빠른 세금계산서 발행을 지원합니다. 안정적이고 장기적인 서비스 운영을 지향합니다. CC Switch 사용자는 이 링크로 가입하면 체험 크레딧 3위안과 첫 충전 10% 할인을 받을 수 있습니다!",
       "vapi": "V-API는 3년간 운영해 온 브랜드로, 개인·개발자·기업에 안정적이고 빠르며 안전한 LLM API 서비스를 제공합니다. 계약 체결과 중국의 정식 세금계산서 발행(일반/전용 부가가치세)을 지원합니다. CC Switch 사용자는 이 링크로 가입하면 첫 주문에서 2위안 즉시 할인과 10% 할인을 받을 수 있습니다!"
     },
@@ -2978,7 +2980,7 @@
       "enabledPi": "“{{name}}”을(를) 활성화하고 AGENTS.md에 저장했습니다.",
       "disabled": "\"{{name}}\" 비활성화를 완료하고 {{path}} 파일의 내용을 비웠습니다.",
       "disabledPi": "\"{{name}}\"을(를) 비활성화하고 AGENTS.md를 삭제했습니다.",
-      "backup": "파일의 이전 내용을 \"{{name}}\" 항목으로 저장했습니다.",
+      "backup": "파일의 이전 내용을 \"{{name}}\" 항목으로 저장했습니다",
       "hermesOn": "새로운 Hermes 세션에 적용됩니다.",
       "hermesOff": "새로운 Hermes 세션은 내장된 기본 페르소나를 사용합니다.",
       "added": "\"{{name}}\"을(를) 추가했습니다.",
@@ -4315,7 +4317,7 @@
       "routeTargetChanged": "라우팅 대상을 {{provider}}(으)로 설정했습니다.",
       "routeSwitched": "라우팅 대상을 {{provider}}(으)로 전환했습니다. 이후 새 요청은 이 공급자를 사용합니다.",
       "stackDefaultChanged": "통합 기본 공급자를 {{provider}}(으)로 설정했습니다. 이미 선택한 통합 모델은 각자의 공급자를 계속 사용합니다.",
-      "clientConfigChanged": "클라이언트 설정도 변경되었습니다. 업데이트된 설정을 로드하려면 {{app}}을(를) 다시 시작하세요.",
+      "clientConfigChanged": " 클라이언트 설정도 변경되었습니다. 업데이트된 설정을 로드하려면 {{app}}을(를) 다시 시작하세요.",
       "defaultRemembered": "통합 모드로 전환하면 {{provider}}이(가) 기본 공급자가 됩니다.",
       "restartHint": "적용하려면 {{app}}을(를) 다시 시작하세요.",
       "failed": "전환할 수 없음: {{detail}}"
@@ -4762,7 +4764,7 @@
     "rowFail": "{{app}}에서 활성화 실패: {{error}}",
     "fixSync": "동기화 방식 변경",
     "rowMoreAria": "{{name}}에 대한 추가 작업",
-    "copyDir": "폴더 이름 복사",
+    "openDir": "폴더 열기",
     "uninstallEllipsis": "제거",
     "listLabel": "설치된 스킬",
     "noMatch": "검색어와 일치하는 스킬이 없습니다: \"{{query}}\"",
@@ -4790,7 +4792,8 @@
       "enableFailed": "{{apps}}에서 활성화하지 못했습니다. 목록에 표시했습니다",
       "uninstalledMany": "스킬 {{count}}개를 제거했습니다",
       "backupAt": "{{path}}에 백업했습니다",
-      "copiedDir": "폴더 이름 {{dir}}을(를) 복사했습니다",
+      "copiedName": "스킬 이름을 복사했습니다: {{name}}",
+      "openDirFailed": "폴더를 열지 못했습니다.",
       "noUpdatesInSelection": "선택한 스킬에 업데이트가 없습니다",
       "selectionAlreadyOn": "선택한 스킬 {{count}}개가 이미 {{app}}에서 활성화되어 있습니다",
       "selectionAlreadyOff": "선택한 스킬 {{count}}개 중 {{app}}에서 활성화된 항목이 없습니다",
@@ -4902,8 +4905,9 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
-      "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우(예: WSL 경로), 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
-      "claudeHelp": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 공식 공급자 카드에서 계정을 선택하고 해당 카드로 전환하면 이후 새로 실행하는 claude는 모두 해당 계정을 사용합니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요. 로그인 토큰은 이 컴퓨터에만 보관되며 업로드되거나 갱신되지 않고, 계정도 로그아웃되지 않습니다. 처음 전환할 때 Claude Code에 현재 로그인된 계정이 자동으로 추가됩니다. 계정을 전환하면 Remote Control 연결이 끊기며 프롬프트 캐시를 다시 생성해야 합니다."
+      "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
+      "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
+      "claudeHelp": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 공식 공급자 카드에서 계정을 선택하고 해당 카드로 전환하면 Claude Code의 로그인 계정이 즉시 해당 계정으로 바뀝니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요. 로그인 토큰은 이 컴퓨터에만 보관되며 업로드되거나 갱신되지 않고, 계정도 로그아웃되지 않습니다. 처음 전환할 때 Claude Code에 현재 로그인된 계정이 자동으로 추가됩니다. 계정을 전환하면 Remote Control 연결이 끊기며 프롬프트 캐시를 다시 생성해야 합니다."
     },
     "addAccount": "계정 추가",
     "accountMenu": "{{login}}의 추가 작업",
@@ -4968,7 +4972,8 @@
       "loginMaybeExpired": "로그인 정보가 만료되었을 수 있습니다. 이 계정으로 전환하기 전에 다시 로그인해 주세요.",
       "statusLoadFailed": "Claude 계정을 불러올 수 없습니다. 다시 시도해 주세요.",
       "empty": "아직 추가된 Claude 계정이 없습니다. 여러 구독 계정 간에 전환하려면 여기에서 로그인하세요.",
-      "removeNote": "CC Switch에 저장된 이 계정의 로그인 정보만 삭제합니다. 다른 곳에서는 로그아웃되지 않으며, Claude Code의 현재 로그인 상태(~/.claude)에도 영향을 주지 않습니다. 이 계정에 연결된 카드는 Claude Code에 현재 로그인된 계정을 사용하도록 변경됩니다."
+      "removeNote": "CC Switch에 저장된 이 계정의 로그인 정보만 삭제합니다. 다른 곳에서는 로그아웃되지 않으며, Claude Code의 현재 로그인 상태(~/.claude)에도 영향을 주지 않습니다. 이 계정에 연결된 카드는 Claude Code에 현재 로그인된 계정을 사용하도록 변경됩니다.",
+      "wslUnsupported": "Claude 설정 디렉터리가 WSL에 있으면 아직 Claude 계정을 추가하거나 전환할 수 없습니다."
     }
   },
   "kimi": {
@@ -5065,5 +5070,12 @@
       "providerMissing": "이 Oh My Pi 공급자는 더 이상 저장된 목록에 없습니다.",
       "legacyModelsJson": "Oh My Pi 디렉터리에 이전 형식의 models.json이 남아 있습니다. omp를 다음에 실행하면 models.yml로 마이그레이션됩니다. omp를 한 번 실행한 후 공급자를 다시 추가하세요."
     }
+  },
+  "dsh": {
+    "empty": {
+      "title": "DeepSeek Harness 공급자 추가",
+      "description": "API 엔드포인트, API 키, 모델을 설정하세요. 기존 사용자 지정 공급자는 여기에 자동으로 표시됩니다."
+    },
+    "deleteSessionHint": "기본 세션 기록과의 일관성을 유지하려면 DeepSeek Harness에서 이 세션을 삭제하세요."
   }
 }
