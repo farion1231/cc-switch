@@ -1813,7 +1813,24 @@ impl Database {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
-            INSERT OR IGNORE INTO proxy_config_v22 SELECT * FROM proxy_config;
+            -- 必须按列名拷贝：真实库里 live_takeover_active 是 ALTER 追加的（排在最后），
+            -- 与上面重建表声明的列序不同，用 SELECT * 会让 live_takeover_active /
+            -- created_at / updated_at 三列整体错位。
+            INSERT OR IGNORE INTO proxy_config_v22 (
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout,
+                streaming_idle_timeout, non_streaming_timeout, circuit_failure_threshold,
+                circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
+                circuit_min_requests, default_cost_multiplier, pricing_model_source,
+                live_takeover_active, created_at, updated_at
+            ) SELECT
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout,
+                streaming_idle_timeout, non_streaming_timeout, circuit_failure_threshold,
+                circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
+                circuit_min_requests, default_cost_multiplier, pricing_model_source,
+                live_takeover_active, created_at, updated_at
+            FROM proxy_config;
 
             -- Insert Cursor default row
             INSERT OR IGNORE INTO proxy_config_v22 (
@@ -4305,6 +4322,65 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(values, (1, 1, 0));
+        Ok(())
+    }
+
+    /// 回归（2026-10-28）：v25→v26 重建 proxy_config 时，原实现用 `SELECT *` 按**位置**拷贝。
+    /// 但真实库里 `live_takeover_active` 是后期 `ALTER TABLE` 追加的（SQLite 只能追加到末尾），
+    /// 因此实际列序是 `…, created_at, updated_at, live_takeover_active`，与重建表声明的
+    /// `…, live_takeover_active, created_at, updated_at` 不同 → 三列静默错位。
+    /// 迁移必须按列名拷贝，不能依赖列序。
+    #[test]
+    fn proxy_config_cursor_migration_preserves_column_values() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0;
+            INSERT INTO proxy_config (app_type, live_takeover_active, created_at, updated_at, max_retries)
+                VALUES ('claude', 1, '2026-01-01 00:00:00', '2026-01-02 00:00:00', 9);",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let (live, created, updated, retries): (i64, String, String, i64) = conn.query_row(
+            "SELECT live_takeover_active, created_at, updated_at, max_retries
+             FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(live, 1, "live_takeover_active 不能被时间戳顶掉");
+        assert_eq!(created, "2026-01-01 00:00:00");
+        assert_eq!(updated, "2026-01-02 00:00:00");
+        assert_eq!(retries, 9);
+        let cursor_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'cursor'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(cursor_rows, 1, "迁移后应有一条 cursor 默认行");
         Ok(())
     }
 
