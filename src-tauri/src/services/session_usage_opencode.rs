@@ -390,8 +390,9 @@ fn query_assistant_messages(
     })
 }
 
-/// 原样记录内置强度变体名。自定义 variant 可包含任意设置，无法从名称还原
-/// 请求强度；不能查询当前配置来倒推历史，也不能把 reasoning token 数当强度。
+/// 原样记录内置强度变体名；`default` 是未选变体、沿用模型默认强度。自定义
+/// variant 可包含任意设置，无法从名称还原请求强度；不能查询当前配置来倒推
+/// 历史，也不能把 reasoning token 数当强度。
 fn opencode_reasoning_effort(value: &serde_json::Value) -> Option<String> {
     value
         .pointer("/model/variant")
@@ -401,7 +402,15 @@ fn opencode_reasoning_effort(value: &serde_json::Value) -> Option<String> {
         .filter(|level| {
             matches!(
                 *level,
-                "off" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                "default"
+                    | "off"
+                    | "none"
+                    | "minimal"
+                    | "low"
+                    | "medium"
+                    | "high"
+                    | "xhigh"
+                    | "max"
             )
         })
         .map(str::to_owned)
@@ -643,6 +652,10 @@ mod tests {
                 Some("max"),
             ),
             (serde_json::json!({"variant": "none"}), Some("none")),
+            (
+                serde_json::json!({"model": {"variant": "default"}}),
+                Some("default"),
+            ),
             (serde_json::json!({"variant": "fast"}), None),
             (serde_json::json!({"variant": null}), None),
             (serde_json::json!({"tokens": {"reasoning": 2000}}), None),
