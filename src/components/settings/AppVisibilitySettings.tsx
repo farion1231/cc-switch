@@ -71,7 +71,7 @@ export function AppVisibilitySettings({
       </header>
       <div className="flex flex-wrap gap-1 rounded-md border border-border-default bg-background p-1">
         {APP_CONFIG.map((app) => {
-          const isVisible = visibleApps[app.id];
+          const isVisible = Boolean(visibleApps[app.id]);
           // Disable button if this is the last visible app
           const isDisabled = isVisible && visibleCount <= 1;
 
