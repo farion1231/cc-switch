@@ -88,7 +88,7 @@ fn pre_migration_backup_wal_rows_remain_recoverable() -> Result<(), AppError> {
     let journal_mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
     assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
     Database::create_tables_on_conn(&conn)?;
-    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")?;
+    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp; ALTER TABLE mcp_servers DROP COLUMN enabled_dsh; ALTER TABLE skills DROP COLUMN enabled_dsh;")?;
     conn.execute(
         "INSERT INTO mcp_servers (id, name, server_config) VALUES (?1, ?2, ?3)",
         params!["wal-safety-sentinel", "committed-in-wal", "{}"],
@@ -109,6 +109,7 @@ fn pre_migration_backup_wal_rows_remain_recoverable() -> Result<(), AppError> {
     );
     assert_eq!(Database::get_user_version(&conn)?, 22);
     assert!(!Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+    assert!(!Database::has_column(&conn, "mcp_servers", "enabled_dsh")?);
     let before: String = conn.query_row(
         "SELECT name FROM mcp_servers WHERE id = 'wal-safety-sentinel'",
         [],
@@ -145,6 +146,7 @@ fn pre_migration_backup_wal_rows_remain_recoverable() -> Result<(), AppError> {
         )?;
         assert_eq!(preserved, "committed-in-wal");
         assert!(!Database::has_column(&saved, "mcp_servers", "enabled_omp")?);
+        assert!(!Database::has_column(&saved, "mcp_servers", "enabled_dsh")?);
         found_recoverable_snapshot = true;
     }
     assert!(
@@ -1747,7 +1749,7 @@ fn pre_migration_backup_failure_guards_existing_unversioned_database() -> Result
     Ok(())
 }
 
-// An installed v22 database must not be upgraded to v23 unless a readable
+// An installed v23 database must not be upgraded to v24 unless a readable
 // pre-migration backup is secured. Both phases use only synthetic data.
 #[test]
 #[serial_test::serial]
@@ -1773,15 +1775,15 @@ fn pre_migration_backup_failure_preserves_database_until_safe_retry() -> Result<
     std::fs::create_dir_all(&config_dir).expect("create synthetic config dir");
     let db_path = config_dir.join("cc-switch.db");
 
-    // Published v22 fixture: the v23 OMP column has not been created.
+    // Published v23 fixture: the new v24 DSH columns have not been created.
     let conn = Connection::open(&db_path)?;
     Database::create_tables_on_conn(&conn)?;
-    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")?;
+    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_dsh; ALTER TABLE skills DROP COLUMN enabled_dsh;")?;
     conn.execute(
         "INSERT INTO mcp_servers (id, name, server_config) VALUES (?1, ?2, ?3)",
         params!["synthetic-provider", "synthetic", "{}"],
     )?;
-    Database::set_user_version(&conn, 22)?;
+    Database::set_user_version(&conn, 23)?;
     drop(conn);
 
     // A regular file at the backup path deterministically makes mkdir fail.
@@ -1796,10 +1798,12 @@ fn pre_migration_backup_failure_preserves_database_until_safe_retry() -> Result<
     let conn = Connection::open(&db_path)?;
     assert_eq!(
         Database::get_user_version(&conn)?,
-        22,
+        23,
         "failed backup must leave schema version unchanged"
     );
-    assert!(!Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+    assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+    assert!(!Database::has_column(&conn, "mcp_servers", "enabled_dsh")?);
+    assert!(!Database::has_column(&conn, "skills", "enabled_dsh")?);
     let sentinel: String = conn.query_row(
         "SELECT name FROM mcp_servers WHERE id = 'synthetic-provider'",
         [],
@@ -1816,6 +1820,8 @@ fn pre_migration_backup_failure_preserves_database_until_safe_retry() -> Result<
     let conn = Connection::open(&db_path)?;
     assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
     assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+    assert!(Database::has_column(&conn, "mcp_servers", "enabled_dsh")?);
+    assert!(Database::has_column(&conn, "skills", "enabled_dsh")?);
     let preserved: String = conn.query_row(
         "SELECT name FROM mcp_servers WHERE id = 'synthetic-provider'",
         [],
@@ -1824,7 +1830,7 @@ fn pre_migration_backup_failure_preserves_database_until_safe_retry() -> Result<
     assert_eq!(preserved, "synthetic");
 
     // The startup auto-vacuum path may create a later post-upgrade backup
-    // too. Require at least one original v22 snapshot, not that an arbitrary
+    // too. Require at least one original v23 snapshot, not that an arbitrary
     // directory iteration entry is necessarily the pre-migration snapshot.
     let mut found_pre_migration = false;
     for entry in std::fs::read_dir(&backup_dir).expect("verified backup directory") {
@@ -1833,14 +1839,59 @@ fn pre_migration_backup_failure_preserves_database_until_safe_retry() -> Result<
             continue;
         }
         let saved = Connection::open(&path)?;
-        if Database::get_user_version(&saved)? == 22 {
-            assert!(!Database::has_column(&saved, "mcp_servers", "enabled_omp")?);
+        if Database::get_user_version(&saved)? == 23 {
+            assert!(Database::has_column(&saved, "mcp_servers", "enabled_omp")?);
+            assert!(!Database::has_column(&saved, "mcp_servers", "enabled_dsh")?);
+            assert!(!Database::has_column(&saved, "skills", "enabled_dsh")?);
             found_pre_migration = true;
         }
     }
     assert!(
         found_pre_migration,
-        "at least one readable pre-upgrade v22 database backup must remain"
+        "at least one readable pre-upgrade v23 database backup must remain"
     );
     Ok(())
+}
+
+#[test]
+fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_dsh;
+         ALTER TABLE skills DROP COLUMN enabled_dsh;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_omp)
+         VALUES ('shared', 'Shared MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_kimi)
+         VALUES ('skill', 'Skill', 'skill', 1);",
+    )
+    .expect("seed v23 database");
+    Database::set_user_version(&conn, 23).expect("set user_version=23");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v23 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    let mcp_flags: (bool, bool) = conn
+        .query_row(
+            "SELECT enabled_omp, enabled_dsh FROM mcp_servers WHERE id = 'shared'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read migrated MCP flags");
+    let skill_flags: (bool, bool) = conn
+        .query_row(
+            "SELECT enabled_kimi, enabled_dsh FROM skills WHERE id = 'skill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read migrated skill flags");
+    assert_eq!(mcp_flags, (true, false));
+    assert_eq!(skill_flags, (true, false));
+
+    conn.execute("UPDATE mcp_servers SET enabled_dsh = 1", [])
+        .unwrap();
+    Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
+    assert!(conn
+        .query_row("SELECT enabled_dsh FROM mcp_servers", [], |row| row
+            .get::<_, bool>(0))
+        .unwrap());
 }

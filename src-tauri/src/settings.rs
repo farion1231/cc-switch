@@ -58,6 +58,8 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub kimi: bool,
     #[serde(default = "default_true")]
+    pub dsh: bool,
+    #[serde(default = "default_true")]
     pub agy: bool,
 }
 
@@ -75,6 +77,7 @@ impl Default for VisibleApps {
             pi: true,
             mcode: true,
             kimi: true,
+            dsh: true,
             agy: true,
             omp: true,
         }
@@ -96,6 +99,7 @@ impl VisibleApps {
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Dsh => self.dsh,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
         }
@@ -424,6 +428,10 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// 退出时是否处于轻量模式（主窗口已销毁、只留托盘）；下次启动按它恢复。
+    /// 只经 [`set_lightweight_mode`] 写，前端全量保存不透传。
+    #[serde(default)]
+    pub lightweight_mode: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -647,6 +655,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            lightweight_mode: false,
             enable_local_proxy: false,
             enable_stack_mode: false,
             proxy_confirmed: None,
@@ -1186,6 +1195,14 @@ pub fn clear_codex_unify_migrate_existing() -> Result<(), AppError> {
     })
 }
 
+/// 记下当前是否处于轻量模式（见 [`AppSettings::lightweight_mode`]），值没变就不写盘。
+pub fn set_lightweight_mode(enabled: bool) -> Result<(), AppError> {
+    if get_settings().lightweight_mode == enabled {
+        return Ok(());
+    }
+    mutate_settings(|settings| settings.lightweight_mode = enabled)
+}
+
 /// 客户端地址（见 [`AppSettings::proxy_client_host`]），去掉首尾空白；没设或为空时是 `None`。
 pub fn get_proxy_client_host() -> Option<String> {
     get_settings()
@@ -1366,7 +1383,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => None,
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
     }
 }
 
@@ -1386,7 +1403,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => {}
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}
     })
 }
 
