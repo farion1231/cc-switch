@@ -1899,7 +1899,12 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
 #[cfg_attr(windows, allow(dead_code))]
-fn build_provider_command_line(shell: &str, launch_command: &str, cwd: Option<&Path>) -> String {
+fn build_provider_command_line(
+    shell: &str,
+    flag: &'static str,
+    launch_command: &str,
+    cwd: Option<&Path>,
+) -> String {
     let command = cwd
         .map(|dir| {
             format!(
@@ -1913,16 +1918,65 @@ fn build_provider_command_line(shell: &str, launch_command: &str, cwd: Option<&P
     format!(
         "{} {} {}",
         shell_single_quote(shell),
-        provider_command_flag_for_shell(shell),
+        flag,
         shell_single_quote(&command)
     )
 }
 
+/// 选择 bash 的启动参数：优先加载用户终端会读的配置。
+///
+/// macOS 终端默认启动登录 shell，先看登录文件；Linux 终端默认启动非登录交互
+/// shell，先看 `.bashrc`。首选文件不存在时回退到另一类。两类都不存在时用平台
+/// 默认（macOS `-lic`，其它 `-ic`）。
+#[cfg_attr(windows, allow(dead_code))]
+fn bash_provider_flag(home: Option<&Path>, is_macos: bool) -> &'static str {
+    let Some(home) = home else {
+        return if is_macos { "-lic" } else { "-ic" };
+    };
+    let login_file = [".bash_profile", ".bash_login", ".profile"]
+        .iter()
+        .any(|name| home.join(name).is_file());
+    let bashrc = home.join(".bashrc").is_file();
+    if is_macos {
+        if login_file {
+            "-lic"
+        } else if bashrc {
+            "-ic"
+        } else {
+            "-lic"
+        }
+    } else if bashrc {
+        "-ic"
+    } else if login_file {
+        "-lic"
+    } else {
+        "-ic"
+    }
+}
+
+/// 选择用户 shell 的启动参数。bash 会读取 `$HOME` 下的配置文件；这里的主目录
+/// 探测只用于 `is_file` 判断，不写入启动脚本。
 #[cfg_attr(windows, allow(dead_code))]
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
+    provider_command_flag_for_shell_with_home(
+        shell,
+        dirs::home_dir().as_deref(),
+        cfg!(target_os = "macos"),
+    )
+}
+
+/// 和 [`provider_command_flag_for_shell`] 相同，但主目录与平台由调用方给出。
+/// 测试用它避免依赖运行测试的机器。
+#[cfg_attr(windows, allow(dead_code))]
+fn provider_command_flag_for_shell_with_home(
+    shell: &str,
+    home: Option<&Path>,
+    is_macos: bool,
+) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
         "zsh" => "-lic",
+        "bash" => bash_provider_flag(home, is_macos),
         _ => "-ic",
     }
 }
@@ -5440,6 +5494,27 @@ fn build_unix_launcher_script(
     script_file: &Path,
     env_file: Option<&Path>,
 ) -> String {
+    build_unix_launcher_script_with_flag(
+        launch,
+        shell,
+        provider_command_flag_for_shell(shell),
+        cwd,
+        script_file,
+        env_file,
+    )
+}
+
+/// 和 [`build_unix_launcher_script`] 相同，但允许调用方注入 shell 参数，
+/// 让测试不依赖运行测试的机器的 home 目录。
+#[cfg_attr(windows, allow(dead_code))]
+fn build_unix_launcher_script_with_flag(
+    launch: &ProviderLaunch,
+    shell: &str,
+    flag: &'static str,
+    cwd: Option<&Path>,
+    script_file: &Path,
+    env_file: Option<&Path>,
+) -> String {
     let mut temp_files: Vec<String> = launch
         .cleanup
         .iter()
@@ -5468,6 +5543,7 @@ fn build_unix_launcher_script(
     }
     script.push_str(&build_provider_command_line(
         shell,
+        flag,
         &unix_launch_command(launch),
         cwd,
     ));
@@ -6872,20 +6948,107 @@ mod tests {
             shell_word("/tmp/claude config.json")
         );
         assert_eq!(
-            build_provider_command_line("/bin/zsh", &claude, None),
+            build_provider_command_line("/bin/zsh", "-lic", &claude, None),
             "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
         );
         assert_eq!(
-            build_provider_command_line("/bin/bash", &claude, Some(Path::new("/tmp/project"))),
-            r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+            build_provider_command_line(
+                "/bin/bash",
+                "-lic",
+                &claude,
+                Some(Path::new("/tmp/project"))
+            ),
+            r#"'/bin/bash' -lic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
         assert_eq!(
             build_provider_command_line(
                 "/bin/sh",
+                "-c",
                 &claude,
                 Some(Path::new("/tmp/project O'Brien"))
             ),
             r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+        );
+    }
+
+    #[test]
+    fn bash_provider_flag_prefers_the_config_file_the_terminal_reads() {
+        let profile_only = tempfile::tempdir().unwrap();
+        std::fs::write(profile_only.path().join(".bash_profile"), "").unwrap();
+        assert_eq!(bash_provider_flag(Some(profile_only.path()), true), "-lic");
+        assert_eq!(bash_provider_flag(Some(profile_only.path()), false), "-lic");
+
+        for name in [".bash_login", ".profile"] {
+            let login_only = tempfile::tempdir().unwrap();
+            std::fs::write(login_only.path().join(name), "").unwrap();
+            assert_eq!(
+                bash_provider_flag(Some(login_only.path()), true),
+                "-lic",
+                "{name}"
+            );
+            assert_eq!(
+                bash_provider_flag(Some(login_only.path()), false),
+                "-lic",
+                "{name}"
+            );
+        }
+
+        let bashrc_only = tempfile::tempdir().unwrap();
+        std::fs::write(bashrc_only.path().join(".bashrc"), "").unwrap();
+        assert_eq!(bash_provider_flag(Some(bashrc_only.path()), true), "-ic");
+        assert_eq!(bash_provider_flag(Some(bashrc_only.path()), false), "-ic");
+
+        let both = tempfile::tempdir().unwrap();
+        std::fs::write(both.path().join(".bash_profile"), "").unwrap();
+        std::fs::write(both.path().join(".bashrc"), "").unwrap();
+        assert_eq!(bash_provider_flag(Some(both.path()), true), "-lic");
+        assert_eq!(bash_provider_flag(Some(both.path()), false), "-ic");
+
+        let neither = tempfile::tempdir().unwrap();
+        assert_eq!(bash_provider_flag(Some(neither.path()), true), "-lic");
+        assert_eq!(bash_provider_flag(Some(neither.path()), false), "-ic");
+
+        assert_eq!(bash_provider_flag(None, true), "-lic");
+        assert_eq!(bash_provider_flag(None, false), "-ic");
+    }
+
+    #[test]
+    fn bash_dispatch_uses_the_selected_flag() {
+        let profile_only = tempfile::tempdir().unwrap();
+        std::fs::write(profile_only.path().join(".bash_profile"), "").unwrap();
+        assert_eq!(
+            provider_command_flag_for_shell_with_home("/bin/bash", Some(profile_only.path()), true),
+            "-lic"
+        );
+        assert_eq!(
+            provider_command_flag_for_shell_with_home(
+                "/bin/bash",
+                Some(profile_only.path()),
+                false
+            ),
+            "-lic"
+        );
+
+        let bashrc_only = tempfile::tempdir().unwrap();
+        std::fs::write(bashrc_only.path().join(".bashrc"), "").unwrap();
+        assert_eq!(
+            provider_command_flag_for_shell_with_home("/bin/bash", Some(bashrc_only.path()), true),
+            "-ic"
+        );
+        assert_eq!(
+            provider_command_flag_for_shell_with_home("/bin/bash", Some(bashrc_only.path()), false),
+            "-ic"
+        );
+    }
+
+    #[test]
+    fn non_bash_shell_flags_stay_fixed() {
+        assert_eq!(provider_command_flag_for_shell("/bin/zsh"), "-lic");
+        assert_eq!(provider_command_flag_for_shell("/bin/sh"), "-c");
+        assert_eq!(provider_command_flag_for_shell("/bin/dash"), "-c");
+        assert_eq!(
+            provider_command_flag_for_shell("/usr/local/bin/fish"),
+            "-ic"
         );
     }
 
@@ -6964,18 +7127,22 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn unix_launcher_script_passes_env_past_rc_files_and_cleans_up() {
+    fn unix_launcher_env_case(flag: &'static str, rc_name: &str) {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&bin).unwrap();
+        let rc_marker = tmp.path().join("rc-ran");
         // A user rc that exports its own Gemini variables must not win.
+        // The marker proves the rc file actually ran.
         std::fs::write(
-            home.join(".bashrc"),
-            "export GEMINI_API_KEY=from-rc\nexport GOOGLE_GEMINI_BASE_URL=https://rc.test\n",
+            home.join(rc_name),
+            format!(
+                "export GEMINI_API_KEY=from-rc\nexport GOOGLE_GEMINI_BASE_URL=https://rc.test\ntouch '{}'\n",
+                rc_marker.display()
+            ),
         )
         .unwrap();
         let out = tmp.path().join("out");
@@ -6994,9 +7161,15 @@ mod tests {
         let env_file = tmp.path().join("env.sh");
         std::fs::write(&env_file, unix_launch_env_file(&launch)).unwrap();
         // Replace the final interactive shell with a no-op so the test returns.
-        let content =
-            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file))
-                .replace("exec '/bin/bash'", "exit 0 #");
+        let content = build_unix_launcher_script_with_flag(
+            &launch,
+            "/bin/bash",
+            flag,
+            None,
+            &script,
+            Some(&env_file),
+        )
+        .replace("exec '/bin/bash'", "exit 0 #");
         std::fs::write(&script, content).unwrap();
         let status = std::process::Command::new("sh")
             .arg(&script)
@@ -7010,11 +7183,24 @@ mod tests {
             std::fs::read_to_string(&out).unwrap(),
             "k'$(echo no)`x`%PATH%\nunset\nunset\n--gemini_dir=/home/me/.cc-switch/agy/relay\n"
         );
+        assert!(rc_marker.exists(), "{rc_name} must run");
         assert!(
             !env_file.exists(),
             "env file is removed right after reading"
         );
         assert!(!script.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_script_passes_env_past_login_rc_and_cleans_up() {
+        unix_launcher_env_case("-lic", ".bash_profile");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_script_passes_env_past_bashrc_and_cleans_up() {
+        unix_launcher_env_case("-ic", ".bashrc");
     }
 
     #[test]
