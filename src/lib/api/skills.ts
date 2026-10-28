@@ -286,6 +286,11 @@ export const skillsApi = {
     await invoke("open_cc_switch_skills_dir");
   },
 
+  /** 在文件管理器里打开某个已安装 Skill 的目录 */
+  async openSkillDir(directory: string): Promise<void> {
+    await invoke("open_skill_dir", { directory });
+  },
+
   /** 搜索 skills.sh 公共目录 */
   async searchSkillsSh(
     query: string,
