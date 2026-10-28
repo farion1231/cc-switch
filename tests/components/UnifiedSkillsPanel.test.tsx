@@ -350,6 +350,8 @@ describe("UnifiedSkillsPanel", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByText(/skillsPage.rowFail/)).toBeInTheDocument();
+    // 失败原因换掉那一行的描述，不接在描述后面被截掉；没失败的行照常显示描述
+    expect(screen.getAllByText("Alpha description")).toHaveLength(1);
     expect(m.toastWarning).toHaveBeenCalledWith(
       expect.stringContaining("appMatrix.toast.partialFail"),
       expect.objectContaining({
@@ -474,32 +476,26 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
-  it("enables the selected Skills in one app from the selection bar", async () => {
+  it("keeps only update and uninstall in the selection bar", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
       makeSkill({ id: "b", name: "B" }),
-      makeSkill({ id: "c", name: "C" }),
     ];
     renderPanel();
-    const picks = screen.getAllByRole("checkbox", {
-      name: "skillsPage.selectAria",
-    });
-    await userEvent.click(picks[0]);
-    await userEvent.click(picks[2]);
+    await userEvent.click(
+      screen.getAllByRole("checkbox", { name: "skillsPage.selectAria" })[0],
+    );
     expect(screen.getByText("skillsPage.bulk.selected")).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: /skillsPage.bulk.enableTo/ }),
-    );
-    await userEvent.click(
-      await screen.findByRole("menuitem", { name: /Codex/ }),
-    );
-    await waitFor(() =>
-      expect(m.bulkToggle).toHaveBeenCalledWith({
-        ids: ["a", "c"],
-        app: "codex",
-        enabled: true,
-      }),
-    );
+    // 启用 / 停用直接点矩阵里的格子，批量条不再放应用菜单
+    expect(
+      screen.getByRole("button", { name: "skills.update" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "skillsPage.bulk.uninstall" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /enableTo|bulk\.disable/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("selects every listed Skill from the header checkbox", async () => {
@@ -527,13 +523,18 @@ describe("UnifiedSkillsPanel", () => {
     for (const pick of picks) expect(pick).not.toBeChecked();
   });
 
-  it("uninstalls through the row menu after confirming", async () => {
+  it("uninstalls the selected Skill after confirming", async () => {
     m.installed = [makeSkill()];
     m.uninstall.mockResolvedValueOnce({
       preservedPiPath: "/tmp/.pi/agent/skills/alpha-skill",
     });
     renderPanel();
-    await openMenu("skillsPage.rowMoreAria", "skillsPage.uninstallEllipsis");
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "skillsPage.selectAria" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.bulk.uninstall" }),
+    );
     expect(
       screen.getByText("skillsPage.confirm.uninstallBody"),
     ).toBeInTheDocument();
@@ -551,7 +552,7 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
-  it("filters to Skills with updates from the header count and updates them after confirming", async () => {
+  it("filters to Skills with updates from the status filter and updates them after confirming", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
       makeSkill({ id: "b", name: "B" }),
@@ -561,7 +562,7 @@ describe("UnifiedSkillsPanel", () => {
       { id: "gone", name: "Gone", remoteHash: "y" },
     ];
     renderPanel();
-    // 更新横幅已去掉：页头的「N 个可更新」、行上的徽标、「检查更新」按钮说的是同一件事
+    // 可更新的数量只说一次（工具栏按钮）；行上的「可更新」就是这一行的更新按钮
     expect(screen.getAllByText("skills.updateAvailable")).toHaveLength(1);
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
     // 已知有更新时「检查更新」直接变成「全部更新」，不用先筛选
@@ -572,20 +573,23 @@ describe("UnifiedSkillsPanel", () => {
       screen.queryByRole("button", { name: "skills.checkUpdates" }),
     ).not.toBeInTheDocument();
 
-    const chip = screen.getByRole("button", {
-      name: "skillsPage.headerUpdates",
-    });
-    expect(chip).toHaveAttribute("aria-pressed", "false");
-    await userEvent.click(chip);
-    expect(chip).toHaveAttribute("aria-pressed", "true");
+    await openMenu("skillsPage.filter.all", "skillsPage.filter.updates");
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    // 筛选按钮在工具栏，选中行时也一直看得见
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "skillsPage.selectAria" }),
+    );
+    expect(screen.getByText("skillsPage.bulk.selected")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "skillsPage.filter.updates" }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "common.cancel" }),
+    );
 
-    // 再点一次恢复全部
-    await userEvent.click(chip);
-    expect(chip).toHaveAttribute("aria-pressed", "false");
+    await openMenu("skillsPage.filter.updates", "skillsPage.filter.all");
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
 
-    await userEvent.click(chip);
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.updateAllCount" }),
     );
@@ -613,6 +617,31 @@ describe("UnifiedSkillsPanel", () => {
     );
     await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(1));
     expect(m.updateSkill).toHaveBeenCalledWith("b");
+  });
+
+  it("updates one Skill from its row badge and opens its folder from the row", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A" }),
+      makeSkill({ id: "b", name: "B", directory: "b-dir" }),
+    ];
+    m.updates = [{ id: "b", name: "B", remoteHash: "x" }];
+    renderPanel();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.rowUpdateAria" }),
+    );
+    await waitFor(() => expect(m.updateSkill).toHaveBeenCalledWith("b"));
+    expect(m.updateSkill).toHaveBeenCalledTimes(1);
+
+    // 行尾只有「打开目录」一个按钮，不再是下拉菜单
+    expect(
+      screen.queryByRole("button", { name: "skillsPage.rowMoreAria" }),
+    ).not.toBeInTheDocument();
+    const openDir = vi.spyOn(skillsApi, "openSkillDir").mockResolvedValue();
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "skillsPage.openDirAria" })[1],
+    );
+    expect(openDir).toHaveBeenCalledWith("b-dir");
+    openDir.mockRestore();
   });
 
   it("switches Installed / Discover with page tabs", async () => {
