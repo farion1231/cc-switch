@@ -6307,10 +6307,10 @@ model_provider = "c"
         assert_eq!(
             profile["inferenceModels"],
             json!([
-                "claude-fable-5",
-                "claude-haiku-4-5",
+                "claude-sonnet-5",
                 "claude-opus-5",
-                "claude-sonnet-5"
+                "claude-fable-5",
+                "claude-haiku-4-5"
             ])
         );
         assert!(models.iter().all(Value::is_string), "no synthetic 1M claim");
