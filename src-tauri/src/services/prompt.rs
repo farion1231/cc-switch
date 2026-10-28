@@ -309,7 +309,8 @@ impl PromptService {
     pub fn sync_all_to_live(state: &AppState) -> Result<(), AppError> {
         let mut failures = Vec::new();
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            // DeepSeek Harness Desktop 读的是 DeepSeek Harness 的 `$DSH_HOME/AGENTS.md`
+            if matches!(app, AppType::ClaudeDesktop | AppType::DshDesktop) {
                 continue;
             }
             if let Err(error) = Self::sync_to_live(state, app.clone()) {
