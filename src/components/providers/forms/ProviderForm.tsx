@@ -143,6 +143,7 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
 
 type PresetEntry = {
   id: string;
@@ -244,7 +245,7 @@ const normalizeCodexChatReasoningForSave = (
       ? (value?.thinkingParam ?? "thinking")
       : "none",
     effortParam: supportsEffort
-      ? (value?.effortParam ?? "reasoning_effort")
+      ? normalizeEnabledCodexChatEffortParam(value?.effortParam)
       : "none",
     effortValueMode: supportsEffort
       ? (value?.effortValueMode ?? "passthrough")
