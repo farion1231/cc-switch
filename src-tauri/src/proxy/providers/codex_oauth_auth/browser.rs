@@ -615,12 +615,23 @@ mod tests {
             .unwrap()
             .1
             .into_owned();
-        let new = client
-            .get(&endpoint)
-            .query(&[("state", state.as_str()), ("error", "access_denied")])
-            .send()
-            .await
-            .unwrap();
+        // The client may not have observed the old server's FIN yet and can
+        // write onto the closed socket; that failure proves the connection was
+        // dropped, so reconnect like a browser would. A response from the old
+        // flow would still surface as BAD_REQUEST below.
+        let mut attempts = 0;
+        let new = loop {
+            match client
+                .get(&endpoint)
+                .query(&[("state", state.as_str()), ("error", "access_denied")])
+                .send()
+                .await
+            {
+                Ok(response) => break response,
+                Err(err) if err.is_request() && attempts < 3 => attempts += 1,
+                Err(err) => panic!("callback request failed: {err:?}"),
+            }
+        };
         assert_eq!(new.status(), StatusCode::OK);
         new.bytes().await.unwrap();
         manager.cancel_device_flow(&response.device_code).await;
