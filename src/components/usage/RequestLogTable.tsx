@@ -14,9 +14,8 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
 import {
-  CACHE_INCLUSIVE_APP_TYPES,
-  getFreshInputTokens,
   isUnpricedUsage,
+  omitsCacheWrites,
   type LogFilters,
   type RequestLog,
   type UsageRangeSelection,
@@ -143,7 +142,7 @@ export function getRequestCacheHitRate(
   log: RequestLog,
 ): { rate: number; cacheable: number } | null {
   const cacheable =
-    getFreshInputTokens(log) + log.cacheCreationTokens + log.cacheReadTokens;
+    log.freshInputTokens + log.cacheCreationTokens + log.cacheReadTokens;
   if (cacheable <= 0) return null;
   return { rate: log.cacheReadTokens / cacheable, cacheable };
 }
@@ -368,7 +367,7 @@ export function RequestLogTable({
 
   const renderRow = (log: RequestLog) => {
     const unpriced = isUnpricedUsage(log);
-    const freshInput = getFreshInputTokens(log);
+    const freshInput = log.freshInputTokens;
     const isCacheInclusive = log.inputTokens !== freshInput;
     const time = formatLogTime(log.createdAt, now);
     const fullTime = formatLogFullTime(log.createdAt);
@@ -409,8 +408,8 @@ export function RequestLogTable({
         ? `${log.requestModel} → ${log.model}`
         : log.model;
     const hasCache = log.cacheReadTokens > 0;
-    // OpenAI 协议不单报缓存写入，这几个应用的 0 是「不知道」，不是「没写」
-    const cacheWriteUnknown = CACHE_INCLUSIVE_APP_TYPES.has(log.appType);
+    // Gemini 和 Grok Build 不单报缓存写入，它们的 0 是「不知道」，不是「没写」
+    const cacheWriteUnknown = omitsCacheWrites(log.appType);
     const hitRate = getRequestCacheHitRate(log);
     const success = isSuccessStatus(log.statusCode);
 

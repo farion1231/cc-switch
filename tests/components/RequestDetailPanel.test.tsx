@@ -26,6 +26,7 @@ const log = (overrides: Partial<RequestLog>): RequestLog => ({
   model: "claude-opus-5-5",
   costMultiplier: "1",
   inputTokens: 3_066,
+  freshInputTokens: 3_066,
   outputTokens: 1_512,
   cacheReadTokens: 71_300,
   cacheCreationTokens: 2_048,
@@ -171,6 +172,23 @@ describe("RequestDetailPanel", () => {
     expect(
       screen.queryByText("usage.detail.providerId"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows fresh input net of both cache reads and cache writes", () => {
+    renderWith(
+      log({
+        appType: "codex",
+        model: "gpt-6-sol",
+        inputTokens: 1_000,
+        freshInputTokens: 100,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 600,
+      }),
+    );
+
+    expect(
+      screen.getByText("100 (usage.rawInputLabel: 1,000)"),
+    ).toBeInTheDocument();
   });
 
   it("shows the error and a retry button when loading fails", () => {
