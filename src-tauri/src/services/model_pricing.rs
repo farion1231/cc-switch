@@ -374,11 +374,14 @@ fn is_models_dev_response_too_large(len: usize) -> bool {
 /// 拉取 models.dev 数据（api.json），定价同步与表单的模型参数补全共用。
 ///
 /// 必须走全局代理客户端：WebView 直连只跟随系统代理，代理环境下会超时。
-/// 返回原始 JSON 字符串，由前端解析为 ModelsDevResponse。
+/// 全局客户端为透传禁用了自动解压，须显式声明 gzip——否则 5.9MB 的 api.json
+/// 原样传输，代理环境下 15s 超时不够用。
+/// 返回解压后的 JSON 字符串，由前端解析为 ModelsDevResponse。
 pub async fn fetch_models_dev() -> Result<String, String> {
     let client = crate::proxy::http_client::get();
     let mut response = client
         .get(MODELS_DEV_API_URL)
+        .header(reqwest::header::ACCEPT_ENCODING, "gzip")
         .timeout(Duration::from_secs(MODELS_DEV_FETCH_TIMEOUT_SECS))
         .send()
         .await
@@ -388,6 +391,8 @@ pub async fn fetch_models_dev() -> Result<String, String> {
     if !status.is_success() {
         return Err(format!("models.dev returned HTTP {status}"));
     }
+
+    let encoding = crate::proxy::content_encoding::get_content_encoding(response.headers());
 
     if let Some(len) = response.content_length() {
         if is_models_dev_response_too_large(len as usize) {
@@ -411,7 +416,26 @@ pub async fn fetch_models_dev() -> Result<String, String> {
         }
     }
 
-    Ok(String::from_utf8_lossy(&buf).into_owned())
+    let body = decode_models_dev_body(encoding.as_deref(), buf)?;
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// 按响应声明的 content-encoding 解压 models.dev 响应体，解压输出同样受
+/// `MODELS_DEV_MAX_RESPONSE_BYTES` 约束。请求只声明了 gzip，出现不支持的
+/// 编码时直接报错，不能把压缩字节当 JSON 交给前端。
+fn decode_models_dev_body(encoding: Option<&str>, body: Vec<u8>) -> Result<Vec<u8>, String> {
+    let Some(encoding) = encoding else {
+        return Ok(body);
+    };
+    match crate::proxy::content_encoding::decompress_body_with_limit(
+        encoding,
+        &body,
+        MODELS_DEV_MAX_RESPONSE_BYTES,
+    ) {
+        Ok(decompressed) => decompressed
+            .ok_or_else(|| format!("Unsupported models.dev content-encoding: {encoding}")),
+        Err(error) => Err(format!("Failed to decompress models.dev response: {error}")),
+    }
 }
 
 /// 追加一个 chunk 并判断累计大小是否超限（读取过程中即时生效，避免 chunked 响应被整体缓冲）
@@ -863,5 +887,42 @@ mod tests {
         // 超过上限时 chunk 仍被追加，调用方才能报告真实的累计字节数
         assert!(append_models_dev_chunk(&mut buf, &[1]).is_err());
         assert_eq!(buf.len(), MODELS_DEV_MAX_RESPONSE_BYTES + 1);
+    }
+
+    #[test]
+    fn models_dev_decode_passes_through_plain_body() {
+        let body = br#"{"schema_version":1}"#.to_vec();
+        let decoded = decode_models_dev_body(None, body.clone()).expect("pass through");
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn models_dev_decode_gunzips_response() {
+        let payload = br#"{"schema_version":1}"#;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, payload).expect("gzip encode");
+        let compressed = encoder.finish().expect("finish gzip");
+
+        let decoded = decode_models_dev_body(Some("gzip"), compressed).expect("gunzip");
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn models_dev_decode_rejects_unsupported_encoding() {
+        // 不能把压缩字节当 JSON 透传给前端
+        let err = decode_models_dev_body(Some("snappy"), vec![0, 1, 2]).expect_err("reject");
+        assert!(err.contains("Unsupported models.dev content-encoding"));
+    }
+
+    #[test]
+    fn models_dev_decode_rejects_decompressed_bomb() {
+        // 请求声明了 gzip，解压输出必须同样受 32MB 上限约束
+        let payload = vec![0u8; MODELS_DEV_MAX_RESPONSE_BYTES + 1];
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, &payload).expect("gzip encode");
+        let compressed = encoder.finish().expect("finish gzip");
+
+        let err = decode_models_dev_body(Some("gzip"), compressed).expect_err("too large");
+        assert!(err.contains("Failed to decompress models.dev response"));
     }
 }
