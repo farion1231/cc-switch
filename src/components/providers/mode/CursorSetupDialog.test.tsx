@@ -639,7 +639,7 @@ function renderPanel(
           onDuplicate: vi.fn(),
           onOpenWebsite: vi.fn(),
           // 上游 v7 把生效状态徽标改成 portal 到页头槽位；测试里挂到 body，供 findByLabelText 等查询
-          statusSlot: document.body,
+          statusSlot: document.body as unknown as HTMLDivElement,
         }),
       ),
     ),
@@ -904,7 +904,7 @@ describe("SwitchModePanel — 进入路由 / 回到直连并使用 也要过接�
             stack: false,
             error: "attach 失败",
           },
-          statusSlot: document.body,
+          statusSlot: document.body as unknown as HTMLDivElement,
         }),
       ),
     );
