@@ -4725,10 +4725,6 @@
     },
     "bulk": {
       "selected": "{{count}} seçildi",
-      "enableTo": "Şurada etkinleştir",
-      "enableToAria": "{{count}}'de seçilen Becerileri etkinleştirin",
-      "disable": "Şurada devre dışı bırak",
-      "disableAria": "{{count}}'de seçilen Becerileri kapatın",
       "uninstall": "Kaldır"
     },
     "piColumnTitle": "Pi, klasörü ~/.pi/agent/skills konumunda mevcut olduğunda bir Beceriyi etkin olarak sayar",
@@ -4742,9 +4738,9 @@
     "selectAllAria": "Gösterilenlerin tümünü seç",
     "rowFail": "{{app}}'de etkinleştirme başarısız oldu: {{error}}",
     "fixSync": "Eşitleme yöntemini değiştir",
-    "rowMoreAria": "{{name}} için diğer işlemler",
+    "rowUpdateAria": "{{name}} öğesini güncelle",
     "openDir": "Klasörü aç",
-    "uninstallEllipsis": "Kaldır",
+    "openDirAria": "{{name}} klasörünü aç",
     "listLabel": "Yüklü Beceriler",
     "noMatch": "“{{query}}” Beceri eşleşmesi yok",
     "noFilterMatch": "Filtrelerle eşleşen Beceri yok",
@@ -4773,10 +4769,7 @@
       "backupAt": "{{path}}'ye yedeklendi",
       "copiedName": "{{name}} kopyalandı",
       "openDirFailed": "Klasör açılamadı",
-      "noUpdatesInSelection": "Seçilen Becerilerin hiçbirinde güncelleme yok",
-      "selectionAlreadyOn": "{{count}}'nin seçilen Becerileri zaten {{app}}'de etkindir",
-      "selectionAlreadyOff": "Seçilen {{count}} Becerilerinden hiçbiri {{app}}'de etkin değil",
-      "disabledSelection": "{{app}}'de {{count}} {{noun}} kapatıldı"
+      "noUpdatesInSelection": "Seçilen Becerilerin hiçbirinde güncelleme yok"
     },
     "installTo": {
       "prefix": "Şuraya yükleyin:",
@@ -4850,9 +4843,6 @@
       "discoverBody": "Liste eksik olabilir.",
       "updatesBody": "Bu depolardaki beceriler kontrol edilmediğinden sonuçlar eksik olabilir."
     },
-    "headerUpdates": "{{count}} güncellemeleri",
-    "headerUpdatesShow": "Yalnızca güncellemeleri olan Becerileri göster",
-    "headerUpdatesClear": "Tüm Becerileri Göster",
     "updateAllCount": "Tümünü güncelle ({{count}})",
     "updatingProgress": "{{done}}/{{total}} güncelleniyor…"
   },

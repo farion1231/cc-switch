@@ -4751,10 +4751,6 @@
     },
     "bulk": {
       "selected": "{{count}} 件選択",
-      "enableTo": "有効にする先",
-      "enableToAria": "選択した {{count}} 件の Skill を有効にする先",
-      "disable": "オフにする",
-      "disableAria": "選択した {{count}} 件の Skill をこのアプリでオフ",
       "uninstall": "アンインストール"
     },
     "piColumnTitle": "Pi は ~/.pi/agent/skills にそのフォルダーがあるかで判定します",
@@ -4768,9 +4764,9 @@
     "selectAllAria": "表示中をすべて選択",
     "rowFail": "{{app}} での有効化に失敗：{{error}}",
     "fixSync": "同期方法を変更",
-    "rowMoreAria": "{{name}} のその他の操作",
+    "rowUpdateAria": "{{name}} を更新",
     "openDir": "フォルダーを開く",
-    "uninstallEllipsis": "アンインストール",
+    "openDirAria": "{{name}} のフォルダを開く",
     "listLabel": "インストール済みの Skill",
     "noMatch": "「{{query}}」に一致する Skill はありません",
     "noFilterMatch": "絞り込み条件に合う Skill はありません",
@@ -4799,10 +4795,7 @@
       "backupAt": "バックアップ先：{{path}}",
       "copiedName": "{{name}} をコピーしました",
       "openDirFailed": "フォルダーを開けませんでした",
-      "noUpdatesInSelection": "選択した Skill に更新はありません",
-      "selectionAlreadyOn": "選択した {{count}} 件の Skill は既に {{app}} で有効です",
-      "selectionAlreadyOff": "選択した {{count}} 件の Skill はどれも {{app}} で有効ではありません",
-      "disabledSelection": "{{app}} で {{count}} 件の {{noun}} をオフにしました"
+      "noUpdatesInSelection": "選択した Skill に更新はありません"
     },
     "installTo": {
       "prefix": "インストール先：",
@@ -4876,9 +4869,6 @@
       "discoverBody": "一覧が不完全な可能性があります。",
       "updatesBody": "これらのリポジトリの Skill は確認されていないため、結果が不完全な可能性があります。"
     },
-    "headerUpdates": "{{count}} 件の更新",
-    "headerUpdatesShow": "更新がある Skill だけを表示",
-    "headerUpdatesClear": "すべての Skill を表示",
     "updateAllCount": "すべて更新（{{count}} 件）",
     "updatingProgress": "更新中 {{done}}/{{total}}…"
   },

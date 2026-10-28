@@ -4751,10 +4751,6 @@
     },
     "bulk": {
       "selected": "已选 {{count}}",
-      "enableTo": "启用到",
-      "enableToAria": "把选中的 {{count}} 个 Skill 启用到",
-      "disable": "停用",
-      "disableAria": "在这个应用里停用选中的 {{count}} 个 Skill",
       "uninstall": "卸载"
     },
     "piColumnTitle": "Pi 按 ~/.pi/agent/skills 里有没有这个目录来判断",
@@ -4768,9 +4764,9 @@
     "selectAllAria": "全选当前列表",
     "rowFail": "在 {{app}} 启用失败：{{error}}",
     "fixSync": "改同步方式",
-    "rowMoreAria": "{{name}} 的更多操作",
+    "rowUpdateAria": "更新 {{name}}",
     "openDir": "打开目录",
-    "uninstallEllipsis": "卸载",
+    "openDirAria": "打开 {{name}} 的目录",
     "listLabel": "已安装的 Skill",
     "noMatch": "没有匹配“{{query}}”的 Skill",
     "noFilterMatch": "没有符合筛选条件的 Skill",
@@ -4799,10 +4795,7 @@
       "backupAt": "备份在 {{path}}",
       "copiedName": "已复制 {{name}}",
       "openDirFailed": "没能打开目录",
-      "noUpdatesInSelection": "选中的 Skill 没有可用的更新",
-      "selectionAlreadyOn": "选中的 {{count}} 个 Skill 已经在 {{app}} 启用",
-      "selectionAlreadyOff": "选中的 {{count}} 个 Skill 都没有在 {{app}} 启用",
-      "disabledSelection": "已在 {{app}} 停用 {{count}} 个 {{noun}}"
+      "noUpdatesInSelection": "选中的 Skill 没有可用的更新"
     },
     "installTo": {
       "prefix": "安装到：",
@@ -4876,9 +4869,6 @@
       "discoverBody": "列表可能不完整。",
       "updatesBody": "这些仓库里的 Skill 没有检查，更新结果可能不完整。"
     },
-    "headerUpdates": "{{count}} 个可更新",
-    "headerUpdatesShow": "只看可更新的 Skill",
-    "headerUpdatesClear": "显示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 个）",
     "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },
