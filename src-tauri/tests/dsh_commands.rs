@@ -22,7 +22,14 @@ impl DshHome {
         }
     }
     fn config(&self) -> PathBuf {
-        self.directory.path().join("profiles/web/cordis.patch.yml")
+        self.profile("web")
+    }
+    fn profile(&self, name: &str) -> PathBuf {
+        self.directory
+            .path()
+            .join("profiles")
+            .join(name)
+            .join("cordis.patch.yml")
     }
 }
 impl Drop for DshHome {
@@ -200,4 +207,64 @@ fn dsh_and_omp_mcp_writes_roll_back_together() {
         .contains("server.js"));
     let omp: serde_json::Value = serde_json::from_slice(&fs::read(&omp_path).unwrap()).unwrap();
     assert!(omp["mcpServers"].get("shared").is_none());
+}
+
+#[test]
+fn dsh_writes_reach_the_desktop_profile_and_reads_merge_both() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = DshHome::new();
+    let state = create_test_state().unwrap();
+    // A provider configured natively in the Desktop app only.
+    let desktop = home.profile("desktop");
+    fs::create_dir_all(desktop.parent().unwrap()).unwrap();
+    fs::write(&desktop, "# desktop\n- id: llm-pi-ai\n  config:\n    providers:\n      desktop-only: {api: openai-completions, baseURL: 'https://desktop.example/v1', apiKeyEnv: DESKTOP_KEY, models: [{id: desktop-model}]}\n").unwrap();
+    let imported = ProviderService::list(&state, AppType::Dsh).unwrap();
+    assert_eq!(
+        imported["desktop-only"]
+            .meta
+            .as_ref()
+            .unwrap()
+            .live_config_managed,
+        Some(true)
+    );
+    ProviderService::add(&state, AppType::Dsh, provider("draft"), true).unwrap();
+    for path in [home.config(), desktop.clone()] {
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("https://example.com/v1"));
+    }
+    ProviderService::remove_from_live_config(&state, AppType::Dsh, "draft").unwrap();
+    for path in [home.config(), desktop.clone()] {
+        assert!(!fs::read_to_string(&path)
+            .unwrap()
+            .contains("https://example.com/v1"));
+    }
+    assert!(fs::read_to_string(&desktop)
+        .unwrap()
+        .contains("https://desktop.example/v1"));
+    // An MCP server written to both profiles imports once and keeps the other apps' flags.
+    let server = McpServer {
+        id: "shared".into(),
+        name: "Shared".into(),
+        server: json!({"type":"stdio","command":"node","args":["server.js"]}),
+        apps: McpApps {
+            claude: true,
+            dsh: true,
+            ..Default::default()
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: vec![],
+    };
+    McpService::upsert_server(&state, server).unwrap();
+    for path in [home.config(), desktop.clone()] {
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("serverName: shared"));
+    }
+    assert_eq!(McpService::import_from_all_apps(&state).unwrap(), 0);
+    let stored = state.db.get_all_mcp_servers().unwrap()["shared"].clone();
+    assert!(stored.apps.claude && stored.apps.dsh);
 }

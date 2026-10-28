@@ -1,4 +1,8 @@
-//! DeepSeek Harness' standard `web` profile. Other profiles remain native-owned.
+//! DeepSeek Harness' interactive application profiles: the CLI's `web` and the Desktop
+//! app's `desktop`. Both compose `dsh-base`, so both carry `llm-pi-ai` and host
+//! `dsh-mcp-client` inserts, and each application initializes its profile by creating only
+//! the files it is missing, so a patch written before the first launch is adopted as is.
+//! Other profiles (headless, acp, sdk, user-created) remain native-owned.
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 use indexmap::IndexMap;
@@ -10,6 +14,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Written together: CC Switch cannot tell which application the user installs, and neither
+/// application creates the other's profile.
+const PROFILES: [&str; 2] = ["web", "desktop"];
+const PATCH_FILE: &str = "cordis.patch.yml";
+
 pub(crate) fn data_dir() -> PathBuf {
     std::env::var_os("DSH_HOME")
         .filter(|value| !value.is_empty())
@@ -17,8 +26,60 @@ pub(crate) fn data_dir() -> PathBuf {
         .unwrap_or_else(|| get_home_dir().join(".dsh"))
 }
 
+fn profile_patch_path(home: &Path, profile: &str) -> PathBuf {
+    home.join("profiles").join(profile).join(PATCH_FILE)
+}
+
+fn profile_patch_paths(home: &Path) -> Vec<PathBuf> {
+    PROFILES
+        .iter()
+        .map(|profile| profile_patch_path(home, profile))
+        .collect()
+}
+
+fn config_paths() -> Vec<PathBuf> {
+    profile_patch_paths(&data_dir())
+}
+
+/// The `web` profile, reported as the configuration's location.
 pub(crate) fn config_path() -> PathBuf {
-    data_dir().join("profiles/web/cordis.patch.yml")
+    profile_patch_path(&data_dir(), PROFILES[0])
+}
+
+fn credentials_path() -> PathBuf {
+    data_dir().join(".credentials.yaml")
+}
+
+/// A removal only edits profiles that exist; every other write reaches both.
+fn write_targets(paths: &[PathBuf], writing: bool) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .filter(|path| writing || path.exists())
+        .cloned()
+        .collect()
+}
+
+/// Two profiles share this file name, so a profile's own error names the file.
+fn locate(error: AppError, path: &Path) -> AppError {
+    match error {
+        AppError::Config(message) => AppError::Config(format!("{message} ({})", path.display())),
+        other => other,
+    }
+}
+
+/// The Desktop app and the credential store create their directories owner-only; match
+/// them when creating one first.
+fn create_dir_private(dir: &Path) -> Result<(), AppError> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(dir)
+        .map_err(|error| AppError::io(dir, error))
 }
 
 fn read_text(path: &Path) -> Result<String, AppError> {
@@ -144,7 +205,7 @@ struct FileLock(PathBuf);
 impl FileLock {
     fn acquire(path: &Path) -> Result<Self, AppError> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| AppError::io(parent, error))?;
+            create_dir_private(parent)?;
         }
         let lock = PathBuf::from(format!("{}.lock", path.display()));
         let mut file = fs::OpenOptions::new()
@@ -182,29 +243,55 @@ fn restore(path: &Path, previous: Option<Vec<u8>>) -> Result<(), AppError> {
     }
 }
 
-/// Hold the native writer lock through the database commit, rolling back on failure.
-fn edit_path_and_commit<T>(
-    path: &Path,
-    edit: impl FnOnce(&str) -> Result<String, AppError>,
+/// Hold every profile's native writer lock through the database commit. Each profile is
+/// edited from its own content and nothing is written until every edit has succeeded; a
+/// later failure restores every profile that was written.
+fn edit_paths_and_commit<T>(
+    paths: &[PathBuf],
+    edit: impl Fn(&str) -> Result<String, AppError>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = FileLock::acquire(path)?;
-    let previous = if path.exists() {
-        Some(fs::read(path).map_err(|error| AppError::io(path, error))?)
-    } else {
-        None
-    };
-    let next = edit(&read_text(path)?)?;
-    atomic_write_private(path, next.as_bytes())?;
-    match commit() {
+    let _guards = paths
+        .iter()
+        .map(|path| FileLock::acquire(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut changes = vec![];
+    for path in paths {
+        let previous = if path.exists() {
+            Some(fs::read(path).map_err(|error| AppError::io(path, error))?)
+        } else {
+            None
+        };
+        let text = read_text(path)?;
+        let next = edit(&text).map_err(|error| locate(error, path))?;
+        if next != text {
+            changes.push((path, previous, next));
+        }
+    }
+    let mut written = vec![];
+    let mut outcome = Ok(());
+    for (path, previous, next) in changes {
+        if let Err(error) = atomic_write_private(path, next.as_bytes()) {
+            outcome = Err(error);
+            break;
+        }
+        written.push((path, previous));
+    }
+    match outcome.and_then(|()| commit()) {
         Ok(result) => Ok(result),
         Err(error) => {
-            restore(path, previous).map_err(|rollback| {
-                AppError::Message(format!(
+            let mut rollback = None;
+            for (path, previous) in written.into_iter().rev() {
+                if let Err(failure) = restore(path, previous) {
+                    rollback.get_or_insert(failure);
+                }
+            }
+            Err(match rollback {
+                Some(rollback) => AppError::Message(format!(
                     "{error}; restoring DeepSeek Harness configuration failed: {rollback}"
-                ))
-            })?;
-            Err(error)
+                )),
+                None => error,
+            })
         }
     }
 }
@@ -255,15 +342,37 @@ fn credential_document(path: &Path) -> Result<Yaml, AppError> {
 }
 
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
-    get_providers_from(&config_path(), &data_dir().join(".credentials.yaml"))
+    providers_in(&config_paths(), &credentials_path())
 }
 
+/// Providers of every profile, an earlier profile winning a repeated id: a provider added
+/// natively in one application still lists, and its next save reaches both.
+fn providers_in(
+    paths: &[PathBuf],
+    credentials_path: &Path,
+) -> Result<IndexMap<String, Value>, AppError> {
+    let credentials = credential_document(credentials_path)?;
+    let mut providers = IndexMap::new();
+    for path in paths {
+        for (id, provider) in
+            profile_providers(path, &credentials).map_err(|error| locate(error, path))?
+        {
+            providers.entry(id).or_insert(provider);
+        }
+    }
+    Ok(providers)
+}
+
+#[cfg(test)]
 fn get_providers_from(
     path: &Path,
     credentials_path: &Path,
 ) -> Result<IndexMap<String, Value>, AppError> {
+    providers_in(&[path.to_path_buf()], credentials_path)
+}
+
+fn profile_providers(path: &Path, credentials: &Yaml) -> Result<IndexMap<String, Value>, AppError> {
     let entry = provider_entry(&read_text(path)?)?;
-    let credentials = credential_document(credentials_path)?;
     let mut result = IndexMap::new();
     for (key, native) in entry["config"]["providers"].as_mapping().unwrap() {
         let id = key
@@ -426,8 +535,8 @@ pub(crate) fn save_and_commit<T>(
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     save_paths_and_commit(
-        &config_path(),
-        &data_dir().join(".credentials.yaml"),
+        &config_paths(),
+        &credentials_path(),
         id,
         config,
         create,
@@ -436,14 +545,15 @@ pub(crate) fn save_and_commit<T>(
 }
 
 fn save_paths_and_commit<T>(
-    path: &Path,
+    paths: &[PathBuf],
     credentials_path: &Path,
     id: &str,
     config: Option<Value>,
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    if config.is_none() && !path.exists() {
+    let paths = write_targets(paths, config.is_some());
+    if paths.is_empty() {
         return commit();
     }
     let _credentials_lock = FileLock::acquire(credentials_path)?;
@@ -537,9 +647,9 @@ fn save_paths_and_commit<T>(
     } else {
         None
     };
-    let result = edit_path_and_commit(
-        path,
-        |text| update_provider(text, id, native, create),
+    let result = edit_paths_and_commit(
+        &paths,
+        |text| update_provider(text, id, native.clone(), create),
         commit,
     );
     if result.is_err() && changed_credentials {
@@ -559,7 +669,24 @@ pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
 }
 
 pub(crate) fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
-    mcp_entries_from(&read_text(&config_path())?)
+    mcp_entries_in(&config_paths())
+}
+
+/// MCP servers of every profile, each `serverName` once: import upserts in order, so a
+/// second copy would overwrite the record the first one just updated.
+fn mcp_entries_in(paths: &[PathBuf]) -> Result<Vec<Yaml>, AppError> {
+    let mut entries: Vec<Yaml> = vec![];
+    for path in paths {
+        for entry in mcp_entries_from(&read_text(path)?).map_err(|error| locate(error, path))? {
+            if !entries
+                .iter()
+                .any(|known| known["config"]["serverName"] == entry["config"]["serverName"])
+            {
+                entries.push(entry);
+            }
+        }
+    }
+    Ok(entries)
 }
 
 fn mcp_entries_from(text: &str) -> Result<Vec<Yaml>, AppError> {
@@ -587,16 +714,17 @@ pub(crate) fn sync_mcp_and_commit<T>(
     spec: Option<&Value>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    sync_mcp_file_and_commit(&config_path(), id, spec, commit)
+    sync_mcp_file_and_commit(&config_paths(), id, spec, commit)
 }
 
 fn sync_mcp_file_and_commit<T>(
-    path: &Path,
+    paths: &[PathBuf],
     id: &str,
     spec: Option<&Value>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    if spec.is_none() && !path.exists() {
+    let paths = write_targets(paths, spec.is_some());
+    if paths.is_empty() {
         return commit();
     }
     if let Some(spec) = spec {
@@ -615,8 +743,8 @@ fn sync_mcp_file_and_commit<T>(
             ));
         }
     }
-    edit_path_and_commit(
-        path,
+    edit_paths_and_commit(
+        &paths,
         |text| {
             let all_entries = entries(text)?;
             let matches: Vec<_> = plugin_entries(&all_entries)
@@ -738,12 +866,245 @@ fn sync_mcp_file_and_commit<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::slice;
 
     // @deepseek-ai/dsh-app-boot@0.2.1-rc.2 PROFILE_PATCH_TEMPLATE.
     const FACTORY_PROFILE: &str = "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n";
 
     fn editor_config() -> Value {
         json!({"name":"Gateway","api":"openai-responses","options":{"baseURL":"https://gateway.example/v1","apiKey":"test-value","headers":{"X-Client":"cc-switch"}},"models":{"test-model":{"name":"Model","limit":{"context":100000,"output":1000},"modalities":{"input":["text","image"],"output":["text"]},"reasoningEfforts":{"off":null,"high":"high"},"compat":{"supportsStore":false}}}})
+    }
+
+    fn profile(home: &Path, name: &str, text: &str) -> PathBuf {
+        let path = home.join("profiles").join(name).join(PATCH_FILE);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, text).unwrap();
+        path
+    }
+
+    fn lock_file(path: &Path) -> PathBuf {
+        PathBuf::from(format!("{}.lock", path.display()))
+    }
+
+    #[test]
+    fn writes_reach_both_profiles_and_create_the_missing_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let paths = profile_patch_paths(home);
+        assert!(paths[0].ends_with("profiles/web/cordis.patch.yml"));
+        let web = profile(
+            home,
+            "web",
+            "- id: llm-pi-ai\n  config:\n    providers:\n      web-only: {apiKeyEnv: WEB_KEY}\n",
+        );
+        let credentials = home.join(".credentials.yaml");
+        save_paths_and_commit(
+            &paths,
+            &credentials,
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+        let desktop = &paths[1];
+        for path in &paths {
+            let entry = provider_entry(&read_text(path).unwrap()).unwrap();
+            assert_eq!(
+                entry["config"]["providers"]["gateway"]["baseURL"],
+                "https://gateway.example/v1"
+            );
+        }
+        // Each profile keeps its own entries; a missing profile starts from DSH's empty layer.
+        let web_providers = provider_entry(&read_text(&web).unwrap()).unwrap();
+        assert_eq!(
+            web_providers["config"]["providers"]["web-only"]["apiKeyEnv"],
+            "WEB_KEY"
+        );
+        let desktop_providers = provider_entry(&read_text(desktop).unwrap()).unwrap();
+        assert!(desktop_providers["config"]["providers"]
+            .get("web-only")
+            .is_none());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(desktop.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        // Adding an id that exists in only one profile is still a conflict.
+        let error = save_paths_and_commit(
+            &paths,
+            &credentials,
+            "web-only",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert!(
+            provider_entry(&read_text(desktop).unwrap()).unwrap()["config"]["providers"]
+                .get("web-only")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn removal_only_edits_profiles_that_exist() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let paths = profile_patch_paths(home);
+        let credentials = home.join(".credentials.yaml");
+        save_paths_and_commit(&paths, &credentials, "gateway", None, false, || Ok(())).unwrap();
+        sync_mcp_file_and_commit(&paths, "test", None, || Ok(())).unwrap();
+        assert!(!home.join("profiles").exists());
+        profile(home, "web", FACTORY_PROFILE);
+        save_paths_and_commit(
+            &paths,
+            &credentials,
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+        fs::remove_dir_all(paths[1].parent().unwrap()).unwrap();
+        save_paths_and_commit(&paths, &credentials, "gateway", None, false, || Ok(())).unwrap();
+        assert!(!paths[1].parent().unwrap().exists());
+        assert!(get_providers_from(&paths[0], &credentials)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn reads_merge_both_profiles_with_the_web_profile_first() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let paths = profile_patch_paths(home);
+        let credentials = home.join(".credentials.yaml");
+        profile(
+            home,
+            "web",
+            "- id: llm-pi-ai\n  config:\n    providers:\n      shared: {displayName: Web, apiKeyEnv: SHARED_KEY}\n- insert:\n  - id: mcp-github\n    name: '@deepseek-ai/dsh-mcp-client'\n    config: {serverName: github, transport: stdio, command: node}\n",
+        );
+        profile(
+            home,
+            "desktop",
+            "- id: llm-pi-ai\n  config:\n    providers:\n      shared: {displayName: Desktop, apiKeyEnv: SHARED_KEY}\n      desktop-only: {apiKeyEnv: DESKTOP_KEY}\n- insert:\n  - id: mcp-github\n    name: '@deepseek-ai/dsh-mcp-client'\n    config: {serverName: github, transport: stdio, command: deno}\n  - id: mcp-gitlab\n    name: '@deepseek-ai/dsh-mcp-client'\n    config: {serverName: gitlab, transport: streamable-http, url: 'https://gitlab.example/mcp'}\n",
+        );
+        let providers = providers_in(&paths, &credentials).unwrap();
+        assert_eq!(
+            providers.keys().collect::<Vec<_>>(),
+            ["shared", "desktop-only"]
+        );
+        assert_eq!(providers["shared"]["name"], "Web");
+        let entries = mcp_entries_in(&paths).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["config"]["command"], "node");
+        assert_eq!(entries[1]["config"]["serverName"], "gitlab");
+        // A broken credential store is its own error, not one of the profiles'.
+        fs::write(&credentials, "version: 2\n").unwrap();
+        let error = providers_in(&paths, &credentials).unwrap_err().to_string();
+        assert!(error.contains("credential"));
+        assert!(!error.contains("cordis.patch.yml"));
+    }
+
+    #[test]
+    fn failed_commit_restores_every_profile_and_the_credentials() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let paths = profile_patch_paths(home);
+        let credentials = home.join(".credentials.yaml");
+        let web_text = "# web\n- id: other\n  config: {value: !!js process.env.WEB}\n";
+        let web = profile(home, "web", web_text);
+        let desktop = profile(home, "desktop", FACTORY_PROFILE);
+        let fail = || Err::<(), _>(AppError::Database("injected failure".into()));
+        assert!(save_paths_and_commit(
+            &paths,
+            &credentials,
+            "gateway",
+            Some(editor_config()),
+            true,
+            fail
+        )
+        .is_err());
+        assert!(
+            sync_mcp_file_and_commit(&paths, "test", Some(&json!({"command":"node"})), fail)
+                .is_err()
+        );
+        assert_eq!(fs::read_to_string(&web).unwrap(), web_text);
+        assert_eq!(fs::read_to_string(&desktop).unwrap(), FACTORY_PROFILE);
+        assert!(!credentials.exists());
+        for path in paths.iter().chain([&credentials]) {
+            assert!(!lock_file(path).exists());
+        }
+    }
+
+    #[test]
+    fn a_held_lock_or_a_failing_edit_in_one_profile_writes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let paths = profile_patch_paths(home);
+        let credentials = home.join(".credentials.yaml");
+        let web = profile(home, "web", FACTORY_PROFILE);
+        let desktop = profile(home, "desktop", FACTORY_PROFILE);
+        {
+            let _guard = FileLock::acquire(&desktop).unwrap();
+            assert!(save_paths_and_commit(
+                &paths,
+                &credentials,
+                "gateway",
+                Some(editor_config()),
+                true,
+                || Ok(())
+            )
+            .is_err());
+        }
+        assert_eq!(fs::read_to_string(&web).unwrap(), FACTORY_PROFILE);
+        assert!(!credentials.exists());
+        assert!(!lock_file(&web).exists());
+        // An entry the editor cannot rewrite names the profile it lives in.
+        let tagged = "- id: llm-pi-ai\n  config:\n    providers:\n      native: {apiKey: !!js process.env.NATIVE_KEY}\n";
+        fs::write(&desktop, tagged).unwrap();
+        let error = save_paths_and_commit(
+            &paths,
+            &credentials,
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("YAML tags"));
+        assert!(error.to_string().contains(&desktop.display().to_string()));
+        assert_eq!(fs::read_to_string(&web).unwrap(), FACTORY_PROFILE);
+        assert_eq!(fs::read_to_string(&desktop).unwrap(), tagged);
+        assert!(!credentials.exists());
+    }
+
+    #[test]
+    fn mcp_sync_reaches_both_profiles_and_lists_each_server_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let paths = profile_patch_paths(home);
+        profile(home, "web", FACTORY_PROFILE);
+        let spec = json!({"type":"http","url":"https://example.com/mcp"});
+        sync_mcp_file_and_commit(&paths, "test", Some(&spec), || Ok(())).unwrap();
+        for path in &paths {
+            let entries = mcp_entries_from(&read_text(path).unwrap()).unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0]["config"]["serverName"], "test");
+        }
+        assert_eq!(mcp_entries_in(&paths).unwrap().len(), 1);
+        sync_mcp_file_and_commit(&paths, "test", None, || Ok(())).unwrap();
+        for path in &paths {
+            assert!(mcp_entries_from(&read_text(path).unwrap())
+                .unwrap()
+                .is_empty());
+        }
     }
 
     #[test]
@@ -753,7 +1114,7 @@ mod tests {
         let credentials = temp.path().join(".credentials.yaml");
         fs::write(&path, FACTORY_PROFILE).unwrap();
         save_paths_and_commit(
-            &path,
+            slice::from_ref(&path),
             &credentials,
             "gateway",
             Some(editor_config()),
@@ -774,7 +1135,7 @@ mod tests {
         let path = temp.path().join("cordis.patch.yml");
         fs::write(&path, FACTORY_PROFILE).unwrap();
         sync_mcp_file_and_commit(
-            &path,
+            slice::from_ref(&path),
             "test",
             Some(&json!({"type":"http","url":"https://example.com/mcp"})),
             || Ok(()),
@@ -802,9 +1163,14 @@ mod tests {
             let temp = tempfile::tempdir().unwrap();
             let path = temp.path().join("cordis.patch.yml");
             fs::write(&path, original).unwrap();
-            sync_mcp_file_and_commit(&path, "test", Some(&json!({"command":"node"})), || Ok(()))
-                .unwrap();
-            sync_mcp_file_and_commit(&path, "test", None, || Ok(())).unwrap();
+            sync_mcp_file_and_commit(
+                slice::from_ref(&path),
+                "test",
+                Some(&json!({"command":"node"})),
+                || Ok(()),
+            )
+            .unwrap();
+            sync_mcp_file_and_commit(slice::from_ref(&path), "test", None, || Ok(())).unwrap();
             let text = read_text(&path).unwrap();
             let document: Yaml = serde_yaml::from_str(&text).unwrap();
             assert_eq!(document, Yaml::Sequence(vec![]));
@@ -836,7 +1202,7 @@ mod tests {
             assert_eq!(get_providers_from(&path, &credentials).unwrap().len(), 1);
             assert_eq!(read_text(&credentials).unwrap(), original);
             save_paths_and_commit(
-                &path,
+                slice::from_ref(&path),
                 &credentials,
                 "gateway",
                 Some(editor_config()),
@@ -877,7 +1243,7 @@ mod tests {
         )
         .unwrap();
         save_paths_and_commit(
-            &path,
+            slice::from_ref(&path),
             &credentials,
             "gateway",
             Some(editor_config()),
@@ -898,16 +1264,29 @@ mod tests {
         let previous_credentials = fs::read(&credentials).unwrap();
         let mut edited = imported["gateway"].clone();
         edited["name"] = json!("Renamed");
-        save_paths_and_commit(&path, &credentials, "gateway", Some(edited), false, || {
-            Ok(())
-        })
+        save_paths_and_commit(
+            slice::from_ref(&path),
+            &credentials,
+            "gateway",
+            Some(edited),
+            false,
+            || Ok(()),
+        )
         .unwrap();
         assert_eq!(fs::read(&credentials).unwrap(), previous_credentials);
         assert_eq!(
             credential_document(&credentials).unwrap()["refs"]["OTHER_KEY"],
             "other"
         );
-        save_paths_and_commit(&path, &credentials, "gateway", None, false, || Ok(())).unwrap();
+        save_paths_and_commit(
+            slice::from_ref(&path),
+            &credentials,
+            "gateway",
+            None,
+            false,
+            || Ok(()),
+        )
+        .unwrap();
         assert!(get_providers_from(&path, &credentials).unwrap().is_empty());
         assert_eq!(fs::read(&credentials).unwrap(), previous_credentials);
     }
@@ -920,7 +1299,7 @@ mod tests {
         fs::write(&path, "- id: other\n").unwrap();
         let fail = || Err::<(), _>(AppError::Database("injected failure".into()));
         assert!(save_paths_and_commit(
-            &path,
+            slice::from_ref(&path),
             &credentials,
             "gateway",
             Some(editor_config()),
@@ -932,7 +1311,7 @@ mod tests {
         assert!(!credentials.exists());
         let _guard = FileLock::acquire(&path).unwrap();
         assert!(save_paths_and_commit(
-            &path,
+            slice::from_ref(&path),
             &credentials,
             "gateway",
             Some(editor_config()),
@@ -949,7 +1328,7 @@ mod tests {
         let path = temp.path().join("cordis.patch.yml");
         fs::write(&path,"# keep\n- id: other\n  config: {dynamic: !!js process.env.VALUE}\n- id: github\n  name: '@deepseek-ai/dsh-mcp-client'\n  disabled: true\n  config:\n    serverName: github\n    transport: stdio\n    command: node\n    toolCallTimeoutMs: 12345\n").unwrap();
         sync_mcp_file_and_commit(
-            &path,
+            slice::from_ref(&path),
             "github",
             Some(&json!({"type":"http","url":"https://example.com/mcp"})),
             || Ok(()),
@@ -963,7 +1342,7 @@ mod tests {
         assert!(entry["config"].get("command").is_none());
         assert!(entry.get("disabled").is_none());
         assert!(sync_mcp_file_and_commit(
-            &path,
+            slice::from_ref(&path),
             "github",
             Some(&json!({"type":"sse","url":"https://example.com/sse"})),
             || Ok(())
@@ -982,7 +1361,7 @@ mod tests {
         let sibling = entries(group).unwrap()[0]["insert"][1].clone();
         assert_eq!(mcp_entries_from(group).unwrap().len(), 1);
         sync_mcp_file_and_commit(
-            &path,
+            slice::from_ref(&path),
             "github",
             Some(&json!({"type":"http","url":"https://example.com/mcp"})),
             || Ok(()),
@@ -995,7 +1374,7 @@ mod tests {
         assert_eq!(entry["config"]["transport"], "streamable-http");
         assert!(entry["config"].get("command").is_none());
         assert!(entry.get("disabled").is_none());
-        sync_mcp_file_and_commit(&path, "github", None, || Ok(())).unwrap();
+        sync_mcp_file_and_commit(slice::from_ref(&path), "github", None, || Ok(())).unwrap();
         let text = read_text(&path).unwrap();
         assert!(text.starts_with(untouched));
         assert!(mcp_entries_from(&text).unwrap().is_empty());
@@ -1014,15 +1393,21 @@ mod tests {
         let group = "- insert:\n  - id: github\n    name: '@deepseek-ai/dsh-mcp-client'\n    config: {serverName: github, transport: stdio, command: node}\n  - id: sibling\n    name: custom-plugin\n    config: {dynamic: !!js process.env.OTHER}\n";
         fs::write(&path, group).unwrap();
         for next in [Some(&spec), None] {
-            assert!(sync_mcp_file_and_commit(&path, "github", next, || Ok(())).is_err());
+            assert!(
+                sync_mcp_file_and_commit(slice::from_ref(&path), "github", next, || Ok(()))
+                    .is_err()
+            );
             assert_eq!(read_text(&path).unwrap(), group);
         }
         // A tagged top-level entry can't be edited, but removing it rewrites nothing else.
         let own = "- id: cc-switch-mcp-github\n  name: '@deepseek-ai/dsh-mcp-client'\n  config: {serverName: github, transport: stdio, command: node, env: {TOKEN: !!js process.env.TOKEN}}\n";
         fs::write(&path, own).unwrap();
-        assert!(sync_mcp_file_and_commit(&path, "github", Some(&spec), || Ok(())).is_err());
+        assert!(
+            sync_mcp_file_and_commit(slice::from_ref(&path), "github", Some(&spec), || Ok(()))
+                .is_err()
+        );
         assert_eq!(read_text(&path).unwrap(), own);
-        sync_mcp_file_and_commit(&path, "github", None, || Ok(())).unwrap();
+        sync_mcp_file_and_commit(slice::from_ref(&path), "github", None, || Ok(())).unwrap();
         assert_eq!(read_text(&path).unwrap(), "[]\n");
     }
 
@@ -1032,13 +1417,16 @@ mod tests {
         let path = temp.path().join("cordis.patch.yml");
         let original = "- id: cc-switch-mcp-test\n  name: unrelated-plugin\n";
         fs::write(&path, original).unwrap();
-        assert!(
-            sync_mcp_file_and_commit(&path, "test", Some(&json!({"command":"node"})), || Ok(()))
-                .is_err()
-        );
+        assert!(sync_mcp_file_and_commit(
+            slice::from_ref(&path),
+            "test",
+            Some(&json!({"command":"node"})),
+            || Ok(())
+        )
+        .is_err());
         assert_eq!(read_text(&path).unwrap(), original);
         assert!(sync_mcp_file_and_commit(
-            &path,
+            slice::from_ref(&path),
             "other",
             Some(&json!({"command":"node"})),
             || Err::<(), _>(AppError::Database("injected".into()))
@@ -1113,8 +1501,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("cordis.patch.yml");
         fs::write(&path, "# keep\n[]\n").unwrap();
-        let result: Result<(), AppError> = edit_path_and_commit(
-            &path,
+        let result: Result<(), AppError> = edit_paths_and_commit(
+            slice::from_ref(&path),
             |_| Ok("- id: test\n".into()),
             || {
                 assert!(path.with_extension("yml.lock").exists());
@@ -1124,7 +1512,10 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(read_text(&path).unwrap(), "# keep\n[]\n");
         let guard = FileLock::acquire(&path).unwrap();
-        assert!(edit_path_and_commit(&path, |_| Ok(String::new()), || Ok(())).is_err());
+        assert!(
+            edit_paths_and_commit(slice::from_ref(&path), |_| Ok(String::new()), || Ok(()))
+                .is_err()
+        );
         drop(guard);
         assert!(!path.with_extension("yml.lock").exists());
     }

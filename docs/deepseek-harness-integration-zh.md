@@ -23,7 +23,7 @@ DeepSeek Harness 的应用 ID 为 `dsh`，命令为 `dsh`，npm 包为 `@deepsee
 - OpenAI Responses：`openai-responses`。
 - Anthropic Messages：`anthropic-messages`。
 
-添加的供应商写入标准 Web profile 的 `llm-pi-ai.config.providers`。多个供应商可以同时添加；「移除」只从原生配置移除，保留 CC Switch 中可再次添加的档案；删除档案同时移除其原生节点。供应商 key 不覆盖同名节点。已有配置在列表刷新时导入，原生节点被其他程序移除后，档案变为未添加。
+添加的供应商写入 `web` 与 `desktop` 两个 profile 的 `llm-pi-ai.config.providers`，命令行版和桌面版都能读到。多个供应商可以同时添加；「移除」只从原生配置移除，保留 CC Switch 中可再次添加的档案；删除档案同时移除其原生节点。供应商 key 不覆盖任一 profile 中的同名节点。已有配置在列表刷新时导入：两个 profile 的供应商合并后导入，同一 id 以 `web` 的版本为准，在 CC Switch 保存后两份一致；原生节点在两个 profile 中都被其他程序移除后，档案变为未添加。
 
 供应商的模型出现在 DeepSeek Harness 的模型选择器中。默认模型、DeepSeek 官方账号登录以及其他 profile 通过 DeepSeek Harness 原生界面管理。CC Switch 的「添加」不会更改原生默认模型。
 
@@ -34,14 +34,14 @@ API Key 写入原生 `.credentials.yaml` 的 `refs`，profile 仅保存 `apiKeyE
 | 能力 | 原生位置与行为 |
 | --- | --- |
 | 数据目录 | `$DSH_HOME`，未设置时为 `~/.dsh` |
-| 供应商、模型 | `profiles/web/cordis.patch.yml` 的 `llm-pi-ai` 插件 override |
+| 供应商、模型 | `profiles/web/cordis.patch.yml` 与 `profiles/desktop/cordis.patch.yml` 的 `llm-pi-ai` 插件 override，两份一起写 |
 | API Key | `.credentials.yaml` 的 `refs`；保留其他 refs 与 records |
-| MCP | 同一 profile 的 `insert` 列表中每个服务器一个 `@deepseek-ai/dsh-mcp-client` 插件条目 |
+| MCP | 两个 profile 各自的 `insert` 列表中每个服务器一个 `@deepseek-ai/dsh-mcp-client` 插件条目 |
 | Skills | `skills/<目录>/SKILL.md` |
 | 全局提示词 | `AGENTS.md` |
 | 会话 | `sessions/<项目>/<会话>/session.vN.jsonl` 或 `.jsonl.zstd` |
 
-`DSH_HOME` 需要由 CC Switch 进程继承。此版本管理标准 `web` profile，其他 profile 继续由 DeepSeek Harness 管理。
+`DSH_HOME` 需要由 CC Switch 进程继承。CC Switch 管理命令行版的 `web` 与桌面版的 `desktop` 两个 profile：供应商与 MCP 的新增、修改一起写入两份，缺少的那份随之创建（DeepSeek Harness 初始化 profile 时只补缺失的文件，不会覆盖已写好的补丁），因此先配置、后安装任意一端都能直接使用；移除只改已存在的 profile。从只写 `web` 的旧版本升级、或桌面版的恢复流程把 `desktop` 补丁改名备份后，此前添加的供应商和 MCP 不会自动补入 `desktop`：在 CC Switch 中重新保存该供应商（或关闭再开启该 MCP 的 DeepSeek Harness 开关）即可写入两份。其他 profile（`headless`、`acp`、`sdk`、自定义）继续由 DeepSeek Harness 管理。
 
 MCP 支持 stdio 和 Streamable HTTP，SSE 会提示改用 HTTP。新增使用 DSH 的 `insert` 补丁创建插件，读取、修改和移除支持同一插入列表中的多个插件；移除最后一个补丁时写回 `[]` 并保留文件头注释。修改保留原生超时、重连等扩展字段；更换传输类型时移除旧的启动或连接参数。发生数据库保存失败时恢复原生文件。
 
@@ -51,7 +51,7 @@ Skills 复用现有应用同步、导入、更新和迁移机制，并沿用 Kim
 
 ## 配置保留与支持边界
 
-原生写入使用原子替换，并遵循 DeepSeek Harness 的 `<文件>.lock` 独占文件锁与 PID 记录。供应商、凭据、MCP 写入与数据库提交之间失败时恢复写入前的内容。
+原生写入使用原子替换，并遵循 DeepSeek Harness 的 `<文件>.lock` 独占文件锁与 PID 记录。两个 profile、凭据与数据库提交任一步失败时，恢复全部写入前的内容；涉及某一 profile 文件的错误会注明该文件路径。
 
 修改保留其他顶层补丁的原始文本（含注释与 `!!js`），并保留目标插件中的其他供应商、配置项及未编辑的扩展字段。被修改的顶层补丁（含其 `insert` 列表）及凭据文档会重新序列化，其中的 YAML 注释和排版不保证保留。无法解析的 YAML、重复插件 ID、无法安全定位的 MCP 条目会报错并保留原文件。供应商本身含动态 YAML 时请在原生配置中编辑。
 
