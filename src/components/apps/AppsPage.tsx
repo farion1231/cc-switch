@@ -737,7 +737,9 @@ function ToolRow({
     (isVersionLoading || broken
       ? null
       : !info?.version
-        ? "install"
+        ? canUninstall
+          ? null
+          : "install"
         : isOutdated && !nodeGap
           ? "update"
           : null);
@@ -772,6 +774,13 @@ function ToolRow({
     <span className="inline-flex items-center gap-1 text-caption font-medium text-warning-text">
       <AlertTriangle className="h-3.5 w-3.5" />
       {t("appsPage.notRunnable")}
+    </span>
+  ) : canUninstall ? (
+    <span
+      className="text-caption text-fg-2"
+      title={t("appsPage.versionUnknown")}
+    >
+      {t("common.unknown")}
     </span>
   ) : (
     <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>

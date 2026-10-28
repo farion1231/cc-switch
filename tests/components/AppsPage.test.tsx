@@ -2083,3 +2083,40 @@ describe("AppsPage visibility column", () => {
     }
   });
 });
+
+describe("AppsPage issue #8889: unknown version when installations exist", () => {
+  it("renders unknown version instead of not installed and hides install button when tool paths exist", async () => {
+    vi.resetModules();
+    missing.add("claude");
+    const claudeReport = report("claude", {
+      installs: [
+        {
+          path: "C:\\Program Files\\Claude\\claude.exe",
+          version: null,
+          runnable: true,
+          error: null,
+          source: "system",
+          is_path_default: true,
+        },
+      ],
+    });
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) => (tool === "claude" ? claudeReport : report(tool))),
+    );
+    mocks.probeToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) => (tool === "claude" ? claudeReport : report(tool))),
+    );
+
+    await renderApps();
+
+    const claudeCard = card("Claude Code");
+    expect(claudeCard.getByText("common.unknown")).toBeInTheDocument();
+    expect(claudeCard.queryByText("common.notInstalled")).toBeNull();
+    expect(
+      claudeCard.queryByRole("button", { name: "settings.toolInstall" }),
+    ).toBeNull();
+    expect(
+      claudeCard.getByRole("button", { name: "appPage.moreActions" }),
+    ).toBeInTheDocument();
+  });
+});
