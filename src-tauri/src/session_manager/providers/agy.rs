@@ -266,6 +266,9 @@ mod tests {
     use super::*;
     #[test]
     fn agy_binary_only_sessions_keep_index_metadata_without_fabricated_transcripts() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project space");
         let workspace_uris =
