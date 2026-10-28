@@ -71,6 +71,11 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("加载主窗口配置失败: {e}"))?
         .build()
         .map_err(|e| format!("创建主窗口失败: {e}"))?;
+    // 重建出的新 WebView2 上没有 setup 时挂的渲染进程崩溃监听（setup 里那次
+    // install 挂在已被销毁的旧窗口上，启动时的轻量模式自动恢复也会走到这条
+    // 路径重建），必须补装，否则用过一次轻量模式后渲染进程死亡就又是永久白屏
+    #[cfg(target_os = "windows")]
+    crate::webview_recovery::install(app);
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
