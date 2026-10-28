@@ -504,7 +504,7 @@ describe("Codex Copilot provider form", () => {
     expect(screen.queryByText("providerPreset.label")).not.toBeInTheDocument();
   });
 
-  it("keeps a self-hosted copilot-api URL as an ordinary Codex provider", async () => {
+  it("keeps a self-hosted URL ordinary and saves a Chat output ceiling", async () => {
     copilotAuthState.isAuthenticated = false;
     const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
     const config = `model_provider = "custom"
@@ -546,6 +546,10 @@ requires_openai_auth = true`;
     // 普通 Responses 卡的高级区默认折叠，上游格式在里面。
     fireEvent.click(screen.getByRole("button", { name: /高级选项/ }));
     await selectFormat("openai_chat");
+    fireEvent.change(
+      await screen.findByRole("spinbutton", { name: "最大输出 tokens" }),
+      { target: { value: "16384" } },
+    );
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
 
@@ -554,6 +558,7 @@ requires_openai_auth = true`;
     expect(saved.meta?.authBinding).toBeUndefined();
     expect(saved.meta?.githubAccountId).toBeUndefined();
     expect(saved.meta?.apiFormat).toBe("openai_chat");
+    expect(saved.meta?.maxOutputTokens).toBe(16384);
     expect(JSON.parse(saved.settingsConfig).auth).toEqual({
       OPENAI_API_KEY: "sk-self-hosted",
     });

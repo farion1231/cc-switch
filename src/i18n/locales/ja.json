@@ -1998,6 +1998,8 @@
     "maxOutputTokensLabel": "最大出力トークン",
     "maxOutputTokensPlaceholder": "空欄の場合はデフォルトの 8192 を使用",
     "maxOutputTokensHint": "Codex は出力上限を送らないため、既定の 8192 では長い回答や深い思考が切れることがあります。この値が Anthropic の max_tokens として送られます。",
+    "maxOutputTokensChatPlaceholder": "空欄の場合はアップストリームのデフォルトを使用",
+    "maxOutputTokensChatHint": "Codex リクエストに出力上限がない場合にのみ使用します。通常モデルには max_tokens、o シリーズには max_completion_tokens を送ります。",
     "promptCacheRoutingLabel": "プロンプトキャッシュルーティング",
     "promptCacheRoutingAuto": "自動（推奨）",
     "promptCacheRoutingEnabled": "有効",
