@@ -726,6 +726,10 @@ impl Database {
                         }
                         Self::set_user_version(conn, 26)?;
                     }
+                    26 => {
+                        Self::migrate_v26_to_v27(conn)?;
+                        Self::set_user_version(conn, 27)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -749,6 +753,31 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// v26 -> v27 迁移：截断历史上超长的 `proxy_request_logs.error_message`（#6706）。
+    ///
+    /// 新写入已由 `UsageLogger` 按字符截断；SQLite 的 `length`/`substr` 对 TEXT
+    /// 同样按字符计数，所以存量行截断后与新写入一致，也不会切坏 UTF-8。
+    fn migrate_v26_to_v27(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_request_logs")?
+            || !Self::has_column(conn, "proxy_request_logs", "error_message")?
+        {
+            return Ok(());
+        }
+        let max_chars = crate::proxy::usage::logger::MAX_ERROR_MESSAGE_CHARS as i64;
+        let truncated = conn
+            .execute(
+                "UPDATE proxy_request_logs
+                 SET error_message = substr(error_message, 1, ?1)
+                 WHERE length(error_message) > ?1",
+                [max_chars],
+            )
+            .map_err(|e| AppError::Database(format!("截断超长错误信息失败: {e}")))?;
+        if truncated > 0 {
+            log::info!("v26 -> v27: truncated {truncated} oversized error_message rows");
+        }
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
@@ -4623,6 +4652,75 @@ mod tests {
         let read = db.get_all_installed_skills()?;
         assert!(!read["s"].apps.agy);
         assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v26_to_v27_truncates_oversized_error_messages() -> Result<(), AppError> {
+        use crate::proxy::usage::logger::MAX_ERROR_MESSAGE_CHARS;
+
+        // A full v26 database, as an upgrading user has it.
+        let db = Database::memory()?;
+        let conn = crate::database::lock_conn!(db.conn);
+        let insert = |id: &str, message: Option<&str>| {
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, status_code,
+                    error_message, latency_ms, created_at
+                 ) VALUES (?1, 'p', 'claude', 'm', 502, ?2, 7, 1700000000)",
+                rusqlite::params![id, message],
+            )
+        };
+        let exact = "e".repeat(MAX_ERROR_MESSAGE_CHARS);
+        let ascii = format!("HTTP 502: {}", "x".repeat(MAX_ERROR_MESSAGE_CHARS * 10));
+        // 3-byte and 4-byte characters: the cut must count characters, not bytes.
+        let cjk = "汉".repeat(MAX_ERROR_MESSAGE_CHARS + 1);
+        let emoji = "🦀".repeat(MAX_ERROR_MESSAGE_CHARS + 1);
+        insert("exact", Some(&exact))?;
+        insert("ascii", Some(&ascii))?;
+        insert("cjk", Some(&cjk))?;
+        insert("emoji", Some(&emoji))?;
+        insert("short", Some("Internal Server Error"))?;
+        insert("none", None)?;
+        Database::set_user_version(&conn, 26)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let stored = |id: &str| -> Result<(Option<String>, i64), AppError> {
+            Ok(conn.query_row(
+                "SELECT error_message, latency_ms FROM proxy_request_logs WHERE request_id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?)
+        };
+        assert_eq!(stored("exact")?.0, Some(exact));
+        assert_eq!(
+            stored("ascii")?.0,
+            Some(ascii.chars().take(MAX_ERROR_MESSAGE_CHARS).collect())
+        );
+        assert_eq!(stored("cjk")?.0, Some("汉".repeat(MAX_ERROR_MESSAGE_CHARS)));
+        assert_eq!(
+            stored("emoji")?.0,
+            Some("🦀".repeat(MAX_ERROR_MESSAGE_CHARS))
+        );
+        assert_eq!(
+            stored("short")?.0,
+            Some("Internal Server Error".to_string())
+        );
+        assert_eq!(stored("none")?, (None, 7), "other columns are untouched");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v26_to_v27_skips_layouts_without_error_message() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE proxy_request_logs (request_id TEXT PRIMARY KEY);")?;
+        Database::set_user_version(&conn, 26)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         Ok(())
     }
 
