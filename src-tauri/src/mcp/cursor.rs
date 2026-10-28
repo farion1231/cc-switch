@@ -116,6 +116,7 @@ pub fn import_from_cursor(config: &mut MultiAppConfig) -> Result<usize, AppError
                         agy: false,
                         kimi: false,
                         omp: false,
+                        dsh: false,
                         cursor: true,
                     },
                     description: None,
