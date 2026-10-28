@@ -4564,6 +4564,7 @@
     "importHelpTitle": "匯入會讀哪些設定",
     "importHelp": "只讀使用者層級設定。用 claude mcp add 預設加到專案裡的 MCP、外掛自帶的 MCP 不會匯入。",
     "columnName": "名稱",
+    "bulkActionsHint": "點擊欄位標題的應用程式圖示，可批次啟用或停用目前清單中的 MCP。",
     "noMatch": "沒有名稱、指令或位址符合「{{query}}」的 MCP",
     "clearSearch": "清除搜尋",
     "listLabel": "MCP 列表",

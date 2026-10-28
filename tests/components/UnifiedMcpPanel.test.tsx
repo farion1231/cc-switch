@@ -191,13 +191,23 @@ describe("UnifiedMcpPanel", () => {
   it("shows the empty state, not a search miss, when there are no servers", () => {
     renderPanel();
     expect(screen.getByText("mcpPage.emptyTitle")).toBeInTheDocument();
+    expect(screen.queryByText("mcpPage.bulkActionsHint")).not.toBeInTheDocument();
     expect(screen.queryByText("mcpPage.noMatch")).not.toBeInTheDocument();
+  });
+
+  it("hides the bulk-action hint while servers are loading", () => {
+    mocks.isLoading = true;
+    mocks.serversMap = { alpha: makeServer("alpha") };
+    renderPanel();
+    expect(screen.getByText("mcp.loading")).toBeInTheDocument();
+    expect(screen.queryByText("mcpPage.bulkActionsHint")).not.toBeInTheDocument();
   });
 
   it("shows the load error instead of the empty state", () => {
     mocks.isError = true;
     renderPanel();
     expect(screen.getByText("mcpPage.loadFailed")).toBeInTheDocument();
+    expect(screen.queryByText("mcpPage.bulkActionsHint")).not.toBeInTheDocument();
     expect(screen.getByText("database is locked")).toBeInTheDocument();
     expect(screen.queryByText("mcpPage.emptyTitle")).not.toBeInTheDocument();
   });
@@ -209,6 +219,29 @@ describe("UnifiedMcpPanel", () => {
     expect(
       within(header).getAllByRole("button", { name: /appMatrix.columnAria/ }),
     ).toHaveLength(3);
+  });
+
+  it("shows a bulk-action hint before opening an app column menu without writing", async () => {
+    mocks.serversMap = { alpha: makeServer("alpha") };
+    renderPanel();
+
+    expect(screen.getByText("mcpPage.bulkActionsHint")).toBeVisible();
+    const codexColumn = screen.getAllByRole("button", {
+      name: /appMatrix.columnAria/,
+    })[1];
+    await userEvent.click(codexColumn);
+    expect(
+      screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
+    ).toBeVisible();
+    expect(mocks.bulkToggle).not.toHaveBeenCalled();
+    expect(mocks.toggle).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("button", { name: "appMatrix.pop.enableRest" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("mcpPage.bulkActionsHint")).toBeVisible();
+    expect(mocks.bulkToggle).not.toHaveBeenCalled();
   });
 
   it("highlights the column header when a cell gets keyboard focus", async () => {
@@ -240,6 +273,7 @@ describe("UnifiedMcpPanel", () => {
       name: /appMatrix.columnAria/,
     })[1];
     await userEvent.click(codexColumn);
+    expect(screen.getByText("mcpPage.bulkActionsHint")).toBeVisible();
     expect(screen.getByText("appMatrix.pop.scopeSearch")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
