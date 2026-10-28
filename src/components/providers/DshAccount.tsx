@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
+import { QuotaRefreshCell } from "@/components/settings/auth/AccountQuota";
 import {
   dshApi,
   type DshAccountStatus,
@@ -45,53 +44,53 @@ function accountName(status: DshAccountStatus, fallback: string): string {
 
 /**
  * 右侧额度列：余额一行、赠金一行（DeepSeek Harness 也分开显示，免得把赠金当成充值），
- * 刷新按钮在它们右边、垂直居中。
+ * 写在别的服务「剩余 xx%」那一格的位置；刷新用各服务共用的「x 分钟前 ↻」。
  */
 function DshBalance({
+  login,
   status,
+  queriedAt,
   loading,
   onRefresh,
 }: {
+  login: string;
   status: DshAccountStatus;
+  queriedAt: number;
   loading: boolean;
   onRefresh: () => void;
 }) {
   const { t } = useTranslation();
   const wallets = status.wallets.map(formatWallet).join(" · ");
   const bonus = status.bonusWallets.map(formatWallet).join(" · ");
+  // 右边让出倒计时格（52）和间距（8），和别的账号「剩余 xx%」那一格右对齐
+  const cell = "me-[60px] self-end text-caption tabular-nums";
   return (
-    <div className="auth-quota-col flex shrink-0 items-center gap-1.5 text-caption">
-      <div className="flex flex-col items-end gap-0.5">
+    <>
+      <div className="auth-quota-col flex shrink-0 flex-col justify-center gap-0.5">
         {status.error ? (
-          <span className="text-fg-3">{t("dsh.account.balanceFailed")}</span>
+          <span className={`${cell} text-fg-3`}>
+            {t("dsh.account.balanceFailed")}
+          </span>
         ) : (
           <>
-            <span className="text-fg-1 tabular-nums">
+            <span className={`${cell} text-fg-1`}>
               {t("dsh.account.balance", { amount: wallets || "—" })}
             </span>
             {bonus && (
-              <span className="text-fg-2 tabular-nums">
+              <span className={`${cell} text-fg-2`}>
                 {t("dsh.account.bonus", { amount: bonus })}
               </span>
             )}
           </>
         )}
       </div>
-      <Button
-        type="button"
-        variant="quiet"
-        size="compact"
-        aria-label={t("dsh.account.refresh")}
-        disabled={loading}
-        onClick={onRefresh}
-      >
-        {loading ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <RefreshCw className="h-3 w-3" />
-        )}
-      </Button>
-    </div>
+      <QuotaRefreshCell
+        login={login}
+        queriedAt={queriedAt}
+        loading={loading}
+        onRefresh={onRefresh}
+      />
+    </>
   );
 }
 
@@ -230,7 +229,9 @@ export function DshAccountLogin({ helpSide }: DshAccountLoginProps) {
             users: [],
             quota: data.expired ? undefined : (
               <DshBalance
+                login={name}
                 status={data}
+                queriedAt={status.dataUpdatedAt}
                 loading={status.isFetching}
                 onRefresh={() => void status.refetch()}
               />

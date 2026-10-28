@@ -5097,7 +5097,6 @@
       "balance": "余额 {{amount}}",
       "bonus": "赠金 {{amount}}",
       "balanceFailed": "余额暂时查不到",
-      "refresh": "刷新余额",
       "noticeSignedOutTitle": "未登录 DeepSeek 账号",
       "noticeSignedOut": "在授权中心或 DeepSeek Harness 里用浏览器登录 DeepSeek 账号后，可直接使用账号下的模型；Web 和 Desktop 共用这份登录。",
       "noticeExpiredTitle": "DeepSeek 账号登录已失效",

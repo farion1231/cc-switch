@@ -5097,7 +5097,6 @@
       "balance": "Balance {{amount}}",
       "bonus": "Bonus {{amount}}",
       "balanceFailed": "Balance unavailable right now",
-      "refresh": "Refresh balance",
       "noticeSignedOutTitle": "Not signed in to a DeepSeek account",
       "noticeSignedOut": "Sign in to your DeepSeek account through the browser, in the Auth Center or in DeepSeek Harness, to use the account's models. Web and Desktop share this sign-in.",
       "noticeExpiredTitle": "DeepSeek account sign-in expired",

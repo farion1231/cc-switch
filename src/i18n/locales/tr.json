@@ -5053,7 +5053,6 @@
       "balance": "Bakiye {{amount}}",
       "bonus": "Bonus {{amount}}",
       "balanceFailed": "Bakiye şu anda alınamıyor",
-      "refresh": "Bakiyeyi yenile",
       "noticeSignedOutTitle": "DeepSeek hesabında oturum açılmamış",
       "noticeSignedOut": "Hesabın modellerini kullanmak için Yetkilendirme Merkezi'nde veya DeepSeek Harness'ta tarayıcı üzerinden DeepSeek hesabınızda oturum açın. Web ve Desktop bu oturumu paylaşır.",
       "noticeExpiredTitle": "DeepSeek hesabı oturumunun süresi doldu",
