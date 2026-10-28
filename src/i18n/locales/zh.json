@@ -270,7 +270,50 @@
     "formSubtitleStack": "{{app}}（聚合模式）",
     "editCurrentNoticeFile": "这是正在使用的供应商。保存后会立即写进",
     "editCurrentNoticeFileEnd": "，下一次请求生效。",
-    "editCurrentNotice": "这是正在使用的供应商。保存后立即生效，下一次请求就用新的设置。"
+    "editCurrentNotice": "这是正在使用的供应商。保存后立即生效，下一次请求就用新的设置。",
+    "transfer": {
+      "errors": {
+        "invalidPayload": "复制的供应商字段格式不正确，请重新复制卡片配置。",
+        "invalidUrl": "供应商接口地址必须是有效的 HTTP 或 HTTPS 地址，且不能包含用户名或密码。",
+        "placeholderKey": "不能粘贴代理占位凭据或未解析的密钥引用。",
+        "accountAuth": "此卡使用账号登录或专用配置，不能复制为 API Key 卡。请在目标应用选择对应预设并登录。",
+        "cloudAuth": "此卡使用云平台专用认证，不能转换为普通 API Key 卡。请在目标应用选择云平台预设。",
+        "unparsable": "供应商配置无法解析，请先修复配置再复制。",
+        "noPlainKey": "此卡没有可复制的明文 API Key（可能使用官方登录、环境变量或代理占位凭据）。请在目标应用配置认证。",
+        "managedEndpoint": "此端点使用托管账号认证，请在目标应用选择对应账号，不能复制为 API Key 卡。",
+        "unsupportedTarget": "不支持的目标应用。"
+      },
+      "warnings": {
+        "presetEndpoint": "已使用目标应用同套餐预设的接口地址：{{url}}。请确认此密钥可用于该端点。",
+        "duplicateName": "目标模型列表每个 ID 只能保留一个显示名：{{id}} 保留“{{kept}}”，“{{dropped}}”未写入。",
+        "singleModel": "目标应用的此表单只设置一个默认模型，已选择 {{model}}；未写入：{{models}}。",
+        "protocolUnsupported": "源接口协议为 {{protocol}}，目标应用不支持该协议；URL 和 Key 仅作预填，请选择兼容的端点及协议后保存。",
+        "protocolUnknown": "未能确认源接口协议，已使用目标应用默认协议，请在保存前确认。",
+        "fullUrl": "源配置使用完整请求 URL，目标会按基础地址拼接路径；请改为基础地址，避免重复路径。",
+        "requestBodyDropped": "目标应用没有请求体覆盖功能，未复制请求体覆盖；请在目标高级配置中核对。",
+        "proxyRouting": "源接口协议或高级请求设置需要 CC Switch 本地路由才能生效；直连不会转换协议或应用这些设置。",
+        "advancedDropped": "目标表单不支持自定义 User-Agent 或请求覆盖，未复制这些高级字段，请核对接口兼容性。",
+        "claudeStack": "以下模型不能一一放入 Claude 的四个角色槽，已保留到聚合模型列表，请核对角色映射：{{models}}。",
+        "desktopUnmapped": "Desktop 只有四个角色槽，以下模型未写入，请在表单中选择需要的模型：{{models}}。",
+        "desktopDefaults": "源卡未指定模型，已填入 Desktop 官方默认角色模型，请确认上游支持。",
+        "desktopProxy": "Desktop 草稿使用本地路由模式，需要 CC Switch 路由服务运行；保存不会自动启用供应商。",
+        "missingParams": "模型 {{model}} 缺少 {{fields}}，目标预设也未提供；请在表单补全后保存。",
+        "kimiContext": "部分模型没有上下文长度，已使用 Kimi 表单的占位值 {{size}}，请核对后保存。",
+        "noModels": "源卡没有模型列表，已保留目标默认值；请在表单获取或添加模型后保存。"
+      },
+      "copy": "复制配置",
+      "duplicate": "创建副本",
+      "copied": "已复制“{{name}}”，切换应用后可粘贴添加",
+      "paste": "粘贴添加",
+      "pasteTip": "复制供应商配置后粘贴添加（{{shortcut}}）",
+      "drag": "拖到左侧应用以复制配置",
+      "preview": "已带入复制的供应商信息，检查后保存即可添加。",
+      "copyTo": "复制到 {{app}}",
+      "cardLabel": "供应商 {{name}}",
+      "clipboardEmpty": "剪贴板中没有供应商配置，请先从供应商卡片复制配置。",
+      "clipboardReadFailed": "无法读取剪贴板，请重试或使用系统粘贴快捷键。",
+      "copyIncludesKey": "包含 API Key 和模型映射"
+    }
   },
   "claudeCode": {
     "needsRouting": "需要路由",

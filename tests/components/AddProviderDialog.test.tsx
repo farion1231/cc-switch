@@ -12,6 +12,7 @@ import type { ProviderFormValues } from "@/components/providers/forms/ProviderFo
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { providersApi } from "@/lib/api";
 import type { ProviderEditorView } from "@/lib/api/providers";
+import type { ProviderFormProps } from "@/components/providers/forms/ProviderForm";
 import { usePresetStep } from "@/components/providers/forms/presetStep";
 import { createPortal } from "react-dom";
 
@@ -49,6 +50,10 @@ let universalProps: {
   onUniversalPresetSelect?: unknown;
   onManageUniversalProviders?: unknown;
 } = {};
+let capturedDraft: Pick<
+  ProviderFormProps,
+  "initialData" | "initialDataIsDraft" | "draftProviderKey"
+> = {};
 
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
@@ -58,6 +63,9 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     onEditorBaseChange,
     onUniversalPresetSelect,
     onManageUniversalProviders,
+    initialData,
+    initialDataIsDraft,
+    draftProviderKey,
   }: {
     onSubmit: (values: ProviderFormValues) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
@@ -68,10 +76,14 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     ) => void;
     onUniversalPresetSelect?: unknown;
     onManageUniversalProviders?: unknown;
+    initialData?: ProviderFormProps["initialData"];
+    initialDataIsDraft?: boolean;
+    draftProviderKey?: string;
   }) => {
     const presetStep = usePresetStep();
     const registerSelector = presetStep?.registerSelector;
     universalProps = { onUniversalPresetSelect, onManageUniversalProviders };
+    capturedDraft = { initialData, initialDataIsDraft, draftProviderKey };
     useEffect(() => {
       if (mockHasPresetSelector) return registerSelector?.();
     }, [registerSelector]);
@@ -124,6 +136,7 @@ describe("AddProviderDialog", () => {
     mockProjectedBase = null;
     mockProjectedDraft = undefined;
     submitReadyCallbacks = [];
+    capturedDraft = {};
     mockFormValues = {
       name: "Test Provider",
       websiteUrl: "https://provider.example.com",
@@ -137,6 +150,106 @@ describe("AddProviderDialog", () => {
         },
       },
     };
+  });
+
+  it("prefills a copied Claude card as a new draft over the target live configuration", async () => {
+    const base = {
+      env: { TARGET_SETTING: "keep" },
+      permissions: { allow: ["Read"] },
+    };
+    vi.spyOn(providersApi, "getEditorView").mockResolvedValue({
+      settings: base,
+      inactive: [],
+    });
+    const submit = vi.fn();
+    const close = vi.fn();
+    mockHasPresetSelector = true;
+    const draft = {
+      id: "",
+      name: "Gateway",
+      icon: "custom-icon",
+      websiteUrl: "https://example.test",
+      category: "custom" as const,
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://example.test/v1",
+          ANTHROPIC_AUTH_TOKEN: "test-key",
+        },
+      },
+    };
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={close}
+        appId="claude"
+        onSubmit={submit}
+        initialData={draft}
+        transferWarnings={["Check the model map"]}
+      />,
+    );
+    await screen.findByText("Check the model map");
+    await waitFor(() =>
+      expect(capturedDraft.initialData?.name).toBe("Gateway"),
+    );
+    expect(capturedDraft.initialDataIsDraft).toBe(true);
+    expect(capturedDraft.draftProviderKey).toMatch(/^copy-/);
+    expect(capturedDraft.initialData?.settingsConfig).toMatchObject({
+      env: {
+        TARGET_SETTING: "keep",
+        ANTHROPIC_AUTH_TOKEN: "test-key",
+        CLAUDE_CODE_AUTO_MODE_SERVER: "0",
+      },
+      permissions: base.permissions,
+    });
+    expect(
+      screen.queryByRole("button", { name: "pick-preset" }),
+    ).not.toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
+    expect(draft.settingsConfig.env).not.toHaveProperty("TARGET_SETTING");
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.backToList" }),
+    );
+    expect(close).toHaveBeenCalledWith(false);
+  });
+
+  it("projects a copied Codex draft using its target editor before presenting the form", async () => {
+    const draft = {
+      id: "",
+      name: "Gateway",
+      category: "custom" as const,
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "test-key" },
+        config: 'model = "example"',
+      },
+    };
+    const shown = {
+      auth: draft.settingsConfig.auth,
+      config: 'model = "example"\nuser_setting = true',
+    };
+    const view = vi
+      .spyOn(providersApi, "getEditorView")
+      .mockResolvedValue({ settings: shown, inactive: [] });
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="codex"
+        onSubmit={vi.fn()}
+        initialData={draft}
+      />,
+    );
+    await waitFor(() =>
+      expect(capturedDraft.initialData?.settingsConfig).toEqual(shown),
+    );
+    expect(view).toHaveBeenCalledWith(
+      "codex",
+      draft.settingsConfig,
+      "custom",
+      undefined,
+      undefined,
+    );
+    expect(capturedDraft.initialDataIsDraft).toBe(true);
+    expect(draft.settingsConfig.config).not.toContain("user_setting");
   });
 
   it("opens without a fade while Claude's live base loads, then shows the picker", async () => {

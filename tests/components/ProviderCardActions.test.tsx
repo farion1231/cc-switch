@@ -22,6 +22,31 @@ async function openMenu(presentation: CardPresentation) {
 }
 
 describe("ProviderCardActions — mode items in the more menu", () => {
+  it("distinguishes copying portable configuration from creating a duplicate", async () => {
+    const copy = vi.fn();
+    const duplicate = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ProviderCardActions
+        providerName="Gateway"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={duplicate}
+        onCopyConfiguration={copy}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "providerCard.action.more" }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu).getByRole("menuitem", { name: "创建副本" }),
+    ).toBeInTheDocument();
+    await user.click(within(menu).getByRole("menuitem", { name: "复制配置" }));
+    expect(copy).toHaveBeenCalledOnce();
+    expect(duplicate).not.toHaveBeenCalled();
+  });
   it("lists them first", async () => {
     const onSelect = vi.fn();
     const { user, menu } = await openMenu({

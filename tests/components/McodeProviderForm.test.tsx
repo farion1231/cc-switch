@@ -58,6 +58,24 @@ const original = {
 };
 
 describe("McodeProviderForm", () => {
+  it("saves a prefilled copy with a new editable key instead of an existing provider identity", async () => {
+    const submit = vi.fn();
+    render(
+      <McodeProviderForm
+        appId="mcode"
+        initialData={{ name: "Copied", settingsConfig: original }}
+        initialDataIsDraft
+        draftProviderKey="copy-new"
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByDisplayValue("copy-new")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0][0].providerKey).toBe("copy-new");
+  });
   it.each([true, false])(
     "edits native fields while preserving model options and unknown settings (explicit API: %s)",
     async (explicitApi) => {

@@ -47,6 +47,7 @@ import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 import { ProviderCardActions } from "./ProviderCardActions";
 import { terminalIsIsolated } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
+import { useProviderTransferControls } from "@/contexts/ProviderTransferContext";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -198,6 +199,7 @@ export function ProviderCard({
   dragHandleProps,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const transfer = useProviderTransferControls();
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
   const managedCodexAccountId = resolveManagedAccountId(
     provider.meta,
@@ -351,12 +353,26 @@ export function ProviderCard({
   };
   return (
     <div
+      tabIndex={transfer ? 0 : undefined}
+      role={transfer ? "group" : undefined}
+      aria-label={
+        transfer
+          ? t("provider.transfer.cardLabel", { name: provider.name })
+          : undefined
+      }
+      onFocus={() => transfer?.select(provider, appId)}
+      onClick={() => transfer?.select(provider, appId)}
       className={cn(
         "group relative rounded-panel border transition-[border-color,box-shadow,background-color] duration-150",
         presentation.tone
           ? TONE_CLASS[presentation.tone]
           : "border-border bg-surface hover:border-border-strong hover:shadow-v7-sm",
         dragHandleProps?.isDragging && "cursor-grabbing shadow-v7-md",
+        transfer &&
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action",
+        transfer?.selectedProvider?.id === provider.id &&
+          transfer.selectedProvider.app === appId &&
+          "ring-1 ring-action",
       )}
     >
       <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
@@ -377,22 +393,40 @@ export function ProviderCard({
           <span className="w-4 shrink-0" />
         )}
 
-        <ProviderIconBox
-          icon={resolveProviderIcon(appId, provider.icon, provider.iconColor)}
-          name={provider.name}
-          color={provider.iconColor}
-          className={cn(
-            // 底色固定为白，图标颜色也要固定：单色（currentColor）图标和首字母
-            // fallback 不能继承深色模式下的浅色文字
-            "bg-white text-neutral-900",
-            presentation.dim && "opacity-60",
-          )}
-          fallbackClassName="bg-transparent text-neutral-600"
-        />
+        <div
+          draggable={Boolean(transfer)}
+          onDragStart={(event) => transfer?.startDrag(event, provider, appId)}
+          onDragEnd={() => transfer?.endDrag()}
+          title={
+            transfer
+              ? t("provider.transfer.drag", {
+                  defaultValue: "拖到左侧应用以复制配置",
+                })
+              : undefined
+          }
+        >
+          <ProviderIconBox
+            icon={resolveProviderIcon(appId, provider.icon, provider.iconColor)}
+            name={provider.name}
+            color={provider.iconColor}
+            className={cn(
+              // 底色固定为白，图标颜色也要固定：单色（currentColor）图标和首字母
+              // fallback 不能继承深色模式下的浅色文字
+              "bg-white text-neutral-900",
+              presentation.dim && "opacity-60",
+            )}
+            fallbackClassName="bg-transparent text-neutral-600"
+          />
+        </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1.5">
             <h3
+              draggable={Boolean(transfer)}
+              onDragStart={(event) =>
+                transfer?.startDrag(event, provider, appId)
+              }
+              onDragEnd={() => transfer?.endDrag()}
               className={cn(
                 "m-0 min-w-0 truncate text-strong",
                 presentation.dim ? "text-fg-2" : "text-fg-1",
@@ -637,6 +671,9 @@ export function ProviderCard({
             </div>
           </div>
           <ProviderCardActions
+            onCopyConfiguration={
+              transfer ? () => transfer.copy(provider, appId) : undefined
+            }
             providerName={provider.name}
             presentation={presentation}
             onEdit={() => onEdit(provider)}

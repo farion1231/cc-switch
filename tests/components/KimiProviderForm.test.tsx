@@ -80,6 +80,37 @@ function setup(
 }
 
 describe("KimiProviderForm", () => {
+  it("saves copied API fields under a new provider key", async () => {
+    const submit = vi.fn();
+    const copied = {
+      provider: {
+        type: "anthropic",
+        base_url: "https://example.test",
+        api_key: "test-only",
+      },
+      models: { example: { model: "example", max_context_size: 200000 } },
+    };
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <KimiProviderForm
+          appId="kimi"
+          initialData={{ name: "Copied", settingsConfig: copied }}
+          initialDataIsDraft
+          draftProviderKey="copy-new"
+          submitLabel="Save"
+          onSubmit={submit}
+          onCancel={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByDisplayValue("copy-new")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0][0].providerKey).toBe("copy-new");
+    expect(
+      JSON.parse(submit.mock.calls[0][0].settingsConfig).models.example,
+    ).toMatchObject({ model: "example", provider: "copy-new" });
+  });
   it.each(["import", "json"] as const)(
     "preserves native capabilities from %s without exposing audio or video controls",
     async (source) => {

@@ -270,7 +270,50 @@
     "formSubtitleStack": "{{app}} (Aggregation mode)",
     "editCurrentNoticeFile": "This is the provider in use. Saving writes it to",
     "editCurrentNoticeFileEnd": " right away; the next request uses it.",
-    "editCurrentNotice": "This is the provider in use. Saving takes effect right away; the next request uses the new settings."
+    "editCurrentNotice": "This is the provider in use. Saving takes effect right away; the next request uses the new settings.",
+    "transfer": {
+      "errors": {
+        "invalidPayload": "The copied provider data is malformed. Copy the provider card again.",
+        "invalidUrl": "The provider endpoint must be a valid HTTP or HTTPS URL without a username or password.",
+        "placeholderKey": "Proxy placeholder credentials and unresolved key references cannot be pasted.",
+        "accountAuth": "This card signs in with an account or uses a dedicated configuration, so it cannot be copied as an API key card. Choose the matching preset in the target app and sign in there.",
+        "cloudAuth": "This card uses cloud platform authentication and cannot become a plain API key card. Choose the cloud platform preset in the target app.",
+        "unparsable": "The provider configuration could not be read. Fix it before copying.",
+        "noPlainKey": "This card has no plain-text API key to copy (it may use an official sign-in, an environment variable, or a proxy placeholder). Configure authentication in the target app.",
+        "managedEndpoint": "This endpoint uses managed account authentication. Choose the matching account in the target app; it cannot be copied as an API key card.",
+        "unsupportedTarget": "This target app is not supported."
+      },
+      "warnings": {
+        "presetEndpoint": "Using the endpoint from the target app's matching plan preset: {{url}}. Make sure this key works with it.",
+        "duplicateName": "The target model list keeps one display name per ID: {{id}} keeps “{{kept}}”; “{{dropped}}” was not written.",
+        "singleModel": "This target form sets a single default model; {{model}} was chosen. Not written: {{models}}.",
+        "protocolUnsupported": "The source endpoint uses the {{protocol}} protocol, which the target app does not support. The URL and key are only prefilled; choose a compatible endpoint and protocol before saving.",
+        "protocolUnknown": "The source protocol could not be determined, so the target app's default protocol is used. Check it before saving.",
+        "fullUrl": "The source uses a full request URL, but the target appends paths to a base URL. Change it to the base URL to avoid duplicated paths.",
+        "requestBodyDropped": "The target app has no request body overrides, so they were not copied. Review the target's advanced settings.",
+        "proxyRouting": "The source protocol or advanced request settings only take effect through CC Switch local routing; direct connections do not convert protocols or apply them.",
+        "advancedDropped": "The target form does not support a custom User-Agent or request overrides, so they were not copied. Check endpoint compatibility.",
+        "claudeStack": "These models do not fit Claude's four role slots and were kept in the stacked model list. Review the role mappings: {{models}}.",
+        "desktopUnmapped": "Claude Desktop has four role slots; these models were not written. Pick the models you need in the form: {{models}}.",
+        "desktopDefaults": "The source card names no models, so the official Claude Desktop role defaults were filled in. Make sure the upstream supports them.",
+        "desktopProxy": "The Claude Desktop draft uses local routing, which requires the CC Switch routing service. Saving does not activate the provider.",
+        "missingParams": "Model {{model}} is missing {{fields}}, and the target preset does not provide them. Fill them in before saving.",
+        "kimiContext": "Some models have no context length; the Kimi form placeholder {{size}} was used. Review before saving.",
+        "noModels": "The source card has no model list, so the target defaults were kept. Fetch or add models in the form before saving."
+      },
+      "copy": "Copy configuration",
+      "duplicate": "Create duplicate",
+      "copied": "Copied “{{name}}”. Switch apps to paste and add.",
+      "paste": "Paste and add",
+      "pasteTip": "Copy a provider configuration, then paste to add ({{shortcut}}).",
+      "drag": "Drag to an app in the sidebar to copy configuration",
+      "preview": "Copied provider details are filled in. Review and save to add.",
+      "copyTo": "Copy to {{app}}",
+      "cardLabel": "Provider {{name}}",
+      "clipboardEmpty": "The clipboard has no provider configuration. Copy one from a provider card first.",
+      "clipboardReadFailed": "Could not read the clipboard. Try again or use the system paste shortcut.",
+      "copyIncludesKey": "Includes API key and model mappings"
+    }
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",

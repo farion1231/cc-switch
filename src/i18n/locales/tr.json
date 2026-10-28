@@ -247,7 +247,50 @@
     "formSubtitleStack": "{{app}} (Birleştirme modu)",
     "editCurrentNoticeFile": "Bu, kullanımda olan sağlayıcıdır. Kaydetme şunu yazar:",
     "editCurrentNoticeFileEnd": "hemen; sonraki istek bunu kullanır.",
-    "editCurrentNotice": "Bu, kullanımda olan sağlayıcıdır. Kaydetme hemen etkili olur; sonraki istek yeni ayarları kullanır."
+    "editCurrentNotice": "Bu, kullanımda olan sağlayıcıdır. Kaydetme hemen etkili olur; sonraki istek yeni ayarları kullanır.",
+    "transfer": {
+      "errors": {
+        "invalidPayload": "Kopyalanan sağlayıcı verisi hatalı. Sağlayıcı kartını yeniden kopyalayın.",
+        "invalidUrl": "Sağlayıcı uç noktası, kullanıcı adı veya parola içermeyen geçerli bir HTTP ya da HTTPS URL'si olmalıdır.",
+        "placeholderKey": "Proxy yer tutucu kimlik bilgileri ve çözümlenmemiş anahtar başvuruları yapıştırılamaz.",
+        "accountAuth": "Bu kart hesap girişi veya özel bir yapılandırma kullanıyor, bu yüzden API anahtarı kartı olarak kopyalanamaz. Hedef uygulamada ilgili ön ayarı seçip oradan giriş yapın.",
+        "cloudAuth": "Bu kart bulut platformu kimlik doğrulaması kullanıyor ve düz bir API anahtarı kartına dönüştürülemez. Hedef uygulamada bulut platformu ön ayarını seçin.",
+        "unparsable": "Sağlayıcı yapılandırması okunamadı. Kopyalamadan önce düzeltin.",
+        "noPlainKey": "Bu kartta kopyalanabilecek düz metin API anahtarı yok (resmi giriş, ortam değişkeni veya proxy yer tutucusu kullanıyor olabilir). Kimlik doğrulamayı hedef uygulamada yapılandırın.",
+        "managedEndpoint": "Bu uç nokta yönetilen hesap kimlik doğrulaması kullanıyor. Hedef uygulamada ilgili hesabı seçin; API anahtarı kartı olarak kopyalanamaz.",
+        "unsupportedTarget": "Bu hedef uygulama desteklenmiyor."
+      },
+      "warnings": {
+        "presetEndpoint": "Hedef uygulamanın eşleşen plan ön ayarındaki uç nokta kullanıldı: {{url}}. Bu anahtarın bu uç noktada çalıştığından emin olun.",
+        "duplicateName": "Hedef model listesi her kimlik için tek bir görünen ad tutar: {{id}} için “{{kept}}” korundu, “{{dropped}}” yazılmadı.",
+        "singleModel": "Bu hedef form yalnızca tek bir varsayılan model ayarlar; {{model}} seçildi. Yazılmayanlar: {{models}}.",
+        "protocolUnsupported": "Kaynak uç nokta {{protocol}} protokolünü kullanıyor ve hedef uygulama bunu desteklemiyor. URL ve anahtar yalnızca önceden dolduruldu; kaydetmeden önce uyumlu bir uç nokta ve protokol seçin.",
+        "protocolUnknown": "Kaynak protokol belirlenemedi, hedef uygulamanın varsayılan protokolü kullanıldı. Kaydetmeden önce kontrol edin.",
+        "fullUrl": "Kaynak tam bir istek URL'si kullanıyor, ancak hedef yolları temel URL'ye ekler. Yinelenen yolları önlemek için temel URL'ye değiştirin.",
+        "requestBodyDropped": "Hedef uygulamada istek gövdesi geçersiz kılma özelliği yok, bu yüzden kopyalanmadı. Hedefin gelişmiş ayarlarını gözden geçirin.",
+        "proxyRouting": "Kaynak protokol veya gelişmiş istek ayarları yalnızca CC Switch yerel yönlendirmesi üzerinden etkili olur; doğrudan bağlantılar protokol dönüştürmez ve bunları uygulamaz.",
+        "advancedDropped": "Hedef form özel User-Agent veya istek geçersiz kılmalarını desteklemiyor, bu yüzden kopyalanmadı. Uç nokta uyumluluğunu kontrol edin.",
+        "claudeStack": "Bu modeller Claude'un dört rol yuvasına sığmadığından yığın model listesinde tutuldu. Rol eşlemelerini gözden geçirin: {{models}}.",
+        "desktopUnmapped": "Claude Desktop'ta dört rol yuvası var; bu modeller yazılmadı. İhtiyacınız olan modelleri formda seçin: {{models}}.",
+        "desktopDefaults": "Kaynak kart model belirtmiyor, bu yüzden Claude Desktop'ın resmi varsayılan rol modelleri dolduruldu. Üst sağlayıcının bunları desteklediğinden emin olun.",
+        "desktopProxy": "Claude Desktop taslağı yerel yönlendirme kullanır ve CC Switch yönlendirme hizmetini gerektirir. Kaydetmek sağlayıcıyı etkinleştirmez.",
+        "missingParams": "{{model}} modelinde {{fields}} eksik ve hedef ön ayar da bunları sağlamıyor. Kaydetmeden önce formda doldurun.",
+        "kimiContext": "Bazı modellerin bağlam uzunluğu yok; Kimi formundaki {{size}} yer tutucu değeri kullanıldı. Kaydetmeden önce gözden geçirin.",
+        "noModels": "Kaynak kartın model listesi yok, bu yüzden hedefin varsayılanları korundu. Kaydetmeden önce formda modelleri getirin veya ekleyin."
+      },
+      "copy": "Yapılandırmayı kopyala",
+      "duplicate": "Kopya oluştur",
+      "copied": "“{{name}}” kopyalandı. Yapıştırıp eklemek için uygulamayı değiştirin.",
+      "paste": "Yapıştır ve ekle",
+      "pasteTip": "Sağlayıcı yapılandırmasını kopyalayıp yapıştırarak ekleyin ({{shortcut}}).",
+      "drag": "Yapılandırmayı kopyalamak için kenar çubuğundaki bir uygulamaya sürükleyin",
+      "preview": "Kopyalanan sağlayıcı bilgileri dolduruldu. Eklemek için gözden geçirip kaydedin.",
+      "copyTo": "{{app}} uygulamasına kopyala",
+      "cardLabel": "Sağlayıcı {{name}}",
+      "clipboardEmpty": "Panoda sağlayıcı yapılandırması yok. Önce bir sağlayıcı kartından yapılandırmayı kopyalayın.",
+      "clipboardReadFailed": "Pano okunamadı. Yeniden deneyin veya sistemin yapıştırma kısayolunu kullanın.",
+      "copyIncludesKey": "API anahtarı ve model eşlemelerini içerir"
+    }
   },
   "claudeCode": {
     "needsRouting": "Yönlendirme Gerekiyor",

@@ -102,7 +102,9 @@ const PRESETS = [
 
 export function KimiProviderForm({
   providerId,
+  draftProviderKey,
   initialData,
+  initialDataIsDraft = false,
   onSubmit,
   onCancel,
   submitLabel,
@@ -119,7 +121,9 @@ export function KimiProviderForm({
   );
   const [text, setText] = useState(JSON.stringify(config, null, 2));
   const [jsonValid, setJsonValid] = useState(true);
-  const [providerKey, setProviderKey] = useState(providerId ?? "");
+  const [providerKey, setProviderKey] = useState(
+    providerId ?? draftProviderKey ?? "",
+  );
   const [presetId, setPresetId] = useState("custom");
   const [category, setCategory] = useState<ProviderCategory>(
     initialData?.category ?? "custom",
@@ -127,7 +131,7 @@ export function KimiProviderForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { data: existing } = useProvidersQuery("kimi");
-  const isEdit = Boolean(initialData);
+  const isEdit = Boolean(initialData) && !initialDataIsDraft;
   const step = usePresetStep();
   const isAccountLogin = !isEdit && presetId === KIMI_ACCOUNT_PRESET_ID;
   const showAccountLogin = isAccountLogin && (!step || step.step === "form");

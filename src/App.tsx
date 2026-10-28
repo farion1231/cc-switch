@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
+  ClipboardPaste,
   KeyRound,
   MoreHorizontal,
   Plus,
@@ -142,6 +143,8 @@ import {
   orderAppIds,
 } from "@/config/appConfig";
 import type { PiFamilyAppId } from "@/lib/api/pi";
+import { ProviderTransferScope } from "@/contexts/ProviderTransferContext";
+import { useProviderTransfer } from "@/hooks/useProviderTransfer";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -178,6 +181,11 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [transferDraft, setTransferDraft] = useState<{
+    provider: Provider;
+    warnings: string[];
+    nonce: number;
+  } | null>(null);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
   const [connectionStatusSlot, setConnectionStatusSlot] =
@@ -317,6 +325,7 @@ function App() {
   const currentModeView =
     providerModeView?.app === activeApp ? providerModeView.view : undefined;
   const openAddProvider = (modeView: AppMode | undefined) => {
+    setTransferDraft(null);
     setFormModeView(modeView);
     setIsAddOpen(true);
   };
@@ -832,6 +841,7 @@ function App() {
   // 面板的 appId 跟着 activeApp 走，开着切应用会把 A 应用的供应商保存进 B 应用
   const closeProviderPanels = () => {
     setIsAddOpen(false);
+    setTransferDraft(null);
     setEditingProvider(null);
     setUsageProvider(null);
   };
@@ -871,6 +881,30 @@ function App() {
     localStorage.setItem(APP_STORAGE_KEY, app);
     setCurrentView("providers");
   };
+
+  const providerTransfer = useProviderTransfer({
+    app: activeApp,
+    providers,
+    enabled:
+      currentView === "providers" &&
+      !isAddOpen &&
+      !editingProvider &&
+      !usageProvider &&
+      !managementBusy,
+    onReady(provider, warnings, target) {
+      if (managementBusyRef.current) return;
+      const openDraft = () => {
+        closeProviderPanels();
+        setActiveApp(target);
+        localStorage.setItem(APP_STORAGE_KEY, target);
+        setCurrentView("providers");
+        setFormModeView(target === activeApp ? currentModeView : undefined);
+        setTransferDraft({ provider, warnings, nonce: Date.now() });
+        setIsAddOpen(true);
+      };
+      if (!confirmLeave(openDraft)) openDraft();
+    },
+  });
 
   const openPage = (page: GlobalPage | "settings") => {
     if (page === "settings") {
@@ -1425,6 +1459,24 @@ function App() {
               </HoverTip>
             )}
           {currentView === "providers" && (
+            <HoverTip
+              content={t("provider.transfer.pasteTip", {
+                shortcut: isMac() ? "⌘V" : "Ctrl+V",
+              })}
+            >
+              <Button
+                variant="neutral"
+                size="regular"
+                disabled={!providerTransfer.canPaste || providerTransfer.busy}
+                aria-busy={providerTransfer.busy}
+                onClick={providerTransfer.paste}
+              >
+                <ClipboardPaste className="h-4 w-4" />
+                {t("provider.transfer.paste", { defaultValue: "粘贴添加" })}
+              </Button>
+            </HoverTip>
+          )}
+          {currentView === "providers" && (
             <Button
               variant="solid"
               size="regular"
@@ -1753,7 +1805,7 @@ function App() {
     return isAppPage(currentView) ? renderAppPage() : renderGlobalPage();
   };
 
-  return (
+  const content = (
     <WindowControlsContext.Provider
       value={useAppWindowControls ? <WindowControls /> : null}
     >
@@ -1819,9 +1871,15 @@ function App() {
       </div>
 
       <AddProviderDialog
+        key={`${activeApp}-${transferDraft?.nonce ?? "new"}`}
         open={isAddOpen}
-        onOpenChange={setIsAddOpen}
+        onOpenChange={(open) => {
+          setIsAddOpen(open);
+          if (!open) setTransferDraft(null);
+        }}
         appId={activeApp}
+        initialData={transferDraft?.provider}
+        transferWarnings={transferDraft?.warnings}
         onSubmit={addProvider}
         modeView={formModeView}
       />
@@ -1919,6 +1977,11 @@ function App() {
       <NewLayoutDialog />
       <WhatsNewNotice />
     </WindowControlsContext.Provider>
+  );
+  return (
+    <ProviderTransferScope value={providerTransfer.controls}>
+      {content}
+    </ProviderTransferScope>
   );
 }
 

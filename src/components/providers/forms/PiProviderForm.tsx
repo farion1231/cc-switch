@@ -499,12 +499,14 @@ function buildPiSettingsConfig({
 export function PiProviderForm({
   appId,
   providerId,
+  draftProviderKey,
   submitLabel,
   onSubmit,
   onCancel,
   onSubmittingChange,
   onSubmitReadyChange,
   initialData,
+  initialDataIsDraft = false,
   showButtons = true,
 }: ProviderFormProps) {
   const { t } = useTranslation();
@@ -523,7 +525,7 @@ export function PiProviderForm({
     () => asObject(initialData?.settingsConfig),
     [initialData?.settingsConfig],
   );
-  const isEdit = Boolean(initialData);
+  const isEdit = Boolean(initialData) && !initialDataIsDraft;
   const initialNativeName = optionalText(initialConfig.name);
   const initialDisplayName = initialData?.name ?? initialNativeName;
   const initialConfigHasNativeName = hasOwn(initialConfig, "name");
@@ -565,7 +567,9 @@ export function PiProviderForm({
   const [category, setCategory] = useState<ProviderCategory>(
     initialData?.category ?? "custom",
   );
-  const [providerKey, setProviderKey] = useState(providerId ?? "");
+  const [providerKey, setProviderKey] = useState(
+    providerId ?? draftProviderKey ?? "",
+  );
   // Pi 和 omp 的供应商各管各的，查重只看当前应用。
   const { data: existingProviders } = useProvidersQuery(isOmp ? "omp" : "pi");
   // 预设自带标识；同一家加第二次时会撞上已有的卡，在字段下直接提示。

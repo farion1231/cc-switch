@@ -37,6 +37,10 @@ import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { AuthCenterTarget } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
+import {
+  overlayClaudeProviderFields,
+  withClaudeGatewayDefaults,
+} from "@/utils/claudeEditorOverlay";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -53,6 +57,8 @@ interface AddProviderDialogProps {
   ) => Promise<void> | void;
   /** 从供应商页哪一格打开的，见 ProviderForm 的同名参数 */
   modeView?: AppMode;
+  initialData?: Provider;
+  transferWarnings?: string[];
 }
 
 export function AddProviderDialog({
@@ -61,8 +67,14 @@ export function AddProviderDialog({
   appId,
   onSubmit,
   modeView,
+  initialData,
+  transferWarnings = [],
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
+  const draftProviderKey = useMemo(
+    () => (initialData ? `copy-${crypto.randomUUID()}` : undefined),
+    [initialData],
+  );
   // OpenCode and OpenClaw don't support universal providers
   const showUniversalTab =
     appId !== "opencode" &&
@@ -80,8 +92,8 @@ export function AddProviderDialog({
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
   const [manageUniversalOpen, setManageUniversalOpen] = useState(false);
   useEffect(() => {
-    if (open) setStep("pick");
-  }, [open, appId]);
+    if (open) setStep(initialData ? "form" : "pick");
+  }, [open, appId, initialData]);
   const selectorCount = useRef(0);
   const registerSelector = useCallback(() => {
     selectorCount.current += 1;
@@ -129,6 +141,59 @@ export function AddProviderDialog({
   );
   // 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见上）。
   const projectsDraft = appId !== "claude" && usesEditorView(appId);
+  const [transferProjection, setTransferProjection] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  useEffect(() => {
+    if (!open || !initialData || !projectsDraft) {
+      setTransferProjection(null);
+      return;
+    }
+    let cancelled = false;
+    setTransferProjection(null);
+    providersApi
+      .getEditorView(
+        appId,
+        initialData.settingsConfig,
+        initialData.category,
+        undefined,
+        initialData.meta,
+      )
+      .then((view) => {
+        if (cancelled) return;
+        setDraftEditorBase({
+          base: view.settings,
+          draft: initialData.settingsConfig,
+        });
+        setTransferProjection(view.settings);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        toastEditorViewFailed(t, error);
+        setTransferProjection(initialData.settingsConfig);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, initialData, projectsDraft, appId, t]);
+  const transferInitialData = useMemo(() => {
+    if (!initialData) return undefined;
+    if (appId === "claude")
+      return {
+        ...initialData,
+        settingsConfig: overlayClaudeProviderFields(
+          claudeLiveBase ?? {},
+          withClaudeGatewayDefaults(
+            initialData.settingsConfig,
+            initialData.category,
+          ),
+        ),
+      };
+    return transferProjection
+      ? { ...initialData, settingsConfig: transferProjection }
+      : initialData;
+  }, [initialData, appId, claudeLiveBase, transferProjection]);
   const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
 
   useEffect(() => {
@@ -171,12 +236,12 @@ export function AddProviderDialog({
       return;
     }
     // 第 2 步的返回回到选预设
-    if (step === "form") {
+    if (step === "form" && !initialData) {
       setStep("pick");
       return;
     }
     closeDialog();
-  }, [authSettingsTarget, closeDialog, step]);
+  }, [authSettingsTarget, closeDialog, step, initialData]);
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
     [appId, open],
@@ -511,6 +576,9 @@ export function AddProviderDialog({
 
   const form = (
     <ProviderForm
+      initialData={transferInitialData}
+      initialDataIsDraft={Boolean(initialData)}
+      draftProviderKey={draftProviderKey}
       appId={appId}
       submitLabel={t("common.add")}
       modeView={modeView}
@@ -554,7 +622,7 @@ export function AddProviderDialog({
           : APP_DISPLAY_NAME[appId]
       }
       backLabel={
-        step === "form"
+        step === "form" && !initialData
           ? t("providerPreset.backToPick")
           : t("provider.backToList")
       }
@@ -573,7 +641,27 @@ export function AddProviderDialog({
           <div ref={setPickerHost} className="min-h-0 flex-1" />
         )}
         <div className={step === "pick" ? "hidden" : undefined}>
-          {waitingForClaudeBase ? (
+          {initialData && (
+            <div
+              className="mb-4 rounded-control border border-border bg-subtle p-3 text-body text-fg-2"
+              role="status"
+            >
+              <p>
+                {t("provider.transfer.preview", {
+                  defaultValue: "已带入复制的供应商信息，检查后保存即可添加。",
+                })}
+              </p>
+              {transferWarnings.length > 0 && (
+                <ul className="mt-2 list-disc space-y-1 ps-5">
+                  {transferWarnings.map((warning, index) => (
+                    <li key={index}>{warning}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {waitingForClaudeBase ||
+          (initialData && projectsDraft && !transferProjection) ? (
             <div className="py-12 text-center text-body text-fg-2">
               {t("common.loading")}
             </div>

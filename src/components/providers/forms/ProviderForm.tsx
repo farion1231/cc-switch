@@ -285,6 +285,7 @@ type LocalProxyRequestOverridesBuildResult = ReturnType<
 export interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
+  draftProviderKey?: string;
   submitLabel: string;
   onSubmit: (values: ProviderFormValues) => Promise<void> | void;
   onCancel: () => void;
@@ -305,6 +306,8 @@ export interface ProviderFormProps {
     icon?: string;
     iconColor?: string;
   };
+  /** Prefilled new-provider draft; does not carry an existing provider identity. */
+  initialDataIsDraft?: boolean;
   showButtons?: boolean;
   isProxyTakeover?: boolean;
   /** 编辑器里行保存着、但不随切换生效的字段（Claude Code、Codex、Gemini CLI、Grok Build）。 */
@@ -348,6 +351,7 @@ export function ProviderForm(props: ProviderFormProps) {
 function ProviderFormFull({
   appId,
   providerId,
+  draftProviderKey,
   submitLabel,
   onSubmit,
   onCancel,
@@ -356,6 +360,7 @@ function ProviderFormFull({
   onManageAuthAccounts,
   onSubmittingChange,
   initialData,
+  initialDataIsDraft = false,
   showButtons = true,
   isProxyTakeover = false,
   inactiveFields,
@@ -369,7 +374,7 @@ function ProviderFormFull({
   }
 
   const { t } = useTranslation();
-  const isEditMode = Boolean(initialData);
+  const isEditMode = Boolean(initialData) && !initialDataIsDraft;
   const initialCodexOfficialIdentity =
     appId === "codex" && initialData
       ? resolveCodexOfficialIdentity(appId, {
@@ -416,7 +421,7 @@ function ProviderFormFull({
   const { category } = useProviderCategory({
     appId,
     selectedPresetId,
-    isEditMode,
+    isEditMode: isEditMode || initialDataIsDraft,
     initialCategory:
       initialData?.category ??
       (hasExistingCodexOfficialIdentity ? "official" : undefined),
@@ -1115,7 +1120,7 @@ function ProviderFormFull({
   const opencodeForm = useOpencodeFormState({
     initialData,
     appId,
-    providerId,
+    providerId: providerId ?? draftProviderKey,
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
@@ -1167,7 +1172,7 @@ function ProviderFormFull({
   const openclawForm = useOpenclawFormState({
     initialData,
     appId,
-    providerId,
+    providerId: providerId ?? draftProviderKey,
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
@@ -1179,7 +1184,7 @@ function ProviderFormFull({
   const hermesForm = useHermesFormState({
     initialData,
     appId,
-    providerId,
+    providerId: providerId ?? draftProviderKey,
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });

@@ -68,7 +68,9 @@ const normalizeKey = (value: string) =>
 export function McodeProviderForm({
   appId,
   providerId,
+  draftProviderKey,
   initialData,
+  initialDataIsDraft = false,
   onSubmit,
   onCancel,
   submitLabel,
@@ -104,8 +106,10 @@ export function McodeProviderForm({
   const [error, setError] = useState("");
   // The key becomes `custom_provider.<key>` and MCode's default-model
   // references embed it, so it is fixed once the provider exists.
-  const isEdit = Boolean(initialData);
-  const [providerKey, setProviderKey] = useState(providerId ?? "");
+  const isEdit = Boolean(initialData) && !initialDataIsDraft;
+  const [providerKey, setProviderKey] = useState(
+    providerId ?? draftProviderKey ?? "",
+  );
   const { data: existing } = useProvidersQuery(appId);
   const keyTaken =
     !isEdit &&
