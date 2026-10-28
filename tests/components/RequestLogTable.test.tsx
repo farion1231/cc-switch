@@ -1,5 +1,5 @@
 import userEvent from "@testing-library/user-event";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -306,14 +306,8 @@ describe("RequestLogTable", () => {
       expect(model).not.toHaveAttribute("title");
       await user.hover(model);
       const tip = await screen.findByRole("tooltip");
-      expect(
-        within(tip).getByText(
-          index === 0 ? `requested-model → ${base.model}` : base.model,
-        ),
-      ).toBeInTheDocument();
-      expect(
-        within(tip).getByText(`usage.reasoningEffort: ${effort}`),
-      ).toBeInTheDocument();
+      expect(tip).toHaveTextContent(`usage.reasoningEffort: ${effort}`);
+      expect(tip).not.toHaveTextContent(base.model);
       await user.unhover(model);
     }
     expect(rows[2].children[3].firstElementChild).toHaveAttribute(
