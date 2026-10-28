@@ -355,7 +355,7 @@ impl Drop for FileLock {
 }
 
 /// 崩溃残留的 `<file>.lock` 会把之后的写入永久卡住（DSH 原生协议只做 create_new）。
-/// 只有在能证明锁的主人已经不在时才删除：Unix 用 `kill(pid, 0)` 判活，两个平台都用修改
+/// 只有在能证明锁的主人已经不在时才删除：Unix 用 `kill(pid, 0)`、Windows 用 `OpenProcess` 判活，都用修改
 /// 时间兜底（一次写入的锁不可能留 10 分钟）。
 const STALE_LOCK_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -378,8 +378,35 @@ fn process_is_alive(pid: u32) -> bool {
     pid > 0 && unsafe { libc::kill(pid as libc::pid_t, 0) } == 0
 }
 
-/// Windows 上没有零依赖的判活方式，交给 mtime 兜底（见 [`STALE_LOCK_AGE`]）。
-#[cfg(not(unix))]
+/// Windows：按 pid 打开进程；只有系统明确回答“没有这个进程”（`ERROR_INVALID_PARAMETER`）
+/// 或进程已退出才算不在，拒绝访问等其它失败一律按活着处理，交给 mtime 兜底。
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    if pid == 0 {
+        return true;
+    }
+    // SAFETY: 只查询；句柄在下面关掉。
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        // SAFETY: 紧跟在失败的 OpenProcess 之后读取本线程的错误码。
+        return unsafe { GetLastError() } != ERROR_INVALID_PARAMETER;
+    }
+    let mut exit_code = 0u32;
+    // SAFETY: 句柄有效，输出参数指向本地变量。
+    let queried = unsafe { GetExitCodeProcess(handle, &mut exit_code) } != 0;
+    // SAFETY: OpenProcess 返回的句柄只关这一次。
+    unsafe { CloseHandle(handle) };
+    !queried || exit_code == STILL_ACTIVE as u32
+}
+
+#[cfg(not(any(unix, windows)))]
 fn process_is_alive(_pid: u32) -> bool {
     true
 }
