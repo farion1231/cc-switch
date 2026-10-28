@@ -2,10 +2,13 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { KimiProviderForm } from "@/components/providers/forms/KimiProviderForm";
 import { kimiProviderPresets } from "@/config/kimiProviderPresets";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import type { ProviderCategory } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import { server } from "../msw/server";
 
 beforeAll(() => {
   Element.prototype.scrollIntoView ??= vi.fn();
@@ -47,6 +50,14 @@ const config = {
     },
   },
 };
+
+// 模型参数收在每行的展开区里，和 Pi、OpenCode 一样。
+function expandModels() {
+  for (const toggle of screen.getAllByRole("button", {
+    name: "opencode.toggleModelDetails",
+  }))
+    fireEvent.click(toggle);
+}
 
 function setup(
   onSubmit = vi.fn(),
@@ -112,18 +123,16 @@ describe("KimiProviderForm", () => {
           target: { value: JSON.stringify(native) },
         });
       }
+      expandModels();
       expect(
-        screen.getByRole("checkbox", { name: "kimi.capabilities.image_in" }),
+        screen.getByRole("switch", { name: "kimi.capabilities.image_in" }),
       ).toBeChecked();
       expect(
-        screen.queryByRole("checkbox", { name: "kimi.capabilities.audio_in" }),
+        screen.queryByRole("switch", { name: "kimi.capabilities.audio_in" }),
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("checkbox", { name: "kimi.capabilities.video_in" }),
+        screen.queryByRole("switch", { name: "kimi.capabilities.video_in" }),
       ).not.toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText(/kimi\.baseUrl/), {
-        target: { value: "https://updated.example.com/v1" },
-      });
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
       await waitFor(() => expect(submit).toHaveBeenCalledOnce());
       const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
@@ -131,10 +140,7 @@ describe("KimiProviderForm", () => {
         capabilities: native.models["kimi-code/k3"].capabilities,
         overrides: native.models["kimi-code/k3"].overrides,
       });
-      expect(saved.provider).toEqual({
-        ...config.provider,
-        base_url: "https://updated.example.com/v1",
-      });
+      expect(saved.provider).toEqual(config.provider);
     },
   );
 
@@ -145,8 +151,9 @@ describe("KimiProviderForm", () => {
       "future_capability",
     );
     const submit = setup(vi.fn(), undefined, native);
+    expandModels();
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "kimi.capabilities.image_in" }),
+      screen.getByRole("switch", { name: "kimi.capabilities.image_in" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
@@ -193,10 +200,10 @@ describe("KimiProviderForm", () => {
         }),
       );
       await user.click(screen.getByRole("button", { name }));
-      expect(screen.getByLabelText("opencode.providerKey *")).toHaveValue(
+      expect(screen.getByLabelText("opencode.providerKey")).toHaveValue(
         selected.providerKey,
       );
-      expect(screen.getByLabelText("kimi.baseUrl *")).toHaveValue(
+      expect(screen.getByLabelText("opencode.baseUrl")).toHaveValue(
         selected.settingsConfig.provider.base_url,
       );
       expect(
@@ -251,20 +258,119 @@ describe("KimiProviderForm", () => {
     },
   );
 
-  it("edits native endpoints while preserving OAuth and model overrides", async () => {
+  it("edits only the models of an official account, keeping its login", async () => {
     const submit = setup();
-    fireEvent.change(screen.getByLabelText("kimi.baseUrl *"), {
-      target: { value: "https://example.com/v1" },
-    });
+    expect(
+      screen.getByText("kimi.oauth.connectionManaged"),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("opencode.baseUrl")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
-    expect(saved.provider).toEqual({
-      ...config.provider,
-      base_url: "https://example.com/v1",
-    });
+    expect(saved.provider).toEqual(config.provider);
     expect(saved.models).toEqual(config.models);
     expect(submit.mock.calls[0][0].providerKey).toBe("managed:kimi-code");
+  });
+
+  it("adds models from the official account's own catalog", async () => {
+    const user = userEvent.setup();
+    let requested: unknown;
+    server.use(
+      http.post("http://tauri.local/kimi_oauth_models", async ({ request }) => {
+        requested = await request.json();
+        return HttpResponse.json({
+          "kimi-code/k3": {
+            provider: "managed:kimi-code",
+            model: "k3",
+            max_context_size: 1048576,
+          },
+          "kimi-code/k3.1-pro": {
+            provider: "managed:kimi-code",
+            model: "k3.1-pro",
+            display_name: "K3.1 Pro",
+            max_context_size: 1048576,
+            capabilities: ["tool_use", "thinking"],
+            support_efforts: ["high", "max"],
+            default_effort: "max",
+          },
+        });
+      }),
+    );
+    const submit = setup();
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(await screen.findByRole("checkbox", { name: "k3.1-pro" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.modelPicker.apply" }),
+    );
+    expect(requested).toEqual({ accountId: "managed:kimi-code" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.models["kimi-code/k3.1-pro"]).toEqual({
+      provider: "managed:kimi-code",
+      model: "k3.1-pro",
+      display_name: "K3.1 Pro",
+      max_context_size: 1048576,
+      capabilities: ["tool_use", "thinking"],
+      support_efforts: ["high", "max"],
+      default_effort: "max",
+    });
+    expect(saved.models["kimi-code/k3"]).toEqual(config.models["kimi-code/k3"]);
+  });
+
+  it("shows request headers inline like Pi", () => {
+    const { oauth: _oauth, ...apiKeyProvider } = config.provider;
+    setup(vi.fn(), undefined, {
+      ...config,
+      provider: { ...apiKeyProvider, type: "openai", api_key: "sk-test" },
+    });
+    expect(screen.getByDisplayValue("X-Custom")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("flags a preset whose provider key collides with an existing card", async () => {
+    const user = userEvent.setup();
+    const selected = kimiProviderPresets.find(
+      (preset) => preset.name === "Kimi",
+    )!;
+    server.use(
+      http.post("http://tauri.local/get_providers", () =>
+        HttpResponse.json({
+          [selected.providerKey]: {
+            id: selected.providerKey,
+            name: "Kimi",
+            settingsConfig: {},
+          },
+        }),
+      ),
+    );
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <KimiProviderForm
+          appId="kimi"
+          submitLabel="Save"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
+    );
+    await user.click(screen.getByRole("button", { name: "Kimi" }));
+    expect(
+      await screen.findByText("opencode.providerKeyDuplicate"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("opencode.providerKey")).toHaveValue(
+      selected.providerKey,
+    );
   });
 
   it("blocks invalid JSON until the editor is corrected", () => {
@@ -279,15 +385,138 @@ describe("KimiProviderForm", () => {
 
   it("requires at least one model with a positive context length", () => {
     setup();
-    fireEvent.change(screen.getByLabelText("kimi.contextSize *"), {
+    expandModels();
+    fireEvent.change(screen.getByLabelText("kimi.contextSize"), {
       target: { value: "0" },
     });
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("kimi.contextSize *"), {
+    fireEvent.change(screen.getByLabelText("kimi.contextSize"), {
       target: { value: "262144" },
     });
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "kimi.removeModel" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("adds fetched models and fills their window and capabilities from models.dev", async () => {
+    const user = userEvent.setup();
+    let fetchRequest: Record<string, unknown> | undefined;
+    server.use(
+      http.post(
+        "http://tauri.local/fetch_models_for_config",
+        async ({ request }) => {
+          fetchRequest = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json([
+            { id: "model-x", ownedBy: "example" },
+            { id: "model-y", ownedBy: "example" },
+          ]);
+        },
+      ),
+      http.get(MODELS_DEV_API_URL, () =>
+        HttpResponse.json({
+          example: {
+            api: "https://api.example.com/v1",
+            models: {
+              "model-x": {
+                limit: { context: 123456 },
+                reasoning: true,
+                modalities: { input: ["text", "image"], output: ["text"] },
+              },
+            },
+          },
+        }),
+      ),
+    );
+    const submit = vi.fn();
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <KimiProviderForm
+          appId="kimi"
+          submitLabel="Save"
+          onSubmit={submit}
+          onCancel={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("opencode.providerKey"), {
+      target: { value: "acme" },
+    });
+    fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
+      target: { value: "https://api.example.com/v1" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "sk-test" },
+    });
+    fireEvent.change(screen.getByLabelText("provider.name"), {
+      target: { value: "Acme" },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(await screen.findByRole("checkbox", { name: "model-x" }));
+    await user.click(await screen.findByRole("checkbox", { name: "model-y" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.modelPicker.apply" }),
+    );
+
+    expect(fetchRequest).toMatchObject({
+      baseUrl: "https://api.example.com/v1",
+      apiKey: "sk-test",
+    });
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
+            .value,
+        ).models["acme/model-x"].max_context_size,
+      ).toBe(123456),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.models).toEqual({
+      "acme/model-x": {
+        provider: "acme",
+        model: "model-x",
+        max_context_size: 123456,
+        capabilities: ["tool_use", "image_in", "thinking"],
+      },
+      // models.dev 没有这款：保留占位窗口，用户自己核对。
+      "acme/model-y": {
+        provider: "acme",
+        model: "model-y",
+        max_context_size: 262144,
+        capabilities: ["tool_use"],
+      },
+    });
+  });
+
+  it("uses the Anthropic auth header when fetching models for Anthropic providers", async () => {
+    const user = userEvent.setup();
+    let fetchRequest: Record<string, unknown> | undefined;
+    server.use(
+      http.post(
+        "http://tauri.local/fetch_models_for_config",
+        async ({ request }) => {
+          fetchRequest = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json([]);
+        },
+      ),
+    );
+    setup(vi.fn(), undefined, {
+      ...config,
+      provider: {
+        type: "anthropic",
+        base_url: "https://api.example.com",
+        api_key: "sk-test",
+      },
+    });
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await waitFor(() =>
+      expect(fetchRequest).toMatchObject({ apiFormat: "anthropic-messages" }),
+    );
   });
 });

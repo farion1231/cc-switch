@@ -14,7 +14,9 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
-  | "agy";
+  | "dsh"
+  | "agy"
+  | "omp";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -29,7 +31,9 @@ export interface SkillApps {
   pi: boolean;
   mcode?: boolean;
   kimi?: boolean;
+  dsh?: boolean;
   agy?: boolean;
+  omp?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
@@ -280,6 +284,11 @@ export const skillsApi = {
   /** 在文件管理器里打开 CC Switch 目录下的 Skills 目录 */
   async openCcSwitchSkillsDir(): Promise<void> {
     await invoke("open_cc_switch_skills_dir");
+  },
+
+  /** 在文件管理器里打开某个已安装 Skill 的目录 */
+  async openSkillDir(directory: string): Promise<void> {
+    await invoke("open_skill_dir", { directory });
   },
 
   /** 搜索 skills.sh 公共目录 */

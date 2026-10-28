@@ -21,9 +21,9 @@ enum CodingPlanProvider {
     /// `https://ark.cn-beijing.volces.com/api/plan[/v3]`（Agent Plan）
     /// 或 `/api/coding[/v3]`（Coding Plan））。
     Volcengine,
-    /// OpenCode Go（$10/月订阅，美元额度三时间窗口）。base_url 分两档：
-    /// `https://opencode.ai/zen/go`（claude/claude-desktop 直连 /messages）
-    /// 与 `https://opencode.ai/zen/go/v1`（codex/opencode/pi 走 Chat）。
+    /// OpenCode Go（$10/月订阅，美元额度三时间窗口）。base_url 分两个入口：
+    /// `https://opencode.ai/inference/go/anthropic`（Anthropic 端，现行文档地址）
+    /// 与 `https://opencode.ai/zen/go`（旧入口），OpenAI Chat 端在各自后面加 `/v1`。
     OpencodeGo,
     /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
     CommandCode,
@@ -46,8 +46,9 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
-    } else if url.contains("opencode.ai/zen/go") {
-        // 同时覆盖 /zen/go 与 /zen/go/v1 两档 base；Zen 按量版（/zen/v1）
+    } else if url.contains("opencode.ai/zen/go") || url.contains("opencode.ai/inference/go") {
+        // 覆盖 /zen/go、/zen/go/v1 与 /inference/go、/inference/go/v1、
+        // /inference/go/anthropic；Zen 按量版（/zen/v1 或 /inference/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
         Some(CodingPlanProvider::OpencodeGo)
     } else if url.contains("api.commandcode.ai/provider") {
@@ -151,10 +152,20 @@ impl CodingPlanOutcome {
 // ── Kimi For Coding ─────────────────────────────────────────
 
 async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
+    query_kimi_at("https://api.kimi.com/coding/v1", api_key).await
+}
+
+/// `base_url` is the Kimi Code API root (`https://api.kimi.ai/coding/v1` for
+/// global accounts); `token` is an API key or an official OAuth access token.
+pub(crate) async fn query_kimi_at(
+    base_url: &str,
+    token: &str,
+) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
+    let api_key = token;
 
     let resp = client
-        .get("https://api.kimi.com/coding/v1/usages")
+        .get(format!("{}/usages", base_url.trim_end_matches('/')))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
@@ -762,8 +773,9 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
 /// `model_remains` 数组里有 `general`(编程套餐)和 `video` 等其他模型,
 /// 这里只取 `general`,跳过 video。
 ///
-/// 5h 桶始终存在;周桶并非所有套餐都有,靠 `current_weekly_status == 1`
-/// 判定激活(无周限额套餐该字段为 3,`remaining_percent` 恒为 100,不应展示)。
+/// 5h 桶始终存在;周桶并非所有套餐都有,靠 `current_weekly_status` 区分:
+/// 1 = 正常计时,2 = 周额度已耗尽(照常展示),3 = 无周限额
+/// (该字段为 3 时 `remaining_percent` 恒为 100,不应展示)。
 fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     let mut tiers = Vec::new();
 
@@ -799,8 +811,11 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
         });
     }
 
-    // 周桶:仅当 status=1 时激活;status=3 等表示该套餐无周限额,跳过
-    if item.get("current_weekly_status").and_then(|v| v.as_i64()) == Some(1) {
+    // 周桶:status=1 正常计时;status=2 表示周额度已耗尽(剩余 0%,官方控制台仍
+    // 显示该桶并按周限额限流),照常展示成「已用完」;status=3 表示该套餐无周
+    // 限额(remaining_percent 恒为 100),跳过
+    let weekly_status = item.get("current_weekly_status").and_then(|v| v.as_i64());
+    if weekly_status == Some(1) || weekly_status == Some(2) {
         if let Some(remain_pct) = item
             .get("current_weekly_remaining_percent")
             .and_then(|v| v.as_f64())
@@ -2335,9 +2350,18 @@ mod tests {
     }
 
     #[test]
-    fn opencode_go_detects_both_base_variants_but_not_zen() {
-        // claude/claude-desktop 预设 base 是 /zen/go，codex/opencode/pi 是
-        // /zen/go/v1，两档都要命中；Zen 按量版（/zen/v1）无用量 API，不得命中。
+    fn opencode_go_detects_current_and_legacy_bases_but_not_zen() {
+        // Claude Desktop 预设 base 是 /inference/go/anthropic，Codex/OpenCode/Pi
+        // 是 /inference/go/v1；旧入口 /zen/go[/v1] 仍可用，也要命中；Zen 按量版
+        // （/zen/v1）无用量 API，不得命中。
+        assert!(matches!(
+            detect_provider("https://opencode.ai/inference/go/anthropic"),
+            Some(CodingPlanProvider::OpencodeGo)
+        ));
+        assert!(matches!(
+            detect_provider("https://opencode.ai/inference/go/v1"),
+            Some(CodingPlanProvider::OpencodeGo)
+        ));
         assert!(matches!(
             detect_provider("https://opencode.ai/zen/go"),
             Some(CodingPlanProvider::OpencodeGo)
@@ -2347,6 +2371,7 @@ mod tests {
             Some(CodingPlanProvider::OpencodeGo)
         ));
         assert!(detect_provider("https://opencode.ai/zen/v1").is_none());
+        assert!(detect_provider("https://opencode.ai/inference/v1").is_none());
     }
 
     #[test]
@@ -2787,20 +2812,23 @@ mod tests {
     }
 
     #[test]
-    fn minimax_weekly_status_2_also_skips_weekly_tier() {
-        // 防御性:除 1 之外的 status 都视为周桶未激活,跳过
+    fn minimax_weekly_status_2_keeps_exhausted_weekly_tier() {
+        // status=2:周额度已耗尽(实测 remaining_percent=0,官方控制台显示
+        // 红条并按周限额限流),周桶照常展示成已用完,不能跳过
         let body = json!({
             "model_remains": [{
                 "model_name": "general",
                 "current_interval_remaining_percent": 80.0,
-                "current_weekly_remaining_percent": 50.0,
+                "current_weekly_remaining_percent": 0.0,
                 "current_weekly_status": 2
             }]
         });
         let tiers = parse_minimax_tiers(&body);
-        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
         assert_eq!(tiers[0].utilization, 20.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 100.0);
     }
 
     #[test]

@@ -36,6 +36,11 @@ impl Drop for KimiHome {
     }
 }
 
+fn live_config(home: &KimiHome) -> serde_json::Value {
+    let text = fs::read_to_string(home.config()).unwrap();
+    serde_json::to_value(toml::from_str::<toml::Value>(&text).unwrap()).unwrap()
+}
+
 fn provider(id: &str, model: &str) -> Provider {
     Provider::with_id(
         id.into(),
@@ -46,30 +51,78 @@ fn provider(id: &str, model: &str) -> Provider {
 }
 
 #[test]
-fn kimi_official_accounts_are_protected_only_while_present_in_native_config() {
+fn kimi_official_accounts_edit_models_leave_kimi_and_are_deleted_only_after_leaving() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
     let home = KimiHome::new();
     let state = create_test_state().unwrap();
     let mut config = json!({"default_model":"custom/model", "providers":{"custom":{"type":"openai","api_key":"test"}},"models":{"custom/model":{"provider":"custom","model":"test","max_context_size":32000}}});
+    let credentials = home.directory.path().join("credentials");
+    fs::create_dir_all(&credentials).unwrap();
     for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
-        config["providers"][id] = json!({"type":"kimi","base_url":"https://api.kimi.com/coding/v1","oauth":{"storage":"file","key":format!("oauth/{}", id.replace(':', "-"))}});
+        let slot = id.replace(':', "-");
+        config["providers"][id] = json!({"type":"kimi","base_url":"https://api.kimi.com/coding/v1","oauth":{"storage":"file","key":format!("oauth/{slot}")}});
         config["models"][format!("{id}/k3")] =
             json!({"provider":id,"model":"k3","max_context_size":1048576});
+        fs::write(
+            credentials.join(format!("{slot}.json")),
+            r#"{"access_token":"a","refresh_token":"r","expires_at":4102444800}"#,
+        )
+        .unwrap();
     }
+    config["services"]["moonshot_search"] = json!({"base_url":"https://api.kimi.com/coding/v1/search","api_key":"","oauth":{"storage":"file","key":"oauth/kimi-code-ccs-second"}});
     fs::write(home.config(), toml::to_string(&config).unwrap()).unwrap();
     let entries = ProviderService::list(&state, AppType::Kimi).unwrap();
     for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
-        let original = fs::read(home.config()).unwrap();
         assert_eq!(entries[id].category.as_deref(), Some("official"));
         assert!(entries[id].name.starts_with("Kimi Official"));
+        // Still in Kimi: deleting goes through the Authorization Center.
+        let original = fs::read(home.config()).unwrap();
         assert!(ProviderService::delete(&state, AppType::Kimi, id).is_err());
-        assert!(ProviderService::remove_from_live_config(&state, AppType::Kimi, id).is_err());
+        assert_eq!(fs::read(home.config()).unwrap(), original);
+
+        // Models are editable; the signed-in connection is not.
         let mut edited = entries[id].clone();
         edited.settings_config["provider"] = json!({"type":"openai","api_key":"replacement"});
-        assert!(ProviderService::update(&state, AppType::Kimi, None, edited).is_err());
-        assert_eq!(fs::read(home.config()).unwrap(), original);
+        edited.settings_config["models"] =
+            json!({format!("{id}/k3.1"):{"provider":id,"model":"k3.1","max_context_size":1048576}});
+        ProviderService::update(&state, AppType::Kimi, None, edited).unwrap();
+        let live = live_config(&home);
+        assert_eq!(live["providers"][id], config["providers"][id]);
+        assert!(live["models"].get(format!("{id}/k3")).is_none());
+        assert_eq!(live["models"][format!("{id}/k3.1")]["model"], "k3.1");
     }
+
+    // No edit turns another card into an official account.
+    let mut forged = entries["custom"].clone();
+    forged.settings_config["provider"] = config["providers"]["managed:kimi-code"].clone();
+    assert!(ProviderService::update(&state, AppType::Kimi, None, forged).is_err());
+
+    // Removing keeps the card and login; services move to Kimi's own login.
+    ProviderService::remove_from_live_config(&state, AppType::Kimi, "kimi-code-ccs-second")
+        .unwrap();
+    let live = live_config(&home);
+    assert!(live["providers"].get("kimi-code-ccs-second").is_none());
+    assert!(live["models"].get("kimi-code-ccs-second/k3.1").is_none());
+    assert_eq!(
+        live["services"]["moonshot_search"]["oauth"]["key"],
+        "oauth/managed-kimi-code"
+    );
+    assert!(credentials.join("kimi-code-ccs-second.json").exists());
+    let saved = state
+        .db
+        .get_provider_by_id("kimi-code-ccs-second", "kimi")
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.meta.unwrap().live_config_managed, Some(false));
+    ProviderService::add_to_live_config(&state, AppType::Kimi, "kimi-code-ccs-second").unwrap();
+    let live = live_config(&home);
+    assert_eq!(
+        live["providers"]["kimi-code-ccs-second"],
+        config["providers"]["kimi-code-ccs-second"]
+    );
+    assert_eq!(live["models"]["kimi-code-ccs-second/k3.1"]["model"], "k3.1");
+
     fs::write(home.config(), "").unwrap();
     let entries = ProviderService::list(&state, AppType::Kimi).unwrap();
     for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
@@ -82,6 +135,64 @@ fn kimi_official_accounts_are_protected_only_while_present_in_native_config() {
         assert!(state.db.get_provider_by_id(id, "kimi").unwrap().is_none());
     }
     assert_eq!(fs::read_to_string(home.config()).unwrap(), "");
+}
+
+#[test]
+fn kimi_official_cards_need_a_local_login_and_take_their_own_credential_with_them() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = KimiHome::new();
+    let state = create_test_state().unwrap();
+    let custom = json!({"type":"openai","api_key":"test"});
+    let mut config = json!({"default_model":"custom/model", "providers":{"custom":custom},"models":{"custom/model":{"provider":"custom","model":"test","max_context_size":32000}}});
+    for (id, key) in [
+        ("managed:kimi-code", "kimi-code"),
+        ("kimi-code-ccs-second", "kimi-code-ccs-second"),
+    ] {
+        config["providers"][id] = json!({"type":"kimi","base_url":"https://api.kimi.com/coding/v1","oauth":{"storage":"file","key":format!("oauth/{key}")}});
+        config["models"][format!("{id}/k3")] =
+            json!({"provider":id,"model":"k3","max_context_size":1048576});
+    }
+    fs::write(home.config(), toml::to_string(&config).unwrap()).unwrap();
+    ProviderService::list(&state, AppType::Kimi).unwrap();
+
+    // A card whose login is not on this machine (e.g. synced from another
+    // device) must not point Kimi at a missing credential.
+    let original = fs::read(home.config()).unwrap();
+    let error = ProviderService::switch(&state, AppType::Kimi, "kimi-code-ccs-second").unwrap_err();
+    assert!(
+        error.to_string().contains("Authorization Center")
+            || error.to_string().contains("授权中心")
+    );
+    assert_eq!(fs::read(home.config()).unwrap(), original);
+
+    let credentials = home.directory.path().join("credentials");
+    fs::create_dir_all(&credentials).unwrap();
+    let valid = json!({"access_token":"a","refresh_token":"r","expires_at":4_102_444_800i64});
+    for name in ["kimi-code", "kimi-code-ccs-second"] {
+        fs::write(
+            credentials.join(format!("{name}.json")),
+            serde_json::to_vec(&valid).unwrap(),
+        )
+        .unwrap();
+    }
+    ProviderService::switch(&state, AppType::Kimi, "kimi-code-ccs-second").unwrap();
+    assert_eq!(
+        ProviderService::current(&state, AppType::Kimi).unwrap(),
+        "kimi-code-ccs-second"
+    );
+    ProviderService::switch(&state, AppType::Kimi, "custom").unwrap();
+
+    // Kimi dropped both nodes: deleting the cards also deletes CC Switch's own
+    // credential slot, but never Kimi's default login.
+    let only_custom = json!({"default_model":"custom/model", "providers":{"custom":custom},"models":{"custom/model":{"provider":"custom","model":"test","max_context_size":32000}}});
+    fs::write(home.config(), toml::to_string(&only_custom).unwrap()).unwrap();
+    ProviderService::list(&state, AppType::Kimi).unwrap();
+    for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
+        ProviderService::delete(&state, AppType::Kimi, id).unwrap();
+    }
+    assert!(credentials.join("kimi-code.json").exists());
+    assert!(!credentials.join("kimi-code-ccs-second.json").exists());
 }
 
 #[test]
@@ -126,6 +237,13 @@ fn kimi_provider_lifecycle_imports_native_config_and_tracks_external_removal() {
     let state = create_test_state().unwrap();
     let native = "# user settings\ndefault_model = 'official'\n[providers.official]\ntype = 'kimi'\nbase_url = 'https://api.kimi.com/coding/v1'\napi_key = ''\n[providers.official.oauth]\nkey = 'kimi-code'\nstorage = 'file'\n[models.official]\nprovider = 'official'\nmodel = 'kimi-for-coding'\nmax_context_size = 262144\n[thinking]\neffort = 'high'\n";
     fs::write(home.config(), native).unwrap();
+    // Switching back to an official account needs its login on this machine.
+    fs::create_dir_all(home.directory.path().join("credentials")).unwrap();
+    fs::write(
+        home.directory.path().join("credentials/kimi-code.json"),
+        r#"{"access_token":"a","refresh_token":"r","expires_at":4102444800}"#,
+    )
+    .unwrap();
     assert!(ProviderService::list(&state, AppType::Kimi)
         .unwrap()
         .contains_key("official"));

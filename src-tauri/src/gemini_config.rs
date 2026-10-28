@@ -34,6 +34,9 @@ pub fn parse_env_file(content: &str) -> HashMap<String, String> {
             continue;
         }
 
+        // Gemini CLI loads .env with dotenv, which reads `export KEY=VALUE` as `KEY=VALUE`
+        let line = line.strip_prefix("export ").unwrap_or(line);
+
         // 解析 KEY=VALUE
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
@@ -357,6 +360,22 @@ GEMINI_MODEL=gemini-3.5-flash
             map.get("GEMINI_MODEL"),
             Some(&"gemini-3.5-flash".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_env_file_reads_export_lines() {
+        let content = r#"# Gemini CLI
+export GEMINI_API_KEY=AIza-user-key
+export GEMINI_MODEL=gemini-2.5-pro
+"#;
+
+        let map = parse_env_file(content);
+
+        assert_eq!(
+            map.get("GEMINI_API_KEY"),
+            Some(&"AIza-user-key".to_string())
+        );
+        assert_eq!(map.get("GEMINI_MODEL"), Some(&"gemini-2.5-pro".to_string()));
     }
 
     #[test]
