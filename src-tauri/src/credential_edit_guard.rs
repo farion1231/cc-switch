@@ -22,8 +22,8 @@ pub(crate) fn conflict() -> AppError {
 fn unsupported() -> AppError {
     AppError::localized(
         "provider.credential_protection_unsupported",
-        "编辑保护仅适用于含内联 API Key 的自定义供应商，不适用于官方或托管登录账号。",
-        "Editing protection requires a custom provider with an inline API key; official and managed login accounts are not supported.",
+        "编辑保护仅适用于受支持应用中含内联 API Key 的自定义供应商，不适用于官方或托管登录账号。",
+        "Editing protection requires a supported application and a custom provider with an inline API key; official and managed login accounts are not supported.",
     )
 }
 
@@ -145,6 +145,7 @@ fn native_auth(app: &AppType, settings: &Value) -> Result<Value, AppError> {
             // These are individual native provider nodes, not the global client config.
             auth_fields(settings).unwrap_or(Value::Null)
         }
+        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp => return Err(unsupported()),
     })
 }
 
@@ -175,6 +176,7 @@ fn inline_key(app: &AppType, settings: &Value) -> Result<Option<String>, AppErro
         AppType::OpenCode | AppType::Mcode => from_paths(&["/options/apiKey", "/settings/apiKey"]),
         AppType::OpenClaw | AppType::Pi => from_paths(&["/apiKey"]),
         AppType::Hermes => from_paths(&["/api_key"]),
+        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp => return Err(unsupported()),
     })
 }
 

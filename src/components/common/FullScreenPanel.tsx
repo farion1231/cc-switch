@@ -59,6 +59,13 @@ const unlockBodyScroll = () => {
 };
 
 /**
+ * 打开着的面板，后打开的在最后。二级页里再开二级页（定价 → 编辑定价、编辑供应商 → 测速）时
+ * 每层都在 window 上挂了 ESC 监听，stopPropagation 拦不住同一目标上的其他监听，
+ * 所以只让栈顶那层响应，一次 ESC 只退一层。
+ */
+const openPanelStack: object[] = [];
+
+/**
  * Reusable full-screen panel component
  * Handles portal rendering, header with back button, and footer
  * Uses solid theme colors without transparency
@@ -103,8 +110,16 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   React.useEffect(() => {
     if (!isOpen) return;
 
+    const entry = {};
+    openPanelStack.push(entry);
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // 上面还叠着别的面板：交给最上面那层
+        if (openPanelStack[openPanelStack.length - 1] !== entry) {
+          return;
+        }
+
         // 子组件（例如 Radix 的 Select/Dialog/Dropdown）如果已经消费了 ESC，就不要再关闭整个面板
         if (event.defaultPrevented) {
           return;
@@ -123,6 +138,8 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     window.addEventListener("keydown", handleKeyDown, false);
     return () => {
       window.removeEventListener("keydown", handleKeyDown, false);
+      const index = openPanelStack.indexOf(entry);
+      if (index >= 0) openPanelStack.splice(index, 1);
     };
   }, [isOpen]);
 

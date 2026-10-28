@@ -24,6 +24,9 @@ fn provider(app: &AppType) -> Provider {
         AppType::Hermes => {
             json!({"api_key":"test-key-a", "base_url":"https://example.com", "model":"model-a", "api_mode":"chat_completions"})
         }
+        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp => {
+            json!({"apiKey":"test-key-a", "baseUrl":"https://example.com", "model":"model-a"})
+        }
     };
     let mut provider = Provider::with_id("guarded".into(), "Custom".into(), settings, None);
     provider.meta = Some(ProviderMeta {
@@ -42,6 +45,17 @@ fn credential_guard_all_app_configs_allow_model_edits_but_reject_key_and_destina
     for app in AppType::all() {
         let db = Database::memory().unwrap();
         let original = provider(&app);
+        if matches!(
+            app,
+            AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp
+        ) {
+            assert!(db.save_provider(app.as_str(), &original).is_err());
+            assert!(db
+                .get_provider_by_id(&original.id, app.as_str())
+                .unwrap()
+                .is_none());
+            continue;
+        }
         db.save_provider(app.as_str(), &original).unwrap();
         let mut edited = original.clone();
         edited.name = "Renamed".into();

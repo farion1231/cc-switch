@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderCardActions } from "@/components/providers/ProviderCardActions";
@@ -66,6 +66,46 @@ describe("ProviderCardActions — mode items in the more menu", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it("opens a submenu to pick the default model", async () => {
+    const onSelect = vi.fn();
+    const pick = vi.fn();
+    const { user, menu } = await openMenu({
+      buttons: [],
+      chips: [],
+      menuItems: [
+        {
+          key: "setDefault",
+          label: "providerCard.action.setDefault",
+          onSelect,
+          submenu: {
+            title: "openclaw.selectDefaultModel",
+            options: [
+              {
+                key: "m-1",
+                label: "Model 1",
+                detail: "m-1",
+                onSelect: vi.fn(),
+              },
+              { key: "m-2", label: "m-2", onSelect: pick },
+            ],
+          },
+        },
+      ],
+    });
+
+    const trigger = within(menu).getAllByRole("menuitem")[0];
+    expect(trigger).toHaveTextContent("providerCard.action.setDefault");
+    await user.click(trigger);
+    const submenu = (await screen.findAllByRole("menu")).at(-1)!;
+    expect(submenu).toHaveTextContent("openclaw.selectDefaultModel");
+    // jsdom 里点子菜单项不会触发选择，改用键盘选
+    fireEvent.keyDown(within(submenu).getByRole("menuitem", { name: "m-2" }), {
+      key: "Enter",
+    });
+    expect(pick).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("shows only the usual items when the mode has none", async () => {
     const { menu } = await openMenu({ buttons: [], chips: [] });
 
@@ -74,5 +114,51 @@ describe("ProviderCardActions — mode items in the more menu", () => {
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
     ).toEqual(["provider.duplicate", "common.delete"]);
+  });
+});
+
+describe("ProviderCardActions — open terminal", () => {
+  it("is a button on the card, not an item in the more menu", async () => {
+    const user = userEvent.setup();
+    const onOpenTerminal = vi.fn();
+    render(
+      <ProviderCardActions
+        providerName="Claude Official"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenTerminal={onOpenTerminal}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerCard.action.openTerminal" }),
+    );
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+
+    await user.click(
+      screen.getByRole("button", { name: "providerCard.action.more" }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu).queryByRole("menuitem", { name: "provider.openTerminal" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("isn't shown for apps without it", () => {
+    render(
+      <ProviderCardActions
+        providerName="Kimi"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "providerCard.action.openTerminal",
+      }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -30,8 +30,15 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::Dsh => {
+            crate::dsh_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
+        AppType::Kimi => {
+            crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -301,6 +308,10 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Agy
+        | AppType::Omp
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -377,7 +388,11 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::ClaudeDesktop
+        | AppType::Agy
+        | AppType::Omp => Ok(settings.clone()),
     }
 }
 
@@ -414,6 +429,10 @@ pub(crate) fn write_live_for_state(
     }
     if matches!(app_type, AppType::GrokBuild) {
         super::grok_direct::reapply(db, Some(provider), provider)?;
+        return Ok(());
+    }
+    if matches!(app_type, AppType::Agy) {
+        // 卡片只作用于它打开的终端，全量同步不写真实 settings.json。
         return Ok(());
     }
 
@@ -688,12 +707,28 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Dsh => {
+            crate::dsh_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
+        AppType::Kimi => {
+            crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
+            ));
+        }
+        AppType::Agy => {
+            return Err(AppError::Config(
+                "Antigravity configuration requires the provider switch flow".into(),
+            ));
+        }
+        AppType::Omp => {
+            return Err(AppError::InvalidInput(
+                "Oh My Pi providers use the Oh My Pi provider service".to_string(),
             ));
         }
     }
@@ -826,7 +861,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi | AppType::Mcode) {
+        if matches!(
+            app_type,
+            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
+        ) {
             continue;
         }
         let result = if app_type.is_additive_mode() {
@@ -982,8 +1020,14 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
+        AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
+        AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
+        )),
+        AppType::Agy => crate::agy_config::read_live_settings(),
+        AppType::Omp => Err(AppError::InvalidInput(
+            "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
         )),
     }
 }
@@ -1089,8 +1133,24 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
+        AppType::Agy => {
+            let live = crate::agy_config::read_live_settings()?;
+            // agy 首次启动就会写出空的 settings.json；没有 Key、端点、模型的配置
+            // 不是用户的供应商，不导入。
+            if !crate::agy_config::has_managed_content(&live) {
+                return Ok(false);
+            }
+            live
+        }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Omp => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1122,6 +1182,9 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             } else {
                 "custom"
             }
+        } else if matches!(app_type, AppType::Agy) {
+            // Key 只在进程环境里，从不落盘：从 live 导入的一定是 agy 自己的登录。
+            "official"
         } else {
             "custom"
         }
