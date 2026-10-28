@@ -657,9 +657,12 @@ impl CommonConfigSnippets {
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
             AppType::Cursor => self.cursor.as_ref(),
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp => {
-                None
-            }
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Agy
+            | AppType::Omp => None,
         }
     }
 
@@ -675,8 +678,12 @@ impl CommonConfigSnippets {
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
             AppType::Cursor => self.cursor = snippet,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp => {
-            }
+            AppType::Pi
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Agy
+            | AppType::Omp => {}
         }
     }
 }
@@ -1057,7 +1064,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
-                AppType::Cursor => continue, // Cursor didn't exist in v3.6.x, skip
+                AppType::Cursor => continue,   // Cursor didn't exist in v3.6.x, skip
                 AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi

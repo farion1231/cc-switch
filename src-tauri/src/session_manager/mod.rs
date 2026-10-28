@@ -14,8 +14,8 @@ use std::time::Instant;
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, cursor, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode,
-    pi,
+    agy, claude, codex, cursor, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
+    opencode, pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
