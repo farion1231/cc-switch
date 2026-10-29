@@ -112,6 +112,7 @@ vi.mock("@/hooks/useSkills", () => ({
     isPending: false,
   }),
   useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
+  useRefreshDiscoverableSkills: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
