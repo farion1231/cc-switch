@@ -2636,22 +2636,24 @@ describe("PiProviderForm", () => {
         http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
           HttpResponse.json(ids.map((id) => ({ id, ownedBy: "example" }))),
         ),
-        http.get(MODELS_DEV_API_URL, () =>
-          HttpResponse.json({
-            example: {
-              api: "https://api.example.com/v1",
-              models: {
-                "model-x": {
-                  reasoning: true,
-                  reasoning_options: [
-                    { type: "effort", values: ["low", "medium", "high"] },
-                  ],
-                  modalities: { input: ["text", "image"], output: ["text"] },
-                  limit: { context: 123456, output: 32000 },
+        http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+          HttpResponse.json(
+            JSON.stringify({
+              example: {
+                api: "https://api.example.com/v1",
+                models: {
+                  "model-x": {
+                    reasoning: true,
+                    reasoning_options: [
+                      { type: "effort", values: ["low", "medium", "high"] },
+                    ],
+                    modalities: { input: ["text", "image"], output: ["text"] },
+                    limit: { context: 123456, output: 32000 },
+                  },
                 },
               },
-            },
-          }),
+            }),
+          ),
         ),
       );
     }

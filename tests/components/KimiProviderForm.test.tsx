@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { KimiProviderForm } from "@/components/providers/forms/KimiProviderForm";
 import { kimiProviderPresets } from "@/config/kimiProviderPresets";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import type { ProviderCategory } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 import { server } from "../msw/server";
@@ -412,19 +411,21 @@ describe("KimiProviderForm", () => {
           ]);
         },
       ),
-      http.get(MODELS_DEV_API_URL, () =>
-        HttpResponse.json({
-          example: {
-            api: "https://api.example.com/v1",
-            models: {
-              "model-x": {
-                limit: { context: 123456 },
-                reasoning: true,
-                modalities: { input: ["text", "image"], output: ["text"] },
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.json(
+          JSON.stringify({
+            example: {
+              api: "https://api.example.com/v1",
+              models: {
+                "model-x": {
+                  limit: { context: 123456 },
+                  reasoning: true,
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                },
               },
             },
-          },
-        }),
+          }),
+        ),
       ),
     );
     const submit = vi.fn();
