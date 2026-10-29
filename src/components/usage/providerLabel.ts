@@ -16,7 +16,17 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "MiniMax Code (Session)": "mcode",
   "Kimi Code (Session)": "kimi",
   "Pi (Session)": "pi",
+  "Oh My Pi (Session)": "omp",
   "Antigravity (Session)": "agy",
+  "DeepSeek Harness (Session)": "dsh",
+};
+
+/**
+ * 同样来自会话日志、但能认出走的是官方账号登录（OAuth）的占位名。
+ * DeepSeek Harness 的 Web 与 Desktop 共用一份 DeepSeek 账号登录，用量合并记在 dsh 下。
+ */
+const SESSION_ACCOUNT_PROVIDER_APPS: Record<string, AppId> = {
+  "DeepSeek Harness (OAuth)": "dsh",
 };
 
 export interface UsageProviderLabel {
@@ -35,6 +45,16 @@ export function getUsageProviderLabel(
   if (!name) {
     const label = t("usage.unknownProvider");
     return { label, shortLabel: label };
+  }
+  const accountApp = SESSION_ACCOUNT_PROVIDER_APPS[name];
+  if (accountApp) {
+    return {
+      label: t("usage.sessionAccountProvider.label", {
+        app: APP_DISPLAY_NAME[accountApp],
+      }),
+      shortLabel: t("usage.sessionAccountProvider.short"),
+      hint: t("usage.sessionAccountProvider.hint"),
+    };
   }
   const app = SESSION_PROVIDER_APPS[name];
   if (!app) return { label: name, shortLabel: name };

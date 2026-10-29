@@ -32,6 +32,18 @@ const lastProps = (id: string) =>
     .filter((props) => props.provider.id === id)
     .at(-1);
 
+const dshAccountStatusMock = vi.fn();
+
+vi.mock("@/components/providers/DshAccount", () => ({
+  useDshAccountStatus: (enabled: boolean) =>
+    enabled ? dshAccountStatusMock() : { data: undefined },
+  accountName: (status: any, fallback: string) =>
+    status.profile?.name ?? fallback,
+  DshAccountCard: ({ status }: any) => (
+    <div data-testid="dsh-account-card">{status.profile?.name}</div>
+  ),
+}));
+
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
 }));
@@ -1240,5 +1252,59 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByRole("button", { name: "provider.addProvider" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the signed-in DeepSeek account as an official card under Added", async () => {
+    dshAccountStatusMock.mockReturnValue({
+      data: { signedIn: true, expired: false, profile: { name: "Jason" } },
+    });
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="dsh"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId("dsh-account-card")).toHaveTextContent(
+      "Jason",
+    );
+    expect(screen.getByText("providerCard.section.added")).toBeInTheDocument();
+    expect(
+      screen.queryByText("providerCard.section.addedEmpty"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "provider.addProvider" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty state and no account card while signed out of DeepSeek", async () => {
+    dshAccountStatusMock.mockReturnValue({
+      data: { signedIn: false, expired: false, profile: null },
+    });
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="dsh"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "provider.addProvider" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("dsh-account-card")).not.toBeInTheDocument();
   });
 });
