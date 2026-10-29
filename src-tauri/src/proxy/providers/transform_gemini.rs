@@ -482,6 +482,18 @@ fn convert_messages_to_contents(
 
         if role == "assistant" {
             merge_tool_names_from_parts(&parts, &mut tool_name_by_id);
+        } else if let Some((function_responses, rest)) = split_function_response_parts(&parts) {
+            // Gemini (Vertex in particular) rejects a user turn whose
+            // functionResponse parts are followed by text/media with
+            // "Requests ending with a model turn are not supported". Claude
+            // Code routinely appends a text block (e.g. a system reminder)
+            // after its tool_result blocks, so emit the function responses as
+            // their own user content and the remaining parts as the next one.
+            // Done for every message, not just the last, so the converted
+            // history stays byte-stable across turns for the prompt cache.
+            contents.push(json!({ "role": gemini_role, "parts": function_responses }));
+            contents.push(json!({ "role": gemini_role, "parts": rest }));
+            continue;
         }
 
         contents.push(json!({
@@ -568,6 +580,22 @@ fn extract_assistant_tool_use_keys(content: Option<&Value>) -> (HashSet<String>,
 
 fn normalize_tool_name(name: &str) -> &str {
     name.rsplit(':').next().unwrap_or(name)
+}
+
+/// Splits a user turn that mixes `functionResponse` parts with other parts
+/// into (function responses, everything else), keeping the relative order
+/// within each group. Returns `None` when no split is needed.
+fn split_function_response_parts(parts: &[Value]) -> Option<(Vec<Value>, Vec<Value>)> {
+    let is_function_response = |part: &Value| part.get("functionResponse").is_some();
+    if !parts.iter().any(is_function_response) || parts.iter().all(is_function_response) {
+        return None;
+    }
+    Some(
+        parts
+            .iter()
+            .cloned()
+            .partition(|part| is_function_response(part)),
+    )
 }
 
 fn convert_message_content_to_parts(
@@ -1365,6 +1393,51 @@ mod tests {
         );
     }
 
+    /// Regression for #8988: Vertex Gemini rejects a final user turn shaped
+    /// `[functionResponse, text]` with "Requests ending with a model turn".
+    #[test]
+    fn anthropic_to_gemini_splits_text_after_tool_results_into_next_user_turn() {
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "Check two cities" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } },
+                        { "type": "tool_use", "id": "call_2", "name": "get_weather", "input": { "city": "Paris" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" },
+                        { "type": "tool_result", "tool_use_id": "call_2", "content": "Rain" },
+                        { "type": "text", "text": "<system-reminder>keep going</system-reminder>" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+
+        assert_eq!(contents.len(), 4);
+        assert_eq!(contents[0]["parts"][0]["text"], "Check two cities");
+        assert_eq!(contents[1]["role"], "model");
+
+        let responses = contents[2]["parts"].as_array().unwrap();
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["functionResponse"]["id"], "call_1");
+        assert_eq!(responses[1]["functionResponse"]["id"], "call_2");
+
+        assert_eq!(contents[3]["role"], "user");
+        assert_eq!(
+            contents[3]["parts"],
+            json!([{ "text": "<system-reminder>keep going</system-reminder>" }])
+        );
+    }
+
     #[test]
     fn anthropic_to_gemini_moves_mixed_tool_result_image_to_native_part() {
         let input = json!({
@@ -1412,12 +1485,15 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("GEMINI_TOOL_IMAGE_SENTINEL"));
+        assert_eq!(parts.len(), 1);
+        let media = result["contents"][2]["parts"].as_array().unwrap();
+        assert_eq!(result["contents"][2]["role"], "user");
         assert_eq!(
-            parts[1]["text"],
+            media[0]["text"],
             "[cc-switch: media output of tool call call_image]"
         );
-        assert_eq!(parts[2]["inlineData"]["mimeType"], "image/png");
-        assert_eq!(parts[2]["inlineData"]["data"], "GEMINI_TOOL_IMAGE_SENTINEL");
+        assert_eq!(media[1]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(media[1]["inlineData"]["data"], "GEMINI_TOOL_IMAGE_SENTINEL");
     }
 
     #[test]
@@ -1463,7 +1539,7 @@ mod tests {
         assert!(serialized.contains("[cc-switch: omitted 20000 bytes]"));
         assert!(!serialized.contains(&"A".repeat(64)));
         assert_eq!(
-            result["contents"][1]["parts"][2]["inlineData"]["data"],
+            result["contents"][2]["parts"][1]["inlineData"]["data"],
             "GEMINI_STRING_IMAGE_SENTINEL"
         );
     }
@@ -1594,8 +1670,9 @@ mod tests {
 
         assert!(response.is_string());
         assert!(!response.as_str().unwrap().contains("IMAGE_ONLY_SENTINEL"));
-        assert_eq!(parts[2]["inlineData"]["mimeType"], "image/webp");
-        assert_eq!(parts[2]["inlineData"]["data"], "IMAGE_ONLY_SENTINEL");
+        let media = result["contents"][2]["parts"].as_array().unwrap();
+        assert_eq!(media[1]["inlineData"]["mimeType"], "image/webp");
+        assert_eq!(media[1]["inlineData"]["data"], "IMAGE_ONLY_SENTINEL");
     }
 
     #[test]
