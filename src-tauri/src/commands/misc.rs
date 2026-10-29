@@ -1721,6 +1721,22 @@ fn extract_version(raw: &str) -> String {
 /// 工具未安装时的统一错误文案；WSL 路径会再拼上 `[WSL:{distro}] ` 前缀。
 const NOT_INSTALLED: &str = "not installed or not executable";
 
+/// 已定位到的可执行文件跑 `--version` 却什么都没输出时的诊断。文件在、拿不到版本，
+/// 就是「装了但跑不起来」：安装位置列表照样会列出它，这里若报没装，同一行会既在
+/// 「已安装」组里、又显示「未安装」和安装按钮。
+fn silent_version_probe_detail(status: std::process::ExitStatus) -> String {
+    match status.code() {
+        Some(0) => "`--version` printed nothing".to_string(),
+        Some(code) => format!("`--version` exited with code {code} and printed nothing"),
+        None => "`--version` was terminated and printed nothing".to_string(),
+    }
+}
+
+/// 已定位到的可执行文件启动失败（文件损坏、被安全软件拦截、不是有效程序等）时的诊断。
+fn launch_failure_detail(tool_path: &Path, err: &std::io::Error) -> String {
+    format!("failed to launch {}: {err}", tool_path.display())
+}
+
 /// CLI 版本探测的三态结果，跨平台统一各 probe（`try_get_version` /
 /// `try_get_version_wsl` / `scan_cli_version`）的返回，进而在 `ToolVersion` 上给出
 /// 结构化的 `installed_but_broken` 信号——避免前端靠匹配错误文案反推语义。
@@ -2856,10 +2872,12 @@ fn run_windows_tool_version_command(
 /// the directory scan, so the displayed version matches what `tool` resolves
 /// to in a terminal (#4701).
 ///
-/// Returns `NotFound` when no entry is resolved on PATH (the caller falls back
-/// to `scan_cli_version` over the hardcoded/registry dirs); `FoundButFailed`
-/// when an entry was resolved but `--version` exited non-zero (installed but
-/// not runnable), which is reported as-is without falling back, so an old
+/// Returns `NotFound` when no entry is resolved on PATH, or the resolved entry
+/// fails to launch (the caller falls back to `scan_cli_version` over the
+/// hardcoded/registry dirs, which still reports it as broken when nothing else
+/// runs); `FoundButFailed` when an entry ran but no version came out of it —
+/// it exited non-zero or printed nothing (installed but not runnable).
+/// That is reported as-is without falling back, so an old
 /// install elsewhere cannot mask a broken default.
 #[cfg(target_os = "windows")]
 fn probe_path_default_version(tool: &str) -> ShellProbe {
@@ -2875,29 +2893,35 @@ fn probe_path_default_version(tool: &str) -> ShellProbe {
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
                 } else {
                     ShellProbe::Found(extract_version(raw))
                 }
             } else {
                 let err = if stderr.is_empty() { stdout } else { stderr };
                 if err.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
                 } else {
                     ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
                 }
             }
         }
+        // 启动不了不一定是装坏了：`where` 会列出 npm 留下的无扩展名 sh shim，同目录
+        // 没有 .cmd 时它可能排在最前，而终端会跳过它、去跑后面那份。交给目录扫描判断：
+        // 别处有能跑的就以它为准，都跑不起来扫描也会报「装了但跑不起来」。
         Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
 }
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
 fn scan_cli_version(tool: &str) -> ShellProbe {
+    scan_cli_version_in(tool, &build_tool_search_paths(tool))
+}
+
+fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf]) -> ShellProbe {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
-    let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
@@ -2907,8 +2931,11 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
     // 典型场景：工具已安装但当前环境跑不起来（如 openclaw 要求 Node v22.19+）。
     // 这类信息比笼统的 "not installed" 有用得多，循环结束未探到版本时回传。
     let mut exec_diagnostic: Option<String> = None;
+    // 文件在、却启动失败或没有任何输出时的首个诊断。没有更具体的报错时才用它：
+    // 文件在就不算没装（安装位置列表也会列出它）。
+    let mut silent_diagnostic: Option<String> = None;
 
-    for path in &search_paths {
+    for path in search_paths {
         #[cfg(target_os = "windows")]
         let new_path = format!("{};{}", path.display(), current_path);
 
@@ -2916,7 +2943,8 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
         let new_path = prepend_search_dir_to_path(path, &current_path);
 
         for tool_path in tool_executable_candidates(tool, path) {
-            if !tool_path.exists() {
+            // 只认文件：与工具同名的目录不是安装，否则启动失败会被当成「装了跑不起来」
+            if !tool_path.is_file() {
                 continue;
             }
 
@@ -2931,27 +2959,36 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
                     .output()
             };
 
-            if let Ok(out) = output {
-                let stdout = decode_command_output(&out.stdout).trim().to_string();
-                let stderr = decode_command_output(&out.stderr).trim().to_string();
-                if out.status.success() {
-                    let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                    if !raw.is_empty() {
-                        return ShellProbe::Found(extract_version(raw));
-                    }
+            let out = match output {
+                Ok(out) => out,
+                Err(e) => {
+                    silent_diagnostic.get_or_insert_with(|| launch_failure_detail(&tool_path, &e));
+                    continue;
+                }
+            };
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            if out.status.success() {
+                let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                if !raw.is_empty() {
+                    return ShellProbe::Found(extract_version(raw));
+                }
+                silent_diagnostic.get_or_insert_with(|| silent_version_probe_detail(out.status));
+            } else {
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                let detail = detail.trim();
+                if detail.is_empty() {
+                    silent_diagnostic
+                        .get_or_insert_with(|| silent_version_probe_detail(out.status));
                 } else if exec_diagnostic.is_none() {
-                    let detail = if stderr.is_empty() { stdout } else { stderr };
-                    let detail = detail.trim();
-                    if !detail.is_empty() {
-                        exec_diagnostic = Some(last_lines(detail, 4));
-                    }
+                    exec_diagnostic = Some(last_lines(detail, 4));
                 }
             }
         }
     }
 
-    // 有诊断 = 找到了可执行文件但 --version 报错（装了跑不起来）；否则视作未安装。
-    match exec_diagnostic {
+    // 有诊断 = 找到了可执行文件但拿不到版本（装了跑不起来），具体报错优先；否则视作未安装。
+    match exec_diagnostic.or(silent_diagnostic) {
         Some(detail) => ShellProbe::FoundButFailed(detail),
         None => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
@@ -3313,7 +3350,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         let new_path = prepend_search_dir_to_path(dir, &current_path);
 
         for tool_path in tool_executable_candidates(tool, dir) {
-            if !tool_path.exists() {
+            // 与 scan_cli_version 一致，只认文件，同名目录不算一处安装
+            if !tool_path.is_file() {
                 continue;
             }
             // Hermes 发布启动器时换成 .exe 不会删掉旧的 .cmd，两者同在它自己的 bin 目录，
@@ -10546,6 +10584,66 @@ mod tests {
         let candidates = tool_executable_candidates("opencode", &dir);
 
         assert_eq!(candidates, vec![PathBuf::from("/usr/local/bin/opencode")]);
+    }
+
+    /// 文件在、却拿不到版本（起不来 / 没输出）算「装了但跑不起来」，不算没装：
+    /// 安装位置列表照样列出这类文件，报没装会让应用页同一行既在「已安装」组又显示安装按钮。
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn scan_cli_version_reports_present_but_silent_executable_as_broken() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let make_dir = |name: &str, script: Option<&str>| {
+            let dir = root.path().join(name);
+            std::fs::create_dir_all(&dir).expect("dir should be created");
+            let tool = dir.join("kimi");
+            match script {
+                Some(body) => {
+                    std::fs::write(&tool, format!("#!/bin/sh\n{body}\n"))
+                        .expect("script should be written");
+                    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
+                        .expect("script should be executable");
+                }
+                // 不可执行的文件：启动失败
+                None => std::fs::write(&tool, "").expect("file should be written"),
+            }
+            dir
+        };
+        let silent = make_dir("silent", Some("exit 0"));
+        let silent_failure = make_dir("silent-failure", Some("exit 3"));
+        let not_executable = make_dir("not-executable", None);
+        let loud_failure = make_dir("loud-failure", Some("echo boom >&2\nexit 1"));
+        let working = make_dir("working", Some("echo 'kimi 1.2.3'"));
+        let empty = root.path().join("empty");
+        std::fs::create_dir_all(&empty).expect("dir should be created");
+        // 与工具同名的目录不是安装
+        let same_name_dir = root.path().join("same-name-dir");
+        std::fs::create_dir_all(same_name_dir.join("kimi")).expect("dir should be created");
+
+        let broken_detail = |paths: &[PathBuf]| match scan_cli_version_in("kimi", paths) {
+            ShellProbe::FoundButFailed(detail) => detail,
+            ShellProbe::Found(v) => panic!("expected broken, got version {v}"),
+            ShellProbe::NotFound(e) => panic!("expected broken, got not found: {e}"),
+        };
+
+        assert!(broken_detail(std::slice::from_ref(&silent)).contains("printed nothing"));
+        assert!(broken_detail(std::slice::from_ref(&silent_failure))
+            .contains("exited with code 3 and printed nothing"));
+        assert!(
+            broken_detail(std::slice::from_ref(&not_executable)).starts_with("failed to launch")
+        );
+        // 具体报错优先于笼统诊断
+        assert_eq!(broken_detail(&[silent.clone(), loud_failure]), "boom");
+        // 别处有能跑的安装仍以它为准
+        assert!(matches!(
+            scan_cli_version_in("kimi", &[silent, working]),
+            ShellProbe::Found(v) if v == "1.2.3"
+        ));
+        assert!(matches!(
+            scan_cli_version_in("kimi", &[empty, same_name_dir]),
+            ShellProbe::NotFound(_)
+        ));
     }
 
     #[test]
