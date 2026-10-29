@@ -4,6 +4,7 @@
 //! and Gemini `GenerateContentResponse` payloads back to Anthropic Messages
 //! responses for Claude-compatible clients.
 
+use super::codex_chat_common::{requires_gemini_thought_signature, GEMINI_SKIP_THOUGHT_SIGNATURE};
 use super::gemini_schema::build_gemini_function_declaration;
 use super::gemini_shadow::{GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
 use crate::proxy::error::ProxyError;
@@ -80,11 +81,24 @@ pub fn anthropic_to_gemini_with_shadow(
     }
 
     if let Some(messages) = messages {
-        result["contents"] = json!(convert_messages_to_contents(
+        let mut contents = convert_messages_to_contents(
             messages,
             &shadow_turns,
             supports_multimodal_function_response,
-        )?);
+        )?;
+        if body
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(requires_gemini_thought_signature)
+        {
+            let filled = fill_skip_thought_signatures(&mut contents);
+            if filled > 0 {
+                log::debug!(
+                    "[Claude] Filled {filled} missing Gemini thought signature(s) with the skip placeholder"
+                );
+            }
+        }
+        result["contents"] = json!(contents);
     }
 
     if let Some(generation_config) = build_generation_config(&body) {
@@ -482,6 +496,18 @@ fn convert_messages_to_contents(
 
         if role == "assistant" {
             merge_tool_names_from_parts(&parts, &mut tool_name_by_id);
+        } else if let Some((function_responses, rest)) = split_function_response_parts(&parts) {
+            // Gemini (Vertex in particular) rejects a user turn whose
+            // functionResponse parts are followed by text/media with
+            // "Requests ending with a model turn are not supported". Claude
+            // Code routinely appends a text block (e.g. a system reminder)
+            // after its tool_result blocks, so emit the function responses as
+            // their own user content and the remaining parts as the next one.
+            // Done for every message, not just the last, so the converted
+            // history stays byte-stable across turns for the prompt cache.
+            contents.push(json!({ "role": gemini_role, "parts": function_responses }));
+            contents.push(json!({ "role": gemini_role, "parts": rest }));
+            continue;
         }
 
         contents.push(json!({
@@ -568,6 +594,22 @@ fn extract_assistant_tool_use_keys(content: Option<&Value>) -> (HashSet<String>,
 
 fn normalize_tool_name(name: &str) -> &str {
     name.rsplit(':').next().unwrap_or(name)
+}
+
+/// Splits a user turn that mixes `functionResponse` parts with other parts
+/// into (function responses, everything else), keeping the relative order
+/// within each group. Returns `None` when no split is needed.
+fn split_function_response_parts(parts: &[Value]) -> Option<(Vec<Value>, Vec<Value>)> {
+    let is_function_response = |part: &Value| part.get("functionResponse").is_some();
+    if !parts.iter().any(is_function_response) || parts.iter().all(is_function_response) {
+        return None;
+    }
+    Some(
+        parts
+            .iter()
+            .cloned()
+            .partition(|part| is_function_response(part)),
+    )
 }
 
 fn convert_message_content_to_parts(
@@ -684,14 +726,18 @@ fn convert_message_content_to_parts(
                 // Re-attach the thought_signature that Gemini originally
                 // associated with this functionCall.  The Anthropic format
                 // strips it from the tool_use block, but Gemini requires it
-                // on every functionCall in a multi-turn tool-use exchange.
-                // Without replaying the stored signature the upstream may
-                // reject with "missing a `thought_signature`".
-                if let Some(sig) = thought_signature_by_id.get(id) {
-                    function_call["thoughtSignature"] = json!(sig);
+                // on every functionCall part in a multi-turn tool-use
+                // exchange.  Per the Gemini wire protocol, `thoughtSignature`
+                // is a Part-level sibling of `functionCall` (it does NOT live
+                // inside the `functionCall` object); nesting it there causes
+                // the upstream to reject with `Unknown name "thoughtSignature"
+                // at 'contents[X].parts[Y].function_call'`.
+                let thought_signature = thought_signature_by_id.get(id).cloned();
+                let mut part = json!({ "functionCall": function_call });
+                if let Some(sig) = thought_signature {
+                    part["thoughtSignature"] = json!(sig);
                 }
-
-                parts.push(json!({ "functionCall": function_call }));
+                parts.push(part);
             }
             "tool_result" => {
                 let tool_use_id = block
@@ -806,6 +852,59 @@ fn plan_gemini_tool_result(content: Option<&Value>) -> (Value, Vec<Value>) {
     );
 
     (normalize_tool_result_response(Some(&cleaned)), gemini_parts)
+}
+
+/// Thought signatures are replayed from the in-memory shadow store, so they are
+/// gone when CC Switch restarts mid tool-call turn or the turn has been evicted.
+/// Gemini 3+ then rejects the rebuilt request with "Function call is missing a
+/// thought_signature". Gemini only validates the first functionCall of each model
+/// step in the current turn (after the last user content that is not just
+/// functionResponse parts), and documents `skip_thought_signature_validator` for
+/// history it cannot trace back. Fill only those calls when they are unsigned;
+/// real signatures, parallel sibling calls and earlier turns are left as is.
+fn fill_skip_thought_signatures(contents: &mut [Value]) -> usize {
+    let turn_start = contents
+        .iter()
+        .rposition(|content| {
+            content.get("role").and_then(Value::as_str) == Some("user")
+                && content
+                    .get("parts")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts
+                            .iter()
+                            .any(|part| part.get("functionResponse").is_none())
+                    })
+        })
+        .map_or(0, |index| index + 1);
+    let mut filled = 0;
+    for content in &mut contents[turn_start..] {
+        if content.get("role").and_then(Value::as_str) != Some("model") {
+            continue;
+        }
+        let Some(first_call) = content
+            .get_mut("parts")
+            .and_then(Value::as_array_mut)
+            .and_then(|parts| {
+                parts
+                    .iter_mut()
+                    .find(|part| part.get("functionCall").is_some())
+            })
+        else {
+            continue;
+        };
+        let has_signature = first_call
+            .get("thoughtSignature")
+            .or_else(|| first_call.get("thought_signature"))
+            .and_then(Value::as_str)
+            .is_some_and(|signature| !signature.is_empty());
+        if has_signature {
+            continue;
+        }
+        first_call["thoughtSignature"] = json!(GEMINI_SKIP_THOUGHT_SIGNATURE);
+        filled += 1;
+    }
+    filled
 }
 
 fn is_gemini_3_series(model: &str) -> bool {
@@ -1365,6 +1464,51 @@ mod tests {
         );
     }
 
+    /// Regression for #8988: Vertex Gemini rejects a final user turn shaped
+    /// `[functionResponse, text]` with "Requests ending with a model turn".
+    #[test]
+    fn anthropic_to_gemini_splits_text_after_tool_results_into_next_user_turn() {
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "Check two cities" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } },
+                        { "type": "tool_use", "id": "call_2", "name": "get_weather", "input": { "city": "Paris" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" },
+                        { "type": "tool_result", "tool_use_id": "call_2", "content": "Rain" },
+                        { "type": "text", "text": "<system-reminder>keep going</system-reminder>" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+
+        assert_eq!(contents.len(), 4);
+        assert_eq!(contents[0]["parts"][0]["text"], "Check two cities");
+        assert_eq!(contents[1]["role"], "model");
+
+        let responses = contents[2]["parts"].as_array().unwrap();
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["functionResponse"]["id"], "call_1");
+        assert_eq!(responses[1]["functionResponse"]["id"], "call_2");
+
+        assert_eq!(contents[3]["role"], "user");
+        assert_eq!(
+            contents[3]["parts"],
+            json!([{ "text": "<system-reminder>keep going</system-reminder>" }])
+        );
+    }
+
     #[test]
     fn anthropic_to_gemini_moves_mixed_tool_result_image_to_native_part() {
         let input = json!({
@@ -1412,12 +1556,15 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("GEMINI_TOOL_IMAGE_SENTINEL"));
+        assert_eq!(parts.len(), 1);
+        let media = result["contents"][2]["parts"].as_array().unwrap();
+        assert_eq!(result["contents"][2]["role"], "user");
         assert_eq!(
-            parts[1]["text"],
+            media[0]["text"],
             "[cc-switch: media output of tool call call_image]"
         );
-        assert_eq!(parts[2]["inlineData"]["mimeType"], "image/png");
-        assert_eq!(parts[2]["inlineData"]["data"], "GEMINI_TOOL_IMAGE_SENTINEL");
+        assert_eq!(media[1]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(media[1]["inlineData"]["data"], "GEMINI_TOOL_IMAGE_SENTINEL");
     }
 
     #[test]
@@ -1463,7 +1610,7 @@ mod tests {
         assert!(serialized.contains("[cc-switch: omitted 20000 bytes]"));
         assert!(!serialized.contains(&"A".repeat(64)));
         assert_eq!(
-            result["contents"][1]["parts"][2]["inlineData"]["data"],
+            result["contents"][2]["parts"][1]["inlineData"]["data"],
             "GEMINI_STRING_IMAGE_SENTINEL"
         );
     }
@@ -1594,8 +1741,9 @@ mod tests {
 
         assert!(response.is_string());
         assert!(!response.as_str().unwrap().contains("IMAGE_ONLY_SENTINEL"));
-        assert_eq!(parts[2]["inlineData"]["mimeType"], "image/webp");
-        assert_eq!(parts[2]["inlineData"]["data"], "IMAGE_ONLY_SENTINEL");
+        let media = result["contents"][2]["parts"].as_array().unwrap();
+        assert_eq!(media[1]["inlineData"]["mimeType"], "image/webp");
+        assert_eq!(media[1]["inlineData"]["data"], "IMAGE_ONLY_SENTINEL");
     }
 
     #[test]
@@ -1690,6 +1838,238 @@ mod tests {
             result["contents"][0]["parts"][0]["functionResponse"]["name"],
             "get_weather"
         );
+    }
+
+    fn skip_signature_request(model: &str) -> Value {
+        json!({
+            "model": model,
+            "messages": [
+                { "role": "user", "content": "old question" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_old", "name": "read", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_old", "content": "a" }
+                    ]
+                },
+                { "role": "assistant", "content": "done" },
+                { "role": "user", "content": "new question" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "text", "text": "checking" },
+                        { "type": "tool_use", "id": "call_1", "name": "read", "input": {} },
+                        { "type": "tool_use", "id": "call_2", "name": "grep", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "b" },
+                        { "type": "tool_result", "tool_use_id": "call_2", "content": "c" }
+                    ]
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_3", "name": "read", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_3", "content": "d" }
+                    ]
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn anthropic_to_gemini_fills_skip_signature_on_first_call_of_current_turn_steps() {
+        let result = anthropic_to_gemini(skip_signature_request("gemini-3.8-flash")).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+        let model_turns: Vec<&Value> = contents
+            .iter()
+            .filter(|content| content["role"] == "model")
+            .collect();
+
+        // Earlier turn (before "new question") is not validated by Gemini.
+        assert!(model_turns[0]["parts"][0].get("thoughtSignature").is_none());
+
+        // Current turn, first step: text part untouched, first call filled,
+        // parallel sibling stays unsigned.
+        let step_one = model_turns[2]["parts"].as_array().unwrap();
+        assert!(step_one[0].get("thoughtSignature").is_none());
+        assert_eq!(
+            step_one[1]["thoughtSignature"],
+            GEMINI_SKIP_THOUGHT_SIGNATURE
+        );
+        assert!(step_one[2].get("thoughtSignature").is_none());
+
+        // Current turn, second step.
+        assert_eq!(
+            model_turns[3]["parts"][0]["thoughtSignature"],
+            GEMINI_SKIP_THOUGHT_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_keeps_real_signature_over_skip_placeholder() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "provider-a",
+            "session-1",
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_3"),
+                "read",
+                json!({}),
+                Some("sig-real"),
+            )],
+        );
+
+        let result = anthropic_to_gemini_with_shadow(
+            skip_signature_request("google/gemini-3.8-flash"),
+            Some(&store),
+            Some("provider-a"),
+            Some("session-1"),
+        )
+        .unwrap();
+        let contents = result["contents"].as_array().unwrap();
+        let last_model = contents
+            .iter()
+            .rev()
+            .find(|content| content["role"] == "model")
+            .unwrap();
+        assert_eq!(last_model["parts"][0]["thoughtSignature"], "sig-real");
+    }
+
+    #[test]
+    fn anthropic_to_gemini_skips_placeholder_for_pre_gemini_3_models() {
+        let result = anthropic_to_gemini(skip_signature_request("gemini-2.5-flash")).unwrap();
+        let has_placeholder = result["contents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|content| content["parts"].as_array().unwrap())
+            .any(|part| part.get("thoughtSignature").is_some());
+        assert!(!has_placeholder);
+    }
+
+    #[test]
+    fn anthropic_to_gemini_rebuilt_function_call_keeps_signature_on_part() {
+        // The shadow turn holds the signature but no replayable parts, so the
+        // assistant message is rebuilt from its tool_use blocks instead of
+        // being replayed verbatim.
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "provider-a",
+            "session-1",
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_1"),
+                "get_weather",
+                json!({ "city": "Tokyo" }),
+                Some("sig-xyz"),
+            )],
+        );
+
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "weather?" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(
+            input,
+            Some(&store),
+            Some("provider-a"),
+            Some("session-1"),
+        )
+        .unwrap();
+
+        let part = &result["contents"][1]["parts"][0];
+        assert_eq!(part["functionCall"]["name"], "get_weather");
+        assert_eq!(part["thoughtSignature"], "sig-xyz");
+        assert!(part["functionCall"].get("thoughtSignature").is_none());
+    }
+
+    #[test]
+    fn anthropic_to_gemini_reattaches_thought_signature_as_part_sibling() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "provider-a",
+            "session-1",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "id": "call_1",
+                        "name": "get_weather",
+                        "args": { "city": "Tokyo" }
+                    },
+                    "thoughtSignature": "sig-xyz"
+                }]
+            }),
+            vec![GeminiToolCallMeta::new(
+                Some("call_1"),
+                "get_weather",
+                json!({ "city": "Tokyo" }),
+                Some("sig-xyz"),
+            )],
+        );
+
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(
+            input,
+            Some(&store),
+            Some("provider-a"),
+            Some("session-1"),
+        )
+        .unwrap();
+
+        let part = &result["contents"][0]["parts"][0];
+        // `thoughtSignature` must be a sibling of `functionCall` on the Part,
+        // NOT nested inside the functionCall object.
+        assert_eq!(part["thoughtSignature"], "sig-xyz");
+        assert!(
+            part["functionCall"].get("thoughtSignature").is_none(),
+            "thoughtSignature must not be nested inside functionCall"
+        );
+        assert_eq!(part["functionCall"]["name"], "get_weather");
     }
 
     #[test]
