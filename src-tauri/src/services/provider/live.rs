@@ -849,6 +849,32 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
     sync_live_for_provider_respecting_mode(state, app_type, provider, None).map(Some)
 }
 
+/// Populate newly encountered DSH profiles with managed providers and enabled MCP servers.
+/// The native writer records completion locally so later native deletions remain intentional.
+pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
+    let providers = state
+        .db
+        .get_all_providers("dsh")?
+        .into_iter()
+        .filter(|(_, provider)| {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.live_config_managed)
+                == Some(true)
+        })
+        .map(|(id, provider)| (id, provider.settings_config))
+        .collect();
+    let servers = state
+        .db
+        .get_all_mcp_servers()?
+        .into_iter()
+        .filter(|(_, server)| server.apps.dsh)
+        .map(|(id, server)| (id, server.server))
+        .collect();
+    crate::dsh_config::initialize_profiles(&providers, &servers)
+}
+
 /// Sync current provider to live configuration
 ///
 /// 使用有效的当前供应商 ID（验证过存在性）。
@@ -858,6 +884,9 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 /// For additive mode apps (OpenCode), all providers are synced instead of just the current one.
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     let mut failures = Vec::new();
+    if let Err(error) = initialize_dsh_profiles(state) {
+        failures.push(format!("provider/dsh: {error}"));
+    }
 
     // Sync providers based on mode
     for app_type in AppType::all() {
@@ -1021,7 +1050,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
-        AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
+        AppType::Dsh => {
+            Ok(json!(crate::dsh_config::get_providers()?))
+        }
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
