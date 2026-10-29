@@ -45,6 +45,10 @@ vi.mock("@/components/providers/forms/CodebuddyAccountSection", () => ({
   CodebuddyAccountSection: () => <div />,
 }));
 
+vi.mock("@/components/providers/DshAccount", () => ({
+  DshAccountLogin: () => <div />,
+}));
+
 describe("CodexOAuthSection", () => {
   let scrollIntoViewDescriptor: PropertyDescriptor | undefined;
 
