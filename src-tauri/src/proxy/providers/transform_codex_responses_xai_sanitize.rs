@@ -135,11 +135,9 @@ fn filter_unsupported_include_markers(body: &mut Value) -> bool {
         Some(include) => {
             let original_len = include.len();
             include.retain(|item| {
-                !item.as_str().is_some_and(|marker| {
-                    XAI_UNSUPPORTED_INCLUDE_MARKERS
-                        .iter()
-                        .any(|unsupported| marker == *unsupported)
-                })
+                !item
+                    .as_str()
+                    .is_some_and(|marker| XAI_UNSUPPORTED_INCLUDE_MARKERS.contains(&marker))
             });
             let changed = include.len() != original_len;
             remove_empty_include = changed && include.is_empty();
