@@ -162,6 +162,8 @@
     "editClaudeProvider": "Edit Claude Code Provider",
     "editCodexProvider": "Edit Codex Provider",
     "configError": "Configuration Error",
+    "liveConfigReadFailed": "Couldn't read the {{app}} config file",
+    "liveConfigReadFailedHint": "Adding or removing providers will fail until the config file is fixed.",
     "notConfigured": "Not configured for official website",
     "applyToClaudePlugin": "Apply to Claude plugin",
     "removeFromClaudePlugin": "Remove from Claude plugin",

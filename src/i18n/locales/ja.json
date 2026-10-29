@@ -162,6 +162,8 @@
     "editClaudeProvider": "Claude Code プロバイダーを編集",
     "editCodexProvider": "Codex プロバイダーを編集",
     "configError": "設定エラー",
+    "liveConfigReadFailed": "{{app}} の設定ファイルを読み込めません",
+    "liveConfigReadFailedHint": "設定ファイルを修正するまで、プロバイダーの追加・削除は失敗します。",
     "notConfigured": "公式サイト用に未設定",
     "applyToClaudePlugin": "Claude プラグインに適用",
     "removeFromClaudePlugin": "Claude プラグインから解除",

@@ -162,6 +162,8 @@
     "editClaudeProvider": "編輯 Claude Code 供應商",
     "editCodexProvider": "編輯 Codex 供應商",
     "configError": "設定錯誤",
+    "liveConfigReadFailed": "無法讀取 {{app}} 設定檔",
+    "liveConfigReadFailedHint": "修好設定檔之前，新增、移除供應商都會失敗。",
     "notConfigured": "未設定官網位址",
     "applyToClaudePlugin": "套用至 Claude 外掛程式",
     "removeFromClaudePlugin": "從 Claude 外掛程式移除",

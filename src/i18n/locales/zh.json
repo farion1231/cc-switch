@@ -162,6 +162,8 @@
     "editClaudeProvider": "编辑 Claude Code 供应商",
     "editCodexProvider": "编辑 Codex 供应商",
     "configError": "配置错误",
+    "liveConfigReadFailed": "无法读取 {{app}} 配置文件",
+    "liveConfigReadFailedHint": "修好配置文件之前，添加、移除供应商都会失败。",
     "notConfigured": "未配置官网地址",
     "applyToClaudePlugin": "应用到 Claude 插件",
     "removeFromClaudePlugin": "从 Claude 插件移除",
