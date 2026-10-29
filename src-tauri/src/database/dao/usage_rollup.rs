@@ -114,6 +114,18 @@ impl Database {
     }
 
     fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
+        // Proxy can cross the local-day cutoff before its linked Session. Preserve the
+        // canonical charge for the native session header after pruning that Proxy.
+        conn.execute(
+            "UPDATE proxy_request_logs AS s SET matched_proxy_cost_usd = (
+                 SELECT p.total_cost_usd FROM proxy_request_logs p
+                 WHERE p.request_id = s.matched_proxy_request_id)
+             WHERE s.data_source = 'codex_session' AND s.codex_dedup_version = 1
+               AND s.matched_proxy_request_id IS NOT NULL
+               AND EXISTS (SELECT 1 FROM proxy_request_logs p
+                           WHERE p.request_id = s.matched_proxy_request_id AND p.created_at < ?1)",
+            [cutoff],
+        )?;
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
         let fresh_detail_input = fresh_input_sql("l");
@@ -513,6 +525,53 @@ mod tests {
             (total_cost - 5.0).abs() < 1e-6,
             "expected backfilled cost 5.0, got {total_cost}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn linked_session_keeps_proxy_charge_across_prune_boundary() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let cutoff = compute_local_midnight_cutoff(Local::now(), 30)?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, total_cost_usd, latency_ms, status_code, created_at
+                 ) VALUES ('proxy', 'p', 'codex', 'mapped', 'alias',
+                     100, 10, '0.20', 1, 200, ?1)",
+                [cutoff - 60],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, total_cost_usd, latency_ms, status_code,
+                    created_at, data_source, session_id, codex_dedup_version,
+                    matched_proxy_request_id, matched_proxy_cost_usd
+                 ) VALUES ('session', '_codex_session', 'codex', 'alias', 'alias',
+                     100, 10, '0.10', 1, 200, ?1, 'codex_session', 'thread', 1,
+                     'proxy', '0.10')",
+                [cutoff + 60],
+            )?;
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+        let session = db.get_session_usage_summary("codex", "thread")?;
+        assert_eq!(session.total_requests, 1);
+        assert_eq!(session.total_cost, "0.200000");
+        let overall = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+        assert_eq!(overall.total_requests, 1);
+        assert_eq!(overall.total_cost, "0.200000");
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_request_logs SET created_at = ?1 WHERE request_id = 'session'",
+                [cutoff - 60],
+            )?;
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+        let after = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+        assert_eq!(after.total_requests, 1);
+        assert_eq!(after.total_cost, "0.200000");
         Ok(())
     }
 
