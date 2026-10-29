@@ -37,7 +37,8 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    backfill_reasoning_effort_on_conn, mark_reasoning_effort_synced, metadata_modified_nanos,
+    update_sync_state, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
@@ -206,8 +207,12 @@ fn sync_single_grok_file(
         return Ok(SessionSyncResult::default());
     }
 
-    let last_modified = cursors.get(&file_path_str).map_or(0, |c| c.last_modified);
-    if file_modified <= last_modified {
+    let cursor = cursors.get(&file_path_str);
+    if file_modified <= cursor.map_or(0, |c| c.last_modified) {
+        // 记录思考强度之前导入的会话：只给既有明细补字段，不重新入账。
+        if cursor.is_some_and(|c| !c.reasoning_effort_synced) {
+            backfill_grok_reasoning_effort(db, file_path, &file_path_str)?;
+        }
         return Ok(SessionSyncResult::default());
     }
 
@@ -218,16 +223,11 @@ fn sync_single_grok_file(
     let content = fs::read_to_string(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
     let events = parse_grok_usage_events(&content);
+    let reasoning_effort = grok_session_reasoning_effort(file_path);
 
-    // 会话 ID = 会话目录名（与 summary.json 的 info.id 一致）。request_id
-    // 唯一性押在该 UUIDv7 全局唯一上：同 ID 的归档/活跃副本经 UPSERT 幂等
-    // 收敛（有意），不同 <enc-cwd> 下撞 ID 视为不可能。
-    let session_id = file_path
-        .parent()
-        .and_then(|dir| dir.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
+    // request_id 唯一性押在会话 UUIDv7 全局唯一上：同 ID 的归档/活跃副本经
+    // UPSERT 幂等收敛（有意），不同 <enc-cwd> 下撞 ID 视为不可能。
+    let session_id = grok_session_id(file_path);
 
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -267,25 +267,14 @@ fn sync_single_grok_file(
                 continue;
             }
 
-            // 幂等键锚定上游稳定 ID（prompt_id 是每轮唯一的 UUID），不含文件
-            // 内序号：updates.jsonl 前缀被改写（如 rewind 截断）导致事件序号
-            // 前移时，幸存轮次仍命中原行不会双算；被移除轮次的行保留——
-            // rewind 不退还已消耗的 token，留存即正确记账。若上游对同一
-            // prompt_id 写多条 turn_completed（未观测到），UPSERT 取后者，
-            // 方向是少记不双算。prompt_id 缺失时回退 "idx{N}"（UUID 形态的
-            // prompt_id 不可能与之撞名）。
-            let turn_key = if event.prompt_id.is_empty() {
-                format!("idx{idx}")
-            } else {
-                event.prompt_id.clone()
-            };
-            let request_id = format!("grok_session:{session_id}:{turn_key}:{model}");
+            let request_id = grok_request_id(&session_id, idx, event, model);
             match insert_grok_session_entry(
                 db,
                 &request_id,
                 turn,
                 event.cost_is_partial || turn.cost_partial,
                 model,
+                reasoning_effort.as_deref(),
                 &session_id,
                 event.created_at,
             ) {
@@ -304,9 +293,85 @@ fn sync_single_grok_file(
         result.deferred_files += 1;
     } else {
         update_sync_state(db, &file_path_str, file_modified, events.len() as i64)?;
+        let conn = lock_conn!(db.conn);
+        mark_reasoning_effort_synced(&conn, &file_path_str)?;
     }
 
     Ok(result)
+}
+
+/// 会话 ID = 会话目录名（与 summary.json 的 info.id 一致）。
+fn grok_session_id(file_path: &Path) -> String {
+    file_path
+        .parent()
+        .and_then(|dir| dir.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// 幂等键锚定上游稳定 ID（prompt_id 是每轮唯一的 UUID），不含文件
+/// 内序号：updates.jsonl 前缀被改写（如 rewind 截断）导致事件序号
+/// 前移时，幸存轮次仍命中原行不会双算；被移除轮次的行保留——
+/// rewind 不退还已消耗的 token，留存即正确记账。若上游对同一
+/// prompt_id 写多条 turn_completed（未观测到），UPSERT 取后者，
+/// 方向是少记不双算。prompt_id 缺失时回退 "idx{N}"（UUID 形态的
+/// prompt_id 不可能与之撞名）。
+fn grok_request_id(session_id: &str, idx: usize, event: &GrokUsageEvent, model: &str) -> String {
+    let turn_key = if event.prompt_id.is_empty() {
+        format!("idx{idx}")
+    } else {
+        event.prompt_id.clone()
+    };
+    format!("grok_session:{session_id}:{turn_key}:{model}")
+}
+
+/// Grok Build 不逐轮记录思考强度，只有 summary.json 的会话当前档位。导入时
+/// 读取，活跃会话里与刚结束的轮次一致；会话中途改档时更早的轮次会记成新档位。
+fn grok_session_reasoning_effort(file_path: &Path) -> Option<String> {
+    let summary = fs::read(file_path.parent()?.join("summary.json")).ok()?;
+    let summary: serde_json::Value = serde_json::from_slice(&summary).ok()?;
+    let effort = summary
+        .get("reasoning_effort")?
+        .as_str()?
+        .trim()
+        .to_ascii_lowercase();
+    (!effort.is_empty()).then_some(effort)
+}
+
+fn backfill_grok_reasoning_effort(
+    db: &Database,
+    file_path: &Path,
+    file_path_str: &str,
+) -> Result<(), AppError> {
+    let effort = grok_session_reasoning_effort(file_path);
+    let content = match effort {
+        Some(_) => fs::read_to_string(file_path)
+            .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?,
+        None => String::new(),
+    };
+    let session_id = grok_session_id(file_path);
+    let conn = lock_conn!(db.conn);
+    let tx = conn.unchecked_transaction()?;
+    let mut updated = 0;
+    for (idx, event) in parse_grok_usage_events(&content).iter().enumerate() {
+        for (model, turn) in &event.per_model {
+            if !turn.is_zero() {
+                updated += backfill_reasoning_effort_on_conn(
+                    &tx,
+                    &grok_request_id(&session_id, idx, event, model),
+                    "grok_session",
+                    effort.as_deref(),
+                )?;
+            }
+        }
+    }
+    mark_reasoning_effort_synced(&tx, file_path_str)?;
+    tx.commit()?;
+    if updated > 0 {
+        crate::usage_events::notify_log_recorded();
+    }
+    Ok(())
 }
 
 /// 从 updates.jsonl 内容解析出全部逐轮用量事件（保持文件顺序）
@@ -414,12 +479,14 @@ fn parse_event_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
 }
 
 /// 插入单条 Grok 会话记录到 proxy_request_logs
+#[allow(clippy::too_many_arguments)]
 fn insert_grok_session_entry(
     db: &Database,
     request_id: &str,
     turn: &GrokCounters,
     cost_is_partial: bool,
     model: &str,
+    reasoning_effort: Option<&str>,
     session_id: &str,
     created_at: i64,
 ) -> Result<bool, AppError> {
@@ -527,8 +594,8 @@ fn insert_grok_session_entry(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source,
-            input_token_semantics
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+            input_token_semantics, reasoning_effort
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
         ON CONFLICT(request_id) DO UPDATE SET
             model = excluded.model,
             input_tokens = excluded.input_tokens,
@@ -539,13 +606,15 @@ fn insert_grok_session_entry(
             cache_read_cost_usd = excluded.cache_read_cost_usd,
             cache_creation_cost_usd = excluded.cache_creation_cost_usd,
             total_cost_usd = excluded.total_cost_usd,
-            latency_ms = excluded.latency_ms
+            latency_ms = excluded.latency_ms,
+            reasoning_effort = COALESCE(reasoning_effort, excluded.reasoning_effort)
         WHERE data_source = 'grok_session'
           AND (input_tokens != excluded.input_tokens
            OR output_tokens != excluded.output_tokens
            OR cache_read_tokens != excluded.cache_read_tokens
            OR latency_ms != excluded.latency_ms
-           OR model != excluded.model)",
+           OR model != excluded.model
+           OR (reasoning_effort IS NULL AND excluded.reasoning_effort IS NOT NULL))",
         rusqlite::params![
             request_id,
             "_grok_session",     // provider_id
@@ -572,6 +641,7 @@ fn insert_grok_session_entry(
             created_at,
             "grok_session",      // data_source
             INPUT_TOKEN_SEMANTICS_TOTAL,
+            reasoning_effort,
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 Grok Build 会话日志失败: {e}")))?;
@@ -773,6 +843,60 @@ mod tests {
         let expected2 = Decimal::from(56_540_000u64) / Decimal::from(10_000_000_000u64);
         assert_eq!(Decimal::from_str(&costs[0].1).expect("decimal"), expected1);
         assert_eq!(Decimal::from_str(&costs[1].1).expect("decimal"), expected2);
+        Ok(())
+    }
+
+    #[test]
+    fn session_reasoning_effort_is_recorded_and_backfilled_without_reimport() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = write_session_file(
+            temp.path(),
+            "sess-effort",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "p1",
+                &model_counters("grok-4.5-build", 100, 10, 0, 1),
+            )],
+        );
+        let summary = path.with_file_name("summary.json");
+        std::fs::write(&summary, r#"{"reasoning_effort":" High "}"#).unwrap();
+        let sync = |db: &Database| {
+            sync_single_grok_file(
+                db,
+                &path,
+                &crate::services::session_usage::load_sync_cursors(db).unwrap(),
+            )
+        };
+        let effort = |db: &Database| -> Option<String> {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT reasoning_effort FROM proxy_request_logs",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(sync(&db)?.imported, 1);
+        assert_eq!(effort(&db).as_deref(), Some("high"));
+
+        // 导入早于强度记录的旧行：文件未变时只补字段，被清理的明细不会被重建。
+        std::fs::write(&summary, r#"{"reasoning_effort":"low"}"#).unwrap();
+        lock_conn!(db.conn).execute_batch(
+            "UPDATE proxy_request_logs SET reasoning_effort = NULL;
+             UPDATE session_log_sync SET reasoning_effort_synced = 0;",
+        )?;
+        assert_eq!(sync(&db)?.imported, 0);
+        assert_eq!(effort(&db).as_deref(), Some("low"));
+        lock_conn!(db.conn).execute_batch(
+            "DELETE FROM proxy_request_logs;
+             UPDATE session_log_sync SET reasoning_effort_synced = 0;",
+        )?;
+        assert_eq!(sync(&db)?.imported, 0);
+        assert_eq!(query_rows(&db)?.len(), 0);
         Ok(())
     }
 

@@ -20,7 +20,8 @@ use crate::opencode_config::get_opencode_db_path;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    backfill_reasoning_effort_on_conn, mark_reasoning_effort_synced, metadata_modified_nanos,
+    update_sync_state, SessionSyncResult,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
@@ -36,6 +37,7 @@ struct OpenCodeMessageData {
     cache_write_tokens: u32,
     cost: f64,
     model_id: String,
+    reasoning_effort: Option<String>,
     timestamp_ms: i64,
     /// 耗时终点优先取 time.streamed（流式结束，不含工具执行），缺失或异常时
     /// 退回 time.completed；离线回填只有整条消息的起止时间，没有首字时间，
@@ -81,7 +83,13 @@ fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool,
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let db_path = get_opencode_db_path();
+    sync_opencode_usage_at_path(db, &db_path)
+}
 
+fn sync_opencode_usage_at_path(
+    db: &Database,
+    db_path: &std::path::Path,
+) -> Result<SessionSyncResult, AppError> {
     if !db_path.exists() {
         return Ok(SessionSyncResult {
             imported: 0,
@@ -99,7 +107,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     // opencode 的数据库运行在 WAL 模式：新提交先落在 -wal 文件里，
     // 主库文件只有在 checkpoint 时才更新。因此必须同时考虑 -wal 的
     // mtime，否则会在 checkpoint 之前漏掉刚写入的会话。
-    let metadata = fs::metadata(&db_path)
+    let metadata = fs::metadata(db_path)
         .map_err(|e| AppError::Config(format!("无法读取 opencode.db 元数据: {e}")))?;
     let mut file_modified = metadata_modified_nanos(&metadata);
 
@@ -110,6 +118,13 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     let cursors = crate::services::session_usage::load_sync_cursors(db)?;
     let last_modified = cursors.get(&db_path_str).map_or(0, |c| c.last_modified);
+
+    if cursors
+        .get(&db_path_str)
+        .is_some_and(|c| !c.reasoning_effort_synced)
+    {
+        backfill_opencode_reasoning_effort(db, db_path)?;
+    }
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -125,7 +140,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     // 打开 opencode 的 SQLite 数据库（只读）
     let opencode_conn =
-        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
 
     let mut result = SessionSyncResult {
@@ -203,6 +218,8 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     // 仅在本轮完全成功时推进文件级状态；否则保留下次重试入口。
     if !has_sync_errors {
         update_sync_state(db, &db_path_str, file_modified, 0)?;
+        let conn = lock_conn!(db.conn);
+        mark_reasoning_effort_synced(&conn, &db_path_str)?;
     }
 
     if result.imported > 0 {
@@ -215,6 +232,38 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     }
 
     Ok(result)
+}
+
+/// 升级补录绕过 mtime，但绝不绕过正常导入的去重游标。
+fn backfill_opencode_reasoning_effort(
+    db: &Database,
+    db_path: &std::path::Path,
+) -> Result<(), AppError> {
+    let source =
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let schema = detect_schema(&source)?;
+    let mut updated = 0;
+    for (session_id, _) in query_sessions(&source, schema)? {
+        let messages = query_assistant_messages(&source, schema, &session_id)?;
+        let conn = lock_conn!(db.conn);
+        let tx = conn.unchecked_transaction()?;
+        for (message_id, msg) in messages.messages {
+            let request_id = format!("opencode_session:{session_id}:{message_id}");
+            updated += backfill_reasoning_effort_on_conn(
+                &tx,
+                &request_id,
+                "opencode_session",
+                msg.reasoning_effort.as_deref(),
+            )?;
+        }
+        tx.commit()?;
+    }
+    let conn = lock_conn!(db.conn);
+    mark_reasoning_effort_synced(&conn, &db_path.to_string_lossy())?;
+    if updated > 0 {
+        crate::usage_events::notify_log_recorded();
+    }
+    Ok(())
 }
 
 /// 查询所有会话的 (id, sync_watermark)
@@ -341,6 +390,32 @@ fn query_assistant_messages(
     })
 }
 
+/// 原样记录内置强度变体名；`default` 是未选变体、沿用模型默认强度。自定义
+/// variant 可包含任意设置，无法从名称还原请求强度；不能查询当前配置来倒推
+/// 历史，也不能把 reasoning token 数当强度。
+fn opencode_reasoning_effort(value: &serde_json::Value) -> Option<String> {
+    value
+        .pointer("/model/variant")
+        .or_else(|| value.get("variant"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|level| {
+            matches!(
+                *level,
+                "default"
+                    | "off"
+                    | "none"
+                    | "minimal"
+                    | "low"
+                    | "medium"
+                    | "high"
+                    | "xhigh"
+                    | "max"
+            )
+        })
+        .map(str::to_owned)
+}
+
 /// 解析 opencode message.data JSON 为结构化数据
 fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> {
     let tokens = value.get("tokens")?;
@@ -421,6 +496,7 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         cache_write_tokens,
         cost,
         model_id,
+        reasoning_effort: opencode_reasoning_effort(value),
         timestamp_ms,
         latency_ms,
     })
@@ -434,6 +510,16 @@ fn insert_opencode_message(
     session_id: &str,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
+
+    if backfill_reasoning_effort_on_conn(
+        &conn,
+        request_id,
+        "opencode_session",
+        msg.reasoning_effort.as_deref(),
+    )? > 0
+    {
+        crate::usage_events::notify_log_recorded();
+    }
 
     let created_at = if msg.timestamp_ms > 0 {
         msg.timestamp_ms / 1000
@@ -517,8 +603,8 @@ fn insert_opencode_message(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source, reasoning_effort
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         rusqlite::params![
             request_id,
             "_opencode_session",   // provider_id
@@ -545,6 +631,7 @@ fn insert_opencode_message(
             "1.0",                 // cost_multiplier
             created_at,
             "opencode_session",    // data_source
+            msg.reasoning_effort,
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 OpenCode 会话日志失败: {e}")))?;
@@ -555,6 +642,108 @@ fn insert_opencode_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_reasoning_effort_variants_are_explicit_and_versioned() {
+        for (value, expected) in [
+            (serde_json::json!({"variant": "xhigh"}), Some("xhigh")),
+            (
+                serde_json::json!({"model": {"variant": "max"}}),
+                Some("max"),
+            ),
+            (serde_json::json!({"variant": "none"}), Some("none")),
+            (
+                serde_json::json!({"model": {"variant": "default"}}),
+                Some("default"),
+            ),
+            (serde_json::json!({"variant": "fast"}), None),
+            (serde_json::json!({"variant": null}), None),
+            (serde_json::json!({"tokens": {"reasoning": 2000}}), None),
+        ] {
+            assert_eq!(opencode_reasoning_effort(&value).as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn test_reasoning_effort_backfills_unchanged_v1_and_v2_without_reimport() -> Result<(), AppError>
+    {
+        for schema in [OpenCodeSchema::V1, OpenCodeSchema::V2] {
+            let db = Database::memory()?;
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("opencode.db");
+            let source = rusqlite::Connection::open(&path)?;
+            let (sessions, messages) = match schema {
+                OpenCodeSchema::V1 => ("session", "message"),
+                OpenCodeSchema::V2 => ("session_v2", "session_message"),
+            };
+            source.execute_batch(&format!(
+                "CREATE TABLE {sessions} (id TEXT, time_updated INTEGER);
+                 CREATE TABLE {messages} (id TEXT, session_id TEXT, type TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+                 INSERT INTO {sessions} VALUES ('s1', 100);"
+            ))?;
+            for (id, variant) in [("kept", "max"), ("pruned", "high"), ("custom", "fast")] {
+                let mut value = serde_json::json!({
+                    "role": "assistant", "tokens": {"input": 100, "output": 20},
+                    "time": {"created": 1000, "completed": 2000}, "cost": 0.25,
+                    "modelID": "test-model", "model": {"id": "test-model"}
+                });
+                match schema {
+                    OpenCodeSchema::V1 => value["variant"] = serde_json::json!(variant),
+                    OpenCodeSchema::V2 => value["model"]["variant"] = serde_json::json!(variant),
+                }
+                source.execute(
+                    &format!("INSERT INTO {messages} VALUES (?1, 's1', 'assistant', 100, 100, ?2)"),
+                    rusqlite::params![id, value.to_string()],
+                )?;
+            }
+            drop(source);
+            assert_eq!(sync_opencode_usage_at_path(&db, &path)?.imported, 3);
+            let kept = "opencode_session:s1:kept";
+            assert_eq!(
+                db.get_request_detail(kept)?
+                    .unwrap()
+                    .reasoning_effort
+                    .as_deref(),
+                Some("max")
+            );
+            assert_eq!(
+                db.get_request_detail("opencode_session:s1:custom")?
+                    .unwrap()
+                    .reasoning_effort,
+                None
+            );
+            let old_cursor =
+                crate::services::session_usage::get_sync_state(&db, &path.to_string_lossy())?;
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute_batch(
+                    "UPDATE proxy_request_logs SET reasoning_effort = NULL;
+                    DELETE FROM proxy_request_logs WHERE request_id = 'opencode_session:s1:pruned';
+                    UPDATE session_log_sync SET reasoning_effort_synced = 0;",
+                )?;
+            }
+            for _ in 0..2 {
+                assert_eq!(sync_opencode_usage_at_path(&db, &path)?.imported, 0);
+            }
+            let after = db.get_request_detail(kept)?.unwrap();
+            assert_eq!(after.reasoning_effort.as_deref(), Some("max"));
+            assert_eq!(after.total_cost_usd, "0.25");
+            assert_eq!(after.output_tokens, 20);
+            assert!(db
+                .get_request_detail("opencode_session:s1:pruned")?
+                .is_none());
+            assert_eq!(
+                crate::services::session_usage::get_sync_state(&db, &path.to_string_lossy())?,
+                old_cursor
+            );
+            assert!(
+                crate::services::session_usage::load_sync_cursors(&db)?
+                    [path.to_string_lossy().as_ref()]
+                .reasoning_effort_synced
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_parse_message_data_full() {

@@ -13,9 +13,10 @@ use crate::services::session_usage::{
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::find_model_pricing;
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -26,6 +27,7 @@ const DATA_SOURCE: &str = "pi_session";
 const PROVIDER_PLACEHOLDER: &str = "_pi_session";
 const UNKNOWN_MODEL: &str = "unknown";
 const MAX_USAGE_LABEL_BYTES: usize = 512;
+const MAX_REASONING_CACHE_ENTRIES: usize = 256;
 const MIN_SQLITE_UNIX_MILLIS: i64 = -62_167_219_200_000;
 const MAX_SQLITE_UNIX_MILLIS: i64 = 253_402_300_799_999;
 const REVISION_TAIL_BYTES: u64 = 4096;
@@ -87,6 +89,7 @@ struct PiUsageRecord {
     provider_id: String,
     model: String,
     request_model: String,
+    reasoning_effort: Option<String>,
     input_tokens: u32,
     output_tokens: u32,
     cache_read_tokens: u32,
@@ -104,6 +107,147 @@ struct ParsedPiFile {
     records: Vec<PiUsageRecord>,
     last_complete_line: i64,
     incomplete_tail: bool,
+    reasoning_cache: PiReasoningCache,
+}
+
+/// A bounded checkpoint for normal appends. Older branch parents can be
+/// recovered from the JSONL without importing their usage again.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct PiReasoningCache {
+    recent_levels: VecDeque<(String, String)>,
+    last_entry_id: Option<String>,
+    legacy_level: Option<String>,
+    history_omitted: bool,
+}
+
+/// Keep the levels encountered during this parse so a full replay can resolve
+/// arbitrary branches. Only the bounded cache is written to the database.
+#[derive(Debug)]
+struct PiReasoningContext {
+    levels_by_entry: HashMap<String, String>,
+    cache: PiReasoningCache,
+    history_complete: bool,
+}
+
+impl Default for PiReasoningContext {
+    fn default() -> Self {
+        Self {
+            levels_by_entry: HashMap::new(),
+            cache: PiReasoningCache::default(),
+            history_complete: true,
+        }
+    }
+}
+
+impl PiReasoningContext {
+    fn from_json(json: &str) -> Option<Self> {
+        if let Ok(cache) = serde_json::from_str::<PiReasoningCache>(json) {
+            if cache.recent_levels.len() > MAX_REASONING_CACHE_ENTRIES {
+                return None;
+            }
+            return Some(Self {
+                levels_by_entry: cache.recent_levels.iter().cloned().collect(),
+                history_complete: !cache.history_omitted,
+                cache,
+            });
+        }
+
+        // Accept the earlier, unbounded checkpoint without replaying usage.
+        // Its next successful sync writes only the bounded representation.
+        #[derive(Deserialize)]
+        struct LegacyContext {
+            levels_by_entry: HashMap<String, Option<String>>,
+            legacy_level: Option<String>,
+        }
+        let legacy: LegacyContext = serde_json::from_str(json).ok()?;
+        let levels_by_entry: HashMap<_, _> = legacy
+            .levels_by_entry
+            .into_iter()
+            .filter_map(|(id, level)| level.map(|level| (id, level)))
+            .collect();
+        let cache = PiReasoningCache {
+            recent_levels: levels_by_entry
+                .iter()
+                .take(MAX_REASONING_CACHE_ENTRIES)
+                .map(|(id, level)| (id.clone(), level.clone()))
+                .collect(),
+            legacy_level: legacy.legacy_level,
+            history_omitted: levels_by_entry.len() > MAX_REASONING_CACHE_ENTRIES,
+            last_entry_id: None,
+        };
+        Some(Self {
+            levels_by_entry,
+            cache,
+            history_complete: true,
+        })
+    }
+
+    fn needs_history(&self, entry: &Value, version: u64) -> bool {
+        if self.history_complete
+            || version < 2
+            || valid_entry_id(entry).is_none()
+            || entry.get("type").and_then(Value::as_str) == Some("thinking_level_change")
+        {
+            return false;
+        }
+        nonempty_string(entry.get("parentId"))
+            .filter(|parent| crate::session_manager::providers::pi::is_valid_tree_id(parent))
+            .is_some_and(|parent| {
+                self.cache.last_entry_id.as_deref() != Some(parent)
+                    && !self.levels_by_entry.contains_key(parent)
+            })
+    }
+
+    fn observe(&mut self, entry: &Value, version: u64) -> Option<String> {
+        let entry_id = valid_entry_id(entry);
+        let mut level = if version < 2 || entry_id.is_none() {
+            self.cache.legacy_level.clone()
+        } else {
+            nonempty_string(entry.get("parentId")).and_then(|parent| {
+                if self.cache.last_entry_id.as_deref() == Some(parent) {
+                    // Also covers an unknown-level tail without storing null
+                    // levels for every entry in an ordinary linear session.
+                    self.cache.legacy_level.clone()
+                } else {
+                    self.levels_by_entry.get(parent).cloned()
+                }
+            })
+        };
+        if entry.get("type").and_then(Value::as_str) == Some("thinking_level_change") {
+            level = nonempty_string(entry.get("thinkingLevel"))
+                .map(truncate_usage_label)
+                .map(str::to_owned);
+        }
+        if let Some(id) = entry_id {
+            if let Some(level) = &level {
+                self.levels_by_entry.insert(id.to_string(), level.clone());
+                self.cache
+                    .recent_levels
+                    .push_back((id.to_string(), level.clone()));
+                if self.cache.recent_levels.len() > MAX_REASONING_CACHE_ENTRIES {
+                    self.cache.recent_levels.pop_front();
+                    self.cache.history_omitted = true;
+                }
+            } else {
+                self.levels_by_entry.remove(id);
+                self.cache.recent_levels.retain(|(key, _)| key != id);
+            }
+        }
+        self.cache.last_entry_id = entry_id.map(str::to_owned);
+        self.cache.legacy_level = level.clone();
+        level
+    }
+}
+
+fn valid_entry_id(entry: &Value) -> Option<&str> {
+    nonempty_string(entry.get("id"))
+        .filter(|id| crate::session_manager::providers::pi::is_valid_tree_id(id))
+}
+
+enum PiRecordOutcome {
+    Inserted,
+    Updated,
+    Skipped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,7 +414,8 @@ fn sync_single_pi_file(
     // active sessions can seek straight to appended JSONL. Any mismatch is a
     // rewrite and must rescan from the header; the durable request ledger
     // makes that safe.
-    let (start_after_line, start_at_byte) = match previous {
+    let mut reasoning_context = PiReasoningContext::default();
+    let (mut start_after_line, mut start_at_byte) = match previous {
         Some(state)
             if state.revision.complete
                 && revision.file_size > state.revision.file_size
@@ -280,6 +425,21 @@ fn sync_single_pi_file(
         }
         Some(_) | None => (0, None),
     };
+    if start_at_byte.is_some() {
+        let serialized: Option<String> = lock_conn!(db.conn).query_row(
+            "SELECT pi_usage_context FROM session_log_sync WHERE file_path = ?1",
+            [&file_path_string],
+            |row| row.get(0),
+        )?;
+        match serialized.and_then(|json| PiReasoningContext::from_json(&json)) {
+            Some(context) => reasoning_context = context,
+            None => {
+                // Missing/invalid context cannot safely seed the append path.
+                start_after_line = 0;
+                start_at_byte = None;
+            }
+        }
+    }
     let parsed = parse_pi_file(
         file_path,
         start_after_line,
@@ -287,25 +447,32 @@ fn sync_single_pi_file(
         revision.file_size,
         modified,
         scope,
+        reasoning_context,
     )?;
     let conn = lock_conn!(db.conn);
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| AppError::Database(format!("启动 Pi 用量导入事务失败: {error}")))?;
     let mut result = SessionSyncResult::default();
+    let mut updated = false;
     for record in &parsed.records {
-        if insert_pi_record(&tx, record)? {
-            result.imported = result.imported.saturating_add(1);
-        } else {
-            result.skipped = result.skipped.saturating_add(1);
+        match insert_pi_record(&tx, record)? {
+            PiRecordOutcome::Inserted => result.imported = result.imported.saturating_add(1),
+            outcome => {
+                updated |= matches!(outcome, PiRecordOutcome::Updated);
+                result.skipped = result.skipped.saturating_add(1);
+            }
         }
     }
 
-    update_pi_sync_state_on_conn(&tx, &file_path_string, revision, parsed.last_complete_line)?;
+    update_pi_sync_state_on_conn(&tx, &file_path_string, revision, &parsed)?;
     tx.commit()
         .map_err(|error| AppError::Database(format!("提交 Pi 用量导入事务失败: {error}")))?;
     if parsed.incomplete_tail {
         result.deferred_files = 1;
+    }
+    if updated {
+        crate::usage_events::notify_log_recorded();
     }
     Ok(result)
 }
@@ -315,6 +482,11 @@ fn decode_pi_sync_state(
     cursor: Option<&crate::services::session_usage::SyncCursor>,
 ) -> Option<PiSyncState> {
     let cursor = cursor?;
+    // Old cursors predate reasoning capture. Rescan once to fill metadata on
+    // existing detail rows; the durable usage ledger still prevents rebilling.
+    if !cursor.has_pi_usage_context {
+        return None;
+    }
     let last_line_offset = cursor.last_line_offset;
     let encoded_revision = cursor.last_synced_at as u64;
     let marker = encoded_revision >> REVISION_MARKER_SHIFT;
@@ -343,14 +515,21 @@ fn update_pi_sync_state_on_conn(
     conn: &rusqlite::Connection,
     file_path: &str,
     revision: PiFileRevision,
-    last_line_offset: i64,
+    parsed: &ParsedPiFile,
 ) -> Result<(), AppError> {
-    update_sync_state_on_conn(conn, file_path, revision.modified_nanos, last_line_offset)?;
-    // No schema expansion is needed for Pi's append proof. This tagged value
-    // is private to Pi rows; no production consumer interprets last_synced_at.
+    let context = serde_json::to_string(&parsed.reasoning_cache)
+        .map_err(|error| AppError::Database(format!("序列化 Pi 思考强度上下文失败: {error}")))?;
+    update_sync_state_on_conn(
+        conn,
+        file_path,
+        revision.modified_nanos,
+        parsed.last_complete_line,
+    )?;
+    // Keep the append proof and branch context in the same transaction as
+    // usage rows. The tagged revision is private to Pi's last_synced_at values.
     conn.execute(
-        "UPDATE session_log_sync SET last_synced_at = ?2 WHERE file_path = ?1",
-        rusqlite::params![file_path, revision.encoded()],
+        "UPDATE session_log_sync SET last_synced_at = ?2, pi_usage_context = ?3 WHERE file_path = ?1",
+        rusqlite::params![file_path, revision.encoded(), context],
     )
     .map_err(|error| AppError::Database(format!("更新 Pi 会话同步状态失败: {error}")))?;
     Ok(())
@@ -409,6 +588,7 @@ fn parse_pi_file(
     snapshot_size: u64,
     file_modified_nanos: i64,
     scope: &ChildScope,
+    mut reasoning_context: PiReasoningContext,
 ) -> Result<ParsedPiFile, AppError> {
     let file = File::open(file_path)
         .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
@@ -421,6 +601,7 @@ fn parse_pi_file(
     let mut records = Vec::new();
     let mut incomplete_tail = false;
     let nested = scope.is_nested(file_path);
+    let mut version = 1;
 
     loop {
         buffer.clear();
@@ -462,9 +643,6 @@ fn parse_pi_file(
                 crate::session_manager::providers::pi::MAX_TREE_ENTRIES
             )));
         }
-        if session_id.is_some() && line_number <= start_after_line {
-            continue;
-        }
         let Some(value) = value else {
             if !has_newline {
                 incomplete_tail = true;
@@ -484,6 +662,7 @@ fn parse_pi_file(
                 .and_then(Value::as_str)
                 .filter(|id| crate::session_manager::providers::pi::is_valid_tree_id(id))
                 .map(str::to_string);
+            version = value.get("version").and_then(Value::as_u64).unwrap_or(1);
             if session_id.is_none() {
                 return Err(AppError::Config("Pi 会话 header 缺少 id".to_string()));
             }
@@ -498,7 +677,26 @@ fn parse_pi_file(
             }
             continue;
         }
-        let Some(record) = parse_usage_record(
+        if reasoning_context.needs_history(&value, version) {
+            // At most one retry: the fresh context keeps every level while
+            // replaying this snapshot. Only entries after the original cursor
+            // become usage records, so old/pruned requests stay untouched.
+            drop((records, reasoning_context, reader, buffer));
+            return parse_pi_file(
+                file_path,
+                start_after_line,
+                None,
+                snapshot_size,
+                file_modified_nanos,
+                scope,
+                PiReasoningContext::default(),
+            );
+        }
+        let reasoning_effort = reasoning_context.observe(&value, version);
+        if line_number <= start_after_line {
+            continue;
+        }
+        let Some(mut record) = parse_usage_record(
             &value,
             session_id.as_deref().unwrap_or_default(),
             session_timestamp,
@@ -513,6 +711,11 @@ fn parse_pi_file(
         {
             continue;
         }
+        // Tool usage and summaries can use independent models/settings.
+        // Only assistant requests inherit the conversation's thinking level.
+        if value.pointer("/message/role").and_then(Value::as_str) == Some("assistant") {
+            record.reasoning_effort = record.reasoning_effort.or(reasoning_effort);
+        }
         records.push(record);
     }
 
@@ -523,6 +726,7 @@ fn parse_pi_file(
         records,
         last_complete_line: line_number,
         incomplete_tail,
+        reasoning_cache: reasoning_context.cache,
     })
 }
 
@@ -689,6 +893,10 @@ fn parse_usage_record(
         provider_id,
         model,
         request_model,
+        reasoning_effort: message
+            .and_then(|message| nonempty_string(message.get("thinkingLevel")))
+            .map(truncate_usage_label)
+            .map(str::to_owned),
         input_tokens,
         output_tokens,
         cache_read_tokens,
@@ -888,7 +1096,10 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
+fn insert_pi_record(
+    conn: &rusqlite::Connection,
+    record: &PiUsageRecord,
+) -> Result<PiRecordOutcome, AppError> {
     let request_seen: bool = conn
         .query_row(
             PI_REQUEST_DEDUP_SQL,
@@ -909,7 +1120,32 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             )
             .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
     if already_seen {
-        return Ok(false);
+        if let Some(effort) = &record.reasoning_effort {
+            // Keep normal backfills as primary-key lookups. The semantic
+            // fallback is only needed for legacy IDs migrated by Pi.
+            let changed = if request_seen {
+                conn.execute(
+                    "UPDATE proxy_request_logs SET reasoning_effort = ?1
+                     WHERE data_source = ?2 AND reasoning_effort IS NULL AND request_id = ?3",
+                    rusqlite::params![effort, DATA_SOURCE, record.request_id],
+                )?
+            } else {
+                conn.execute(
+                    "UPDATE proxy_request_logs SET reasoning_effort = ?1
+                     WHERE data_source = ?2 AND reasoning_effort IS NULL
+                       AND request_id IN (
+                           SELECT request_id FROM session_usage_dedup
+                           WHERE data_source = ?2 AND semantic_id = ?3
+                             AND (?4 = 0 OR has_entry_id = 0)
+                       )",
+                    rusqlite::params![effort, DATA_SOURCE, record.semantic_id, record.has_entry_id],
+                )?
+            };
+            if changed > 0 {
+                return Ok(PiRecordOutcome::Updated);
+            }
+        }
+        return Ok(PiRecordOutcome::Skipped);
     }
     conn.execute(
         "INSERT OR IGNORE INTO session_usage_dedup
@@ -963,10 +1199,10 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             input_cost_usd, output_cost_usd, cache_read_cost_usd,
             cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
+            provider_type, is_streaming, cost_multiplier, created_at, data_source, reasoning_effort
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
+            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
         )",
         rusqlite::params![
             record.request_id,
@@ -995,9 +1231,16 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             "1.0",
             record.created_at,
             DATA_SOURCE,
+            record.reasoning_effort,
         ],
     )
-    .map(|changed| changed > 0)
+    .map(|changed| {
+        if changed > 0 {
+            PiRecordOutcome::Inserted
+        } else {
+            PiRecordOutcome::Skipped
+        }
+    })
     .map_err(|error| AppError::Database(format!("插入 Pi 会话用量失败: {error}")))
 }
 
@@ -1101,6 +1344,351 @@ mod tests {
         )
     }
 
+    fn assistant_child(id: &str, parent: &str) -> String {
+        assistant_line(id, "2023-11-14T22:13:21Z", 10)
+            .replace(r#""parentId":null"#, &format!(r#""parentId":"{parent}""#))
+    }
+
+    fn assert_reasoning_effort(
+        db: &Database,
+        line: &str,
+        expected: Option<&str>,
+    ) -> Result<(), AppError> {
+        let entry: Value = serde_json::from_str(line).unwrap();
+        let record = parse_usage_record(&entry, "session", None, 0).unwrap();
+        let detail = db.get_request_detail(&record.request_id)?.unwrap();
+        assert_eq!(detail.reasoning_effort.as_deref(), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn reasoning_effort_follows_parent_branches_across_incremental_sync() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let path = session_path(temp.path(), "reasoning-branches");
+        let first = assistant_child("first", "high");
+        let second = assistant_child("second", "low");
+        let branch = assistant_child("branch", "first");
+        let disabled = assistant_child("disabled", "off");
+        let unknown = assistant_child("unknown", "missing");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"reasoning"}"#,
+                r#"{"type":"thinking_level_change","id":"high","parentId":null,"thinkingLevel":"high"}"#,
+                &first,
+                r#"{"type":"thinking_level_change","id":"low","parentId":"first","thinkingLevel":"low"}"#,
+                &second,
+            ],
+        );
+        let db = Database::memory()?;
+        let initial = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(initial.errors.is_empty(), "{:?}", initial.errors);
+        assert_eq!(initial.imported, 2);
+        assert_reasoning_effort(&db, &first, Some("high"))?;
+        assert_reasoning_effort(&db, &second, Some("low"))?;
+
+        // Only the database cursor carries state across passes; the appended
+        // branch points back before the last level change in the original file.
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(writer, "{branch}").unwrap();
+            writeln!(writer, "{}", r#"{"type":"thinking_level_change","id":"off","parentId":"branch","thinkingLevel":"off"}"#).unwrap();
+            writeln!(writer, "{disabled}").unwrap();
+            writeln!(writer, "{unknown}").unwrap();
+        }
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(appended.errors.is_empty(), "{:?}", appended.errors);
+        assert_eq!((appended.imported, appended.skipped), (3, 0));
+        assert_reasoning_effort(&db, &branch, Some("high"))?;
+        assert_reasoning_effort(&db, &disabled, Some("off"))?;
+        assert_reasoning_effort(&db, &unknown, None)?;
+        let serialized: String = lock_conn!(db.conn).query_row(
+            "SELECT pi_usage_context FROM session_log_sync WHERE file_path = ?1",
+            [path.to_string_lossy().as_ref()],
+            |row| row.get(0),
+        )?;
+        let context: PiReasoningCache = serde_json::from_str(&serialized).unwrap();
+        assert!(!context.recent_levels.iter().any(|(id, _)| id == "unknown"));
+        Ok(())
+    }
+
+    #[test]
+    fn reasoning_cache_stays_bounded_and_recovers_old_branches_without_reimport(
+    ) -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let path = session_path(temp.path(), "bounded-reasoning");
+        let first = assistant_child("first", "high");
+        let tail_id = format!("node-{}", MAX_REASONING_CACHE_ENTRIES * 16 - 1);
+        let last = assistant_child("last", &tail_id);
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"bounded-reasoning"}"#,
+                r#"{"type":"thinking_level_change","id":"high","parentId":null,"thinkingLevel":"high"}"#,
+                &first,
+                r#"{"type":"message","id":"unknown","parentId":null,"message":{"role":"user"}}"#,
+                r#"{"type":"thinking_level_change","id":"low","parentId":"first","thinkingLevel":"low"}"#,
+            ],
+        );
+        {
+            let mut writer =
+                std::io::BufWriter::new(fs::OpenOptions::new().append(true).open(&path).unwrap());
+            let mut parent = "low".to_string();
+            for index in 0..MAX_REASONING_CACHE_ENTRIES * 16 {
+                let id = format!("node-{index}");
+                writeln!(
+                    writer,
+                    "{}",
+                    serde_json::json!({
+                        "type": "message", "id": id, "parentId": parent,
+                        "message": {"role": "user", "content": "continue"}
+                    })
+                )
+                .unwrap();
+                parent = id;
+            }
+            writeln!(writer, "{last}").unwrap();
+            writer.flush().unwrap();
+        }
+        let db = Database::memory()?;
+        let initial = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(initial.errors.is_empty(), "{:?}", initial.errors);
+        assert_eq!(initial.imported, 2);
+        assert_reasoning_effort(&db, &first, Some("high"))?;
+        assert_reasoning_effort(&db, &last, Some("low"))?;
+
+        let read_cache = || -> Result<String, AppError> {
+            Ok(lock_conn!(db.conn).query_row(
+                "SELECT pi_usage_context FROM session_log_sync WHERE file_path = ?1",
+                [path.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )?)
+        };
+        let serialized = read_cache()?;
+        let cache: PiReasoningCache = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(cache.recent_levels.len(), MAX_REASONING_CACHE_ENTRIES);
+        assert!(cache.history_omitted);
+        assert!(!cache.recent_levels.iter().any(|(id, _)| id == "first"));
+        assert!(serialized.len() < 16_384, "{} bytes", serialized.len());
+
+        // Normal continuation still starts after the durable cursor.
+        let continued = assistant_child("continued", "last");
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(writer, "{continued}").unwrap();
+        }
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(appended.errors.is_empty(), "{:?}", appended.errors);
+        assert_eq!((appended.imported, appended.skipped), (1, 0));
+        assert_reasoning_effort(&db, &continued, Some("low"))?;
+
+        // Replaying only context must not backfill or modify old detail rows.
+        lock_conn!(db.conn).execute(
+            "UPDATE proxy_request_logs SET reasoning_effort = NULL, total_cost_usd = '0.42'",
+            [],
+        )?;
+        let cached = assistant_child("cached-before-miss", "continued");
+        let branch = assistant_child("old-branch", "first");
+        let unknown = assistant_child("unknown-branch", "unknown");
+        let missing = assistant_child("missing-branch", "missing");
+        let another = assistant_child("another-old-branch", "node-0");
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            for line in [&cached, &branch, &unknown, &missing, &another] {
+                writeln!(writer, "{line}").unwrap();
+            }
+        }
+        let branched = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(branched.errors.is_empty(), "{:?}", branched.errors);
+        assert_eq!((branched.imported, branched.skipped), (5, 0));
+        assert_reasoning_effort(&db, &cached, Some("low"))?;
+        assert_reasoning_effort(&db, &branch, Some("high"))?;
+        assert_reasoning_effort(&db, &unknown, None)?;
+        assert_reasoning_effort(&db, &missing, None)?;
+        assert_reasoning_effort(&db, &another, Some("low"))?;
+        let unchanged: i64 = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs
+             WHERE reasoning_effort IS NULL AND total_cost_usd = '0.42'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(unchanged, 3);
+        assert!(read_cache()?.len() < 16_384);
+
+        // Old parents remain resolvable even after all their usage is rolled up.
+        assert_eq!(db.rollup_and_prune(30)?, 8);
+        let after_prune = assistant_child("after-prune", "first");
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(writer, "{after_prune}").unwrap();
+        }
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(appended.errors.is_empty(), "{:?}", appended.errors);
+        assert_eq!((appended.imported, appended.skipped), (1, 0));
+        assert_reasoning_effort(&db, &after_prune, Some("high"))?;
+        let count: i64 = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 1);
+        let cache_before = read_cache()?;
+        let unchanged = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((unchanged.imported, unchanged.skipped), (0, 0));
+        assert_eq!(read_cache()?, cache_before);
+        Ok(())
+    }
+
+    #[test]
+    fn reasoning_cache_preserves_unknown_tails_and_compacts_legacy_checkpoints(
+    ) -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let path = session_path(temp.path(), "legacy-checkpoint");
+        let first = assistant_child("first", "high");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"legacy-checkpoint"}"#,
+                r#"{"type":"thinking_level_change","id":"high","parentId":null,"thinkingLevel":"high"}"#,
+                &first,
+            ],
+        );
+        let db = Database::memory()?;
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        let mut legacy_levels = serde_json::Map::new();
+        legacy_levels.insert("first".into(), Value::from("high"));
+        legacy_levels.insert("unknown".into(), Value::Null);
+        for index in 0..MAX_REASONING_CACHE_ENTRIES * 4 {
+            legacy_levels.insert(format!("old-{index}"), Value::from("low"));
+        }
+        lock_conn!(db.conn).execute(
+            "UPDATE session_log_sync SET pi_usage_context = ?1",
+            [serde_json::json!({
+                "levels_by_entry": legacy_levels, "legacy_level": "high"
+            })
+            .to_string()],
+        )?;
+        let branch = assistant_child("branch", "first");
+        let unknown = assistant_child("unknown-tail", "missing");
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(writer, "{branch}").unwrap();
+            writeln!(writer, "{unknown}").unwrap();
+        }
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(appended.errors.is_empty(), "{:?}", appended.errors);
+        assert_eq!((appended.imported, appended.skipped), (2, 0));
+        assert_reasoning_effort(&db, &branch, Some("high"))?;
+        assert_reasoning_effort(&db, &unknown, None)?;
+        let serialized: String = lock_conn!(db.conn).query_row(
+            "SELECT pi_usage_context FROM session_log_sync",
+            [],
+            |row| row.get(0),
+        )?;
+        let context = PiReasoningContext::from_json(&serialized).unwrap();
+        assert!(context.cache.history_omitted);
+        assert!(context.cache.recent_levels.len() <= MAX_REASONING_CACHE_ENTRIES);
+        assert!(!context.levels_by_entry.contains_key("unknown"));
+        assert!(!context.levels_by_entry.contains_key("unknown-tail"));
+        let continued = assistant_child("continued", "unknown-tail");
+        let entry: Value = serde_json::from_str(&continued).unwrap();
+        // Unknown linear tails are known absences, not cache misses.
+        assert!(!context.needs_history(&entry, 3));
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(writer, "{continued}").unwrap();
+        }
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(appended.errors.is_empty(), "{:?}", appended.errors);
+        assert_eq!((appended.imported, appended.skipped), (1, 0));
+        assert_reasoning_effort(&db, &continued, None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn reasoning_effort_supports_legacy_sessions_and_resets_after_rewrite() -> Result<(), AppError>
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = session_path(temp.path(), "legacy-reasoning");
+        let header = r#"{"type":"session","version":1,"id":"legacy-reasoning"}"#;
+        let first = assistant_line("first", "2023-11-14T22:13:21Z", 1)
+            .replace(r#""id":"first","parentId":null,"#, "");
+        let second = assistant_line("second", "2023-11-14T22:13:22Z", 2)
+            .replace(r#""id":"second","parentId":null,"#, "");
+        write_lines(
+            &path,
+            &[
+                header,
+                r#"{"type":"thinking_level_change","thinkingLevel":"xhigh"}"#,
+                &first,
+            ],
+        );
+        let db = Database::memory()?;
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(writer, "{second}").unwrap();
+        }
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((appended.imported, appended.skipped), (1, 0));
+        assert_reasoning_effort(&db, &first, Some("xhigh"))?;
+        assert_reasoning_effort(&db, &second, Some("xhigh"))?;
+
+        let replacement = assistant_line("replacement", "2023-11-14T22:13:23Z", 3);
+        write_lines(&path, &[header, &replacement]);
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        assert_reasoning_effort(&db, &replacement, None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn reasoning_effort_backfills_old_cursors_without_reimporting_usage() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let path = session_path(temp.path(), "reasoning-backfill");
+        let first = assistant_child("first", "high");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"reasoning-backfill"}"#,
+                r#"{"type":"thinking_level_change","id":"high","parentId":null,"thinkingLevel":"high"}"#,
+                &first,
+            ],
+        );
+        let db = Database::memory()?;
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("UPDATE proxy_request_logs SET reasoning_effort = NULL", [])?;
+            conn.execute("UPDATE session_log_sync SET pi_usage_context = NULL", [])?;
+        }
+        crate::usage_events::take_test_notify_count();
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        assert_eq!(crate::usage_events::take_test_notify_count(), 1);
+        assert_reasoning_effort(&db, &first, Some("high"))?;
+        let logs =
+            db.get_request_logs(&crate::services::usage_stats::LogFilters::default(), 0, 20)?;
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.data[0].input_tokens, 10);
+        assert_eq!(logs.data[0].reasoning_effort.as_deref(), Some("high"));
+        let unchanged = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((unchanged.imported, unchanged.skipped), (0, 0));
+        assert_eq!(crate::usage_events::take_test_notify_count(), 0);
+
+        // A metadata rescan must not recreate already rolled-up usage.
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+        lock_conn!(db.conn).execute("UPDATE session_log_sync SET pi_usage_context = NULL", [])?;
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 0);
+        let conn = lock_conn!(db.conn);
+        let totals: (i64, i64) = conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM proxy_request_logs), (SELECT SUM(request_count) FROM usage_daily_rollups)",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(totals, (0, 1));
+        Ok(())
+    }
+
     fn set_modified(path: &Path, modified: std::time::SystemTime) {
         File::options()
             .write(true)
@@ -1137,6 +1725,76 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_effort_backfills_legacy_identity_after_pi_migration() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let path = session_path(temp.path(), "migrated-reasoning");
+        let migrated = assistant_child("generated", "high");
+        let legacy = migrated.replace(r#""id":"generated","parentId":"high","#, "");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":1,"id":"migrated-reasoning"}"#,
+                r#"{"type":"thinking_level_change","thinkingLevel":"high"}"#,
+                &legacy,
+            ],
+        );
+        let db = Database::memory()?;
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("UPDATE proxy_request_logs SET reasoning_effort = NULL", [])?;
+            conn.execute("UPDATE session_log_sync SET pi_usage_context = NULL", [])?;
+        }
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"migrated-reasoning"}"#,
+                r#"{"type":"thinking_level_change","id":"high","parentId":null,"thinkingLevel":"high"}"#,
+                &migrated,
+            ],
+        );
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        assert_reasoning_effort(&db, &legacy, Some("high"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn reasoning_effort_recovers_an_incomplete_level_change() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let path = session_path(temp.path(), "partial-reasoning");
+        let first = assistant_child("first", "high");
+        let second = assistant_child("second", "low");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"partial-reasoning"}"#,
+                r#"{"type":"thinking_level_change","id":"high","parentId":null,"thinkingLevel":"high"}"#,
+                &first,
+            ],
+        );
+        let db = Database::memory()?;
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            write!(writer, "{}", r#"{"type":"thinking_level_change","id":"low","parentId":"first","thinkingLevel":"lo"#).unwrap();
+        }
+        let incomplete = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(incomplete.errors.is_empty(), "{:?}", incomplete.errors);
+        assert_eq!((incomplete.imported, incomplete.deferred_files), (0, 1));
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(writer, "{}", r#"w"}"#).unwrap();
+            writeln!(writer, "{second}").unwrap();
+        }
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        assert_reasoning_effort(&db, &first, Some("high"))?;
+        assert_reasoning_effort(&db, &second, Some("low"))?;
+        Ok(())
+    }
+
+    #[test]
     fn imports_all_pi_usage_carriers_with_source_semantics() -> Result<(), AppError> {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = session_path(temp.path(), "all-carriers");
@@ -1144,7 +1802,8 @@ mod tests {
             &path,
             &[
                 r#"{"type":"session","version":3,"id":"session-a","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
-                r#"{"type":"message","id":"user","parentId":null,"timestamp":"2023-11-14T22:13:20Z","message":{"role":"user","content":"question"}}"#,
+                r#"{"type":"thinking_level_change","id":"high","parentId":null,"thinkingLevel":"high"}"#,
+                r#"{"type":"message","id":"user","parentId":"high","timestamp":"2023-11-14T22:13:20Z","message":{"role":"user","content":"question"}}"#,
                 r#"{"type":"message","id":"assistant","parentId":"user","timestamp":"2023-11-14T22:13:21Z","message":{"role":"assistant","content":[{"type":"text","text":"answer"}],"provider":"custom-pi","model":"requested-model","responseModel":"actual-model","responseId":"response-1","timestamp":1700000000000,"usage":{"input":10,"output":7,"cacheRead":5,"cacheWrite":2,"reasoning":3,"totalTokens":23,"cost":{"input":0.00001,"output":0.000014,"cacheRead":5E-7,"cacheWrite":0.000001,"total":0.0000255}},"stopReason":"stop"}}"#,
                 r#"{"type":"message","id":"tool","parentId":"assistant","timestamp":"2023-11-14T22:13:22Z","message":{"role":"toolResult","toolCallId":"tool-1","toolName":"nested","content":[],"usage":{"input":3,"output":4,"cacheRead":1,"cacheWrite":1,"totalTokens":9,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}}"#,
                 r#"{"type":"compaction","id":"compact","parentId":"tool","timestamp":"2023-11-14T22:13:23Z","summary":"summary","usage":{"input":11,"output":12,"cacheRead":2,"cacheWrite":3,"totalTokens":28,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"details":{"retainedTail":[{"type":"message","message":{"role":"assistant","usage":{"input":999,"output":999,"cacheRead":999,"cacheWrite":999}}}]}}"#,
@@ -1220,6 +1879,12 @@ mod tests {
         assert!(providers.iter().any(|provider| {
             provider.provider_id == PROVIDER_PLACEHOLDER && provider.provider_name == "Pi (Session)"
         }));
+        let logs =
+            db.get_request_logs(&crate::services::usage_stats::LogFilters::default(), 0, 20)?;
+        for log in logs.data {
+            let expected = (log.provider_id == "custom-pi").then_some("high");
+            assert_eq!(log.reasoning_effort.as_deref(), expected);
+        }
         Ok(())
     }
 
@@ -1734,6 +2399,7 @@ mod tests {
             snapshot_size,
             modified,
             &ChildScope::default(),
+            PiReasoningContext::default(),
         )?;
         assert_eq!(parsed.records.len(), 1);
         assert_eq!(parsed.last_complete_line, 2);

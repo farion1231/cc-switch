@@ -2292,6 +2292,7 @@
     "modelPricingDesc": "各モデルのトークンコストを設定",
     "noPricingData": "料金データがありません。「追加」をクリックしてモデル料金を設定してください。",
     "model": "モデル",
+    "reasoningEffort": "思考レベル",
     "pricingModel": "課金モデル",
     "displayName": "表示名",
     "inputCost": "入力コスト",
