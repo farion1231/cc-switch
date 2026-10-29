@@ -4153,7 +4153,7 @@ pub(crate) struct CommandDeadline {
 }
 
 impl CommandDeadline {
-    fn from_timeout(timeout: Option<std::time::Duration>) -> Option<Self> {
+    pub(crate) fn from_timeout(timeout: Option<std::time::Duration>) -> Option<Self> {
         timeout.map(|limit| Self {
             expires_at: std::time::Instant::now() + limit,
             limit,

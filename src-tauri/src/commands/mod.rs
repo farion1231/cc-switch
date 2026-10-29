@@ -84,4 +84,4 @@ pub use webdav_sync::*;
 pub use workspace::*;
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) use misc::{login_shell_path, merge_path_segments};
+pub(crate) use misc::{login_shell_path, merge_path_segments, CommandDeadline};
