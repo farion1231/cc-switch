@@ -158,8 +158,11 @@ impl SkillService {
             if slot.exists() || Self::is_symlink(&slot) {
                 if !Self::is_symlink(&slot) {
                     Self::validate_sync_source_dir(&slot, &directory)?;
-                    Self::create_uninstall_backup_excluding(previous, Some(&source))?
-                        .ok_or_else(|| anyhow!("Could not preserve the managed Skill snapshot"))?;
+                    Self::create_uninstall_backup_excluding(
+                        previous,
+                        std::slice::from_ref(&source),
+                    )?
+                    .ok_or_else(|| anyhow!("Could not preserve the managed Skill snapshot"))?;
                 }
                 let staging = tempfile::Builder::new()
                     .prefix(".link-source-")
