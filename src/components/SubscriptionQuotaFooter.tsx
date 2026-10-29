@@ -1,4 +1,5 @@
 import React from "react";
+import { CodexMembershipLine } from "@/components/quota/CodexMembershipLine";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
@@ -278,10 +279,19 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   }
 
   const rows = quotaRows(t, quota, i18n.language, { inline, display });
+  const withMembership = (content: React.ReactNode) =>
+    quota.membership ? (
+      <div className={inline ? "flex flex-col items-end gap-0.5" : undefined}>
+        <CodexMembershipLine quota={quota} />
+        {content}
+      </div>
+    ) : (
+      content
+    );
   if (rows.length === 0) {
-    if (!emptyText) return null;
+    if (!emptyText) return withMembership(null);
     if (inline) {
-      return (
+      return withMembership(
         <QuotaLines
           lines={[
             { key: "empty", left: Infinity, tone: "muted", text: emptyText },
@@ -289,10 +299,10 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
           queriedAt={quota.queriedAt}
           loading={loading}
           onRefresh={refetch}
-        />
+        />,
       );
     }
-    return (
+    return withMembership(
       <QuotaBars
         className="mt-3"
         title={t("subscription.title")}
@@ -301,24 +311,24 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
         loading={loading}
         onRefresh={refetch}
         footer={<p className="text-caption text-fg-3">{emptyText}</p>}
-      />
+      />,
     );
   }
 
   if (inline) {
-    return (
+    return withMembership(
       <QuotaLines
         lines={rows.map((row) => row.line)}
         queriedAt={quota.queriedAt}
         loading={loading}
         onRefresh={refetch}
         breakdown={tierBreakdown(t, quota.tiers || [], display) ?? undefined}
-      />
+      />,
     );
   }
 
   const extra = quota.extraUsage;
-  return (
+  return withMembership(
     <QuotaBars
       className="mt-3"
       title={t("subscription.title", { defaultValue: "Subscription Quota" })}
@@ -346,7 +356,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
           </div>
         ) : null
       }
-    />
+    />,
   );
 };
 

@@ -10,6 +10,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::config;
 
+mod codex_membership;
+pub use codex_membership::CodexMembership;
+
 // ── 数据类型 ──────────────────────────────────────────────
 
 /// 凭据状态
@@ -75,6 +78,9 @@ pub struct SubscriptionQuota {
     /// 只有 ChatGPT 订阅（codex / codex_oauth）有；没查到时为 None，不影响额度本身
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_credits: Option<ResetCredits>,
+    /// ChatGPT 套餐及明确的会员有效期；补查失败不影响额度。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership: Option<CodexMembership>,
     /// ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有、不限量或为 0 时为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits_balance: Option<f64>,
@@ -92,6 +98,7 @@ impl SubscriptionQuota {
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            membership: None,
             credits_balance: None,
             error: None,
             queried_at: None,
@@ -107,6 +114,7 @@ impl SubscriptionQuota {
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            membership: None,
             credits_balance: None,
             error: Some(message),
             queried_at: Some(now_millis()),
@@ -614,6 +622,7 @@ fn parse_claude_quota(body: &serde_json::Value) -> SubscriptionQuota {
         tiers,
         extra_usage,
         reset_credits: None,
+        membership: None,
         credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
@@ -877,6 +886,7 @@ struct CodexRateLimit {
 
 #[derive(Deserialize)]
 struct CodexUsageResponse {
+    plan_type: Option<serde_json::Value>,
     rate_limit: Option<CodexRateLimit>,
     /// 原样收下再挑字段：形状不对时只是不显示余额，不能让整份额度解析失败
     credits: Option<serde_json::Value>,
@@ -1006,13 +1016,25 @@ pub(crate) async fn query_codex_quota(
     tool_label: &str,
     expired_message: &str,
 ) -> Result<SubscriptionQuota, String> {
-    let (quota, reset_credits) = tokio::join!(
+    let (quota, reset_credits, membership) = tokio::join!(
         query_codex_usage(access_token, account_id, tool_label, expired_message),
         query_codex_reset_credits(access_token, account_id),
+        codex_membership::query(access_token, account_id),
     );
     let mut quota = quota?;
     if quota.success {
         quota.reset_credits = reset_credits;
+        quota.membership = membership
+            .map(|mut membership| {
+                // The live usage response is newer than a token's plan snapshot.
+                membership.plan_type = quota
+                    .membership
+                    .as_ref()
+                    .and_then(|m| m.plan_type.clone())
+                    .or(membership.plan_type);
+                membership
+            })
+            .or_else(|| quota.membership.take());
     }
     Ok(quota)
 }
@@ -1111,6 +1133,13 @@ async fn query_codex_usage(
         tiers,
         extra_usage: None,
         reset_credits: None,
+        membership: body
+            .plan_type
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .map(|plan_type| CodexMembership {
+                plan_type: Some(plan_type),
+                active_until: None,
+            }),
         credits_balance: body.credits.as_ref().and_then(parse_codex_credits_balance),
         error: None,
         queried_at: Some(now_millis()),
@@ -1576,6 +1605,7 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         tiers,
         extra_usage: None,
         reset_credits: None,
+        membership: None,
         credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),

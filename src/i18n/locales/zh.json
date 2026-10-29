@@ -4128,6 +4128,12 @@
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
   },
   "subscription": {
+    "membership": {
+      "validUntil": "{{plan}} · 订阅有效至 {{date}}",
+      "expired": "{{plan}} · 订阅已于 {{date}} 到期",
+      "unavailable": "{{plan}} · 订阅到期时间暂不可用",
+      "hint": "会员有效期与额度重置、登录令牌有效期不同；自动续费状态请以 ChatGPT 订阅管理为准。"
+    },
     "title": "订阅额度",
     "short": {
       "fiveHour": "5 小时",

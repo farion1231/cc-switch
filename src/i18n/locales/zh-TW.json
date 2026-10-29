@@ -4129,6 +4129,12 @@
     "suggestedDefaultsHint": "使用此預設推薦的預設模型設定"
   },
   "subscription": {
+    "membership": {
+      "validUntil": "{{plan}} · 訂閱有效至 {{date}}",
+      "expired": "{{plan}} · 訂閱已於 {{date}} 到期",
+      "unavailable": "{{plan}} · 訂閱到期時間暫不可用",
+      "hint": "會員有效期與額度重設、登入權杖有效期不同；自動續訂狀態請以 ChatGPT 訂閱管理為準。"
+    },
     "title": "訂閱額度",
     "short": {
       "fiveHour": "5 小時",
