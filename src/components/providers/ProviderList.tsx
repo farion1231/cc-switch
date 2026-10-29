@@ -54,6 +54,10 @@ import { usePiCurrentState } from "@/lib/query/pi";
 import { isPiFamilyApp } from "@/config/appConfig";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
+  providerTransferDropTarget,
+  useProviderTransferControls,
+} from "@/contexts/ProviderTransferContext";
+import {
   buildAdditiveSections,
   buildLaunchSections,
   buildSwitchSections,
@@ -124,6 +128,7 @@ export function ProviderList({
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
+  const transfer = useProviderTransferControls();
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
     appId,
@@ -607,9 +612,28 @@ export function ProviderList({
       ) : (
         <DndContext
           sensors={sensors}
-          modifiers={verticalDragModifiers}
+          modifiers={transfer ? undefined : verticalDragModifiers}
           collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
+          onDragStart={() => transfer?.setSortTarget(null, true)}
+          onDragMove={(event) =>
+            transfer?.setSortTarget(
+              providerTransferDropTarget(event.activatorEvent, event.delta),
+              true,
+            )
+          }
+          onDragCancel={() => transfer?.setSortTarget(null, false)}
+          onDragEnd={(event) => {
+            const target = transfer
+              ? providerTransferDropTarget(event.activatorEvent, event.delta)
+              : null;
+            transfer?.setSortTarget(null, false);
+            const provider = providers[event.active.id];
+            if (target && transfer && provider) {
+              transfer.copyTo(provider, appId, target);
+              return;
+            }
+            void handleDragEnd(event);
+          }}
         >
           {sections.map((section, index) => (
             <section key={section.key} className="space-y-2">

@@ -270,7 +270,51 @@
     "formSubtitleStack": "{{app}}（聚合模式）",
     "editCurrentNoticeFile": "這是正在使用的供應商。儲存後會立即寫進",
     "editCurrentNoticeFileEnd": "，下一次請求生效。",
-    "editCurrentNotice": "這是正在使用的供應商。儲存後立即生效，下一次請求就用新的設定。"
+    "editCurrentNotice": "這是正在使用的供應商。儲存後立即生效，下一次請求就用新的設定。",
+    "transfer": {
+      "errors": {
+        "invalidPayload": "複製的供應商欄位格式不正確，請重新複製卡片設定。",
+        "invalidUrl": "供應商介面位址必須是有效的 HTTP 或 HTTPS 位址，且不能包含使用者名稱或密碼。",
+        "placeholderKey": "不能貼上代理佔位憑證或未解析的金鑰參照。",
+        "accountAuth": "此卡使用帳號登入或專用設定，不能複製為 API Key 卡。請在目標應用選擇對應預設並登入。",
+        "cloudAuth": "此卡使用雲端平台專用認證，不能轉換為一般 API Key 卡。請在目標應用選擇雲端平台預設。",
+        "unparsable": "供應商設定無法解析，請先修正設定再複製。",
+        "noPlainKey": "此卡沒有可複製的明文 API Key（可能使用官方登入、環境變數或代理佔位憑證）。請在目標應用設定認證。",
+        "managedEndpoint": "此端點使用託管帳號認證，請在目標應用選擇對應帳號，不能複製為 API Key 卡。",
+        "unsupportedTarget": "不支援的目標應用。",
+        "modelConnectionOverride": "此卡包含模型層級的介面位址或協定覆寫，無法以單一連線的複製設定保留。請在目標應用手動設定。"
+      },
+      "warnings": {
+        "presetEndpoint": "已使用目標應用同方案預設的介面位址：{{url}}。請確認此金鑰可用於該端點。",
+        "duplicateName": "目標模型清單每個 ID 只能保留一個顯示名稱：{{id}} 保留「{{kept}}」，「{{dropped}}」未寫入。",
+        "singleModel": "目標應用的此表單只設定一個預設模型，已選擇 {{model}}；未寫入：{{models}}。",
+        "protocolUnsupported": "來源介面協定為 {{protocol}}，目標應用不支援該協定；URL 與 Key 僅作預填，請選擇相容的端點與協定後儲存。",
+        "protocolUnknown": "無法確認來源介面協定，已使用目標應用預設協定，請在儲存前確認。",
+        "fullUrl": "來源設定使用完整請求 URL，目標會依基礎位址拼接路徑；請改為基礎位址，避免重複路徑。",
+        "requestBodyDropped": "目標應用沒有請求主體覆寫功能，未複製請求主體覆寫；請在目標進階設定中核對。",
+        "proxyRouting": "來源介面協定或進階請求設定需要 CC Switch 本機路由才能生效；直連不會轉換協定或套用這些設定。",
+        "advancedDropped": "目標表單不支援自訂 User-Agent 或請求覆寫，未複製這些進階欄位，請核對介面相容性。",
+        "claudeStack": "以下模型無法一一放入 Claude 的四個角色槽，已保留到聚合模型清單，請核對角色對應：{{models}}。",
+        "desktopUnmapped": "Desktop 只有四個角色槽，以下模型未寫入，請在表單中選擇需要的模型：{{models}}。",
+        "desktopDefaults": "來源卡未指定模型，已填入 Desktop 官方預設角色模型，請確認上游支援。",
+        "desktopProxy": "Desktop 草稿使用本機路由模式，需要 CC Switch 路由服務執行；儲存不會自動啟用供應商。",
+        "missingParams": "模型 {{model}} 缺少 {{fields}}，目標預設也未提供；請在表單補齊後儲存。",
+        "kimiContext": "部分模型沒有上下文長度，已使用 Kimi 表單的佔位值 {{size}}，請核對後儲存。",
+        "noModels": "來源卡沒有模型清單，已保留目標預設值；請在表單取得或新增模型後儲存。"
+      },
+      "copy": "複製設定",
+      "duplicate": "建立副本",
+      "copied": "已複製「{{name}}」，切換應用程式後可貼上新增",
+      "paste": "貼上新增",
+      "pasteTip": "複製供應商設定後貼上新增（{{shortcut}}）",
+      "drag": "拖曳到左側應用程式以複製設定",
+      "preview": "已帶入複製的供應商資訊，檢查後儲存即可新增。",
+      "copyTo": "複製到 {{app}}",
+      "cardLabel": "供應商 {{name}}",
+      "clipboardEmpty": "剪貼簿中沒有供應商設定，請先從供應商卡片複製設定。",
+      "clipboardReadFailed": "無法讀取剪貼簿，請重試或使用系統貼上快捷鍵。",
+      "copyIncludesKey": "包含 API Key 和模型對應"
+    }
   },
   "claudeCode": {
     "needsRouting": "需要路由",

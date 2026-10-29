@@ -1,4 +1,8 @@
-import { useRef, type ComponentType } from "react";
+import { useRef, useState, type ComponentType, type DragEvent } from "react";
+import {
+  PROVIDER_TRANSFER_MIME,
+  useProviderTransferControls,
+} from "@/contexts/ProviderTransferContext";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
@@ -16,6 +20,7 @@ import {
   KeyRound,
   Layers,
   LayoutGrid,
+  Plus,
   Route,
   Server,
   Settings,
@@ -421,7 +426,34 @@ function AppNavItem({
   onSelect: () => void;
 }) {
   const { t } = useTranslation();
+  const transfer = useProviderTransferControls();
+  const [dropOver, setDropOver] = useState(false);
+  const dropHandlers = {
+    onDragOver(event: DragEvent<HTMLButtonElement>) {
+      if (
+        !transfer?.dragging ||
+        !event.dataTransfer.types.includes(PROVIDER_TRANSFER_MIME)
+      )
+        return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      setDropOver(true);
+      transfer.setSortTarget(app, true);
+    },
+    onDragLeave() {
+      setDropOver(false);
+      if (transfer?.dragging) transfer.setSortTarget(null, true);
+    },
+    onDrop(event: DragEvent<HTMLButtonElement>) {
+      setDropOver(false);
+      transfer?.drop(event, app);
+    },
+  };
   const name = APP_DISPLAY_NAME[app];
+  const dropActive = Boolean(
+    transfer?.dragging && (dropOver || transfer.sortTarget === app),
+  );
+  const copyLabel = t("provider.transfer.copyTo", { app: name });
   const tag = modeTag(status, t);
   const modeName =
     status.mode === "route"
@@ -445,30 +477,46 @@ function AppNavItem({
           ? { className: "bg-route-solid text-route-on", icon: Route }
           : null;
     return (
-      <HoverTip content={tip} side="right" disableHoverableContent>
+      <HoverTip
+        content={dropActive ? copyLabel : tip}
+        side="right"
+        disableHoverableContent
+      >
         <button
           type="button"
           onClick={onSelect}
-          aria-label={tip}
+          {...dropHandlers}
+          data-provider-drop-app={app}
+          aria-label={dropActive ? copyLabel : tip}
           aria-current={selected ? "page" : undefined}
           className={cn(
             "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
+            dropActive && "ring-2 ring-action bg-selected",
           )}
         >
           <span className="relative flex">
             <AppGlyph app={app} size={20} badgeClassName={badgeBg} />
-            {marker && (
+            {dropActive ? (
               <span
                 aria-hidden="true"
-                className={cn(
-                  "absolute -end-[7px] -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2",
-                  selected ? "border-selected" : "border-sidebar",
-                  marker.className,
-                )}
+                className="absolute -end-2 -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-action text-action-fg"
               >
-                <marker.icon className="h-2 w-2" strokeWidth={3} />
+                <Plus className="h-2.5 w-2.5" strokeWidth={3} />
               </span>
+            ) : (
+              marker && (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute -end-[7px] -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2",
+                    selected ? "border-selected" : "border-sidebar",
+                    marker.className,
+                  )}
+                >
+                  <marker.icon className="h-2 w-2" strokeWidth={3} />
+                </span>
+              )
             )}
           </span>
         </button>
@@ -480,15 +528,23 @@ function AppNavItem({
     <button
       type="button"
       onClick={onSelect}
+      {...dropHandlers}
+      data-provider-drop-app={app}
+      aria-label={dropActive ? copyLabel : undefined}
       aria-current={selected ? "page" : undefined}
       className={cn(
         "mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
         selected && "bg-selected font-medium hover:bg-selected",
+        dropActive && "ring-2 ring-action bg-selected",
       )}
     >
       <AppGlyph app={app} size={16} badgeClassName={badgeBg} />
-      <span className="min-w-0 flex-1 truncate">{name}</span>
-      {status.alert ? (
+      <span className="min-w-0 flex-1 truncate">
+        {dropActive ? copyLabel : name}
+      </span>
+      {dropActive ? (
+        <Plus aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-action" />
+      ) : status.alert ? (
         <span
           role="img"
           aria-label={t("nav.needsAttention")}

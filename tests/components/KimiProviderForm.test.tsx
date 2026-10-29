@@ -80,6 +80,83 @@ function setup(
 }
 
 describe("KimiProviderForm", () => {
+  it("saves copied API fields under a new provider key", async () => {
+    const submit = vi.fn();
+    const copied = {
+      provider: {
+        type: "anthropic",
+        base_url: "https://example.test",
+        api_key: "test-only",
+      },
+      models: { example: { model: "example", max_context_size: 200000 } },
+    };
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <KimiProviderForm
+          appId="kimi"
+          initialData={{ name: "Copied", settingsConfig: copied }}
+          initialDataIsDraft
+          draftProviderKey="copy-new"
+          submitLabel="Save"
+          onSubmit={submit}
+          onCancel={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByDisplayValue("copy-new")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0][0].providerKey).toBe("copy-new");
+    expect(
+      JSON.parse(submit.mock.calls[0][0].settingsConfig).models[
+        "copy-new/example"
+      ],
+    ).toMatchObject({ model: "example", provider: "copy-new" });
+  });
+  it("gives repeated copies disjoint global model aliases and follows an edited provider key", async () => {
+    const copied = {
+      provider: {
+        type: "anthropic",
+        base_url: "https://example.test",
+        api_key: "test-only",
+      },
+      models: { example: { model: "example", max_context_size: 200000 } },
+    };
+    const saved: Array<{ providerKey: string; settingsConfig: string }> = [];
+    for (const key of ["copy-first", "copy-second"]) {
+      const submit = vi.fn();
+      const view = render(
+        <QueryClientProvider client={createTestQueryClient()}>
+          <KimiProviderForm
+            appId="kimi"
+            initialData={{ name: "Copy", settingsConfig: copied }}
+            initialDataIsDraft
+            draftProviderKey={key}
+            submitLabel="Save"
+            onSubmit={submit}
+            onCancel={vi.fn()}
+          />
+        </QueryClientProvider>,
+      );
+      if (key === "copy-second")
+        fireEvent.change(screen.getByDisplayValue(key), {
+          target: { value: "renamed-copy" },
+        });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      saved.push(submit.mock.calls[0][0]);
+      view.unmount();
+    }
+    const first = JSON.parse(saved[0].settingsConfig).models;
+    const second = JSON.parse(saved[1].settingsConfig).models;
+    expect(Object.keys(first)).toEqual(["copy-first/example"]);
+    expect(Object.keys(second)).toEqual(["renamed-copy/example"]);
+    expect(second["renamed-copy/example"]).toMatchObject({
+      model: "example",
+      provider: "renamed-copy",
+    });
+    expect(Object.keys(copied.models)).toEqual(["example"]);
+  });
   it.each(["import", "json"] as const)(
     "preserves native capabilities from %s without exposing audio or video controls",
     async (source) => {

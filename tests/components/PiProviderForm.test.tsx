@@ -70,6 +70,36 @@ describe("PiProviderForm", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
+  it.each(["pi", "omp"] as const)(
+    "saves a copied %s provider as a new draft with its generated key",
+    async (appId) => {
+      const submit = vi.fn();
+      render(
+        <PiProviderForm
+          appId={appId}
+          initialData={{
+            name: "Copied",
+            settingsConfig: {
+              baseUrl: "https://example.test",
+              apiKey: "test-only",
+              api: "anthropic-messages",
+              models: [completeModel("example")],
+            },
+          }}
+          initialDataIsDraft
+          draftProviderKey="copy-new"
+          submitLabel="Save"
+          onSubmit={submit}
+          onCancel={vi.fn()}
+        />,
+      );
+      expect(screen.getByDisplayValue("copy-new")).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      expect(submit.mock.calls[0][0].providerKey).toBe("copy-new");
+    },
+  );
+
   it("shows a preset's provider key and blocks saving when it is already taken", async () => {
     const user = userEvent.setup();
     const preset = piProviderPresets.find((entry) => entry.name === "Kimi")!;

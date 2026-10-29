@@ -1,5 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export async function readText(): Promise<string> {
+  try {
+    return await invoke<string>("read_text_from_clipboard");
+  } catch {
+    return await navigator.clipboard.readText();
+  }
+}
+
 export async function copyText(text: string): Promise<void> {
   try {
     await invoke("copy_text_to_clipboard", { text });

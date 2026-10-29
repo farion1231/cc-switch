@@ -1,4 +1,5 @@
 import type * as React from "react";
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowDown,
@@ -30,12 +31,14 @@ import {
   DropdownMenuLabel,
   DropdownMenuPortal,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { isMac } from "@/lib/platform";
 import type {
   CardButton,
   CardMenuItem,
@@ -70,6 +73,7 @@ interface ProviderCardActionsProps {
   onEdit: () => void;
   onDelete: () => void;
   onDuplicate?: () => void;
+  onCopyConfiguration?: () => void;
   onTest?: () => void;
   isTesting?: boolean;
   onConfigureUsage?: () => void;
@@ -90,6 +94,7 @@ export function ProviderCardActions({
   onEdit,
   onDelete,
   onDuplicate,
+  onCopyConfiguration,
   onTest,
   isTesting,
   onConfigureUsage,
@@ -97,6 +102,7 @@ export function ProviderCardActions({
   openTerminalIsolated,
 }: ProviderCardActionsProps) {
   const { t } = useTranslation();
+  const copyDescriptionId = useId();
   const { status, buttons, move, menuItems = [] } = presentation;
 
   return (
@@ -207,9 +213,32 @@ export function ProviderCardActions({
             <ModeMenuItem key={item.key} item={item} />
           ))}
           {menuItems.length > 0 && <DropdownMenuSeparator />}
+          {onCopyConfiguration && (
+            <DropdownMenuItem
+              onSelect={onCopyConfiguration}
+              aria-label={t("provider.transfer.copy", {
+                defaultValue: "复制配置",
+              })}
+              aria-describedby={copyDescriptionId}
+            >
+              <span className="flex flex-col gap-0.5">
+                <span>
+                  {t("provider.transfer.copy", { defaultValue: "复制配置" })}
+                </span>
+                <span id={copyDescriptionId} className="text-caption text-fg-2">
+                  {t("provider.transfer.copyIncludesKey")}
+                </span>
+              </span>
+              <DropdownMenuShortcut aria-hidden="true">
+                {isMac() ? "⌘C" : "Ctrl+C"}
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
           {onDuplicate && (
             <DropdownMenuItem onSelect={onDuplicate}>
-              {t("provider.duplicate")}
+              {onCopyConfiguration
+                ? t("provider.transfer.duplicate", { defaultValue: "创建副本" })
+                : t("provider.duplicate")}
             </DropdownMenuItem>
           )}
           {onTest && (
@@ -223,9 +252,10 @@ export function ProviderCardActions({
               {t("provider.configureUsage")}
             </DropdownMenuItem>
           )}
-          {(onDuplicate || onTest || onConfigureUsage) && (
-            <DropdownMenuSeparator />
-          )}
+          {(onCopyConfiguration ||
+            onDuplicate ||
+            onTest ||
+            onConfigureUsage) && <DropdownMenuSeparator />}
           <DropdownMenuItem
             disabled={Boolean(presentation.deleteDisabledReason)}
             onSelect={onDelete}
