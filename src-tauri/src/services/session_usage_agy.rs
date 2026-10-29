@@ -237,6 +237,9 @@ mod tests {
 
     #[test]
     fn native_models_backfill_unknown_rows_without_changing_tokens_or_deduplication() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("conversations")).unwrap();
         let source = dir
@@ -326,6 +329,9 @@ mod tests {
 
     #[test]
     fn native_models_do_not_replace_explicit_models_or_selection_events() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("conversations")).unwrap();
         let source = dir
@@ -366,6 +372,9 @@ mod tests {
 
     #[test]
     fn native_tiered_ids_share_the_model_selection_bucket_and_price() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("conversations")).unwrap();
         let source = dir

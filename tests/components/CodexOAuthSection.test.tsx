@@ -46,6 +46,10 @@ vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
   WorkBuddyAccountSection: () => <div />,
 }));
 
+vi.mock("@/components/providers/DshAccount", () => ({
+  DshAccountLogin: () => <div />,
+}));
+
 describe("CodexOAuthSection", () => {
   let scrollIntoViewDescriptor: PropertyDescriptor | undefined;
 

@@ -23,6 +23,9 @@ vi.mock("@/components/providers/KimiAccountLogin", () => ({
 vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
   WorkBuddyAccountSection: () => <div data-testid="workbuddy" />,
 }));
+vi.mock("@/components/providers/DshAccount", () => ({
+  DshAccountLogin: () => <div data-testid="dsh" />,
+}));
 
 let resizeCallbacks: Array<() => void> = [];
 
