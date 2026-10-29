@@ -15,7 +15,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Search, X } from "lucide-react";
+import { Download, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
@@ -45,6 +45,7 @@ import {
 } from "@/lib/query/omo";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
@@ -208,9 +209,10 @@ export function ProviderList({
     [checkProvider],
   );
 
+  const [confirmDesktopRefresh, setConfirmDesktopRefresh] = useState(false);
   const queryClient = useQueryClient();
-  const importMutation = useMutation({
-    mutationFn: async (): Promise<boolean> => {
+  const importMutation = useMutation<boolean, unknown, boolean>({
+    mutationFn: async (replaceExisting = false): Promise<boolean> => {
       if (appId === "opencode") {
         return (await providersApi.importOpenCodeFromLive()) > 0;
       }
@@ -221,11 +223,14 @@ export function ProviderList({
         return (await providersApi.importHermesFromLive()) > 0;
       }
       if (appId === "claude-desktop") {
-        return (await providersApi.importClaudeDesktopFromClaude()) > 0;
+        return (
+          (await providersApi.importClaudeDesktopFromClaude(replaceExisting)) >
+          0
+        );
       }
       return providersApi.importDefault(appId);
     },
-    onSuccess: (imported) => {
+    onSuccess: (imported, replaceExisting) => {
       if (imported) {
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
@@ -233,7 +238,13 @@ export function ProviderList({
         }
         toast.success(t("provider.importCurrentDescription"));
       } else {
-        toast.info(t("provider.noProviders"));
+        toast.info(
+          t(
+            replaceExisting
+              ? "provider.noCompatibleClaudeProviders"
+              : "provider.noProviders",
+          ),
+        );
       }
     },
     onError: (error: unknown) => {
@@ -462,7 +473,7 @@ export function ProviderList({
             appId === "kimi" ||
             appId === "dsh"
               ? undefined
-              : () => importMutation.mutate()
+              : () => importMutation.mutate(false)
           }
         />
       </div>
@@ -583,6 +594,32 @@ export function ProviderList({
   return (
     <div className="space-y-4">
       {piStateErrorNotice}
+      {appId === "claude-desktop" && (
+        <div className="flex justify-end">
+          <Button
+            variant="neutral"
+            size="compact"
+            disabled={importMutation.isPending}
+            onClick={() => setConfirmDesktopRefresh(true)}
+          >
+            <Download className="h-4 w-4" />
+            {t("provider.refreshFromClaude")}
+          </Button>
+          <ConfirmDialog
+            isOpen={confirmDesktopRefresh}
+            title={t("provider.refreshFromClaude")}
+            message={t("provider.refreshFromClaudeConfirm")}
+            confirmText={t("provider.refreshFromClaude")}
+            pending={importMutation.isPending}
+            onConfirm={() =>
+              importMutation.mutate(true, {
+                onSettled: () => setConfirmDesktopRefresh(false),
+              })
+            }
+            onCancel={() => setConfirmDesktopRefresh(false)}
+          />
+        </div>
+      )}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div
