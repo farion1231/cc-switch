@@ -778,6 +778,51 @@ pub(crate) fn has_matching_proxy_usage_log(
         .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
 }
 
+// Claude 结构化错误没有可用于指纹匹配的 token/model 用量；代理侧与会话侧
+// 只能用应用、HTTP 状态、时间和会话身份关联。session_id 可用时必须精确匹配，
+// 避免十分钟窗口内同状态码的独立失败互相吞掉；旧数据缺会话身份时才退化为
+// 维护者要求的 app_type + status_code + 时间窗匹配。
+static MATCHING_PROXY_ERROR_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
+    let l_data_source = data_source_expr("l");
+    let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE {l_data_source} = 'proxy'
+              AND {app_type_match}
+              AND l.status_code = ?2
+              AND l.status_code >= 400
+              AND l.created_at BETWEEN ?3 - ?4 AND ?3 + ?4
+              AND (?5 IS NULL OR NULLIF(TRIM(l.session_id), '') = ?5)
+        )"
+    )
+});
+
+pub(crate) fn has_matching_proxy_error_log(
+    conn: &Connection,
+    app_type: &str,
+    status_code: i64,
+    created_at: i64,
+    session_id: Option<&str>,
+) -> Result<bool, AppError> {
+    let session_id = session_id.map(str::trim).filter(|value| !value.is_empty());
+    conn.prepare_cached(&MATCHING_PROXY_ERROR_LOG_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    app_type,
+                    status_code,
+                    created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                    session_id,
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|e| AppError::Database(format!("查询重复代理错误日志失败: {e}")))
+}
+
 /// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
 /// 代理直录行，即认为当时处于代理接管态，会话事件应整体跳过——同一请求
 /// 已由代理逐请求记账，会话侧再入账必双算。
@@ -3373,6 +3418,67 @@ mod tests {
         assert!(!has_matching_proxy_usage_log(
             &conn,
             &different_cache_creation
+        )?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matching_proxy_error_log_uses_status_session_and_window() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "desktop-proxy-error",
+            "claude-desktop",
+            "anthropic",
+            "claude-sonnet-4-5",
+            "proxy",
+            1_000,
+            0,
+            0,
+            0,
+            0,
+            403,
+            "0",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET session_id = 'session-error'
+             WHERE request_id = 'desktop-proxy-error'",
+            [],
+        )?;
+
+        assert!(has_matching_proxy_error_log(
+            &conn,
+            "claude",
+            403,
+            1_060,
+            Some("session-error")
+        )?);
+        assert!(!has_matching_proxy_error_log(
+            &conn,
+            "claude",
+            401,
+            1_060,
+            Some("session-error")
+        )?);
+        assert!(!has_matching_proxy_error_log(
+            &conn,
+            "claude",
+            403,
+            1_060,
+            Some("another-session")
+        )?);
+        assert!(!has_matching_proxy_error_log(
+            &conn,
+            "claude",
+            403,
+            1_601,
+            Some("session-error")
+        )?);
+        // 旧会话日志没有 session_id 时仍按维护者要求退化到状态码 + 时间窗。
+        assert!(has_matching_proxy_error_log(
+            &conn, "claude", 403, 1_060, None
         )?);
 
         Ok(())

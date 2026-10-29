@@ -14,7 +14,8 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::{claude_cache_creation_1h_tokens, TokenUsage};
 use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
+    effective_usage_log_filter, find_model_pricing, has_matching_proxy_error_log,
+    has_matching_proxy_usage_log, DedupKey,
 };
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
@@ -1367,6 +1368,24 @@ fn refresh_session_log_entry_on_conn(
     if stored.status_code >= 400 && !msg.is_api_error() {
         return Ok(SessionRowOutcome::Skipped);
     }
+    // 代理错误可能在会话行首次入库之后才落盘；重扫同一 message 时也要清掉
+    // 已存在的重复 session_log，不能只在首次 INSERT 前判断。
+    if msg.is_api_error()
+        && has_matching_proxy_error_log(
+            conn,
+            "claude",
+            msg.status_code(),
+            dedup_key.created_at,
+            msg.session_id.as_deref(),
+        )?
+    {
+        conn.execute(
+            "DELETE FROM proxy_request_logs WHERE request_id = ?1",
+            [request_id],
+        )
+        .map_err(|e| AppError::Database(format!("删除重复的会话错误日志失败: {e}")))?;
+        return Ok(SessionRowOutcome::Updated);
+    }
     let output_grew = i64::from(msg.output_tokens) > stored.output_tokens;
     let latency_ms = timing.map_or(stored.latency_ms, |timing| {
         timing.latency_ms.max(stored.latency_ms)
@@ -1490,7 +1509,18 @@ fn upsert_session_log_entry_on_conn(
             pricing_cache,
         );
     }
-    if !msg.is_api_error() && has_matching_proxy_usage_log(conn, &dedup_key)? {
+    let matches_proxy = if msg.is_api_error() {
+        has_matching_proxy_error_log(
+            conn,
+            "claude",
+            msg.status_code(),
+            created_at,
+            msg.session_id.as_deref(),
+        )?
+    } else {
+        has_matching_proxy_usage_log(conn, &dedup_key)?
+    };
+    if matches_proxy {
         return Ok(SessionRowOutcome::Skipped);
     }
 
@@ -2424,6 +2454,112 @@ mod tests {
         assert!(load_sync_cursors(&db)?.contains_key(&claude_api_error_backfill_key(&file)));
 
         fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_skips_api_error_already_recorded_by_proxy() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        fs::write(&file, format!("{}\n", api_error_line("msg_routed_error"))).unwrap();
+
+        crate::proxy::usage::logger::UsageLogger::new(&db).log_error_with_context(
+            "proxy-routed-error".to_string(),
+            "anthropic".to_string(),
+            "claude-desktop".to_string(),
+            "claude-sonnet-4-5".to_string(),
+            403,
+            "authentication_failed".to_string(),
+            100,
+            true,
+            Some("session-error".to_string()),
+            None,
+        )?;
+        let error_timestamp = chrono::DateTime::parse_from_rfc3339("2026-06-07T13:01:23Z")
+            .unwrap()
+            .timestamp();
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_request_logs SET created_at = ?1
+                 WHERE request_id = 'proxy-routed-error'",
+                [error_timestamp],
+            )?;
+        }
+
+        let result = sync_with_cursor(&db, &file)?;
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        let conn = lock_conn!(db.conn);
+        let rows: Vec<(String, i64)> = conn
+            .prepare("SELECT request_id, status_code FROM proxy_request_logs ORDER BY request_id")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        assert_eq!(rows, vec![("proxy-routed-error".to_string(), 403)]);
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_refresh_removes_api_error_when_proxy_row_arrives_later() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let value: serde_json::Value =
+            serde_json::from_str(&api_error_line("msg_late_proxy")).unwrap();
+        let msg = parse_assistant_usage(&value, Some("session-error")).unwrap();
+        {
+            let conn = lock_conn!(db.conn);
+            assert_eq!(
+                upsert_session_log_entry_on_conn(
+                    &conn,
+                    "session:msg_late_proxy",
+                    &msg,
+                    None,
+                    &mut SessionPricingCache::default(),
+                )?,
+                SessionRowOutcome::Inserted
+            );
+        }
+
+        crate::proxy::usage::logger::UsageLogger::new(&db).log_error_with_context(
+            "proxy-late-error".to_string(),
+            "anthropic".to_string(),
+            "claude".to_string(),
+            "claude-sonnet-4-5".to_string(),
+            403,
+            "authentication_failed".to_string(),
+            100,
+            true,
+            Some("session-error".to_string()),
+            None,
+        )?;
+        let error_timestamp = chrono::DateTime::parse_from_rfc3339("2026-06-07T13:01:23Z")
+            .unwrap()
+            .timestamp();
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "UPDATE proxy_request_logs SET created_at = ?1
+             WHERE request_id = 'proxy-late-error'",
+            [error_timestamp],
+        )?;
+        assert_eq!(
+            upsert_session_log_entry_on_conn(
+                &conn,
+                "session:msg_late_proxy",
+                &msg,
+                None,
+                &mut SessionPricingCache::default(),
+            )?,
+            SessionRowOutcome::Updated
+        );
+        let session_row_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs
+             WHERE request_id = 'session:msg_late_proxy')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(!session_row_exists);
+
         Ok(())
     }
 
