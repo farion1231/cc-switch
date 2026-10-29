@@ -175,7 +175,9 @@ fn sync_file(
     let cursor = cursors.get(key);
     // 上次已经处理到文件末尾、文件也没变：直接跳过。
     if cursor.is_some_and(|cursor| {
-        cursor.last_modified == modified && cursor.last_byte_offset == Some(size)
+        cursor.last_modified == modified
+            && cursor.last_byte_offset == Some(size)
+            && cursor.parser_state.is_some()
     }) {
         return Ok(SessionSyncResult::default());
     }
@@ -183,6 +185,9 @@ fn sync_file(
     // 从上次处理到的字节位置续读。会话日志只会追加，整份重读/重解压是 O(文件长度) 的
     // 无谓开销：一个长会话每次同步都要把所有历史重新解一遍。
     let mut start = cursor
+        // Older cursors did not save step timestamps. Replay once to recover the context;
+        // the durable request ledger prevents previously imported usage from being counted twice.
+        .filter(|cursor| cursor.parser_state.is_some())
         .and_then(|cursor| cursor.last_byte_offset)
         .filter(|offset| (0..=size).contains(offset))
         .unwrap_or(0);
@@ -200,7 +205,21 @@ fn sync_file(
             ..Default::default()
         });
     }
-    let pending = collect_requests(&chunk.text, session_id);
+    let mut step_starts: HashMap<(u64, u64), i64> = if start > 0 {
+        serde_json::from_str::<Vec<((u64, u64), i64)>>(
+            cursor
+                .and_then(|cursor| cursor.parser_state.as_deref())
+                .unwrap_or("[]"),
+        )
+        .map_err(|error| AppError::Config(format!("Invalid DSH session parser state: {error}")))?
+        .into_iter()
+        .collect()
+    } else {
+        HashMap::new()
+    };
+    let pending = collect_requests(&chunk.text, session_id, &mut step_starts);
+    let parser_state = serde_json::to_string(&step_starts.into_iter().collect::<Vec<_>>())
+        .map_err(|error| AppError::Config(error.to_string()))?;
     // 游标推进到这批增量最后一个完整帧的末尾：下一轮只读新追加的部分。测试与真实日志里
     // 一次 append 就是一帧，所以窗口边界永远落在帧边界上。
     let next_offset = chunk
@@ -274,7 +293,7 @@ fn sync_file(
         )?;
         result.imported += 1;
     }
-    update_dsh_sync_state(&tx, key, modified, size, next_offset)?;
+    update_dsh_sync_state(&tx, key, modified, size, next_offset, &parser_state)?;
     tx.commit()?;
     Ok(result)
 }
@@ -286,6 +305,7 @@ fn update_dsh_sync_state(
     last_modified: i64,
     file_size: i64,
     byte_offset: i64,
+    parser_state: &str,
 ) -> Result<(), AppError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -293,8 +313,8 @@ fn update_dsh_sync_state(
         .unwrap_or(0);
     conn.prepare_cached(
         "INSERT OR REPLACE INTO session_log_sync
-             (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+             (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset, parser_state)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )
     .and_then(|mut stmt| {
         stmt.execute(rusqlite::params![
@@ -302,7 +322,8 @@ fn update_dsh_sync_state(
             last_modified,
             file_size,
             now,
-            byte_offset
+            byte_offset,
+            parser_state
         ])
     })
     .map_err(|error| AppError::Database(format!("更新同步状态失败: {error}")))?;
@@ -457,10 +478,13 @@ fn scan_zstd_frames(buffer: &[u8]) -> (Vec<(usize, usize)>, Option<usize>) {
 }
 
 /// 逐行解析会话日志，收集所有带用量的 `assistant/message`。
-fn collect_requests(text: &[u8], session_id: &str) -> Vec<PendingRequest> {
+fn collect_requests(
+    text: &[u8],
+    session_id: &str,
+    step_starts: &mut HashMap<(u64, u64), i64>,
+) -> Vec<PendingRequest> {
     let mut requests = Vec::new();
     // (turn, step) → step/start 时间，用来估算本次请求的耗时与首字。
-    let mut step_starts: HashMap<(u64, u64), i64> = HashMap::new();
     for line in text.split(|byte| *byte == b'\n') {
         if line.iter().all(|byte| byte.is_ascii_whitespace()) {
             continue;
@@ -480,8 +504,12 @@ fn collect_requests(text: &[u8], session_id: &str) -> Vec<PendingRequest> {
                 }
             }
             Some("assistant/message") => {
-                if let Some(request) = parse_assistant_message(&value, session_id, &step_starts) {
+                if let Some(request) = parse_assistant_message(&value, session_id, step_starts) {
                     requests.push(request);
+                    step_starts.remove(&(
+                        value["data"]["turn"].as_u64().unwrap_or(u64::MAX),
+                        value["data"]["step"].as_u64().unwrap_or(u64::MAX),
+                    ));
                 }
             }
             _ => {}
@@ -1148,6 +1176,80 @@ mod tests {
                 |row| row.get::<_, Option<i64>>(0),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn dsh_usage_preserves_timing_across_syncs_and_database_reopen() {
+        use std::io::Write;
+        let open_db = |path: &Path| {
+            let db = Database {
+                conn: std::sync::Mutex::new(rusqlite::Connection::open(path).unwrap()),
+                log_count_cache: std::sync::Mutex::new(None),
+            };
+            db.create_tables().unwrap();
+            db
+        };
+        for compressed in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("usage.db");
+            let db = open_db(&db_path);
+            let root = dir.path().join("sessions");
+            let path = root.join("project/session-test").join(if compressed {
+                "session.v4.jsonl.zstd"
+            } else {
+                "session.v4.jsonl"
+            });
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let encode = |events: &[Value]| {
+                if compressed {
+                    frame(events)
+                } else {
+                    events
+                        .iter()
+                        .map(|event| format!("{event}\n"))
+                        .collect::<String>()
+                        .into_bytes()
+                }
+            };
+            let start = 1_700_000_000_000;
+            fs::write(&path, encode(&[header(), step_start(1, 1, start)])).unwrap();
+            assert_eq!(sync_dsh_usage_from(&db, &root).unwrap().imported, 0);
+            assert_eq!(
+                cursor_byte_offset(&db, &path),
+                Some(fs::metadata(&path).unwrap().len() as i64)
+            );
+            drop(db);
+            let db = open_db(&db_path);
+            let message = assistant_message(
+                1,
+                1,
+                "split",
+                start + 3000,
+                "test-model",
+                10,
+                5,
+                0,
+                start + 200,
+            );
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap()
+                .write_all(&encode(&[message]))
+                .unwrap();
+            let result = sync_dsh_usage_from(&db, &root).unwrap();
+            assert_eq!(result.imported, 1);
+            assert_eq!(result.skipped, 0);
+            let conn = db.conn.lock().unwrap();
+            let timings: (i64, Option<i64>) = conn
+                .query_row(
+                    "SELECT latency_ms, first_token_ms FROM proxy_request_logs",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(timings, (3000, Some(200)));
+        }
     }
 
     /// 追加一条之后只读追加的那一段：把去重账本清空再同步，仍然只导入 1 条。

@@ -57,8 +57,8 @@ pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::{
-    provider_exists_in_live_config, sync_additive_app_to_live, write_live_for_state,
-    LiveSyncOutcome,
+    initialize_dsh_profiles, provider_exists_in_live_config, sync_additive_app_to_live,
+    write_live_for_state, LiveSyncOutcome,
 };
 
 // Internal re-exports
@@ -5461,6 +5461,14 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        let app_type = app_type.provider_app();
+        if app_type == AppType::Dsh {
+            // A profile can appear while CC Switch is running. Keep the provider list usable
+            // when a native lock or an invalid profile prevents the initial sync; retry later.
+            if let Err(error) = initialize_dsh_profiles(state) {
+                log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
+            }
+        }
         if app_type == AppType::Pi {
             return pi::list(state);
         }

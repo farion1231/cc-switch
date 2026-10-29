@@ -511,6 +511,14 @@ impl AppType {
         }
     }
 
+    /// Desktop and Web share DSH provider rows, usage scripts and endpoint metadata.
+    pub fn provider_app(self) -> Self {
+        match self {
+            Self::DshDesktop => Self::Dsh,
+            app => app,
+        }
+    }
+
     /// Check if this app uses additive mode
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)

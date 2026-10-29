@@ -172,13 +172,27 @@ fn parse_wallets(value: &Value, positive_only: bool) -> Vec<DshWallet> {
         .collect()
 }
 
+/// Only the configured platform may receive the stored token. Do not derive request URLs
+/// from a credential file, even when it was written by another DSH client.
+fn validated_origin(issuer: &str) -> Result<&'static str, String> {
+    if issuer.trim_end_matches('/') == PLATFORM_ORIGIN {
+        Ok(PLATFORM_ORIGIN)
+    } else {
+        Err(login_error(
+            "dsh.account.error_issuer",
+            "DeepSeek 登录凭据的 issuer 与官方平台不一致，请重新登录",
+            "The DeepSeek credential issuer does not match the official platform; sign in again",
+        ))
+    }
+}
+
 /// The shared login plus, when signed in, the account profile and balance.
 pub async fn status() -> Result<DshAccountStatus, String> {
     let Some((token, issuer)) = crate::dsh_config::account_grant().map_err(|e| e.to_string())?
     else {
         return Ok(DshAccountStatus::default());
     };
-    let origin = issuer.trim_end_matches('/').to_owned();
+    let origin = validated_origin(&issuer)?;
     let mut status = DshAccountStatus {
         signed_in: true,
         usage_url: Some(format!("{origin}/usage")),
@@ -226,7 +240,10 @@ pub async fn sign_out() -> Result<(), String> {
     else {
         return Ok(());
     };
-    let origin = issuer.trim_end_matches('/');
+    let Ok(origin) = validated_origin(&issuer) else {
+        // Local sign-out must still work for an unsupported issuer, without contacting it.
+        return Ok(());
+    };
     let request = crate::proxy::http_client::no_redirect()?
         .post(format!("{origin}/auth-api/v0/users/logout"));
     if let Err(PlatformError::Failed(error)) = platform_request(request, &token).await {
@@ -672,6 +689,46 @@ fn abandon(login: PendingLogin) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn credential_issuer_must_match_the_configured_platform() {
+        for issuer in [PLATFORM_ORIGIN, "https://platform.deepseek.com/"] {
+            assert_eq!(validated_origin(issuer).unwrap(), PLATFORM_ORIGIN);
+        }
+        for issuer in [
+            "http://platform.deepseek.com",
+            "https://platform.deepseek.com.attacker.example",
+            "https://platform.deepseek.com@attacker.example",
+            "https://platform.deepseek.com/another-path",
+            "https://platform.deepseek.com?redirect=elsewhere",
+            "http://127.0.0.1:1234",
+        ] {
+            assert!(validated_origin(issuer).is_err(), "{issuer}");
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn unsupported_issuer_is_never_contacted_and_can_be_signed_out_locally() {
+        let home = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", home.path());
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let issuer = format!("http://{}", listener.local_addr().unwrap());
+        crate::dsh_config::store_account_grant("test-token", &issuer).unwrap();
+        assert!(status().await.unwrap_err().contains("issuer"));
+        sign_out().await.unwrap();
+        assert!(crate::dsh_config::account_grant().unwrap().is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), listener.accept())
+                .await
+                .is_err()
+        );
+        match previous {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
+        }
+    }
 
     #[test]
     fn pkce_challenge_is_the_s256_of_the_verifier() {

@@ -1,6 +1,6 @@
 //! DeepSeek Harness' standard profiles. CC Switch keeps one provider and MCP set in every
-//! profile DSH has initialized among `web`, `desktop` (owned by DeepSeek Harness Desktop),
-//! `headless` and `acp`; `sdk` / `sdk-minimal` are for embedding and stay native-owned. All
+//! `web` and `desktop` profile, plus initialized `headless` and `acp` profiles;
+//! `sdk` / `sdk-minimal` are for embedding and stay native-owned. All
 //! profiles share `$DSH_HOME`'s credentials, sessions, skills and `AGENTS.md`.
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
@@ -20,7 +20,7 @@ pub(crate) fn data_dir() -> PathBuf {
         .unwrap_or_else(|| get_home_dir().join(".dsh"))
 }
 
-/// Profiles CC Switch writes, in this order, when DSH has already initialized them.
+/// Profiles CC Switch writes, in this order. Web and Desktop are prepared before first launch.
 const TARGET_PROFILES: [&str; 4] = ["web", "desktop", "headless", "acp"];
 /// Providers and MCP are shown from the first of these that exists.
 const DISPLAY_PROFILES: [&str; 2] = ["web", "desktop"];
@@ -33,19 +33,16 @@ pub(crate) fn profile_path(name: &str) -> PathBuf {
     profile_dir(name).join("cordis.patch.yml")
 }
 
-/// Every initialized target profile. A missing profile (e.g. Desktop before its first launch) is
-/// never created; only when DSH has no profile at all does CC Switch start the `web` one.
+/// Always prepare Web and Desktop: DSH's initProfile preserves an existing patch and supplies
+/// the remaining files on first launch. Optional runtime profiles are only written if present.
 pub(crate) fn target_paths() -> Vec<PathBuf> {
-    let existing: Vec<_> = TARGET_PROFILES
+    TARGET_PROFILES
         .iter()
-        .map(|name| profile_path(name))
-        .filter(|path| path.exists())
-        .collect();
-    if existing.is_empty() {
-        vec![profile_path("web")]
-    } else {
-        existing
-    }
+        .filter_map(|name| {
+            let path = profile_path(name);
+            (DISPLAY_PROFILES.contains(name) || path.exists()).then_some(path)
+        })
+        .collect()
 }
 
 /// The authoritative profile providers and MCP are read from first: `web`, else `desktop`, else
@@ -55,7 +52,8 @@ pub(crate) fn config_path() -> PathBuf {
         .iter()
         .map(|name| profile_path(name))
         .find(|path| path.exists())
-        .unwrap_or_else(|| target_paths().swap_remove(0))
+        .or_else(|| target_paths().into_iter().find(|path| path.exists()))
+        .unwrap_or_else(|| profile_path("web"))
 }
 
 /// Every profile whose providers and MCP are shown, authoritative profile first.
@@ -92,9 +90,8 @@ pub(crate) fn home_patch_path() -> PathBuf {
     data_dir().join("cordis.patch.yml")
 }
 
-/// 「打开配置目录」用的路径：Desktop 的 profile 还没初始化时退回 DSH home，免得为了开一个
-/// 目录先造出空的 `profiles/desktop`（[`target_paths`] 只看 `cordis.patch.yml`，但空目录
-/// 会让用户以为 Desktop 已经被接管）。
+/// Open the Desktop profile if a patch exists; otherwise open DSH home without creating an
+/// empty profile just for directory browsing.
 pub(crate) fn desktop_config_dir() -> PathBuf {
     if profile_path("desktop").exists() {
         profile_dir("desktop")
@@ -337,7 +334,7 @@ impl FileLock {
             .map_err(|error| {
                 if error.kind() == std::io::ErrorKind::AlreadyExists {
                     AppError::Conflict(
-                        "DeepSeekRuntime is saving its configuration; retry shortly".into(),
+                        "DeepSeek Harness is saving its configuration; retry shortly".into(),
                     )
                 } else {
                     AppError::io(lock, error)
@@ -452,7 +449,7 @@ fn edit_files_and_commit<T>(
     // plan 少给或多给一个文件都意味着某一处改动会被静默丢掉：宁可整体失败。
     if next.len() != paths.len() {
         return Err(AppError::Message(format!(
-            "DeepSeekRuntime write plan returned {} file(s) for {} file(s); nothing was written",
+            "DeepSeek Harness write plan returned {} file(s) for {} file(s); nothing was written",
             next.len(),
             paths.len()
         )));
@@ -660,7 +657,7 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
             // profile 把整张供应商列表变成错误页。
             Err(error) if path != authoritative => {
                 log::warn!(
-                    "跳过无法解析的 DeepSeekRuntime profile {}: {error}",
+                    "跳过无法解析的 DeepSeek Harness profile {}: {error}",
                     path.display()
                 );
                 continue;
@@ -864,7 +861,9 @@ pub(crate) fn save_and_commit<T>(
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    ensure_providers_not_shadowed(&home_patch_path())?;
+    if config.is_some() {
+        ensure_providers_not_shadowed(&home_patch_path())?;
+    }
     save_paths_and_commit(
         &target_paths(),
         &credentials_path(),
@@ -919,6 +918,122 @@ fn save_paths_and_commit<T>(
             for text in profile_texts {
                 next.push(update_provider(text, id, Some(native.clone()), create)?);
             }
+            Ok(next)
+        },
+        commit,
+    )
+}
+
+/// Seed a newly encountered profile once. Keep the receipt beside the native profiles, rather
+/// than in the cloud-synced database: deleting every managed node in DSH must not cause a later
+/// startup to restore it. Profiles, credentials and the receipt are committed together.
+pub(crate) fn initialize_profiles(
+    providers: &IndexMap<String, Value>,
+    servers: &IndexMap<String, Value>,
+) -> Result<(), AppError> {
+    initialize_profiles_and_commit(providers, servers, || Ok(()))
+}
+
+fn initialize_profiles_and_commit<T>(
+    providers: &IndexMap<String, Value>,
+    servers: &IndexMap<String, Value>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    if providers.is_empty() && servers.is_empty() {
+        return commit();
+    }
+    let profiles = target_paths();
+    let receipt = data_dir().join(".cc-switch-profile-sync.json");
+    let parse_receipt = |text: &str| -> Result<Vec<String>, AppError> {
+        if text.trim().is_empty() {
+            Ok(vec![])
+        } else {
+            serde_json::from_str(text).map_err(|_| {
+                AppError::Config("Invalid DeepSeek Harness profile sync receipt".into())
+            })
+        }
+    };
+    let initialized = parse_receipt(&read_text(&receipt)?)?;
+    if profiles
+        .iter()
+        .all(|path| initialized.contains(&profile_name(path)))
+    {
+        return commit();
+    }
+    let mut files = vec![credentials_path()];
+    files.extend(profiles.iter().cloned());
+    // Write the receipt last, after every native file has been written successfully.
+    files.push(receipt);
+    edit_files_and_commit(
+        &files,
+        |texts| {
+            let mut initialized = parse_receipt(&texts[profiles.len() + 1])?;
+            let mut next = texts.to_vec();
+            for (index, path) in profiles.iter().enumerate() {
+                let name = profile_name(path);
+                if initialized.contains(&name) {
+                    continue;
+                }
+                let text = &texts[index + 1];
+                let has_providers = providers.keys().try_fold(false, |found, id| {
+                    Ok::<_, AppError>(found || existing_provider_node(text, id)?.is_some())
+                })?;
+                let has_servers = servers.keys().try_fold(false, |found, id| {
+                    Ok::<_, AppError>(found || existing_mcp_entry(text, id)?.is_some())
+                })?;
+                if !has_providers && !providers.is_empty() {
+                    ensure_providers_not_shadowed(&home_patch_path())?;
+                    for (id, config) in providers {
+                        // Prefer the existing native node, including its credential reference.
+                        // A stale database row must not overwrite a key edited in DSH.
+                        let mut native = None;
+                        for source in &texts[1..=profiles.len()] {
+                            if let Some(node) = existing_provider_node(source, id)? {
+                                let node = serde_json::to_value(node).map_err(|_| {
+                                    AppError::Config(format!(
+                                        "Provider '{id}' contains dynamic YAML; edit it in DeepSeek Harness"
+                                    ))
+                                })?;
+                                // Validate the original text too: serde_yaml can drop !!js tags.
+                                update_provider(source, id, Some(node.clone()), false)?;
+                                native = Some(node);
+                                break;
+                            }
+                        }
+                        let native = match native {
+                            Some(native) => native,
+                            None => {
+                                let (credentials, native) = native_provider(id, config, &next[0])?;
+                                next[0] = credentials;
+                                native
+                            }
+                        };
+                        next[index + 1] =
+                            update_provider(&next[index + 1], id, Some(native), true)?;
+                    }
+                }
+                if !has_servers {
+                    for (id, spec) in servers {
+                        validate_mcp_spec(id, spec)?;
+                        let mut source = None;
+                        for text in &texts[1..=profiles.len()] {
+                            if let Some(entry) = existing_mcp_entry(text, id)? {
+                                // Apply the same tag/anchor checks as an explicit native edit.
+                                mcp_edit(text, id, Some(spec))?;
+                                source = Some(entry);
+                                break;
+                            }
+                        }
+                        next[index + 1] = match source {
+                            Some(source) => insert_mcp_entry(&next[index + 1], &source)?,
+                            None => mcp_edit(&next[index + 1], id, Some(spec))?,
+                        };
+                    }
+                }
+                initialized.push(name);
+            }
+            next[profiles.len() + 1] = serde_json::to_string(&initialized)
+                .map_err(|error| AppError::Config(error.to_string()))?;
             Ok(next)
         },
         commit,
@@ -989,10 +1104,10 @@ fn diverged_provider_error(
     AppError::localized(
         "dsh.provider_diverged",
         format!(
-            "供应商 '{id}' 在 profile '{other}' 里的内容与 '{source}' 不同；CC Switch 只认得 '{source}' 的那份，改写会覆盖你在 DeepSeekRuntime 里对 '{other}' 做的修改。请先在 DeepSeekRuntime 里把两者改成一致，或手动编辑 profiles/{other}/cordis.patch.yml。"
+            "供应商 '{id}' 在 profile '{other}' 里的内容与 '{source}' 不同；CC Switch 只认得 '{source}' 的那份，改写会覆盖你在 DeepSeek Harness 里对 '{other}' 做的修改。请先在 DeepSeek Harness 里把两者改成一致，或手动编辑 profiles/{other}/cordis.patch.yml。"
         ),
         format!(
-            "Provider '{id}' differs between the '{other}' and '{source}' profiles; CC Switch only knows the '{source}' copy, so writing would discard your changes in '{other}'. Make them identical in DeepSeekRuntime, or edit profiles/{other}/cordis.patch.yml directly."
+            "Provider '{id}' differs between the '{other}' and '{source}' profiles; CC Switch only knows the '{source}' copy, so writing would discard your changes in '{other}'. Make them identical in DeepSeek Harness, or edit profiles/{other}/cordis.patch.yml directly."
         ),
     )
 }
@@ -1032,50 +1147,37 @@ fn existing_mcp_entry(text: &str, id: &str) -> Result<Option<Yaml>, AppError> {
     Ok(found)
 }
 
-/// One MCP server's copies across profiles must agree with the authoritative profile.
-///
-/// A server that only a non-authoritative profile carries was added natively inside DSH, and
-/// writing the CC Switch spec there would silently replace it; a copy that differs from the
-/// authoritative one is a native edit that a rewrite would discard. Both are refused and the
-/// profile is named. A target profile that simply lacks the server is fine: CC Switch writes it
-/// everywhere.
+/// Compare existing copies, preferring the displayed profile when it has one. A missing copy
+/// is expected when a profile was initialized later; only differing contents are a conflict.
 fn ensure_mcp_copies_agree(
     paths: &[PathBuf],
     authoritative: usize,
     texts: &[String],
     id: &str,
-) -> Result<(), AppError> {
-    let source = texts
+) -> Result<Option<Yaml>, AppError> {
+    let mut source = texts
         .get(authoritative)
         .map(|text| existing_mcp_entry(text, id))
         .transpose()?
-        .flatten();
-    let Some(source) = source else {
-        // 优先 profile 里没有：别的 profile 里既然有，就是别处原生加的
-        for (index, text) in texts.iter().enumerate() {
-            if index != authoritative && existing_mcp_entry(text, id)?.is_some() {
+        .flatten()
+        .map(|entry| (authoritative, entry));
+    for (index, text) in texts.iter().enumerate() {
+        let Some(copy) = existing_mcp_entry(text, id)? else {
+            continue;
+        };
+        if let Some((source_index, source)) = &source {
+            if copy != *source {
                 return Err(diverged_mcp_error(
                     id,
                     paths.get(index),
-                    paths.get(authoritative),
+                    paths.get(*source_index),
                 ));
             }
-        }
-        return Ok(());
-    };
-    for (index, text) in texts.iter().enumerate() {
-        if index == authoritative {
-            continue;
-        }
-        if existing_mcp_entry(text, id)?.is_some_and(|copy| copy != source) {
-            return Err(diverged_mcp_error(
-                id,
-                paths.get(index),
-                paths.get(authoritative),
-            ));
+        } else {
+            source = Some((index, copy));
         }
     }
-    Ok(())
+    Ok(source.map(|(_, entry)| entry))
 }
 
 fn diverged_mcp_error(id: &str, other: Option<&PathBuf>, source: Option<&PathBuf>) -> AppError {
@@ -1084,10 +1186,10 @@ fn diverged_mcp_error(id: &str, other: Option<&PathBuf>, source: Option<&PathBuf
     AppError::localized(
         "dsh.mcp_diverged",
         format!(
-            "MCP 服务器 '{id}' 在 profile '{other}' 里的配置与 '{source}' 不同；改写会覆盖你在 DeepSeekRuntime 里对 '{other}' 做的修改。请先在 DeepSeekRuntime 里把两者改成一致，或手动编辑 profiles/{other}/cordis.patch.yml。"
+            "MCP 服务器 '{id}' 在 profile '{other}' 里的配置与 '{source}' 不同；改写会覆盖你在 DeepSeek Harness 里对 '{other}' 做的修改。请先在 DeepSeek Harness 里把两者改成一致，或手动编辑 profiles/{other}/cordis.patch.yml。"
         ),
         format!(
-            "MCP server '{id}' differs between the '{other}' and '{source}' profiles; writing would discard your changes in '{other}'. Make them identical in DeepSeekRuntime, or edit profiles/{other}/cordis.patch.yml directly."
+            "MCP server '{id}' differs between the '{other}' and '{source}' profiles; writing would discard your changes in '{other}'. Make them identical in DeepSeek Harness, or edit profiles/{other}/cordis.patch.yml directly."
         ),
     )
 }
@@ -1216,7 +1318,7 @@ pub(crate) fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
             // 权威 profile 读不出来时照旧报错；其余 profile 只跳过并记日志。
             Err(error) if path != authoritative => {
                 log::warn!(
-                    "跳过无法解析的 DeepSeekRuntime profile {}: {error}",
+                    "跳过无法解析的 DeepSeek Harness profile {}: {error}",
                     path.display()
                 );
                 continue;
@@ -1292,30 +1394,79 @@ fn sync_mcp_files_and_commit<T>(
         return commit();
     }
     if let Some(spec) = spec {
-        crate::mcp::validation::validate_server_spec(spec)?;
-        if spec["type"] == "sse" {
-            return Err(AppError::InvalidInput("DeepSeek Harness supports stdio and Streamable HTTP MCP; use an HTTP endpoint instead of SSE".into()));
-        }
-        if id.is_empty()
-            || id.len() > 32
-            || id
-                .chars()
-                .any(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
-        {
-            return Err(AppError::InvalidInput(
-                "DeepSeek Harness MCP names must contain 1–32 letters, digits, '-' or '_'".into(),
-            ));
-        }
+        validate_mcp_spec(id, spec)?;
     }
     edit_files_and_commit(
         &paths,
         |texts| {
             let authoritative = authoritative_index(&paths);
-            ensure_mcp_copies_agree(&paths, authoritative, texts, id)?;
-            texts.iter().map(|text| mcp_edit(text, id, spec)).collect()
+            let source = ensure_mcp_copies_agree(&paths, authoritative, texts, id)?;
+            texts
+                .iter()
+                .map(|text| mcp_edit_with_source(text, id, spec, source.as_ref()))
+                .collect()
         },
         commit,
     )
+}
+
+fn validate_mcp_spec(id: &str, spec: &Value) -> Result<(), AppError> {
+    crate::mcp::validation::validate_server_spec(spec)?;
+    if spec["type"] == "sse" {
+        return Err(AppError::InvalidInput("DeepSeek Harness supports stdio and Streamable HTTP MCP; use an HTTP endpoint instead of SSE".into()));
+    }
+    if id.is_empty()
+        || id.len() > 32
+        || id
+            .chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+    {
+        return Err(AppError::InvalidInput(
+            "DeepSeek Harness MCP names must contain 1–32 letters, digits, '-' or '_'".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// A missing copy inherits native plugin IDs and extension fields from an existing copy, so
+/// creating it does not manufacture a conflict on the next edit or deletion.
+fn mcp_edit_with_source(
+    text: &str,
+    id: &str,
+    spec: Option<&Value>,
+    source: Option<&Yaml>,
+) -> Result<String, AppError> {
+    if let Some(source) = source.filter(|_| spec.is_some()) {
+        if existing_mcp_entry(text, id)?.is_none() {
+            let seeded = insert_mcp_entry(text, source)?;
+            return mcp_edit(&seeded, id, spec);
+        }
+    }
+    mcp_edit(text, id, spec)
+}
+
+fn insert_mcp_entry(text: &str, entry: &Yaml) -> Result<String, AppError> {
+    // serde_yaml does not round-trip native !!js tags. Refuse dynamic nodes before copying.
+    serde_json::to_value(entry).map_err(|_| {
+        AppError::Config(
+            "This DeepSeek Harness MCP entry contains dynamic YAML; edit it in DeepSeek Harness"
+                .into(),
+        )
+    })?;
+    let parsed = entries(text)?;
+    if let Some(id) = entry["id"].as_str() {
+        if plugin_entries(&parsed).any(|(_, _, entry)| entry["id"].as_str() == Some(id)) {
+            return Err(AppError::Conflict(format!(
+                "DeepSeek Harness plugin id '{id}' is already in use"
+            )));
+        }
+    }
+    let patch = Yaml::Mapping(
+        [(Yaml::from("insert"), Yaml::Sequence(vec![entry.clone()]))]
+            .into_iter()
+            .collect(),
+    );
+    replace_patch(text, &parsed, None, Some(patch))
 }
 
 /// One profile's text with MCP server `id` added, replaced or (when `spec` is `None`) removed.
@@ -1879,7 +2030,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn providers_are_written_to_every_initialized_profile_without_creating_missing_ones() {
+    fn provider_writes_prepare_web_and_desktop_and_keep_optional_profiles_native_owned() {
         let home = DshHome::new();
         let root = home.dir.path();
         init_profiles(root, &["web", "headless"]);
@@ -1887,13 +2038,13 @@ mod tests {
         init_profiles(root, &["sdk"]);
 
         set_provider("gateway", editor_config()).unwrap();
-        for name in ["web", "headless"] {
+        for name in ["web", "desktop", "headless"] {
             assert!(profile_text(root, name)
                 .unwrap()
                 .contains("apiKeyEnv: CC_SWITCH_DSH_GATEWAY"));
         }
         assert_eq!(profile_text(root, "sdk").unwrap(), FACTORY_PROFILE);
-        assert!(!root.join("profiles/desktop").exists());
+        assert!(root.join("profiles/desktop/cordis.patch.yml").exists());
         assert!(!root.join("profiles/acp").exists());
         assert!(provider_key_exists("gateway").unwrap());
         assert_eq!(
@@ -1902,10 +2053,10 @@ mod tests {
         );
 
         remove_provider("gateway").unwrap();
-        for name in ["web", "headless"] {
+        for name in ["web", "desktop", "headless"] {
             assert!(!profile_text(root, name).unwrap().contains("gateway"));
         }
-        assert!(!root.join("profiles/desktop").exists());
+        assert!(root.join("profiles/desktop/cordis.patch.yml").exists());
     }
 
     #[test]
@@ -1926,6 +2077,140 @@ mod tests {
         );
         init_profiles(root, &["web"]);
         assert_eq!(config_path(), root.join("profiles/web/cordis.patch.yml"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn newly_initialized_desktop_imports_managed_configuration_only_once() {
+        use crate::app_config::{AppType, McpApps, McpServer};
+        use crate::provider::{Provider, ProviderMeta};
+        use crate::services::provider::{initialize_dsh_profiles, ProviderService};
+
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+        let web = profile_path("web");
+        // Existing users only had Web when these rows were written.
+        save_paths_and_commit(
+            &[web.clone()],
+            &credentials_path(),
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+        let spec = json!({"command":"node","args":["fetch.js"]});
+        sync_mcp_file_and_commit(&web, "fetch", Some(&spec), || Ok(())).unwrap();
+        let before_web = read_text(&web)
+            .unwrap()
+            .replace("command: node", "command: native-node");
+        fs::write(&web, &before_web).unwrap();
+        let native_credentials = read_text(&credentials_path())
+            .unwrap()
+            .replace("test-value", "native-key");
+        fs::write(credentials_path(), native_credentials).unwrap();
+        let before_credentials = fs::read(credentials_path()).unwrap();
+        let state = crate::store::AppState::new(std::sync::Arc::new(
+            crate::database::Database::memory().unwrap(),
+        ));
+        for (id, managed) in [("gateway", true), ("parked", false)] {
+            let mut provider = Provider::with_id(id.into(), id.into(), editor_config(), None);
+            provider.meta = Some(ProviderMeta {
+                live_config_managed: Some(managed),
+                ..Default::default()
+            });
+            state.db.save_provider("dsh", &provider).unwrap();
+        }
+        for (id, enabled) in [("fetch", true), ("disabled", false)] {
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: id.into(),
+                    name: id.into(),
+                    server: spec.clone(),
+                    apps: McpApps {
+                        dsh: enabled,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: vec![],
+                })
+                .unwrap();
+        }
+        // First Desktop launch happens after the managed Web setup.
+        init_profiles(root, &["desktop"]);
+        let desktop = profile_path("desktop");
+        let native = "- id: native-plugin\n  config: {value: !!js process.env.VALUE}\n";
+        fs::write(&desktop, native).unwrap();
+        let listed = ProviderService::list(&state, AppType::DshDesktop).unwrap();
+        assert!(listed.contains_key("gateway"));
+        let providers = get_providers_from(&desktop, &credentials_path()).unwrap();
+        assert!(providers.contains_key("gateway"));
+        assert_eq!(providers["gateway"]["options"]["apiKey"], "native-key");
+        assert!(!providers.contains_key("parked"));
+        let text = read_text(&desktop).unwrap();
+        assert!(text.starts_with(native));
+        assert_eq!(
+            mcp_entries_from(&text).unwrap(),
+            mcp_entries_from(&before_web).unwrap()
+        );
+        assert!(text.contains("native-node"));
+        assert_eq!(read_text(&web).unwrap(), before_web);
+        assert_eq!(fs::read(credentials_path()).unwrap(), before_credentials);
+        assert!(desktop_status().configured);
+
+        // Even deleting every managed node natively must survive startup and page refresh.
+        fs::write(&desktop, native).unwrap();
+        initialize_dsh_profiles(&state).unwrap();
+        ProviderService::list(&state, AppType::Dsh).unwrap();
+        assert_eq!(read_text(&desktop).unwrap(), native);
+
+        // Optional profiles that appear later receive the same one-time initialization.
+        init_profiles(root, &["headless"]);
+        initialize_dsh_profiles(&state).unwrap();
+        assert!(
+            get_providers_from(&profile_path("headless"), &credentials_path())
+                .unwrap()
+                .contains_key("gateway")
+        );
+        assert_eq!(read_text(&desktop).unwrap(), native);
+        assert!(!profile_path("acp").exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn profile_initialization_rolls_back_its_receipt_and_can_retry() {
+        let _home = DshHome::new();
+        let providers = IndexMap::from([("gateway".into(), editor_config())]);
+        let servers = IndexMap::from([("fetch".into(), json!({"command":"node"}))]);
+        let receipt = data_dir().join(".cc-switch-profile-sync.json");
+        let result = initialize_profiles_and_commit(&providers, &servers, || {
+            Err::<(), _>(AppError::Database("injected".into()))
+        });
+        assert!(result.is_err());
+        assert!(!receipt.exists());
+        assert!(!credentials_path().exists());
+        for name in ["web", "desktop"] {
+            assert!(!profile_path(name).exists());
+        }
+        initialize_profiles(&providers, &servers).unwrap();
+        for name in ["web", "desktop"] {
+            assert!(get_providers_from(&profile_path(name), &credentials_path())
+                .unwrap()
+                .contains_key("gateway"));
+            assert_eq!(
+                mcp_entries_from(&read_text(&profile_path(name)).unwrap())
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        let _guard = FileLock::acquire(&profile_path("desktop")).unwrap();
+        // A completed import needs no native writes or locks on subsequent startup.
+        initialize_profiles(&providers, &servers).unwrap();
     }
 
     #[test]
@@ -1986,8 +2271,9 @@ mod tests {
         .unwrap();
         let error = set_provider("gateway", editor_config()).unwrap_err();
         assert!(error.to_string().contains("cordis.patch.yml"), "{error}");
-        assert!(remove_provider("gateway").is_err());
         assert_eq!(profile_text(root, "web").unwrap(), written);
+        remove_provider("gateway").unwrap();
+        assert!(get_providers().unwrap().is_empty());
     }
 
     #[test]
@@ -1999,7 +2285,7 @@ mod tests {
         let spec = json!({"type":"stdio","command":"node","args":["server.js"]});
 
         sync_mcp_and_commit("memory", Some(&spec), || Ok(())).unwrap();
-        for name in ["web", "acp"] {
+        for name in ["web", "desktop", "acp"] {
             assert_eq!(
                 mcp_entries_from(&profile_text(root, name).unwrap())
                     .unwrap()
@@ -2007,7 +2293,7 @@ mod tests {
                 1
             );
         }
-        assert!(!root.join("profiles/desktop").exists());
+        assert!(root.join("profiles/desktop/cordis.patch.yml").exists());
         assert_eq!(mcp_entries().unwrap().len(), 1);
 
         let (web, acp) = (
@@ -2147,26 +2433,52 @@ mod tests {
         assert_eq!(profile_text(root, "desktop").unwrap(), edited);
     }
 
-    /// 只在别的 profile 里存在的 MCP（用户在 DSH 原生界面里加的）不能被 CC Switch 覆盖。
     #[test]
     #[serial_test::serial]
-    fn mcp_added_natively_in_another_profile_is_refused() {
+    fn mcp_missing_from_web_can_be_edited_and_removed() {
         let home = DshHome::new();
         let root = home.dir.path();
-        init_profiles(root, &["web", "desktop"]);
-        let native = "---\n- insert:\n    - id: native-desktop-mcp\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: memory\n        transport: stdio\n        command: python-native\n";
-        fs::write(root.join("profiles/desktop/cordis.patch.yml"), native).unwrap();
+        init_profiles(root, &["desktop"]);
+        let desktop = profile_path("desktop");
+        fs::write(&desktop, "- insert:\n  - id: native-fetch\n    name: '@deepseek-ai/dsh-mcp-client'\n    config: {serverName: fetch, transport: stdio, command: node, args: [old.js], toolCallTimeoutMs: 12345}\n").unwrap();
+        init_profiles(root, &["web"]);
 
-        let spec = json!({"type":"stdio","command":"npx","args":["-y","mock-mcp"]});
-        let error = sync_mcp_and_commit("memory", Some(&spec), || Ok(())).unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("desktop"), "{message}");
-        assert_eq!(
-            profile_text(root, "desktop").unwrap(),
-            native,
-            "原生节点必须原样保留"
-        );
-        assert!(!profile_text(root, "web").unwrap().contains("mock-mcp"));
+        let updated = json!({"command":"node","args":["new.js"]});
+        sync_mcp_and_commit("fetch", Some(&updated), || Ok(())).unwrap();
+        for name in ["web", "desktop"] {
+            let text = profile_text(root, name).unwrap();
+            assert!(text.contains("new.js"));
+            assert!(text.contains("native-fetch"));
+            assert!(text.contains("toolCallTimeoutMs: 12345"));
+        }
+        // Exercise deletion in the same missing-copy window, before first-import runs.
+        init_profiles(root, &["web"]);
+        sync_mcp_and_commit("fetch", None, || Ok(())).unwrap();
+        assert!(mcp_entries().unwrap().is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn mcp_missing_from_web_still_rejects_divergent_existing_copies() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "desktop", "headless"]);
+        for (name, command) in [("desktop", "node"), ("headless", "python")] {
+            sync_mcp_file_and_commit(
+                &profile_path(name),
+                "fetch",
+                Some(&json!({"command":command})),
+                || Ok(()),
+            )
+            .unwrap();
+        }
+        let before = profile_text(root, "desktop");
+        for spec in [Some(json!({"command":"npx"})), None] {
+            let error = sync_mcp_and_commit("fetch", spec.as_ref(), || Ok(())).unwrap_err();
+            assert!(error.to_string().contains("headless"));
+            assert_eq!(profile_text(root, "desktop"), before);
+            assert_eq!(profile_text(root, "web").unwrap(), FACTORY_PROFILE);
+        }
     }
 
     /// 崩溃留下的 `<file>.lock` 不该把之后的写入永久卡死，但活着的写入方仍然要被尊重。

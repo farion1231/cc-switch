@@ -842,6 +842,10 @@ pub fn run() {
                 }
             }
 
+            if let Err(error) = crate::services::provider::initialize_dsh_profiles(&app_state) {
+                log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
+            }
+
             match app_state.db.init_default_official_providers() {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Seeded {count} official provider(s)");

@@ -23,13 +23,15 @@ DeepSeek Harness 的应用 ID 为 `dsh`，命令为 `dsh`，npm 包为 `@deepsee
 - OpenAI Responses：`openai-responses`。
 - Anthropic Messages：`anthropic-messages`。
 
-添加的供应商写入所有已初始化 profile 的 `llm-pi-ai.config.providers`：依次检查 `web`、`desktop`、`headless`、`acp`，只写已经有 `cordis.patch.yml` 的那些；`sdk`、`sdk-minimal` 供嵌入开发使用，不写。不存在的 profile 不会被创建（例如还没启动过的 Desktop）；一个 profile 都没有时才创建 `web`。添加、编辑、移除对所有目标 profile 一起做。多个供应商可以同时添加；「移除」只从原生配置移除，保留 CC Switch 中可再次添加的档案；删除档案同时移除其原生节点。供应商 key 不覆盖同名节点。已有配置在列表刷新时导入，原生节点被其他程序移除后，档案变为未添加。
+添加的供应商写入 `web`、`desktop`，以及已初始化的 `headless`、`acp` profile 的 `llm-pi-ai.config.providers`。Web 或 Desktop 缺少 `cordis.patch.yml` 时会提前创建；客户端首次启动时保留已有补丁并补齐其他文件（[上游 `initProfile` 实现](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/packages/boot/app-boot/src/profile.ts#L223-L249)）。`sdk`、`sdk-minimal` 供嵌入开发使用，不写。添加、编辑、移除对所有目标 profile 一起做。多个供应商可以同时添加；「移除」只从原生配置移除，保留 CC Switch 中可再次添加的档案；删除档案同时移除其原生节点。供应商 key 不覆盖同名节点。已有配置在列表刷新时导入，原生节点被其他程序移除后，档案变为未添加。
 
-列表和「已添加」状态读取**所有**已初始化 profile，`web`、`desktop` 优先：只在某个 profile 里存在的供应商（例如在 DeepSeekRuntime 的 headless 界面里原生添加的）也会显示出来，不会出现「列表里没有、添加时却说 key 已占用」的死角。每个 profile 里的同名节点内容必须与优先显示的那份一致：如果用户在 DeepSeekRuntime 原生界面里改了其中一份（换端点、换模型、换凭据引用），CC Switch 编辑或移除时会拒绝写入并指出是哪个 profile 不一致，而不是用优先显示的那份静默覆盖。MCP 条目按同样规则处理。
+列表和「已添加」状态读取**所有**已初始化 profile，`web`、`desktop` 优先：只在某个 profile 里存在的供应商（例如在 DeepSeek Harness 的 headless 界面里原生添加的）也会显示出来，不会出现「列表里没有、添加时却说 key 已占用」的死角。每个 profile 里的同名节点内容必须与优先显示的那份一致：如果用户在 DeepSeek Harness 原生界面里改了其中一份（换端点、换模型、换凭据引用），CC Switch 编辑或移除时会拒绝写入并指出是哪个 profile 不一致，而不是用优先显示的那份静默覆盖。MCP 条目比较实际存在的副本：优先显示的 profile 缺少某条 MCP 时，使用其他 profile 中已有的条目作为比较基准；缺少副本不会阻止编辑或删除，内容确实不同才报错。
+
+启动 CC Switch 或打开 DSH / DSH Desktop 供应商页时，会检查首次遇到的目标 profile。尚无受管供应商的 profile 会补入 `liveConfigManaged` 为真的供应商，尚无受管 MCP 的 profile 会补入已为 DSH 启用的服务器；现有原生配置保留。完成记录保存在 `$DSH_HOME/.cc-switch-profile-sync.json`，和本次配置写入一起提交、失败一起回滚。以后用户在原生客户端删除条目，即使删空，也不会因重启或刷新页面反复补回。
 
 供应商的模型出现在 DeepSeek Harness 的模型选择器中。默认模型和 `sdk` 类 profile 通过 DeepSeek Harness 原生界面管理。CC Switch 的「添加」不会更改原生默认模型。
 
-`$DSH_HOME/cordis.patch.yml`（home 级补丁）在所有 profile 之后生效。如果其中有 `llm-pi-ai` 的 `config`，写进任何 profile 的供应商都会被盖住，此时添加、编辑、移除直接报错「供应商被 home 级补丁覆盖，请先在该文件里移除」，不写任何文件。
+`$DSH_HOME/cordis.patch.yml`（home 级补丁）在所有 profile 之后生效。如果其中有 `llm-pi-ai` 的 `config`，写进任何 profile 的供应商都会被盖住，此时添加、编辑直接报错「供应商被 home 级补丁覆盖，请先在该文件里移除」。仍可移除 profile 中的条目或删除 CC Switch 档案。
 
 API Key 写入原生 `.credentials.yaml` 的 `refs`，profile 仅保存 `apiKeyEnv` 引用。只有登录 `records`、尚未建立 `refs` 或 `refs` 为 null 的原生凭据文件也可读取，首次写入 Key 时再创建 `refs` 并保留登录记录。编辑已有供应商且 Key 不变时保留其原生引用；改用新 Key 时使用 CC Switch 为该供应商生成的独立引用。移除供应商保留凭据，避免影响可能复用同一引用的配置。CC Switch 的供应商档案仍沿用项目现有的本机保存和同步机制。
 
@@ -38,7 +40,7 @@ API Key 写入原生 `.credentials.yaml` 的 `refs`，profile 仅保存 `apiKeyE
 | 能力 | 原生位置与行为 |
 | --- | --- |
 | 数据目录 | `$DSH_HOME`，未设置时为 `~/.dsh` |
-| 供应商、模型 | `profiles/{web,desktop,headless,acp}/cordis.patch.yml` 中已存在者的 `llm-pi-ai` 插件 override |
+| 供应商、模型 | `profiles/{web,desktop}/cordis.patch.yml`，以及已有的 `headless`、`acp` 补丁中的 `llm-pi-ai` 插件 override |
 | API Key | `.credentials.yaml` 的 `refs`；保留其他 refs 与 records |
 | MCP | 同一组 profile 的 `insert` 列表中每个服务器一个 `@deepseek-ai/dsh-mcp-client` 插件条目 |
 | DeepSeek 账号（OAuth） | `.credentials.yaml` 的 `records["deepseek-account-platform/default"]`，Web 与 Desktop 共用 |
@@ -54,13 +56,13 @@ API Key 写入原生 `.credentials.yaml` 的 `refs`，profile 仅保存 `apiKeyE
 
 ## DeepSeek 账号（OAuth）
 
-授权中心有 DeepSeek Harness 一组：可以用浏览器登录 DeepSeek 账号，流程与 DeepSeek Harness Web 相同（PKCE S256，`auth-api/v0/dsh/auth_init`、`auth_exchange`，本机 `127.0.0.1` 回调，取消时 `auth_cancel`），登录写进 Web 与 Desktop 共用的 `.credentials.yaml`，运行中的 DeepSeek Harness 会自动重新读取。也可以在 DeepSeek Harness 里登录，CC Switch 读取同一份记录，显示账号、充值余额和赠金余额，退出登录时两端同时退出（先删本地记录，再尽力通知平台）。账号令牌只发往 `https://platform.deepseek.com`，请求不跟随重定向。
+授权中心有 DeepSeek Harness 一组：可以用浏览器登录 DeepSeek 账号，流程与 DeepSeek Harness Web 相同（PKCE S256，`auth-api/v0/dsh/auth_init`、`auth_exchange`，本机 `127.0.0.1` 回调，取消时 `auth_cancel`），登录写进 Web 与 Desktop 共用的 `.credentials.yaml`，运行中的 DeepSeek Harness 会自动重新读取。也可以在 DeepSeek Harness 里登录，CC Switch 读取同一份记录，显示账号、充值余额和赠金余额，退出登录时两端同时退出（先删本地记录，再尽力通知平台）。查询账号和远程退出前都会核对凭据的 `issuer`；账号令牌只发往 `https://platform.deepseek.com`，请求不跟随重定向。其他 issuer 的凭据仍可在本地退出，不会向它发送请求。
 
 ## 会话与用量
 
 Web 和 Desktop 共用 `$DSH_HOME/sessions`，会话里没有记录是哪一端创建的，因此会话页和用量页把两者合并为一个 DeepSeek Harness 来源。用量导入器（沿用 [PR #8771](https://github.com/farion1231/cc-switch/pull/8771)）读取 `assistant/message` 的 token 用量；走 DeepSeek 账号路由（`source.provider` 为 `deepseek-account`）的请求单独记为「DeepSeek 账号（OAuth）」，其余记为会话日志。
 
-用量导入按字节游标增量读取：游标记下已处理到的文件位置，每次同步只读追加的那一段、只解压新增的 zstd 帧，不再整份重读重解压（长会话每次同步的代价与新增量成正比，而不是与会话总长度成正比）。末尾写了一半的帧不会被跨过，游标停在最后一个完整帧，等下一轮补全；日志被重写或变短时从头重扫，去重账本保证不会重复入库。
+用量导入按字节游标增量读取：游标记下已处理到的文件位置，每次同步只读追加的那一段、只解压新增的 zstd 帧，不再整份重读重解压（长会话每次同步的代价与新增量成正比，而不是与会话总长度成正比）。未完成请求的 `step/start` 时间与游标一起保存到数据库，`assistant/message` 即使落在下轮同步或应用重启后，也能计算耗时和首字时间；旧版游标会重读一次以恢复上下文，并沿用去重账本。末尾写了一半的帧不会被跨过，游标停在最后一个完整帧，等下一轮补全；日志被重写或变短时从头重扫，去重账本保证不会重复入库。
 
 MCP 支持 stdio 和 Streamable HTTP，SSE 会提示改用 HTTP。新增使用 DSH 的 `insert` 补丁创建插件，读取、修改和移除支持同一插入列表中的多个插件；移除最后一个补丁时写回 `[]` 并保留文件头注释。修改保留原生超时、重连等扩展字段；更换传输类型时移除旧的启动或连接参数。发生数据库保存失败时恢复原生文件。
 
