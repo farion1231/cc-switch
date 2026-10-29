@@ -807,18 +807,11 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
-        // guard 在分流之前获取：两条路径都是真实的上游连接，都该计入
-        // active_connections / in_flight_by_provider，否则关闭路由态时的
-        // 在飞流量在统计里是隐形的。
+        // guard 在分流之前获取：它计的是真实的上游连接，和路由态无关，两条路径
+        // 都要注入——否则关闭路由态（Stack / 分流）时的在飞流量在统计里是隐形的。
         let mut guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
-        if !self.routing_state_enabled() {
-            return self
-                .forward_with_retry_inner(
-                    app_type, method, endpoint, body, headers, extensions, providers, &mut guard,
-                )
-                .await;
-        }
-        {
+        // 路由态才记这两项账本：分流（Stack）请求不该动路由状态。
+        if self.routing_state_enabled() {
             let mut s = self.status.write().await;
             s.total_requests = s.total_requests.saturating_add(1);
             s.last_request_at = Some(chrono::Utc::now().to_rfc3339());
@@ -4687,6 +4680,32 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
 
+    /// 等 `active_connections` 落到 `expected`：`Drop` 把减量 spawn 到 runtime，
+    /// 是异步落地的，读计数器前必须等它跑完。单次 `yield_now()` 不构成任何完成
+    /// 保证——它只让出一次调度，既不管排队的任务有没有被 poll，也不管它跑完没有。
+    /// 口径同 `proxy/server.rs` 的拒绝路径：有界等待，超时即失败，不静默放过。
+    /// 放在 `mod tests` 这一层：内联用例和 `bookkeeping` 子模块都要用。
+    ///
+    /// `expected` 是**调用点自己声明**的，不是恒为 0：多数用例只 drop 一部分
+    /// guard，其余的还持有连接，计数器只会落到那个数。写死 0 会让这些用例永远
+    /// 等不到，超时失败——而且失败信息（"guard 没释放"）和真实原因（等错了数）
+    /// 完全对不上，正是最难查的那类假线索。
+    async fn connections_settled(status: &Arc<RwLock<ProxyStatus>>, expected: usize) {
+        // 超时本身不算失败：减量有可能恰好在边界之后落地，所以超时后仍然再读一次
+        // 计数器，拿真实值下结论。真正失败的条件只有一个——值没落到 expected。
+        let _ = tokio::time::timeout(Duration::from_secs(1), async {
+            while status.read().await.active_connections != expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let actual = status.read().await.active_connections;
+        assert_eq!(
+            actual, expected,
+            "active_connections 未在 1s 内落到 {expected}（Drop 的减量没有落地？）"
+        );
+    }
+
     #[test]
     fn opencode_upstream_host_matching() {
         // With or without a port, and subdomains, count as OpenCode; other
@@ -6961,8 +6980,8 @@ mod tests {
         }
 
         drop(a);
-        // Drop 把减量调度到 runtime，让出一次调度让它跑完
-        tokio::task::yield_now().await;
+        // b、c 还持有连接，计数器只会落到 2
+        connections_settled(&status, 2).await;
         {
             let s = status.read().await;
             assert_eq!(s.in_flight_by_provider["claude"]["p1"], 1);
@@ -6993,7 +7012,8 @@ mod tests {
 
         // 只结束 Claude 那条：Codex 的计数必须原样保留，不能被动到。
         drop(claude);
-        tokio::task::yield_now().await;
+        // codex 那条还持有连接，计数器只会落到 1
+        connections_settled(&status, 1).await;
 
         {
             let s = status.read().await;
@@ -7081,7 +7101,7 @@ mod tests {
         guard.bind_provider("claude", "p1").await;
 
         drop(guard);
-        tokio::task::yield_now().await;
+        connections_settled(&status, 0).await;
 
         let s = status.read().await;
         assert!(
@@ -7104,7 +7124,7 @@ mod tests {
         }
 
         drop(guard);
-        tokio::task::yield_now().await;
+        connections_settled(&status, 0).await;
         let s = status.read().await;
         assert_eq!(s.active_connections, 0);
     }
@@ -8833,10 +8853,18 @@ mod tests {
 
                 assert_eq!(result.is_ok(), status == 200, "{status}");
                 if let Ok(result) = &result {
-                    assert!(result.connection_guard.is_none(), "no active connection");
+                    // Stack 请求同样是真实的上游连接，guard 必须随响应流转：
+                    // 流式响应还在吐字节时计数就该挂着，提前归零又变成隐形的在飞流量。
+                    assert!(
+                        result.connection_guard.is_some(),
+                        "a stacked request is a real upstream connection"
+                    );
                 }
                 assert_eq!(books(&fwd).await, untouched(), "{status}");
-                assert_eq!(fwd.status.read().await.active_connections, 0);
+                // result 持有 guard，先放手让它 drop，减量才会被 spawn 出去。
+                // （Err 路径的 guard 已经在 forward_with_retry 内落地，这里同样等得着。）
+                drop(result);
+                connections_settled(&fwd.status, 0).await;
                 assert!(breaker_untouched(&fwd, "kimi").await, "{status}");
                 assert_eq!(up.requests.lock().await.len(), 1, "{status}");
             }
