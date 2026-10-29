@@ -783,6 +783,29 @@ fn mcode_installer_update_command(install_root: &str) -> String {
     )
 }
 
+/// 重跑 Kimi Code 官方 installer 升级原生安装那一处。显式传 `KIMI_INSTALL_DIR`，
+/// 保证写回探测到的目录（installer 覆盖 `<dir>/bin/kimi`），而不是默认的 `~/.kimi-code`。
+#[cfg(not(target_os = "windows"))]
+fn kimi_installer_update_command(install_root: &str) -> String {
+    format!(
+        "KIMI_INSTALL_DIR={} {KIMI_INSTALL_UNIX}",
+        shell_single_quote(install_root)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn kimi_installer_update_command(install_root: &str) -> String {
+    // PowerShell 单引号字面量里 `'` 写作 `''`；整段经 EncodedCommand 传入，不经 cmd 解析。
+    let script = format!(
+        "$env:KIMI_INSTALL_DIR = '{}'; {KIMI_INSTALL_WINDOWS_SCRIPT}",
+        install_root.replace('\'', "''")
+    );
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(&script)
+    )
+}
+
 /// Codex 官方独立安装器（`install.sh` / `install.ps1`）装出的一处安装。
 ///
 /// 布局（2026-09 实测 install.sh、读 install.ps1）：发布包在
@@ -3557,6 +3580,68 @@ fn mcode_script_install_root(
     })
 }
 
+/// Kimi Code 的 `upgrade` 子命令 0.43.0 起才有 `-y, --yes`。更早的版本把 `--yes` 当成主命令
+/// 的全局选项吞掉，非 TTY（静默 lifecycle 正是如此）下只打印手动升级提示就 exit 0，
+/// `kimi upgrade --yes || <fallback>` 的兜底永不触发，用户看到「版本没有变化」（#9032）。
+const KIMI_UPGRADE_YES_MIN_VERSION: &str = "0.43.0";
+
+fn kimi_upgrade_ignores_yes(version: Option<&str>) -> bool {
+    version.and_then(|v| compare_semver(v, KIMI_UPGRADE_YES_MIN_VERSION))
+        == Some(std::cmp::Ordering::Less)
+}
+
+/// Kimi Code 官方 installer 的布局：两平台都是 `<KIMI_INSTALL_DIR>/bin/kimi[.exe]`
+/// 原生二进制。npm 版的真身在 `node_modules` 下（Windows 入口是 `kimi.cmd`），不算。
+/// 先看真身：POSIX 用户自建的软链（如 `~/.local/bin/kimi`）指回安装目录时，installer
+/// 必须写回真身所在的那处；Windows 的真身是 canonicalize 出的 `\\?\` verbatim 路径，
+/// 交给 installer 前还原。纯字符串、不碰 fs。
+fn kimi_native_install_root(bin_path: &str, real_target: &str) -> Option<String> {
+    let normalized_real = real_target.replace('\\', "/").to_ascii_lowercase();
+    if normalized_real.contains("/node_modules/") {
+        return None;
+    }
+    #[cfg(not(target_os = "windows"))]
+    if is_brew_managed_path(real_target) {
+        return None;
+    }
+    let real = match real_target.strip_prefix(r"\\?\UNC\") {
+        Some(unc) => format!(r"\\{unc}"),
+        None => real_target
+            .strip_prefix(r"\\?\")
+            .unwrap_or(real_target)
+            .to_string(),
+    };
+    let root = [real.as_str(), bin_path].into_iter().find_map(|path| {
+        if !matches!(last_path_segment_lower(path).as_str(), "kimi" | "kimi.exe") {
+            return None;
+        }
+        let bin_dir = parent_dir(path);
+        if last_path_segment_lower(&bin_dir) != "bin" {
+            return None;
+        }
+        let root = parent_dir(&bin_dir);
+        (!root.is_empty()).then_some(root)
+    });
+    root
+}
+
+/// 旧版 Kimi Code（见 `KIMI_UPGRADE_YES_MIN_VERSION`）的升级命令：跳过会假成功的
+/// `kimi upgrade --yes`。包管理器认得的安装（npm / Volta / bun / Homebrew）走锚定的包管理器；
+/// 先查它，因为 Volta 的 `bin/kimi[.exe]` shim 不解析到 `node_modules`，会被误认成原生
+/// 布局、让 installer 覆盖 shim。其余原生安装重跑官方 installer。都认不出时返回 None，
+/// 交回普通锚定。
+fn kimi_legacy_update_command(bin_path: &str, real_target: &str) -> Option<String> {
+    #[cfg(not(target_os = "windows"))]
+    let package_command =
+        package_manager_anchored_command_from_paths("kimi", bin_path, real_target);
+    #[cfg(target_os = "windows")]
+    let package_command = package_manager_anchored_command_from_paths("kimi", bin_path);
+    package_command.or_else(|| {
+        kimi_native_install_root(bin_path, real_target)
+            .map(|root| kimi_installer_update_command(&root))
+    })
+}
+
 /// 按 installer 写在 `<root>/install.json` 的回执认领安装目录——自定义
 /// `MCODE_INSTALL_DIR` 的目录名不固定，只能靠它（schema 1/2 都有 `product` /
 /// `updateOwner` / `prefix`）。返回回执里的 `prefix` 原值：installer 以
@@ -4688,6 +4773,12 @@ fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Optio
             .find_map(|entry| mcode_receipt_install_root(entry, McodeLayout::NATIVE))
         {
             return Some(mcode_installer_update_command(&root));
+        }
+    }
+    // 版本号来自 `--version` 探测，所以放在这里而不是纯路径的 `anchored_command_from_paths`。
+    if tool == "kimi" && kimi_upgrade_ignores_yes(inst.version.as_deref()) {
+        if let Some(cmd) = kimi_legacy_update_command(&inst.path, &real) {
+            return Some(cmd);
         }
     }
     anchored_command_from_paths(tool, &inst.path, &real)
@@ -7785,6 +7876,101 @@ mod tests {
         .unwrap();
         assert_eq!(update, format!("kimi upgrade --yes || {posix}"));
         assert!(!update.contains("npm"));
+    }
+
+    #[test]
+    fn kimi_native_install_root_follows_the_installer_layout() {
+        assert_eq!(
+            kimi_native_install_root(
+                "/home/me/.kimi-code/bin/kimi",
+                "/home/me/.kimi-code/bin/kimi"
+            )
+            .as_deref(),
+            Some("/home/me/.kimi-code")
+        );
+        // 软链指回安装目录时写回真身那处。
+        assert_eq!(
+            kimi_native_install_root("/home/me/.local/bin/kimi", "/opt/kimi/bin/kimi").as_deref(),
+            Some("/opt/kimi")
+        );
+        assert_eq!(
+            kimi_native_install_root(
+                r"C:\Users\sc\.kimi-code\bin\kimi.exe",
+                r"\\?\C:\Users\sc\.kimi-code\bin\kimi.exe"
+            )
+            .as_deref(),
+            Some(r"C:\Users\sc\.kimi-code")
+        );
+        // npm 版不归 installer 管。
+        assert_eq!(
+            kimi_native_install_root(
+                "/home/me/.nvm/versions/node/v22.19.0/bin/kimi",
+                "/home/me/.nvm/versions/node/v22.19.0/lib/node_modules/@moonshot-ai/kimi-code/dist/main.mjs"
+            ),
+            None
+        );
+        assert_eq!(
+            kimi_native_install_root(
+                r"C:\Users\sc\AppData\Roaming\npm\kimi.cmd",
+                r"\\?\C:\Users\sc\AppData\Roaming\npm\kimi.cmd"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn legacy_kimi_native_update_reruns_the_installer() {
+        let install = |path: &str, version: &str| ToolInstallation {
+            path: path.to_string(),
+            version: Some(version.to_string()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            source: infer_install_source(Path::new(path)).to_string(),
+            is_path_default: true,
+            real: PathBuf::from(path),
+        };
+        let (path, root) = if cfg!(target_os = "windows") {
+            (
+                r"C:\Users\sc\.kimi-code\bin\kimi.exe",
+                r"C:\Users\sc\.kimi-code",
+            )
+        } else {
+            ("/home/me/.kimi-code/bin/kimi", "/home/me/.kimi-code")
+        };
+
+        // 0.43.0 之前 `upgrade --yes` 在非 TTY 下只打印提示就 exit 0（#9032）。
+        assert_eq!(
+            installs_anchored_command("kimi", &[install(path, "0.23.1")]),
+            Some(kimi_installer_update_command(root))
+        );
+        // 新版照旧走 CLI 自升级。
+        let current = installs_anchored_command("kimi", &[install(path, "2.4.0")]).unwrap();
+        assert!(current.contains("upgrade --yes"), "{current}");
+        assert_eq!(
+            installs_anchored_command("kimi", &[install(path, "0.43.0")]),
+            Some(current)
+        );
+        // Volta 的 shim 也是 `bin/kimi`，必须交给 Volta，不能让 installer 覆盖。
+        #[cfg(not(target_os = "windows"))]
+        {
+            let volta =
+                installs_anchored_command("kimi", &[install("/home/me/.volta/bin/kimi", "0.23.1")])
+                    .unwrap();
+            assert!(
+                volta.ends_with("volta install @moonshot-ai/kimi-code"),
+                "{volta}"
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn kimi_installer_update_command_targets_the_detected_dir() {
+        assert_eq!(
+            kimi_installer_update_command("/home/me/my kimi"),
+            format!("KIMI_INSTALL_DIR='/home/me/my kimi' {KIMI_INSTALL_UNIX}")
+        );
     }
 
     #[cfg(target_os = "windows")]
