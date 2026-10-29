@@ -638,8 +638,8 @@ describe("OpenCodeFormFields", () => {
 
     expandFirstModel();
 
-    expect(screen.getByLabelText("Context")).toHaveValue(1048576);
-    expect(screen.getByLabelText("Output")).toHaveValue(131072);
+    expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(1048576);
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(131072);
   });
 
   it("keeps model name composition local until the IME commits", () => {
@@ -758,7 +758,7 @@ describe("OpenCodeFormFields", () => {
     renderOpenCodeForm({ onModelsChange });
 
     expandFirstModel();
-    fireEvent.change(screen.getByLabelText("Context"), {
+    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
       target: { value: "2000000" },
     });
 
@@ -775,7 +775,7 @@ describe("OpenCodeFormFields", () => {
     const { rerender, props } = renderOpenCodeForm({ onModelsChange });
 
     expandFirstModel();
-    fireEvent.change(screen.getByLabelText("Context"), {
+    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
       target: { value: "" },
     });
 
@@ -792,7 +792,7 @@ describe("OpenCodeFormFields", () => {
         <OpenCodeFormFields {...props} models={withoutContext} />
       </FormShell>,
     );
-    fireEvent.change(screen.getByLabelText("Output"), {
+    fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
       target: { value: "" },
     });
 
@@ -800,6 +800,89 @@ describe("OpenCodeFormFields", () => {
       "kimi-k2": {
         name: "Kimi K2",
       },
+    });
+  });
+
+  it("edits reasoning and image input with switches instead of raw JSON", () => {
+    const onModelsChange = vi.fn();
+    renderOpenCodeForm({
+      onModelsChange,
+      models: {
+        "kimi-k2": {
+          name: "Kimi K2",
+          reasoning: true,
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    });
+
+    expandFirstModel();
+    expect(screen.queryByDisplayValue("reasoning")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("modalities")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("pi.form.reasoning")).toBeChecked();
+    expect(screen.getByLabelText("pi.form.imageInput")).not.toBeChecked();
+
+    fireEvent.click(screen.getByLabelText("pi.form.imageInput"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "kimi-k2": {
+        name: "Kimi K2",
+        reasoning: true,
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+    });
+
+    // OpenCode 关掉思考是去掉字段，不写 false 盖住 models.dev
+    fireEvent.click(screen.getByLabelText("pi.form.reasoning"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "kimi-k2": {
+        name: "Kimi K2",
+        modalities: { input: ["text"], output: ["text"] },
+      },
+    });
+  });
+
+  it("shows DeepSeek Harness thinking levels and compatibility as structured fields", () => {
+    const onModelsChange = vi.fn();
+    const model = {
+      name: "MiMo V2.6 Pro",
+      reasoning: true,
+      reasoningEfforts: { off: null, low: "low", high: "high" },
+      compat: { supportsStore: false },
+    };
+    renderOpenCodeForm({
+      modelDialect: "dsh",
+      onModelsChange,
+      models: { "mimo-v2.6-pro": model },
+    });
+
+    expandFirstModel();
+    expect(
+      screen.queryByDisplayValue("reasoningEfforts"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("compat")).not.toBeInTheDocument();
+    expect(screen.getByText("pi.form.compatibility")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("supportsStore")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "pi.form.thinkingLevelsLabel" }),
+    );
+    fireEvent.click(screen.getByLabelText("pi.form.thinkingLevels.medium"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "mimo-v2.6-pro": {
+        ...model,
+        reasoningEfforts: {
+          off: null,
+          low: "low",
+          medium: "medium",
+          high: "high",
+        },
+      },
+    });
+
+    // DSH 只认 reasoningEfforts：关掉思考要写 false
+    fireEvent.click(screen.getByLabelText("pi.form.reasoning"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "mimo-v2.6-pro": { ...model, reasoning: false, reasoningEfforts: false },
     });
   });
 });
