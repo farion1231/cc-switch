@@ -68,7 +68,6 @@ function renderCard(provider: Provider, onEdit = vi.fn()) {
         provider={provider}
         appId="codebuddy"
         isCurrent={false}
-        isInConfig={false}
         presentation={{ chips: [], buttons: [] }}
         onEdit={onEdit}
         onDelete={vi.fn()}
