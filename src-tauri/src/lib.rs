@@ -842,6 +842,10 @@ pub fn run() {
                 }
             }
 
+            if let Err(error) = crate::services::provider::initialize_dsh_profiles(&app_state) {
+                log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
+            }
+
             match app_state.db.init_default_official_providers() {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Seeded {count} official provider(s)");
@@ -1873,6 +1877,11 @@ pub fn run() {
             commands::get_claude_default_plan,
             commands::get_claude_login_switch,
             commands::kimi_oauth_status,
+            commands::dsh_account_status,
+            commands::dsh_account_sign_out,
+            commands::dsh_account_login_start,
+            commands::dsh_account_login_poll,
+            commands::dsh_account_login_cancel,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,
             commands::kimi_oauth_cancel,
