@@ -1809,6 +1809,12 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        let (listen_address, listen_port) = {
+            let status = self.status.read().await;
+            (status.address.clone(), status.port)
+        };
+        super::upstream_guard::reject_self_forwarding(&url, &listen_address, listen_port).await?;
+
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
         // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。
@@ -6121,7 +6127,13 @@ mod tests {
         let continuation = json!({
             "input": [{"type": "function_call_output", "call_id": "call-1", "output": "done"}]
         });
-        for source in ["session_id", "x-session-id", "metadata"] {
+        for source in [
+            "session_id",
+            "x-session-id",
+            "session-id",
+            "thread-id",
+            "metadata",
+        ] {
             let mut headers = HeaderMap::new();
             let mut body = first.clone();
             let session_id = "12345678-1234-1234-1234-123456789abc";
@@ -7512,7 +7524,8 @@ mod tests {
                 gate(AppType::Codex, &third_party),
                 Some(OpaqueStateRejection {
                     reasoning: false,
-                    compaction: true
+                    compaction: true,
+                    item_ids: false,
                 })
             );
             assert_eq!(gate(AppType::Codex, &official), None);
@@ -7554,6 +7567,7 @@ mod tests {
                 Some(OpaqueStateRejection {
                     reasoning: false,
                     compaction: true,
+                    item_ids: false,
                 })
             );
             assert_eq!(
