@@ -197,6 +197,9 @@
       "forget": "从最近用过里移除",
       "confirm": "打开终端",
       "skipPermissions": "跳过权限确认",
+      "extraArgs": "附加参数（可选）",
+      "extraArgsPlaceholder": "例如 --debug --append-system-prompt \"简洁回答\"",
+      "extraArgsHint": "接在启动命令后面，只用于这次打开的终端。用空格分隔，含空格的值用引号括起来。",
       "agySwitchTitle": "会切换 agy 的登录",
       "agySwitchBody": "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
       "agySwitchRunning": "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。"
@@ -728,6 +731,15 @@
       "saved": "已保存",
       "unsavedChanges": "请先保存配置",
       "saveBeforeSync": "请先保存配置，再使用上传/下载。",
+      "clear": "清除配置",
+      "clearing": "清除中...",
+      "clearSuccess": "已清除本机的 WebDAV 配置",
+      "clearFailed": "清除配置失败：{{error}}",
+      "clearConfirm": {
+        "title": "清除 WebDAV 配置",
+        "message": "将从本机删除已保存的 WebDAV 地址、账号、密码和远程目录，并停止自动同步。云端已上传的数据不会被删除。",
+        "confirm": "清除"
+      },
       "fetchingRemote": "获取远端信息...",
       "fetchRemoteFailed": "获取远端信息失败，请检查配置和网络后重试。",
       "confirmDownload": {
@@ -1353,6 +1365,7 @@
     "groupByTime": "按时间",
     "groupByProject": "按项目",
     "desktopNote": "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
+    "dshMergedNote": "DeepSeek Harness 的 Web 和 Desktop 共用同一份会话记录，这里合并显示。",
     "matchCount": "匹配 {{count}} 个会话",
     "totalCount": "共 {{count}} 个会话",
     "selectAllMatches": "全选匹配结果",
@@ -2105,9 +2118,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "暂无额外选项",
     "noModelOptions": "模型选项，点击 + 添加",
-    "modelLimits": "Token 限制",
-    "limitContext": "上下文",
-    "limitOutput": "输出",
     "modelExtraFields": "模型属性",
     "noModelExtraFields": "模型属性 (variants, cost 等)，点击 + 添加",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2245,6 +2255,11 @@
       "short": "会话日志",
       "label": "{{app}} · 会话日志",
       "hint": "没开路由时从客户端的会话日志读取，分不出具体是哪家供应商"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek 账号",
+      "label": "{{app}} · DeepSeek 账号（OAuth）",
+      "hint": "从会话日志读取，走的是 DeepSeek 账号登录；Web 和 Desktop 共用这份登录，用量合并统计"
     },
     "stream": "流",
     "nonStream": "非流",
@@ -2546,7 +2561,7 @@
       "scanTitle": "自动扫描会话日志",
       "scanHelpTitle": "会话日志是什么",
       "scanHelp": "各应用写在本机的会话记录。CC Switch 从里面读取用量，不开路由也有数据。",
-      "coverage": "覆盖 7 个应用：{{apps}}",
+      "coverage": "覆盖 {{total}} 个应用：{{apps}}",
       "cadenceOn": "启动时扫描一次，后台每 10 分钟一次；打开用量页时立即扫描，之后按所选间隔扫描",
       "cadenceOff": "自动扫描已关闭，只在点「立即同步」时扫描",
       "unsupported": "Hermes、OpenClaw 暂不支持用量统计",
@@ -4171,6 +4186,7 @@
     "extraUsage": "超额用量",
     "expired": "会话已过期",
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
+    "expiredHintAccounts": "请在授权中心重新登录这个账号",
     "queryFailed": "查询失败",
     "refresh": "刷新"
   },
@@ -4602,6 +4618,7 @@
       "failedTitle": "有应用没有读到",
       "filesTitle": "读取了哪些文件",
       "claudeNote": "（顶层 mcpServers）",
+      "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -5075,6 +5092,31 @@
     "empty": {
       "title": "添加 DeepSeek Harness 供应商",
       "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"
+    },
+    "sharedProviders": "已添加的供应商会一起写进 DeepSeek Harness 的 Web 和 Desktop 配置（以及已初始化的 headless、acp），在 DeepSeek Harness 里选模型即可。",
+    "sharedProvidersNote": "Web 和 Desktop 共用这份列表",
+    "account": {
+      "help": "DeepSeek 账号用浏览器登录（OAuth），可以在这里登录，也可以在 DeepSeek Harness 里登录。登录信息保存在 $DSH_HOME/.credentials.yaml（默认 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一处登录或退出，两端同时生效，运行中的 DeepSeek Harness 会自动重新读取。账号路由的模型用量在用量页单独显示为「DeepSeek 账号（OAuth）」。",
+      "statusFailed": "无法读取 DeepSeek 账号的登录状态",
+      "empty": "未登录 DeepSeek 账号",
+      "unnamed": "DeepSeek 账号",
+      "expired": "登录已失效，请重新登录",
+      "shared": "Web 与 Desktop 共用",
+      "signOut": "退出登录",
+      "signOutConfirm": "退出 DeepSeek 账号「{{name}}」？DeepSeek Harness 的 Web 和 Desktop 会同时退出，API Key 供应商不受影响。",
+      "signOutFailed": "退出 DeepSeek 账号失败",
+      "balance": "余额 {{amount}}",
+      "bonus": "赠金 {{amount}}",
+      "balanceFailed": "余额暂时查不到",
+      "signedIn": "DeepSeek 账号已登录，Web 和 Desktop 都可以使用",
+      "signInFailed": "DeepSeek 账号登录失败",
+      "presetName": "DeepSeek 官方登录",
+      "presetDescription": "用浏览器登录 DeepSeek 账号后，DeepSeek Harness 会直接提供账号下的模型，不用再添加供应商；Web 和 Desktop 共用这份登录。登录和退出在授权中心管理，登录后账号会出现在「已添加」里。",
+      "manageAccounts": "管理 DeepSeek 账号",
+      "cardSubtitle": "官方账号 · Web 和 Desktop 共用",
+      "expiredChip": "登录已失效",
+      "editDisabled": "账号下的模型由 DeepSeek Harness 自动提供，无需编辑。",
+      "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
   }
