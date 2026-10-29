@@ -40,8 +40,6 @@ vi.mock("react-i18next", () => ({
 }));
 
 vi.mock("@/lib/query/usage", () => ({
-  // queryClient.ts 引用 usageKeys 给 usage 命名空间配 refetchOnWindowFocus
-  usageKeys: { all: ["usage"] },
   useUsageTrends: () => ({
     data: [
       {

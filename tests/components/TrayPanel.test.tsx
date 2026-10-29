@@ -38,6 +38,7 @@ const texts: PanelTexts = {
   inUse: "In use",
   noMatch: "No match",
   openMain: "Open main window",
+  reloadUi: "Reload UI",
   quit: "Quit",
   settings: "Settings",
   lightweightMode: "Lightweight mode",

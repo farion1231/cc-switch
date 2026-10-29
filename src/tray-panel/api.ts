@@ -9,6 +9,8 @@ export interface PanelTexts {
   inUse: string;
   noMatch: string;
   openMain: string;
+  /** 界面卡死/白屏时的重载入口 */
+  reloadUi: string;
   quit: string;
   settings: string;
   lightweightMode: string;
