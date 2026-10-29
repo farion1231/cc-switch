@@ -381,6 +381,7 @@ async fn handle_messages_for_app(
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
+    let resolved_api_format = result.claude_api_format.is_some();
     let api_format = result
         .claude_api_format
         .as_deref()
@@ -395,7 +396,10 @@ async fn handle_messages_for_app(
             app_type.as_str()
         ))
     })?;
-    let needs_transform = adapter.needs_transform(&ctx.provider);
+    let needs_transform = claude_response_needs_transform(
+        resolved_api_format.then_some(api_format.as_str()),
+        adapter.needs_transform(&ctx.provider),
+    );
 
     // Claude 特有：格式转换处理
     if needs_transform {
@@ -421,6 +425,21 @@ async fn handle_messages_for_app(
         connection_guard,
     )
     .await
+}
+
+/// Whether a Claude upstream response must be converted back to Anthropic Messages.
+///
+/// The forwarder resolves the wire format per request (GitHub Copilot picks native
+/// Messages for Anthropic models that advertise it), so that decision wins over the
+/// provider-level default, which always converts for Copilot.
+fn claude_response_needs_transform(
+    resolved_api_format: Option<&str>,
+    provider_default: bool,
+) -> bool {
+    resolved_api_format.map_or(
+        provider_default,
+        super::providers::claude_api_format_needs_transform,
+    )
 }
 
 fn validate_claude_desktop_gateway_auth(
@@ -3349,6 +3368,22 @@ async fn log_usage(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn claude_response_transform_follows_the_resolved_format() {
+        use super::claude_response_needs_transform;
+
+        // Copilot defaults to converting, but a request resolved to native Messages
+        // gets an Anthropic response back and must pass through untouched.
+        assert!(!claude_response_needs_transform(Some("anthropic"), true));
+        assert!(claude_response_needs_transform(Some("openai_chat"), true));
+        assert!(claude_response_needs_transform(
+            Some("openai_responses"),
+            false
+        ));
+        assert!(claude_response_needs_transform(None, true));
+        assert!(!claude_response_needs_transform(None, false));
+    }
+
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
         codex_proxy_error_json, extract_gateway_token, responses_sse_stream_to_anthropic_message,

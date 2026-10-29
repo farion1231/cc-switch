@@ -196,6 +196,7 @@
       "recent": "最近使ったフォルダ",
       "forget": "最近使ったフォルダから削除",
       "confirm": "ターミナルを開く",
+      "skipPermissions": "権限の確認をスキップ",
       "agySwitchTitle": "agy のログインを切り替えます",
       "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
       "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。"
