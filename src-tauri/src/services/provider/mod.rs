@@ -11,6 +11,7 @@ pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
 pub(crate) mod codex_official_models;
+pub(crate) mod codex_terminal;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
