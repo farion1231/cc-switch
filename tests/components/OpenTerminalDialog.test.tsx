@@ -128,6 +128,7 @@ describe("OpenTerminalDialog", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
       cwd: "/work/alpha",
+      skipPermissions: false,
     });
     expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toEqual([
       "/work/alpha",
@@ -153,11 +154,47 @@ describe("OpenTerminalDialog", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
       cwd: "/work/beta",
+      skipPermissions: false,
     });
     expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toEqual([
       "/work/beta",
       "/work/alpha",
     ]);
+  });
+
+  it("passes the skip-permissions choice and remembers it per app after opening", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+
+    const checkbox = screen.getByRole("checkbox");
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.confirm",
+      }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: true,
+    });
+    expect(
+      window.localStorage.getItem("cc-switch:terminal:skip-permissions:claude"),
+    ).toBe("1");
+    expect(
+      window.localStorage.getItem("cc-switch:terminal:skip-permissions:agy"),
+    ).toBeNull();
+  });
+
+  it("prefills the remembered skip-permissions choice", () => {
+    window.localStorage.setItem(
+      "cc-switch:terminal:skip-permissions:claude",
+      "1",
+    );
+    renderDialog();
+    expect(screen.getByRole("checkbox")).toBeChecked();
   });
 
   it("keeps the dialog open and the list unchanged when opening fails", async () => {

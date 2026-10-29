@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Notice } from "@/components/ui/notice";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -23,6 +24,9 @@ import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
 const MAX_RECENT = 5;
+/** 跳过权限确认按应用分别记住：同一个人可能只在其中一个工具里这么用 */
+const skipPermissionsKey = (appId: AppId) =>
+  `cc-switch:terminal:skip-permissions:${appId}`;
 
 function readRecent(): string[] {
   try {
@@ -40,6 +44,23 @@ function writeRecent(dirs: string[]) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dirs));
   } catch {
     // 只是记住用过的目录，存不了不影响打开终端
+  }
+}
+
+function readSkipPermissions(appId: AppId): boolean {
+  try {
+    return window.localStorage.getItem(skipPermissionsKey(appId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSkipPermissions(appId: AppId, value: boolean) {
+  try {
+    if (value) window.localStorage.setItem(skipPermissionsKey(appId), "1");
+    else window.localStorage.removeItem(skipPermissionsKey(appId));
+  } catch {
+    // 同上，只是记住上次的选择
   }
 }
 
@@ -125,6 +146,7 @@ export function OpenTerminalDialog({
   const [recent, setRecent] = useState<string[]>([]);
   const [dir, setDir] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
+  const [skipPermissions, setSkipPermissions] = useState(false);
   const queryClient = useQueryClient();
 
   // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
@@ -156,8 +178,9 @@ export function OpenTerminalDialog({
     const stored = readRecent();
     setRecent(stored);
     setDir(stored[0] ?? null);
+    setSkipPermissions(readSkipPermissions(appId));
     setOpening(false);
-  }, [provider]);
+  }, [provider, appId]);
 
   const handleChoose = async () => {
     try {
@@ -181,10 +204,14 @@ export function OpenTerminalDialog({
     if (!provider || !dir || opening) return;
     setOpening(true);
     try {
-      await providersApi.openTerminal(provider.id, appId, { cwd: dir });
+      await providersApi.openTerminal(provider.id, appId, {
+        cwd: dir,
+        skipPermissions,
+      });
       writeRecent(
         [dir, ...recent.filter((item) => item !== dir)].slice(0, MAX_RECENT),
       );
+      writeSkipPermissions(appId, skipPermissions);
       toast.success(t("provider.terminalOpened"));
       if (agyWillSwitch) {
         void queryClient.invalidateQueries({
@@ -323,6 +350,21 @@ export function OpenTerminalDialog({
               </ul>
             </div>
           )}
+
+          <label className="flex cursor-pointer select-none items-start gap-2">
+            <Checkbox
+              checked={skipPermissions}
+              disabled={opening}
+              onCheckedChange={(value) => setSkipPermissions(value === true)}
+              className="mt-0.5"
+            />
+            <span className="min-w-0 text-body text-fg-1">
+              {t("provider.openTerminalDialog.skipPermissions")}
+              <code className="ms-1.5 break-all font-mono text-caption text-fg-3">
+                --dangerously-skip-permissions
+              </code>
+            </span>
+          </label>
         </div>
 
         <DialogFooter>

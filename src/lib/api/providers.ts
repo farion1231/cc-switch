@@ -26,6 +26,8 @@ export interface SwitchResult {
 
 export interface OpenTerminalOptions {
   cwd?: string;
+  /** 启动时加 `--dangerously-skip-permissions`（Claude Code 与 agy 同名） */
+  skipPermissions?: boolean;
 }
 
 export interface ClaudeDesktopStatus {
@@ -210,11 +212,12 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd } = options ?? {};
+    const { cwd, skipPermissions } = options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
+      skipPermissions,
     });
   },
 

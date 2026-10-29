@@ -5035,6 +5035,7 @@ pub async fn open_provider_terminal(
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
+    #[allow(non_snake_case)] skipPermissions: Option<bool>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let launch_cwd = resolve_launch_cwd(cwd)?;
@@ -5047,7 +5048,7 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
-    let launch = match app_type {
+    let mut launch = match app_type {
         AppType::Agy => {
             switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
             agy_terminal_launch(provider)?
@@ -5078,6 +5079,9 @@ pub async fn open_provider_terminal(
             claude_terminal_launch(&env_vars, &providerId)?
         }
     };
+    if skipPermissions == Some(true) {
+        launch.skip_permissions();
+    }
 
     launch_provider_terminal(&launch, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
@@ -5184,6 +5188,18 @@ struct ProviderLaunch {
     batch_vars: Vec<(&'static str, String)>,
     /// 退出时删除的临时文件，都在系统临时目录里
     cleanup: Vec<PathBuf>,
+}
+
+/// 跳过所有工具权限确认。终端只会启动 `claude` 或 `agy`，两者的参数同名。
+const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
+
+impl ProviderLaunch {
+    /// 用户在「打开终端」里勾了跳过权限确认：只加给这一次启动，不写进任何配置。
+    fn skip_permissions(&mut self) {
+        self.args.push(SKIP_PERMISSIONS_FLAG.to_string());
+        self.batch_command.push(' ');
+        self.batch_command.push_str(SKIP_PERMISSIONS_FLAG);
+    }
 }
 
 /// Claude Code：把卡上的 env 写进临时 settings 文件，`claude --settings <文件>` 启动。
@@ -6966,6 +6982,31 @@ mod tests {
             "agy --gemini_dir=/home/me/.cc-switch/agy/relay"
         );
         assert_eq!(unix_launch_env_file(&plain), "");
+    }
+
+    #[test]
+    fn skip_permissions_appends_the_flag_on_every_platform() {
+        let mut launch = claude_account_terminal_launch(None);
+        launch.env.clear();
+        launch.skip_permissions();
+        assert_eq!(
+            unix_launch_command(&launch),
+            "claude --dangerously-skip-permissions"
+        );
+        assert_eq!(
+            launch.batch_command,
+            "claude --dangerously-skip-permissions"
+        );
+
+        let mut launch = agy_key_launch();
+        launch.skip_permissions();
+        assert!(unix_launch_command(&launch).ends_with(
+            "agy --gemini_dir=/home/me/.cc-switch/agy/relay --dangerously-skip-permissions"
+        ));
+        assert_eq!(
+            launch.batch_command,
+            format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\" --dangerously-skip-permissions")
+        );
     }
 
     #[test]
