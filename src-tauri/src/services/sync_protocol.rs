@@ -391,8 +391,8 @@ pub(crate) fn apply_snapshot(
     // are backed up/replaced and the corresponding database snapshot is applied.
     let _skill_state_guard = skill_state_write_guard();
     let skills_backup = backup_current_skills()?;
-    SkillService::checkpoint_copy_deployments(db)
-        .map_err(|error| AppError::Message(format!("保存 Skill 部署记录失败: {error:#}")))?;
+    let copies = SkillService::checkpoint_copy_deployments(db)
+        .map_err(|error| AppError::Message(format!("检查 Skill 副本失败: {error:#}")))?;
 
     // Replace skills first, then import database; roll back skills on DB failure.
     restore_skills_zip(skills_zip)?;
@@ -401,6 +401,7 @@ pub(crate) fn apply_snapshot(
         return Err(skills_backup.rollback_after_import_error(db_err));
     }
 
+    SkillService::refresh_copy_deployments(copies);
     Ok(())
 }
 

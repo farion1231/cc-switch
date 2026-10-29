@@ -311,6 +311,9 @@ enum SkillDeployment {
     Copy { expected_hash: String },
 }
 
+/// Verified app copies captured before a cloud import replaces the SSOT.
+pub(crate) struct SkillCopyCheckpoint(Vec<(String, PathBuf, SkillDeployment)>);
+
 // ========== skills.sh API 类型 ==========
 
 /// skills.sh API 原始响应
@@ -379,6 +382,10 @@ struct SkillBackupMetadata {
     backup_created_at: i64,
     source_path: String,
 }
+
+/// 每个 Skill 保留的最近备份数。按 Skill 分组而不是全局计数：
+/// 批量卸载时每个 Skill 都留有备份，反复更新同一个 Skill 也不会无限堆积。
+const SKILL_BACKUP_RETAIN_PER_SKILL: usize = 3;
 
 /// 仓库归档解压上限：条目数与解压后总字节数。
 ///
@@ -1293,7 +1300,8 @@ impl SkillService {
     }
 
     /// Include hidden files, empty directories and entry types, but exclude
-    /// Python bytecode caches generated while running a Skill.
+    /// Python bytecode caches generated while running a Skill and metadata
+    /// files the OS file browser drops into folders it opens.
     fn compute_deployment_hash(dir: &Path) -> Result<String> {
         use sha2::{Digest, Sha256};
 
@@ -1333,6 +1341,15 @@ impl SkillService {
             let entry = entry?;
             let path = entry.path();
             let file_type = entry.file_type()?;
+            if file_type.is_file()
+                && entry.file_name().to_str().is_some_and(|name| {
+                    [".DS_Store", "Thumbs.db", "desktop.ini"]
+                        .iter()
+                        .any(|junk| name.eq_ignore_ascii_case(junk))
+                })
+            {
+                continue;
+            }
             if file_type.is_dir() && entry.file_name() == "__pycache__" {
                 let only_bytecode = fs::read_dir(&path)?.all(|entry| {
                     entry.is_ok_and(|entry| {
@@ -1830,7 +1847,6 @@ impl SkillService {
         }
 
         let mut staged = Vec::new();
-        let mut copy_receipts = Vec::new();
         for (destination, symlink) in targets {
             let parent = destination
                 .parent()
@@ -1851,12 +1867,6 @@ impl SkillService {
                 }
             } else {
                 Self::copy_dir_recursive(source, &replacement)?;
-            }
-            if destination != ssot && !Self::is_symlink(&replacement) {
-                copy_receipts.push((
-                    destination.clone(),
-                    Self::compute_deployment_hash(&replacement)?,
-                ));
             }
             staged.push((destination, staging));
         }
@@ -1895,9 +1905,6 @@ impl SkillService {
                 ));
             }
             return Err(error);
-        }
-        for (destination, hash) in copy_receipts {
-            Self::record_copy_deployment(&destination, &hash)?;
         }
         result
     }
@@ -2137,7 +2144,8 @@ impl SkillService {
             }
         }
 
-        entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at));
+        // created_at 只精确到秒；同一秒内的备份按 ID（时间戳_slug[_序号]）区分先后。
+        entries.sort_by(|a, b| (b.created_at, &b.backup_id).cmp(&(a.created_at, &a.backup_id)));
         Ok(entries)
     }
 
@@ -2256,8 +2264,7 @@ impl SkillService {
             let source = ssot.join(&directory);
             let native_dir = Self::get_distinct_app_skills_dir(&ssot, app)?;
             let native = native_dir.join(&directory);
-            let previous_deployment =
-                Self::inspect_skill_destination(&source, &native, &directory)?;
+            Self::ensure_skill_destination_matches(&source, &native, &directory)?;
             fs::create_dir_all(&native_dir)?;
             let staging = tempfile::Builder::new()
                 .prefix(".cc-switch-toggle-")
@@ -2282,15 +2289,9 @@ impl SkillService {
                     Self::remove_path(&native)?;
                 }
                 if existed {
-                    fs::rename(previous, &native)?;
-                    if let Some(SkillDeployment::Copy { expected_hash }) = previous_deployment {
-                        Self::record_copy_deployment(&native, &expected_hash)?;
-                    }
+                    fs::rename(previous, native)?;
                 }
                 return Err(error);
-            }
-            if !enabled {
-                Self::forget_copy_deployment(&native);
             }
             return Ok(());
         }
@@ -2656,52 +2657,11 @@ impl SkillService {
         Self::inspect_skill_destination(source, destination, directory).map(|_| ())
     }
 
-    // Receipts are local to this device and outside Skills snapshots. The last
-    // deployed hash remains valid when a cloud import replaces the SSOT.
-    fn copy_receipt_path(destination: &Path) -> Result<PathBuf> {
-        use sha2::{Digest, Sha256};
-
-        let parent = destination
-            .parent()
-            .context("Skill destination has no parent")?;
-        let name = destination
-            .file_name()
-            .context("Skill destination has no name")?;
-        let identity = parent.canonicalize()?.join(name);
-        let key = Sha256::digest(identity.to_string_lossy().as_bytes());
-        Ok(get_app_config_dir()
-            .join("skill-deployments")
-            .join(format!("{key:x}.json")))
-    }
-
-    fn record_copy_deployment(destination: &Path, hash: &str) -> Result<()> {
-        let receipt = Self::copy_receipt_path(destination)?;
-        crate::config::atomic_write(&receipt, &serde_json::to_vec(&hash)?)?;
-        Ok(())
-    }
-
-    fn copy_matches_receipt(destination: &Path, hash: &str) -> bool {
-        Self::copy_receipt_path(destination)
-            .ok()
-            .and_then(|receipt| fs::read(receipt).ok())
-            .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
-            .is_some_and(|expected| expected == hash)
-    }
-
-    fn forget_copy_deployment(destination: &Path) {
-        if let Ok(receipt) = Self::copy_receipt_path(destination) {
-            if let Err(error) = fs::remove_file(receipt) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!("无法清理 Skill 部署记录 {}: {error}", destination.display());
-                }
-            }
-        }
-    }
-
-    /// Caller holds the Skills state write guard, before replacing the SSOT.
-    /// Adopt legacy copies only while they still match the old local source.
-    pub(crate) fn checkpoint_copy_deployments(db: &Database) -> Result<()> {
+    /// Caller holds the Skills state write guard. Links survive the in-place
+    /// SSOT replacement; copies are refreshed afterwards, as in `update_skill`.
+    pub(crate) fn checkpoint_copy_deployments(db: &Database) -> Result<SkillCopyCheckpoint> {
         let ssot = Self::get_ssot_dir()?;
+        let mut copies = Vec::new();
         for skill in db.get_all_installed_skills()?.values() {
             let Ok(directory) = Self::require_valid_directory(&skill.directory) else {
                 continue;
@@ -2709,7 +2669,8 @@ impl SkillService {
             let source = ssot.join(&directory);
             for app in AppType::all() {
                 if matches!(app, AppType::ClaudeDesktop | AppType::OpenClaw)
-                    || (!matches!(app, AppType::Pi) && !skill.apps.is_enabled_for(&app))
+                    || !(matches!(app, AppType::Pi | AppType::Omp)
+                        || skill.apps.is_enabled_for(&app))
                 {
                     continue;
                 }
@@ -2717,14 +2678,34 @@ impl SkillService {
                     continue;
                 };
                 let destination = app_dir.join(&directory);
-                if let Ok(Some(SkillDeployment::Copy { expected_hash })) =
+                if let Ok(Some(deployment @ SkillDeployment::Copy { .. })) =
                     Self::inspect_skill_destination(&source, &destination, &directory)
                 {
-                    Self::record_copy_deployment(&destination, &expected_hash)?;
+                    copies.push((directory.clone(), destination, deployment));
                 }
             }
         }
-        Ok(())
+        Ok(SkillCopyCheckpoint(copies))
+    }
+
+    pub(crate) fn refresh_copy_deployments(checkpoint: SkillCopyCheckpoint) {
+        let Ok(ssot) = Self::get_ssot_dir() else {
+            return;
+        };
+        for (directory, destination, deployment) in checkpoint.0 {
+            let source = ssot.join(&directory);
+            if !source.is_dir() {
+                continue;
+            }
+            if let Err(error) =
+                Self::refresh_skill_destination(&source, &destination, &directory, &deployment)
+            {
+                log::warn!(
+                    "云同步后刷新 Skill 副本失败 {}: {error:#}",
+                    destination.display()
+                );
+            }
+        }
     }
 
     fn inspect_skill_destination(
@@ -2761,11 +2742,11 @@ impl SkillService {
                 }));
             }
         } else if destination.is_dir() {
-            if let Ok(destination_hash) = Self::compute_deployment_hash(destination) {
-                if Self::copy_matches_receipt(destination, &destination_hash)
-                    || Self::compute_deployment_hash(source)
-                        .is_ok_and(|source_hash| destination_hash == source_hash)
-                {
+            if let (Ok(destination_hash), Ok(source_hash)) = (
+                Self::compute_deployment_hash(destination),
+                Self::compute_deployment_hash(source),
+            ) {
+                if destination_hash == source_hash {
                     return Ok(Some(SkillDeployment::Copy {
                         expected_hash: destination_hash,
                     }));
@@ -2785,11 +2766,7 @@ impl SkillService {
         directory: &str,
     ) -> Result<()> {
         match Self::inspect_skill_destination(source, destination, directory)? {
-            Some(_) => {
-                Self::remove_path(destination)?;
-                Self::forget_copy_deployment(destination);
-                Ok(())
-            }
+            Some(_) => Self::remove_path(destination),
             None => Ok(()),
         }
     }
@@ -2837,7 +2814,7 @@ impl SkillService {
                         "目标 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
                     ));
                 }
-                Self::deploy_skill_copy(source, destination, directory)?;
+                Self::replace_dest_with_copy(source, destination, directory)?;
             }
         }
 
@@ -2892,7 +2869,7 @@ impl SkillService {
         match sync_method {
             SyncMethod::Auto => {
                 if dest.exists() && !Self::is_symlink(&dest) {
-                    Self::deploy_skill_copy(&source, &dest, &directory)?;
+                    Self::replace_dest_with_copy(&source, &dest, &directory)?;
                     log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
                     return Ok(());
                 }
@@ -2912,7 +2889,7 @@ impl SkillService {
                     }
                 }
                 // Fallback 到 copy
-                Self::deploy_skill_copy(&source, &dest, &directory)?;
+                Self::replace_dest_with_copy(&source, &dest, &directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
             SyncMethod::Symlink => {
@@ -2920,7 +2897,7 @@ impl SkillService {
                 log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
             }
             SyncMethod::Copy => {
-                Self::deploy_skill_copy(&source, &dest, &directory)?;
+                Self::replace_dest_with_copy(&source, &dest, &directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
         }
@@ -2973,22 +2950,9 @@ impl SkillService {
         Self::replace_skill_destination(dest, |staged| Self::copy_dir_recursive(source, staged))
     }
 
-    fn deploy_skill_copy(source: &Path, dest: &Path, directory: &str) -> Result<()> {
-        Self::validate_sync_source_dir(source, directory)?;
-        let mut hash = String::new();
-        Self::replace_skill_destination(dest, |staged| {
-            Self::copy_dir_recursive(source, staged)?;
-            hash = Self::compute_deployment_hash(staged)?;
-            Ok(())
-        })?;
-        Self::record_copy_deployment(dest, &hash)
-    }
-
     fn replace_dest_with_symlink(source: &Path, dest: &Path, directory: &str) -> Result<()> {
         Self::validate_sync_source_dir(source, directory)?;
-        Self::replace_skill_destination(dest, |staged| Self::create_symlink(source, staged))?;
-        Self::forget_copy_deployment(dest);
-        Ok(())
+        Self::replace_skill_destination(dest, |staged| Self::create_symlink(source, staged))
     }
 
     /// Build the replacement before moving the original. Keep it on the same
@@ -3093,7 +3057,6 @@ impl SkillService {
             let source = ssot_dir.join(&directory);
             Self::ensure_skill_destination_matches(&source, &skill_path, &directory)?;
             Self::remove_path(&skill_path)?;
-            Self::forget_copy_deployment(&skill_path);
             log::debug!("Skill {directory} 已从 {app:?} 删除");
         }
 
@@ -4306,6 +4269,22 @@ impl SkillService {
         }
     }
 
+    /// 刚写入的备份总是保留：同一秒内被清理掉的目录名可能被它复用，按名称排序不可靠。
+    fn cleanup_old_skill_backups(directory: &str, current: &Path) -> Result<()> {
+        // list_backups 已按创建时间倒序；无法解析 meta.json 的备份不在列表中，不会被清理。
+        let stale = Self::list_backups()?
+            .into_iter()
+            .filter(|entry| {
+                entry.skill.directory.eq_ignore_ascii_case(directory)
+                    && Path::new(&entry.backup_path) != current
+            })
+            .skip(SKILL_BACKUP_RETAIN_PER_SKILL - 1);
+        for entry in stale {
+            fs::remove_dir_all(&entry.backup_path)?;
+        }
+        Ok(())
+    }
+
     fn backup_path_for_id(backup_id: &str) -> Result<PathBuf> {
         if backup_id.contains("..")
             || backup_id.contains('/')
@@ -4376,8 +4355,9 @@ impl SkillService {
             return Err(err);
         }
 
-        // Recovery copies may be the only remaining original after uninstall.
-        // Retain them until the user explicitly deletes them in the restore UI.
+        if let Err(err) = Self::cleanup_old_skill_backups(&skill.directory, &backup_path) {
+            log::warn!("清理旧 Skill 备份失败: {err:#}");
+        }
 
         log::info!(
             "Skill {} 已在卸载前备份到 {}",
@@ -5922,7 +5902,6 @@ mod tests {
                 .unwrap()
                 .join("shared");
 
-            // Existing installations predate local deployment receipts.
             SkillService::copy_dir_recursive(&source, &destination).unwrap();
             write_python_cache(&destination);
             let outcomes = SkillService::resync_all_apps(&db);
@@ -5941,7 +5920,7 @@ mod tests {
                 .apps
                 .is_enabled_for(&app));
 
-            SkillService::deploy_skill_copy(&source, &destination, "shared").unwrap();
+            SkillService::replace_dest_with_copy(&source, &destination, "shared").unwrap();
             skill.apps = SkillApps::only(&app);
             db.save_skill(&skill).unwrap();
             write_python_cache(&destination);
@@ -5955,39 +5934,6 @@ mod tests {
             assert!(!source.exists());
             assert!(db.get_installed_skill(&skill.id).unwrap().is_none());
         }
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn copied_skill_uses_last_deployment_when_ssot_changes() {
-        let temp = tempdir().unwrap();
-        let home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(&home, SkillStorageLocation::CcSwitch);
-        let source = SkillService::get_ssot_dir().unwrap().join("shared");
-        let destination = SkillService::get_app_skills_dir(&AppType::Claude)
-            .unwrap()
-            .join("shared");
-        write_skill(&source, "old");
-        fs::create_dir_all(source.join("scripts")).unwrap();
-        fs::write(source.join("scripts/helper.py"), "pass").unwrap();
-        SkillService::deploy_skill_copy(&source, &destination, "shared").unwrap();
-        write_python_cache(&destination);
-        write_skill(&source, "new");
-
-        SkillService::sync_to_app_dir("shared", &AppType::Claude).unwrap();
-        assert_eq!(
-            fs::read(source.join("SKILL.md")).unwrap(),
-            fs::read(destination.join("SKILL.md")).unwrap()
-        );
-
-        fs::write(destination.join(".local-notes"), "user edits").unwrap();
-        write_skill(&source, "newer");
-        assert!(SkillService::sync_to_app_dir("shared", &AppType::Claude).is_err());
-        assert!(SkillService::remove_from_app("shared", &AppType::Claude).is_err());
-        assert_eq!(
-            fs::read_to_string(destination.join(".local-notes")).unwrap(),
-            "user edits"
-        );
     }
 
     #[test]
@@ -6021,7 +5967,7 @@ mod tests {
                 .unwrap()
                 .join("shared");
             if matches!(app, AppType::Codex) {
-                SkillService::deploy_skill_copy(&source, &destination, "shared").unwrap();
+                SkillService::replace_dest_with_copy(&source, &destination, "shared").unwrap();
                 fs::write(destination.join(".local-notes"), "keep this").unwrap();
             } else {
                 SkillService::copy_dir_recursive(&source, &destination).unwrap();
@@ -6202,6 +6148,71 @@ mod tests {
         for backup in backups {
             assert!(PathBuf::from(backup).join("skill/SKILL.md").is_file());
         }
+    }
+
+    #[test]
+    fn deployment_hash_ignores_os_folder_metadata() {
+        let temp = tempdir().unwrap();
+        let skill = temp.path().join("skill");
+        write_skill(&skill, "managed");
+        let clean = SkillService::compute_deployment_hash(&skill).unwrap();
+
+        fs::write(skill.join(".DS_Store"), "finder").unwrap();
+        fs::write(skill.join("Thumbs.db"), "explorer").unwrap();
+        fs::write(skill.join("desktop.ini"), "explorer").unwrap();
+        assert_eq!(
+            SkillService::compute_deployment_hash(&skill).unwrap(),
+            clean
+        );
+
+        fs::write(skill.join(".local-notes"), "user edits").unwrap();
+        assert_ne!(
+            SkillService::compute_deployment_hash(&skill).unwrap(),
+            clean
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn skill_backups_are_capped_per_skill() {
+        let temp = tempdir().unwrap();
+        let home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&home, SkillStorageLocation::CcSwitch);
+        let ssot = SkillService::get_ssot_dir().unwrap();
+        let other = poisoned_skill("local:other", "other");
+        write_skill(&ssot.join("other"), "other");
+        let other_backup = SkillService::create_uninstall_backup(&other)
+            .unwrap()
+            .unwrap();
+
+        let skill = poisoned_skill("local:shared", "shared");
+        for version in 0..SKILL_BACKUP_RETAIN_PER_SKILL + 2 {
+            write_skill(&ssot.join("shared"), &format!("v{version}"));
+            SkillService::create_uninstall_backup(&skill).unwrap();
+        }
+
+        let mut kept: Vec<_> = SkillService::list_backups()
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.skill.directory == "shared")
+            .map(|entry| {
+                fs::read_to_string(Path::new(&entry.backup_path).join("skill/SKILL.md")).unwrap()
+            })
+            .collect();
+        kept.sort();
+        let expected: Vec<_> = (2..SKILL_BACKUP_RETAIN_PER_SKILL + 2)
+            .map(|version| {
+                format!(
+                    "---
+name: v{version}
+description: Test skill
+---
+"
+                )
+            })
+            .collect();
+        assert_eq!(kept, expected);
+        assert!(other_backup.join("skill/SKILL.md").is_file());
     }
 
     #[test]
