@@ -1529,7 +1529,7 @@ mod tests {
                 [],
             )?;
             let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
-            let cursor = cursors[path.to_string_lossy().as_ref()];
+            let cursor = &cursors[path.to_string_lossy().as_ref()];
             let revision = (cursor.last_synced_at as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
                 | (marker << REVISION_MARKER_SHIFT);
             lock_conn!(db.conn).execute(
@@ -1550,7 +1550,7 @@ mod tests {
             assert!(appended.errors.is_empty());
             assert_eq!((appended.imported, appended.skipped), (1, 0));
             let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
-            let cursor = cursors[path.to_string_lossy().as_ref()];
+            let cursor = &cursors[path.to_string_lossy().as_ref()];
             assert_eq!(cursor.last_line_offset, 4);
             assert_eq!(cursor.last_synced_at as u64 >> REVISION_MARKER_SHIFT, 0b101);
 
