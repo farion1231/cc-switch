@@ -69,6 +69,17 @@ use std::env;
 /// - 未设置 / 空串：走自动判定（默认，零回归）。
 const IM_MODULE_FILE_OVERRIDE_ENV: &str = "CC_SWITCH_GTK_IM_MODULE_FILE";
 
+/// 钩子（linuxdeploy-plugin-gtk 的 AppRun）无条件导出的变量名：GTK 初始化时读
+/// 的就是它，我们只在判定要改时才回头写同一个名字。
+const GTK_IM_MODULE_FILE_ENV: &str = "GTK_IM_MODULE_FILE";
+
+/// AppRun 导出的 AppDir 路径：拿不到它就无法把缓存路径归因给 bundle 缓存。
+const APPDIR_ENV: &str = "APPDIR";
+
+/// 用户配置的输入法模块（冒号分隔的有序列表）。GTK 挑输入法模块时只读它、
+/// 不读 `XMODIFIERS`，所以本补丁也只读它。
+const GTK_IM_MODULE_ENV: &str = "GTK_IM_MODULE";
+
 /// `GTK_IM_MODULE` 里这些 id 不需要外部缓存就能解析：GTK 3.24 的
 /// `lookup_immodule()` 认的是 `gtk-im-context-simple` / `gtk-im-context-none`
 /// 这两个内置 id，`xim` 则由 bundle 缓存自己列出。用户显式选它们时，我们不动
@@ -301,14 +312,22 @@ fn mirrored_host_cache(current: &str, appdir: &str) -> Option<String> {
     Some(mirrored)
 }
 
-/// 「要不要真去读文件」的前置判断：纯字符串，不碰 IO。
+/// 「这台机器要不要为输入法动手」的前置判断：纯字符串，不碰 IO。
 ///
-/// 与 [`resolve_im_module_file_action`] 的前四步一致，单独拆出来是因为它是
-/// [`apply_gtk_im_module_file_fix`] 里唯一能让整个修复静默空转的地方：门藏在
-/// 只做 IO 的函数里，就没有任何测试能碰到它——把开关反接，唯一的发布形态下
-/// 整个补丁变成 no-op，而其余测试照旧全绿。
+/// 与 [`resolve_im_module_file_action`] 的前四步一致。它现在的唯一生产用处是
+/// 让 [`apply_gtk_im_module_file_fix`] 核对一条不变量：**它放行时 bundle 路径
+/// 必定已经拿到**（第 2/3/4 条条件正是 `bundle_path` 的定义）——所以读不读
+/// 文件只由 `bundle_path` / `appdir` 说话，不需要另一道门。
 ///
-/// 五个条件全部满足才返回 `true`，任一条不满足就一次 `read` 都不做：
+/// 曾经那道门长这样：`let bundle_content = if probe_files { 读 } else { None }`。
+/// 它对正确性是冗余的（resolve 的前四步、以及第五步 `served` 的短路都排在主机
+/// 那一档之前返回，门不放行时 bundle 内容与主机候选根本进不了决策），却给
+/// "把开关反接"这种变异留了一个在发布形态下静默空转的位置——这层代码读的是
+/// 进程环境，把开关藏在这里，就等于放在任何测试都碰不到的地方。门删掉了，
+/// 改由 `bundle_path` 驱动惰性。
+///
+/// 五个条件全部满足才返回 `true`，任一条不满足就说明这台机器要么没走 AppImage
+/// 启动、要么用户已经表过态、要么压根没配非内置输入法模块：
 /// 1. 逃生开关没有非空取值（`keep` / 自定义路径都算用户已经表过态）；
 /// 2. `GTK_IM_MODULE_FILE` 有值（钩子没导出就不是 AppImage 启动）；
 /// 3. `APPDIR` 有值（拿不到就无法把路径归因给 bundle 缓存）；
@@ -352,19 +371,32 @@ fn should_probe_files(
 /// 在 GTK 初始化前修正 `GTK_IM_MODULE_FILE`：钩子写入的 bundle 缓存服务不了
 /// 用户请求的输入法模块时，把它改指向主机上真正列出该模块的缓存。
 /// 只在 Linux 编译。
+///
+/// 只是 [`decide_and_apply_gtk_im_module_file`] 的一层壳：真正干活的函数是私有的
+/// （理由见它的文档），公开签名保持 `()` 不变，`main.rs` 里的调用点不用动。
 #[cfg(target_os = "linux")]
 pub fn apply_gtk_im_module_file_fix() {
-    let override_value = env::var(IM_MODULE_FILE_OVERRIDE_ENV).ok();
-    let current = env::var("GTK_IM_MODULE_FILE").ok();
-    let appdir = env::var("APPDIR").ok();
-    let gtk_im_module = env::var("GTK_IM_MODULE").ok();
+    decide_and_apply_gtk_im_module_file();
+}
 
-    // 先用纯字符串判断把「不可能需要文件」的组合挡掉：非 AppImage 启动
-    // （没有 APPDIR / 变量没设 / 变量指向 AppDir 之外）、显式用了逃生开关、
-    // 或者压根没配非内置输入法模块时，连一次 read 都不做。判定条件与下面
-    // resolve 的前四步一致，只是为了把 IO 挡在最前面——门本身拆到了
-    // should_probe_files()：它是 apply 里唯一能让整个修复静默空转的地方，
-    // 藏在只做 IO 的函数里就没有测试能碰到。
+/// 读环境、做判定、把决定写回环境，并把**决定本身交出来**。
+///
+/// 为什么身体要单独拆一层：`apply_gtk_im_module_file_fix` 是 `pub` 且被 lib.rs
+/// 重新导出，它的返回类型就得和它一样公开；而 [`ImModuleFileAction`] 是模块内私有
+/// 枚举，改成 `pub` 也不够——私有模块会把有效可见性压回 crate 内，还得去 lib.rs
+/// 补一条 `pub use`，那超出了本次改动允许碰的文件范围。所以公开签名不动，把身体
+/// 拆到这个私有函数上：测试直接调它，照样拿得到决定（`Keep` 与
+/// `KeepWithoutHostCache` 因此可区分），照样覆盖 `resolve_im_module_file_action`
+/// 那个调用点与 `env::set_var`。
+///
+/// 只有这一个出口：前面没有任何提前 return，"每条路径都返回决定"因此是天然的。
+#[cfg(target_os = "linux")]
+fn decide_and_apply_gtk_im_module_file() -> ImModuleFileAction {
+    let override_value = env::var(IM_MODULE_FILE_OVERRIDE_ENV).ok();
+    let current = env::var(GTK_IM_MODULE_FILE_ENV).ok();
+    let appdir = env::var(APPDIR_ENV).ok();
+    let gtk_im_module = env::var(GTK_IM_MODULE_ENV).ok();
+
     let override_value = override_value.as_deref().map(str::trim).unwrap_or_default();
     let current_path = current.as_deref().map(str::trim).filter(|p| !p.is_empty());
     let appdir = appdir.as_deref().map(str::trim).filter(|d| !d.is_empty());
@@ -379,20 +411,24 @@ pub fn apply_gtk_im_module_file_fix() {
         gtk_im_module.as_deref(),
     );
 
-    // bundle 缓存与主机候选都是惰性的：上面的前置判断不通过时，前者保持
-    // None（resolve 据此判断"没有正面证据"），探到主机缓存时才会逐个读。
-    let bundle_content = if probe_files {
-        bundle_path.and_then(read_cache_content)
-    } else {
-        None
-    };
-    let host_candidates = if probe_files {
-        match (bundle_path, appdir) {
-            (Some(path), Some(dir)) => host_cache_candidates(path, dir),
-            _ => Vec::new(),
-        }
-    } else {
-        Vec::new()
+    // bundle_path 就是 IO 的总开关：非 AppImage 启动（没有 APPDIR / 变量没设 /
+    // 变量指向 AppDir 之外）时它是 None，一次 read 都不会有；逃生开关已经表态、
+    // 或压根没配输入法时它仍是 Some，那一趟 read 是白读的——用一次白读换掉
+    // 「反接门能让整个补丁静默空转」的位置，划算。而 should_probe_files 放行时
+    // bundle_path 必定是 Some（它的第 2/3/4 条条件正是 bundle_path 的定义），
+    // 所以这里不再另设一道 probe_files 门：那两道门对正确性是冗余的（resolve
+    // 的前四步、以及第五步 served 的短路都排在主机那一档之前返回，门不放行时
+    // bundle 内容与主机候选根本进不了决策），却恰好是"反接门"能让整个补丁静默
+    // 空转的地方——这层代码读的是进程环境，把开关藏在这里，就等于放在任何测试
+    // 都碰不到的地方。
+    debug_assert!(!probe_files || bundle_path.is_some());
+
+    // bundle 缓存与主机候选都由 bundle_path / appdir 驱动：前者读不到时保持
+    // None（resolve 据此判断"没有正面证据"），后者是空表；探到主机缓存时才读。
+    let bundle_content = bundle_path.and_then(read_cache_content);
+    let host_candidates = match (bundle_path, appdir) {
+        (Some(path), Some(dir)) => host_cache_candidates(path, dir),
+        _ => Vec::new(),
     };
 
     let action = resolve_im_module_file_action(
@@ -407,16 +443,19 @@ pub fn apply_gtk_im_module_file_fix() {
     // tauri 的日志插件在这个时点还没注册：它在 lib.rs 的 .setup() 里初始化，
     // 而 setup 发生在 builder.build()，晚于当前这次调用。所以诊断只能写
     // stderr——用 log::info! 会被静默丢掉（main.rs 里既有几行也不打日志）。
-    match action {
+    //
+    // 按引用匹配：决定还要交出去，不能在这里被 move 掉。
+    match &action {
         ImModuleFileAction::Keep => {}
         ImModuleFileAction::Set(path) => {
             eprintln!("[cc-switch] GTK_IM_MODULE_FILE 已指向 {path}");
-            env::set_var("GTK_IM_MODULE_FILE", path);
+            env::set_var(GTK_IM_MODULE_FILE_ENV, path);
         }
         ImModuleFileAction::KeepWithoutHostCache(modules) => {
             eprintln!("[cc-switch] 主机 GTK 缓存没有列出 {modules}，保持默认行为");
         }
     }
+    action
 }
 
 /// 把「bundle 缓存读到了 / 没读到」折叠成 resolve 要的三值结果。
@@ -476,6 +515,7 @@ fn read_cache_content(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     /// 真实 bundle 缓存：issue #7746 报告的模块集合，按 `gtk-query-immodules`
     /// 的真实输出形状写——`#` 头注释 + 每个模块一个块（`.so` 路径独占一行、随后
@@ -569,6 +609,20 @@ mod tests {
         ),
     );
 
+    /// 主机缓存（/usr/local/lib64 路径）：只列出靠后模块 ibus，没有 fcitx。
+    /// 与 HOST_FCITX5 配成一对，用来钉住兜底档"取最早的那个候选"——两个候选都
+    /// 只能兜底时，不能因为遍历顺序反了、或者 `fallback.is_none()` 被删掉，
+    /// 就换成后面那个。
+    const HOST_IBUS_ONLY: (&str, &str) = (
+        "/usr/local/lib64/gtk-3.0/3.0.0/immodules.cache",
+        concat!(
+            "# Created by gtk-query-immodules-3.0\n",
+            "\"/usr/local/lib64/gtk-3.0/immodules/im-ibus.so\"\n",
+            "\"ibus\" \"IBus\" \"gtk30\" \"/usr/share/locale\" \"@ibus\"\n",
+            "\n",
+        ),
+    );
+
     /// 反例夹具：模块名只出现在**非 id 字段**里，且形态真实（显示名含括号形式）。
     /// 用来固定"显示名不算模块名"这一不变量——它是字段判定的现实近似边界。
     const HOST_NAME_ONLY: (&str, &str) = (
@@ -606,11 +660,16 @@ mod tests {
         "/usr/local/lib64/gtk-3.0/3.0.0/immodules.cache",
     ];
 
+    // reader 是借住 `table` 活着的，所以这一层生命周期必须显式写出来：返回类型里
+    // 用省略的 `'_` 时，`table` 有多个可省略的生命周期，rustc 推不出该绑哪一个
+    // （E0106 missing lifetime specifier）。
     /// 构造主机探测的候选表与 reader：路径即候选顺序，内容即"文件内容"，
     /// 一起交给真正的 `find_host_cache_with`。测试侧**不再**复制一份选择策略——
     /// 早期这里镜像过一份只实现「任一」的逻辑，于是 `find_host_cache` 改成两级
     /// 之后测试断言的是新策略、跑的却是旧镜像，那条假红只有再读一遍才发现。
-    fn host_probe(table: &[(&str, &str)]) -> (Vec<String>, impl Fn(&str) -> Option<String> + '_) {
+    fn host_probe<'a>(
+        table: &'a [(&str, &str)],
+    ) -> (Vec<String>, impl Fn(&str) -> Option<String> + 'a) {
         let paths: Vec<String> = table.iter().map(|(path, _)| (*path).to_string()).collect();
         let reader = move |path: &str| {
             table
@@ -621,8 +680,24 @@ mod tests {
         (paths, reader)
     }
 
+    /// 把一份缓存内容写进临时目录，返回它的路径（`name` 可以带子目录，父目录会
+    /// 一并建出来——bundle 缓存在 AppDir 里是有层级的）。
+    ///
+    /// 给真正的 `find_host_cache` 与 `apply` 用：`find_host_cache` 自己焊死了
+    /// `read_cache_content` 这个 reader，没有注入缝，只能拿真实文件喂它——顺带把
+    /// 真实的读失败路径（文件不存在 / 是个目录）也一并走到。
+    fn write_cache(dir: &tempfile::TempDir, name: &str, content: &str) -> String {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create cache dir");
+        }
+        std::fs::write(&path, content).expect("write fixture");
+        path.to_str().expect("utf-8 temp path").to_string()
+    }
+
     /// 所有端到端测试的统一入口：bundle 探测与主机探测都由内容表注入，
-    /// 不接触进程环境、不读文件，且主机那一路走真正的 `find_host_cache_with`。
+    /// 不接触进程环境、不读文件，且两路都走真正的生产函数——`bundle_lists` 与
+    /// `find_host_cache_with`——测试侧不再镜像任何一档的折叠逻辑。
     fn run(
         override_value: Option<&str>,
         gtk_im_module: Option<&str>,
@@ -637,7 +712,7 @@ mod tests {
             gtk_im_module,
             current,
             appdir,
-            |module| bundle.map(|content| cache_lists_module(content, module)),
+            |module| bundle_lists(bundle, module),
             |modules| find_host_cache_with(&paths, modules, &reader),
         )
     }
@@ -716,6 +791,79 @@ mod tests {
         };
         let hit = find_host_cache_with(&paths, &["fcitx"], &reader);
         assert_eq!(hit.as_deref(), Some(HOST_FCITX.0));
+    }
+
+    /// 兜底档的两个性质要分开钉：**第一档够不着**（才会走到兜底）与**取最早的
+    /// 那个兜底候选**（走遍了该怎么挑）。上面几条例子里能兜底的候选只有一个，
+    /// 所以这两条性质一直是同一个用例顺带覆盖的——删掉 `fallback.is_none() &&`
+    /// （后一个覆盖前一个）或者把候选遍历整个反过来，全都不红。
+    #[test]
+    fn host_probe_fallback_keeps_the_earliest_candidate() {
+        // 两个候选都只列出靠后模块：兜底档必须取排在前面的那个。
+        let (paths, reader) = host_probe(&[HOST_FCITX5, HOST_IBUS_ONLY]);
+        let hit = find_host_cache_with(&paths, &["fcitx", "ibus"], &reader);
+        assert_eq!(hit.as_deref(), Some(HOST_FCITX5.0));
+        // 对照：第一个模块有候选能服务时，兜底档排得再靠前也不该赢——"取最早"
+        // 只属于兜底档，别让它替第一档做主。
+        let (paths, reader) = host_probe(&[HOST_IBUS_ONLY, HOST_FCITX]);
+        let hit = find_host_cache_with(&paths, &["fcitx", "ibus"], &reader);
+        assert_eq!(hit.as_deref(), Some(HOST_FCITX.0));
+    }
+
+    /// 直接测生产形态的 `find_host_cache`（真实文件、真实 `read_cache_content`）。
+    /// `find_host_cache_with` 那一组把两级策略本身钉住，这一组钉住"生产代码真的
+    /// 被接上了"：reader 注入缝被焊死、候选类型被换掉、或者整个函数被旁路掉，
+    /// 上面的用例照旧绿，只有这几条会红。
+    #[test]
+    fn find_host_cache_prefers_the_first_requested_module() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // 请求 [fcitx, ibus]：第一个候选只列出靠后的 ibus，第二个列出用户首选的
+        // fcitx——必须取第二个，否则等于替用户改偏好。
+        let later = write_cache(&dir, "later.cache", HOST_FCITX5.1);
+        let first = write_cache(&dir, "first.cache", HOST_FCITX.1);
+        let candidates = [later, first];
+        let hit = find_host_cache(&candidates, &["fcitx", "ibus"]);
+        assert_eq!(hit.as_deref(), Some(candidates[1].as_str()));
+        // 两个候选都列出第一个请求模块时，候选顺序说话（镜像布局优先）。
+        let multiarch = write_cache(&dir, "multiarch.cache", HOST_FCITX.1);
+        let flat = write_cache(&dir, "flat.cache", HOST_FCITX.1);
+        let candidates = [multiarch, flat];
+        let hit = find_host_cache(&candidates, &["fcitx"]);
+        assert_eq!(hit.as_deref(), Some(candidates[0].as_str()));
+    }
+
+    #[test]
+    fn find_host_cache_falls_back_to_a_later_requested_module() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // 第一个请求模块谁都没有时，退回第一个能服务靠后模块的候选（比什么都不强）。
+        let only_later = write_cache(&dir, "only-later.cache", HOST_FCITX5.1);
+        let candidates = [only_later];
+        let hit = find_host_cache(&candidates, &["fcitx", "ibus"]);
+        assert_eq!(hit.as_deref(), Some(candidates[0].as_str()));
+    }
+
+    #[test]
+    fn find_host_cache_returns_none_when_no_candidate_lists_a_module() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // 谁都列不出请求的模块：None（调用方据此保持现状）。
+        let stock = write_cache(&dir, "stock.cache", HOST_STOCK_ONLY.1);
+        let candidates = [stock];
+        assert_eq!(find_host_cache(&candidates, &["fcitx", "ibus"]), None);
+        // 一张候选都没有时同样 None，不能慌着猜一个路径。
+        assert_eq!(find_host_cache(&[], &["fcitx"]), None);
+    }
+
+    #[test]
+    fn find_host_cache_skips_a_candidate_it_cannot_read() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // 读不到的候选排在前面（文件不存在）：必须跳过它，不能因为它排在第一个
+        // 就默认用它的路径，也不能因为第一个读不到就放弃整个探测。
+        let good = write_cache(&dir, "good.cache", HOST_FCITX.1);
+        let missing = dir.path().join("missing.cache");
+        let missing = missing.to_str().expect("utf-8 temp path").to_string();
+        let candidates = [missing, good];
+        let hit = find_host_cache(&candidates, &["fcitx"]);
+        assert_eq!(hit.as_deref(), Some(candidates[1].as_str()));
     }
 
     #[test]
@@ -813,6 +961,27 @@ mod tests {
         // 也不去做主机探测（没有证据表明 bundle 缺这个模块）。
         let action = hooked(None, Some("fcitx"), None, &[HOST_FCITX]);
         assert_eq!(action, ImModuleFileAction::Keep);
+    }
+
+    /// 直接测 `bundle_lists`：resolve 与"缓存读没读到"之间唯一的三值折叠点。
+    /// 端到端那一路（run() 的 bundle 闭包）现在也走这个函数本身，这一组把它
+    /// 单独钉一遍——尤其是 None 与 Some(false) 的区别。
+    #[test]
+    fn bundle_lists_answers_from_the_cache_when_it_is_readable() {
+        // 缓存可读：如实回答它列不列这个模块，判定走带引号的整名。
+        assert_eq!(bundle_lists(Some(BUNDLE), "xim"), Some(true));
+        assert_eq!(bundle_lists(Some(BUNDLE), "fcitx"), Some(false));
+        // 空模块名在真实缓存里"看起来被列出了"（locale 字段里的空串 `""`）：
+        // 所以丢空项必须由 requested_im_modules 完成，bundle_lists 不负责过滤。
+        assert_eq!(bundle_lists(Some(BUNDLE), ""), Some(true));
+    }
+
+    #[test]
+    fn bundle_lists_reports_none_when_the_cache_is_unreadable() {
+        // 读不到必须折成 None（"没有正面证据"），不能折成 Some(false)——
+        // 后者会被当成"缓存说没有这个模块"，于是照样去改用户环境。
+        assert_eq!(bundle_lists(None, "fcitx"), None);
+        assert_eq!(bundle_lists(None, ""), None);
     }
 
     #[test]
@@ -1001,7 +1170,10 @@ mod tests {
         );
         // 空项（连续冒号 / 首尾冒号）会被丢掉；但不 trim，也不展开 XMODIFIERS。
         let modules = requested_im_modules(Some(" fcitx :: : ibus "));
-        assert_eq!(modules, Some(vec![" fcitx ", " ibus "]));
+        // 中间那个 `" "` 也活着：过滤器只丢**真空串**，而 `" : "` 切出来是一个
+        // 空格段、不是空段。这与 GTK 一致——`lookup_immodule()` 对每个条目都做
+        // `g_strcmp0` 与哈希查找，空格段查不中就当没这一项继续，不会因此短路。
+        assert_eq!(modules, Some(vec![" fcitx ", " ", " ibus "]));
         // 整体为空串 / 纯空白视为未配置。
         assert_eq!(requested_im_modules(Some("   ")), None);
         assert_eq!(requested_im_modules(None), None);
@@ -1085,6 +1257,21 @@ mod tests {
         // 镜像候选 + 全部静态候选：静态的一个不少，也没有哪个出现两次。
         assert_eq!(candidates.len(), EXPECTED_HOST_CACHES.len() + 1);
         assert_static_candidates_present(&candidates);
+        // 而且静态那一段必须**原样跟上静态列表的顺序**：顺序决定多个候选都可读
+        // 时用户拿到哪个缓存，只断言"都在"的话把整个列表调换顺序也不会有测试红。
+        for (index, path) in EXPECTED_HOST_CACHES.iter().enumerate() {
+            assert_eq!(candidates[index + 1].as_str(), *path);
+        }
+    }
+
+    /// 静态候选表本身的顺序也是承重的（见 `HOST_IM_MODULE_CACHES` 的文档）：
+    /// 扁平 `/usr/lib`（Arch / Gentoo）优先，`/usr/lib64`（Fedora / openSUSE）
+    /// 次之，然后是 Debian 系 multiarch，最后才是本机编译的 `/usr/local`。
+    /// 期望值写死在 `EXPECTED_HOST_CACHES` 里，不从生产常量取——反过来读生产
+    /// 常量的话，改它就不可能有测试红。
+    #[test]
+    fn static_candidates_keep_their_documented_order() {
+        assert_eq!(HOST_IM_MODULE_CACHES, EXPECTED_HOST_CACHES);
     }
 
     /// 判定必须建立在**真实**的 `gtk-query-immodules` 输出形状上：`#` 头注释，
@@ -1144,6 +1331,42 @@ mod tests {
         assert_eq!(action, expected);
     }
 
+    /// 直接测 `read_cache_content`：它是 bundle 与主机两路共用的读文件出口。
+    /// 关键是把"读失败"与"读到了空内容"分开——读失败折成 `Some(String::new())`
+    /// 会让每份缓存都变成"可读但列不出任何模块"，补丁就永远不生效。
+    #[test]
+    fn read_cache_content_returns_the_file_text() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write_cache(&dir, "immodules.cache", HOST_FCITX.1);
+        assert_eq!(read_cache_content(&path).as_deref(), Some(HOST_FCITX.1));
+    }
+
+    #[test]
+    fn read_cache_content_treats_unreadable_paths_as_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // 不存在的路径：None（没有这份缓存），不能是读到了空串。
+        let missing = dir.path().join("missing.cache");
+        let missing = missing.to_str().expect("utf-8 temp path");
+        assert_eq!(read_cache_content(missing), None);
+        // 目录：std::fs::read 直接失败，同样按"没有这份缓存"处理。
+        let dir_path = dir.path();
+        let dir_path = dir_path.to_str().expect("utf-8 temp path");
+        assert_eq!(read_cache_content(dir_path), None);
+    }
+
+    #[test]
+    fn read_cache_content_keeps_ascii_from_a_non_utf8_cache() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("weird.cache");
+        let weird = b"\xff\"fcitx\"\n";
+        std::fs::write(&path, weird).expect("write fixture");
+        let path = path.to_str().expect("utf-8 temp path");
+        // 个别非 UTF-8 字节不该让整份缓存被判成"不存在"：ASCII 部分原样保留，
+        // 模块名照样查得到。
+        let read = read_cache_content(path).expect("lossy read");
+        assert!(read.contains("\"fcitx\""));
+    }
+
     #[test]
     fn appdir_prefix_check_tolerates_double_slash_and_rejects_the_rest() {
         // 正向：钩子写出的是 `$APPDIR//usr/...`，APPDIR 也可能带尾斜杠；
@@ -1151,11 +1374,105 @@ mod tests {
         assert!(is_appdir_relative(HOOK, APP));
         assert!(is_appdir_relative("/tmp/.mount_cc/usr/lib/x", APP));
         assert!(is_appdir_relative(HOOK, "/tmp/.mount_cc/"));
+        // 这一对才是承重的：单斜杠路径 + 带尾斜杠的 APPDIR，两个因素必须同时
+        // 由 `trim_end_matches('/')` 兜住。上面三条都被 HOOK 自己的双斜杠满足了
+        // ——把那个 trim 删掉它们照样绿，只有这一条会红；没有它，`APPDIR` 带尾
+        // 斜杠 + 普通单斜杠路径的组合会静默失配（判定成"不是 bundle 缓存"，
+        // 补丁在该启动的机器上不启动）。
+        assert!(is_appdir_relative("/tmp/.mount_cc/usr/lib/x", "/tmp/.mount_cc/"));
         // 负向：只是拼接前缀不算（.mount_cc-evil）、AppDir 本身不是缓存路径、
         // AppDir 空 / 纯空白时判定不了，一律当作"不是 bundle 缓存"。
         assert!(!is_appdir_relative("/tmp/.mount_cc-evil/usr/x", APP));
         assert!(!is_appdir_relative(APP, APP));
         assert!(!is_appdir_relative(HOOK, "   "));
         assert!(!is_appdir_relative(HOOK, ""));
+    }
+
+    /// 环境变量名必须是钩子与 GTK 真正读的那几个。改错一个字母，逃生开关或者
+    /// 整个补丁就静默失效——而其余测试传的都是字面量，抓不到这种错。
+    #[test]
+    fn env_var_names_match_what_the_hook_and_gtk_read() {
+        assert_eq!(IM_MODULE_FILE_OVERRIDE_ENV, "CC_SWITCH_GTK_IM_MODULE_FILE");
+        assert_eq!(GTK_IM_MODULE_FILE_ENV, "GTK_IM_MODULE_FILE");
+        assert_eq!(APPDIR_ENV, "APPDIR");
+        assert_eq!(GTK_IM_MODULE_ENV, "GTK_IM_MODULE");
+    }
+
+    /// 还原 `apply` 动过的四个进程环境变量。nextest 一个测试一个进程，本来就不脏；
+    /// 但本地 `cargo test` 是同进程多线程，`#[serial]` 只保证不并发、不保证干净，
+    /// 所以该还的还得还。
+    struct EnvGuard([(&'static str, Option<std::ffi::OsString>); 4]);
+
+    impl EnvGuard {
+        fn new() -> Self {
+            let names = [
+                IM_MODULE_FILE_OVERRIDE_ENV,
+                GTK_IM_MODULE_FILE_ENV,
+                APPDIR_ENV,
+                GTK_IM_MODULE_ENV,
+            ];
+            Self(names.map(|name| (name, std::env::var_os(name))))
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (name, previous) in &self.0 {
+                match previous {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+
+    /// 端到端走一遍真正干活的 `decide_and_apply_gtk_im_module_file`（`apply` 只是
+    /// 它的一层壳）：此前这一层没有任何测试接过，于是 `resolve` 的返回值再对，也
+    /// 证明不了它把四个参数按正确顺序交了出去、或者真的把决定写回了进程环境。
+    ///
+    /// 这里只钉**主机缓存够不着**的形态：候选路径是写死的绝对路径（`/usr/...`），
+    /// 测试里造不出来，所以不假设机器上装了什么输入法——那样的用例只会在有 fcitx
+    /// 的机器上绿，是假绿。
+    ///
+    /// 走私有的那层而不是公开壳：它把**决定本身**交出来，而 `Keep` 与
+    /// `KeepWithoutHostCache` 的区分只有看得到决定才成立——环境变量在两种情况下
+    /// 都是"没变"，区分不了。
+    #[test]
+    #[serial]
+    fn apply_writes_its_decision_back_into_the_environment() {
+        let _guard = EnvGuard::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let appdir = dir.path();
+        let hooked = write_cache(&dir, "usr/lib/gtk-3.0/3.0.0/immodules.cache", BUNDLE);
+        std::env::set_var(APPDIR_ENV, appdir);
+        std::env::set_var(GTK_IM_MODULE_FILE_ENV, &hooked);
+        std::env::set_var(GTK_IM_MODULE_ENV, "fcitx");
+
+        // 一、逃生开关：强制改写。这是不依赖主机缓存就能拿到 `Set` 的唯一形状，
+        // 也是唯一能证明"决定真的被导出到环境里"的形状——把 `env::set_var` 删掉，
+        // 诊断照样打、决定照样算，可什么都没导出，补丁白干。
+        let forced = dir.path().join("forced.cache");
+        let forced = forced.to_str().expect("utf-8 temp path");
+        std::env::set_var(IM_MODULE_FILE_OVERRIDE_ENV, forced);
+        let action = decide_and_apply_gtk_im_module_file();
+        let exported = std::env::var(GTK_IM_MODULE_FILE_ENV).expect("must export");
+        assert_eq!(exported, forced);
+        assert_eq!(action, ImModuleFileAction::Set(forced.to_string()));
+
+        // 二、没有逃生开关、bundle 缓存里没有这个模块、主机候选一个都够不着：
+        // 保持钩子写入的路径，绝不猜一个，也绝不顺手把环境改写掉。模块名故意取一个
+        // 任何主机缓存都列不出来的，免得这条用例依赖机器上装了什么。
+        let module = "cc-switch-no-such-im-module";
+        std::env::remove_var(IM_MODULE_FILE_OVERRIDE_ENV);
+        std::env::set_var(GTK_IM_MODULE_FILE_ENV, &hooked);
+        std::env::set_var(GTK_IM_MODULE_ENV, module);
+        let action = decide_and_apply_gtk_im_module_file();
+        let kept = std::env::var(GTK_IM_MODULE_FILE_ENV).expect("var stays set");
+        assert_eq!(kept, hooked);
+        // 决定必须带着请求的模块名出来。把 `gtk_im_module` 与 `current` 在调用点
+        // 上调个交换（四个 `Option<&str>` 同型，编译器看不出来），`resolve` 会在
+        // 第三步就返回 `Keep`——环境照样"没变"，只有这一条会红。
+        let expected = ImModuleFileAction::KeepWithoutHostCache(module.to_string());
+        assert_eq!(action, expected);
     }
 }
