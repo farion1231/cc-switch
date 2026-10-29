@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
@@ -576,7 +576,17 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
 pub struct SkillService {
     #[cfg(test)]
     repo_fixture: Option<PathBuf>,
+    /// 发现结果按仓库缓存（键是 owner/name/branch），只存读成功的仓库。
+    /// 发现要把每个仓库的归档整包下下来，添加、启用仓库或导入后的重拉不该把
+    /// 没变的仓库再下一遍；手动刷新会绕过它（`force_refresh`）。
+    discovery_cache: Mutex<HashMap<RepoCacheKey, (Instant, Vec<DiscoverableSkill>)>>,
 }
+
+/// owner / name / branch（branch 是配置值，不是解析后的分支）
+type RepoCacheKey = (String, String, String);
+
+/// 发现缓存的有效期：GitHub 归档本身也有几分钟的 CDN 缓存，再短意义不大
+const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
 impl Default for SkillService {
     fn default() -> Self {
@@ -589,6 +599,7 @@ impl SkillService {
         Self {
             #[cfg(test)]
             repo_fixture: None,
+            discovery_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -3104,13 +3115,16 @@ impl SkillService {
         &self,
         repos: Vec<SkillRepo>,
     ) -> Result<Vec<DiscoverableSkill>> {
-        Ok(self.discover_available_report(repos).await?.skills)
+        Ok(self.discover_available_report(repos, false).await?.skills)
     }
 
     /// 发现可安装的 Skill，并逐仓库报告没读到的仓库（停用的仓库不读也不报）。
+    ///
+    /// `force_refresh` 为 false 时，有效期内的仓库直接用缓存，不重新下载。
     pub async fn discover_available_report(
         &self,
         repos: Vec<SkillRepo>,
+        force_refresh: bool,
     ) -> Result<SkillDiscoveryResult> {
         let mut skills = Vec::new();
         let mut failures = Vec::new();
@@ -3120,7 +3134,7 @@ impl SkillService {
 
         let fetch_tasks = enabled_repos
             .iter()
-            .map(|repo| self.fetch_repo_skills(repo));
+            .map(|repo| self.fetch_repo_skills_cached(repo, force_refresh));
 
         let results: Vec<Result<Vec<DiscoverableSkill>>> =
             futures::future::join_all(fetch_tasks).await;
@@ -3206,6 +3220,71 @@ impl SkillService {
 
         skills.sort_by_key(|skill| skill.name.to_lowercase());
 
+        Ok(skills)
+    }
+
+    /// 只发现一个仓库（添加、重新启用仓库时用），不碰其它仓库。
+    pub async fn discover_repo(&self, repo: &SkillRepo) -> SkillDiscoveryResult {
+        if !repo.enabled {
+            return SkillDiscoveryResult::default();
+        }
+        match self.fetch_repo_skills_cached(repo, false).await {
+            Ok(mut skills) => {
+                Self::deduplicate_discoverable_skills(&mut skills);
+                skills.sort_by_key(|skill| skill.name.to_lowercase());
+                SkillDiscoveryResult {
+                    skills,
+                    failures: Vec::new(),
+                }
+            }
+            Err(e) => {
+                log::warn!("获取仓库 {}/{} 技能失败: {}", repo.owner, repo.name, e);
+                SkillDiscoveryResult {
+                    skills: Vec::new(),
+                    failures: vec![Self::repo_failure(repo, e.to_string())],
+                }
+            }
+        }
+    }
+
+    fn discovery_cache_key(repo: &SkillRepo) -> RepoCacheKey {
+        (repo.owner.clone(), repo.name.clone(), repo.branch.clone())
+    }
+
+    /// 先查缓存，过期或 `force_refresh` 时再下载；下载成功才写回缓存。
+    ///
+    /// 缓存时间记的是开始下载的时刻：前端取消请求停不掉这里的下载，较早开始、
+    /// 较晚结束的旧下载不能覆盖之后（比如强制刷新）写入的结果。
+    async fn fetch_repo_skills_cached(
+        &self,
+        repo: &SkillRepo,
+        force_refresh: bool,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let key = Self::discovery_cache_key(repo);
+        if !force_refresh {
+            let cache = self
+                .discovery_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some((fetched_at, skills)) = cache.get(&key) {
+                if fetched_at.elapsed() < DISCOVERY_CACHE_TTL {
+                    return Ok(skills.clone());
+                }
+            }
+        }
+
+        let started_at = Instant::now();
+        let skills = self.fetch_repo_skills(repo).await?;
+        let mut cache = self
+            .discovery_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if cache
+            .get(&key)
+            .is_none_or(|(fetched_at, _)| *fetched_at <= started_at)
+        {
+            cache.insert(key, (started_at, skills.clone()));
+        }
         Ok(skills)
     }
 
@@ -7677,6 +7756,7 @@ mod tests {
                 let db = Arc::new(Database::memory().expect("memory db"));
                 let service = SkillService {
                     repo_fixture: Some(remote.path().to_path_buf()),
+                    ..SkillService::new()
                 };
                 let mut installed = poisoned_skill("owner/repo:skill", directory);
                 installed.name = directory.to_string();
@@ -7927,16 +8007,20 @@ mod tests {
         write_skill(&remote.path().join("pdf"), "pdf");
         let service = SkillService {
             repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
         };
 
         let report = service
-            .discover_available_report(vec![
-                repo("owner", "repo", true),
-                // 坐标不合法：下载前就失败，不碰网络
-                repo("bad owner!", "broken", true),
-                // 停用的仓库不读，也不该出现在失败里
-                repo("bad owner?", "disabled", false),
-            ])
+            .discover_available_report(
+                vec![
+                    repo("owner", "repo", true),
+                    // 坐标不合法：下载前就失败，不碰网络
+                    repo("bad owner!", "broken", true),
+                    // 停用的仓库不读，也不该出现在失败里
+                    repo("bad owner?", "disabled", false),
+                ],
+                false,
+            )
             .await
             .expect("discover report");
 
@@ -7973,6 +8057,60 @@ mod tests {
             .await
             .expect("discover");
         assert_eq!(skills.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discover_reuses_cached_repos_unless_forced() {
+        let remote = tempdir().expect("remote repo");
+        write_skill(&remote.path().join("pdf"), "pdf");
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+        let repos = || vec![repo("owner", "repo", true)];
+
+        let first = service
+            .discover_available_report(repos(), false)
+            .await
+            .expect("first discover");
+        assert_eq!(first.skills.len(), 1);
+
+        // 仓库里多了一个 Skill：缓存期内不重新下载，强制刷新才看得到
+        write_skill(&remote.path().join("docx"), "docx");
+        let cached = service
+            .discover_available_report(repos(), false)
+            .await
+            .expect("cached discover");
+        assert_eq!(cached.skills.len(), 1);
+        let single = service.discover_repo(&repo("owner", "repo", true)).await;
+        assert_eq!(single.skills.len(), 1);
+
+        let forced = service
+            .discover_available_report(repos(), true)
+            .await
+            .expect("forced discover");
+        assert_eq!(forced.skills.len(), 2);
+        // 强制刷新的结果写回缓存
+        let single = service.discover_repo(&repo("owner", "repo", true)).await;
+        assert_eq!(single.skills.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn discover_repo_reports_failure_and_skips_disabled_repo() {
+        let service = SkillService::new();
+
+        let failed = service
+            .discover_repo(&repo("bad owner!", "broken", true))
+            .await;
+        assert!(failed.skills.is_empty());
+        assert_eq!(failed.failures.len(), 1);
+        assert!(failed.failures[0].error.contains("INVALID_REPO_REF"));
+
+        let disabled = service
+            .discover_repo(&repo("bad owner!", "broken", false))
+            .await;
+        assert!(disabled.skills.is_empty());
+        assert!(disabled.failures.is_empty());
     }
 
     #[tokio::test]
