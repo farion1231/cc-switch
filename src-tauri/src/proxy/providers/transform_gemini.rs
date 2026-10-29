@@ -4,6 +4,7 @@
 //! and Gemini `GenerateContentResponse` payloads back to Anthropic Messages
 //! responses for Claude-compatible clients.
 
+use super::codex_chat_common::{requires_gemini_thought_signature, GEMINI_SKIP_THOUGHT_SIGNATURE};
 use super::gemini_schema::build_gemini_function_declaration;
 use super::gemini_shadow::{GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
 use crate::proxy::error::ProxyError;
@@ -80,11 +81,24 @@ pub fn anthropic_to_gemini_with_shadow(
     }
 
     if let Some(messages) = messages {
-        result["contents"] = json!(convert_messages_to_contents(
+        let mut contents = convert_messages_to_contents(
             messages,
             &shadow_turns,
             supports_multimodal_function_response,
-        )?);
+        )?;
+        if body
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(requires_gemini_thought_signature)
+        {
+            let filled = fill_skip_thought_signatures(&mut contents);
+            if filled > 0 {
+                log::debug!(
+                    "[Claude] Filled {filled} missing Gemini thought signature(s) with the skip placeholder"
+                );
+            }
+        }
+        result["contents"] = json!(contents);
     }
 
     if let Some(generation_config) = build_generation_config(&body) {
@@ -838,6 +852,59 @@ fn plan_gemini_tool_result(content: Option<&Value>) -> (Value, Vec<Value>) {
     );
 
     (normalize_tool_result_response(Some(&cleaned)), gemini_parts)
+}
+
+/// Thought signatures are replayed from the in-memory shadow store, so they are
+/// gone when CC Switch restarts mid tool-call turn or the turn has been evicted.
+/// Gemini 3+ then rejects the rebuilt request with "Function call is missing a
+/// thought_signature". Gemini only validates the first functionCall of each model
+/// step in the current turn (after the last user content that is not just
+/// functionResponse parts), and documents `skip_thought_signature_validator` for
+/// history it cannot trace back. Fill only those calls when they are unsigned;
+/// real signatures, parallel sibling calls and earlier turns are left as is.
+fn fill_skip_thought_signatures(contents: &mut [Value]) -> usize {
+    let turn_start = contents
+        .iter()
+        .rposition(|content| {
+            content.get("role").and_then(Value::as_str) == Some("user")
+                && content
+                    .get("parts")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts
+                            .iter()
+                            .any(|part| part.get("functionResponse").is_none())
+                    })
+        })
+        .map_or(0, |index| index + 1);
+    let mut filled = 0;
+    for content in &mut contents[turn_start..] {
+        if content.get("role").and_then(Value::as_str) != Some("model") {
+            continue;
+        }
+        let Some(first_call) = content
+            .get_mut("parts")
+            .and_then(Value::as_array_mut)
+            .and_then(|parts| {
+                parts
+                    .iter_mut()
+                    .find(|part| part.get("functionCall").is_some())
+            })
+        else {
+            continue;
+        };
+        let has_signature = first_call
+            .get("thoughtSignature")
+            .or_else(|| first_call.get("thought_signature"))
+            .and_then(Value::as_str)
+            .is_some_and(|signature| !signature.is_empty());
+        if has_signature {
+            continue;
+        }
+        first_call["thoughtSignature"] = json!(GEMINI_SKIP_THOUGHT_SIGNATURE);
+        filled += 1;
+    }
+    filled
 }
 
 fn is_gemini_3_series(model: &str) -> bool {
@@ -1771,6 +1838,128 @@ mod tests {
             result["contents"][0]["parts"][0]["functionResponse"]["name"],
             "get_weather"
         );
+    }
+
+    fn skip_signature_request(model: &str) -> Value {
+        json!({
+            "model": model,
+            "messages": [
+                { "role": "user", "content": "old question" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_old", "name": "read", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_old", "content": "a" }
+                    ]
+                },
+                { "role": "assistant", "content": "done" },
+                { "role": "user", "content": "new question" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "text", "text": "checking" },
+                        { "type": "tool_use", "id": "call_1", "name": "read", "input": {} },
+                        { "type": "tool_use", "id": "call_2", "name": "grep", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "b" },
+                        { "type": "tool_result", "tool_use_id": "call_2", "content": "c" }
+                    ]
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_3", "name": "read", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_3", "content": "d" }
+                    ]
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn anthropic_to_gemini_fills_skip_signature_on_first_call_of_current_turn_steps() {
+        let result = anthropic_to_gemini(skip_signature_request("gemini-3.8-flash")).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+        let model_turns: Vec<&Value> = contents
+            .iter()
+            .filter(|content| content["role"] == "model")
+            .collect();
+
+        // Earlier turn (before "new question") is not validated by Gemini.
+        assert!(model_turns[0]["parts"][0].get("thoughtSignature").is_none());
+
+        // Current turn, first step: text part untouched, first call filled,
+        // parallel sibling stays unsigned.
+        let step_one = model_turns[2]["parts"].as_array().unwrap();
+        assert!(step_one[0].get("thoughtSignature").is_none());
+        assert_eq!(
+            step_one[1]["thoughtSignature"],
+            GEMINI_SKIP_THOUGHT_SIGNATURE
+        );
+        assert!(step_one[2].get("thoughtSignature").is_none());
+
+        // Current turn, second step.
+        assert_eq!(
+            model_turns[3]["parts"][0]["thoughtSignature"],
+            GEMINI_SKIP_THOUGHT_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_keeps_real_signature_over_skip_placeholder() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "provider-a",
+            "session-1",
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_3"),
+                "read",
+                json!({}),
+                Some("sig-real"),
+            )],
+        );
+
+        let result = anthropic_to_gemini_with_shadow(
+            skip_signature_request("google/gemini-3.8-flash"),
+            Some(&store),
+            Some("provider-a"),
+            Some("session-1"),
+        )
+        .unwrap();
+        let contents = result["contents"].as_array().unwrap();
+        let last_model = contents
+            .iter()
+            .rev()
+            .find(|content| content["role"] == "model")
+            .unwrap();
+        assert_eq!(last_model["parts"][0]["thoughtSignature"], "sig-real");
+    }
+
+    #[test]
+    fn anthropic_to_gemini_skips_placeholder_for_pre_gemini_3_models() {
+        let result = anthropic_to_gemini(skip_signature_request("gemini-2.5-flash")).unwrap();
+        let has_placeholder = result["contents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|content| content["parts"].as_array().unwrap())
+            .any(|part| part.get("thoughtSignature").is_some());
+        assert!(!has_placeholder);
     }
 
     #[test]
