@@ -1329,6 +1329,7 @@
     "groupByTime": "Zamana göre",
     "groupByProject": "Projeye göre",
     "desktopNote": "Claude Desktop'nin kendine ait oturum kaydı yoktur. Claude Code oturumları gösteriliyor.",
+    "dshMergedNote": "DeepSeek Harness Web ve Desktop aynı oturum kayıtlarını paylaşır; burada birlikte gösterilir.",
     "matchCount": "{{count}} eşleştirme oturumları",
     "totalCount": "{{count}} oturumları",
     "selectAllMatches": "Tüm eşleşmeleri seç",
@@ -2081,9 +2082,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "Hiçbir ekstra seçenek yapılandırılmadı",
     "noModelOptions": "Model seçenekleri, eklemek için +'ya tıklayın",
-    "modelLimits": "Token Limitleri",
-    "limitContext": "Bağlam",
-    "limitOutput": "Çıktı",
     "modelExtraFields": "Model Özellikleri",
     "noModelExtraFields": "Model özellikleri (varyantlar, maliyet vb.), eklemek için + işaretine tıklayın",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2221,6 +2219,11 @@
       "short": "Oturum günlükleri",
       "label": "{{app}} · Oturum günlükleri",
       "hint": "Yönlendirme kapalıyken istemcinin oturum günlüklerini okuyun, böylece sağlayıcı birbirinden ayırt edilemez"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek hesabı",
+      "label": "{{app}} · DeepSeek hesabı (OAuth)",
+      "hint": "DeepSeek hesabı oturumuyla yapılan istekler için oturum günlüklerinden okunur; Web ve Desktop bu oturumu paylaştığından kullanımları birleştirilir"
     },
     "stream": "Akış",
     "nonStream": "Yayın dışı",
@@ -2520,7 +2523,7 @@
       "scanTitle": "Oturum günlüklerini otomatik olarak tara",
       "scanHelpTitle": "Oturum günlükleri nedir?",
       "scanHelp": "Konuşma, bu bilgisayara yazılan her uygulamanın kaydını tutar. CC Switch bunların kullanımını okur, böylece yönlendirme olmadan bile veri alırsınız.",
-      "coverage": "7 uygulamayı kapsar: {{apps}}",
+      "coverage": "{{total}} uygulamayı kapsar: {{apps}}",
       "cadenceOn": "Başlangıçta ve arka planda her 10 dakikada bir tarar; Kullanım sayfası açıldığında hemen tarar, ardından seçilen aralıkla tarar",
       "cadenceOff": "Otomatik tarama kapalı; günlükler yalnızca Şimdi Eşitle'ye tıkladığınızda taranır",
       "unsupported": "Hermes ve OpenClaw henüz kullanım istatistiklerini desteklemiyor",
@@ -4579,6 +4582,7 @@
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
       "claudeNote": " (üst düzey mcpServers)",
+      "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp)",
       "ok": "Anladım"
     },
     "templateLabels": {
@@ -5030,6 +5034,31 @@
     "empty": {
       "title": "DeepSeek Harness sağlayıcısı ekle",
       "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
+    },
+    "sharedProviders": "Eklenen sağlayıcılar DeepSeek Harness'ın hem Web hem Desktop yapılandırmasına (ve başlatılmış headless, acp profillerine) yazılır; modeli DeepSeek Harness içinde seçin.",
+    "sharedProvidersNote": "Web ve Desktop ortak kullanır",
+    "account": {
+      "help": "DeepSeek hesabı tarayıcı üzerinden oturum açar (OAuth); burada veya DeepSeek Harness'ta oturum açabilirsiniz. Oturum $DSH_HOME/.credentials.yaml (varsayılan ~/.dsh/.credentials.yaml) içinde saklanır ve DeepSeek Harness Web ile Desktop tarafından paylaşılır: herhangi bir yerde oturum açmak veya kapatmak ikisine de uygulanır, çalışan DeepSeek Harness dosyayı otomatik olarak yeniden okur. Hesabın modellerinin kullanımı, Kullanım sayfasında ayrıca \"DeepSeek hesabı (OAuth)\" olarak görünür.",
+      "statusFailed": "DeepSeek hesabı oturumu okunamadı",
+      "empty": "DeepSeek hesabında oturum açılmamış",
+      "unnamed": "DeepSeek hesabı",
+      "expired": "Oturumun süresi doldu. Yeniden oturum açın",
+      "shared": "Web ve Desktop tarafından paylaşılır",
+      "signOut": "Oturumu kapat",
+      "signOutConfirm": "\"{{name}}\" DeepSeek hesabından çıkış yapılsın mı? DeepSeek Harness Web ve Desktop'ta birlikte oturum kapatılır. API anahtarı sağlayıcıları etkilenmez.",
+      "signOutFailed": "DeepSeek hesabından çıkış yapılamadı",
+      "balance": "Bakiye {{amount}}",
+      "bonus": "Bonus {{amount}}",
+      "balanceFailed": "Bakiye şu anda alınamıyor",
+      "signedIn": "DeepSeek hesabında hem Web hem Desktop için oturum açıldı",
+      "signInFailed": "DeepSeek hesabında oturum açılamadı",
+      "presetName": "DeepSeek resmi oturum açma",
+      "presetDescription": "DeepSeek hesabınızda tarayıcı üzerinden oturum açtıktan sonra DeepSeek Harness hesabın modellerini doğrudan sunar; sağlayıcı eklemeniz gerekmez. Web ve Desktop bu oturumu paylaşır. Oturum açma ve kapatma Yetkilendirme Merkezi'nde yönetilir; oturum açınca hesap Eklenenler altında görünür.",
+      "manageAccounts": "DeepSeek hesabını yönet",
+      "cardSubtitle": "Resmi hesap · Web ve Desktop ortak",
+      "expiredChip": "Oturum süresi doldu",
+      "editDisabled": "Bu hesabın modellerini DeepSeek Harness kendisi sağlar; düzenlenecek bir şey yok.",
+      "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
     },
     "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
   }
