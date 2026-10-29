@@ -1379,7 +1379,10 @@ mod tests {
         // ——把那个 trim 删掉它们照样绿，只有这一条会红；没有它，`APPDIR` 带尾
         // 斜杠 + 普通单斜杠路径的组合会静默失配（判定成"不是 bundle 缓存"，
         // 补丁在该启动的机器上不启动）。
-        assert!(is_appdir_relative("/tmp/.mount_cc/usr/lib/x", "/tmp/.mount_cc/"));
+        assert!(is_appdir_relative(
+            "/tmp/.mount_cc/usr/lib/x",
+            "/tmp/.mount_cc/"
+        ));
         // 负向：只是拼接前缀不算（.mount_cc-evil）、AppDir 本身不是缓存路径、
         // AppDir 空 / 纯空白时判定不了，一律当作"不是 bundle 缓存"。
         assert!(!is_appdir_relative("/tmp/.mount_cc-evil/usr/x", APP));
