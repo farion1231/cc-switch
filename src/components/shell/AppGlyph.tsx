@@ -21,11 +21,6 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   omp: "Oh My Pi",
 };
 
-/** 侧栏里用的短名（侧栏窄，全名在悬停提示里）；没列的应用沿用 {@link APP_DISPLAY_NAME}。 */
-export const APP_SIDEBAR_NAME: Partial<Record<AppId, string>> = {
-  dsh: "DSH",
-};
-
 const APP_ICON_NAME: Record<AppId, string> = {
   claude: "claude",
   "claude-desktop": "claude",
