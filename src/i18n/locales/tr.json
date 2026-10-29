@@ -2520,7 +2520,7 @@
       "scanTitle": "Oturum günlüklerini otomatik olarak tara",
       "scanHelpTitle": "Oturum günlükleri nedir?",
       "scanHelp": "Konuşma, bu bilgisayara yazılan her uygulamanın kaydını tutar. CC Switch bunların kullanımını okur, böylece yönlendirme olmadan bile veri alırsınız.",
-      "coverage": "7 uygulamayı kapsar: {{apps}}",
+      "coverage": "{{total}} uygulamayı kapsar: {{apps}}",
       "cadenceOn": "Başlangıçta ve arka planda her 10 dakikada bir tarar; Kullanım sayfası açıldığında hemen tarar, ardından seçilen aralıkla tarar",
       "cadenceOff": "Otomatik tarama kapalı; günlükler yalnızca Şimdi Eşitle'ye tıkladığınızda taranır",
       "unsupported": "Hermes ve OpenClaw henüz kullanım istatistiklerini desteklemiyor",

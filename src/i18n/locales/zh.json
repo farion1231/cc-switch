@@ -2546,7 +2546,7 @@
       "scanTitle": "自动扫描会话日志",
       "scanHelpTitle": "会话日志是什么",
       "scanHelp": "各应用写在本机的会话记录。CC Switch 从里面读取用量，不开路由也有数据。",
-      "coverage": "覆盖 7 个应用：{{apps}}",
+      "coverage": "覆盖 {{total}} 个应用：{{apps}}",
       "cadenceOn": "启动时扫描一次，后台每 10 分钟一次；打开用量页时立即扫描，之后按所选间隔扫描",
       "cadenceOff": "自动扫描已关闭，只在点「立即同步」时扫描",
       "unsupported": "Hermes、OpenClaw 暂不支持用量统计",

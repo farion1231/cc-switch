@@ -20,6 +20,9 @@ describe("getUsageProviderLabel", () => {
     expect(getUsageProviderLabel("Gemini (Session)", t).label).toBe(
       "usage.sessionProvider.label:Gemini CLI",
     );
+    expect(getUsageProviderLabel("Oh My Pi (Session)", t).label).toBe(
+      "usage.sessionProvider.label:Oh My Pi",
+    );
   });
 
   it("translates every placeholder name the backend can return", () => {
