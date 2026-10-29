@@ -11,6 +11,7 @@ pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
 pub(crate) mod codex_official_models;
+pub(crate) mod codex_terminal;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
@@ -57,8 +58,8 @@ pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::{
-    provider_exists_in_live_config, sync_additive_app_to_live, write_live_for_state,
-    LiveSyncOutcome,
+    initialize_dsh_profiles, provider_exists_in_live_config, sync_additive_app_to_live,
+    write_live_for_state, LiveSyncOutcome,
 };
 
 // Internal re-exports
@@ -5461,6 +5462,13 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        if app_type == AppType::Dsh {
+            // A profile can appear while CC Switch is running. Keep the provider list usable
+            // when a native lock or an invalid profile prevents the initial sync; retry later.
+            if let Err(error) = initialize_dsh_profiles(state) {
+                log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
+            }
+        }
         if app_type == AppType::Pi {
             return pi::list(state);
         }
@@ -5590,12 +5598,12 @@ impl ProviderService {
                     Some(provider.settings_config.clone()),
                     create,
                     || {
-                        state.db.save_provider("dsh", provider)?;
+                        state.db.save_provider(app_type.as_str(), provider)?;
                         Ok(true)
                     },
                 )
             } else {
-                state.db.save_provider("dsh", provider)?;
+                state.db.save_provider(app_type.as_str(), provider)?;
                 Ok(true)
             };
         }
@@ -6570,9 +6578,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
-        if app_type == AppType::Dsh {
+        if matches!(app_type, AppType::Dsh) {
             return crate::dsh_config::save_and_commit(id, None, false, || {
-                state.db.delete_provider("dsh", id)
+                state.db.delete_provider(app_type.as_str(), id)
             });
         }
         if app_type == AppType::Kimi {
@@ -6727,11 +6735,11 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::remove(state, id);
         }
-        if app_type == AppType::Dsh {
+        if matches!(app_type, AppType::Dsh) {
             return crate::dsh_config::save_and_commit(id, None, false, || {
-                if let Some(mut provider) = state.db.get_provider_by_id(id, "dsh")? {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
                     Self::set_provider_live_config_managed(&mut provider, false);
-                    state.db.save_provider("dsh", &provider)?;
+                    state.db.save_provider(app_type.as_str(), &provider)?;
                 }
                 Ok(())
             });
@@ -6928,7 +6936,7 @@ impl ProviderService {
                 id,
                 Some(provider.settings_config.clone()),
                 false,
-                || state.db.save_provider("dsh", &provider),
+                || state.db.save_provider(app_type.as_str(), &provider),
             )?;
             return Ok(SwitchResult::default());
         }
