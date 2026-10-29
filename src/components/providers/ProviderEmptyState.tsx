@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Button } from "@/components/ui/button";
 import type { AppId } from "@/lib/api/types";
-import { isDshApp } from "@/config/appConfig";
 
 interface ProviderEmptyStateProps {
   appId: AppId;
@@ -27,7 +26,7 @@ export function ProviderEmptyState({
   const emptyCopyNs =
     appId === "pi" || appId === "mcode" || appId === "kimi" || appId === "omp"
       ? appId
-      : isDshApp(appId)
+      : appId === "dsh"
         ? "dsh"
         : null;
   // Antigravity 没有切换，这句「切换只替换关键字段」对它不成立

@@ -566,7 +566,6 @@ export function UsageDashboard({
       (app) =>
         visible[app] ||
         (app === "claude" && visible["claude-desktop"]) ||
-        (app === "dsh" && visible["dsh-desktop"]) ||
         app === appType,
     );
   }, [settings?.visibleApps, appType]);

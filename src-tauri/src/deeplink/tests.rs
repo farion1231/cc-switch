@@ -230,11 +230,11 @@ fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
     assert!(apps.claude && apps.pi && apps.mcode && apps.omp);
 }
 
-/// DeepSeek Harness 的 MCP 写进所有 profile；Desktop 没有单独的开关，`dsh-desktop` 落到同一个标记
+/// DeepSeek Harness 的 MCP 链接写进 DSH 的标记（Web 与 Desktop 共用）
 #[test]
-fn test_parse_mcp_deeplink_accepts_dsh_and_dsh_desktop() {
+fn test_parse_mcp_deeplink_accepts_dsh() {
     let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
-    for apps in ["dsh", "dsh-desktop", "claude,dsh"] {
+    for apps in ["dsh", "claude,dsh"] {
         let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
         let request = parse_deeplink_url(&url).expect("dsh is a valid MCP target");
         assert!(

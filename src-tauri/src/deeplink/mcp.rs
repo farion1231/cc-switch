@@ -182,8 +182,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "hermes" => apps.hermes = true,
             "mcode" => apps.mcode = true,
             "kimi" => apps.kimi = true,
-            // DSH Desktop has no MCP flag: DSH's servers are written to every profile.
-            "dsh" | "dsh-desktop" => apps.dsh = true,
+            "dsh" => apps.dsh = true,
             "pi" => apps.pi = true,
             "omp" => apps.omp = true,
             other => {

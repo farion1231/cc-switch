@@ -1,15 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** DeepSeek Harness Desktop 在「应用」页的状态（后端 `dsh_config::desktop_status`） */
-export interface DshDesktopStatus {
-  /** Desktop 只发布 macOS 和 Windows 版 */
-  supported: boolean;
-  installed: boolean;
-  /** Desktop profile 里已有供应商 */
-  configured: boolean;
-  profilePath: string;
-}
-
 export interface DshAccountProfile {
   id: string | null;
   name: string | null;
@@ -52,7 +42,6 @@ export interface DshLoginStart {
 }
 
 export const dshApi = {
-  getDesktopStatus: () => invoke<DshDesktopStatus>("get_dsh_desktop_status"),
   accountStatus: () => invoke<DshAccountStatus>("dsh_account_status"),
   /** Web 和 Desktop 同时退出 */
   accountSignOut: () => invoke<void>("dsh_account_sign_out"),

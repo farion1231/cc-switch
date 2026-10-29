@@ -808,7 +808,7 @@ pub fn run() {
                 app_state.db.is_providers_empty().unwrap_or(false);
 
             for app_type in
-                crate::app_config::AppType::independent().filter(|t| !t.is_additive_mode())
+                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
             {
                 if !crate::services::provider::should_import_default_config_on_startup(
                     &app_state,
@@ -1877,7 +1877,6 @@ pub fn run() {
             commands::get_claude_default_plan,
             commands::get_claude_login_switch,
             commands::kimi_oauth_status,
-            commands::get_dsh_desktop_status,
             commands::dsh_account_status,
             commands::dsh_account_sign_out,
             commands::dsh_account_login_start,
@@ -2098,7 +2097,7 @@ fn initialize_common_config_snippets(state: &store::AppState) {
     // This must run before proxy mode is re-attached on startup, otherwise we'd read
     // proxy-placeholder configs instead of the user's actual live settings. A client
     // still attached from an update restart (no detach on the way out) is skipped too.
-    for app_type in crate::app_config::AppType::independent() {
+    for app_type in crate::app_config::AppType::all() {
         if !state
             .db
             .should_auto_extract_config_snippet(app_type.as_str())

@@ -59,13 +59,6 @@ pub struct VisibleApps {
     pub kimi: bool,
     #[serde(default = "default_true")]
     pub dsh: bool,
-    #[serde(
-        rename = "dsh-desktop",
-        alias = "dshDesktop",
-        alias = "dsh_desktop",
-        default = "default_true"
-    )]
-    pub dsh_desktop: bool,
     #[serde(default = "default_true")]
     pub agy: bool,
 }
@@ -85,7 +78,6 @@ impl Default for VisibleApps {
             mcode: true,
             kimi: true,
             dsh: true,
-            dsh_desktop: true,
             agy: true,
             omp: true,
         }
@@ -108,7 +100,6 @@ impl VisibleApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
-            AppType::DshDesktop => self.dsh_desktop,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
         }
@@ -1392,12 +1383,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi
-        | AppType::Mcode
-        | AppType::Kimi
-        | AppType::Dsh
-        | AppType::DshDesktop
-        | AppType::Omp => None,
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
     }
 }
 
@@ -1417,12 +1403,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi
-        | AppType::Mcode
-        | AppType::Kimi
-        | AppType::Dsh
-        | AppType::DshDesktop
-        | AppType::Omp => {}
+        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}
     })
 }
 

@@ -594,13 +594,6 @@ impl Default for SkillService {
     }
 }
 
-/// 技能代码遍历的应用：除去 DeepSeek Harness Desktop。它和 DeepSeek Harness 共用
-/// `$DSH_HOME/skills`，没有自己的开关；把它当成独立应用遍历，会以「未启用」为由删掉 DSH
-/// 已启用的技能，或者把同一个目录重复扫描一遍。
-fn skill_app_types() -> impl Iterator<Item = AppType> {
-    AppType::independent()
-}
-
 impl SkillService {
     pub fn new() -> Self {
         Self {
@@ -684,11 +677,7 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop
-            | AppType::Mcode
-            | AppType::Kimi
-            | AppType::Dsh
-            | AppType::DshDesktop => {}
+            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Dsh => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -740,8 +729,7 @@ impl SkillService {
 
         Ok(match app {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
-            // DSH Desktop shares `$DSH_HOME/skills` with DSH
-            AppType::Dsh | AppType::DshDesktop => crate::dsh_config::data_dir().join("skills"),
+            AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
@@ -810,7 +798,7 @@ impl SkillService {
     }
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
-        for app in skill_app_types() {
+        for app in AppType::all() {
             if matches!(app, AppType::ClaudeDesktop) {
                 continue;
             }
@@ -1187,7 +1175,7 @@ impl SkillService {
                     }
 
                     // 其他应用沿用既有的逐项容错行为。
-                    for app in skill_app_types() {
+                    for app in AppType::all() {
                         if matches!(
                             app,
                             AppType::Pi
@@ -2067,7 +2055,7 @@ impl SkillService {
         }
 
         // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
-        for app in skill_app_types() {
+        for app in AppType::all() {
             let _ = Self::sync_to_app_unlocked(db, &app);
         }
         for (directory, deployment) in pi_deployments {
@@ -2310,7 +2298,7 @@ impl SkillService {
 
         // 收集所有待扫描的目录及其来源标签
         let mut scan_sources: Vec<(PathBuf, String)> = Vec::new();
-        for app in skill_app_types() {
+        for app in AppType::all() {
             if let Ok(d) = Self::get_app_skills_dir(&app) {
                 scan_sources.push((d, app.as_str().to_string()));
             }
@@ -2384,7 +2372,7 @@ impl SkillService {
 
         // 收集所有候选搜索目录
         let mut search_sources: Vec<(PathBuf, String)> = Vec::new();
-        for app in skill_app_types() {
+        for app in AppType::all() {
             if let Ok(d) = Self::get_app_skills_dir(&app) {
                 search_sources.push((d, app.as_str().to_string()));
             }
@@ -2489,7 +2477,7 @@ impl SkillService {
             // 只存标志的话，界面显示已启用、应用却读不到，要等下次切换供应商才补上。
             // 已经在应用目录里的保持原样；投影失败就不记这个应用的启用，
             // 让库里的标志始终等于磁盘上的事实。
-            for app in skill_app_types() {
+            for app in AppType::all() {
                 if matches!(
                     app,
                     AppType::Pi
@@ -2767,7 +2755,7 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop | AppType::DshDesktop) {
+        if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
         }
 
@@ -2971,7 +2959,7 @@ impl SkillService {
         app: &AppType,
         preserved_paths: &[PathBuf],
     ) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop | AppType::DshDesktop) {
+        if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
         }
 
@@ -3018,18 +3006,13 @@ impl SkillService {
     }
 
     /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、OpenClaw 不支持 Skills，
-    /// DeepSeek Harness Desktop 和 DeepSeek Harness 共用 `$DSH_HOME/skills`（由 DSH 那一列管），
     /// Pi 没有数据库列、按目录是否存在现算。这些应用的 skills 目录不归 CC Switch 管，
     /// 同步时一个字节都不能碰——OpenClaw 自己的 `~/.openclaw/skills` 里和受管
     /// Skill 同名的真实目录，否则会被当成「已关掉的投影」删掉。
     fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop
-                | AppType::DshDesktop
-                | AppType::OpenClaw
-                | AppType::Pi
-                | AppType::Omp
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Omp
         )
     }
 
@@ -3037,7 +3020,7 @@ impl SkillService {
     /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi、Omp 不由这里同步，不在结果里）。
     pub fn resync_all_apps(db: &Arc<Database>) -> Vec<SkillAppSyncOutcome> {
         let _state_guard = skill_state_read_guard();
-        skill_app_types()
+        AppType::all()
             .filter(Self::is_sync_managed_app)
             .map(|app| {
                 let (error, failed_skills) = match Self::sync_to_app_unlocked(db, &app) {
@@ -4227,7 +4210,7 @@ impl SkillService {
             return Ok(Some(ssot_path));
         }
 
-        for app in skill_app_types() {
+        for app in AppType::all() {
             if matches!(
                 app,
                 AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
@@ -4980,7 +4963,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
     }
 
     // 扫描各应用目录
-    for app in skill_app_types() {
+    for app in AppType::all() {
         let app_dir = match SkillService::get_app_skills_dir(&app) {
             Ok(d) => d,
             Err(_) => continue,
@@ -7405,28 +7388,6 @@ mod tests {
                 .is_none(),
             "poisoned row must be deleted from the database"
         );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn dsh_desktop_sync_leaves_the_shared_dsh_skills_alone() {
-        let temp = tempdir().expect("tempdir");
-        let _home = TestHomeGuard::set(temp.path());
-        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
-        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
-        skill.apps.set_enabled_for(&AppType::Dsh, true);
-        db.save_skill(&skill).expect("save skill");
-        let deployed = SkillService::get_app_skills_dir(&AppType::Dsh)
-            .unwrap()
-            .join("test-skill");
-        write_skill(&deployed, "managed");
-
-        SkillService::sync_to_app(&db, &AppType::DshDesktop).expect("sync desktop");
-        assert!(
-            deployed.exists(),
-            "DSH Desktop must not remove DSH's skills"
-        );
-        assert!(!skill_app_types().any(|app| app == AppType::DshDesktop));
     }
 
     #[cfg(unix)]

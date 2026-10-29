@@ -4223,7 +4223,6 @@
     "columnVisible": "Show",
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
     "desktopHelp": "Claude Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
-    "dshDesktopHelp": "DeepSeek Harness Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",
@@ -5083,7 +5082,7 @@
       "title": "Add a DeepSeek Harness provider",
       "description": "Configure an endpoint, API key and models. Existing custom providers appear here automatically."
     },
-    "sharedProviders": "Web and Desktop share this provider list: adding, editing and removing write to every initialized profile (web, desktop, headless, acp). No profile is created for a Desktop app that hasn't been launched yet.",
+    "sharedProviders": "Web and Desktop share this provider list: adding, editing and removing write to both the web and desktop profiles (created in advance if missing; Desktop keeps it on first launch) and to any initialized headless or acp profile.",
     "account": {
       "help": "The DeepSeek account signs in through the browser (OAuth), here or in DeepSeek Harness. The sign-in is stored in $DSH_HOME/.credentials.yaml (default ~/.dsh/.credentials.yaml) and shared by DeepSeek Harness Web and Desktop: signing in or out anywhere applies to both, and a running DeepSeek Harness reloads it automatically. Usage of the account's models appears separately on the Usage page as \"DeepSeek account (OAuth)\".",
       "statusFailed": "Couldn't read the DeepSeek account sign-in",

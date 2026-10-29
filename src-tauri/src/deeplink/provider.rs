@@ -340,7 +340,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
-        AppType::Dsh | AppType::DshDesktop => {
+        AppType::Dsh => {
             return Err(AppError::InvalidInput(
                 "Add DeepSeek Harness providers from the DeepSeek Harness page".into(),
             ));

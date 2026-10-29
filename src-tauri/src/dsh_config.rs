@@ -90,87 +90,8 @@ pub(crate) fn home_patch_path() -> PathBuf {
     data_dir().join("cordis.patch.yml")
 }
 
-/// Open the Desktop profile if a patch exists; otherwise open DSH home without creating an
-/// empty profile just for directory browsing.
-pub(crate) fn desktop_config_dir() -> PathBuf {
-    if profile_path("desktop").exists() {
-        profile_dir("desktop")
-    } else {
-        data_dir()
-    }
-}
-
 pub(crate) fn credentials_path() -> PathBuf {
     data_dir().join(".credentials.yaml")
-}
-
-/// DeepSeek Harness Desktop as shown on the Apps page.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopStatus {
-    /// Desktop ships for macOS and Windows only.
-    pub supported: bool,
-    pub installed: bool,
-    /// The Desktop profile has at least one provider in `llm-pi-ai`.
-    pub configured: bool,
-    pub profile_path: String,
-}
-
-/// Electron's `userData` directory and the installed app bundle. The Desktop profile itself is
-/// not evidence: CC Switch may create it before the app's first launch.
-///
-/// The packaged app is `DeepSeekRuntime` (`productName`) while its package name is
-/// `@deepseek-ai/dsh-desktop`, and Electron derives `userData` from whichever of the two it
-/// resolved as the app name, so every spelling is checked instead of betting on one.
-fn desktop_install_candidates() -> Vec<PathBuf> {
-    const USER_DATA_NAMES: [&str; 3] =
-        ["@deepseek-ai/dsh-desktop", "DeepSeekRuntime", "dsh-desktop"];
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    let mut add = |candidate: PathBuf| {
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
-    };
-    if cfg!(target_os = "macos") {
-        let home = get_home_dir();
-        for name in USER_DATA_NAMES {
-            add(home.join("Library/Application Support").join(name));
-        }
-        add(PathBuf::from("/Applications/DeepSeekRuntime.app"));
-        add(home.join("Applications/DeepSeekRuntime.app"));
-    } else if cfg!(windows) {
-        if let Some(roaming) = dirs::config_dir() {
-            add(roaming.join("@deepseek-ai").join("dsh-desktop"));
-            for name in &USER_DATA_NAMES[1..] {
-                add(roaming.join(name));
-            }
-        }
-        if let Some(local) = dirs::data_local_dir() {
-            add(local.join("Programs").join("DeepSeekRuntime"));
-            add(local
-                .join("Programs")
-                .join("@deepseek-ai")
-                .join("dsh-desktop"));
-        }
-    }
-    candidates
-}
-
-pub(crate) fn desktop_status() -> DesktopStatus {
-    let supported = cfg!(any(target_os = "macos", windows));
-    let path = profile_path("desktop");
-    let configured = path.exists()
-        && get_providers_from(&path, &credentials_path())
-            .is_ok_and(|providers| !providers.is_empty());
-    DesktopStatus {
-        supported,
-        installed: supported
-            && desktop_install_candidates()
-                .iter()
-                .any(|candidate| candidate.exists()),
-        configured,
-        profile_path: path.to_string_lossy().into_owned(),
-    }
 }
 
 fn read_text(path: &Path) -> Result<String, AppError> {
@@ -2145,7 +2066,7 @@ mod tests {
         let desktop = profile_path("desktop");
         let native = "- id: native-plugin\n  config: {value: !!js process.env.VALUE}\n";
         fs::write(&desktop, native).unwrap();
-        let listed = ProviderService::list(&state, AppType::DshDesktop).unwrap();
+        let listed = ProviderService::list(&state, AppType::Dsh).unwrap();
         assert!(listed.contains_key("gateway"));
         let providers = get_providers_from(&desktop, &credentials_path()).unwrap();
         assert!(providers.contains_key("gateway"));
@@ -2160,7 +2081,6 @@ mod tests {
         assert!(text.contains("native-node"));
         assert_eq!(read_text(&web).unwrap(), before_web);
         assert_eq!(fs::read(credentials_path()).unwrap(), before_credentials);
-        assert!(desktop_status().configured);
 
         // Even deleting every managed node natively must survive startup and page refresh.
         fs::write(&desktop, native).unwrap();

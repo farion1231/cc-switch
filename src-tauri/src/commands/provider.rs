@@ -20,25 +20,19 @@ const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
-fn parse_provider_app(app: &str) -> Result<AppType, String> {
-    AppType::from_str(app)
-        .map(AppType::provider_app)
-        .map_err(|error| error.to_string())
-}
-
 /// 获取所有供应商
 #[tauri::command]
 pub fn get_providers(
     state: State<'_, AppState>,
     app: String,
 ) -> Result<IndexMap<String, Provider>, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::list(state.inner(), app_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_current_provider(state: State<'_, AppState>, app: String) -> Result<String, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::current(state.inner(), app_type).map_err(|e| e.to_string())
 }
 
@@ -50,7 +44,7 @@ pub async fn add_provider(
     #[allow(non_snake_case)] addToLive: Option<bool>,
     #[allow(non_snake_case)] editorSave: Option<EditorSave>,
 ) -> Result<bool, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let add_to_live = addToLive.unwrap_or(true);
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
@@ -71,7 +65,7 @@ pub async fn update_provider(
     #[allow(non_snake_case)] originalId: Option<String>,
     #[allow(non_snake_case)] editorSave: Option<EditorSave>,
 ) -> Result<bool, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
@@ -101,7 +95,7 @@ pub async fn get_provider_editor_view(
     #[allow(non_snake_case)] providerId: Option<String>,
     meta: Option<ProviderMeta>,
 ) -> Result<EditorView, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
@@ -133,7 +127,7 @@ pub fn delete_provider(
     app: String,
     id: String,
 ) -> Result<bool, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::delete(state.inner(), app_type, &id)
         .map(|_| true)
         .map_err(|e| e.to_string())
@@ -145,7 +139,7 @@ pub fn add_provider_to_live_config(
     app: String,
     id: String,
 ) -> Result<bool, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::add_to_live_config(state.inner(), app_type, &id)
         .map(|_| true)
         .map_err(|e| e.to_string())
@@ -157,7 +151,7 @@ pub fn remove_provider_from_live_config(
     app: String,
     id: String,
 ) -> Result<bool, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::remove_from_live_config(state.inner(), app_type, &id)
         .map(|_| true)
         .map_err(|e| e.to_string())
@@ -186,7 +180,7 @@ pub async fn switch_provider(
     app: String,
     id: String,
 ) -> Result<SwitchResult, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let handle = app_handle.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = handle
@@ -277,7 +271,7 @@ pub fn import_default_config_test_hook(
 
 #[tauri::command]
 pub fn import_default_config(state: State<'_, AppState>, app: String) -> Result<bool, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     import_default_config_internal(&state, app_type).map_err(Into::into)
 }
 
@@ -529,7 +523,7 @@ pub async fn queryProviderUsage(
     #[allow(non_snake_case)] providerId: String, // 使用 camelCase 匹配前端
     app: String,
 ) -> Result<crate::provider::UsageResult, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     // inner 可能以两种形式失败：
     //   1) 返回 Ok(UsageResult { success: false, .. }) —— 确定性失败（401、脚本
     //      报错、未知供应商等）。写进 UsageCache 并刷新托盘，让
@@ -856,7 +850,7 @@ pub async fn testUsageScript(
     #[allow(non_snake_case)] userId: Option<String>,
     #[allow(non_snake_case)] templateType: Option<String>,
 ) -> Result<crate::provider::UsageResult, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::test_usage_script(
         state.inner(),
         app_type,
@@ -875,7 +869,7 @@ pub async fn testUsageScript(
 
 #[tauri::command]
 pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::read_live_settings(app_type).map_err(|e| e.to_string())
 }
 
@@ -895,7 +889,7 @@ pub fn get_custom_endpoints(
     app: String,
     #[allow(non_snake_case)] providerId: String,
 ) -> Result<Vec<crate::settings::CustomEndpoint>, String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::get_custom_endpoints(state.inner(), app_type, &providerId)
         .map_err(|e| e.to_string())
 }
@@ -907,7 +901,7 @@ pub fn add_custom_endpoint(
     #[allow(non_snake_case)] providerId: String,
     url: String,
 ) -> Result<(), String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::add_custom_endpoint(state.inner(), app_type, &providerId, url)
         .map_err(|e| e.to_string())
 }
@@ -919,7 +913,7 @@ pub fn remove_custom_endpoint(
     #[allow(non_snake_case)] providerId: String,
     url: String,
 ) -> Result<(), String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::remove_custom_endpoint(state.inner(), app_type, &providerId, url)
         .map_err(|e| e.to_string())
 }
@@ -931,7 +925,7 @@ pub fn update_endpoint_last_used(
     #[allow(non_snake_case)] providerId: String,
     url: String,
 ) -> Result<(), String> {
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::update_endpoint_last_used(state.inner(), app_type, &providerId, url)
         .map_err(|e| e.to_string())
 }
@@ -949,7 +943,7 @@ pub async fn update_providers_sort_order(
     updates: Vec<ProviderSortUpdate>,
 ) -> Result<bool, String> {
     static SORT_ORDER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let app_type = parse_provider_app(&app)?;
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let _serial = SORT_ORDER_LOCK.lock().await;
     let changed = ProviderService::update_sort_order(state.inner(), app_type.clone(), updates)
         .map_err(|e| e.to_string())?;
@@ -1367,119 +1361,5 @@ mod native_query_credentials_tests {
 
         assert_eq!(base_url, "https://provider.zenmux.example/v1");
         assert_eq!(api_key, "sk-provider");
-    }
-}
-
-#[cfg(test)]
-mod dsh_desktop_tests {
-    use super::*;
-    use serde_json::json;
-    use std::sync::Arc;
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn desktop_usage_scripts_and_endpoints_use_the_shared_provider_row() {
-        use crate::proxy::providers::{
-            copilot_auth::CopilotAuthManager, xai_oauth_auth::XaiOAuthManager,
-        };
-        use tokio::sync::RwLock;
-
-        let state = AppState::new(Arc::new(crate::database::Database::memory().unwrap()));
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let router = axum::Router::new().route(
-            "/usage",
-            axum::routing::get(|headers: axum::http::HeaderMap| async move {
-                assert_eq!(headers["authorization"], "Bearer test-key");
-                axum::Json(json!({"remaining":42}))
-            }),
-        );
-        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let code = r#"({ request: {url: '{{baseUrl}}/usage', method: 'GET', headers: {Authorization: 'Bearer {{apiKey}}'}}, extractor: response => ({remaining: response.remaining, unit: 'USD'}) })"#;
-        let mut provider = Provider::with_id(
-            "gateway".into(),
-            "Gateway".into(),
-            json!({
-                "options": {"baseURL":url, "apiKey":"test-key"}
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            usage_script: Some(
-                serde_json::from_value(json!({
-                    "enabled":true, "language":"javascript", "code":code
-                }))
-                .unwrap(),
-            ),
-            ..Default::default()
-        });
-        state.db.save_provider("dsh", &provider).unwrap();
-        let app = parse_provider_app("dsh-desktop").unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let copilot = CopilotAuthState(Arc::new(RwLock::new(CopilotAuthManager::new(
-            dir.path().into(),
-        ))));
-        let xai = XaiOAuthState(Arc::new(RwLock::new(XaiOAuthManager::new(
-            dir.path().into(),
-        ))));
-        let queried = query_provider_usage_inner(&state, &copilot, &xai, app.clone(), "gateway")
-            .await
-            .unwrap();
-        assert!(queried.success, "{:?}", queried.error);
-        assert_eq!(queried.data.unwrap()[0].remaining, Some(42.0));
-        let tested = ProviderService::test_usage_script(
-            &state,
-            app.clone(),
-            "gateway",
-            code,
-            5,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        assert!(tested.success, "{:?}", tested.error);
-        assert_eq!(tested.data.unwrap()[0].remaining, Some(42.0));
-
-        let endpoint = "https://extra.example".to_owned();
-        ProviderService::add_custom_endpoint(&state, app.clone(), "gateway", endpoint.clone())
-            .unwrap();
-        ProviderService::update_endpoint_last_used(
-            &state,
-            app.clone(),
-            "gateway",
-            endpoint.clone(),
-        )
-        .unwrap();
-        let endpoints =
-            ProviderService::get_custom_endpoints(&state, app.clone(), "gateway").unwrap();
-        assert_eq!(endpoints.len(), 1);
-        assert_eq!(endpoints[0].url, endpoint);
-        assert_eq!(
-            state.db.get_all_providers("dsh").unwrap()["gateway"]
-                .meta
-                .as_ref()
-                .unwrap()
-                .custom_endpoints
-                .len(),
-            1
-        );
-        ProviderService::remove_custom_endpoint(&state, app, "gateway", endpoint).unwrap();
-        assert!(
-            ProviderService::get_custom_endpoints(&state, AppType::Dsh, "gateway")
-                .unwrap()
-                .is_empty()
-        );
-        assert!(state
-            .db
-            .get_all_providers("dsh-desktop")
-            .unwrap()
-            .is_empty());
-        server.abort();
     }
 }

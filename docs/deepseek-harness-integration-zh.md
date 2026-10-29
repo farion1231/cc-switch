@@ -27,7 +27,7 @@ DeepSeek Harness 的应用 ID 为 `dsh`，命令为 `dsh`，npm 包为 `@deepsee
 
 列表和「已添加」状态读取**所有**已初始化 profile，`web`、`desktop` 优先：只在某个 profile 里存在的供应商（例如在 DeepSeek Harness 的 headless 界面里原生添加的）也会显示出来，不会出现「列表里没有、添加时却说 key 已占用」的死角。每个 profile 里的同名节点内容必须与优先显示的那份一致：如果用户在 DeepSeek Harness 原生界面里改了其中一份（换端点、换模型、换凭据引用），CC Switch 编辑或移除时会拒绝写入并指出是哪个 profile 不一致，而不是用优先显示的那份静默覆盖。MCP 条目比较实际存在的副本：优先显示的 profile 缺少某条 MCP 时，使用其他 profile 中已有的条目作为比较基准；缺少副本不会阻止编辑或删除，内容确实不同才报错。
 
-启动 CC Switch 或打开 DSH / DSH Desktop 供应商页时，会检查首次遇到的目标 profile。尚无受管供应商的 profile 会补入 `liveConfigManaged` 为真的供应商，尚无受管 MCP 的 profile 会补入已为 DSH 启用的服务器；现有原生配置保留。完成记录保存在 `$DSH_HOME/.cc-switch-profile-sync.json`，和本次配置写入一起提交、失败一起回滚。以后用户在原生客户端删除条目，即使删空，也不会因重启或刷新页面反复补回。
+启动 CC Switch 或打开 DeepSeek Harness 供应商页时，会检查首次遇到的目标 profile。尚无受管供应商的 profile 会补入 `liveConfigManaged` 为真的供应商，尚无受管 MCP 的 profile 会补入已为 DSH 启用的服务器；现有原生配置保留。完成记录保存在 `$DSH_HOME/.cc-switch-profile-sync.json`，和本次配置写入一起提交、失败一起回滚。以后用户在原生客户端删除条目，即使删空，也不会因重启或刷新页面反复补回。
 
 供应商的模型出现在 DeepSeek Harness 的模型选择器中。默认模型和 `sdk` 类 profile 通过 DeepSeek Harness 原生界面管理。CC Switch 的「添加」不会更改原生默认模型。
 
@@ -52,7 +52,7 @@ API Key 写入原生 `.credentials.yaml` 的 `refs`，profile 仅保存 `apiKeyE
 
 ## DeepSeek Harness Desktop
 
-「应用」页单独列出 **DeepSeek Harness Desktop**：它是桌面应用，不能在这里安装或升级，CC Switch 通过它的配置文件（`profiles/desktop/cordis.patch.yml`）接入。是否已安装按 Electron 用户数据目录（`@deepseek-ai/dsh-desktop`）或应用包判断，CC Switch 自己写过 profile 不算。侧栏的 Desktop 页面和 DeepSeek Harness 页面读写同一份供应商列表；MCP、Skills、提示词跟随 DeepSeek Harness。
+Desktop 不单独作为一个应用：它和 Web 共用凭据、会话、Skills 和 `AGENTS.md`，供应商和 MCP 也总是同时写进 `web` 和 `desktop` 两个 profile，所以侧栏和「应用」页只有一个 DeepSeek Harness，它的供应商、MCP、Skills、提示词同时作用于 Web 和 Desktop。
 
 ## DeepSeek 账号（OAuth）
 

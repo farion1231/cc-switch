@@ -49,8 +49,7 @@ impl McpApps {
             AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
-            // DSH Desktop has no flag of its own: DSH's MCP is mirrored into its profile.
-            AppType::ClaudeDesktop | AppType::DshDesktop => false,
+            AppType::ClaudeDesktop => false,
             AppType::Agy => self.agy,
         }
     }
@@ -69,7 +68,7 @@ impl McpApps {
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::ClaudeDesktop | AppType::DshDesktop => {}
+            AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
         }
@@ -180,8 +179,7 @@ impl SkillApps {
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
-            // DSH Desktop reads the same `$DSH_HOME/skills` as DSH.
-            AppType::ClaudeDesktop | AppType::DshDesktop => false,
+            AppType::ClaudeDesktop => false,
         }
     }
 
@@ -202,7 +200,6 @@ impl SkillApps {
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
-            AppType::DshDesktop => {}    // shares DSH's `$DSH_HOME/skills`
         }
     }
 
@@ -484,8 +481,6 @@ pub enum AppType {
     Mcode,
     Kimi,
     Dsh,
-    #[serde(rename = "dsh-desktop", alias = "dsh_desktop", alias = "dshDesktop")]
-    DshDesktop,
     Agy,
     Omp,
 }
@@ -505,17 +500,8 @@ impl AppType {
             AppType::Mcode => "mcode",
             AppType::Kimi => "kimi",
             AppType::Dsh => "dsh",
-            AppType::DshDesktop => "dsh-desktop",
             AppType::Agy => "agy",
             AppType::Omp => "omp",
-        }
-    }
-
-    /// Desktop and Web share DSH provider rows, usage scripts and endpoint metadata.
-    pub fn provider_app(self) -> Self {
-        match self {
-            Self::DshDesktop => Self::Dsh,
-            app => app,
         }
     }
 
@@ -534,7 +520,6 @@ impl AppType {
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh
-                | AppType::DshDesktop
                 | AppType::Omp
         )
     }
@@ -568,21 +553,10 @@ impl AppType {
             AppType::Mcode,
             AppType::Kimi,
             AppType::Dsh,
-            AppType::DshDesktop,
             AppType::Agy,
             AppType::Omp,
         ]
         .into_iter()
-    }
-
-    /// Applications that own their own native files and database rows.
-    ///
-    /// `DshDesktop` is deliberately absent: it shares DeepSeekRuntime's providers, MCP servers,
-    /// skills and prompts and has no switches or rows of its own. Every per-application loop uses
-    /// this instead of [`AppType::all`] so that adding another shared shell cannot silently make a
-    /// loop treat it as an independent app.
-    pub fn independent() -> impl Iterator<Item = AppType> {
-        Self::all().filter(|app| *app != AppType::DshDesktop)
     }
 }
 
@@ -604,15 +578,12 @@ impl FromStr for AppType {
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
-            "dsh-desktop" | "dsh_desktop" | "dshdesktop" | "deepseek-harness-desktop" => {
-                Ok(AppType::DshDesktop)
-            }
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, dsh-desktop, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, dsh-desktop, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp."),
             )),
         }
     }
@@ -656,7 +627,6 @@ impl CommonConfigSnippets {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
-            | AppType::DshDesktop
             | AppType::Omp
             | AppType::Agy => None,
         }
@@ -677,7 +647,6 @@ impl CommonConfigSnippets {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
-            | AppType::DshDesktop
             | AppType::Omp
             | AppType::Agy => {}
         }
@@ -1010,7 +979,6 @@ impl MultiAppConfig {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
-            | AppType::DshDesktop
             | AppType::Omp
             | AppType::Agy => return Ok(false),
         };
@@ -1060,7 +1028,6 @@ impl MultiAppConfig {
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh
-                | AppType::DshDesktop
                 | AppType::Omp
                 | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
             };
@@ -1177,28 +1144,6 @@ mod tests {
     use std::env;
     use std::fs;
     use tempfile::TempDir;
-
-    #[test]
-    fn app_type_parses_dsh_desktop_aliases() {
-        for alias in [
-            "dsh-desktop",
-            "dsh_desktop",
-            "dshDesktop",
-            "deepseek-harness-desktop",
-        ] {
-            assert_eq!(alias.parse::<AppType>().unwrap(), AppType::DshDesktop);
-        }
-        assert_eq!(AppType::DshDesktop.as_str(), "dsh-desktop");
-        assert_eq!(
-            serde_json::to_value(AppType::DshDesktop).unwrap(),
-            serde_json::json!("dsh-desktop")
-        );
-        assert!(AppType::DshDesktop.is_additive_mode());
-        // MCP and Skills follow DSH: no flag of its own
-        let mut apps = McpApps::default();
-        apps.set_enabled_for(&AppType::DshDesktop, true);
-        assert!(apps.is_empty());
-    }
 
     #[test]
     fn app_type_parses_claude_desktop_aliases() {

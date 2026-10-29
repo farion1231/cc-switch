@@ -322,7 +322,6 @@ describe("SessionManagerPage", () => {
         mcode: false,
         kimi: false,
         dsh: false,
-        "dsh-desktop": false,
         agy: false,
         omp: false,
       },

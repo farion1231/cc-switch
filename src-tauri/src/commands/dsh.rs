@@ -1,10 +1,4 @@
-//! DeepSeek Harness Desktop status and the DeepSeek account login shared with DSH Web.
-
-/// DeepSeek Harness Desktop on the Apps page: installed, and whether its profile has providers.
-#[tauri::command]
-pub fn get_dsh_desktop_status() -> crate::dsh_config::DesktopStatus {
-    crate::dsh_config::desktop_status()
-}
+//! The DeepSeek account login shared by DSH Web and Desktop.
 
 /// The DeepSeek account (OAuth) login shared by DSH Web and Desktop, with profile and balance.
 #[tauri::command]

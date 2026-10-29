@@ -4197,7 +4197,6 @@
     "columnVisible": "Göster",
     "visibleHelp": "Kapalıyken uygulama artık kenar çubuğunda, tepsi menüsünde, MCP / Skills uygulama sütunlarında veya İstemler ve Oturumlar'daki uygulama seçicilerde görünmez. Yalnızca gizlenir: sağlayıcıları, MCP sunucuları ve diğer ayarları yerinde kalır, kendi yapılandırma dosyalarına da dokunulmaz.",
     "desktopHelp": "Claude Desktop bir masaüstü uygulamasıdır ve buraya yüklenemez veya yükseltilemez; CC Switch, yapılandırma dosyası aracılığıyla ona bağlanır.",
-    "dshDesktopHelp": "DeepSeek Harness Desktop bir masaüstü uygulamasıdır ve buraya yüklenemez veya yükseltilemez; CC Switch, yapılandırma dosyası aracılığıyla ona bağlanır.",
     "desktopUnsupported": "Bu sistemde desteklenmiyor",
     "desktopConnected": "Bağlı",
     "desktopNotConnected": "Bağlı değil",
@@ -5039,7 +5038,7 @@
       "title": "DeepSeek Harness sağlayıcısı ekle",
       "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
     },
-    "sharedProviders": "Web ve Desktop bu sağlayıcı listesini paylaşır: ekleme, düzenleme ve kaldırma başlatılmış her profile (web, desktop, headless, acp) birlikte yazılır. Henüz açılmamış Desktop için profil oluşturulmaz.",
+    "sharedProviders": "Web ve Desktop bu sağlayıcı listesini paylaşır: ekleme, düzenleme ve kaldırma web ve desktop profillerine (yoksa önceden oluşturulur; Desktop ilk açılışta korur) ve başlatılmış headless, acp profillerine birlikte yazılır.",
     "account": {
       "help": "DeepSeek hesabı tarayıcı üzerinden oturum açar (OAuth); burada veya DeepSeek Harness'ta oturum açabilirsiniz. Oturum $DSH_HOME/.credentials.yaml (varsayılan ~/.dsh/.credentials.yaml) içinde saklanır ve DeepSeek Harness Web ile Desktop tarafından paylaşılır: herhangi bir yerde oturum açmak veya kapatmak ikisine de uygulanır, çalışan DeepSeek Harness dosyayı otomatik olarak yeniden okur. Hesabın modellerinin kullanımı, Kullanım sayfasında ayrıca \"DeepSeek hesabı (OAuth)\" olarak görünür.",
       "statusFailed": "DeepSeek hesabı oturumu okunamadı",

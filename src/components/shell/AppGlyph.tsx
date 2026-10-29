@@ -17,7 +17,6 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
   dsh: "DeepSeek Harness",
-  "dsh-desktop": "DeepSeek Harness Desktop",
   agy: "Antigravity",
   omp: "Oh My Pi",
 };
@@ -25,7 +24,6 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
 /** 侧栏里用的短名（侧栏窄，全名在悬停提示里）；没列的应用沿用 {@link APP_DISPLAY_NAME}。 */
 export const APP_SIDEBAR_NAME: Partial<Record<AppId, string>> = {
   dsh: "DSH",
-  "dsh-desktop": "DSH Desktop",
 };
 
 const APP_ICON_NAME: Record<AppId, string> = {
@@ -41,17 +39,14 @@ const APP_ICON_NAME: Record<AppId, string> = {
   mcode: "minimax",
   kimi: "kimi",
   dsh: "deepseek",
-  "dsh-desktop": "deepseek",
   agy: "antigravity",
   omp: "omp",
 };
 
-// Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面。
-// DeepSeek Harness 不加角标：它的会话和用量是 Web 与 Desktop 合并的，只有 Desktop 标桌面。
+// Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面
 const APP_BADGE_ICON: Partial<Record<AppId, typeof Terminal>> = {
   claude: Terminal,
   "claude-desktop": Monitor,
-  "dsh-desktop": Monitor,
 };
 
 interface AppGlyphProps {

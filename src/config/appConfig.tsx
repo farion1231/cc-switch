@@ -30,7 +30,6 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "dsh",
-  "dsh-desktop",
   "agy",
   "omp",
 ];
@@ -48,7 +47,6 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   dsh: true,
-  "dsh-desktop": true,
   agy: true,
   omp: true,
 };
@@ -139,22 +137,13 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  | "opencode"
-  | "openclaw"
-  | "hermes"
-  | "pi"
-  | "mcode"
-  | "kimi"
-  | "dsh"
-  | "dsh-desktop"
-  | "omp"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
   "dsh",
-  "dsh-desktop",
   "opencode",
   "openclaw",
   "hermes",
@@ -164,14 +153,6 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
-}
-
-/**
- * DeepSeek Harness 的 Web（`profiles/web`）和 Desktop（`profiles/desktop`）：供应商表单、预设、
- * 原生配置写法相同，只是写进不同的 profile。
- */
-export function isDshApp(appId: string): appId is "dsh" | "dsh-desktop" {
-  return appId === "dsh" || appId === "dsh-desktop";
 }
 
 /** Oh My Pi 是 Pi 的分支：供应商表单、启用状态和用量脚本命令与 Pi 共用。 */
@@ -196,14 +177,8 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/**
- * Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`）。
- * DeepSeek Harness Desktop 跟随 DeepSeek Harness：同一列的 MCP 同时写进两个 profile。
- */
-export type McpAppId = Exclude<
-  AppId,
-  "claude-desktop" | "openclaw" | "dsh-desktop"
->;
+/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
+export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -319,14 +294,6 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
-  },
-  "dsh-desktop": {
-    label: "DeepSeek Harness Desktop",
-    icon: (
-      <ProviderIcon icon="deepseek" name="DeepSeek Harness Desktop" size={14} />
-    ),
-    activeClass: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
-    badgeClass: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-0 gap-1.5",
   },
   kimi: {
     label: "Kimi Code",

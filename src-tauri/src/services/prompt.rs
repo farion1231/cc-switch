@@ -308,8 +308,7 @@ impl PromptService {
     /// Best-effort projection for every Prompt-capable application.
     pub fn sync_all_to_live(state: &AppState) -> Result<(), AppError> {
         let mut failures = Vec::new();
-        // DeepSeekRuntime Desktop 读的是 DeepSeekRuntime 的 `$DSH_HOME/AGENTS.md`
-        for app in AppType::independent() {
+        for app in AppType::all() {
             if matches!(app, AppType::ClaudeDesktop) {
                 continue;
             }

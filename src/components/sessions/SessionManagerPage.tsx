@@ -201,7 +201,6 @@ export function SessionManagerPage({
       (app) =>
         visible[app] ||
         (app === "claude" && visible["claude-desktop"]) ||
-        (app === "dsh" && visible["dsh-desktop"]) ||
         app === appFilter,
     );
   }, [settings?.visibleApps, appFilter]);

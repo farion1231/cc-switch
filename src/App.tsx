@@ -783,7 +783,6 @@ function App() {
         if (
           activeApp === "mcode" ||
           activeApp === "dsh" ||
-          activeApp === "dsh-desktop" ||
           activeApp === "kimi" ||
           activeApp === "agy"
         )
@@ -1014,12 +1013,7 @@ function App() {
         queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
         queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
       ]);
-    } else if (
-      app === "mcode" ||
-      app === "dsh" ||
-      app === "dsh-desktop" ||
-      app === "kimi"
-    ) {
+    } else if (app === "mcode" || app === "dsh" || app === "kimi") {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
   };
@@ -1191,7 +1185,6 @@ function App() {
     } else if (
       activeApp === "mcode" ||
       activeApp === "dsh" ||
-      activeApp === "dsh-desktop" ||
       activeApp === "kimi"
     ) {
       // The MCode list already includes its live custom nodes; the backend
@@ -1307,8 +1300,7 @@ function App() {
 
   // ─── 应用页 ─────────────────────────────────────────────────────────────
 
-  // 应用页 ⋯ →「查看此应用的用量」：带上这个应用的筛选（Claude Desktop 的流量并在 Claude 里，
-  // DeepSeek Harness Desktop 的会话用量并在 DeepSeek Harness 里）
+  // 应用页 ⋯ →「查看此应用的用量」：带上这个应用的筛选（Claude Desktop 的流量并在 Claude 里）
   const usageAppOf = (app: AppId): AppTypeFilter | null => {
     const type = sharedFeatureAppOf(app);
     return (KNOWN_APP_TYPES as ReadonlyArray<string>).includes(type)
@@ -1399,7 +1391,6 @@ function App() {
           {currentView === "providers" &&
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
-            activeApp !== "dsh-desktop" &&
             activeApp !== "kimi" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
@@ -1568,7 +1559,6 @@ function App() {
               activeApp === "mcode" ||
               activeApp === "kimi" ||
               activeApp === "dsh" ||
-              activeApp === "dsh-desktop" ||
               activeApp === "omp"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
@@ -1724,7 +1714,6 @@ function App() {
                 (app) =>
                   visibleApps[app] ||
                   (app === "claude" && visibleApps["claude-desktop"]) ||
-                  (app === "dsh" && visibleApps["dsh-desktop"]) ||
                   app === promptsApp,
               )}
               onAppChange={setPromptsApp}
