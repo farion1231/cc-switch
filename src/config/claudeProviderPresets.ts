@@ -1595,6 +1595,33 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#2932E1",
   },
   {
+    // 讯飞官方 Claude Code 配置：www.xfyun.cn/doc/spark/CodingPlan.html。
+    // 请求一律用别名 astron-code-latest，底层模型（Spark X2 等）在控制台套餐
+    // 页切换；/anthropic 之外的 /v1、/v2 是 Responses / Chat，不能混用。
+    // 非 claude-* 模型 id 按 200K 默认窗口处理，钉成与 Codex 预设相同的官方
+    // 保守值 92160（官方建议 <96k）
+    name: "Astron Coding Plan",
+    websiteUrl: "https://maas.xfyun.cn/packageSubscription",
+    apiKeyUrl: "https://maas.xfyun.cn/packageSubscription",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "astron-code-latest",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "astron-code-latest",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "astron-code-latest",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "astron-code-latest",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "92160",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: [
+      "https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic",
+    ],
+    icon: "astron",
+  },
+  {
     name: "千问AI平台",
     family: "qianwen",
     planKey: "payg",
