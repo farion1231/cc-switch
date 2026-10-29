@@ -2477,6 +2477,20 @@ pub(crate) fn plan_codex_model_catalog(
     })
 }
 
+/// 只含一个模型的目录（GPT 模型照样镜像官方条目）：行里没配目录、又得盖掉别家留下的目录
+/// 指针时用（`-c` 删不掉键）。
+pub(crate) fn codex_single_model_catalog(
+    model: &str,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<Value, AppError> {
+    let spec = CodexCatalogModelSpec {
+        model: model.to_string(),
+        ..CodexCatalogModelSpec::default()
+    };
+    codex_catalog_from_specs_for_row(&[spec], config_text, profile)
+}
+
 /// 一家第三方供应商发布的模型：行里的模型目录；没有配置目录时只有行的 `model`。
 fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
     let specs = codex_catalog_model_specs(settings);
