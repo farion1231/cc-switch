@@ -5,7 +5,7 @@
 //! the main proxy files.
 
 use serde_json::Value;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Composite key for a Gemini shadow session.
@@ -71,6 +71,17 @@ pub struct GeminiShadowSessionSnapshot {
     pub provider_id: String,
     pub session_id: String,
     pub turns: Vec<GeminiAssistantTurn>,
+    /// Lightweight signatures outlive the bounded full-content turn window.
+    pub thought_signatures: HashMap<String, String>,
+}
+
+const MAX_CACHED_SIGNATURES: usize = 4096;
+const MAX_CACHED_SIGNATURE_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GeminiSignatureKey {
+    session: GeminiShadowKey,
+    tool_call_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +101,9 @@ impl GeminiShadowSession {
 struct GeminiShadowInner {
     sessions: HashMap<GeminiShadowKey, GeminiShadowSession>,
     session_order: VecDeque<GeminiShadowKey>,
+    signatures: HashMap<GeminiSignatureKey, String>,
+    signature_order: VecDeque<GeminiSignatureKey>,
+    signature_bytes: usize,
 }
 
 impl GeminiShadowInner {
@@ -97,6 +111,9 @@ impl GeminiShadowInner {
         Self {
             sessions: HashMap::new(),
             session_order: VecDeque::new(),
+            signatures: HashMap::new(),
+            signature_order: VecDeque::new(),
+            signature_bytes: 0,
         }
     }
 }
@@ -107,10 +124,13 @@ impl GeminiShadowInner {
 /// - sessions are keyed by `(provider_id, session_id)`
 /// - each session keeps only a bounded number of recent assistant turns
 /// - the oldest session is evicted first when the store is full
+/// - a separately bounded cache retains signatures by exact provider/session/call id
 #[derive(Debug)]
 pub struct GeminiShadowStore {
     max_sessions: usize,
     max_turns_per_session: usize,
+    max_signatures: usize,
+    max_signature_bytes: usize,
     inner: RwLock<GeminiShadowInner>,
 }
 
@@ -127,9 +147,25 @@ impl GeminiShadowStore {
     }
 
     pub fn with_limits(max_sessions: usize, max_turns_per_session: usize) -> Self {
+        Self::with_signature_limits(
+            max_sessions,
+            max_turns_per_session,
+            MAX_CACHED_SIGNATURES,
+            MAX_CACHED_SIGNATURE_BYTES,
+        )
+    }
+
+    fn with_signature_limits(
+        max_sessions: usize,
+        max_turns_per_session: usize,
+        max_signatures: usize,
+        max_signature_bytes: usize,
+    ) -> Self {
         Self {
             max_sessions: max_sessions.max(1),
             max_turns_per_session: max_turns_per_session.max(1),
+            max_signatures: max_signatures.max(1),
+            max_signature_bytes: max_signature_bytes.max(1),
             inner: RwLock::new(GeminiShadowInner::new()),
         }
     }
@@ -147,8 +183,15 @@ impl GeminiShadowStore {
 
         let mut inner = self.write_inner();
         Self::touch_session_order(&mut inner.session_order, &key);
+        Self::cache_signatures(
+            &mut inner,
+            &key,
+            &turn.tool_calls,
+            self.max_signatures,
+            self.max_signature_bytes,
+        );
 
-        let snapshot = {
+        let mut snapshot = {
             let session = inner
                 .sessions
                 .entry(key.clone())
@@ -159,6 +202,7 @@ impl GeminiShadowStore {
             }
             Self::snapshot_session(&key, session)
         };
+        snapshot.thought_signatures = Self::signatures_for_session(&inner, &key);
         Self::prune_sessions(&mut inner, self.max_sessions);
         snapshot
     }
@@ -194,12 +238,23 @@ impl GeminiShadowStore {
     ) -> Option<GeminiShadowSessionSnapshot> {
         let key = GeminiShadowKey::new(provider_id, session_id);
         let mut inner = self.write_inner();
-        let snapshot = inner
+        let mut snapshot = inner
             .sessions
             .get(&key)
             .map(|session| Self::snapshot_session(&key, session));
         if snapshot.is_some() {
             Self::touch_session_order(&mut inner.session_order, &key);
+        }
+        let signatures = Self::signatures_for_session(&inner, &key);
+        if let Some(snapshot) = snapshot.as_mut() {
+            snapshot.thought_signatures = signatures;
+        } else if !signatures.is_empty() {
+            snapshot = Some(GeminiShadowSessionSnapshot {
+                provider_id: key.provider_id,
+                session_id: key.session_id,
+                turns: Vec::new(),
+                thought_signatures: signatures,
+            });
         }
         snapshot
     }
@@ -213,7 +268,17 @@ impl GeminiShadowStore {
         if removed {
             Self::remove_key_from_order(&mut inner.session_order, &key);
         }
-        removed
+        let signature_keys = inner
+            .signatures
+            .keys()
+            .filter(|cached| cached.session == key)
+            .cloned()
+            .collect::<Vec<_>>();
+        for cached in &signature_keys {
+            Self::remove_signature(&mut inner, cached);
+        }
+        inner.signature_order.retain(|cached| cached.session != key);
+        removed || !signature_keys.is_empty()
     }
 
     /// Remove all sessions for a provider.
@@ -226,11 +291,25 @@ impl GeminiShadowStore {
             .filter(|key| key.provider_id == provider_id)
             .cloned()
             .collect();
+        let mut removed_sessions = keys.iter().cloned().collect::<HashSet<_>>();
         for key in &keys {
             inner.sessions.remove(key);
             Self::remove_key_from_order(&mut inner.session_order, key);
         }
-        keys.len()
+        let signature_keys = inner
+            .signatures
+            .keys()
+            .filter(|cached| cached.session.provider_id == provider_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        for cached in &signature_keys {
+            removed_sessions.insert(cached.session.clone());
+            Self::remove_signature(&mut inner, cached);
+        }
+        inner
+            .signature_order
+            .retain(|cached| cached.session.provider_id != provider_id);
+        removed_sessions.len()
     }
 
     /// Number of tracked sessions.
@@ -261,6 +340,73 @@ impl GeminiShadowStore {
             provider_id: key.provider_id.clone(),
             session_id: key.session_id.clone(),
             turns: session.turns.iter().cloned().collect(),
+            thought_signatures: HashMap::new(),
+        }
+    }
+
+    fn signatures_for_session(
+        inner: &GeminiShadowInner,
+        session: &GeminiShadowKey,
+    ) -> HashMap<String, String> {
+        inner
+            .signatures
+            .iter()
+            .filter(|(key, _)| &key.session == session)
+            .map(|(key, signature)| (key.tool_call_id.clone(), signature.clone()))
+            .collect()
+    }
+
+    fn signature_entry_size(key: &GeminiSignatureKey, signature: &str) -> usize {
+        // Keys are stored in both the lookup map and the eviction queue.
+        2 * (key.session.provider_id.len() + key.session.session_id.len() + key.tool_call_id.len())
+            + signature.len()
+    }
+
+    fn remove_signature(inner: &mut GeminiShadowInner, key: &GeminiSignatureKey) {
+        if let Some(signature) = inner.signatures.remove(key) {
+            inner.signature_bytes -= Self::signature_entry_size(key, &signature);
+        }
+    }
+
+    fn cache_signatures(
+        inner: &mut GeminiShadowInner,
+        session: &GeminiShadowKey,
+        calls: &[GeminiToolCallMeta],
+        max_count: usize,
+        max_bytes: usize,
+    ) {
+        for call in calls {
+            let Some(id) = call.id.as_deref().filter(|id| !id.is_empty()) else {
+                continue;
+            };
+            let Some(signature) = call
+                .thought_signature
+                .as_deref()
+                .filter(|sig| !sig.is_empty())
+            else {
+                continue;
+            };
+            let key = GeminiSignatureKey {
+                session: session.clone(),
+                tool_call_id: id.to_string(),
+            };
+            if inner.signatures.contains_key(&key) {
+                Self::remove_signature(inner, &key);
+                inner.signature_order.retain(|cached| cached != &key);
+            }
+            let entry_size = Self::signature_entry_size(&key, signature);
+            if entry_size > max_bytes {
+                continue;
+            }
+            inner.signature_bytes += entry_size;
+            inner.signatures.insert(key.clone(), signature.to_string());
+            inner.signature_order.push_back(key);
+            while inner.signatures.len() > max_count || inner.signature_bytes > max_bytes {
+                let Some(oldest) = inner.signature_order.pop_front() else {
+                    break;
+                };
+                Self::remove_signature(inner, &oldest);
+            }
         }
     }
 
@@ -292,6 +438,137 @@ impl GeminiShadowStore {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn signature_cache_survives_full_turn_and_session_eviction() {
+        let store = GeminiShadowStore::with_signature_limits(1, 1, 8, 1024);
+        store.record_assistant_turn(
+            "p",
+            "s",
+            json!({"text": "call"}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_1"),
+                "Glob",
+                json!({}),
+                Some("real-signature"),
+            )],
+        );
+        store.record_assistant_turn("p", "s", json!({"text": "later"}), vec![]);
+        let snapshot = store.get_session("p", "s").unwrap();
+        assert_eq!(snapshot.turns.len(), 1);
+        assert_eq!(
+            snapshot
+                .thought_signatures
+                .get("call_1")
+                .map(String::as_str),
+            Some("real-signature")
+        );
+        store.record_assistant_turn("p", "another", json!({"text": "another session"}), vec![]);
+        let retained = store.get_session("p", "s").unwrap();
+        assert!(retained.turns.is_empty());
+        assert_eq!(
+            retained
+                .thought_signatures
+                .get("call_1")
+                .map(String::as_str),
+            Some("real-signature")
+        );
+        assert!(store.clear_session("p", "s"));
+        assert!(store.get_session("p", "s").is_none());
+        assert!(store.get_session("p", "another").is_some());
+    }
+
+    #[test]
+    fn signature_cache_is_scoped_and_count_bounded() {
+        let store = GeminiShadowStore::with_signature_limits(8, 1, 2, 1024);
+        for (provider, session, signature) in [
+            ("a", "s", "sig-a"),
+            ("b", "s", "sig-b"),
+            ("a", "other", "sig-other"),
+        ] {
+            store.record_assistant_turn(
+                provider,
+                session,
+                json!({}),
+                vec![GeminiToolCallMeta::new(
+                    Some("same-id"),
+                    "Glob",
+                    json!({}),
+                    Some(signature),
+                )],
+            );
+        }
+        assert!(store
+            .get_session("a", "s")
+            .unwrap()
+            .thought_signatures
+            .is_empty());
+        assert_eq!(
+            store.get_session("b", "s").unwrap().thought_signatures["same-id"],
+            "sig-b"
+        );
+        assert_eq!(
+            store.get_session("a", "other").unwrap().thought_signatures["same-id"],
+            "sig-other"
+        );
+        assert_eq!(store.clear_provider("a"), 2);
+        assert!(store.get_session("a", "s").is_none());
+        assert!(store.get_session("a", "other").is_none());
+        assert_eq!(
+            store.get_session("b", "s").unwrap().thought_signatures["same-id"],
+            "sig-b"
+        );
+    }
+
+    #[test]
+    fn signature_cache_enforces_byte_budget_and_updates_existing_ids() {
+        let store = GeminiShadowStore::with_signature_limits(8, 1, 8, 128);
+        for id in ["first", "second"] {
+            store.record_assistant_turn(
+                "p",
+                "s",
+                json!({}),
+                vec![GeminiToolCallMeta::new(
+                    Some(id),
+                    "Glob",
+                    json!({}),
+                    Some("x".repeat(80)),
+                )],
+            );
+        }
+        let signatures = store.get_session("p", "s").unwrap().thought_signatures;
+        assert!(!signatures.contains_key("first"));
+        assert_eq!(signatures["second"], "x".repeat(80));
+        store.record_assistant_turn(
+            "p",
+            "s",
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("second"),
+                "Glob",
+                json!({}),
+                Some("updated"),
+            )],
+        );
+        assert_eq!(
+            store.get_session("p", "s").unwrap().thought_signatures["second"],
+            "updated"
+        );
+        store.record_assistant_turn(
+            "p",
+            "s",
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("oversize"),
+                "Glob",
+                json!({}),
+                Some("x".repeat(200)),
+            )],
+        );
+        let signatures = store.get_session("p", "s").unwrap().thought_signatures;
+        assert!(!signatures.contains_key("oversize"));
+        assert_eq!(signatures["second"], "updated");
+    }
 
     #[test]
     fn record_and_read_latest_turn() {
