@@ -266,8 +266,17 @@ describe("RequestLogTable", () => {
             latencyMs: 10_000,
             dataSource: "pi_session",
           },
+          {
+            ...base,
+            appType: "agy",
+            requestId: "agy-native-timed",
+            outputTokens: 600,
+            latencyMs: 5_000,
+            firstTokenMs: 2_000,
+            dataSource: "agy_session",
+          },
         ],
-        total: 6,
+        total: 7,
         page: 0,
         pageSize: 20,
       },
@@ -284,7 +293,7 @@ describe("RequestLogTable", () => {
     );
 
     const rows = screen.getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(7);
     // 最后两列：速度、首字
     const speedCell = (row: HTMLElement) =>
       row.children[row.children.length - 2];
@@ -315,6 +324,11 @@ describe("RequestLogTable", () => {
       "usage.estimatedTimingTip",
     );
     expect(firstTokenCell(rows[5])).toHaveTextContent("—");
+    expect(speedCell(rows[6])).toHaveTextContent("200tok/s");
+    expect(speedCell(rows[6])).not.toHaveTextContent("≈");
+    expect(firstTokenCell(rows[6])).toHaveTextContent("2.0s");
+    expect(firstTokenCell(rows[6])).not.toHaveTextContent("≈");
+    expect(speedCell(rows[6])).toHaveAttribute("title", "usage.timingTip");
     expect(
       screen.getByRole("columnheader", { name: /usage.firstToken/ }),
     ).toBeInTheDocument();

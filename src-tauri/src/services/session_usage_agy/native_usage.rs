@@ -1,9 +1,9 @@
-//! Read per-generation model names from Antigravity's native conversation database.
+//! Read per-generation model names and native timing from Antigravity's native conversation database.
 use prost::Message;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{collections::HashMap, path::Path, time::Duration};
 
-// Only the fields needed for the step -> generation -> model association are decoded.
+// Decode only the step reference, model identifiers and per-generation timing.
 #[derive(Clone, PartialEq, Message)]
 struct StepMetadata {
     #[prost(message, optional, tag = "20")]
@@ -44,10 +44,67 @@ struct ResponseModelId {
     model_id: String,
 }
 
-pub(super) fn models_for_transcript(
+#[derive(Debug, Default)]
+pub(super) struct NativeUsage {
+    pub model: Option<String>,
+    pub timing: Option<NativeTiming>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct NativeTiming {
+    pub first_token_ms: i64,
+    pub latency_ms: i64,
+}
+
+// Decode timing separately so malformed duration fields cannot hide a model name.
+#[derive(Clone, PartialEq, Message)]
+struct GenerationTiming {
+    #[prost(message, optional, tag = "1")]
+    response: Option<ResponseTiming>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ResponseTiming {
+    #[prost(message, optional, tag = "11")]
+    first_token: Option<NativeDuration>,
+    #[prost(message, optional, tag = "12")]
+    streaming: Option<NativeDuration>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct NativeDuration {
+    #[prost(int64, tag = "1")]
+    seconds: i64,
+    #[prost(int32, tag = "2")]
+    nanos: i32,
+}
+
+impl NativeDuration {
+    fn millis(&self) -> Option<i64> {
+        if self.seconds < 0 || !(0..1_000_000_000).contains(&self.nanos) {
+            return None;
+        }
+        self.seconds
+            .checked_mul(1000)?
+            .checked_add(i64::from(self.nanos) / 1_000_000)
+    }
+}
+
+fn timing_from_generation(bytes: &[u8]) -> Option<NativeTiming> {
+    let response = GenerationTiming::decode(bytes).ok()?.response?;
+    let first_token_ms = response.first_token?.millis()?;
+    let streaming_ms = response.streaming?.millis()?;
+    let latency_ms = first_token_ms.checked_add(streaming_ms)?;
+    (latency_ms > 0).then_some(NativeTiming {
+        first_token_ms,
+        latency_ms,
+    })
+}
+
+pub(super) fn usage_for_transcript(
     transcript: &Path,
     steps: &[u64],
-) -> Result<HashMap<u64, String>, String> {
+) -> Result<HashMap<u64, NativeUsage>, String> {
     // brain/<id>/.system_generated/logs/transcript_full.jsonl and conversations/<id>.db
     // share the same CLI/IDE/private-profile root.
     let session = transcript
@@ -70,10 +127,10 @@ pub(super) fn models_for_transcript(
     if !path.starts_with(root) {
         return Err("Conversation database is outside the Antigravity root".into());
     }
-    read_models(&path, steps).map_err(|error| error.to_string())
+    read_usage(&path, steps).map_err(|error| error.to_string())
 }
 
-fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+fn read_usage(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, NativeUsage>> {
     let mut conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -84,7 +141,7 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
     let tx = conn.transaction()?;
     let mut step_query = tx.prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")?;
     let mut generation_query = tx.prepare("SELECT data FROM gen_metadata WHERE idx=?1")?;
-    let mut models = HashMap::new();
+    let mut usage = HashMap::new();
     for &step in steps {
         let Ok(index) = i64::try_from(step) else {
             continue;
@@ -116,16 +173,17 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
             .ok()
             .and_then(|metadata| metadata.response)
             .map(|response| response.model);
-        if let Some(model) = [tiered, base]
+        let model = [tiered, base]
             .into_iter()
             .flatten()
             .map(|model| model.trim().to_string())
-            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"))
-        {
-            models.insert(step, model);
+            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"));
+        let timing = timing_from_generation(bytes.as_slice());
+        if model.is_some() || timing.is_some() {
+            usage.insert(step, NativeUsage { model, timing });
         }
     }
-    Ok(models)
+    Ok(usage)
 }
 
 #[cfg(test)]
@@ -182,8 +240,71 @@ pub(super) fn test_model_id(id: &str) -> Vec<u8> {
 }
 
 #[cfg(test)]
+pub(super) fn set_test_timing(
+    conn: &Connection,
+    generation: i64,
+    first_token: Option<(i64, i32)>,
+    streaming: Option<(i64, i32)>,
+) {
+    let duration = |(seconds, nanos)| NativeDuration { seconds, nanos };
+    let timing = GenerationTiming {
+        response: Some(ResponseTiming {
+            first_token: first_token.map(duration),
+            streaming: streaming.map(duration),
+        }),
+    };
+    let mut data: Vec<u8> = conn
+        .query_row(
+            "SELECT data FROM gen_metadata WHERE idx=?1",
+            [generation],
+            |r| r.get(0),
+        )
+        .unwrap();
+    data.extend(timing.encode_to_vec());
+    conn.execute(
+        "UPDATE gen_metadata SET data=?1 WHERE idx=?2",
+        rusqlite::params![data, generation],
+    )
+    .unwrap();
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_native_durations_without_guessing_missing_or_invalid_timing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("timing.db");
+        let entries: Vec<_> = (0..7).map(|n| (n, n as u64, "gemini-4-argon")).collect();
+        let conn = write_test_database(&path, &entries);
+        set_test_timing(&conn, 0, Some((2, 500_000_000)), Some((3, 125_000_000)));
+        set_test_timing(&conn, 1, Some((0, 0)), Some((1, 0)));
+        set_test_timing(&conn, 2, None, Some((1, 0)));
+        set_test_timing(&conn, 3, Some((-1, 0)), Some((1, 0)));
+        set_test_timing(&conn, 4, Some((i64::MAX, 0)), Some((1, 0)));
+        set_test_timing(&conn, 5, Some((0, 1_000_000_000)), Some((1, 0)));
+        set_test_timing(&conn, 6, Some((1, 0)), None);
+        let usage = read_usage(&path, &[0, 1, 2, 3, 4, 5, 6]).unwrap();
+        assert_eq!(
+            usage[&0].timing,
+            Some(NativeTiming {
+                first_token_ms: 2500,
+                latency_ms: 5625
+            })
+        );
+        assert_eq!(
+            usage[&1].timing,
+            Some(NativeTiming {
+                first_token_ms: 0,
+                latency_ms: 1000
+            })
+        );
+        for step in 2..7 {
+            assert_eq!(usage[&step].timing, None);
+            assert_eq!(usage[&step].model.as_deref(), Some("gemini-4-argon"));
+        }
+    }
 
     #[test]
     fn uses_step_references_including_zero_instead_of_generation_order() {
@@ -206,11 +327,17 @@ mod tests {
         data.extend_from_slice(b"\x22\x0efake-model-pro");
         conn.execute("UPDATE gen_metadata SET data=?1 WHERE idx=0", [data])
             .unwrap();
-        let models = read_models(&path, &[8, 1, 3, 99]).unwrap();
+        let models = read_usage(&path, &[8, 1, 3, 99]).unwrap();
         assert_eq!(models.len(), 3);
-        assert_eq!(models[&1], "gemini-4-argon");
-        assert_eq!(models[&3], "gemini-3.8-flash-tiered");
-        assert_eq!(models[&8], "claude-opus-5-5-medium");
+        assert_eq!(models[&1].model.as_deref().unwrap(), "gemini-4-argon");
+        assert_eq!(
+            models[&3].model.as_deref().unwrap(),
+            "gemini-3.8-flash-tiered"
+        );
+        assert_eq!(
+            models[&8].model.as_deref().unwrap(),
+            "claude-opus-5-5-medium"
+        );
     }
 
     #[test]
@@ -225,12 +352,12 @@ mod tests {
              INSERT INTO steps VALUES (5,15,NULL);",
         )
         .unwrap();
-        let models = read_models(&path, &[1, 2, 3, 4, 5]).unwrap();
+        let models = read_usage(&path, &[1, 2, 3, 4, 5]).unwrap();
         assert_eq!(models.len(), 1);
-        assert_eq!(models[&1], "gemini-4-argon");
+        assert_eq!(models[&1].model.as_deref().unwrap(), "gemini-4-argon");
         conn.execute("UPDATE gen_metadata SET data=X'80'", [])
             .unwrap();
-        assert!(read_models(&path, &[1]).unwrap().is_empty());
+        assert!(read_usage(&path, &[1]).unwrap().is_empty());
     }
 
     #[test]
@@ -257,13 +384,16 @@ mod tests {
         set_test_generation(&conn, 3, "gemini-4-argon", &test_model_id("unknown"));
         // Field 21 as a varint (wrong wire type) must not hide field 19.
         set_test_generation(&conn, 4, "gemini-4-argon", b"\xa8\x01\x07");
-        let models = read_models(&path, &[1, 2, 3, 4, 5]).unwrap();
-        assert_eq!(models[&1], "gemini-3.8-flash-high");
+        let models = read_usage(&path, &[1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(
+            models[&1].model.as_deref().unwrap(),
+            "gemini-3.8-flash-high"
+        );
         // Older builds have no field 21.
-        assert_eq!(models[&2], "gemini-3.8-flash-n");
-        assert_eq!(models[&3], "gemini-4-argon");
-        assert_eq!(models[&4], "gemini-4-argon");
-        assert_eq!(models[&5], "gemini-4-argon");
+        assert_eq!(models[&2].model.as_deref().unwrap(), "gemini-3.8-flash-n");
+        assert_eq!(models[&3].model.as_deref().unwrap(), "gemini-4-argon");
+        assert_eq!(models[&4].model.as_deref().unwrap(), "gemini-4-argon");
+        assert_eq!(models[&5].model.as_deref().unwrap(), "gemini-4-argon");
     }
 
     #[test]
@@ -283,7 +413,10 @@ mod tests {
             .unwrap();
         assert!(path.with_extension("db-wal").exists());
         assert_eq!(
-            read_models(&path, &[1]).unwrap()[&1],
+            read_usage(&path, &[1]).unwrap()[&1]
+                .model
+                .as_deref()
+                .unwrap(),
             "gemini-3.8-flash-tiered"
         );
         conn.execute_batch(
@@ -292,7 +425,7 @@ mod tests {
         )
         .unwrap();
         let start = std::time::Instant::now();
-        assert!(read_models(&path, &[1]).is_err());
+        assert!(read_usage(&path, &[1]).is_err());
         assert!(start.elapsed() < Duration::from_secs(1));
         conn.execute_batch("ROLLBACK").unwrap();
     }
@@ -303,7 +436,7 @@ mod tests {
         let transcript = dir
             .path()
             .join("brain/session/.system_generated/logs/transcript_full.jsonl");
-        assert!(models_for_transcript(&transcript, &[1]).unwrap().is_empty());
+        assert!(usage_for_transcript(&transcript, &[1]).unwrap().is_empty());
         assert!(!dir.path().join("conversations").exists());
     }
 
@@ -319,6 +452,6 @@ mod tests {
         let transcript = dir
             .path()
             .join("brain/session/.system_generated/logs/transcript_full.jsonl");
-        assert!(models_for_transcript(&transcript, &[1]).is_err());
+        assert!(usage_for_transcript(&transcript, &[1]).is_err());
     }
 }

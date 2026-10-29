@@ -204,13 +204,13 @@ interface OutputTokensPerSecondInput {
 
 /**
  * 一条请求的生成时间（毫秒）= 耗时 − 首字。缺耗时或首字、或差值不大于 0 时返回 null。
- * 只算路由服务记的请求：会话日志的耗时和首字都是按时间戳估的，不算精确速度
+ * 使用路由服务或 Antigravity 原生记录的计时；其他会话的时间戳估算不混入
  * （会话日志另有估算，见 [getEstimatedTokensPerSecond]）；非流式请求没有首字。
  */
 export function getGenerationMs(
   log: OutputTokensPerSecondInput,
 ): number | null {
-  if (isSessionLogRequest(log)) return null;
+  if (isEstimatedTiming(log)) return null;
   const latencyMs = parseFiniteNumber(log.latencyMs);
   const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
   if (latencyMs == null || firstTokenMs == null) return null;
@@ -263,6 +263,11 @@ export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
   );
 }
 
+/** Antigravity 会话带有原生计时，其他会话日志使用时间戳估算。 */
+export function isEstimatedTiming(log: { dataSource?: unknown }): boolean {
+  return isSessionLogRequest(log) && log.dataSource !== "agy_session";
+}
+
 /**
  * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：会话日志导入、
  * 输出不少于 200 token、估算耗时不短于 1 秒。推出了首字的也照样按整段耗时算。
@@ -273,7 +278,7 @@ export function isSpeedEstimateEligible(
   const outputTokens = parseFiniteNumber(log.outputTokens);
   const latencyMs = parseFiniteNumber(log.latencyMs);
   return (
-    isSessionLogRequest(log) &&
+    isEstimatedTiming(log) &&
     outputTokens != null &&
     outputTokens >= SPEED_ESTIMATE_MIN_OUTPUT_TOKENS &&
     latencyMs != null &&

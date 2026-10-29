@@ -49,6 +49,24 @@ describe("usage format helpers", () => {
     ).toBe(20);
   });
 
+  it("uses native Antigravity timing without treating it as a timestamp estimate", () => {
+    const native = {
+      dataSource: "agy_session",
+      outputTokens: 600,
+      latencyMs: 5000,
+      firstTokenMs: 2000,
+    };
+    expect(getOutputTokensPerSecond(native)).toBe(200);
+    expect(getEstimatedTokensPerSecond(native)).toBeNull();
+    expect(
+      getOutputTokensPerSecond({ ...native, outputTokens: 99 }),
+    ).toBeNull();
+    expect(getOutputTokensPerSecond({ ...native, latencyMs: 2050 })).toBeNull();
+    expect(
+      getOutputTokensPerSecond({ ...native, firstTokenMs: undefined }),
+    ).toBeNull();
+  });
+
   it("ignores durationMs: speed is always output / (latency - first token)", () => {
     expect(
       getOutputTokensPerSecond({
