@@ -368,13 +368,10 @@ mod tests {
         ];
         let sessions = scan_roots(&roots);
         assert_eq!(sessions.len(), 1);
+        // Compare as paths: on Windows the joined segments mix `/` and `\`.
         assert_eq!(
-            sessions[0].source_path.as_deref(),
-            Some(
-                logs.join("transcript_full.jsonl")
-                    .to_string_lossy()
-                    .as_ref()
-            )
+            sessions[0].source_path.as_deref().map(Path::new),
+            Some(logs.join("transcript_full.jsonl").as_path())
         );
     }
 

@@ -118,3 +118,24 @@ export const dshProviderPresets: McodeProviderPreset[] =
       },
     ];
   });
+
+export const DSH_ACCOUNT_PRESET_ID = "dsh-official-account";
+
+// An action in the account-login group, separate from the API-key catalog:
+// DSH serves the signed-in account's models itself, nothing is written here.
+export const dshAccountPreset: McodeProviderPreset = {
+  name: "DeepSeek",
+  nameKey: "dsh.account.presetName",
+  providerKey: DSH_ACCOUNT_PRESET_ID,
+  websiteUrl: "https://platform.deepseek.com",
+  icon: "deepseek",
+  category: "official",
+  settingsConfig: {
+    name: "DeepSeek",
+    kind: "custom",
+    enabled: true,
+    api: "openai-completions",
+    options: { baseURL: "", apiKey: "" },
+    models: {},
+  },
+};
