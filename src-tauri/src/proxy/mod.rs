@@ -34,7 +34,11 @@ pub mod thinking_optimizer;
 pub mod thinking_rectifier;
 pub(crate) mod tool_media;
 pub(crate) mod types;
+mod upstream_guard;
 pub mod usage;
+
+#[cfg(test)]
+mod tests_issue_7271;
 
 // 公开导出给外部使用（commands, services等模块需要）
 #[allow(unused_imports)]

@@ -179,7 +179,8 @@
     "configureUsage": "利用状況を設定",
     "managedByHermes": "Hermes 管理",
     "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
-    "openTerminal": "ターミナルを開く",
+    "openTerminal": "このプロバイダーでターミナルを開く",
+    "openTerminalIsolated": "このプロバイダーでターミナルを開く（環境を分離）",
     "openTerminalWithProvider": "このプロバイダーでターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
@@ -231,6 +232,29 @@
         "oauthTitle": "OAuth 認証モード",
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
+      },
+      "claudeAccount": {
+        "label": "ログイン方法",
+        "default": "Claude Code のログインに追従",
+        "defaultDescription": "Claude Code で現在ログイン中のアカウントに追従します",
+        "missing": "このコンピューターにないアカウント",
+        "manage": "Claude アカウントを追加または管理",
+        "helpTerminal": "設定で Claude の設定フォルダーが上書きされているため、このカードに切り替えても Claude Code のログインは変わりません。選んだアカウントはカードの「ターミナルを開く」から使ってください。",
+        "helpWsl": "Claude の設定フォルダーが WSL にあるため、Claude アカウントにはまだ対応していません。このカードに切り替えても Claude Code のログインは変わりません。",
+        "help": "このカードに切り替えると、実行中のセッションも含めて Claude Code のログインがすぐに選んだアカウントに変わります。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。",
+        "claudeAccount": "Claude アカウント",
+        "reauthBadge": "再ログインが必要",
+        "terminalHint": "ターミナルを開いて使用",
+        "wslHint": "WSL は未対応",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team プレミアム",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
@@ -932,6 +956,7 @@
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
+    "ompConfigDir": "Oh My Pi 設定ディレクトリ",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -940,6 +965,7 @@
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
+    "browsePlaceholderOmp": "例: /home/<your-username>/.omp/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -974,7 +1000,7 @@
     "copyToolUninstallCommand": "{{tool}} のアンインストールコマンドをコピー",
     "uninstallCommandCopied": "アンインストールコマンドをコピーしました",
     "uninstallCommandCopyFailed": "コピーに失敗しました。コマンドを選択して手動でコピーしてください。",
-    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code をインストールまたは更新",
+    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi をインストールまたは更新",
     "localEnvCheck": "ローカル環境チェック",
     "updateAllTools": "すべて更新（{{count}}）",
     "currentVersion": "現在のバージョン",
@@ -1098,7 +1124,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1161,9 +1188,9 @@
       "contextWindow": "コンテキストウィンドウ",
       "maxTokens": "最大出力トークン数",
       "compatibility": "互換性",
-      "compatibilityHint": "互換エンドポイントやローカル環境向けにリクエスト動作を調整します。",
+      "compatibilityHint": "OpenAI 互換をうたうエンドポイントが一部のリクエストを拒否する場合にだけ設定します。各項目はそのエンドポイントの癖を一つ表します。たとえば supportsDeveloperRole を false にすると developer ロールを受け付けないこと、maxTokensField を max_tokens にすると古いフィールド名しか受け付けないことを示します。プリセットを選ぶと必要な項目は自動で入ります。空のままならデフォルトで動作します。",
       "addCompatibilityOption": "追加",
-      "noCompatibilityOptions": "互換性オプションはありません",
+      "noCompatibilityOptions": "未設定（デフォルトで動作）",
       "optionKey": "オプション",
       "optionValue": "値",
       "removeCompatibilityOption": "互換性オプションを削除",
@@ -1622,7 +1649,7 @@
       "qiniu": "Qiniu Cloud（七牛云）はマルチプロトコル対応の AI 中継プラットフォームです。1つのキーでネイティブの Claude・GPT・Gemini モデルを利用でき、Anthropic／OpenAI／Gemini の各 API に対応します。",
       "haoai": "hao.ai は開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つのキーで GPT、Claude、Grok などの主要モデルを OpenAI・Anthropic 互換 API で利用でき、モデルルーティング、フェイルオーバー、完全な呼び出しログを備え、価格は公式参考価格の最大 85% オフです。CC Switch ユーザーがこのリンクから登録すると、初回注文で 5% のボーナスクレジットを受け取れます！",
       "fenno": "Fenno.ai は安定・高効率な API 中継サービスで、幅広い主要モデルを利用できます。CC Switch 利用者限定特典：このリンクから 1.99 ドルで 50 ドル相当の Trial プランを購入できます（有効期間 7 日間）！",
-      "teamorouter": "TeamoRouter はエンタープライズグレードの Agentic LLM ゲートウェイで、料金は最大 90% オフ。CC Switch ユーザーに特別特典を提供しています：このリンクから新規登録すると初回チャージが 10% オフ！",
+      "teamorouter": "TeamoRouter なら 1 つのキーで Claude Code から Opus 5.5・Sonnet 5.5・Fable 5.1 を利用でき、Opus 5.5 は公式価格の約 28%、従量課金、Anthropic ネイティブプロトコル対応です。このリンクから登録した CC Switch ユーザーは、$10 / $20 / $50 の初回チャージで 10% のクレジットが追加されます！",
       "ppio": "PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、API キー 1 つで主要なオープンソースモデルをすべて利用できます。このリンクから登録し実名認証を完了すると、¥10 のクーポンがもらえます。",
       "xycai": "XycAi はエンタープライズグレードのトークンファクトリー：200+ のグローバルモデルにワンクリック接続、SLA 自動補償、異常キャッシュは 100% 返金！",
       "9527code": "9527 CODE はエンタープライズ級のフルスペック AI 中継プラットフォームで、Claude Code や Codex などの主要モデルに高速・安定した中継サービスを提供します。1 年間の継続運営、サービス安定性 99.9%、7×24 時間の有人技術サポート。新規ユーザーはサポートへのご連絡で体験クレジットを進呈、紹介キャッシュバックは上限なし！",
@@ -1630,12 +1657,11 @@
       "fluxa": "FluxA と Baidu AI Cloud が共同で提供する AgenticPlan は、AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにします。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4・GLM 5.2・Kimi などの主力モデルを利用可能。さらに FluxA AgentMarket の API クレジットが付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。",
       "88api": "88API は香港企業が運営するワンストップのマルチモデル API プラットフォームで、統一インターフェースからテキスト・画像・音声・動画モデルを利用できます。主要な国際決済方法に対応し、請求書の発行も可能で、エンタープライズ級の安定したサービスを提供します。専用リンクから登録すると特典クレジットがもらえます！",
       "modelflare": "Modelflare は安定・低コストの AI モデルゲートウェイで、1 つのキーで GPT、Claude、Gemini、Grok などの主要モデルを利用できます。CC Switch ユーザー限定特典：初回チャージ時にクーポンコード \"CCSWITCH\" を入力すると 10% オフ！",
-      "everyapi": "EveryAPI は専用のデスクトップクライアントを備え、Claude Code、Codex、Cursor など 20 以上のツールをワンクリックで自動設定できます。1 つのキーで Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、Doubao を利用でき、モデルを切り替えても設定の変更は不要です。登録で 14 元分のクレジットを進呈、GPT は公式価格の 15% から。CC Switch ユーザー限定：初回チャージ時に割引コード \"ccswitch\" を使うと 20% オフ（期限なし）！",
       "alltokens": "AllTokens は「安定を基に、誠実を本に」を掲げ、すべての AI 呼び出しを安定的で正直、安心して任せられるものにすることを目指しています。信頼できるサービスと透明な課金で、GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi などの主要モデルを 1 つのプラットフォームで利用でき、従量課金と利用上限の設定に対応しています。登録で 1 ドル分のお試しクレジットを進呈！",
       "alltokens_si": "AllTokens SI は「安定を基に、誠実を本に」を掲げる、企業向けの AI トークン中継・チーム協業プラットフォームです。メンバー、キー、使用量、残高を企業コンソールで一元管理し、明確な権限と利用上限の設定により、チームの利用を追跡可能で安心して管理できます。",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
       "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！",
-      "dit": "DIT.ai は、複数プロバイダーを低コストでルーティングする AI トークン取引マーケットです。OpenAI 互換の API 1 つで GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要モデルを利用でき、160 以上のルートでプロバイダーがリアルタイムに競い合うため、通常は公式価格より 30〜70% 安くなります。CC Switch ユーザーはこのリンクから登録し、プロモコード \"ccswitch\" を使うと 5 ドル分のウェルカムクーポンを受け取れます！",
+      "dit": "同じモデルを、多くの場合はるかに安く。OpenAI 互換の API 1 つで GPT、Claude、Gemini など 50 以上のモデルを利用でき、160 以上のプロバイダーの中から価格と品質のバランスが最も良い選択肢へルーティングされるため、通常は公式価格より 30〜70% 安くなります。Base URL と API キーを変えるだけで、既存のスタックはそのままですぐに呼び出せます。CC Switch ユーザーはこのリンクから登録し、コード \"cc-switch\" を使うと初回チャージが 30% オフになります！",
       "buytoken": "BuyToken は Claude Code、Codex、DeepSeek などの中継サービスを提供し、エンタープライズ級の同時実行と迅速な請求書発行に対応、安定して長く続くサービスを目指しています。CC Switch ユーザーはこのリンクから登録すると 3 元分のお試しクレジットを受け取れ、初回チャージは 10% オフになります！",
       "vapi": "V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスを提供し、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザーはこのリンクから登録すると、初回注文が 2 元引きのうえ 10% オフになります！"
     },
@@ -1790,6 +1816,8 @@
     "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。"
   },
   "copilot": {
+    "automaticFormat": "モデルに応じてルーティングが自動選択",
+    "automaticFormatHint": "Copilot の上流形式はモデルに応じてルーティングが自動選択し、手動設定は適用されません。",
     "authSection": "GitHub Copilot 認証",
     "authStatus": "認証状態",
     "authenticated": "認証済み: {{username}}",
@@ -1830,7 +1858,6 @@
   "codexOauth": {
     "authStatus": "認証状態",
     "notAuthenticated": "未認証",
-    "loginWithChatGPT": "ChatGPT でログイン",
     "loginRequired": "先に ChatGPT にログインしてください",
     "statusLoading": "アカウント状態を読み込み中...",
     "statusUnavailable": "状態を取得できません",
@@ -1865,7 +1892,12 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
-    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。",
+    "loginMethod": "ログイン方法",
+    "browserLogin": "ブラウザでログイン",
+    "deviceCodeLogin": "デバイスコードでログイン",
+    "openBrowserLogin": "ブラウザのログイン画面を開く",
+    "loginExpired": "ログインの有効期限が切れました。もう一度お試しください。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 認証",
@@ -4178,6 +4210,9 @@
     "moreActions": "その他の操作",
     "manualCommands": "手動インストールコマンド",
     "columnApp": "アプリ",
+    "sectionInstalled": "インストール済み · {{count}}",
+    "sectionNotInstalled": "未インストール · {{count}}",
+    "dragHandle": "ドラッグして {{name}} の順序を変更",
     "columnVersion": "バージョン",
     "columnVisible": "表示",
     "visibleHelp": "オフにすると、このアプリはサイドバー、トレイメニュー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。表示しないだけで、プロバイダーや MCP などの設定はそのまま残り、アプリ自身の設定ファイルも変更されません。",
@@ -4201,7 +4236,8 @@
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
       "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
-      "agy": "公式インストールスクリプトでインストール"
+      "agy": "公式インストールスクリプトでインストール",
+      "omp": "公式インストールスクリプトでインストール"
     }
   },
   "appPage": {
@@ -4335,7 +4371,6 @@
       "routing": "転送中",
       "currentDefault": "現在の既定",
       "defaultAfterSwitch": "切り替え後の既定",
-      "current": "現在",
       "default": "既定"
     },
     "action": {
@@ -4352,7 +4387,8 @@
       "edit": "{{name}} を編集",
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
-      "moveDown": "{{name}} を下へ"
+      "moveDown": "{{name}} を下へ",
+      "openTerminal": "{{name}} でターミナルを開く"
     },
     "chip": {
       "official": "公式",
@@ -4372,7 +4408,6 @@
       "defaultWhileRouting": "ルーティング中は、転送先のプロバイダーがそのまま既定になります。集約に切り替えるときに別のプロバイダーを選べます。",
       "needsRoute": "ルーティングが必要：{{reason}}。直接接続はできません。",
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
-      "currentCannotRemove": "使用中のプロバイダーは削除できません。先にほかを有効にしてください。",
       "inUseCannotDelete": "使用中のプロバイダーは削除できません。先にほかへ切り替えてください。",
       "directDefaultCannotDelete": "ルーティングを終了するとこのプロバイダーに戻るため、削除できません。先に直接接続ページでほかのプロバイダーの「直接接続に戻して使う」を選んでください。",
       "noFailover": "公式アカウントはフェイルオーバーキューに入れられません。クライアント自身のログインを使うため、ほかと交代できません。"
@@ -4441,7 +4476,6 @@
     "used": "使用済み {{value}}%",
     "usedUp": "使い切り",
     "balance": "残高 {{value}}",
-    "balanceUsedUp": "残高なし",
     "planExpired": "プラン期限切れ",
     "failed": "残量を取得できません",
     "reason": {
@@ -4500,6 +4534,11 @@
       "on": "{{name}} · {{app}}：有効",
       "off": "{{name}} · {{app}}：無効",
       "fail": "{{name}} · {{app}}：書き込み失敗、クリックで再試行"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi が実際に読み込む範囲",
+      "help": "Oh My Pi は ~/.omp/agent 自身の設定に加え、他の Agent のディレクトリ（Claude の ~/.claude、Codex の ~/.codex など）からも MCP サーバー、スキル、コマンド、フック、ルール、設定を発見します。Oh My Pi の実際の読み込み内容を CC Switch の表示と一致させるには、~/.omp/agent/config.yml の disabledProviders で不要な発行元を無効化してください（id はドキュメント準拠：claude、codex、gemini、opencode、github、agents など）。",
+      "docsLink": "Oh My Pi に他の Agent の設定を読み込ませない方法"
     }
   },
   "mcpPage": {
@@ -4650,6 +4689,10 @@
       "writeTo": "書き込み先",
       "writeToHelpTitle": "各アプリへの書き込み方",
       "writeToHelp": "同じ設定をチェックした各アプリにそのまま書き込みます。アプリごとに引数を変えたいときは、そのアプリだけの項目を別に作ってください。MiniMax Code は接続項目だけを置き換え、mcp.json の他の項目は残します。",
+      "sseAsHttpTitle": "{{apps}} は SSE に対応しておらず、HTTP として接続します",
+      "sseAsHttpBody": "{{apps}} は stdio と HTTP（Streamable HTTP）のみに対応しているため、この URL を HTTP サーバーとして接続します。サーバーが SSE のみの場合は接続できません。サーバーが Streamable HTTP にも対応していれば、HTTP に切り替えてください。",
+      "sseRejectedTitle": "{{apps}} は SSE に対応していません",
+      "sseRejectedBody": "これらのアプリは stdio と HTTP（Streamable HTTP）のみに対応しているため、保存時の書き込みが失敗します。HTTP に切り替えるか、これらのアプリのチェックを外してください。",
       "meta": "説明とリンク",
       "metaHint": "表示名・説明・タグ・ホームページ・ドキュメント",
       "displayName": "表示名",
@@ -4731,7 +4774,7 @@
     "rowFail": "{{app}} での有効化に失敗：{{error}}",
     "fixSync": "同期方法を変更",
     "rowMoreAria": "{{name}} のその他の操作",
-    "copyDir": "フォルダー名をコピー",
+    "openDir": "フォルダーを開く",
     "uninstallEllipsis": "アンインストール",
     "listLabel": "インストール済みの Skill",
     "noMatch": "「{{query}}」に一致する Skill はありません",
@@ -4759,7 +4802,8 @@
       "enableFailed": "{{apps}} で有効にできませんでした。リストに印を付けました",
       "uninstalledMany": "{{count}} 件の Skill をアンインストールしました",
       "backupAt": "バックアップ先：{{path}}",
-      "copiedDir": "フォルダー名 {{dir}} をコピーしました",
+      "copiedName": "{{name}} をコピーしました",
+      "openDirFailed": "フォルダーを開けませんでした",
       "noUpdatesInSelection": "選択した Skill に更新はありません",
       "selectionAlreadyOn": "選択した {{count}} 件の Skill は既に {{app}} で有効です",
       "selectionAlreadyOff": "選択した {{count}} 件の Skill はどれも {{app}} で有効ではありません",
@@ -4870,12 +4914,13 @@
       "copilotHelp": "Claude Code、Claude Desktop の GitHub Copilot プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
-      "agyHelp": "Antigravity CLI（agy）の公式ログインです。agy は同時に 1 つのアカウントにしかログインできません。「切り替え」で agy のログインを選んだアカウントに置き換え、以降に起動する agy はそのアカウントを使います。agy に元々ログインしていたアカウントは自動でここに追加されるため、切り替えても失われません。"
+      "agyHelp": "Antigravity CLI（agy）の公式ログインです。agy は同時に 1 つのアカウントにしかログインできません。「切り替え」で agy のログインを選んだアカウントに置き換え、以降に起動する agy はそのアカウントを使います。agy に元々ログインしていたアカウントは自動でここに追加されるため、切り替えても失われません。",
+      "claudeHelpTerminal": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。設定で Claude の設定フォルダーが上書きされているため、カードを切り替えても Claude Code のログインは変わりません。公式カードでアカウントを選び、カードの「ターミナルを開く」から使ってください。",
+      "claudeHelpWsl": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。Claude の設定フォルダーが WSL にある場合はまだ対応していません。",
+      "claudeHelp": "Claude Code の公式サブスクリプションアカウント（Pro / Max / Team）。Claude の公式カードでアカウントを選ぶと、そのカードに切り替えると Claude Code のログインがすぐにこのアカウントに変わります。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。ログイントークンはこのコンピューターから出ず、アップロード・更新・ログアウトは行いません。最初の切り替えで、Claude Code に今ログインしているアカウントを自動で保存します。切り替えると Remote Control は切断され、プロンプトキャッシュは作り直されます。"
     },
     "addAccount": "アカウントを追加",
-    "groupMenu": "{{service}} のその他の操作",
     "accountMenu": "{{login}} のその他の操作",
-    "removeAll": "すべてのアカウントを削除",
     "removeAccount": "アカウントを削除",
     "setDefault": "デフォルトに設定",
     "reauth": "再ログイン",
@@ -4895,7 +4940,6 @@
     "loginFailed": "ログインが完了しませんでした",
     "pending": {
       "add": "{{service}} アカウントを追加 · 認可を待っています…",
-      "login": "{{service}} にログイン · 認可を待っています…",
       "reauth": "{{login}} に再ログイン · 認可を待っています…",
       "enterCode": "ブラウザでこのコードを入力：",
       "copy": "コードをコピー",
@@ -4920,12 +4964,26 @@
       "addedOn": "{{date}}に追加",
       "statusLoadFailed": "Antigravity アカウントを読み込めませんでした。再試行してください。",
       "empty": "Antigravity アカウントはまだありません。agy でログイン中のアカウントは自動でここに表示されます。",
-      "login": "Google でログイン",
       "current": "agy で使用中",
       "switchTo": "agy をこのアカウントに切り替え",
       "removeNote": "agy からはログアウトしません。agy が現在このアカウントを使っている場合、削除後もそのまま使えます。",
       "switched": "切り替えました。新しく起動する agy はこのアカウントを使います。",
       "switchedWhileRunning": "切り替えました。agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。agy を終了してから開き直してください。"
+    },
+    "claude": {
+      "pasteSubmitted": "送信しました。ログインを完了しています…",
+      "pasteToggle": "認可後にここへ戻らない場合",
+      "pasteHint": "認可後にブラウザのアドレスバーに表示されたアドレス、またはページに表示されたコードを貼り付けてください。",
+      "pasteLabel": "認可コードまたはアドレス",
+      "pasteSubmit": "送信",
+      "reauthNote": "ログインの有効期限が切れました。再ログインしてください",
+      "addedOn": "{{date}}に追加",
+      "loginExpiresOn": "ログインは{{date}}頃に期限切れになります。その後は再ログインが必要です",
+      "loginMaybeExpired": "ログインの有効期限が切れている可能性があります。切り替える前に再ログインしてください",
+      "statusLoadFailed": "Claude アカウントを読み込めませんでした。再試行してください。",
+      "empty": "Claude アカウントはまだありません。複数のサブスクリプションアカウントを切り替えるときはここでログインします。",
+      "removeNote": "CC Switch がこのアカウント用に保存したログインだけを削除します。他の場所でログアウトされることはなく、Claude Code の現在のログイン（~/.claude）も変わりません。このアカウントを使うカードは Claude Code の現在のログインに切り替わります。",
+      "wslUnsupported": "Claude の設定フォルダーが WSL にあるため、Claude アカウントの追加と切り替えにはまだ対応していません。"
     }
   },
   "kimi": {
@@ -4940,6 +4998,7 @@
       "removeAccount": "アカウントを削除",
       "dismissAccount": "一覧から外す",
       "signedOut": "未ログイン",
+      "noSubscription": "未契約",
       "statusFailed": "ログイン状態を取得できません",
       "expired": "認証コードの有効期限が切れました。再ログインしてください。",
       "denied": "認証が拒否されました。再ログインしてください。",
@@ -4950,7 +5009,8 @@
       "primaryHidden": "Kimi Code 自身のログインは一覧から外されています。同じアカウントで再ログインすると戻ります",
       "removeCurrentHint": "このアカウントは使用中です。別のアカウントに切り替えてから削除してください",
       "manageAccounts": "Kimi アカウントを管理",
-      "managedHint": "Kimi 公式アカウントは認証センターで管理してください。",
+      "managedHint": "先にこの公式アカウントを「削除」で Kimi の設定から外すか、認証センターでログインごと削除してください。",
+      "connectionManaged": "接続とログインは認証センターで管理されます。ここではモデルのみ編集できます。モデルを取得すると、このアカウントで現在使える公式モデルを読み込みます。",
       "current": "Kimi で使用中",
       "primaryShort": "Kimi Code 自身のログイン",
       "empty": "Kimi アカウントはまだありません。Kimi Code でログイン中のアカウントは自動的にここに表示されます。",
@@ -4978,5 +5038,54 @@
       "defaultModelInUse": "Kimi Code がこのプロバイダーのモデルを使用中です。先に Kimi Code の /model でほかのモデルに切り替えてください。",
       "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"
     }
+  },
+  "omp": {
+    "empty": {
+      "title": "API キープロバイダーはまだありません",
+      "description": "右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    },
+    "provider": {
+      "enabled": "Oh My Pi で有効にしました",
+      "enableFailed": "Oh My Pi でこのプロバイダーを有効にできませんでした",
+      "removed": "Oh My Pi から削除しました"
+    },
+    "current": {
+      "readFailed": "Oh My Pi のプロバイダー設定を読み込めません",
+      "stateUnavailableHint": "CC Switch が Oh My Pi のプロバイダー設定を読み込むまで、プロバイダーの変更は無効です。"
+    },
+    "form": {
+      "discoveryType": "モデルの自動検出",
+      "discoveryOff": "使用しない",
+      "discoveryHint": "オンにすると、Oh My Pi がエンドポイントに利用できるモデルを問い合わせるので、モデルを一つずつ入力する必要がなく、新しいモデルも自動で表示されます。オンラインサービスの多くは「OpenAI モデル一覧」を、ローカルで動かすモデルは対応するアプリを選んでください。Anthropic 形式のエンドポイントは通常モデル一覧がないので、「使用しない」のままにします。手動で追加したモデルも有効です。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI モデル一覧（多くのオンラインサービス）",
+        "proxy": "プロキシ（モデルごとに形式を指定）",
+        "ollama": "Ollama（ローカル）",
+        "llamaCpp": "llama.cpp（ローカル）",
+        "lmStudio": "LM Studio（ローカル）",
+        "litellm": "LiteLLM ゲートウェイ",
+        "appleFoundationModels": "Apple オンデバイスモデル（macOS）"
+      }
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi の設定が 1 MiB の上限を超えています。",
+      "externalChange": "Oh My Pi の設定が外部で変更されました。更新して再試行してください。",
+      "rollbackConflict": "データベース保存に失敗し、Oh My Pi の設定も外部で変更されました。手動で復元してください。",
+      "invalidMcp": "Oh My Pi の MCP JSON が無効です。ルートと mcpServers はオブジェクトである必要があります。",
+      "invalidYaml": "Oh My Pi の YAML が無効です。ルートと providers はマッピングにしてください。",
+      "invalidProvider": "Oh My Pi のプロバイダ設定が無効です。必須項目、API 形式、値の型を確認してください。",
+      "manualEdit": "この YAML の構造は CC Switch で安全に編集できません。models.yml を手動で編集してください。",
+      "duplicateProvider": "この Oh My Pi プロバイダキーは既に存在します。",
+      "renameProvider": "Oh My Pi プロバイダキーは変更できません。",
+      "providerMissing": "この Oh My Pi プロバイダは保存済みリストにありません。",
+      "legacyModelsJson": "Oh My Pi にはまだ旧形式の models.json があり、omp は次回起動時にこれを models.yml へ移行します。omp を一度起動してから、もう一度プロバイダを追加してください。"
+    }
+  },
+  "dsh": {
+    "empty": {
+      "title": "DeepSeek Harness プロバイダーを追加",
+      "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
+    },
+    "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
   }
 }

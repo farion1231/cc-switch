@@ -8,6 +8,9 @@ pub(crate) struct RequestInfo {
     pub model: Option<String>,
     pub latency_ms: i64,
     pub first_token_ms: Option<i64>,
+    /// When the final `llm.request` attempt for this step started. Committed messages carry
+    /// the batch-commit time instead, so imports date requests from this.
+    pub request_ms: Option<i64>,
 }
 
 #[derive(Default)]
@@ -25,6 +28,8 @@ struct Step {
 /// Keep only metadata; never retain prompts, tool arguments, or response content here.
 #[derive(Default)]
 pub(crate) struct RequestIndex {
+    /// The agent whose wire is being read; `None` means the main agent.
+    agent: Option<String>,
     step: Option<Step>,
     messages: HashMap<String, RequestInfo>,
 }
@@ -49,9 +54,18 @@ fn duration_ms(value: &Value) -> Option<i64> {
 }
 
 impl RequestIndex {
+    /// Index a subagent's own wire (`agents/<agent>/wire.jsonl`).
+    pub fn for_agent(agent: &str) -> Self {
+        Self {
+            agent: Some(agent.into()),
+            ..Default::default()
+        }
+    }
+
     pub fn observe(&mut self, record: &Value) {
-        // Only the main agent's committed messages live in agents/main/wire.jsonl.
-        if record["agentId"].as_str().is_some_and(|id| id != "main") {
+        // Each agent writes its own wire; ignore requests attributed to any other agent.
+        let own = self.agent.as_deref().unwrap_or("main");
+        if record["agentId"].as_str().is_some_and(|id| id != own) {
             return;
         }
         match record["type"].as_str() {
@@ -132,6 +146,7 @@ impl RequestIndex {
                         // A fork can repeat a step without the original request events.
                         let info = self.messages.entry(id.into()).or_default();
                         info.model = step.model.or_else(|| info.model.take());
+                        info.request_ms = step.request_ms.or(info.request_ms);
                         if latency_ms > 0 {
                             info.latency_ms = latency_ms;
                             info.first_token_ms = first_token_ms

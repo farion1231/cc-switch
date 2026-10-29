@@ -605,6 +605,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  omp: {
+    name: "omp",
+    displayName: "Oh My Pi",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["omp", "oh my pi", "oh-my-pi", "pi"],
+    defaultColor: "#9b4dff",
+  },
   ollama: {
     name: "ollama",
     displayName: "ollama",
@@ -1144,6 +1152,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     shape: "tile",
     keywords: ["vapi", "v-api", "gpt.ge", "relay", "aggregator"],
+    defaultColor: "currentColor",
+  },
+  cline: {
+    name: "cline",
+    displayName: "Cline",
+    category: "ai-provider",
+    keywords: ["cline", "clinepass", "cline pass"],
     defaultColor: "currentColor",
   },
   everyapi: {

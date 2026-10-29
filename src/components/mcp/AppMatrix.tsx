@@ -1,7 +1,9 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Check } from "lucide-react";
+import type { TFunction } from "i18next";
+import { AlertTriangle, BookOpen, Check } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { settingsApi } from "@/lib/api";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import type { AppId } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
@@ -35,7 +37,7 @@ export function resolveBulkScope<T>(
   return { rows: visibleRows, kind: narrowedBy };
 }
 
-// ─── 列高亮（悬停 / 键盘焦点落在某一列时，列头跟着亮并显示应用名） ─────────────
+// ─── 列高亮（悬停 / 键盘焦点落在某一列时，列头跟着亮） ─────────────────────
 /**
  * 只有列头订阅当前列；单元格只拿稳定的 setter，悬停时整张表不会重渲染。
  */
@@ -158,6 +160,30 @@ export function MatrixCell({
 }
 
 // ─── 列头 + 批量弹层 ─────────────────────────────────────────────────────
+const OMP_DISCOVERY_DOCS_URL =
+  "https://github.com/can1357/oh-my-pi/blob/main/docs/context-files.md#disabling-discovery-providers";
+
+/**
+ * Oh My Pi 列的说明：它还会从其他 Agent 的目录发现 MCP、技能等，实际加载的可能比这里勾的多。
+ * MCP 和 Skills 两个矩阵都展开到 Oh My Pi 的列头上；别的列返回空对象，不覆盖已有的 `help`。
+ */
+export function ompDiscoveryColumnNote(
+  app: AppId,
+  t: TFunction,
+): Pick<MatrixColumnHeaderProps, "help" | "docsLink"> {
+  if (app !== "omp") return {};
+  return {
+    help: {
+      title: t("appMatrix.ompDiscovery.title"),
+      body: t("appMatrix.ompDiscovery.help"),
+    },
+    docsLink: {
+      label: t("appMatrix.ompDiscovery.docsLink"),
+      url: OMP_DISCOVERY_DOCS_URL,
+    },
+  };
+}
+
 interface MatrixColumnHeaderProps {
   app: AppId;
   /** 列头上的数字：全部行里启用了几个 */
@@ -176,6 +202,8 @@ interface MatrixColumnHeaderProps {
   extraAction?: { label: string; onClick: () => void };
   /** 标题旁的「?」（Pi：怎么算启用） */
   help?: { title: string; body: React.ReactNode };
+  /** 弹层底部的外部文档链接（Oh My Pi：怎样关掉对其他 Agent 目录的发现） */
+  docsLink?: { label: string; url: string };
   /** 列头的 title（Pi 说明按目录判断） */
   title?: string;
   disabled?: boolean;
@@ -194,11 +222,13 @@ export function MatrixColumnHeader({
   onDisableAll,
   extraAction,
   help,
+  docsLink,
   title,
   disabled,
 }: MatrixColumnHeaderProps) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
+  const [headerHovered, setHeaderHovered] = React.useState(false);
   const countId = React.useId();
   const name = APP_DISPLAY_NAME[app];
   const rest = scopeTotal - scopeEnabled;
@@ -207,9 +237,9 @@ export function MatrixColumnHeader({
 
   const tracking = useColumnTracking(app);
   const activeColumn = React.useContext(MatrixActiveColumnContext);
-  // 悬停 / 键盘聚焦在这一列（列头或任一单元格）时亮起；弹层开着时名字已在弹层标题里
+  // 悬停 / 键盘聚焦在这一列时亮起；应用名只跟随列头悬停，弹层开着时隐藏。
   const highlighted = activeColumn === app || open;
-  const showName = activeColumn === app && !open;
+  const showName = !open && headerHovered;
 
   const run = (action: () => void) => {
     setOpen(false);
@@ -228,6 +258,8 @@ export function MatrixColumnHeader({
             <button
               type="button"
               disabled={disabled}
+              onMouseEnter={() => setHeaderHovered(true)}
+              onMouseLeave={() => setHeaderHovered(false)}
               aria-label={t("appMatrix.columnAria", {
                 app: name,
                 on: enabledCount,
@@ -332,6 +364,20 @@ export function MatrixColumnHeader({
               className="self-start text-body font-medium text-fg-1 underline underline-offset-[3px] hover:text-fg-2"
             >
               {extraAction.label}
+            </button>
+          )}
+          {docsLink && (
+            <button
+              type="button"
+              onClick={() =>
+                void settingsApi
+                  .openExternal(docsLink.url)
+                  .catch(() => undefined)
+              }
+              className="inline-flex items-start gap-1 self-start text-left text-caption text-fg-2 underline-offset-2 hover:text-fg-1 hover:underline"
+            >
+              <BookOpen className="mt-0.5 h-3 w-3 shrink-0" />
+              {docsLink.label}
             </button>
           )}
           <span className="text-caption text-fg-3">

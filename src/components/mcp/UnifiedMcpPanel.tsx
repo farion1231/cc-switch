@@ -42,6 +42,7 @@ import {
   MatrixColumnHighlight,
   MatrixSearch,
   NeutralBadge,
+  ompDiscoveryColumnNote,
   resolveBulkScope,
   showUndoToast,
 } from "./AppMatrix";
@@ -88,16 +89,20 @@ const IMPORT_SOURCE_FILES: Record<
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
   agy: { file: "~/.gemini/config/mcp_config.json" },
+  dsh: { file: "~/.dsh/profiles/web/cordis.patch.yml" },
   kimi: { file: "~/.kimi-code/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
+  omp: { file: "~/.omp/agent/mcp.json" },
 };
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
 const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "kimi",
+  "dsh",
   "pi",
   "agy",
+  "omp",
 ]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
@@ -797,6 +802,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             scopeKind={scope.kind}
                             noun={noun}
                             disabled={controlsDisabled}
+                            {...ompDiscoveryColumnNote(app, t)}
                             onEnableRest={() => void handleBulk(app, true)}
                             onDisableAll={() => void handleBulk(app, false)}
                           />

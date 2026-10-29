@@ -179,7 +179,8 @@
     "configureUsage": "Configure usage query",
     "managedByHermes": "Hermes Managed",
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
-    "openTerminal": "Open Terminal",
+    "openTerminal": "Open Terminal with This Provider",
+    "openTerminalIsolated": "Open Terminal with This Provider (Isolated)",
     "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
@@ -231,6 +232,29 @@
         "oauthTitle": "OAuth Authentication Mode",
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
+      },
+      "claudeAccount": {
+        "label": "Sign-in method",
+        "default": "Follow Claude Code login",
+        "defaultDescription": "The account changes with the current Claude Code login",
+        "missing": "Account not on this computer",
+        "manage": "Add or manage Claude accounts",
+        "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
+        "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
+        "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
+        "claudeAccount": "Claude account",
+        "reauthBadge": "Re-login required",
+        "terminalHint": "Use via Open Terminal",
+        "wslHint": "Not supported in WSL",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team Premium",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
@@ -932,6 +956,7 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "ompConfigDir": "Oh My Pi Configuration Directory",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -940,6 +965,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
+    "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -974,7 +1000,7 @@
     "copyToolUninstallCommand": "Copy the uninstall command for {{tool}}",
     "uninstallCommandCopied": "Uninstall command copied",
     "uninstallCommandCopyFailed": "Copy failed. Please select and copy the command manually.",
-    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
     "localEnvCheck": "Local environment check",
     "updateAllTools": "Update All ({{count}})",
     "currentVersion": "Current Version",
@@ -1098,7 +1124,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1161,9 +1188,9 @@
       "contextWindow": "Context window",
       "maxTokens": "Max output tokens",
       "compatibility": "Compatibility",
-      "compatibilityHint": "Adjust request behavior for compatible or local endpoints.",
+      "compatibilityHint": "Only needed when an endpoint claims to be OpenAI-compatible but rejects some requests. Each option describes one quirk of the endpoint: for example, supportsDeveloperRole = false means it doesn't accept the developer role, and maxTokensField = max_tokens means it only accepts the older field name. Presets fill in what they need; leave it empty to use the defaults.",
       "addCompatibilityOption": "Add",
-      "noCompatibilityOptions": "No compatibility options configured",
+      "noCompatibilityOptions": "Not set — defaults apply",
       "optionKey": "Option",
       "optionValue": "Value",
       "removeCompatibilityOption": "Remove compatibility option",
@@ -1622,7 +1649,7 @@
       "qiniu": "Qiniu Cloud is a multi-protocol AI relay: one key for native Claude, GPT, and Gemini models, with the Anthropic, OpenAI, and Gemini APIs all supported.",
       "haoai": "hao.ai is a fast, stable unified LLM API gateway for developers and teams: one key reaches GPT, Claude, Grok, and other leading models over OpenAI- and Anthropic-compatible APIs, with model routing, failover, and full request logs, at prices as low as 15% of official reference rates. CC Switch users who register via this link get 5% bonus credit on their first order!",
       "fenno": "Fenno.ai is a stable, efficient API relay giving you access to a wide range of mainstream models. Exclusive CC Switch offer: subscribe via this link to the $1.99 Trial Plan worth $50 in credits, valid for 7 days!",
-      "teamorouter": "TeamoRouter is an enterprise-grade Agentic LLM gateway with pricing up to 90% off. It offers exclusive benefits for CC Switch users: register via this link as a new user for 10% off your first top-up!",
+      "teamorouter": "TeamoRouter gives Claude Code one key for Opus 5.5, Sonnet 5.5 and Fable 5.1, with Opus 5.5 at about 28% of the official price, pay as you go, on the native Anthropic protocol. CC Switch users who sign up through this link get an extra 10% credit on a first top-up of $10, $20 or $50!",
       "ppio": "PPIO is a leading independent Agentic Cloud provider in China, serving every flagship open-source model through a single API key. Register via this link and complete identity verification to receive a ¥10 credit voucher.",
       "xycai": "XycAi is an enterprise-grade token factory: one-click access to 200+ global models, automatic SLA compensation, and 100% refunds for abnormal cache charges!",
       "9527code": "9527 CODE is an enterprise-grade, full-capability AI relay platform delivering fast, stable relay for Claude Code, Codex and other mainstream models. One year of continuous operation, 99.9% service stability, and 7×24 human technical support. New users can contact support for trial credit, with unlimited referral cashback!",
@@ -1630,12 +1657,11 @@
       "fluxa": "FluxA and Baidu AI Cloud jointly launched AgenticPlan, letting AI agents buy, manage and use models, APIs and tools on their own. It includes Baidu Qianfan TokenPlan at up to 40% off with flagship models such as DeepSeek V4, GLM 5.2 and Kimi, plus bonus FluxA AgentMarket API credits that unlock 13,000+ paid APIs for search, data scraping, social media, finance, crypto, image generation and video.",
       "88api": "88API is a one-stop multi-model API platform run by a Hong Kong company, giving unified access to text, image, speech and video models. It accepts major international payment methods, can issue invoices and provides enterprise-grade stable service. Sign up through the exclusive link to receive bonus credits!",
       "modelflare": "Modelflare is a stable, lower-cost AI model gateway: one key reaches GPT, Claude, Gemini, Grok, and other leading models. Exclusive for CC Switch users: use the code \"CCSWITCH\" on your first top-up for 10% off!",
-      "everyapi": "EveryAPI ships its own desktop client that auto-configures Claude Code, Codex, Cursor, and 20+ other tools in one click; one key reaches Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, and Doubao, so switching models needs no config changes. Get ¥14 in free credit on sign-up, with GPT models from just 15% of the official price. Exclusive for CC Switch users: use the code \"ccswitch\" on your first top-up for 20% off, with no expiry!",
       "alltokens": "AllTokens is built on stability and honesty, aiming to make every AI call stable, genuine, and trustworthy: reliable service, transparent billing, and one platform for GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi, and other leading models, with pay-as-you-go pricing and spending caps. Get $1 in free trial credit when you sign up!",
       "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!",
-      "dit": "DIT.ai is an AI token exchange for lower-cost multi-provider routing: one OpenAI-compatible API reaches 50+ leading models including GPT, Claude, Gemini, DeepSeek, Grok, and Llama, with providers competing across 160+ routes, typically 30–70% below official pricing. CC Switch users can register via this link and use promo code \"ccswitch\" to claim a $5 welcome coupon!",
+      "dit": "Same models. Often a much lower bill. One OpenAI-compatible API for 50+ models: GPT, Claude, Gemini, and more, with routing across 160+ providers to the best available price-to-quality option, typically 30–70% below official list pricing. Change your base URL and API key, keep your stack, and start calling. CC Switch users: register via this link and use code \"cc-switch\" for 30% off your welcome top-up.",
       "buytoken": "BuyToken offers relay access for Claude Code, Codex, DeepSeek, and more, with enterprise-grade concurrency and fast invoicing, built to be a stable, long-running service. CC Switch users who register via this link get ¥3 in trial credit and 10% off their first top-up!",
       "vapi": "V-API is a three-year-old brand offering stable, fast, and secure high-quality LLM API services for individuals, developers, and businesses, with formal contracts and official invoices (general / special VAT). CC Switch users who register via this link get ¥2 off and 10% off their first order!"
     },
@@ -1790,6 +1816,8 @@
     "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card."
   },
   "copilot": {
+    "automaticFormat": "Selected automatically by routing",
+    "automaticFormatHint": "Routing selects the Copilot upstream format per model; manual format settings are ignored.",
     "authSection": "GitHub Copilot Authentication",
     "authStatus": "Authentication Status",
     "authenticated": "Authenticated as {{username}}",
@@ -1830,7 +1858,6 @@
   "codexOauth": {
     "authStatus": "Auth status",
     "notAuthenticated": "Not authenticated",
-    "loginWithChatGPT": "Sign in with ChatGPT",
     "loginRequired": "Please sign in to ChatGPT first",
     "statusLoading": "Loading account status...",
     "statusUnavailable": "Status unavailable",
@@ -1865,7 +1892,12 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
-    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate.",
+    "loginMethod": "Login method",
+    "browserLogin": "Browser login",
+    "deviceCodeLogin": "Device-code login",
+    "openBrowserLogin": "Open browser login",
+    "loginExpired": "Login expired. Please try again."
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth authentication",
@@ -4178,6 +4210,9 @@
     "moreActions": "More actions",
     "manualCommands": "Manual install commands",
     "columnApp": "App",
+    "sectionInstalled": "Installed · {{count}}",
+    "sectionNotInstalled": "Not installed · {{count}}",
+    "dragHandle": "Drag to reorder {{name}}",
     "columnVersion": "Version",
     "columnVisible": "Show",
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
@@ -4201,7 +4236,8 @@
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
-      "agy": "Installs with the official script"
+      "agy": "Installs with the official script",
+      "omp": "Installs with the official script"
     }
   },
   "appPage": {
@@ -4335,7 +4371,6 @@
       "routing": "Routing",
       "currentDefault": "Current default",
       "defaultAfterSwitch": "Default after switching",
-      "current": "Current",
       "default": "Default"
     },
     "action": {
@@ -4352,7 +4387,8 @@
       "edit": "Edit {{name}}",
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
-      "moveDown": "Move {{name}} down"
+      "moveDown": "Move {{name}} down",
+      "openTerminal": "Open a terminal with {{name}}"
     },
     "chip": {
       "official": "Official",
@@ -4372,7 +4408,6 @@
       "defaultWhileRouting": "While routing, the default is the provider you route to. You can pick another one when switching to Aggregation.",
       "needsRoute": "Needs routing: {{reason}}; can't connect directly.",
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
-      "currentCannotRemove": "The provider in use can't be removed. Enable another one first.",
       "inUseCannotDelete": "The provider in use can't be deleted. Switch to another one first.",
       "directDefaultCannotDelete": "Leaving routing switches back to this provider, so it can't be deleted. On the direct page, choose \"Back to direct and use\" on another provider first.",
       "noFailover": "Official accounts can't join the failover queue: they use the client's own login and can't rotate with other providers."
@@ -4441,7 +4476,6 @@
     "used": "{{value}}% used",
     "usedUp": "Used up",
     "balance": "Balance {{value}}",
-    "balanceUsedUp": "Balance used up",
     "planExpired": "Plan expired",
     "failed": "Quota unavailable",
     "reason": {
@@ -4500,6 +4534,11 @@
       "on": "{{name}} · {{app}}: enabled",
       "off": "{{name}} · {{app}}: off",
       "fail": "{{name}} · {{app}}: write failed, click to retry"
+    },
+    "ompDiscovery": {
+      "title": "What Oh My Pi actually loads",
+      "help": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
+      "docsLink": "How to stop Oh My Pi from loading other agents' config"
     }
   },
   "mcpPage": {
@@ -4650,6 +4689,10 @@
       "writeTo": "Write to",
       "writeToHelpTitle": "How it's written to apps",
       "writeToHelp": "The same config is written as-is to every ticked app; if one app needs different arguments, create a separate entry for it. MiniMax Code only replaces the connection fields; other fields in mcp.json are kept.",
+      "sseAsHttpTitle": "{{apps}} doesn't support SSE and will connect over HTTP",
+      "sseAsHttpBody": "{{apps}} only supports stdio and HTTP (Streamable HTTP), so this URL will be used as an HTTP server; it won't connect if the server only speaks SSE. If the server also offers Streamable HTTP, switch to HTTP.",
+      "sseRejectedTitle": "SSE isn't supported by {{apps}}",
+      "sseRejectedBody": "These apps only support stdio and HTTP (Streamable HTTP), so writing to them will fail on save. Switch to HTTP, or untick these apps.",
       "meta": "Description & links",
       "metaHint": "Display name, description, tags, homepage, docs",
       "displayName": "Display name",
@@ -4731,7 +4774,7 @@
     "rowFail": "Enabling in {{app}} failed: {{error}}",
     "fixSync": "Change sync method",
     "rowMoreAria": "More actions for {{name}}",
-    "copyDir": "Copy folder name",
+    "openDir": "Open folder",
     "uninstallEllipsis": "Uninstall",
     "listLabel": "Installed Skills",
     "noMatch": "No Skills match “{{query}}”",
@@ -4759,7 +4802,8 @@
       "enableFailed": "Couldn't enable in {{apps}}; marked in the list",
       "uninstalledMany": "Uninstalled {{count}} Skills",
       "backupAt": "Backed up to {{path}}",
-      "copiedDir": "Copied folder name {{dir}}",
+      "copiedName": "Copied {{name}}",
+      "openDirFailed": "Couldn't open the folder",
       "noUpdatesInSelection": "None of the selected Skills have updates",
       "selectionAlreadyOn": "The {{count}} selected Skills are already enabled in {{app}}",
       "selectionAlreadyOff": "None of the {{count}} selected Skills are enabled in {{app}}",
@@ -4870,12 +4914,13 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
-      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
+      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
+      "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
+      "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
     },
     "addAccount": "Add account",
-    "groupMenu": "More actions for {{service}}",
     "accountMenu": "More actions for {{login}}",
-    "removeAll": "Delete all accounts",
     "removeAccount": "Delete account",
     "setDefault": "Set as default",
     "reauth": "Sign in again",
@@ -4895,7 +4940,6 @@
     "loginFailed": "Sign-in didn't finish",
     "pending": {
       "add": "Adding a {{service}} account · Waiting for authorization…",
-      "login": "Signing in to {{service}} · Waiting for authorization…",
       "reauth": "Signing in again as {{login}} · Waiting for authorization…",
       "enterCode": "Enter this code in the browser:",
       "copy": "Copy code",
@@ -4920,12 +4964,26 @@
       "addedOn": "Added {{date}}",
       "statusLoadFailed": "Couldn't read Antigravity accounts. Try again.",
       "empty": "No Antigravity accounts yet. The account agy is signed in with appears here automatically.",
-      "login": "Sign in with Google",
       "current": "In use by agy",
       "switchTo": "Switch agy to this account",
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
+    },
+    "claude": {
+      "pasteSubmitted": "Submitted. Finishing sign-in…",
+      "pasteToggle": "Didn't come back here after authorizing?",
+      "pasteHint": "Paste the address from the browser's address bar after authorizing, or the code shown on the page.",
+      "pasteLabel": "Authorization code or address",
+      "pasteSubmit": "Submit",
+      "reauthNote": "Sign-in expired. Sign in again.",
+      "addedOn": "Added {{date}}",
+      "loginExpiresOn": "Sign-in expires around {{date}}; sign in again after that",
+      "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
+      "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
+      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
+      "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
     }
   },
   "kimi": {
@@ -4940,6 +4998,7 @@
       "removeAccount": "Remove account",
       "dismissAccount": "Hide from list",
       "signedOut": "Signed out",
+      "noSubscription": "No subscription",
       "statusFailed": "Cannot read sign-in status",
       "expired": "The authorization code expired. Please sign in again.",
       "denied": "Authorization was denied. Please sign in again.",
@@ -4950,7 +5009,8 @@
       "primaryHidden": "Kimi Code's own login was removed from the list; sign in to the same account to bring it back",
       "removeCurrentHint": "This account is in use. Switch to another account before removing it.",
       "manageAccounts": "Manage Kimi accounts",
-      "managedHint": "Manage official Kimi accounts in the Authorization Center.",
+      "managedHint": "Remove this official account first, or delete it (with its login) in the Authorization Center.",
+      "connectionManaged": "The connection and login are managed in the Authorization Center; edit only the models here. Fetching models reads the official models currently available to this account.",
       "current": "In use by Kimi",
       "primaryShort": "Kimi Code's own login",
       "empty": "No Kimi accounts yet. The account signed in to Kimi Code shows up here automatically.",
@@ -4978,5 +5038,54 @@
       "defaultModelInUse": "Kimi Code is using a model from this provider. Switch to another model with /model in Kimi Code first.",
       "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
     }
+  },
+  "omp": {
+    "empty": {
+      "title": "No API key providers yet",
+      "description": "Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "provider": {
+      "enabled": "Enabled in Oh My Pi",
+      "enableFailed": "Could not enable this provider in Oh My Pi",
+      "removed": "Removed from Oh My Pi"
+    },
+    "current": {
+      "readFailed": "Could not read Oh My Pi's provider configuration",
+      "stateUnavailableHint": "Provider changes are disabled until CC Switch can read Oh My Pi's provider configuration."
+    },
+    "form": {
+      "discoveryType": "Model discovery",
+      "discoveryOff": "Off",
+      "discoveryHint": "When on, Oh My Pi asks the endpoint which models it offers, so you don't have to list them by hand and new models show up on their own. Most online services use “OpenAI model list”; for models running on your machine, pick the matching app. Anthropic-format endpoints usually have no model list, so leave this off. Manually added models still apply.",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI model list (most online services)",
+        "proxy": "Proxy (each model sets its own format)",
+        "ollama": "Ollama (local)",
+        "llamaCpp": "llama.cpp (local)",
+        "lmStudio": "LM Studio (local)",
+        "litellm": "LiteLLM gateway",
+        "appleFoundationModels": "Apple on-device models (macOS)"
+      }
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi configuration exceeds the 1 MiB limit.",
+      "externalChange": "Oh My Pi configuration changed outside CC Switch. Refresh and try again.",
+      "rollbackConflict": "The database save failed and Oh My Pi configuration changed externally. Restore it by hand.",
+      "invalidMcp": "Invalid Oh My Pi MCP JSON. The root and mcpServers must be objects.",
+      "invalidYaml": "Invalid Oh My Pi YAML. The root and providers must be mappings.",
+      "invalidProvider": "Invalid Oh My Pi provider. Check required fields, API format and field types.",
+      "manualEdit": "This YAML uses a layout or construct CC Switch cannot safely edit. Edit models.yml by hand.",
+      "duplicateProvider": "This Oh My Pi provider key already exists.",
+      "renameProvider": "Oh My Pi provider keys cannot be renamed.",
+      "providerMissing": "This Oh My Pi provider is no longer saved.",
+      "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
+    }
+  },
+  "dsh": {
+    "empty": {
+      "title": "Add a DeepSeek Harness provider",
+      "description": "Configure an endpoint, API key and models. Existing custom providers appear here automatically."
+    },
+    "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
   }
 }
