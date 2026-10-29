@@ -1057,12 +1057,12 @@ fn whole_float_to_json_int(number: &Number) -> Option<Number> {
     }
 }
 
-/// Wrap a native Responses SSE byte stream: restore flattened namespace names
-/// and rewrite completed function-call argument JSON. Delta fragments that are
-/// not complete JSON pass through unchanged.
-pub(crate) fn create_xai_native_responses_sse_stream<E>(
+/// Restore flattened namespace names in native Responses SSE events. Only xAI
+/// enables numeric argument normalization; other gateways keep their argument JSON unchanged.
+pub(crate) fn create_namespace_responses_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     restore_map: HashMap<String, NamespacedName>,
+    normalize_arguments: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where
     E: std::error::Error + Send + 'static,
@@ -1081,7 +1081,7 @@ where
                         if block.trim().is_empty() {
                             continue;
                         }
-                        yield Ok(rewrite_xai_native_sse_block(&block, &restore_map));
+                        yield Ok(rewrite_native_sse_block(&block, &restore_map, normalize_arguments));
                     }
                 }
                 Err(e) => {
@@ -1096,14 +1096,23 @@ where
         }
         let tail = std::mem::take(&mut buffer);
         if !tail.trim().is_empty() {
-            yield Ok(rewrite_xai_native_sse_block(&tail, &restore_map));
+            yield Ok(rewrite_native_sse_block(&tail, &restore_map, normalize_arguments));
         }
     }
 }
 
+#[cfg(test)]
 fn rewrite_xai_native_sse_block(
     block: &str,
     restore_map: &HashMap<String, NamespacedName>,
+) -> Bytes {
+    rewrite_native_sse_block(block, restore_map, true)
+}
+
+fn rewrite_native_sse_block(
+    block: &str,
+    restore_map: &HashMap<String, NamespacedName>,
+    normalize_arguments: bool,
 ) -> Bytes {
     let mut event_name: Option<&str> = None;
     let mut data_parts: Vec<&str> = Vec::new();
@@ -1131,7 +1140,9 @@ fn rewrite_xai_native_sse_block(
     };
 
     let mut changed = restore_sse_event_namespaces(&mut event, restore_map);
-    changed |= normalize_xai_function_call_integer_arguments(&mut event);
+    if normalize_arguments {
+        changed |= normalize_xai_function_call_integer_arguments(&mut event);
+    }
     if !changed {
         return Bytes::from(format!("{block}\n\n"));
     }
@@ -1154,6 +1165,28 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn namespace_sse_restores_names_without_rewriting_numeric_arguments() {
+        let request = json!({"tools":[{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen","parameters":{}}]}]});
+        let map =
+            super::super::transform_codex_responses_namespace::namespace_restore_map(&request);
+        let data = json!({"type":"response.output_item.done","item":{"type":"function_call","name":"image_gen__imagegen","arguments":"{\"scale\":1.0}","call_id":"call_1"}});
+        let block = format!("event: response.output_item.done\ndata: {data}");
+        let bytes = rewrite_native_sse_block(&block, &map, false);
+        let output = std::str::from_utf8(&bytes).unwrap();
+        let value: Value = serde_json::from_str(
+            output
+                .lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["item"]["name"], "imagegen");
+        assert_eq!(value["item"]["namespace"], "image_gen");
+        assert_eq!(value["item"]["arguments"], "{\"scale\":1.0}");
+        assert_eq!(value["item"]["call_id"], "call_1");
+    }
 
     #[test]
     fn strips_external_web_access_recursively() {

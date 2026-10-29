@@ -210,20 +210,90 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
     ) && codex_provider_uses_anthropic(provider)
 }
 
-/// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
-/// tool declarations flattened before forwarding, plus xAI schema sanitization.
-///
-/// Codex 0.142+ emits ChatGPT-backend-private `{"type":"namespace",…}` tool
-/// shapes that strict third-party Responses gateways reject with
-/// `422 unknown variant "namespace"`. xAI also rejects root `oneOf`/`anyOf`
-/// function schemas (notably `mcp__codex_app__automation_update`). The
-/// Chat/Anthropic transform paths already unwrap namespaces, so this only
-/// fires on native Responses passthrough.
-///
-/// Covers managed xAI OAuth *and* API-key providers whose live upstream is
-/// `api.x.ai` with `wire_api = "responses"`. See farion1231/cc-switch#6815.
+/// Whether native Responses namespaces need flattening. xAI keeps its existing
+/// behavior; other gateways explicitly opt in through provider settings.
 pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
+    provider_needs_xai_responses_compat(provider)
+        || provider
+            .settings_config
+            .get("responsesCompatibility")
+            .and_then(|compat| compat.get("flattenNamespaces"))
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false)
+}
+
+pub fn provider_needs_xai_responses_compat(provider: &Provider) -> bool {
     provider.is_xai_oauth() || provider_is_xai_native_responses(provider)
+}
+
+/// Apply an explicitly configured API version for the resolved upstream model.
+/// Existing body values and subsequent provider overrides retain precedence.
+pub fn apply_native_responses_api_version(provider: &Provider, body: &mut JsonValue) -> bool {
+    if body.get("api_version").is_some() {
+        return false;
+    }
+    let Some(version) = body
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .and_then(|model| {
+            provider
+                .settings_config
+                .get("responsesCompatibility")
+                .and_then(|compat| compat.get("apiVersions"))
+                .and_then(|versions| versions.get(model))
+        })
+        .and_then(JsonValue::as_str)
+        .filter(|version| !version.trim().is_empty())
+        .map(str::to_string)
+    else {
+        return false;
+    };
+    let Some(object) = body.as_object_mut() else {
+        return false;
+    };
+    object.insert("api_version".into(), JsonValue::String(version));
+    true
+}
+
+/// Normalize the encrypted-output selector for explicitly opted-in gateways.
+/// Keep unrelated selectors and unconfigured providers unchanged.
+pub fn normalize_native_responses_encrypted_include(
+    provider: &Provider,
+    body: &mut JsonValue,
+) -> bool {
+    let configured = provider
+        .settings_config
+        .get("responsesCompatibility")
+        .and_then(|compat| compat.get("normalizeEncryptedInclude"))
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    if !configured {
+        return false;
+    }
+    let Some(include) = body.get_mut("include").and_then(JsonValue::as_array_mut) else {
+        return false;
+    };
+    if !include
+        .iter()
+        .any(|value| value.as_str() == Some("output.encrypted_content"))
+    {
+        return false;
+    }
+    let mut has_reasoning = include
+        .iter()
+        .any(|value| value.as_str() == Some("reasoning.encrypted_content"));
+    include.retain_mut(|value| {
+        if value.as_str() != Some("output.encrypted_content") {
+            return true;
+        }
+        if has_reasoning {
+            return false;
+        }
+        *value = JsonValue::String("reasoning.encrypted_content".into());
+        has_reasoning = true;
+        true
+    });
+    true
 }
 
 /// True when this Codex provider talks native Responses to first-party xAI
@@ -1220,6 +1290,111 @@ mod tests {
             ..ProviderMeta::default()
         });
         provider
+    }
+
+    #[test]
+    fn configured_namespace_compat_is_opt_in_without_xai_rewrites() {
+        let provider = create_provider(json!({
+            "baseURL":"https://provider.example/v1",
+            "responsesCompatibility":{"flattenNamespaces":true}
+        }));
+        assert!(provider_needs_responses_namespace_flatten(&provider));
+        assert!(!provider_needs_xai_responses_compat(&provider));
+        for settings in [
+            json!({"baseURL":"https://provider.example/v1"}),
+            json!({"responsesCompatibility":{"flattenNamespaces":false}}),
+            json!({"responsesCompatibility":{"flattenNamespaces":"true"}}),
+            json!({"responsesCompatibility":null}),
+        ] {
+            assert!(!provider_needs_responses_namespace_flatten(
+                &create_provider(settings)
+            ));
+        }
+    }
+
+    #[test]
+    fn configured_api_version_is_model_scoped_and_preserves_overrides() {
+        let provider = create_provider(json!({
+            "baseURL":"https://provider.example/v1",
+            "responsesCompatibility":{"apiVersions":{
+                "model-a":"2025-03-01-preview",
+                "model-b":"2025-04-01-preview",
+                "ccs-provider/model-a":"2025-03-01-preview",
+                "empty-model":"", "invalid-model":false
+            }}
+        }));
+        for (model, version) in [
+            ("model-a", "2025-03-01-preview"),
+            ("model-b", "2025-04-01-preview"),
+            ("ccs-provider/model-a", "2025-03-01-preview"),
+        ] {
+            let mut body = json!({"model":model,"input":"test"});
+            assert!(apply_native_responses_api_version(&provider, &mut body));
+            assert_eq!(body["api_version"], version);
+            assert!(!apply_native_responses_api_version(&provider, &mut body));
+        }
+        for model in ["unlisted-model", "empty-model", "invalid-model"] {
+            let mut body = json!({"model":model});
+            let before = body.clone();
+            assert!(!apply_native_responses_api_version(&provider, &mut body));
+            assert_eq!(body, before);
+        }
+        let unconfigured = create_provider(json!({"baseURL":"https://other.example/v1"}));
+        let mut body = json!({"model":"model-a"});
+        assert!(!apply_native_responses_api_version(
+            &unconfigured,
+            &mut body
+        ));
+        let mut body = json!({"model":"model-a","api_version":"2025-05-01-preview"});
+        assert!(!apply_native_responses_api_version(&provider, &mut body));
+        assert_eq!(body["api_version"], "2025-05-01-preview");
+    }
+
+    #[test]
+    fn encrypted_include_normalization_is_opt_in_and_idempotent() {
+        let provider =
+            create_provider(json!({"responsesCompatibility":{"normalizeEncryptedInclude":true}}));
+        for include in [
+            json!(["web_search_call.results", "output.encrypted_content"]),
+            json!([
+                "web_search_call.results",
+                "output.encrypted_content",
+                "reasoning.encrypted_content",
+                "output.encrypted_content"
+            ]),
+        ] {
+            let mut body = json!({"model":"model-a","api_version":"override","include":include,"temperature":0.7});
+            assert!(normalize_native_responses_encrypted_include(
+                &provider, &mut body
+            ));
+            assert_eq!(
+                body["include"],
+                json!(["web_search_call.results", "reasoning.encrypted_content"])
+            );
+            assert_eq!(body["api_version"], "override");
+            assert_eq!(body["temperature"], 0.7);
+            assert!(!normalize_native_responses_encrypted_include(
+                &provider, &mut body
+            ));
+        }
+        for mut body in [
+            json!({"model":"model-a","include":["reasoning.encrypted_content", "file_search_call.results"]}),
+            json!({"model":"model-a"}),
+            json!({"model":"model-a","include":null}),
+        ] {
+            let before = body.clone();
+            assert!(!normalize_native_responses_encrypted_include(
+                &provider, &mut body
+            ));
+            assert_eq!(body, before);
+        }
+        let mut body = json!({"model":"model-a","include":["output.encrypted_content"]});
+        let before = body.clone();
+        assert!(!normalize_native_responses_encrypted_include(
+            &create_provider(json!({})),
+            &mut body
+        ));
+        assert_eq!(body, before);
     }
 
     #[test]

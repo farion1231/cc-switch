@@ -1986,7 +1986,19 @@ impl RequestForwarder {
             }
         }
 
-        // Native Responses passthrough to a strict third-party gateway (xAI).
+        if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::is_codex_responses_endpoint(endpoint)
+        {
+            super::providers::apply_native_responses_api_version(provider, &mut request_body);
+            super::providers::normalize_native_responses_encrypted_include(
+                provider,
+                &mut request_body,
+            );
+        }
+
+        // Native Responses namespace compatibility for strict gateways (xAI / explicitly configured gateways).
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
         // xAI request rewrites (schema, agent_message, unknown models).
@@ -2003,18 +2015,20 @@ impl RequestForwarder {
                     provider.id
                 );
             }
-            // Stack 请求只做字段兼容。
-            let upstream_model = if self.keeps_resolved_model() {
-                None
-            } else {
-                super::providers::codex_provider_upstream_model(provider)
-            };
-            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
-                &mut request_body,
-                &provider.id,
-                upstream_model.as_deref(),
-                &provider.settings_config,
-            );
+            if super::providers::provider_needs_xai_responses_compat(provider) {
+                // Stack 请求只做字段兼容。
+                let upstream_model = if self.keeps_resolved_model() {
+                    None
+                } else {
+                    super::providers::codex_provider_upstream_model(provider)
+                };
+                super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+                    &mut request_body,
+                    &provider.id,
+                    upstream_model.as_deref(),
+                    &provider.settings_config,
+                );
+            }
         }
 
         // Stack 请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
@@ -7079,6 +7093,43 @@ mod tests {
                 .map_err(|error| error.error)
                 .expect("forward");
             upstream.seen.lock().await.pop().expect("upstream request")
+        }
+
+        #[tokio::test]
+        async fn configured_api_version_is_limited_to_responses_endpoints() {
+            let upstream = upstream().await;
+            let mut configured = provider(&upstream, "openai_responses");
+            configured.settings_config["responsesCompatibility"] = json!({
+                "apiVersions": { "listed": "2025-03-01-preview" },
+                "normalizeEncryptedInclude": true
+            });
+            let mut request = body("listed", json!([]));
+            request["include"] = json!(["output.encrypted_content"]);
+
+            let responses = send(
+                &forwarder(false),
+                &upstream,
+                configured.clone(),
+                "/v1/responses",
+                request.clone(),
+            )
+            .await;
+            assert_eq!(responses.body["api_version"], "2025-03-01-preview");
+            assert_eq!(
+                responses.body["include"],
+                json!(["reasoning.encrypted_content"])
+            );
+
+            let chat = send(
+                &forwarder(false),
+                &upstream,
+                configured,
+                "/v1/chat/completions",
+                request,
+            )
+            .await;
+            assert!(chat.body.get("api_version").is_none());
+            assert_eq!(chat.body["include"], json!(["output.encrypted_content"]));
         }
 
         #[tokio::test]
