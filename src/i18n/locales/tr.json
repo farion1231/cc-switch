@@ -4200,6 +4200,12 @@
     "suggestedDefaultsHint": "Bu ön ayarın önerilen varsayılan model yapılandırmasını kullanın"
   },
   "subscription": {
+    "membership": {
+      "validUntil": "{{plan}} · Abonelik {{date}} tarihine kadar geçerli",
+      "expired": "{{plan}} · Aboneliğin süresi {{date}} tarihinde doldu",
+      "unavailable": "{{plan}} · Aboneliğin bitiş tarihi bilinmiyor",
+      "hint": "Aboneliğin geçerlilik süresi, kota sıfırlama ve oturum açma belirtecinin sona erme zamanlarından farklıdır. Otomatik yenileme durumunu ChatGPT abonelik yönetiminden kontrol edin."
+    },
     "title": "Abonelik Kotası",
     "short": {
       "fiveHour": "5 saat",
