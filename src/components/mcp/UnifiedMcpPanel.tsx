@@ -89,7 +89,10 @@ const IMPORT_SOURCE_FILES: Record<
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
   agy: { file: "~/.gemini/config/mcp_config.json" },
-  dsh: { file: "~/.dsh/profiles/web/cordis.patch.yml" },
+  dsh: {
+    file: "~/.dsh/profiles/<profile>/cordis.patch.yml",
+    noteKey: "mcpPage.import.dshNote",
+  },
   kimi: { file: "~/.kimi-code/mcp.json" },
   qwen: { file: "~/.qwen/settings.json" },
   mcode: { file: "~/.minimax/mcp.json" },
