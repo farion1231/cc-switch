@@ -4551,7 +4551,10 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "Bağlantıyı kontrol et",
+    "testConnection": "Bağlantıyı test et",
     "connection": {
+      "unchecked": "Kontrol edilmedi",
       "connected": "Bağlantı başarılı",
       "disconnected": "Bağlantı başarısız",
       "checking": "Bağlantı kontrol ediliyor",

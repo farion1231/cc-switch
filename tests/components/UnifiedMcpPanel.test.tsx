@@ -25,6 +25,16 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastWarning: vi.fn(),
   visibleApps: ["claude", "codex", "gemini"] as string[],
+  connectivity: {
+    states: { alpha: "connected", beta: "disconnected" } as Record<
+      string,
+      string
+    >,
+    checking: false,
+    canCheck: true,
+    checkAll: vi.fn(),
+    checkServer: vi.fn(),
+  },
 }));
 
 vi.mock("@/hooks/useMcp", () => ({
@@ -61,7 +71,7 @@ vi.mock("@/components/mcp/useVisibleAppIds", () => ({
 }));
 
 vi.mock("@/hooks/useMcpConnectivity", () => ({
-  useMcpConnectivity: () => ({ alpha: "connected", beta: "disconnected" }),
+  useMcpConnectivity: () => mocks.connectivity,
 }));
 
 vi.mock("@/components/mcp/McpFormModal", () => ({
@@ -139,6 +149,11 @@ describe("UnifiedMcpPanel", () => {
     mocks.isLoading = false;
     mocks.isError = false;
     mocks.visibleApps = ["claude", "codex", "gemini"];
+    mocks.connectivity.states = { alpha: "connected", beta: "disconnected" };
+    mocks.connectivity.checking = false;
+    mocks.connectivity.canCheck = true;
+    mocks.connectivity.checkAll.mockReset();
+    mocks.connectivity.checkServer.mockReset();
     mocks.toggle.mockReset().mockResolvedValue(true);
     mocks.bulkToggle.mockReset().mockImplementation(async ({ serverIds }) => ({
       succeeded: serverIds,
@@ -213,11 +228,62 @@ describe("UnifiedMcpPanel", () => {
       screen.getByRole("img", { name: "mcpPage.connection.disconnected" }),
     ).toHaveClass("bg-danger", "rounded-full");
     expect(
-      screen.getByRole("img", { name: "mcpPage.connection.checking" }),
+      screen.getByRole("img", { name: "mcpPage.connection.unchecked" }),
     ).toHaveClass("bg-fg-3");
+    expect(
+      screen.queryByRole("img", { name: "mcpPage.connection.checking" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: "mcpPage.connection.disabled" }),
     ).toHaveClass("bg-fg-3");
+  });
+
+  it("checks connectivity only when asked, for the page or a single row", async () => {
+    mocks.serversMap = {
+      alpha: makeServer("alpha", { apps: { claude: true } }),
+      disabled: makeServer("disabled"),
+    };
+    renderPanel();
+    expect(mocks.connectivity.checkAll).not.toHaveBeenCalled();
+    expect(mocks.connectivity.checkServer).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.checkConnectivity" }),
+    );
+    expect(mocks.connectivity.checkAll).toHaveBeenCalledTimes(1);
+
+    const [alphaMore, disabledMore] = screen.getAllByRole("button", {
+      name: "mcpPage.rowMoreAria",
+    });
+    await userEvent.click(alphaMore);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.testConnection" }),
+    );
+    expect(mocks.connectivity.checkServer).toHaveBeenCalledWith("alpha");
+
+    await userEvent.click(disabledMore);
+    await screen.findByRole("menuitem", { name: "mcpPage.copyJson" });
+    expect(
+      screen.queryByRole("menuitem", { name: "mcpPage.testConnection" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables the page check while a check runs or nothing is enabled", () => {
+    mocks.serversMap = {
+      alpha: makeServer("alpha", { apps: { claude: true } }),
+    };
+    mocks.connectivity.checking = true;
+    const { unmount } = renderPanel();
+    expect(
+      screen.getByRole("button", { name: "mcpPage.checkConnectivity" }),
+    ).toBeDisabled();
+    unmount();
+    mocks.connectivity.checking = false;
+    mocks.connectivity.canCheck = false;
+    renderPanel();
+    expect(
+      screen.getByRole("button", { name: "mcpPage.checkConnectivity" }),
+    ).toBeDisabled();
   });
 
   it("shows the load error instead of the empty state", () => {

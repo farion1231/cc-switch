@@ -28,6 +28,9 @@ const servers = (enabled = true, command = "example"): McpServersMap => ({
   },
 });
 
+const delivery = (call = 0) =>
+  vi.mocked(mcpApi.startConnectivityChecks).mock.calls[call][1];
+
 describe("page-local MCP connectivity", () => {
   beforeEach(() => {
     vi.mocked(mcpApi.startConnectivityChecks)
@@ -36,133 +39,155 @@ describe("page-local MCP connectivity", () => {
     vi.mocked(mcpApi.cancelConnectivityChecks).mockReset().mockResolvedValue();
   });
 
-  it("waits for configured, enabled servers and never starts for an empty page", () => {
-    const { rerender } = renderHook(({ data }) => useMcpConnectivity(data), {
-      initialProps: { data: undefined as McpServersMap | undefined },
-    });
-    rerender({ data: {} });
-    rerender({ data: servers(false) });
-    expect(mcpApi.startConnectivityChecks).not.toHaveBeenCalled();
-    rerender({ data: servers() });
-    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledWith(
-      ["example"],
-      expect.any(Function),
-    );
-    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps results through metadata changes and focus/online events without reconnecting", () => {
+  it("never checks on its own and shows enabled servers as unchecked", () => {
     const { result, rerender } = renderHook(
       ({ data }) => useMcpConnectivity(data),
-      { initialProps: { data: servers() } },
+      { initialProps: { data: undefined as McpServersMap | undefined } },
     );
-    const deliver = vi.mocked(mcpApi.startConnectivityChecks).mock.calls[0][1];
-    act(() => deliver({ serverId: "example", connected: true }));
-    expect(result.current.example).toBe("connected");
-    const data = servers();
-    data.example.description = "Updated description";
-    data.example.apps.codex = true;
-    rerender({ data });
+    expect(result.current.canCheck).toBe(false);
+    rerender({ data: servers(false) });
+    expect(result.current.states).toEqual({});
+    expect(result.current.canCheck).toBe(false);
+    rerender({ data: servers() });
     act(() => {
       window.dispatchEvent(new Event("focus"));
       window.dispatchEvent(new Event("online"));
     });
-    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
-    expect(result.current.example).toBe("connected");
+    expect(mcpApi.startConnectivityChecks).not.toHaveBeenCalled();
+    expect(result.current.states.example).toBe("unchecked");
+    expect(result.current.checking).toBe(false);
+    expect(result.current.canCheck).toBe(true);
   });
 
-  it("keeps results when a renamed server changes the list order", () => {
-    const example = servers().example;
-    const other = { ...example, id: "other", name: "Other" };
+  it("checks every enabled server on request and reports progress", () => {
+    const disabled = { ...servers(false).example, id: "disabled" };
+    const { result } = renderHook(() =>
+      useMcpConnectivity({ ...servers(), disabled }),
+    );
+    act(() => result.current.checkAll());
+    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledWith(
+      ["example"],
+      expect.any(Function),
+    );
+    expect(result.current.states.example).toBe("checking");
+    expect(result.current.checking).toBe(true);
+    act(() => delivery()({ serverId: "example", connected: true }));
+    expect(result.current.states.example).toBe("connected");
+    expect(result.current.checking).toBe(false);
+  });
+
+  it("checks a single server and ignores disabled ones", () => {
     const { result, rerender } = renderHook(
       ({ data }) => useMcpConnectivity(data),
-      { initialProps: { data: { example, other } } },
+      { initialProps: { data: servers(false) } },
     );
-    const deliver = vi.mocked(mcpApi.startConnectivityChecks).mock.calls[0][1];
-    act(() => deliver({ serverId: "example", connected: true }));
-    rerender({ data: { other, example: { ...example, name: "Renamed" } } });
-    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
-    expect(result.current.example).toBe("connected");
+    act(() => result.current.checkServer("example"));
+    expect(mcpApi.startConnectivityChecks).not.toHaveBeenCalled();
+    rerender({ data: servers() });
+    act(() => result.current.checkServer("example"));
+    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledWith(
+      ["example"],
+      expect.any(Function),
+    );
+    act(() => delivery()({ serverId: "example", connected: false }));
+    expect(result.current.states.example).toBe("disconnected");
   });
 
-  it("cancels stale configs and ignores their late results", async () => {
-    const { result, rerender, unmount } = renderHook(
+  it("keeps results through metadata changes and resets them when the config changes", () => {
+    const { result, rerender } = renderHook(
       ({ data }) => useMcpConnectivity(data),
       { initialProps: { data: servers() } },
     );
-    const oldResult = vi.mocked(mcpApi.startConnectivityChecks).mock
-      .calls[0][1];
-    act(() => oldResult({ serverId: "example", connected: true }));
+    act(() => result.current.checkAll());
+    act(() => delivery()({ serverId: "example", connected: true }));
+    const data = servers();
+    data.example.name = "Renamed";
+    data.example.apps.codex = true;
+    rerender({ data });
+    expect(result.current.states.example).toBe("connected");
     rerender({ data: servers(true, "changed") });
-    expect(result.current.example).toBeUndefined();
-    act(() => oldResult({ serverId: "example", connected: true }));
-    expect(result.current.example).toBeUndefined();
-    const newResult = vi.mocked(mcpApi.startConnectivityChecks).mock
-      .calls[1][1];
-    act(() => newResult({ serverId: "example", connected: false }));
-    expect(result.current.example).toBe("disconnected");
-    await waitFor(() =>
-      expect(mcpApi.cancelConnectivityChecks).toHaveBeenCalledTimes(1),
-    );
-    unmount();
-    await waitFor(() =>
-      expect(mcpApi.cancelConnectivityChecks).toHaveBeenCalledTimes(2),
-    );
+    expect(result.current.states.example).toBe("unchecked");
+    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
   });
 
-  it("cancels even when leaving before the backend registers the batch", async () => {
+  it("replaces running checks and ignores their late results", async () => {
+    let batch = 0;
+    vi.mocked(mcpApi.startConnectivityChecks).mockImplementation(
+      async () => `batch-${++batch}`,
+    );
+    const { result } = renderHook(() => useMcpConnectivity(servers()));
+    act(() => result.current.checkAll());
+    act(() => result.current.checkAll());
+    await waitFor(() =>
+      expect(mcpApi.cancelConnectivityChecks).toHaveBeenCalledWith("batch-1"),
+    );
+    act(() => delivery(0)({ serverId: "example", connected: true }));
+    expect(result.current.states.example).toBe("checking");
+    act(() => delivery(1)({ serverId: "example", connected: false }));
+    expect(result.current.states.example).toBe("disconnected");
+  });
+
+  it("lets a newer single-server check win over an older batch", () => {
+    const { result } = renderHook(() => useMcpConnectivity(servers()));
+    act(() => result.current.checkAll());
+    act(() => result.current.checkServer("example"));
+    act(() => delivery(1)({ serverId: "example", connected: true }));
+    act(() => delivery(0)({ serverId: "example", connected: false }));
+    expect(result.current.states.example).toBe("connected");
+  });
+
+  it("cancels running checks when leaving, even before the backend registers them", async () => {
     let register!: (id: string) => void;
     vi.mocked(mcpApi.startConnectivityChecks).mockReturnValueOnce(
       new Promise((resolve) => {
         register = resolve;
       }),
     );
-    const { unmount } = renderHook(() => useMcpConnectivity(servers()));
+    const { result, unmount } = renderHook(() => useMcpConnectivity(servers()));
+    act(() => result.current.checkAll());
     unmount();
     await act(async () => register("late-batch"));
     expect(mcpApi.cancelConnectivityChecks).toHaveBeenCalledWith("late-batch");
   });
 
-  it("shows failures without retrying and starts a fresh batch on re-entry", async () => {
+  it("does not cancel batches that already finished", async () => {
+    const { result, unmount } = renderHook(() => useMcpConnectivity(servers()));
+    act(() => result.current.checkAll());
+    act(() => delivery()({ serverId: "example", connected: true }));
+    unmount();
+    await Promise.resolve();
+    expect(mcpApi.cancelConnectivityChecks).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed start as disconnected without retrying", async () => {
     vi.mocked(mcpApi.startConnectivityChecks).mockRejectedValueOnce(
       new Error("IPC failed"),
     );
-    const first = renderHook(() => useMcpConnectivity(servers()));
+    const { result } = renderHook(() => useMcpConnectivity(servers()));
+    act(() => result.current.checkAll());
     await waitFor(() =>
-      expect(first.result.current.example).toBe("disconnected"),
+      expect(result.current.states.example).toBe("disconnected"),
     );
     expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
-    first.unmount();
-    const second = renderHook(() => useMcpConnectivity(servers()));
-    expect(second.result.current.example).toBeUndefined();
-    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(2);
   });
 
-  it("cleans up StrictMode's discarded batch", async () => {
-    let batch = 0;
+  it("starts nothing under StrictMode until asked", () => {
     const callbacks: ((result: McpConnectivityResult) => void)[] = [];
     vi.mocked(mcpApi.startConnectivityChecks).mockImplementation(
       async (_ids, onResult) => {
         callbacks.push(onResult);
-        return `batch-${++batch}`;
+        return "batch";
       },
     );
-    const { result, unmount } = renderHook(
-      () => useMcpConnectivity(servers()),
-      {
-        wrapper: ({ children }: PropsWithChildren) => (
-          <StrictMode>{children}</StrictMode>
-        ),
-      },
-    );
-    await waitFor(() =>
-      expect(mcpApi.cancelConnectivityChecks).toHaveBeenCalledWith("batch-1"),
-    );
+    const { result } = renderHook(() => useMcpConnectivity(servers()), {
+      wrapper: ({ children }: PropsWithChildren) => (
+        <StrictMode>{children}</StrictMode>
+      ),
+    });
+    expect(callbacks).toHaveLength(0);
+    act(() => result.current.checkAll());
+    expect(callbacks).toHaveLength(1);
     act(() => callbacks[0]({ serverId: "example", connected: true }));
-    expect(result.current.example).toBeUndefined();
-    unmount();
-    await waitFor(() =>
-      expect(mcpApi.cancelConnectivityChecks).toHaveBeenCalledWith("batch-2"),
-    );
+    expect(result.current.states.example).toBe("connected");
   });
 });

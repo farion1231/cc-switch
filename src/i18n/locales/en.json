@@ -4579,7 +4579,10 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "Check connectivity",
+    "testConnection": "Test connection",
     "connection": {
+      "unchecked": "Not checked",
       "connected": "Connection successful",
       "disconnected": "Connection failed",
       "checking": "Checking connection",
