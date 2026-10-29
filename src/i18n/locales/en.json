@@ -5112,7 +5112,14 @@
       "bonus": "Bonus {{amount}}",
       "balanceFailed": "Balance unavailable right now",
       "signedIn": "Signed in to the DeepSeek account for both Web and Desktop",
-      "signInFailed": "Couldn't sign in to the DeepSeek account"
+      "signInFailed": "Couldn't sign in to the DeepSeek account",
+      "presetName": "DeepSeek official sign-in",
+      "presetDescription": "After you sign in to your DeepSeek account in the browser, DeepSeek Harness serves the account's models directly; no provider needs to be added. Web and Desktop share this sign-in. Sign in and out in the Auth Center; once signed in, the account appears under Added.",
+      "manageAccounts": "Manage DeepSeek account",
+      "cardSubtitle": "Official account · shared by Web and Desktop",
+      "expiredChip": "Sign-in expired",
+      "editDisabled": "DeepSeek Harness provides this account's models itself; there is nothing to edit.",
+      "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
   }

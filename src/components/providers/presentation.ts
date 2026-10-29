@@ -702,6 +702,8 @@ export interface AdditiveInput {
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
+  /** 「已添加」里列表外另画的卡（DSH 的 DeepSeek 账号卡），计入标题数字 */
+  extraAdded?: number;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
@@ -952,7 +954,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   return [
     {
       key: "added",
-      title: t("providerCard.section.added", { count: added.length }),
+      title: t("providerCard.section.added", {
+        count: added.length + (input.extraAdded ?? 0),
+      }),
       help: {
         title: t("providerCard.section.addedHelpTitle"),
         // DSH 的供应商一起写进 Web 和 Desktop 两份配置，在这里说明

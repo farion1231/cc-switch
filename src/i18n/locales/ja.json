@@ -5112,7 +5112,14 @@
       "bonus": "ボーナス {{amount}}",
       "balanceFailed": "現在残高を取得できません",
       "signedIn": "DeepSeek アカウントにログインしました（Web と Desktop の両方で使えます）",
-      "signInFailed": "DeepSeek アカウントにログインできませんでした"
+      "signInFailed": "DeepSeek アカウントにログインできませんでした",
+      "presetName": "DeepSeek 公式ログイン",
+      "presetDescription": "ブラウザで DeepSeek アカウントにログインすると、DeepSeek Harness がアカウントのモデルをそのまま提供するため、プロバイダーを追加する必要はありません。Web と Desktop はこのログインを共有します。ログインとログアウトは認証センターで管理し、ログイン後はアカウントが「追加済み」に表示されます。",
+      "manageAccounts": "DeepSeek アカウントを管理",
+      "cardSubtitle": "公式アカウント · Web と Desktop で共有",
+      "expiredChip": "ログイン無効",
+      "editDisabled": "このアカウントのモデルは DeepSeek Harness が自動で提供するため、編集は不要です。",
+      "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
   }

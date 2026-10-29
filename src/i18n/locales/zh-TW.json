@@ -5113,7 +5113,14 @@
       "bonus": "贈金 {{amount}}",
       "balanceFailed": "暫時查不到餘額",
       "signedIn": "DeepSeek 帳號已登入，Web 和 Desktop 都可以使用",
-      "signInFailed": "DeepSeek 帳號登入失敗"
+      "signInFailed": "DeepSeek 帳號登入失敗",
+      "presetName": "DeepSeek 官方登入",
+      "presetDescription": "以瀏覽器登入 DeepSeek 帳號後，DeepSeek Harness 會直接提供帳號下的模型，不用再新增供應商；Web 和 Desktop 共用這份登入。登入和登出在授權中心管理，登入後帳號會出現在「已加入」裡。",
+      "manageAccounts": "管理 DeepSeek 帳號",
+      "cardSubtitle": "官方帳號 · Web 和 Desktop 共用",
+      "expiredChip": "登入已失效",
+      "editDisabled": "帳號下的模型由 DeepSeek Harness 自動提供，無需編輯。",
+      "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
   }

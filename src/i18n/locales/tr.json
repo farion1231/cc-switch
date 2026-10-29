@@ -5054,7 +5054,14 @@
       "bonus": "Bonus {{amount}}",
       "balanceFailed": "Bakiye şu anda alınamıyor",
       "signedIn": "DeepSeek hesabında hem Web hem Desktop için oturum açıldı",
-      "signInFailed": "DeepSeek hesabında oturum açılamadı"
+      "signInFailed": "DeepSeek hesabında oturum açılamadı",
+      "presetName": "DeepSeek resmi oturum açma",
+      "presetDescription": "DeepSeek hesabınızda tarayıcı üzerinden oturum açtıktan sonra DeepSeek Harness hesabın modellerini doğrudan sunar; sağlayıcı eklemeniz gerekmez. Web ve Desktop bu oturumu paylaşır. Oturum açma ve kapatma Yetkilendirme Merkezi'nde yönetilir; oturum açınca hesap Eklenenler altında görünür.",
+      "manageAccounts": "DeepSeek hesabını yönet",
+      "cardSubtitle": "Resmi hesap · Web ve Desktop ortak",
+      "expiredChip": "Oturum süresi doldu",
+      "editDisabled": "Bu hesabın modellerini DeepSeek Harness kendisi sağlar; düzenlenecek bir şey yok.",
+      "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
     },
     "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
   }

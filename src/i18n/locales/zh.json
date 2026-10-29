@@ -5112,7 +5112,14 @@
       "bonus": "赠金 {{amount}}",
       "balanceFailed": "余额暂时查不到",
       "signedIn": "DeepSeek 账号已登录，Web 和 Desktop 都可以使用",
-      "signInFailed": "DeepSeek 账号登录失败"
+      "signInFailed": "DeepSeek 账号登录失败",
+      "presetName": "DeepSeek 官方登录",
+      "presetDescription": "用浏览器登录 DeepSeek 账号后，DeepSeek Harness 会直接提供账号下的模型，不用再添加供应商；Web 和 Desktop 共用这份登录。登录和退出在授权中心管理，登录后账号会出现在「已添加」里。",
+      "manageAccounts": "管理 DeepSeek 账号",
+      "cardSubtitle": "官方账号 · Web 和 Desktop 共用",
+      "expiredChip": "登录已失效",
+      "editDisabled": "账号下的模型由 DeepSeek Harness 自动提供，无需编辑。",
+      "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
   }

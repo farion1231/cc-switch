@@ -16,15 +16,21 @@ import {
 } from "@/lib/api/dsh";
 import { settingsApi } from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { ProviderIconBox } from "@/components/ProviderIconBox";
+import { resolveProviderIcon } from "@/utils/providerIcon";
+import { CardChipBadge } from "./ProviderCard";
+import { ProviderCardActions } from "./ProviderCardActions";
+import type { CardChip } from "./presentation";
 
 /** 授权中心和两个 DeepSeek Harness 供应商页共用一份查询：登录本来就是 Web / Desktop 共用的 */
 export const DSH_ACCOUNT_STATUS_KEY = ["dsh-account-status"] as const;
 
-function useDshAccountStatus() {
+export function useDshAccountStatus(enabled = true) {
   return useQuery({
     queryKey: DSH_ACCOUNT_STATUS_KEY,
     queryFn: dshApi.accountStatus,
     staleTime: 60_000,
+    enabled,
   });
 }
 
@@ -37,7 +43,10 @@ function formatWallet({ currency, balance }: DshWallet): string {
   return symbol ? `${symbol}${text}` : `${text} ${currency}`;
 }
 
-function accountName(status: DshAccountStatus, fallback: string): string {
+export function accountName(
+  status: DshAccountStatus,
+  fallback: string,
+): string {
   return status.profile?.name ?? status.profile?.contact ?? fallback;
 }
 
@@ -271,5 +280,77 @@ export function DshAccountLogin({ helpSide }: DshAccountLoginProps) {
         onCancel={() => setConfirmSignOut(false)}
       />
     </ManagedAccountsGroup>
+  );
+}
+
+/**
+ * DeepSeek Harness 供应商页「已添加」里的官方账号卡：登录了才有。账号下的模型由 DeepSeek Harness
+ * 自带的账号插件提供，不写进 profile，所以这张卡不是供应商行，也不能移除；登录、退出在授权中心。
+ */
+export function DshAccountCard({ status }: { status: DshAccountStatus }) {
+  const { t } = useTranslation();
+  const name = accountName(status, t("dsh.account.unnamed"));
+  const chips: CardChip[] = [
+    {
+      key: "official",
+      label: t("providerCard.chip.official"),
+      tone: "outline",
+    },
+  ];
+  if (status.expired) {
+    chips.push({
+      key: "expired",
+      label: t("dsh.account.expiredChip"),
+      tone: "warning",
+      title: t("dsh.account.expired"),
+    });
+  }
+  const balance = status.wallets.map(formatWallet).join(" · ");
+  return (
+    <div className="group relative rounded-panel border border-border bg-surface transition-[border-color,box-shadow,background-color] duration-150 hover:border-border-strong hover:shadow-v7-sm">
+      <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
+        <span className="w-4 shrink-0" />
+        <ProviderIconBox
+          icon={resolveProviderIcon("dsh", "deepseek")}
+          name={name}
+          className="bg-white text-neutral-900"
+          fallbackClassName="bg-transparent text-neutral-600"
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h3
+              className="m-0 min-w-0 truncate text-strong text-fg-1"
+              title={name}
+            >
+              {name}
+            </h3>
+            {chips.map((chip) => (
+              <CardChipBadge key={chip.key} chip={chip} />
+            ))}
+          </div>
+          <div className="mt-0.5 truncate text-caption text-fg-2">
+            {t("dsh.account.cardSubtitle")}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          {balance && !status.error && !status.expired && (
+            <span className="max-w-[208px] truncate text-caption tabular-nums text-fg-2">
+              {t("dsh.account.balance", { amount: balance })}
+            </span>
+          )}
+          <ProviderCardActions
+            providerName={name}
+            presentation={{
+              buttons: [],
+              chips,
+              editDisabledReason: t("dsh.account.editDisabled"),
+              deleteDisabledReason: t("dsh.account.managedHint"),
+            }}
+            onEdit={() => undefined}
+            onDelete={() => undefined}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
