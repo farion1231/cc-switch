@@ -880,6 +880,19 @@ fn managed_codex_account_id(provider: &Provider) -> Option<String> {
     None
 }
 
+/// Claude 官方卡绑了授权中心的账号（同前端 ProviderCard 的 `claudeBoundAccountId`）。
+fn claude_bound_account_id(app_type: &AppType, provider: &Provider) -> Option<String> {
+    if *app_type != AppType::Claude || !is_official_account(app_type, provider) {
+        return None;
+    }
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("claude_official"))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
 fn provider_uses_official_subscription(provider: &Provider) -> bool {
     // Managed Codex uses the account-scoped path in tray_usage_source instead
     // of the CLI's app-wide subscription cache.
@@ -901,6 +914,8 @@ fn provider_uses_official_subscription(provider: &Provider) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 enum TrayUsageSource {
     ManagedCodex(String),
+    /// 绑了账号的 Claude 官方卡：按绑定的账号取，不读客户端默认登录的应用级缓存。
+    ClaudeAccount(String),
     /// 客户端自己登录的官方订阅：和供应商卡片读写同一份应用级订阅缓存。
     Subscription,
     Script,
@@ -920,6 +935,16 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
                 .unwrap_or(true);
             return enabled.then_some(TrayUsageSource::ManagedCodex(account_id));
         }
+    }
+    if let Some(account_id) = claude_bound_account_id(app_type, provider) {
+        // 同卡片：绑了账号的 Claude 官方卡没保存过开关时默认查额度，用户关掉才不查。
+        let enabled = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.usage_script.as_ref())
+            .map(|script| script.enabled)
+            .unwrap_or(true);
+        return enabled.then_some(TrayUsageSource::ClaudeAccount(account_id));
     }
     // xAI OAuth 的额度属于绑定的 SuperGrok 账号，不是所在应用的客户端登录，仍走脚本路径。
     if provider_uses_official_subscription(provider) && !provider.is_xai_oauth() {
@@ -971,6 +996,12 @@ fn cached_usage_view(
         // account's quota from a provider cache or the CLI subscription cache.
         return usage_cache
             .with_codex_oauth(account_id, |quota| format_subscription_quota(texts, quota))
+            .flatten();
+    }
+    if let Some(TrayUsageSource::ClaudeAccount(account_id)) = source {
+        // 同上：没查到这个号就不显示，不回落到默认登录的应用级缓存。
+        return usage_cache
+            .with_claude_account(account_id, |quota| format_subscription_quota(texts, quota))
             .flatten();
     }
     if source == Some(&TrayUsageSource::Subscription) {
@@ -2167,7 +2198,7 @@ fn cached_reset_credits(
             usage_cache.with_codex_oauth(account_id, count).flatten()
         }
         TrayUsageSource::Subscription => usage_cache.with_subscription(app_type, count).flatten(),
-        TrayUsageSource::Script => None,
+        TrayUsageSource::ClaudeAccount(_) | TrayUsageSource::Script => None,
     }
 }
 
@@ -3220,6 +3251,11 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                         .await
                         .map(|_| ())
                     }
+                    TrayUsageSource::ClaudeAccount(account_id) => {
+                        crate::commands::get_claude_account_quota(app_clone, state, account_id)
+                            .await
+                            .map(|_| ())
+                    }
                     TrayUsageSource::Subscription => {
                         crate::commands::get_subscription_quota(app_clone, state, app_str)
                             .await
@@ -3880,6 +3916,84 @@ mod tests {
             tray_usage_source(&AppType::Codex, &legacy),
             Some(TrayUsageSource::ManagedCodex("account-1".to_string()))
         );
+    }
+
+    fn claude_bound_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-bound",
+            "name": "Claude Official",
+            "settingsConfig": {"env": {}},
+            "category": "official",
+            "meta": {
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "claude_official",
+                    "accountId": id
+                })),
+                "usage_script": enabled.map(|enabled| serde_json::json!({
+                    "enabled": enabled,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": "official_subscription"
+                }))
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn claude_bound_card_tray_usage_defaults_on_and_reads_its_account() {
+        // 卡片在没保存开关时默认查额度：托盘也要显示，不然两边各说各的
+        for enabled in [Some(true), None] {
+            assert_eq!(
+                tray_usage_source(
+                    &AppType::Claude,
+                    &claude_bound_provider(Some(" acct-1 "), enabled)
+                ),
+                Some(TrayUsageSource::ClaudeAccount("acct-1".to_string()))
+            );
+        }
+        assert_eq!(
+            tray_usage_source(
+                &AppType::Claude,
+                &claude_bound_provider(Some("acct-1"), Some(false))
+            ),
+            None
+        );
+        // 没绑账号的官方卡照旧：开了官方订阅模板才查，读默认登录
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, &claude_bound_provider(None, None)),
+            None
+        );
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, &claude_bound_provider(None, Some(true))),
+            Some(TrayUsageSource::Subscription)
+        );
+
+        // 只读这个号的快照，不回落到默认登录的应用级缓存
+        let cache = UsageCache::new();
+        let texts = en();
+        let provider = claude_bound_provider(Some("acct-1"), None);
+        let label = || {
+            title(usage_view(
+                &cache,
+                &texts,
+                &AppType::Claude,
+                &provider,
+                &provider.id,
+            ))
+            .map(|(text, _)| text)
+        };
+        cache.put_subscription(
+            AppType::Claude,
+            make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 99.0)]),
+        );
+        assert_eq!(label(), None);
+        cache.put_claude_account(
+            "acct-1".to_string(),
+            make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 25.0)]),
+        );
+        assert_eq!(label().as_deref(), Some("5-hour 75% left"));
     }
 
     #[test]

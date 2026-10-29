@@ -196,6 +196,7 @@
       "recent": "Recent",
       "forget": "Remove from recent",
       "confirm": "Open Terminal",
+      "skipPermissions": "Skip permission prompts",
       "agySwitchTitle": "This switches agy's sign-in",
       "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
       "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can."

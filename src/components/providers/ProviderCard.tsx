@@ -43,9 +43,9 @@ import {
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
-import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
+import { isProxyAppId } from "@/config/appConfig";
 import { ProviderCardActions } from "./ProviderCardActions";
-import { terminalIsIsolated } from "./OpenTerminalDialog";
+import { terminalAvailable, terminalIsIsolated } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
 interface DragHandleProps {
@@ -59,9 +59,8 @@ interface ProviderCardProps {
   appId: AppId;
   /** 卡片怎么画：模式色、状态 / 按钮、徽标（由列表按模式算好） */
   presentation: CardPresentation;
-  /** 用来决定额度是否自动查询（共存式应用看 isInConfig） */
+  /** 用来决定官方订阅 / OAuth 额度是否自动查询 */
   isCurrent: boolean;
-  isInConfig?: boolean;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
@@ -186,7 +185,6 @@ export function ProviderCard({
   appId,
   presentation,
   isCurrent,
-  isInConfig = true,
   onEdit,
   onDelete,
   onConfigureUsage,
@@ -306,12 +304,8 @@ export function ProviderCard({
     appId === "agy" && isOfficial && isMac()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
       : null;
-  // 获取用量数据以判断是否有多套餐
-  // 累加模式应用：使用 isInConfig 代替 isCurrent
-  const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
-  const autoQueryInterval = shouldAutoQuery
-    ? provider.meta?.usage_script?.autoQueryInterval || 0
-    : 0;
+  // 获取用量数据以判断是否有多套餐，按用户配置刷新，不依赖供应商启用状态。
+  const autoQueryInterval = provider.meta?.usage_script?.autoQueryInterval ?? 0;
 
   // 脚本用量只在「已启用 + 非官方 + 非官方订阅模板」时才查询；展开判定必须复用同一谓词，
   // 因为禁用的 React Query observer 仍会返回同 key 的旧缓存。
@@ -610,8 +604,6 @@ export function ProviderCard({
                   providerId={provider.id}
                   appId={appId}
                   usageEnabled={usageEnabled}
-                  isCurrent={isCurrent}
-                  isInConfig={isInConfig}
                   inline={true}
                 />
               )}
@@ -661,7 +653,9 @@ export function ProviderCard({
                 : () => onConfigureUsage(provider)
             }
             onOpenTerminal={
-              onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+              onOpenTerminal && terminalAvailable(provider, appId, isCurrent)
+                ? () => onOpenTerminal(provider)
+                : undefined
             }
             openTerminalIsolated={terminalIsIsolated(provider, appId)}
           />
@@ -675,8 +669,6 @@ export function ProviderCard({
             providerId={provider.id}
             appId={appId}
             usageEnabled={usageEnabled}
-            isCurrent={isCurrent}
-            isInConfig={isInConfig}
             inline={false}
           />
         </div>

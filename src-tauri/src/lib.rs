@@ -1694,6 +1694,7 @@ pub fn run() {
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,
+            commands::discover_repo_skills,
             commands::check_skill_updates,
             commands::resync_skills_to_apps,
             commands::update_skill,
