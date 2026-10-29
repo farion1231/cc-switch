@@ -200,6 +200,45 @@ describe("OpenTerminalDialog", () => {
     expect(screen.getByRole("checkbox")).toBeChecked();
   });
 
+  it("passes trimmed extra arguments and remembers them per app after opening", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+
+    fireEvent.change(
+      screen.getByLabelText("provider.openTerminalDialog.extraArgs"),
+      { target: { value: '  --debug --append-system-prompt "be brief"  ' } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.confirm",
+      }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+      extraArgs: '--debug --append-system-prompt "be brief"',
+    });
+    expect(
+      window.localStorage.getItem("cc-switch:terminal:extra-args:claude"),
+    ).toBe('--debug --append-system-prompt "be brief"');
+    expect(
+      window.localStorage.getItem("cc-switch:terminal:extra-args:codex"),
+    ).toBeNull();
+  });
+
+  it("prefills the remembered extra arguments", () => {
+    window.localStorage.setItem(
+      "cc-switch:terminal:extra-args:claude",
+      "--debug",
+    );
+    renderDialog();
+    expect(
+      screen.getByLabelText("provider.openTerminalDialog.extraArgs"),
+    ).toHaveValue("--debug");
+  });
+
   it("keeps the dialog open and the list unchanged when opening fails", async () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/gone"]));
     openTerminalMock.mockRejectedValue(new Error("目录不存在: /gone"));
