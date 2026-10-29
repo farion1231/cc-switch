@@ -408,13 +408,19 @@
     },
     "unifyCodexHistory": {
       "title": "Codex セッション履歴を統一",
-      "message": "オンにすると、Codex CLI の resume 一覧に公式サブスクリプションとサードパーティのセッションがまとめて表示されます（Codex デスクトップ版はアップデートで全セッションを表示できるようになったため影響しません）。注意：プロバイダーをまたいで古いセッションを再開すると、相手のバックエンドが encrypted_content の推論内容を復号できず失敗する場合があります。\n\n既存の公式セッション履歴を共有一覧へ移行することもできます（移行前に ~/.cc-switch/backups へ自動バックアップし、オフにする際に復元を選べます）。",
+      "message": "公式サブスクリプションとサードパーティ API は、Codex CLI とデスクトップで custom 接続 ID を共有します。接続を切り替えた後は、開いているチャットを開き直してください。移行先が元の暗号化された推論内容に対応していない場合があります。\n\n既存の公式履歴もバックアップ後に移行でき、無効化時に復元できます。\n\n公式接続は組み込みの openai ではなく custom を使用するため、Dot、音声入力などのデスクトップ機能が表示されなくなる場合があります。複数プロバイダーの会話を一覧表示できるデスクトップ版では、閲覧のためだけに有効にする必要は通常ありません。",
       "migrateExisting": "既存の公式セッション履歴も移行する",
       "confirm": "理解しました、オンにする"
     },
+    "codexLegacyOfficialHistory": {
+      "message": "先に Codex を終了してください。残っている cc-switch-official の旧公式チャットを内蔵公式接続（openai）に修復します。以前の移行が完了していても再確認できます。履歴の統一が有効でも、修復後のチャットは公式接続を使用します。\n\n元のファイルをバックアップしてから、確認できたチャットとインデックスを修復します。安全に処理できない項目はスキップして件数を表示します。第三者のチャット、メッセージ、暗号化内容、現在の接続設定やログイン情報は変更しません。完了後にチャットを開き直してください。"
+    },
+    "codexManagedHistory": {
+      "message": "先に Codex を終了してください。CC Switch カードで定義された以前のサードパーティ接続 ID をバックアップして共有接続に移行します。移行後のチャットは現在選択中の接続を使用します。管理対象外の接続、メッセージ、暗号化された内容は変更しません。安全に処理できないファイルはスキップして件数を報告し、他のファイルの移行を続けます。ログ、元の設定とバックアップを確認してから再試行してください。"
+    },
     "unifyCodexHistoryOff": {
       "title": "セッション履歴の統一をオフにする",
-      "message": "オフにすると、Codex CLI では公式サブスクリプションとサードパーティのセッション一覧が再び別々になります（デスクトップ版は引き続き全セッションを表示）。オンの間に作成されたセッションは出所を区別できないためサードパーティ側の履歴に残り、CLI では公式サブスクリプション利用時に表示されません。",
+      "message": "公式サブスクリプションは再び openai の接続 ID を使用します。既存の custom 会話はその ID を保持し、再接続できなくなる場合があります。\n\n復元できるのは有効化時に移行した公式会話だけです。有効期間中に作成した会話や出所を確認できない custom 会話は対象外のため、有効な元の接続を維持してください。\n\n公式デスクトップ機能を使用するには、無効化後に OpenAI Official を選択し、Codex を完全に終了して開き直してください。",
       "restoreBackup": "オンにした際に移行した公式セッションを公式履歴へ復元する（バックアップから正確に復元）",
       "confirm": "オフにする"
     },
@@ -893,7 +899,24 @@
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
-    "unifyCodexSessionHistoryDescription": "Codex CLI にのみ影響します：CLI の resume 一覧には現在のプロバイダーのセッションしか表示されません。オンにすると公式サブスクリプションも共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じ一覧に表示されます。Codex デスクトップ版はアップデートで全セッションを表示できるようになったため、デスクトップ版だけなら不要です。既存の公式セッションの移行も選択できます（移行前に自動バックアップ）。オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
+    "unifyCodexSessionHistoryDescription": "公式サブスクリプションとサードパーティ API は custom 接続 ID を共有し、保存したチャットが接続の切り替えに追従できるようにします。Codex デスクトップにも適用されます。すべてのチャットが表示されても、保存済みの接続は更新されません。新しい設定を適用するには、開いているチャットを開き直してください。既存の公式履歴はバックアップ後に移行でき、無効化時に復元できます。別のプロバイダーでの再開には、元の暗号化された推論内容への対応も必要です。",
+    "unifyCodexDesktopCompatibility": "履歴の統一は主に CLI の履歴一覧向けです。有効にすると Codex デスクトップの Dot、音声入力などの公式機能が表示されなくなる場合があります。複数プロバイダーの会話を一覧表示できるデスクトップ版では、履歴閲覧のためだけに有効にする必要は通常ありません。",
+    "codexManagedHistory": "以前のサードパーティチャットを移行",
+    "codexManagedHistoryAction": "以前のチャットを移行",
+    "codexManagedHistoryCompleted": "以前のサードパーティチャットを確認し、{{files}} ファイル、{{rows}} 件のインデックスを移行しました。チャットを開き直してください。以前の設定が使われる場合は、ご自身で Codex を再起動してください。",
+    "codexManagedHistoryPartial": "{{files}} ファイル、{{rows}} 件のインデックスを移行しました。{{skippedFiles}} ファイル、{{skippedRows}} 件のインデックスはスキップしました。CC Switch ログを確認し、元の接続設定でスキップ項目を手動で処理してください。",
+    "codexLegacyOfficialHistory": "旧公式チャットの接続を修復",
+    "codexLegacyOfficialHistoryAction": "確認して修復",
+    "codexLegacyOfficialHistoryCompleted": "旧公式チャットを確認しました：{{files}} 個のファイル、{{rows}} 件のインデックスを修復しました。チャットを開き直してください。修復後は公式接続を使用します。",
+    "codexLegacyOfficialHistoryPartial": "{{files}} 個のファイル、{{rows}} 件のインデックスを修復し、{{skippedFiles}} 個のファイル、{{skippedRows}} 件のインデックスをスキップしました。CC Switch のログで原因を確認し、対処後に再度修復してください。",
+    "codexLegacyOfficialHistoryInUse": "現在の設定または profile が旧公式接続を使用しています。履歴は変更していません。接続を切り替えるか profile を修正してから再試行してください。",
+    "codexHistoryStateUnavailable": "この環境では Codex の履歴インデックスを安全にロックできません。履歴は変更されていません。Codex クライアントと同じ環境で操作してください。",
+    "codexHistoryRetryPending": "一部のファイルは一時的に利用できません。Codex を終了して再試行してください。",
+    "unifyCodexHistoryRestorePartial": "{{files}} 件のファイルと {{rows}} 件のインデックス行を復元し、{{skippedFiles}} 件のファイルと {{skippedRows}} 件のインデックス行をスキップしました。CC Switch のログを確認し、Codex を終了して再試行するか、元の接続設定で手動対応してください。",
+    "unifyCodexHistoryRestoreAction": "バックアップから公式チャットを復元",
+    "unifyCodexHistoryRestoreConfirm": "先に Codex を終了してください。バックアップ台帳で公式と記録されたチャットのみ復元し、検証できないファイルとインデックス行はスキップします。確認後に実行します。残りは再度確認して再試行できます。",
+    "codexHistoryMigrationFailed": "一部の Codex 履歴の接続を移行できませんでした",
+    "codexHistoryMigrationRecovery": "Codex を終了し、CC Switch ログで競合を確認してください。元のプロバイダー定義を復元し、その接続で会話を続けられます。解決後、設定 → アプリ設定 → Codex で手動で再試行してください。クライアントの自動再起動や履歴の強制上書きは行いません。",
     "codexStackClassicSubagents": "集約モードでサブエージェントにクラシックツールを使う",
     "codexStackClassicSubagentsDescription": "メインとサブのエージェントが別のプロバイダーを使う場合は必ずオンにしてください。オフだとサブエージェントにタスクが届きません。",
     "codexStackClassicSubagentsForcedV2": "Codex の config.toml で [features] multi_agent_v2 がオンになっています。こちらが優先されるため、この設定は効きません。",

@@ -408,13 +408,19 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "When enabled, the Codex CLI resume list shows official subscription and third-party sessions together (the Codex desktop app can show all sessions since a recent update and is unaffected). Note: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.\n\nYou can also migrate your existing official session history into the shared list (backed up to ~/.cc-switch/backups first; you can restore it when turning this off).",
+      "message": "Official subscriptions and third-party APIs will share the custom connection ID in both Codex CLI and desktop. Reopen loaded chats after switching connections. The destination backend may not support the original encrypted reasoning content.\n\nYou can also migrate existing official history, with a backup saved first and an option to restore it when turning this off.\n\nOfficial connections use custom instead of the built-in openai identity, which may hide Dot, dictation, and other Desktop features. You usually do not need this option just to view chats in a Desktop version that already lists providers together.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
+    "codexLegacyOfficialHistory": {
+      "message": "Quit Codex first. Repair leftover cc-switch-official chats to the built-in official connection (openai), even if a previous migration completed. Repaired chats use the official connection even when unified history is on.\n\nOriginals are backed up before verified chats and index rows are repaired. Items that cannot be safely processed are skipped and counted. Third-party chats, messages, encrypted content, the current connection config and login information remain unchanged. Reopen chats yourself afterward."
+    },
+    "codexManagedHistory": {
+      "message": "Quit Codex first. This backs up and moves legacy third-party connection IDs defined in CC Switch cards to the shared connection. These chats will then use the currently selected connection. Unmanaged connections, messages, and encrypted content are left untouched. Files that cannot be safely patched are skipped and counted while other files continue. Check the logs, original configuration, and backups before retrying."
+    },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "When turned off, the Codex CLI goes back to separate session lists for the official subscription and third-party providers (the desktop app still shows all sessions). Sessions created while this was on can't be told apart, so they stay in the third-party history and the CLI won't show them under the official subscription.",
+      "message": "Official subscriptions will use the openai connection ID again. Existing custom chats keep that ID and may fail to reconnect.\n\nRestoring backups only covers official chats migrated at enable time. It excludes chats created while enabled and custom chats whose origin cannot be verified; keep a working original connection for those chats.\n\nTo use native official Desktop features, select OpenAI Official after disabling and fully quit and reopen Codex.",
       "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
       "confirm": "Turn off"
     },
@@ -893,7 +899,24 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "Official subscriptions and third-party APIs share the custom connection ID, so saved chats can follow connection changes. This applies to Codex desktop too: showing all chats does not update their saved connection. Reopen loaded chats to adopt new settings. Existing official history can be migrated with a backup and restored when this is turned off. Cross-provider continuation also depends on support for the original encrypted reasoning content.",
+    "unifyCodexDesktopCompatibility": "Unified history mainly serves CLI history lists and may hide Dot, dictation, or other official Codex Desktop features. If your Desktop version already lists chats across providers, you usually do not need it just to view history.",
+    "codexManagedHistory": "Migrate legacy third-party chats",
+    "codexManagedHistoryAction": "Migrate old chats",
+    "codexManagedHistoryCompleted": "Legacy third-party chats checked: {{files}} files and {{rows}} index rows migrated. Reopen chats to load the connection; restart Codex yourself if it still uses old settings.",
+    "codexManagedHistoryPartial": "Migrated {{files}} files and {{rows}} index rows; skipped {{skippedFiles}} files and {{skippedRows}} index rows. Check the CC Switch logs and handle skipped items manually with their original connection configuration.",
+    "codexLegacyOfficialHistory": "Repair legacy official chat connections",
+    "codexLegacyOfficialHistoryAction": "Check and repair",
+    "codexLegacyOfficialHistoryCompleted": "Legacy official chats checked: repaired {{files}} files and {{rows}} index rows. Reopen chats; repaired chats use the official connection.",
+    "codexLegacyOfficialHistoryPartial": "Repaired {{files}} files and {{rows}} index rows; skipped {{skippedFiles}} files and {{skippedRows}} index rows. Check the CC Switch logs, resolve the cause and confirm repair again.",
+    "codexLegacyOfficialHistoryInUse": "The current config or a profile still uses the legacy official connection. No history was changed. Switch away from it or update the profile, then retry.",
+    "codexHistoryStateUnavailable": "The Codex history index cannot be safely locked here. No history was changed. Run this action in the Codex client’s own environment.",
+    "codexHistoryRetryPending": "Some files are temporarily unavailable. Quit Codex and retry.",
+    "unifyCodexHistoryRestorePartial": "Restored {{files}} files and {{rows}} index rows; skipped {{skippedFiles}} files and {{skippedRows}} index rows. Check the CC Switch logs, quit Codex and retry, or handle skipped items manually with their original connection configuration.",
+    "unifyCodexHistoryRestoreAction": "Restore official chats from backups",
+    "unifyCodexHistoryRestoreConfirm": "Quit Codex first. Restore only chats recorded as official in the backup ledger, skipping files and index rows that cannot be verified. Confirm to run; confirm again later to retry remaining items.",
+    "codexHistoryMigrationFailed": "Some Codex history connections could not be migrated",
+    "codexHistoryMigrationRecovery": "Quit Codex and check the CC Switch logs for conflicts. You can restore the original provider definition and continue through that connection. Once resolved, retry manually in Settings → App Configuration → Codex. The client will not be restarted and history will not be forcibly overwritten.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
