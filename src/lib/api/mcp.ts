@@ -9,6 +9,27 @@ import type {
 import type { AppId } from "./types";
 
 export const mcpApi = {
+  async previewApi(request: {
+    url?: string;
+    document?: string;
+    baseUrl?: string;
+  }): Promise<ApiPreview> {
+    return await invoke("preview_mcp_api", { request });
+  },
+
+  async buildApiSpec(
+    profile: { tools: ApiTool[] },
+    headers: Record<string, string>,
+  ): Promise<McpServerSpec> {
+    return await invoke("build_mcp_api_spec", {
+      tools: profile.tools,
+      headers,
+    });
+  },
+
+  async decodeApiSpec(spec: McpServerSpec): Promise<ApiPreview> {
+    return await invoke("decode_mcp_api_spec", { spec });
+  },
   async getStatus(): Promise<McpStatus> {
     return await invoke("get_claude_mcp_status");
   },
@@ -135,6 +156,21 @@ export const mcpApi = {
     return await invoke("resync_mcp_to_apps", { apps: apps ?? null });
   },
 };
+
+export interface ApiTool {
+  readOnly?: boolean;
+  name: string;
+  description: string;
+  method: string;
+  url: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface ApiPreview {
+  title: string;
+  tools: ApiTool[];
+  skipped: string[];
+}
 
 /** 「重新同步到各应用」里单个应用的结果 */
 export interface McpAppSyncOutcome {
