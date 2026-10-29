@@ -2119,9 +2119,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "暫無額外選項",
     "noModelOptions": "模型選項，點擊 + 新增",
-    "modelLimits": "Token 限制",
-    "limitContext": "上下文",
-    "limitOutput": "輸出",
     "modelExtraFields": "模型屬性",
     "noModelExtraFields": "模型屬性 (variants, cost 等)，點擊 + 新增",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2565,7 +2562,7 @@
       "scanTitle": "自動掃描工作階段日誌",
       "scanHelpTitle": "工作階段日誌是什麼",
       "scanHelp": "各應用程式寫在本機的工作階段記錄。CC Switch 從中讀取用量，不開路由也有資料。",
-      "coverage": "涵蓋 7 個應用程式：{{apps}}",
+      "coverage": "涵蓋 {{total}} 個應用程式：{{apps}}",
       "cadenceOn": "啟動時掃描一次，背景每 10 分鐘一次；開啟用量頁時立即掃描，之後依所選間隔掃描",
       "cadenceOff": "自動掃描已關閉，只在點「立即同步」時掃描",
       "unsupported": "Hermes、OpenClaw 暫不支援用量統計",
@@ -5118,7 +5115,8 @@
       "title": "新增 DeepSeek Harness 供應商",
       "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"
     },
-    "sharedProviders": "Web、Desktop 共用這份供應商列表：新增、編輯、移除會一起寫入 web 和 desktop profile（沒有就先建好，Desktop 首次啟動時會保留），以及已初始化的 headless、acp。",
+    "sharedProviders": "已加入的供應商會一起寫進 DeepSeek Harness 的 Web 和 Desktop 設定（以及已初始化的 headless、acp），在 DeepSeek Harness 裡選模型即可。",
+    "sharedProvidersNote": "Web 和 Desktop 共用這份列表",
     "account": {
       "help": "DeepSeek 帳號以瀏覽器登入（OAuth），可以在這裡登入，也可以在 DeepSeek Harness 裡登入。登入資訊儲存在 $DSH_HOME/.credentials.yaml（預設 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一處登入或登出，兩端同時生效，執行中的 DeepSeek Harness 會自動重新讀取。帳號路由的模型用量在用量頁單獨顯示為「DeepSeek 帳號（OAuth）」。",
       "statusFailed": "無法讀取 DeepSeek 帳號的登入狀態",
@@ -5132,13 +5130,15 @@
       "balance": "餘額 {{amount}}",
       "bonus": "贈金 {{amount}}",
       "balanceFailed": "暫時查不到餘額",
-      "noticeSignedOutTitle": "未登入 DeepSeek 帳號",
-      "noticeSignedOut": "在授權中心或 DeepSeek Harness 裡以瀏覽器登入 DeepSeek 帳號後，可直接使用帳號下的模型；Web 和 Desktop 共用這份登入。",
-      "noticeExpiredTitle": "DeepSeek 帳號登入已失效",
-      "noticeExpired": "請在授權中心或 DeepSeek Harness 裡重新登入，Web 和 Desktop 會一起恢復。",
-      "noticeSignedIn": "DeepSeek 帳號：{{name}}",
       "signedIn": "DeepSeek 帳號已登入，Web 和 Desktop 都可以使用",
-      "signInFailed": "DeepSeek 帳號登入失敗"
+      "signInFailed": "DeepSeek 帳號登入失敗",
+      "presetName": "DeepSeek 官方登入",
+      "presetDescription": "以瀏覽器登入 DeepSeek 帳號後，DeepSeek Harness 會直接提供帳號下的模型，不用再新增供應商；Web 和 Desktop 共用這份登入。登入和登出在授權中心管理，登入後帳號會出現在「已加入」裡。",
+      "manageAccounts": "管理 DeepSeek 帳號",
+      "cardSubtitle": "官方帳號 · Web 和 Desktop 共用",
+      "expiredChip": "登入已失效",
+      "editDisabled": "帳號下的模型由 DeepSeek Harness 自動提供，無需編輯。",
+      "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
   }

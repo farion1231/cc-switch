@@ -44,6 +44,9 @@ const RECURSIVE_UNSUPPORTED_FIELDS: &[&str] = &["external_web_access"];
 /// Top-level request fields xAI rejects regardless of model.
 const TOP_LEVEL_UNSUPPORTED_FIELDS: &[&str] = &["prompt_cache_retention", "safety_identifier"];
 
+/// `include` markers emitted by Codex that xAI's Responses API rejects.
+const XAI_UNSUPPORTED_INCLUDE_MARKERS: &[&str] = &["output.encrypted_content"];
+
 /// Top-level sampling fields rejected specifically by grok-4.5.
 const GROK_45_UNSUPPORTED_FIELDS: &[&str] = &[
     "presence_penalty",
@@ -87,37 +90,67 @@ pub(crate) fn sanitize_xai_responses_request(body: &mut Value) -> bool {
         changed |= remove_top_level_field(body, field);
     }
 
-    // 2. grok-4.5 additionally rejects these sampling knobs.
+    // 2. Codex may request replay-only output tokens that xAI does not support.
+    //    Preserve every other include marker so newly supported xAI features keep working.
+    changed |= filter_unsupported_include_markers(body);
+
+    // 3. grok-4.5 additionally rejects these sampling knobs.
     if request_targets_grok_45(body) {
         for field in GROK_45_UNSUPPORTED_FIELDS {
             changed |= remove_top_level_field(body, field);
         }
     }
 
-    // 3. Codex plugin-private flags buried at any depth (e.g. inside tools or
+    // 4. Codex plugin-private flags buried at any depth (e.g. inside tools or
     //    tool parameter schemas).
     for field in RECURSIVE_UNSUPPORTED_FIELDS {
         changed |= remove_field_recursive(body, field);
     }
 
-    // 4. Lift the `additional_tools` input carrier (Responses Lite private
+    // 5. Lift the `additional_tools` input carrier (Responses Lite private
     //    shape) up to top-level `tools` so the supported ones survive.
     changed |= promote_additional_tools(body);
 
-    // 5. Drop `content: null` on reasoning input items — xAI's untagged enum
+    // 6. Drop `content: null` on reasoning input items — xAI's untagged enum
     //    deserializer refuses a present-but-null content field.
     changed |= strip_null_reasoning_content(body);
 
-    // 6. Whitelist the tool types and clean a now-dangling `tool_choice`.
+    // 7. Whitelist the tool types and clean a now-dangling `tool_choice`.
     changed |= filter_unsupported_tools(body);
 
-    // 7. Normalize function tool parameter schemas that xAI rejects before
+    // 8. Normalize function tool parameter schemas that xAI rejects before
     //    sampling starts — notably Codex's built-in `automation_update`, which
     //    arrives flattened as `mcp__codex_app__automation_update` with a root
     //    `oneOf`/`anyOf` union containing a `null` branch. The Responses→Chat
     //    bridge already coerces these, but the native Responses passthrough did
     //    not until this step.
     changed |= normalize_xai_function_tool_parameter_schemas(body);
+
+    changed
+}
+
+fn filter_unsupported_include_markers(body: &mut Value) -> bool {
+    let mut remove_empty_include = false;
+    let changed = match body.get_mut("include").and_then(Value::as_array_mut) {
+        Some(include) => {
+            let original_len = include.len();
+            include.retain(|item| {
+                !item
+                    .as_str()
+                    .is_some_and(|marker| XAI_UNSUPPORTED_INCLUDE_MARKERS.contains(&marker))
+            });
+            let changed = include.len() != original_len;
+            remove_empty_include = changed && include.is_empty();
+            changed
+        }
+        None => false,
+    };
+
+    if remove_empty_include {
+        if let Some(body) = body.as_object_mut() {
+            body.remove("include");
+        }
+    }
 
     changed
 }
@@ -1181,6 +1214,56 @@ mod tests {
         assert!(sanitize_xai_responses_request(&mut body));
         assert!(body.get("prompt_cache_retention").is_none());
         assert!(body.get("safety_identifier").is_none());
+    }
+
+    #[test]
+    fn filters_unsupported_include_marker_preserving_other_values() {
+        let mut body = json!({
+            "model": "grok-4.7",
+            "include": [
+                "reasoning.encrypted_content",
+                "output.encrypted_content",
+                "web_search_call.action.sources"
+            ]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert_eq!(
+            body["include"],
+            json!([
+                "reasoning.encrypted_content",
+                "web_search_call.action.sources"
+            ])
+        );
+        assert!(!sanitize_xai_responses_request(&mut body));
+    }
+
+    #[test]
+    fn drops_include_when_only_unsupported_marker_remains() {
+        let mut body = json!({
+            "model": "grok-4.7",
+            "include": ["output.encrypted_content"]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn keeps_supported_include_values_unchanged() {
+        let mut body = json!({
+            "model": "grok-4.7",
+            "include": ["reasoning.encrypted_content", "web_search_call.action.sources"]
+        });
+
+        assert!(!sanitize_xai_responses_request(&mut body));
+        assert_eq!(
+            body["include"],
+            json!([
+                "reasoning.encrypted_content",
+                "web_search_call.action.sources"
+            ])
+        );
     }
 
     #[test]
