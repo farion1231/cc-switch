@@ -67,6 +67,11 @@
     "mustBeObject": "配置必须是JSON对象，不能是数组或其他类型",
     "invalidJson": "JSON格式错误"
   },
+  "tagInput": {
+    "placeholder": "添加标签...",
+    "removeAria": "删除标签 {{tag}}",
+    "tagHint": "#标签"
+  },
   "claudeConfig": {
     "configLabel": "Claude Code 配置 (JSON) *",
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",

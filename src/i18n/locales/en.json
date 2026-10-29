@@ -67,6 +67,11 @@
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",
     "invalidJson": "Invalid JSON format"
   },
+  "tagInput": {
+    "placeholder": "Add tag...",
+    "removeAria": "Remove tag {{tag}}",
+    "tagHint": "#tag"
+  },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Full Claude Code settings.json content",

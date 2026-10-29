@@ -24,6 +24,7 @@ import {
 } from "@/utils/errorUtils";
 import { useUpsertMcpServer } from "@/hooks/useMcp";
 import { cn } from "@/lib/utils";
+import { TagInput } from "@/components/ui/tag-input";
 import { NeutralBadge } from "./AppMatrix";
 import {
   CHECKBOX_CLASS,
@@ -67,7 +68,7 @@ const SSE_REJECTED_APPS: readonly McpAppId[] = ["pi", "agy"];
 interface MetaDraft {
   name: string;
   description: string;
-  tags: string;
+  tags: string[];
   homepage: string;
   docs: string;
 }
@@ -83,6 +84,13 @@ interface McpFormModalProps {
   initialData?: McpServer;
   /** 现有全部服务器（查重、批量覆盖用） */
   existingServers?: Record<string, McpServer>;
+  /**
+   * 现有全部已去重且排序的 MCP 标签（联想推荐用）。
+   * 遍历所有的 mcp 配置再合并所有的 tags 去重的操作十分 expensive，应该是由数据库进行维护，
+   * rust 提供对应的 API 供前端调用即可直接在 McpFormModal 内部获取而不是依赖于外部传入的 existingTags，
+   * 但目前为快速实现且 McpFormModal 仅能从 UnifiedMcpPanel 进入，所以采取此方案。
+   */
+  existingTags?: string[];
   /** 「写入到」里列出的应用（应用页里设为显示的） */
   visibleAppIds?: McpAppId[];
   onSave: () => void | Promise<void>;
@@ -92,7 +100,7 @@ interface McpFormModalProps {
 const emptyMeta = (): MetaDraft => ({
   name: "",
   description: "",
-  tags: "",
+  tags: [],
   homepage: "",
   docs: "",
 });
@@ -103,7 +111,15 @@ function metaOf(server?: McpServer): MetaDraft {
     // 显示名和键名一样时不必重复填
     name: server.name && server.name !== server.id ? server.name : "",
     description: server.description ?? "",
-    tags: (server.tags ?? []).join(", "),
+    tags: Array.isArray(server.tags)
+      ? Array.from(
+          new Set(
+            server.tags
+              .map((t) => (typeof t === "string" ? t.trim() : ""))
+              .filter(Boolean),
+          ),
+        )
+      : [],
     homepage: server.homepage ?? "",
     docs: server.docs ?? "",
   };
@@ -128,6 +144,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   editingId,
   initialData,
   existingServers = {},
+  existingTags = [],
   visibleAppIds = MCP_APP_IDS,
   onSave,
   onClose,
@@ -220,7 +237,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     setMeta({
       name: withDesc.name && withDesc.name !== preset.id ? withDesc.name : "",
       description: withDesc.description ?? "",
-      tags: (withDesc.tags ?? []).join(", "),
+      tags: Array.isArray(withDesc.tags)
+        ? Array.from(
+            new Set(
+              withDesc.tags
+                .map((t) => (typeof t === "string" ? t.trim() : ""))
+                .filter(Boolean),
+            ),
+          )
+        : [],
       homepage: withDesc.homepage ?? "",
       docs: withDesc.docs ?? "",
     });
@@ -373,10 +398,9 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     assign("description");
     assign("homepage");
     assign("docs");
-    const tags = metaDraft.tags
-      .split(/[,，]/)
-      .map((tag) => tag.trim())
-      .filter(Boolean);
+    const tags = Array.from(
+      new Set(metaDraft.tags.map((tag) => tag.trim()).filter(Boolean)),
+    );
     if (tags.length) entry.tags = tags;
     else delete entry.tags;
     return entry;
@@ -641,6 +665,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         title={title}
         closeLabel={t("common.back")}
         aria-describedby={undefined}
+        onEscapeKeyDown={(event) => {
+          const target = event.target as Element | null;
+          if (
+            target?.closest?.('[aria-expanded="true"]') ||
+            target?.closest?.('[role="listbox"]')
+          ) {
+            event.preventDefault();
+          }
+        }}
       >
         <SheetBody className="flex flex-col gap-5 px-6 pb-6 pt-5">
           {!isEdit && (
@@ -1307,17 +1340,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     <label htmlFor="mcp-meta-tags" className={LABEL_CLASS}>
                       {t("mcpPage.drawer.tags")}
                     </label>
-                    <input
+                    <TagInput
                       id="mcp-meta-tags"
-                      type="text"
-                      className={FIELD_CLASS}
                       value={meta.tags}
+                      suggestions={existingTags}
                       placeholder={t("mcpPage.drawer.tagsPlaceholder")}
-                      autoComplete="off"
-                      onChange={(event) =>
+                      onChange={(tags) =>
                         setMeta((prev) => ({
                           ...prev,
-                          tags: event.target.value,
+                          tags,
                         }))
                       }
                     />
