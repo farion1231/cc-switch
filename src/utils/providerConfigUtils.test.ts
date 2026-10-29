@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   codexApiFormatFromWireApi,
   isCodexAnthropicWireApi,
+  extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   isCodexRemoteCompactionEnabled,
+  setCodexBaseUrl,
   setCodexModelName,
   setCodexRemoteCompaction,
 } from "./providerConfigUtils";
@@ -185,5 +187,73 @@ name = "Example"
 
     const singleQuoted = `model = 'kimi-k2.7'\n`;
     expect(extractCodexModelName(singleQuoted)).toBe("kimi-k2.7");
+  });
+});
+
+describe("setCodexBaseUrl", () => {
+  it("writes base_url inside [model_providers.custom] when [[skills.config]] follows", () => {
+    // Regression: [[skills.config]] is an array-of-tables header ([[...]])
+    // that the section regex did not recognize, so the section range extended
+    // past it and base_url was appended after the skills content — landing
+    // inside skills.config[0] instead of model_providers.custom.
+    const input = `model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+
+[[skills.config]]
+path = "/path/to/some-skill/SKILL.md"
+enabled = false
+`;
+
+    const result = setCodexBaseUrl(input, "https://relay.example.com/v1");
+
+    // base_url must be inside [model_providers.custom], i.e. before the
+    // [[skills.config]] header.
+    const baseUrlLine = 'base_url = "https://relay.example.com/v1"';
+    const baseUrlIndex = result.indexOf(baseUrlLine);
+    const skillsHeaderIndex = result.indexOf("[[skills.config]]");
+    expect(baseUrlIndex).toBeGreaterThan(-1);
+    expect(skillsHeaderIndex).toBeGreaterThan(-1);
+    expect(baseUrlIndex).toBeLessThan(skillsHeaderIndex);
+
+    // Round-trip: extractCodexBaseUrl must find it in the custom table.
+    expect(extractCodexBaseUrl(result)).toBe("https://relay.example.com/v1");
+  });
+
+  it("writes base_url inside [model_providers.custom] when [[skills.config]] precedes it", () => {
+    const input = `model_provider = "custom"
+model = "gpt-5.5"
+
+[[skills.config]]
+path = "/path/to/some-skill/SKILL.md"
+enabled = false
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+`;
+
+    const result = setCodexBaseUrl(input, "https://relay.example.com/v1");
+
+    // base_url must be after [model_providers.custom] and NOT inside the
+    // skills.config array that precedes it.
+    const baseUrlLine = 'base_url = "https://relay.example.com/v1"';
+    const baseUrlIndex = result.indexOf(baseUrlLine);
+    const customHeaderIndex = result.indexOf("[model_providers.custom]");
+    expect(baseUrlIndex).toBeGreaterThan(customHeaderIndex);
+
+    // The skills.config block must not contain base_url.
+    const skillsBlock = result.slice(
+      result.indexOf("[[skills.config]]"),
+      result.indexOf("[model_providers.custom]"),
+    );
+    expect(skillsBlock).not.toContain("base_url");
+
+    expect(extractCodexBaseUrl(result)).toBe("https://relay.example.com/v1");
   });
 });
