@@ -44,10 +44,38 @@ struct ResponseModelId {
     model_id: String,
 }
 
-pub(super) fn models_for_transcript(
+#[derive(Clone, PartialEq, Message)]
+struct GenerationTokenEnvelope {
+    #[prost(message, optional, tag = "1")]
+    response: Option<ResponseTokens>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub(super) struct ResponseTokens {
+    #[prost(message, optional, tag = "4")]
+    pub tokens: Option<GenerationTokens>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub(super) struct GenerationTokens {
+    #[prost(uint64, tag = "2")]
+    pub input_tokens: u64,
+    #[prost(uint64, tag = "3")]
+    pub output_tokens: u64,
+    #[prost(uint64, tag = "5")]
+    pub cache_read_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct NativeGenerationData {
+    pub model: Option<String>,
+    pub tokens: Option<(u64, u64, u64)>,
+}
+
+pub(super) fn native_generations_for_transcript(
     transcript: &Path,
     steps: &[u64],
-) -> Result<HashMap<u64, String>, String> {
+) -> Result<HashMap<u64, NativeGenerationData>, String> {
     // brain/<id>/.system_generated/logs/transcript_full.jsonl and conversations/<id>.db
     // share the same CLI/IDE/private-profile root.
     let session = transcript
@@ -70,10 +98,25 @@ pub(super) fn models_for_transcript(
     if !path.starts_with(root) {
         return Err("Conversation database is outside the Antigravity root".into());
     }
-    read_models(&path, steps).map_err(|error| error.to_string())
+    read_native_generations(&path, steps).map_err(|error| error.to_string())
 }
 
-fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+#[allow(dead_code)]
+pub(super) fn models_for_transcript(
+    transcript: &Path,
+    steps: &[u64],
+) -> Result<HashMap<u64, String>, String> {
+    let generations = native_generations_for_transcript(transcript, steps)?;
+    Ok(generations
+        .into_iter()
+        .filter_map(|(step, gen)| gen.model.map(|model| (step, model)))
+        .collect())
+}
+
+fn read_native_generations(
+    path: &Path,
+    steps: &[u64],
+) -> rusqlite::Result<HashMap<u64, NativeGenerationData>> {
     let mut conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -84,7 +127,7 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
     let tx = conn.transaction()?;
     let mut step_query = tx.prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")?;
     let mut generation_query = tx.prepare("SELECT data FROM gen_metadata WHERE idx=?1")?;
-    let mut models = HashMap::new();
+    let mut generations = HashMap::new();
     for &step in steps {
         let Ok(index) = i64::try_from(step) else {
             continue;
@@ -116,16 +159,37 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
             .ok()
             .and_then(|metadata| metadata.response)
             .map(|response| response.model);
-        if let Some(model) = [tiered, base]
+        let model = [tiered, base]
             .into_iter()
             .flatten()
             .map(|model| model.trim().to_string())
-            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"))
-        {
-            models.insert(step, model);
+            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"));
+        let tokens = GenerationTokenEnvelope::decode(bytes.as_slice())
+            .ok()
+            .and_then(|metadata| metadata.response)
+            .and_then(|response| response.tokens)
+            .map(|tokens| {
+                (
+                    tokens.input_tokens,
+                    tokens.output_tokens,
+                    tokens.cache_read_tokens,
+                )
+            })
+            .filter(|&(i, o, c)| i > 0 || o > 0 || c > 0);
+        if model.is_some() || tokens.is_some() {
+            generations.insert(step, NativeGenerationData { model, tokens });
         }
     }
-    Ok(models)
+    Ok(generations)
+}
+
+#[cfg(test)]
+fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+    let generations = read_native_generations(path, steps)?;
+    Ok(generations
+        .into_iter()
+        .filter_map(|(step, gen)| gen.model.map(|model| (step, model)))
+        .collect())
 }
 
 #[cfg(test)]
@@ -181,9 +245,79 @@ pub(super) fn test_model_id(id: &str) -> Vec<u8> {
     field
 }
 
+/// Field 4 (Token Usage) encoded as a response subfield.
+#[cfg(test)]
+pub(super) fn test_tokens(input: u64, output: u64, cache_read: u64) -> Vec<u8> {
+    let tokens = GenerationTokens {
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_tokens: cache_read,
+    };
+    ResponseTokens {
+        tokens: Some(tokens),
+    }
+    .encode_to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_both_model_and_tokens_from_native_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-4-argon"),
+                (2, 1, "gemini-3.8-flash-tiered"),
+                (3, 2, "claude-opus-5-5-medium"),
+                (4, 3, "gemini-3.8-flash-n"),
+            ],
+        );
+        let mut tokens_and_model_id = test_tokens(150, 42, 30);
+        tokens_and_model_id.extend_from_slice(&test_model_id("gemini-4-argon-high"));
+        set_test_generation(&conn, 0, "gemini-4-argon", &tokens_and_model_id);
+        set_test_generation(
+            &conn,
+            1,
+            "gemini-3.8-flash-tiered",
+            &test_tokens(200, 50, 0),
+        );
+        set_test_generation(&conn, 3, "gemini-3.8-flash-n", &test_tokens(0, 0, 0));
+
+        let gens = read_native_generations(&path, &[1, 2, 3, 4, 99]).unwrap();
+        assert_eq!(gens.len(), 4);
+        assert_eq!(
+            gens[&1],
+            NativeGenerationData {
+                model: Some("gemini-4-argon-high".into()),
+                tokens: Some((150, 42, 30)),
+            }
+        );
+        assert_eq!(
+            gens[&2],
+            NativeGenerationData {
+                model: Some("gemini-3.8-flash-tiered".into()),
+                tokens: Some((200, 50, 0)),
+            }
+        );
+        assert_eq!(
+            gens[&3],
+            NativeGenerationData {
+                model: Some("claude-opus-5-5-medium".into()),
+                tokens: None,
+            }
+        );
+        assert_eq!(
+            gens[&4],
+            NativeGenerationData {
+                model: Some("gemini-3.8-flash-n".into()),
+                tokens: None,
+            }
+        );
+    }
 
     #[test]
     fn uses_step_references_including_zero_instead_of_generation_order() {

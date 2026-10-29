@@ -135,19 +135,35 @@ fn import_records(
     }
 
     // 子代理通常没有 Model Selection；按步骤关联原生生成记录，不推测档位映射。
+    // 历史会话（2024-10-10 前）JSONL 中未记录 token，需要从原生生成记录中回填。
+    let mut native_generations = std::collections::HashMap::new();
     if let Some(transcript) = transcript {
-        let missing: Vec<u64> = ordered
+        let needed: Vec<u64> = ordered
             .iter()
             .filter(|row| row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE")
-            .filter(|row| known_model(row).is_none())
-            .filter_map(|row| row["step_index"].as_u64())
-            .filter(|step| !model_by_step.contains_key(step))
+            .filter_map(|row| {
+                let step = row["step_index"].as_u64()?;
+                let missing_model =
+                    known_model(row).is_none() && !model_by_step.contains_key(&step);
+                let missing_tokens = row["input_tokens"].as_u64().unwrap_or(0) == 0
+                    && row["output_tokens"].as_u64().unwrap_or(0) == 0
+                    && row["cache_read_tokens"].as_u64().unwrap_or(0) == 0
+                    && row["cache_write_tokens"].as_u64().unwrap_or(0) == 0;
+                (missing_model || missing_tokens).then_some(step)
+            })
             .collect();
-        if !missing.is_empty() {
-            match native_models::models_for_transcript(transcript, &missing) {
-                Ok(models) => model_by_step.extend(models),
+        if !needed.is_empty() {
+            match native_models::native_generations_for_transcript(transcript, &needed) {
+                Ok(gens) => {
+                    for (&step, gen) in &gens {
+                        if let Some(model) = &gen.model {
+                            model_by_step.entry(step).or_insert_with(|| model.clone());
+                        }
+                    }
+                    native_generations = gens;
+                }
                 Err(error) => {
-                    log::debug!("Antigravity {session}: cannot read native models: {error}")
+                    log::debug!("Antigravity {session}: cannot read native generations: {error}")
                 }
             }
         }
@@ -169,10 +185,17 @@ fn import_records(
                 .and_then(|v| i64::try_from(v).ok())
                 .unwrap_or(0)
         };
-        let input = token("input_tokens");
-        let output = token("output_tokens");
-        let cache = token("cache_read_tokens");
+        let mut input = token("input_tokens");
+        let mut output = token("output_tokens");
+        let mut cache = token("cache_read_tokens");
         let write = token("cache_write_tokens");
+        if input == 0 && output == 0 && cache == 0 && write == 0 {
+            if let Some(native_tokens) = native_generations.get(&step).and_then(|g| g.tokens) {
+                input = i64::try_from(native_tokens.0).unwrap_or(0);
+                output = i64::try_from(native_tokens.1).unwrap_or(0);
+                cache = i64::try_from(native_tokens.2).unwrap_or(0);
+            }
+        }
         if input == 0 && output == 0 && cache == 0 && write == 0 {
             continue;
         }
@@ -543,5 +566,86 @@ mod tests {
         );
         row["status"] = json!("DONE");
         assert_eq!(import_records(&db, "s", &[row], None).unwrap(), (1, 0));
+    }
+
+    #[test]
+    fn historical_pre_oct_10_tokens_recovered_from_native_database() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/hist_session/.system_generated/logs/transcript_full.jsonl");
+        let path = dir.path().join("conversations/hist_session.db");
+        let conn = native_models::write_test_database(
+            &path,
+            &[(1, 0, "gemini-4-argon"), (2, 1, "gemini-3.8-flash-tiered")],
+        );
+        let mut tokens_and_model_id = native_models::test_tokens(500, 100, 50);
+        tokens_and_model_id.extend_from_slice(&native_models::test_model_id("gemini-4-argon-high"));
+        native_models::set_test_generation(&conn, 0, "gemini-4-argon", &tokens_and_model_id);
+        native_models::set_test_generation(
+            &conn,
+            1,
+            "gemini-3.8-flash-tiered",
+            &native_models::test_tokens(200, 30, 0),
+        );
+
+        let db = Database::memory().unwrap();
+        // Pre-Oct 10 rows: input_tokens, output_tokens, cache_read_tokens fields are completely absent or 0.
+        let rows = vec![
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE"}),
+            json!({"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":0,"output_tokens":0}),
+            json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE"}), // no native record, should be skipped
+        ];
+
+        let (imported, skipped) =
+            import_records(&db, "hist_session", &rows, Some(&source)).unwrap();
+        assert_eq!((imported, skipped), (2, 0));
+
+        let conn = db.conn.lock().unwrap();
+        let step1 = conn
+            .query_row(
+                "SELECT model,input_tokens,output_tokens,cache_read_tokens,total_cost_usd
+                 FROM proxy_request_logs WHERE request_id='agy:hist_session:1'",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            step1,
+            ("gemini-4-argon-high".into(), 500, 100, 50, step1.4.clone())
+        );
+        assert!(step1.4.parse::<f64>().unwrap() > 0.0);
+
+        let step2 = conn
+            .query_row(
+                "SELECT model,input_tokens,output_tokens,cache_read_tokens
+                 FROM proxy_request_logs WHERE request_id='agy:hist_session:2'",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(step2, ("gemini-3.8-flash-tiered".into(), 200, 30, 0));
+
+        // Re-importing should skip (deduplicated)
+        drop(conn);
+        let (re_imported, re_skipped) =
+            import_records(&db, "hist_session", &rows, Some(&source)).unwrap();
+        assert_eq!((re_imported, re_skipped), (0, 2));
     }
 }
