@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
-import { Globe, Info, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Clock,
+  Globe,
+  Info,
+  Loader2,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -31,6 +39,7 @@ import { cn } from "@/lib/utils";
 import { PricingEditModal } from "./PricingEditModal";
 import { ModelsDevAutoSyncPanel } from "./ModelsDevAutoSyncPanel";
 import { ModelsDevPickerDialog } from "./ModelsDevPickerDialog";
+import { TimePricingRulesDialog } from "./TimePricingRulesDialog";
 import {
   getResolvedLang,
   joinClauses,
@@ -316,6 +325,7 @@ export function PricingConfigPanel() {
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ModelPricing | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [timeRulesOpen, setTimeRulesOpen] = useState(false);
 
   const handleAddNew = () => {
     setIsAddingNew(true);
@@ -367,6 +377,17 @@ export function PricingConfigPanel() {
         >
           <Plus className="h-3.5 w-3.5" />
           {t("usage.addPricing")}
+        </Button>
+        <Button
+          type="button"
+          variant="neutral"
+          size="compact"
+          onClick={() => setTimeRulesOpen(true)}
+        >
+          <Clock className="h-3.5 w-3.5" />
+          {t("usage.pricing.timePricing.entry", {
+            defaultValue: "Time-based pricing",
+          })}
         </Button>
       </div>
 
@@ -505,6 +526,13 @@ export function PricingConfigPanel() {
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
           onImported={() => setPickerOpen(false)}
+        />
+      )}
+
+      {timeRulesOpen && (
+        <TimePricingRulesDialog
+          open={timeRulesOpen}
+          onClose={() => setTimeRulesOpen(false)}
         />
       )}
 

@@ -13,6 +13,7 @@ pub mod kimi_oauth;
 pub mod mcp;
 pub mod model_fetch;
 pub mod model_pricing;
+pub mod model_pricing_time_rule;
 pub mod omo;
 pub mod pi_prompt_files;
 pub(crate) mod pi_state;

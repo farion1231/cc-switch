@@ -68,6 +68,32 @@ export interface ModelPricing {
   cacheCreationCostPerMillion: string;
 }
 
+/**
+ * 分时段定价规则：某个模型在一段「星期 + 本地时刻」窗口内改用另一组单价。
+ *
+ * 语义（与 Rust 侧 `ModelPricingTimeRule` 一致）：
+ * - `utcOffsetMinutes` 是**固定偏移**，不做夏令时；要表达「北京时间」就写 480。
+ * - `weekdayMask` bit0 = 周一 … bit6 = 周日。
+ * - 时间窗口是本地时刻的半开区间 `[startMinute, endMinute)`；
+ *   `startMinute === endMinute` 表示全天 24 小时，`startMinute > endMinute` 跨午夜。
+ * - `excludedDates` 里的本地日期永不命中（用来表达「法定节假日除外」）。
+ * - 同一模型的多条规则按数组顺序匹配，**第一条命中的生效**；都不命中就回落普通单价。
+ */
+export interface ModelPricingTimeRule {
+  id: string;
+  modelId: string;
+  label: string;
+  utcOffsetMinutes: number; // fixed offset, -1439..=1439; no DST
+  weekdayMask: number; // bit0 = Monday .. bit6 = Sunday
+  startMinute: number; // 0..=1439, minutes from local midnight
+  endMinute: number; // 0..=1440
+  excludedDates: string[]; // "YYYY-MM-DD", local dates the rule never applies on
+  inputCostPerMillion: string;
+  outputCostPerMillion: string;
+  cacheReadCostPerMillion: string;
+  cacheCreationCostPerMillion: string;
+}
+
 export interface ModelsDevSyncConfig {
   autoSyncEnabled: boolean;
   includeCommonModels: boolean;

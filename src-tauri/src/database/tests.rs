@@ -459,6 +459,76 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn migration_v24_to_v25_creates_model_pricing_time_rule_table() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // 模拟 v24 形状的库：model_pricing 在，model_pricing_time_rule 不在。
+    // 故意不先跑 create_tables，这样建表的责任只可能落在 v24 -> v25 迁移臂上。
+    conn.execute_batch(
+        r#"
+        CREATE TABLE model_pricing (
+            model_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            input_cost_per_million TEXT NOT NULL,
+            output_cost_per_million TEXT NOT NULL,
+            cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+            cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0'
+        );
+        "#,
+    )
+    .expect("seed v24 schema");
+    Database::set_user_version(&conn, 24).expect("set user_version=24");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(
+        Database::table_exists(&conn, "model_pricing_time_rule").expect("check table"),
+        "model_pricing_time_rule should exist after v24 -> v25"
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+
+    // 缺省列：weekday_mask 默认全选、窗口默认全天、sort_order 默认 0
+    for (column, column_type, default) in [
+        ("rule_id", "TEXT", None),
+        ("model_id", "TEXT", None),
+        ("label", "TEXT", Some("")),
+        ("utc_offset_minutes", "INTEGER", Some("0")),
+        ("weekday_mask", "INTEGER", Some("127")),
+        ("start_minute", "INTEGER", Some("0")),
+        ("end_minute", "INTEGER", Some("1440")),
+        ("excluded_dates", "TEXT", Some("")),
+        ("input_cost_per_million", "TEXT", None),
+        ("output_cost_per_million", "TEXT", None),
+        ("cache_read_cost_per_million", "TEXT", Some("0")),
+        ("cache_creation_cost_per_million", "TEXT", Some("0")),
+        ("sort_order", "INTEGER", Some("0")),
+    ] {
+        let info = get_column_info(&conn, "model_pricing_time_rule", column);
+        assert_eq!(info.r#type, column_type, "{column} type mismatch");
+        assert_eq!(info.notnull, 1, "{column} should be NOT NULL");
+        assert_eq!(
+            normalize_default(&info.default).as_deref(),
+            default,
+            "{column} default mismatch"
+        );
+    }
+}
+
+#[test]
+fn schema_create_tables_includes_model_pricing_time_rule() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    assert!(
+        Database::table_exists(&conn, "model_pricing_time_rule").expect("check table"),
+        "new databases should get model_pricing_time_rule from create_tables"
+    );
+}
+
+#[test]
 fn schema_create_tables_repairs_dev_global_profile_marker() {
     let conn = Connection::open_in_memory().expect("open memory db");
 

@@ -10,6 +10,7 @@ import type {
   LogFilters,
   UsageRangeSelection,
   UsageScopeFilters,
+  ModelPricingTimeRule,
 } from "@/types/usage";
 
 const DEFAULT_REFETCH_INTERVAL_MS = 30000;
@@ -157,6 +158,7 @@ export const usageKeys = {
   detail: (requestId: string) =>
     [...usageKeys.all, "detail", requestId] as const,
   pricing: () => [...usageKeys.all, "pricing"] as const,
+  pricingTimeRules: () => [...usageKeys.all, "pricing-time-rules"] as const,
   session: (appType: string, sessionId: string) =>
     [...usageKeys.all, "session", appType, sessionId] as const,
   limits: (providerId: string, appType: string) =>
@@ -417,6 +419,17 @@ export function useModelPricing() {
   });
 }
 
+/**
+ * 分时段定价规则。**返回顺序就是优先级**（第一条命中的生效），
+ * 界面照这个顺序渲染，不自己排序。
+ */
+export function useModelPricingTimeRules() {
+  return useQuery({
+    queryKey: usageKeys.pricingTimeRules(),
+    queryFn: usageApi.getModelPricingTimeRules,
+  });
+}
+
 export function useProviderLimits(providerId: string, appType: string) {
   return useQuery({
     queryKey: usageKeys.limits(providerId, appType),
@@ -456,6 +469,23 @@ export function useDeleteModelPricing() {
 
   return useMutation({
     mutationFn: (modelId: string) => usageApi.deleteModelPricing(modelId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: usageKeys.all });
+    },
+  });
+}
+
+/**
+ * 整份覆盖保存分时段规则。数组顺序 = 优先级，所以增删改排都在前端凑好再一次性发。
+ * 保存后失效整个 usage 前缀：列表重新拉一遍拿到后端补的 id / sort_order，
+ * 汇总和明细也跟着重算（计价口径变了）。
+ */
+export function useSaveModelPricingTimeRules() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (rules: ModelPricingTimeRule[]) =>
+      usageApi.saveModelPricingTimeRules(rules),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: usageKeys.all });
     },

@@ -1,6 +1,9 @@
 use crate::config::{atomic_write, get_app_config_dir};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::services::model_pricing_time_rule::{
+    normalize_time_rule, replace_time_rules_in_database, ModelPricingTimeRule,
+};
 use rusqlite::{params, Transaction};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -79,6 +82,10 @@ struct ModelPricingFile {
     models: Vec<ModelPricingInfo>,
     #[serde(default)]
     deleted_model_ids: Vec<String>,
+    // 纯增量字段：旧版本读到不认识的 timeRules 会直接忽略，因此文件版本号
+    // 不必跟着涨；新版本读没有该字段的旧文件则按空列表处理。
+    #[serde(default)]
+    pub(crate) time_rules: Vec<ModelPricingTimeRule>,
 }
 
 impl Default for ModelPricingFile {
@@ -88,6 +95,7 @@ impl Default for ModelPricingFile {
             models_dev_sync: ModelsDevSyncConfig::default(),
             models: Vec::new(),
             deleted_model_ids: Vec::new(),
+            time_rules: Vec::new(),
         }
     }
 }
@@ -103,7 +111,7 @@ pub fn model_pricing_file_path() -> PathBuf {
     get_app_config_dir().join(MODEL_PRICING_FILE_NAME)
 }
 
-fn normalize_decimal(label: &str, value: &str) -> Result<String, AppError> {
+pub(crate) fn normalize_decimal(label: &str, value: &str) -> Result<String, AppError> {
     let value = value.trim();
     let parsed = Decimal::from_str(value).map_err(|error| {
         AppError::localized(
@@ -314,6 +322,49 @@ pub fn sync_local_model_pricing(db: &Database) -> Result<usize, AppError> {
     Ok(upserted + deleted)
 }
 
+/// 把 `model-pricing.json` 里的 `timeRules` 同步进 `model_pricing_time_rule` 表。
+///
+/// 与基准价不同，这里**不触发回填**：分时段规则改变的是「以后怎么算」，
+/// 历史用量行记的是写入那一刻实际生效的价格，重算会把已经记过的账改掉。
+/// 归一化失败时整体返回错误并保持表原样（不会换半张表）。
+pub fn sync_local_model_pricing_time_rules(db: &Database) -> Result<usize, AppError> {
+    let rules = {
+        let _file_guard = file_lock()
+            .lock()
+            .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+        let file = load_or_create_file_unlocked()?;
+        file.time_rules
+            .into_iter()
+            .enumerate()
+            .map(|(index, rule)| normalize_time_rule(rule, index))
+            .collect::<Result<Vec<_>, AppError>>()?
+    };
+    replace_time_rules_in_database(db, &rules)
+}
+
+/// 保存分时段规则：归一化后写回 JSON sidecar，再同步进数据库。
+///
+/// 返回归一化后的列表（含服务端补的 `id`），前端拿它渲染即可，不必再读一次。
+pub fn save_model_pricing_time_rules(
+    db: &Database,
+    rules: Vec<ModelPricingTimeRule>,
+) -> Result<Vec<ModelPricingTimeRule>, AppError> {
+    let normalized = rules
+        .into_iter()
+        .enumerate()
+        .map(|(index, rule)| normalize_time_rule(rule, index))
+        .collect::<Result<Vec<_>, AppError>>()?;
+
+    let _file_guard = file_lock()
+        .lock()
+        .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+    let mut file = load_or_create_file_unlocked()?;
+    file.time_rules = normalized.clone();
+    write_file_unlocked(&file)?;
+    replace_time_rules_in_database(db, &normalized)?;
+    Ok(normalized)
+}
+
 pub fn get_models_dev_sync_state(db: &Database) -> Result<ModelsDevSyncState, AppError> {
     sync_local_model_pricing(db)?;
     let _file_guard = file_lock()
@@ -474,6 +525,9 @@ pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::model_pricing_time_rule::{
+        load_time_rules_for_candidates, read_model_pricing_time_rules, resolve_time_rule,
+    };
     use serial_test::serial;
 
     fn with_test_home(test: impl FnOnce(&Database, &PathBuf)) {
@@ -499,6 +553,24 @@ mod tests {
             output_cost_per_million: "5".to_string(),
             cache_read_cost_per_million: "0.1".to_string(),
             cache_creation_cost_per_million: "1.5".to_string(),
+        }
+    }
+
+    /// DeepSeek 错峰窗口：00:30 - 08:30 UTC，每天
+    fn sample_time_rule() -> ModelPricingTimeRule {
+        ModelPricingTimeRule {
+            id: String::new(),
+            model_id: "deepseek-chat".to_string(),
+            label: "错峰".to_string(),
+            utc_offset_minutes: 0,
+            weekday_mask: 127,
+            start_minute: 30,
+            end_minute: 510,
+            excluded_dates: Vec::new(),
+            input_cost_per_million: "0.2".to_string(),
+            output_cost_per_million: "0.8".to_string(),
+            cache_read_cost_per_million: "0.02".to_string(),
+            cache_creation_cost_per_million: "0".to_string(),
         }
     }
 
@@ -774,6 +846,114 @@ mod tests {
             let state = get_models_dev_sync_state(db).expect("read failure state");
             assert_eq!(state.config.last_sync_at, Some(456));
             assert_eq!(state.config.last_sync_error.as_deref(), Some("offline"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn saving_time_rules_persists_to_file_and_database() {
+        with_test_home(|db, path| {
+            let saved = save_model_pricing_time_rules(db, vec![sample_time_rule()])
+                .expect("save time rules");
+            assert_eq!(saved.len(), 1);
+            assert!(!saved[0].id.is_empty(), "服务端应补上规则 id");
+
+            let content = fs::read_to_string(path).expect("read pricing file");
+            let file: ModelPricingFile = serde_json::from_str(&content).expect("parse file");
+            assert_eq!(file.time_rules, saved);
+
+            let conn = db.conn.lock().expect("lock test database");
+            let (rule_id, sort_order): (String, i64) = conn
+                .query_row(
+                    "SELECT rule_id, sort_order FROM model_pricing_time_rule
+                     WHERE model_id = 'deepseek-chat'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("query saved rule");
+            assert_eq!(rule_id, saved[0].id);
+            assert_eq!(sort_order, 0);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn saving_empty_time_rules_clears_the_table() {
+        with_test_home(|db, _path| {
+            save_model_pricing_time_rules(db, vec![sample_time_rule()]).expect("save one rule");
+            save_model_pricing_time_rules(db, Vec::new()).expect("save no rules");
+
+            let conn = db.conn.lock().expect("lock test database");
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM model_pricing_time_rule WHERE model_id = 'deepseek-chat'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("count time rules");
+            assert_eq!(count, 0);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn syncing_time_rules_reloads_manual_file_edits() {
+        with_test_home(|db, path| {
+            get_models_dev_sync_state(db).expect("create pricing file");
+            let content = fs::read_to_string(path).expect("read pricing file");
+            let mut file: ModelPricingFile =
+                serde_json::from_str(&content).expect("parse pricing file");
+            // 手改的文件没有 id，sync 时应补一个，不能因此丢掉整条规则
+            file.time_rules.push(sample_time_rule());
+            fs::write(
+                path,
+                serde_json::to_vec_pretty(&file).expect("serialize file"),
+            )
+            .expect("write manual edit");
+
+            assert_eq!(
+                sync_local_model_pricing_time_rules(db).expect("sync time rules"),
+                1
+            );
+
+            let conn = db.conn.lock().expect("lock test database");
+            let (rule_id, input): (String, String) = conn
+                .query_row(
+                    "SELECT rule_id, input_cost_per_million FROM model_pricing_time_rule
+                     WHERE model_id = 'deepseek-chat'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("query manually added rule");
+            assert!(!rule_id.is_empty());
+            assert_eq!(input, "0.2");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn saved_time_rules_resolve_for_the_configured_model() {
+        with_test_home(|db, _path| {
+            let saved = save_model_pricing_time_rules(db, vec![sample_time_rule()])
+                .expect("save time rules");
+            let candidates = vec!["deepseek-chat".to_string()];
+
+            // 命令的读路径必须原样返回保存结果，前端才能直接渲染
+            let all = read_model_pricing_time_rules(db);
+            assert_eq!(all.expect("read saved rules"), saved);
+
+            let rules = load_time_rules_for_candidates(db, &candidates);
+            let rules = rules.expect("load saved rules");
+            assert_eq!(rules, saved);
+
+            // 2026-03-01T01:00:00Z 落在 00:30 - 08:30 窗口内
+            let resolved = resolve_time_rule(&rules, &candidates, 1_772_326_800);
+            let resolved_id = resolved.map(|rule| rule.id.clone());
+            assert_eq!(resolved_id.as_deref(), Some(saved[0].id.as_str()));
+
+            // 同一时刻换一个不相关模型，取不到规则
+            let resolved = resolve_time_rule(&rules, &["gpt-5".to_string()], 1_772_326_800);
+            assert_eq!(resolved.map(|rule| rule.id.as_str()), None);
         });
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::error::AppError;
 use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
+use crate::services::model_pricing_time_rule::ModelPricingTimeRule;
 use crate::services::usage_stats::*;
 use crate::store::AppState;
 use tauri::State;
@@ -298,6 +299,27 @@ pub fn check_provider_limits(
     app_type: String,
 ) -> Result<crate::services::usage_stats::ProviderLimitStatus, AppError> {
     state.db.check_provider_limits(&provider_id, &app_type)
+}
+
+/// 获取分时段定价规则（按 sort_order 排序，即 UI 里的展示顺序）
+#[tauri::command]
+pub fn get_model_pricing_time_rules(
+    state: State<'_, AppState>,
+) -> Result<Vec<ModelPricingTimeRule>, AppError> {
+    crate::services::model_pricing::sync_local_model_pricing_time_rules(&state.db)?;
+    crate::services::model_pricing_time_rule::read_model_pricing_time_rules(&state.db)
+}
+
+/// 保存分时段定价规则：归一化后写回 JSON sidecar 并同步进库，
+/// 返回规范化后的列表（含服务端补的 id），前端直接渲染即可。
+#[tauri::command]
+pub fn save_model_pricing_time_rules(
+    state: State<'_, AppState>,
+    rules: Vec<ModelPricingTimeRule>,
+) -> Result<Vec<ModelPricingTimeRule>, AppError> {
+    let saved = crate::services::model_pricing::save_model_pricing_time_rules(&state.db, rules)?;
+    log::info!("已保存 {} 条分时段定价规则", saved.len());
+    Ok(saved)
 }
 
 /// 删除模型定价

@@ -4,11 +4,19 @@ use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
+use crate::services::model_pricing_time_rule::{
+    describe_window, load_time_rules_for_candidates, resolve_time_rule,
+};
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
-use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
+use crate::services::usage_stats::{
+    find_model_pricing_row, is_placeholder_pricing_model, model_pricing_candidates,
+};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
+
+/// 计价时刻允许回看的最长时间：超过就认为 `latency_ms` 不可信，按当前时刻计价
+const MAX_PRICING_LOOKBACK_SECS: i64 = 86_400;
 
 #[derive(Debug, PartialEq, Eq)]
 struct UsageSemantic {
@@ -331,8 +339,42 @@ impl<'a> UsageLogger<'a> {
         self.log_request(&log)
     }
 
-    /// 获取模型定价
-    pub fn get_model_pricing(&self, model_id: &str) -> Result<Option<ModelPricing>, AppError> {
+    /// 获取 `at_secs` 那一刻生效的模型定价。
+    ///
+    /// 先按分时段规则取档（命中则整体替换基准价），取不到再走 `model_pricing` 表。
+    /// 规则只做精确匹配，因此这里必须复用 `model_pricing_candidates` 展开出的
+    /// 候选模型名，和基准价走同一套「别名 → 真实模型」的归一化。
+    ///
+    /// 落库路径传的是**请求开始时刻**（见 `log_with_calculation`）；需要「现在」
+    /// 的调用方自己传 `chrono::Utc::now().timestamp()`——这里不额外包一层
+    /// `get_model_pricing`，因为包了也没有调用方，只会变成死代码（CI 的 clippy
+    /// 带 `-D warnings`，见 `.github/workflows/ci.yml`）。
+    pub fn get_model_pricing_at(
+        &self,
+        model_id: &str,
+        at_secs: i64,
+    ) -> Result<Option<ModelPricing>, AppError> {
+        let candidates = model_pricing_candidates(model_id);
+        if !candidates.is_empty() {
+            let rules = load_time_rules_for_candidates(self.db, &candidates)?;
+            if let Some(rule) = resolve_time_rule(&rules, &candidates, at_secs) {
+                log::debug!(
+                    "命中分时段定价规则: model_id={model_id}, rule_id={}, label={}, window={}",
+                    rule.id,
+                    rule.label,
+                    describe_window(rule)
+                );
+                return ModelPricing::from_strings(
+                    &rule.input_cost_per_million,
+                    &rule.output_cost_per_million,
+                    &rule.cache_read_cost_per_million,
+                    &rule.cache_creation_cost_per_million,
+                )
+                .map(Some)
+                .map_err(|e| AppError::Database(format!("解析分时段定价失败: {e}")));
+            }
+        }
+
         let conn = crate::database::lock_conn!(self.db.conn);
         let row = find_model_pricing_row(&conn, model_id)?;
         match row {
@@ -387,7 +429,23 @@ impl<'a> UsageLogger<'a> {
         provider_type: Option<String>,
         is_streaming: bool,
     ) -> Result<(), AppError> {
-        let pricing = self.get_model_pricing(&pricing_model)?;
+        // 计价时刻取**请求开始**而不是落库时刻：issue 约定的语义是「跨档的请求
+        // 整体归到开始时刻那一档」。latency_ms 是端到端耗时（见
+        // handler_context::RequestContext::latency_ms），减回去就是请求开始；
+        // start_time 是单调的 Instant，所以这个还原值只在请求期间系统时钟没被
+        // 改过的前提下准确，偏差上限就是那次调整——对分钟级的档位判断无影响。
+        // 回看幅度先夹住：耗时异常大时（时钟被改、失败重试累计）回退到当前时刻，
+        // 免得减出 1970 之类的时间戳意外命中某条规则，也免得 u64 -> i64 转换和
+        // `now - started_at` 在极端值下溢出。
+        let now = chrono::Utc::now().timestamp();
+        let lookback_secs = (latency_ms / 1000).min(MAX_PRICING_LOOKBACK_SECS as u64 + 1) as i64;
+        let started_at = now.saturating_sub(lookback_secs);
+        let priced_at = if now - started_at > MAX_PRICING_LOOKBACK_SECS {
+            now
+        } else {
+            started_at
+        };
+        let pricing = self.get_model_pricing_at(&pricing_model, priced_at)?;
 
         let has_usage = usage.input_tokens > 0
             || usage.output_tokens > 0

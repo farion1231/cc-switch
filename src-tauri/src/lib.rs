@@ -1783,6 +1783,8 @@ pub fn run() {
             commands::update_model_pricing,
             commands::update_model_pricing_batch,
             commands::delete_model_pricing,
+            commands::get_model_pricing_time_rules,
+            commands::save_model_pricing_time_rules,
             commands::get_models_dev_sync_config,
             commands::save_models_dev_sync_config,
             commands::record_models_dev_sync_result,

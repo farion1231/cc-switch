@@ -8,6 +8,7 @@ import type {
   RequestLog,
   LogFilters,
   ModelPricing,
+  ModelPricingTimeRule,
   ModelsDevSyncConfig,
   ModelsDevSyncState,
   ProviderLimitStatus,
@@ -188,6 +189,18 @@ export const usageApi = {
 
   updateModelPricingBatch: async (entries: ModelPricing[]): Promise<number> => {
     return invoke("update_model_pricing_batch", { entries });
+  },
+
+  /** 分时段定价规则，返回顺序即匹配优先级（第一条命中的生效） */
+  getModelPricingTimeRules: async (): Promise<ModelPricingTimeRule[]> => {
+    return invoke("get_model_pricing_time_rules");
+  },
+
+  /** 整份覆盖保存：后端按数组顺序重排并补 id，返回值才是权威列表 */
+  saveModelPricingTimeRules: async (
+    rules: ModelPricingTimeRule[],
+  ): Promise<ModelPricingTimeRule[]> => {
+    return invoke("save_model_pricing_time_rules", { rules });
   },
 
   getModelsDevSyncConfig: async (): Promise<ModelsDevSyncState> => {

@@ -51,7 +51,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 24;
+pub(crate) const SCHEMA_VERSION: i32 = 25;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -147,6 +147,10 @@ impl Database {
         db.ensure_model_pricing_seeded()?;
         if let Err(e) = crate::services::model_pricing::sync_local_model_pricing(&db) {
             log::warn!("Failed to sync local model pricing file: {e}");
+        }
+        // 分时段规则同样住在 model-pricing.json 里，跟随基准价一起落到库里
+        if let Err(e) = crate::services::model_pricing::sync_local_model_pricing_time_rules(&db) {
+            log::warn!("Failed to sync local model pricing time rules: {e}");
         }
 
         // Startup cleanup: prune old logs and reclaim space

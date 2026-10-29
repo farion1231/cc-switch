@@ -253,6 +253,33 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 11.1 Model Pricing Time Rules 表（峰谷分时段定价，v25）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_pricing_time_rule (
+            rule_id TEXT PRIMARY KEY NOT NULL,
+            model_id TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            utc_offset_minutes INTEGER NOT NULL DEFAULT 0,
+            weekday_mask INTEGER NOT NULL DEFAULT 127,
+            start_minute INTEGER NOT NULL DEFAULT 0,
+            end_minute INTEGER NOT NULL DEFAULT 1440,
+            excluded_dates TEXT NOT NULL DEFAULT '',
+            input_cost_per_million TEXT NOT NULL,
+            output_cost_per_million TEXT NOT NULL,
+            cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+            cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0',
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_model_pricing_time_rule_model
+             ON model_pricing_time_rule(model_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 12. Stream Check Logs 表
         conn.execute("CREATE TABLE IF NOT EXISTS stream_check_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id TEXT NOT NULL, provider_name TEXT NOT NULL,
@@ -647,6 +674,11 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 24)?;
+                    }
+                    24 => {
+                        log::info!("迁移数据库从 v24 到 v25（新增分时段定价规则表）");
+                        Self::migrate_v24_to_v25(conn)?;
+                        Self::set_user_version(conn, 25)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1504,6 +1536,48 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v24 -> v25 迁移：添加分时段定价规则表
+    /// 与 create_tables_on_conn 中的建表语句保持一致（IF NOT EXISTS 保证幂等）。
+    /// 表由 model-pricing.json 的 timeRules 独占写入（见
+    /// services::model_pricing::sync_local_model_pricing_time_rules），
+    /// 迁移只需要把表建出来，没有历史数据要搬。
+    fn migrate_v24_to_v25(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_pricing_time_rule (
+                rule_id TEXT PRIMARY KEY NOT NULL,
+                model_id TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                utc_offset_minutes INTEGER NOT NULL DEFAULT 0,
+                weekday_mask INTEGER NOT NULL DEFAULT 127,
+                start_minute INTEGER NOT NULL DEFAULT 0,
+                end_minute INTEGER NOT NULL DEFAULT 1440,
+                excluded_dates TEXT NOT NULL DEFAULT '',
+                input_cost_per_million TEXT NOT NULL,
+                output_cost_per_million TEXT NOT NULL,
+                cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+                cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0',
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "v24 -> v25 创建 model_pricing_time_rule 表失败: {e}"
+            ))
+        })?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_model_pricing_time_rule_model
+             ON model_pricing_time_rule(model_id)",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "v24 -> v25 创建 model_pricing_time_rule 索引失败: {e}"
+            ))
+        })?;
         Ok(())
     }
 
