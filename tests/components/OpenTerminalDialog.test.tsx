@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { OpenTerminalDialog } from "@/components/providers/OpenTerminalDialog";
+import {
+  OpenTerminalDialog,
+  terminalAvailable,
+} from "@/components/providers/OpenTerminalDialog";
 import type { Provider } from "@/types";
 
 const openTerminalMock = vi.fn();
@@ -42,7 +45,7 @@ const provider = {
 function renderDialog(
   onClose = vi.fn(),
   target: Provider = provider,
-  appId: "claude" | "agy" = "claude",
+  appId: "claude" | "codex" | "agy" = "claude",
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -284,5 +287,44 @@ describe("OpenTerminalDialog", () => {
     expect(
       screen.queryByText("provider.openTerminalDialog.isolationTitle"),
     ).not.toBeInTheDocument();
+  });
+
+  const codexRelay = {
+    id: "kimi",
+    name: "Kimi",
+    settingsConfig: {
+      auth: { OPENAI_API_KEY: "sk-kimi" },
+      config:
+        'model_provider = "kimi"\n[model_providers.kimi]\nbase_url = "https://api.moonshot.cn/v1"\n',
+    },
+  } as Provider;
+
+  // Codex 跳过权限确认的参数和 Claude Code 不同，带路由表的第三方卡才算隔离
+  it("shows Codex's own skip flag and isolates its third-party cards", () => {
+    renderDialog(vi.fn(), codexRelay, "codex");
+    expect(
+      screen.getByText("--dangerously-bypass-approvals-and-sandbox"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("provider.openTerminalDialog.isolationTitle"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers a Codex terminal for login or routed cards only when it is current", () => {
+    const official = {
+      id: "openai",
+      name: "OpenAI Official",
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    } as Provider;
+    const routed = {
+      ...codexRelay,
+      meta: { apiFormat: "anthropic" },
+    } as Provider;
+    expect(terminalAvailable(codexRelay, "codex", false)).toBe(true);
+    expect(terminalAvailable(official, "codex", false)).toBe(false);
+    expect(terminalAvailable(official, "codex", true)).toBe(true);
+    expect(terminalAvailable(routed, "codex", true)).toBe(false);
+    expect(terminalAvailable(official, "claude", false)).toBe(true);
   });
 });

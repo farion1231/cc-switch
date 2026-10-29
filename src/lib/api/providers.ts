@@ -26,7 +26,7 @@ export interface SwitchResult {
 
 export interface OpenTerminalOptions {
   cwd?: string;
-  /** 启动时加 `--dangerously-skip-permissions`（Claude Code 与 agy 同名） */
+  /** 启动时跳过权限确认：Claude Code 与 agy 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox` */
   skipPermissions?: boolean;
 }
 
