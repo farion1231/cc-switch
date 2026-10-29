@@ -1721,6 +1721,22 @@ fn extract_version(raw: &str) -> String {
 /// 工具未安装时的统一错误文案；WSL 路径会再拼上 `[WSL:{distro}] ` 前缀。
 const NOT_INSTALLED: &str = "not installed or not executable";
 
+/// 已定位到的可执行文件跑 `--version` 却什么都没输出时的诊断。文件在、拿不到版本，
+/// 就是「装了但跑不起来」：安装位置列表照样会列出它，这里若报没装，同一行会既在
+/// 「已安装」组里、又显示「未安装」和安装按钮。
+fn silent_version_probe_detail(status: std::process::ExitStatus) -> String {
+    match status.code() {
+        Some(0) => "`--version` printed nothing".to_string(),
+        Some(code) => format!("`--version` exited with code {code} and printed nothing"),
+        None => "`--version` was terminated and printed nothing".to_string(),
+    }
+}
+
+/// 已定位到的可执行文件启动失败（文件损坏、被安全软件拦截、不是有效程序等）时的诊断。
+fn launch_failure_detail(tool_path: &Path, err: &std::io::Error) -> String {
+    format!("failed to launch {}: {err}", tool_path.display())
+}
+
 /// CLI 版本探测的三态结果，跨平台统一各 probe（`try_get_version` /
 /// `try_get_version_wsl` / `scan_cli_version`）的返回，进而在 `ToolVersion` 上给出
 /// 结构化的 `installed_but_broken` 信号——避免前端靠匹配错误文案反推语义。
@@ -2856,10 +2872,12 @@ fn run_windows_tool_version_command(
 /// the directory scan, so the displayed version matches what `tool` resolves
 /// to in a terminal (#4701).
 ///
-/// Returns `NotFound` when no entry is resolved on PATH (the caller falls back
-/// to `scan_cli_version` over the hardcoded/registry dirs); `FoundButFailed`
-/// when an entry was resolved but `--version` exited non-zero (installed but
-/// not runnable), which is reported as-is without falling back, so an old
+/// Returns `NotFound` when no entry is resolved on PATH, or the resolved entry
+/// fails to launch (the caller falls back to `scan_cli_version` over the
+/// hardcoded/registry dirs, which still reports it as broken when nothing else
+/// runs); `FoundButFailed` when an entry ran but no version came out of it —
+/// it exited non-zero or printed nothing (installed but not runnable).
+/// That is reported as-is without falling back, so an old
 /// install elsewhere cannot mask a broken default.
 #[cfg(target_os = "windows")]
 fn probe_path_default_version(tool: &str) -> ShellProbe {
@@ -2875,29 +2893,35 @@ fn probe_path_default_version(tool: &str) -> ShellProbe {
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
                 } else {
                     ShellProbe::Found(extract_version(raw))
                 }
             } else {
                 let err = if stderr.is_empty() { stdout } else { stderr };
                 if err.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
                 } else {
                     ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
                 }
             }
         }
+        // 启动不了不一定是装坏了：`where` 会列出 npm 留下的无扩展名 sh shim，同目录
+        // 没有 .cmd 时它可能排在最前，而终端会跳过它、去跑后面那份。交给目录扫描判断：
+        // 别处有能跑的就以它为准，都跑不起来扫描也会报「装了但跑不起来」。
         Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
 }
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
 fn scan_cli_version(tool: &str) -> ShellProbe {
+    scan_cli_version_in(tool, &build_tool_search_paths(tool))
+}
+
+fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf]) -> ShellProbe {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
-    let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
@@ -2907,8 +2931,11 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
     // 典型场景：工具已安装但当前环境跑不起来（如 openclaw 要求 Node v22.19+）。
     // 这类信息比笼统的 "not installed" 有用得多，循环结束未探到版本时回传。
     let mut exec_diagnostic: Option<String> = None;
+    // 文件在、却启动失败或没有任何输出时的首个诊断。没有更具体的报错时才用它：
+    // 文件在就不算没装（安装位置列表也会列出它）。
+    let mut silent_diagnostic: Option<String> = None;
 
-    for path in &search_paths {
+    for path in search_paths {
         #[cfg(target_os = "windows")]
         let new_path = format!("{};{}", path.display(), current_path);
 
@@ -2916,7 +2943,8 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
         let new_path = prepend_search_dir_to_path(path, &current_path);
 
         for tool_path in tool_executable_candidates(tool, path) {
-            if !tool_path.exists() {
+            // 只认文件：与工具同名的目录不是安装，否则启动失败会被当成「装了跑不起来」
+            if !tool_path.is_file() {
                 continue;
             }
 
@@ -2931,27 +2959,36 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
                     .output()
             };
 
-            if let Ok(out) = output {
-                let stdout = decode_command_output(&out.stdout).trim().to_string();
-                let stderr = decode_command_output(&out.stderr).trim().to_string();
-                if out.status.success() {
-                    let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                    if !raw.is_empty() {
-                        return ShellProbe::Found(extract_version(raw));
-                    }
+            let out = match output {
+                Ok(out) => out,
+                Err(e) => {
+                    silent_diagnostic.get_or_insert_with(|| launch_failure_detail(&tool_path, &e));
+                    continue;
+                }
+            };
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            if out.status.success() {
+                let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                if !raw.is_empty() {
+                    return ShellProbe::Found(extract_version(raw));
+                }
+                silent_diagnostic.get_or_insert_with(|| silent_version_probe_detail(out.status));
+            } else {
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                let detail = detail.trim();
+                if detail.is_empty() {
+                    silent_diagnostic
+                        .get_or_insert_with(|| silent_version_probe_detail(out.status));
                 } else if exec_diagnostic.is_none() {
-                    let detail = if stderr.is_empty() { stdout } else { stderr };
-                    let detail = detail.trim();
-                    if !detail.is_empty() {
-                        exec_diagnostic = Some(last_lines(detail, 4));
-                    }
+                    exec_diagnostic = Some(last_lines(detail, 4));
                 }
             }
         }
     }
 
-    // 有诊断 = 找到了可执行文件但 --version 报错（装了跑不起来）；否则视作未安装。
-    match exec_diagnostic {
+    // 有诊断 = 找到了可执行文件但拿不到版本（装了跑不起来），具体报错优先；否则视作未安装。
+    match exec_diagnostic.or(silent_diagnostic) {
         Some(detail) => ShellProbe::FoundButFailed(detail),
         None => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
@@ -3313,7 +3350,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         let new_path = prepend_search_dir_to_path(dir, &current_path);
 
         for tool_path in tool_executable_candidates(tool, dir) {
-            if !tool_path.exists() {
+            // 与 scan_cli_version 一致，只认文件，同名目录不算一处安装
+            if !tool_path.is_file() {
                 continue;
             }
             // Hermes 发布启动器时换成 .exe 不会删掉旧的 .cmd，两者同在它自己的 bin 目录，
@@ -4997,6 +5035,7 @@ pub async fn open_provider_terminal(
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
+    #[allow(non_snake_case)] skipPermissions: Option<bool>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let launch_cwd = resolve_launch_cwd(cwd)?;
@@ -5009,11 +5048,12 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
-    let launch = match app_type {
+    let mut launch = match app_type {
         AppType::Agy => {
             switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
             agy_terminal_launch(provider)?
         }
+        AppType::Codex => codex_terminal_launch(state.db.as_ref(), provider)?,
         AppType::Claude => {
             use crate::services::provider::claude_official::{terminal_account, AccountTerminal};
             match terminal_account(provider).map_err(|e| e.to_string())? {
@@ -5040,6 +5080,9 @@ pub async fn open_provider_terminal(
             claude_terminal_launch(&env_vars, &providerId)?
         }
     };
+    if skipPermissions == Some(true) {
+        launch.skip_permissions();
+    }
 
     launch_provider_terminal(&launch, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
@@ -5146,6 +5189,120 @@ struct ProviderLaunch {
     batch_vars: Vec<(&'static str, String)>,
     /// 退出时删除的临时文件，都在系统临时目录里
     cleanup: Vec<PathBuf>,
+}
+
+impl ProviderLaunch {
+    /// 用户在「打开终端」里勾了跳过权限确认：只加给这一次启动，不写进任何配置。
+    fn skip_permissions(&mut self) {
+        // Claude Code 和 agy 的参数同名；Codex 跳过确认的同时也关掉沙箱。
+        let flag = match self.program {
+            "codex" => "--dangerously-bypass-approvals-and-sandbox",
+            _ => "--dangerously-skip-permissions",
+        };
+        self.args.push(flag.to_string());
+        self.batch_command.push(' ');
+        self.batch_command.push_str(flag);
+    }
+}
+
+/// Codex 的 `-c` 值在 .bat 里经这些变量传（值里可能有 `&` 之类 cmd 的特殊字符）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const CODEX_OVERRIDE_BATCH_VARS: [&str; 24] = [
+    "CC_SWITCH_CODEX_C0",
+    "CC_SWITCH_CODEX_C1",
+    "CC_SWITCH_CODEX_C2",
+    "CC_SWITCH_CODEX_C3",
+    "CC_SWITCH_CODEX_C4",
+    "CC_SWITCH_CODEX_C5",
+    "CC_SWITCH_CODEX_C6",
+    "CC_SWITCH_CODEX_C7",
+    "CC_SWITCH_CODEX_C8",
+    "CC_SWITCH_CODEX_C9",
+    "CC_SWITCH_CODEX_C10",
+    "CC_SWITCH_CODEX_C11",
+    "CC_SWITCH_CODEX_C12",
+    "CC_SWITCH_CODEX_C13",
+    "CC_SWITCH_CODEX_C14",
+    "CC_SWITCH_CODEX_C15",
+    "CC_SWITCH_CODEX_C16",
+    "CC_SWITCH_CODEX_C17",
+    "CC_SWITCH_CODEX_C18",
+    "CC_SWITCH_CODEX_C19",
+    "CC_SWITCH_CODEX_C20",
+    "CC_SWITCH_CODEX_C21",
+    "CC_SWITCH_CODEX_C22",
+    "CC_SWITCH_CODEX_C23",
+];
+
+/// Codex：卡就是当前直连的那家时直接跑 `codex`；否则用 `-c` 只对这个进程换成它，Key 经
+/// 环境变量传（见 `codex_terminal`），不改 `config.toml`。
+fn codex_terminal_launch(
+    db: &crate::database::Database,
+    provider: &crate::provider::Provider,
+) -> Result<ProviderLaunch, String> {
+    use crate::services::provider::codex_terminal;
+    let plan = codex_terminal::terminal_launch(db, provider).map_err(|e| e.to_string())?;
+    let mut overrides = plan.overrides;
+    let mut cleanup = Vec::new();
+    if let Some(catalog) = plan.catalog {
+        let path = unique_temp_path("codex_catalog", "json");
+        std::fs::write(&path, catalog).map_err(|e| format!("写入临时模型目录失败: {e}"))?;
+        overrides.push(codex_terminal::catalog_override(&path.to_string_lossy()));
+        cleanup.push(path);
+    }
+    codex_launch(&provider.name, overrides, plan.env, cleanup.clone()).inspect_err(|_| {
+        for file in &cleanup {
+            let _ = std::fs::remove_file(file);
+        }
+    })
+}
+
+fn codex_launch(
+    name: &str,
+    overrides: Vec<String>,
+    env: Vec<(&'static str, Option<String>)>,
+    cleanup: Vec<PathBuf>,
+) -> Result<ProviderLaunch, String> {
+    if overrides.len() > CODEX_OVERRIDE_BATCH_VARS.len() {
+        return Err(format!("「{name}」要覆盖的 Codex 配置项太多"));
+    }
+    // cmd 不认 `\"`，值里有双引号就会把后面的 `&` 等字符露在引号外面；`call` 会把 `%` 再展开
+    // 一遍、把引号里的 `^` 加倍。
+    if cfg!(target_os = "windows")
+        && overrides
+            .iter()
+            .any(|value| value.contains(['"', '%', '^']))
+    {
+        return Err(format!(
+            "「{name}」的 Codex 配置里有 Windows 终端传不过去的字符（\" % ^），请先切换到这张卡再打开终端"
+        ));
+    }
+
+    let mut args = Vec::new();
+    // npm 装的是 codex.cmd：不加 `call` 跑完不回到启动 .bat，后面删临时文件（含 Key 的
+    // .bat 本身）的几行就不执行了。
+    let mut batch_command = String::from("call codex");
+    let mut batch_vars = Vec::new();
+    for (value, var) in overrides.into_iter().zip(CODEX_OVERRIDE_BATCH_VARS) {
+        args.push("-c".to_string());
+        args.push(value.clone());
+        batch_command.push_str(&format!(" -c \"%{var}%\""));
+        batch_vars.push((var, value));
+    }
+    Ok(ProviderLaunch {
+        title: if args.is_empty() {
+            "Starting Codex with its current config"
+        } else {
+            "Using this provider for Codex in this terminal only (config.toml is unchanged)"
+        },
+        detail: None,
+        program: "codex",
+        args,
+        batch_command,
+        env,
+        batch_vars,
+        cleanup,
+    })
 }
 
 /// Claude Code：把卡上的 env 写进临时 settings 文件，`claude --settings <文件>` 启动。
@@ -6928,6 +7085,67 @@ mod tests {
             "agy --gemini_dir=/home/me/.cc-switch/agy/relay"
         );
         assert_eq!(unix_launch_env_file(&plain), "");
+    }
+
+    #[test]
+    fn skip_permissions_appends_the_flag_on_every_platform() {
+        let mut launch = claude_account_terminal_launch(None);
+        launch.env.clear();
+        launch.skip_permissions();
+        assert_eq!(
+            unix_launch_command(&launch),
+            "claude --dangerously-skip-permissions"
+        );
+        assert_eq!(
+            launch.batch_command,
+            "claude --dangerously-skip-permissions"
+        );
+
+        let mut launch = agy_key_launch();
+        launch.skip_permissions();
+        assert!(unix_launch_command(&launch).ends_with(
+            "agy --gemini_dir=/home/me/.cc-switch/agy/relay --dangerously-skip-permissions"
+        ));
+        assert_eq!(
+            launch.batch_command,
+            format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\" --dangerously-skip-permissions")
+        );
+    }
+
+    #[test]
+    fn codex_launch_passes_overrides_as_separate_arguments() {
+        let mut launch = codex_launch(
+            "Kimi",
+            vec![
+                "model_provider='custom'".to_string(),
+                "model_providers.custom={name='K',base_url='https://k.example/v1?a=1&b=2'}"
+                    .to_string(),
+            ],
+            vec![("CC_SWITCH_CODEX_API_KEY", Some("sk-kimi".to_string()))],
+            Vec::new(),
+        )
+        .unwrap();
+        launch.skip_permissions();
+        assert_eq!(
+            launch.args,
+            vec![
+                "-c",
+                "model_provider='custom'",
+                "-c",
+                "model_providers.custom={name='K',base_url='https://k.example/v1?a=1&b=2'}",
+                "--dangerously-bypass-approvals-and-sandbox",
+            ]
+        );
+        assert!(!unix_launch_command(&launch).contains("sk-kimi"));
+        assert_eq!(
+            launch.batch_command,
+            "call codex -c \"%CC_SWITCH_CODEX_C0%\" -c \"%CC_SWITCH_CODEX_C1%\" --dangerously-bypass-approvals-and-sandbox"
+        );
+        assert_eq!(launch.batch_vars[1].0, "CC_SWITCH_CODEX_C1");
+
+        let plain = codex_launch("Kimi", Vec::new(), Vec::new(), Vec::new()).unwrap();
+        assert_eq!(plain.batch_command, "call codex");
+        assert!(plain.args.is_empty());
     }
 
     #[test]
@@ -10546,6 +10764,66 @@ mod tests {
         let candidates = tool_executable_candidates("opencode", &dir);
 
         assert_eq!(candidates, vec![PathBuf::from("/usr/local/bin/opencode")]);
+    }
+
+    /// 文件在、却拿不到版本（起不来 / 没输出）算「装了但跑不起来」，不算没装：
+    /// 安装位置列表照样列出这类文件，报没装会让应用页同一行既在「已安装」组又显示安装按钮。
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn scan_cli_version_reports_present_but_silent_executable_as_broken() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let make_dir = |name: &str, script: Option<&str>| {
+            let dir = root.path().join(name);
+            std::fs::create_dir_all(&dir).expect("dir should be created");
+            let tool = dir.join("kimi");
+            match script {
+                Some(body) => {
+                    std::fs::write(&tool, format!("#!/bin/sh\n{body}\n"))
+                        .expect("script should be written");
+                    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
+                        .expect("script should be executable");
+                }
+                // 不可执行的文件：启动失败
+                None => std::fs::write(&tool, "").expect("file should be written"),
+            }
+            dir
+        };
+        let silent = make_dir("silent", Some("exit 0"));
+        let silent_failure = make_dir("silent-failure", Some("exit 3"));
+        let not_executable = make_dir("not-executable", None);
+        let loud_failure = make_dir("loud-failure", Some("echo boom >&2\nexit 1"));
+        let working = make_dir("working", Some("echo 'kimi 1.2.3'"));
+        let empty = root.path().join("empty");
+        std::fs::create_dir_all(&empty).expect("dir should be created");
+        // 与工具同名的目录不是安装
+        let same_name_dir = root.path().join("same-name-dir");
+        std::fs::create_dir_all(same_name_dir.join("kimi")).expect("dir should be created");
+
+        let broken_detail = |paths: &[PathBuf]| match scan_cli_version_in("kimi", paths) {
+            ShellProbe::FoundButFailed(detail) => detail,
+            ShellProbe::Found(v) => panic!("expected broken, got version {v}"),
+            ShellProbe::NotFound(e) => panic!("expected broken, got not found: {e}"),
+        };
+
+        assert!(broken_detail(std::slice::from_ref(&silent)).contains("printed nothing"));
+        assert!(broken_detail(std::slice::from_ref(&silent_failure))
+            .contains("exited with code 3 and printed nothing"));
+        assert!(
+            broken_detail(std::slice::from_ref(&not_executable)).starts_with("failed to launch")
+        );
+        // 具体报错优先于笼统诊断
+        assert_eq!(broken_detail(&[silent.clone(), loud_failure]), "boom");
+        // 别处有能跑的安装仍以它为准
+        assert!(matches!(
+            scan_cli_version_in("kimi", &[silent, working]),
+            ShellProbe::Found(v) if v == "1.2.3"
+        ));
+        assert!(matches!(
+            scan_cli_version_in("kimi", &[empty, same_name_dir]),
+            ShellProbe::NotFound(_)
+        ));
     }
 
     #[test]
