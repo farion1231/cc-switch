@@ -903,7 +903,9 @@ fn initialize_profiles_and_commit<T>(
                     Ok::<_, AppError>(found || existing_mcp_entry(text, id)?.is_some())
                 })?;
                 if !has_providers && !providers.is_empty() {
-                    ensure_providers_not_shadowed(&home_patch_path())?;
+                    // Copying managed nodes into a new profile is not a user edit: a home-level
+                    // llm-pi-ai config hides them until it is removed, but refusing here would
+                    // fail every startup without ever writing the receipt.
                     for (id, config) in providers {
                         // Prefer the existing native node, including its credential reference.
                         // A stale database row must not overwrite a key edited in DSH.
@@ -2131,6 +2133,26 @@ mod tests {
         let _guard = FileLock::acquire(&profile_path("desktop")).unwrap();
         // A completed import needs no native writes or locks on subsequent startup.
         initialize_profiles(&providers, &servers).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn profile_initialization_is_not_blocked_by_a_home_level_provider_config() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        fs::write(
+            root.join("cordis.patch.yml"),
+            "- id: llm-pi-ai\n  config:\n    providers: {}\n",
+        )
+        .unwrap();
+        let providers = IndexMap::from([("gateway".into(), editor_config())]);
+        initialize_profiles(&providers, &IndexMap::new()).unwrap();
+        assert!(data_dir().join(".cc-switch-profile-sync.json").exists());
+        for name in ["web", "desktop"] {
+            assert!(get_providers_from(&profile_path(name), &credentials_path())
+                .unwrap()
+                .contains_key("gateway"));
+        }
     }
 
     #[test]
