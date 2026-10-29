@@ -211,7 +211,8 @@ describe("UnifiedMcpPanel", () => {
     ).toHaveLength(3);
   });
 
-  it("highlights the column header when a cell gets keyboard focus", async () => {
+  it("highlights a column for its cells but shows the app name only when hovering the header", async () => {
+    const user = userEvent.setup();
     mocks.serversMap = { alpha: makeServer("alpha") };
     renderPanel();
     const columns = screen.getAllByRole("button", {
@@ -220,9 +221,28 @@ describe("UnifiedMcpPanel", () => {
     const cell = screen.getAllByRole("button", { name: /appMatrix.cell/ })[1];
     act(() => cell.focus());
     expect(columns[1]).toHaveAttribute("data-highlighted");
-    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
     act(() => cell.blur());
     expect(columns[1]).not.toHaveAttribute("data-highlighted");
+
+    await user.hover(cell);
+    expect(columns[1]).toHaveAttribute("data-highlighted");
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "appMatrix.cell.off",
+    );
+    await user.click(cell);
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+
+    await user.hover(columns[1]);
+    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
+    await user.unhover(columns[1]);
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+
+    await user.hover(columns[1]);
+    await user.hover(cell);
+    expect(columns[1]).toHaveAttribute("data-highlighted");
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
   });
 
   it("bulk-enables only the rows left by the search and offers undo", async () => {
