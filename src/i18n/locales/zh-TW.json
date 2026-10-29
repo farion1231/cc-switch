@@ -197,6 +197,9 @@
       "forget": "從最近用過中移除",
       "confirm": "開啟終端機",
       "skipPermissions": "略過權限確認",
+      "extraArgs": "附加參數（選填）",
+      "extraArgsPlaceholder": "例如 --debug --append-system-prompt \"簡潔回答\"",
+      "extraArgsHint": "接在啟動命令後面，只用於這次開啟的終端機。用空格分隔，含空格的值用引號括起來。",
       "agySwitchTitle": "會切換 agy 的登入",
       "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
       "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。"
@@ -728,6 +731,15 @@
       "saved": "已儲存",
       "unsavedChanges": "請先儲存設定",
       "saveBeforeSync": "請先儲存設定，再使用上傳/下載。",
+      "clear": "清除設定",
+      "clearing": "清除中...",
+      "clearSuccess": "已清除本機的 WebDAV 設定",
+      "clearFailed": "清除設定失敗：{{error}}",
+      "clearConfirm": {
+        "title": "清除 WebDAV 設定",
+        "message": "將從本機刪除已儲存的 WebDAV 位址、帳號、密碼和遠端目錄，並停止自動同步。雲端已上傳的資料不會被刪除。",
+        "confirm": "清除"
+      },
       "fetchingRemote": "取得遠端資訊...",
       "fetchRemoteFailed": "取得遠端資訊失敗，請檢查設定和網路後重試。",
       "confirmDownload": {
@@ -1354,6 +1366,7 @@
     "groupByTime": "按時間",
     "groupByProject": "按專案",
     "desktopNote": "Claude Desktop 沒有單獨的工作階段記錄，這裡顯示 Claude Code 的工作階段。",
+    "dshMergedNote": "DeepSeek Harness 的 Web 和 Desktop 共用同一份工作階段記錄，這裡合併顯示。",
     "matchCount": "符合 {{count}} 個工作階段",
     "totalCount": "共 {{count}} 個工作階段",
     "selectAllMatches": "全選符合結果",
@@ -2106,9 +2119,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "暫無額外選項",
     "noModelOptions": "模型選項，點擊 + 新增",
-    "modelLimits": "Token 限制",
-    "limitContext": "上下文",
-    "limitOutput": "輸出",
     "modelExtraFields": "模型屬性",
     "noModelExtraFields": "模型屬性 (variants, cost 等)，點擊 + 新增",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2246,6 +2256,11 @@
       "short": "工作階段日誌",
       "label": "{{app}} · 工作階段日誌",
       "hint": "未開啟路由時從用戶端的工作階段日誌讀取，無法區分是哪家供應商"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek 帳號",
+      "label": "{{app}} · DeepSeek 帳號（OAuth）",
+      "hint": "從工作階段記錄讀取，使用的是 DeepSeek 帳號登入；Web 和 Desktop 共用這份登入，用量合併統計"
     },
     "stream": "串流",
     "nonStream": "非串流",
@@ -2547,7 +2562,7 @@
       "scanTitle": "自動掃描工作階段日誌",
       "scanHelpTitle": "工作階段日誌是什麼",
       "scanHelp": "各應用程式寫在本機的工作階段記錄。CC Switch 從中讀取用量，不開路由也有資料。",
-      "coverage": "涵蓋 7 個應用程式：{{apps}}",
+      "coverage": "涵蓋 {{total}} 個應用程式：{{apps}}",
       "cadenceOn": "啟動時掃描一次，背景每 10 分鐘一次；開啟用量頁時立即掃描，之後依所選間隔掃描",
       "cadenceOff": "自動掃描已關閉，只在點「立即同步」時掃描",
       "unsupported": "Hermes、OpenClaw 暫不支援用量統計",
@@ -4172,6 +4187,7 @@
     "extraUsage": "超額用量",
     "expired": "工作階段已過期",
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
+    "expiredHintAccounts": "請在授權中心重新登入這個帳號",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
   },
@@ -4603,6 +4619,7 @@
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
       "claudeNote": "（頂層 mcpServers）",
+      "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -5076,6 +5093,31 @@
     "empty": {
       "title": "新增 DeepSeek Harness 供應商",
       "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"
+    },
+    "sharedProviders": "已加入的供應商會一起寫進 DeepSeek Harness 的 Web 和 Desktop 設定（以及已初始化的 headless、acp），在 DeepSeek Harness 裡選模型即可。",
+    "sharedProvidersNote": "Web 和 Desktop 共用這份列表",
+    "account": {
+      "help": "DeepSeek 帳號以瀏覽器登入（OAuth），可以在這裡登入，也可以在 DeepSeek Harness 裡登入。登入資訊儲存在 $DSH_HOME/.credentials.yaml（預設 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一處登入或登出，兩端同時生效，執行中的 DeepSeek Harness 會自動重新讀取。帳號路由的模型用量在用量頁單獨顯示為「DeepSeek 帳號（OAuth）」。",
+      "statusFailed": "無法讀取 DeepSeek 帳號的登入狀態",
+      "empty": "未登入 DeepSeek 帳號",
+      "unnamed": "DeepSeek 帳號",
+      "expired": "登入已失效，請重新登入",
+      "shared": "Web 與 Desktop 共用",
+      "signOut": "登出",
+      "signOutConfirm": "登出 DeepSeek 帳號「{{name}}」？DeepSeek Harness 的 Web 和 Desktop 會同時登出，API Key 供應商不受影響。",
+      "signOutFailed": "登出 DeepSeek 帳號失敗",
+      "balance": "餘額 {{amount}}",
+      "bonus": "贈金 {{amount}}",
+      "balanceFailed": "暫時查不到餘額",
+      "signedIn": "DeepSeek 帳號已登入，Web 和 Desktop 都可以使用",
+      "signInFailed": "DeepSeek 帳號登入失敗",
+      "presetName": "DeepSeek 官方登入",
+      "presetDescription": "以瀏覽器登入 DeepSeek 帳號後，DeepSeek Harness 會直接提供帳號下的模型，不用再新增供應商；Web 和 Desktop 共用這份登入。登入和登出在授權中心管理，登入後帳號會出現在「已加入」裡。",
+      "manageAccounts": "管理 DeepSeek 帳號",
+      "cardSubtitle": "官方帳號 · Web 和 Desktop 共用",
+      "expiredChip": "登入已失效",
+      "editDisabled": "帳號下的模型由 DeepSeek Harness 自動提供，無需編輯。",
+      "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
   }

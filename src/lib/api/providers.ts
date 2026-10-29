@@ -28,6 +28,8 @@ export interface OpenTerminalOptions {
   cwd?: string;
   /** 启动时跳过权限确认：Claude Code 与 agy 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox` */
   skipPermissions?: boolean;
+  /** 追加在生成的参数后面，后端按空白拆分、引号括起的算一个 */
+  extraArgs?: string;
 }
 
 export interface ClaudeDesktopStatus {
@@ -212,12 +214,13 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd, skipPermissions } = options ?? {};
+    const { cwd, skipPermissions, extraArgs } = options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
       skipPermissions,
+      extraArgs,
     });
   },
 
