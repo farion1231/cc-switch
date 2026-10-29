@@ -256,4 +256,39 @@ requires_openai_auth = true
 
     expect(extractCodexBaseUrl(result)).toBe("https://relay.example.com/v1");
   });
+
+  it("recovers base_url from a corrupted [[skills.config]] entry", () => {
+    // v4.0.21 wrote base_url inside [[skills.config]] instead of
+    // [model_providers.custom]. When the user edits the URL again,
+    // the fix must move it to the custom table and remove the stale
+    // entry from skills.config[0].
+    const input = `model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+
+[[skills.config]]
+path = "/synthetic/example/SKILL.md"
+enabled = false
+base_url = "https://old.example/v1"
+`;
+
+    const result = setCodexBaseUrl(input, "https://new.example/v1");
+
+    // The new base_url must be in [model_providers.custom].
+    expect(extractCodexBaseUrl(result)).toBe("https://new.example/v1");
+
+    // The old URL must be gone entirely.
+    expect(result).not.toContain("https://old.example/v1");
+
+    // The skills.config block must not contain base_url.
+    const skillsBlock = result.slice(result.indexOf("[[skills.config]]"));
+    expect(skillsBlock).not.toContain("base_url");
+
+    // Skill path and enabled flag must be preserved.
+    expect(skillsBlock).toContain('path = "/synthetic/example/SKILL.md"');
+    expect(skillsBlock).toContain("enabled = false");
+  });
 });
