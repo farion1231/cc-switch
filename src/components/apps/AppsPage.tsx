@@ -732,12 +732,14 @@ function ToolRow({
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
   const canUninstall = isToolPresent(info, report);
+  const installedButUnknown =
+    canUninstall && !info?.version && info?.env_type !== "wsl";
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
     (isVersionLoading || broken
       ? null
       : !info?.version
-        ? canUninstall
+        ? installedButUnknown
           ? null
           : "install"
         : isOutdated && !nodeGap
@@ -775,7 +777,7 @@ function ToolRow({
       <AlertTriangle className="h-3.5 w-3.5" />
       {t("appsPage.notRunnable")}
     </span>
-  ) : canUninstall ? (
+  ) : installedButUnknown ? (
     <span
       className="text-caption text-fg-2"
       title={t("appsPage.versionUnknown")}

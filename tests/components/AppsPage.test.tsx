@@ -2119,4 +2119,47 @@ describe("AppsPage issue #8889: unknown version when installations exist", () =>
       claudeCard.getByRole("button", { name: "appPage.moreActions" }),
     ).toBeInTheDocument();
   });
+
+  it("renders not installed and keeps install button when tool is missing in WSL even if host installations exist", async () => {
+    vi.resetModules();
+    missing.add("claude");
+    const claudeReport = report("claude", {
+      installs: [
+        {
+          path: "C:\\Program Files\\Claude\\claude.exe",
+          version: null,
+          runnable: true,
+          error: null,
+          source: "system",
+          is_path_default: true,
+        },
+      ],
+    });
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) => (tool === "claude" ? claudeReport : report(tool))),
+    );
+    mocks.probeToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) => (tool === "claude" ? claudeReport : report(tool))),
+    );
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      tools.map((name) => ({
+        name,
+        version: missing.has(name) ? null : "2.0.0",
+        latest_version: "2.0.0",
+        error: null,
+        installed_but_broken: false,
+        env_type: name === "claude" ? "wsl" : "windows",
+        wsl_distro: name === "claude" ? "Ubuntu" : null,
+      })),
+    );
+
+    await renderApps();
+
+    const claudeCard = card("Claude Code");
+    expect(claudeCard.getByText("common.notInstalled")).toBeInTheDocument();
+    expect(claudeCard.queryByText("common.unknown")).toBeNull();
+    expect(
+      claudeCard.getByRole("button", { name: "settings.toolInstall" }),
+    ).toBeInTheDocument();
+  });
 });
