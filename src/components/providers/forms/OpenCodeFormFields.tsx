@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -13,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
-import { Plus, Trash2, ChevronRight } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { ApiKeySection, GptContextWindowHint, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
@@ -22,11 +24,20 @@ import {
 } from "@/lib/api/model-fetch";
 import { opencodeNpmPackages } from "@/config/opencodeProviderPresets";
 import { cn } from "@/lib/utils";
+import { isPlainObject } from "@/lib/requestOverrides";
 import {
   getModelExtraFields,
   isKnownModelKey,
+  isReasoningEffortMap,
+  modelSupportsImageInput,
+  modelSupportsReasoning,
   OPENCODE_EXTRA_OPTION_DRAFT_PREFIX,
+  withModelImageInput,
+  withModelReasoning,
+  type OpenCodeModelDialect,
 } from "./helpers/opencodeFormUtils";
+import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
+import { PI_THINKING_LEVELS } from "@/config/piThinkingProfiles";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import {
   findRequestHeaderValue,
@@ -167,8 +178,104 @@ function ModelOptionKeyInput({
   );
 }
 
+/**
+ * DeepSeek Harness 的思考档位：列出的档位才提供，值是发给上游的档位名（null 表示不带）。
+ * 新打开的档位按同名透传；不在 Pi 档位表里的键原样保留。
+ */
+function ReasoningEffortsField({
+  modelKey,
+  efforts,
+  onChange,
+}: {
+  modelKey: string;
+  efforts: Record<string, string | null>;
+  onChange: (efforts: Record<string, string | null>) => void;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const offeredCount = Object.keys(efforts).length;
+
+  const toggle = (level: string, offered: boolean) => {
+    const next: Record<string, string | null> = {};
+    for (const known of PI_THINKING_LEVELS) {
+      if (known === level) {
+        if (offered)
+          next[known] =
+            known in efforts ? efforts[known] : known === "off" ? null : known;
+      } else if (known in efforts) {
+        next[known] = efforts[known];
+      }
+    }
+    for (const [other, value] of Object.entries(efforts)) {
+      if (!(other in next) && other !== level) next[other] = value;
+    }
+    onChange(next);
+  };
+
+  return (
+    <div className="w-full space-y-2 sm:col-span-2">
+      <div className="flex min-h-9 items-center">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setExpanded((current) => !current)}
+          aria-expanded={expanded}
+          className="-ml-2 h-8 gap-1.5 px-2 text-fg-1"
+        >
+          <span>{t("pi.form.thinkingLevelsLabel")}</span>
+          <ChevronDown
+            className={`h-4 w-4 transition-transform motion-reduce:transition-none ${
+              expanded ? "rotate-180" : ""
+            }`}
+          />
+        </Button>
+      </div>
+      {expanded && (
+        <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">
+          {PI_THINKING_LEVELS.map((level) => {
+            const offered = level in efforts;
+            const value = efforts[level];
+            const id = `opencode-${modelKey}-effort-${level}`;
+            return (
+              <div
+                key={level}
+                className="flex h-[42px] items-center gap-3 border-b border-border/40 px-4 text-sm last:border-b-0"
+              >
+                <Label htmlFor={id} className="flex-1 cursor-pointer">
+                  {t(`pi.form.thinkingLevels.${level}`)}
+                </Label>
+                <span
+                  className={
+                    offered
+                      ? "max-w-[18rem] truncate font-mono text-xs text-fg-1"
+                      : "text-xs text-fg-2"
+                  }
+                >
+                  {offered
+                    ? (value ?? "")
+                    : t("pi.form.thinkingLevelUnsupported")}
+                </span>
+                <Switch
+                  id={id}
+                  checked={offered}
+                  // 至少留一个档位，全关请用上面的「支持扩展思考」
+                  disabled={offered && offeredCount === 1}
+                  onCheckedChange={(checked) => toggle(level, checked)}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface OpenCodeFormFieldsProps {
   allowBuiltinDefaults?: boolean;
+  /** 模型字段方言：DeepSeek Harness 多出思考档位和接口兼容性。 */
+  modelDialect?: OpenCodeModelDialect;
   /** 选中拉取到的模型时补参数所查的预设（MiniMax Code 传自己的）。 */
   presetModelSources?: () => readonly PresetModelSource[];
   apiFormats?: ReadonlyArray<{ value: string; label: string }>;
@@ -204,6 +311,7 @@ interface OpenCodeFormFieldsProps {
 
 export function OpenCodeFormFields({
   allowBuiltinDefaults = false,
+  modelDialect = "opencode",
   presetModelSources = opencodePresetModelSources,
   apiFormats = opencodeNpmPackages,
   npm,
@@ -397,6 +505,9 @@ export function OpenCodeFormFields({
       [key]: { ...models[key], name },
     });
   };
+
+  const updateModel = (modelKey: string, model: OpenCodeModel) =>
+    onModelsChange({ ...models, [modelKey]: model });
 
   const handleModelLimitChange = (
     modelKey: string,
@@ -854,74 +965,121 @@ export function OpenCodeFormFields({
 
                 {/* Expanded model details */}
                 {expandedModels.has(key) && (
-                  <div className="ml-9 pl-4 border-l-2 border-muted space-y-3">
-                    {/* Token limits (model.limit) */}
-                    <div className="space-y-2">
-                      <span className="text-xs font-medium text-fg-2">
-                        {t("opencode.modelLimits", {
-                          defaultValue: "Token Limits",
-                        })}
-                      </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <FormLabel
-                            htmlFor={`opencode-${key}-limit-context`}
-                            className="text-xs text-fg-2"
-                          >
-                            {t("opencode.limitContext", {
-                              defaultValue: "Context",
-                            })}
-                          </FormLabel>
-                          <Input
-                            id={`opencode-${key}-limit-context`}
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={model.limit?.context ?? ""}
-                            onChange={(e) =>
-                              handleModelLimitChange(
-                                key,
-                                "context",
-                                e.target.value,
-                              )
-                            }
-                            placeholder="1048576"
-                          />
-                          <GptContextWindowHint
-                            modelId={key}
-                            contextWindow={model.limit?.context}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <FormLabel
-                            htmlFor={`opencode-${key}-limit-output`}
-                            className="text-xs text-fg-2"
-                          >
-                            {t("opencode.limitOutput", {
-                              defaultValue: "Output",
-                            })}
-                          </FormLabel>
-                          <Input
-                            id={`opencode-${key}-limit-output`}
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={model.limit?.output ?? ""}
-                            onChange={(e) =>
-                              handleModelLimitChange(
-                                key,
-                                "output",
-                                e.target.value,
-                              )
-                            }
-                            placeholder="131072"
-                          />
-                        </div>
+                  <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
+                    <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
+                      <div className="flex items-center gap-2.5">
+                        <Label
+                          htmlFor={`opencode-${key}-reasoning`}
+                          className="cursor-pointer"
+                        >
+                          {t("pi.form.reasoning")}
+                        </Label>
+                        <Switch
+                          id={`opencode-${key}-reasoning`}
+                          checked={modelSupportsReasoning(model, modelDialect)}
+                          onCheckedChange={(checked) =>
+                            updateModel(
+                              key,
+                              withModelReasoning(model, checked, modelDialect),
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <Label
+                          htmlFor={`opencode-${key}-image-input`}
+                          className="cursor-pointer"
+                        >
+                          {t("pi.form.imageInput")}
+                        </Label>
+                        <Switch
+                          id={`opencode-${key}-image-input`}
+                          checked={modelSupportsImageInput(model)}
+                          onCheckedChange={(checked) =>
+                            updateModel(
+                              key,
+                              withModelImageInput(model, checked),
+                            )
+                          }
+                        />
                       </div>
                     </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`opencode-${key}-limit-context`}>
+                        {t("pi.form.contextWindow")}
+                      </Label>
+                      <Input
+                        id={`opencode-${key}-limit-context`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={model.limit?.context ?? ""}
+                        onChange={(e) =>
+                          handleModelLimitChange(key, "context", e.target.value)
+                        }
+                        placeholder="1048576"
+                      />
+                      <GptContextWindowHint
+                        modelId={key}
+                        contextWindow={model.limit?.context}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`opencode-${key}-limit-output`}>
+                        {t("pi.form.maxTokens")}
+                      </Label>
+                      <Input
+                        id={`opencode-${key}-limit-output`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={model.limit?.output ?? ""}
+                        onChange={(e) =>
+                          handleModelLimitChange(key, "output", e.target.value)
+                        }
+                        placeholder="131072"
+                      />
+                    </div>
+
+                    {modelDialect === "dsh" &&
+                      isReasoningEffortMap(model.reasoningEfforts) && (
+                        <ReasoningEffortsField
+                          modelKey={key}
+                          efforts={model.reasoningEfforts}
+                          onChange={(reasoningEfforts) =>
+                            updateModel(key, { ...model, reasoningEfforts })
+                          }
+                        />
+                      )}
+
+                    {modelDialect === "dsh" && isPlainObject(model.compat) && (
+                      <StructuredOptionsEditor
+                        id={`opencode-${key}-compat`}
+                        title={t("pi.form.compatibility")}
+                        hint={t("pi.form.compatibilityHint")}
+                        addLabel={t("pi.form.addCompatibilityOption")}
+                        emptyLabel={t("pi.form.noCompatibilityOptions")}
+                        keyLabel={t("pi.form.optionKey")}
+                        valueLabel={t("pi.form.optionValue")}
+                        keyPlaceholder="supportsDeveloperRole"
+                        valuePlaceholder="false"
+                        removeLabel={t("pi.form.removeCompatibilityOption")}
+                        options={model.compat}
+                        onOptionsChange={(compat) => {
+                          const { compat: _previous, ...rest } = model;
+                          updateModel(
+                            key,
+                            Object.keys(compat).length > 0
+                              ? { ...rest, compat }
+                              : (rest as OpenCodeModel),
+                          );
+                        }}
+                        className="sm:col-span-2"
+                      />
+                    )}
 
                     {/* Model Properties (extra fields like variants, cost) */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 sm:col-span-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium text-fg-2">
                           {t("opencode.modelExtraFields", {
@@ -938,7 +1096,8 @@ export function OpenCodeFormFields({
                           <Plus className="h-3 w-3" />
                         </Button>
                       </div>
-                      {Object.keys(getModelExtraFields(model)).length === 0 ? (
+                      {Object.keys(getModelExtraFields(model, modelDialect))
+                        .length === 0 ? (
                         <p className="text-xs text-fg-2 py-1">
                           {t("opencode.noModelExtraFields", {
                             defaultValue:
@@ -946,64 +1105,64 @@ export function OpenCodeFormFields({
                           })}
                         </p>
                       ) : (
-                        Object.entries(getModelExtraFields(model)).map(
-                          ([fKey, fValue]) => (
-                            <div key={fKey} className="flex items-center gap-2">
-                              <ModelOptionKeyInput
-                                optionKey={fKey}
-                                onChange={(newKey) =>
-                                  handleModelExtraFieldKeyChange(
-                                    key,
-                                    fKey,
-                                    newKey,
-                                  )
+                        Object.entries(
+                          getModelExtraFields(model, modelDialect),
+                        ).map(([fKey, fValue]) => (
+                          <div key={fKey} className="flex items-center gap-2">
+                            <ModelOptionKeyInput
+                              optionKey={fKey}
+                              onChange={(newKey) =>
+                                handleModelExtraFieldKeyChange(
+                                  key,
+                                  fKey,
+                                  newKey,
+                                )
+                              }
+                              placeholder={t(
+                                "opencode.modelExtraFieldKeyPlaceholder",
+                                {
+                                  defaultValue: "variants",
+                                },
+                              )}
+                            />
+                            <ImeSafeInput
+                              value={fValue}
+                              onValueChange={(value) =>
+                                handleModelExtraFieldValueChange(
+                                  key,
+                                  fKey,
+                                  value,
+                                )
+                              }
+                              placeholder={t(
+                                "opencode.modelOptionValuePlaceholder",
+                                {
+                                  defaultValue: '{"order": ["baseten"]}',
+                                },
+                              )}
+                              className="flex-1"
+                            />
+                            <HoverTip content={t("common.delete")}>
+                              <Button
+                                aria-label={t("common.delete")}
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() =>
+                                  handleRemoveModelExtraField(key, fKey)
                                 }
-                                placeholder={t(
-                                  "opencode.modelExtraFieldKeyPlaceholder",
-                                  {
-                                    defaultValue: "variants",
-                                  },
-                                )}
-                              />
-                              <ImeSafeInput
-                                value={fValue}
-                                onValueChange={(value) =>
-                                  handleModelExtraFieldValueChange(
-                                    key,
-                                    fKey,
-                                    value,
-                                  )
-                                }
-                                placeholder={t(
-                                  "opencode.modelOptionValuePlaceholder",
-                                  {
-                                    defaultValue: '{"order": ["baseten"]}',
-                                  },
-                                )}
-                                className="flex-1"
-                              />
-                              <HoverTip content={t("common.delete")}>
-                                <Button
-                                  aria-label={t("common.delete")}
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() =>
-                                    handleRemoveModelExtraField(key, fKey)
-                                  }
-                                  className="h-9 w-9 text-fg-2 hover:text-destructive"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </HoverTip>
-                            </div>
-                          ),
-                        )
+                                className="h-9 w-9 text-fg-2 hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </HoverTip>
+                          </div>
+                        ))
                       )}
                     </div>
 
                     {/* SDK Options (model.options) */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 sm:col-span-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium text-fg-2">
                           {t("opencode.sdkOptions", {

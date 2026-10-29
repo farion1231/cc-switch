@@ -2119,9 +2119,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "No extra options configured",
     "noModelOptions": "Model options, click + to add",
-    "modelLimits": "Token Limits",
-    "limitContext": "Context",
-    "limitOutput": "Output",
     "modelExtraFields": "Model Properties",
     "noModelExtraFields": "Model properties (variants, cost, etc.), click + to add",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2565,7 +2562,7 @@
       "scanTitle": "Scan session logs automatically",
       "scanHelpTitle": "What are session logs?",
       "scanHelp": "The conversation records each app writes on this computer. CC Switch reads usage from them, so you get data even without routing.",
-      "coverage": "Covers 7 apps: {{apps}}",
+      "coverage": "Covers {{total}} apps: {{apps}}",
       "cadenceOn": "Scans at startup and every 10 minutes in the background; opening the Usage page scans right away, then at the selected interval",
       "cadenceOff": "Auto scan is off; logs are scanned only when you click Sync Now",
       "unsupported": "Hermes and OpenClaw don't support usage stats yet",
@@ -5166,7 +5163,8 @@
       "title": "Add a DeepSeek Harness provider",
       "description": "Configure an endpoint, API key and models. Existing custom providers appear here automatically."
     },
-    "sharedProviders": "Web and Desktop share this provider list: adding, editing and removing write to both the web and desktop profiles (created in advance if missing; Desktop keeps it on first launch) and to any initialized headless or acp profile.",
+    "sharedProviders": "Added providers are written into both the Web and Desktop configs of DeepSeek Harness (plus any initialized headless or acp profile); pick the model inside DeepSeek Harness.",
+    "sharedProvidersNote": "Shared by Web and Desktop",
     "account": {
       "help": "The DeepSeek account signs in through the browser (OAuth), here or in DeepSeek Harness. The sign-in is stored in $DSH_HOME/.credentials.yaml (default ~/.dsh/.credentials.yaml) and shared by DeepSeek Harness Web and Desktop: signing in or out anywhere applies to both, and a running DeepSeek Harness reloads it automatically. Usage of the account's models appears separately on the Usage page as \"DeepSeek account (OAuth)\".",
       "statusFailed": "Couldn't read the DeepSeek account sign-in",
@@ -5180,13 +5178,15 @@
       "balance": "Balance {{amount}}",
       "bonus": "Bonus {{amount}}",
       "balanceFailed": "Balance unavailable right now",
-      "noticeSignedOutTitle": "Not signed in to a DeepSeek account",
-      "noticeSignedOut": "Sign in to your DeepSeek account through the browser, in the Auth Center or in DeepSeek Harness, to use the account's models. Web and Desktop share this sign-in.",
-      "noticeExpiredTitle": "DeepSeek account sign-in expired",
-      "noticeExpired": "Sign in again in the Auth Center or DeepSeek Harness; Web and Desktop recover together.",
-      "noticeSignedIn": "DeepSeek account: {{name}}",
       "signedIn": "Signed in to the DeepSeek account for both Web and Desktop",
-      "signInFailed": "Couldn't sign in to the DeepSeek account"
+      "signInFailed": "Couldn't sign in to the DeepSeek account",
+      "presetName": "DeepSeek official sign-in",
+      "presetDescription": "After you sign in to your DeepSeek account in the browser, DeepSeek Harness serves the account's models directly; no provider needs to be added. Web and Desktop share this sign-in. Sign in and out in the Auth Center; once signed in, the account appears under Added.",
+      "manageAccounts": "Manage DeepSeek account",
+      "cardSubtitle": "Official account · shared by Web and Desktop",
+      "expiredChip": "Sign-in expired",
+      "editDisabled": "DeepSeek Harness provides this account's models itself; there is nothing to edit.",
+      "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
   }
