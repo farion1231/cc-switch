@@ -78,6 +78,10 @@ impl ValidatedSource {
 /// 校验 `sourcePath` 归属，见模块文档。
 pub fn validate_source(provider_id: &str, source_path: &str) -> Result<ValidatedSource, String> {
     let location = match provider_id {
+        "agy" if source_path.starts_with("sqlite:") => {
+            let (db, session_id) = super::providers::agy::validate_sqlite_source(source_path)?;
+            SourceLocation::Sqlite { db, session_id }
+        }
         "mcode" => {
             let id = source_path
                 .strip_prefix("mcode:")
@@ -221,6 +225,11 @@ pub fn resolve_content_ref(
             let path = jsonl_path(source)?;
             let line = read_jsonl_line(&path, *offset, *len)?;
             let value: Value = serde_json::from_slice(&line).map_err(|_| STALE.to_string())?;
+            if source.provider_id == "agy"
+                && pointer.starts_with(super::providers::agy::ANTIGRAVITY_READER_REF_PREFIX)
+            {
+                return super::providers::agy::resolve_antigravity_reader_content(&value, pointer);
+            }
             extract_text(&value, pointer)
         }
         ContentRef::Sqlite {
@@ -229,6 +238,18 @@ pub fn resolve_content_ref(
             column,
             pointer,
         } => {
+            if source.provider_id == "agy" {
+                if table != "steps" || column != "step_payload" {
+                    return Err(STALE.into());
+                }
+                let db = match &source.location {
+                    SourceLocation::Sqlite { db, .. } => db.clone(),
+                    SourceLocation::Path { path, .. } => {
+                        crate::agy_conversation::for_transcript(path)?.ok_or(STALE)?
+                    }
+                };
+                return super::providers::agy::resolve_native_content(&db, id, pointer);
+            }
             let SourceLocation::Sqlite { db, session_id } = &source.location else {
                 return Err(STALE.to_string());
             };

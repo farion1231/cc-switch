@@ -1,13 +1,17 @@
-//! Read Antigravity's exported transcript; never open its binary conversation store for writing.
+//! Read exported and native Antigravity conversations without modifying their sources.
+mod native;
 use super::{
-    blocks::assign_turn_ids,
+    blocks::{
+        assign_turn_ids, normalize_tool, parse_antigravity_args, thinking_block, tool_call_block,
+        tool_result_block, ToolSource,
+    },
     utils::{parse_timestamp_to_ms, truncate_summary},
 };
-use crate::session_manager::model::{MessageMeta, SessionBlock};
+use crate::session_manager::model::{ContentRef, MessageMeta, SessionBlock, ToolKind, ToolStatus};
 use crate::session_manager::{SessionMessage, SessionMeta};
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -144,7 +148,51 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
             sessions.push(meta);
         }
     }
-    // A binary-only conversation can still be found and resumed, but has no readable transcript.
+    let conversations = root.parent().unwrap_or(root).join("conversations");
+    if let Ok(entries) = fs::read_dir(&conversations) {
+        let canonical = conversations.canonicalize().ok();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(id) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .filter(|s| valid_session_id(s))
+            else {
+                continue;
+            };
+            if path.extension().and_then(|s| s.to_str()) != Some("db")
+                || !path.is_file()
+                || !path
+                    .canonicalize()
+                    .ok()
+                    .zip(canonical.as_ref())
+                    .is_some_and(|(p, r)| p.starts_with(r))
+                || sessions.iter().any(|s| s.session_id == id)
+            {
+                continue;
+            }
+            let mut meta = if let Some(meta) = summaries.remove(id) {
+                meta
+            } else {
+                let Some((text, created_at, last_active_at)) = native::preview(&path) else {
+                    continue;
+                };
+                SessionMeta {
+                    provider_id: "agy".into(),
+                    session_id: id.into(),
+                    title: (!text.is_empty()).then(|| truncate_summary(&text, 80)),
+                    summary: (!text.is_empty()).then(|| truncate_summary(&text, 160)),
+                    project_dir: None,
+                    created_at,
+                    last_active_at,
+                    source_path: None,
+                    resume_command: Some(crate::agy_config::resume_command(gemini_dir, id)),
+                }
+            };
+            meta.source_path = Some(format!("sqlite:{}#{id}", path.display()));
+            sessions.push(meta);
+        }
+    }
     sessions.extend(summaries.into_values());
     sessions
 }
@@ -212,40 +260,304 @@ fn user_request(content: &str) -> &str {
         .unwrap_or(content)
 }
 
+// This function is also used by the usage importer. Preserve upstream's date semantics.
 pub(crate) fn timestamp(value: &Value) -> Option<i64> {
     parse_timestamp_to_ms(&value["created_at"])
 }
 
+fn reader_timestamp(value: &Value) -> Option<i64> {
+    value
+        .get("ts")
+        .and_then(parse_timestamp_to_ms)
+        .or_else(|| parse_timestamp_to_ms(&value["created_at"]))
+}
+
+// Keep each field's physical JSONL origin: partial updates can omit the original
+// thinking/content/tool_calls, but their expanded references must still read that row.
+struct ReaderStep {
+    value: Value,
+    fields: HashMap<String, (u64, u32)>,
+    native_index: Option<i64>,
+}
+
+impl ReaderStep {
+    fn content_ref(&self, pointer: String) -> Option<ContentRef> {
+        if let Some(index) = self.native_index {
+            return Some(ContentRef::Sqlite {
+                table: "steps".into(),
+                id: index.to_string(),
+                column: "step_payload".into(),
+                pointer,
+            });
+        }
+        let field = if pointer.starts_with(ANTIGRAVITY_READER_REF_PREFIX) {
+            "tool_calls"
+        } else {
+            pointer.strip_prefix('/')?.split('/').next()?
+        };
+        let &(offset, len) = self.fields.get(field)?;
+        Some(ContentRef::Jsonl {
+            offset,
+            len,
+            pointer,
+        })
+    }
+}
+
+// Use nanosecond precision for identity; UI timestamps are only millisecond precision.
+fn event_timestamp(value: &Value) -> Option<String> {
+    let time = value.get("created_at").or_else(|| value.get("ts"))?;
+    if let Some(text) = time.as_str() {
+        if let Ok(date) = chrono::DateTime::parse_from_rfc3339(text) {
+            return Some(
+                date.with_timezone(&chrono::Utc)
+                    .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+            );
+        }
+    }
+    parse_timestamp_to_ms(time).map(|ms| ms.to_string())
+}
+
+fn reader_steps(data: &str) -> Vec<ReaderStep> {
+    let mut steps: Vec<ReaderStep> = Vec::new();
+    let mut seen: HashMap<u64, usize> = HashMap::new();
+    let mut previous = None;
+    let mut offset = 0u64;
+    for line in data.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len() as u64;
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(fields) = value.as_object() else {
+            continue;
+        };
+        let index = value["step_index"].as_u64();
+        let prior = index.and_then(|index| seen.get(&index).copied());
+        let update = prior.filter(|&prior| {
+            let existing = &steps[prior].value;
+            match (event_timestamp(existing), event_timestamp(&value)) {
+                (Some(a), Some(b)) => a == b,
+                // Timestamp-less exports can only prove an adjacent update to the same type.
+                (None, None) => {
+                    prior + 1 == steps.len()
+                        && (value.get("type").is_none() || existing["type"] == value["type"])
+                }
+                _ => false,
+            }
+        });
+        let refs: HashMap<_, _> = fields
+            .keys()
+            .filter_map(|key| {
+                u32::try_from(line.len())
+                    .ok()
+                    .map(|len| (key.clone(), (start, len)))
+            })
+            .collect();
+        if let Some(prior) = update {
+            let step = &mut steps[prior];
+            for (key, value) in fields {
+                step.value[key] = value.clone();
+            }
+            step.fields.extend(refs);
+            continue;
+        }
+        // A new event reusing an index or rewinding begins another execution.
+        if index
+            .zip(previous)
+            .is_some_and(|(index, previous)| index <= previous)
+        {
+            seen.clear();
+        }
+        if let Some(index) = index {
+            seen.insert(index, steps.len());
+            previous = Some(index);
+        }
+        steps.push(ReaderStep {
+            value,
+            fields: refs,
+            native_index: None,
+        });
+    }
+    steps
+}
+
+pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
+    let (path, id) = source.strip_prefix("sqlite:")?.rsplit_once('#')?;
+    valid_session_id(id).then(|| (PathBuf::from(path), id.into()))
+}
+
+pub(crate) fn validate_sqlite_source(source: &str) -> Result<(PathBuf, String), String> {
+    validate_sqlite_in(source, &session_sources())
+}
+
+fn validate_sqlite_in(
+    source: &str,
+    sources: &[(PathBuf, Option<PathBuf>)],
+) -> Result<(PathBuf, String), String> {
+    let (path, id) = parse_sqlite_source(source).ok_or("Invalid Antigravity SQLite source")?;
+    let path = path.canonicalize().map_err(|e| e.to_string())?;
+    for (brain, _) in sources {
+        let conversations = brain.parent().unwrap_or(brain).join("conversations");
+        let Ok(root) = conversations.canonicalize() else {
+            continue;
+        };
+        let expected = root.join(format!("{id}.db"));
+        if path == expected && path.is_file() {
+            return Ok((path, id));
+        }
+    }
+    Err("Conversation database is outside the Antigravity roots".into())
+}
+
+pub(crate) fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
+    let (path, _) = validate_sqlite_source(source)?;
+    native::load(&path)
+}
+
+pub(crate) fn resolve_native_content(
+    path: &Path,
+    id: &str,
+    pointer: &str,
+) -> Result<String, String> {
+    native::resolve(path, id, pointer)
+}
+
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let mut messages = Vec::new();
-    for value in records(path)? {
-        let role = match value["type"].as_str() {
-            Some("USER_INPUT") => "user",
-            Some("PLANNER_RESPONSE") => "assistant",
-            _ if value["source"] == "MODEL" => "assistant",
-            _ => "system",
-        };
-        let content = value["content"].as_str().unwrap_or("");
-        let content = if role == "user" {
-            user_request(content)
+    let data =
+        fs::read_to_string(path).map_err(|e| format!("Cannot read Antigravity transcript: {e}"))?;
+    let steps = reader_steps(&data);
+    if steps.is_empty() {
+        if let Some(db) = crate::agy_conversation::for_transcript(path)? {
+            return native::load(&db);
+        }
+    }
+    messages_from_steps(steps)
+}
+
+fn messages_from_steps(steps: Vec<ReaderStep>) -> Result<Vec<SessionMessage>, String> {
+    let mut step_counts = HashMap::new();
+    for record in &steps {
+        let step = &record.value;
+        if let Some(index) = step.get("step_index").and_then(Value::as_i64) {
+            *step_counts.entry(index).or_insert(0usize) += 1;
+        }
+    }
+    // Rewound/replayed logs can reuse step indices. Only reused indices need a
+    // physical-row suffix; ordinary logs retain their existing deterministic IDs.
+    let step_ids: Vec<_> = steps
+        .iter()
+        .enumerate()
+        .map(
+            |(row, record)| match record.value.get("step_index").and_then(Value::as_i64) {
+                Some(index) if step_counts.get(&index).copied().unwrap_or(0) > 1 => {
+                    format!("{index}:row-{row}")
+                }
+                Some(index) => index.to_string(),
+                None => format!("row-{row}"),
+            },
+        )
+        .collect();
+    // Resolve forwards within one planner's execution segment. A new request,
+    // planner, or index rewind ends the segment, so later records cannot replace
+    // an earlier result or finish a call from another turn.
+    let mut pending_calls = HashMap::new();
+    let mut result_calls = HashMap::new();
+    let mut previous_index = None;
+    for (row, record) in steps.iter().enumerate() {
+        let step = &record.value;
+        let index = step.get("step_index").and_then(Value::as_i64);
+        let planner = is_antigravity_planner(step);
+        let user_input = step.get("type").and_then(Value::as_str) == Some("USER_INPUT");
+        let rewound = index
+            .zip(previous_index)
+            .is_some_and(|(current, previous)| current <= previous);
+        if planner || user_input || rewound {
+            pending_calls.clear();
+        }
+        if let Some(index) = index {
+            previous_index = Some(index);
+            if planner {
+                for (tool_index, call) in antigravity_calls(step).enumerate() {
+                    let Some(name) = call
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                    else {
+                        continue;
+                    };
+                    let Some(result_index) = index
+                        .checked_add(1)
+                        .and_then(|n| n.checked_add(i64::try_from(tool_index).ok()?))
+                    else {
+                        continue;
+                    };
+                    pending_calls.insert(
+                        result_index,
+                        (format!("agy:{}:{tool_index}", step_ids[row]), name),
+                    );
+                }
+            } else if let Some((call_id, name)) = pending_calls.remove(&index) {
+                if is_antigravity_tool_result(step, name) {
+                    result_calls.insert(row, (call_id, name));
+                }
+            }
+        }
+    }
+    let mut result = Vec::new();
+    for (row, record) in steps.iter().enumerate() {
+        let value = &record.value;
+        let ts = reader_timestamp(value);
+        let full = |pointer: String| record.content_ref(pointer);
+        let (role, blocks) = if let Some((call_id, name)) = result_calls.get(&row) {
+            (
+                "tool",
+                vec![antigravity_tool_result(value, call_id, name, &full)],
+            )
+        } else if value.get("type").and_then(Value::as_str) == Some("USER_INPUT") {
+            let content = extract_antigravity_content(value);
+            // Native user fields are already the request; only exported logs add CLI wrappers.
+            let content = if record.native_index.is_some() {
+                content
+            } else {
+                user_request(&content).to_string()
+            };
+            let content = if content.is_empty() {
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            } else {
+                content
+            };
+            ("user", vec![SessionBlock::text(content)])
+        } else if is_antigravity_planner(value) {
+            (
+                "assistant",
+                antigravity_model_blocks(value, &step_ids[row], &full),
+            )
         } else {
-            content
+            // Keep future event types visible, as the upstream reader does.
+            let content = extract_antigravity_content(value);
+            let content = if content.is_empty() {
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            } else {
+                content
+            };
+            let role = if value["source"] == "MODEL" {
+                "assistant"
+            } else {
+                "system"
+            };
+            (role, vec![SessionBlock::text(content)])
         };
-        // Keep unrecognized steps visible instead of silently dropping future tool/event types.
-        let content = if content.is_empty() {
-            serde_json::to_string_pretty(&value).unwrap_or_default()
+        let blocks = if blocks.is_empty() {
+            vec![SessionBlock::text(
+                serde_json::to_string_pretty(value).unwrap_or_default(),
+            )]
         } else {
-            content.into()
+            blocks
         };
-        let mut message = SessionMessage::from_blocks(
-            role,
-            timestamp(&value),
-            vec![SessionBlock::Text {
-                text: content,
-                full: None,
-            }],
-        );
-        message.id = value["step_index"].as_u64().map(|n| n.to_string());
+        let mut message = SessionMessage::from_blocks(role, ts, blocks);
+        message.id = Some(step_ids[row].clone());
+
         message.meta = Some(MessageMeta {
             model: value["model"].as_str().map(String::from),
             input_tokens: value["input_tokens"].as_u64(),
@@ -253,17 +565,1153 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             cache_read_tokens: value["cache_read_tokens"].as_u64(),
             cache_write_tokens: value["cache_write_tokens"].as_u64(),
             reasoning_tokens: value["reasoning_tokens"].as_u64(),
+            duration_ms: value["duration_ms"]
+                .as_u64()
+                .filter(|d| *d > 0 && *d <= 3_600_000),
             ..Default::default()
         });
-        messages.push(message);
+
+        result.push(message);
     }
-    assign_turn_ids(&mut messages);
-    Ok(messages)
+
+    assign_turn_ids(&mut result);
+    Ok(result)
+}
+
+fn is_antigravity_planner(step: &Value) -> bool {
+    step.get("type").and_then(Value::as_str) == Some("PLANNER_RESPONSE")
+        && step
+            .get("source")
+            .and_then(Value::as_str)
+            .is_none_or(|source| source == "MODEL")
+}
+
+fn antigravity_calls(step: &Value) -> impl Iterator<Item = &Value> {
+    step.get("tool_calls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+}
+
+fn is_antigravity_tool_result(step: &Value, name: &str) -> bool {
+    let source = step.get("source").and_then(Value::as_str);
+    let kind = step.get("type").and_then(Value::as_str);
+    if source == Some("SYSTEM") && kind == Some("ERROR_MESSAGE") {
+        return true;
+    }
+    if source != Some("MODEL") {
+        return false;
+    }
+    let expected = match name {
+        "replace_file_content" | "multi_replace_file_content" | "write_to_file" => {
+            "CODE_ACTION".to_string()
+        }
+        "list_dir" => "LIST_DIRECTORY".to_string(),
+        _ => name.to_ascii_uppercase(),
+    };
+    kind == Some("GENERIC") || kind == Some(expected.as_str())
+}
+
+// Derived content keeps the existing reader contract and physical JSONL source validation.
+pub(crate) const ANTIGRAVITY_READER_REF_PREFIX: &str = "/_cc_switch/antigravity/tool_calls/";
+
+fn antigravity_reader_args(raw: &Value) -> Value {
+    fn rename_fields(value: &mut Value) {
+        let Some(map) = value.as_object_mut() else {
+            return;
+        };
+        for (alias, key) in [
+            ("CommandLine", "command"),
+            ("AbsolutePath", "path"),
+            ("Path", "path"),
+            ("DirectoryPath", "path"),
+            ("TargetFile", "path"),
+            ("SearchPath", "path"),
+            ("SearchDirectory", "path"),
+            ("TargetContent", "old_string"),
+            ("Target", "old_string"),
+            ("ReplacementContent", "new_string"),
+            ("Replacement", "new_string"),
+            ("ReplacementChunks", "edits"),
+            ("CodeContent", "content"),
+            ("Content", "content"),
+            ("Url", "url"),
+            ("Pattern", "pattern"),
+            ("StartLine", "start_line"),
+            ("EndLine", "end_line"),
+        ] {
+            if !map.contains_key(key) {
+                if let Some(value) = map.remove(alias) {
+                    map.insert(key.into(), value);
+                }
+            }
+        }
+        if let Some(edits) = map.get_mut("edits").and_then(Value::as_array_mut) {
+            for edit in edits {
+                rename_fields(edit);
+            }
+        }
+    }
+    // Decode exactly once: textual values such as "true" must not become booleans on replay.
+    let mut args = parse_antigravity_args(raw);
+    rename_fields(&mut args);
+    args
+}
+
+fn antigravity_diff_pairs(args: &Value, kind: ToolKind) -> Option<Vec<(&str, &str)>> {
+    match kind {
+        ToolKind::Write => Some(vec![("", args.get("content")?.as_str()?)]),
+        ToolKind::Edit => {
+            fn pair(item: &Value) -> Option<(&str, &str)> {
+                Some((
+                    item.get("old_string")?.as_str()?,
+                    item.get("new_string")?.as_str()?,
+                ))
+            }
+            match args.get("edits") {
+                Some(edits) => {
+                    let edits = edits.as_array()?;
+                    if edits.is_empty() {
+                        return None;
+                    }
+                    // An incomplete chunk list cannot represent a complete diff.
+                    edits.iter().map(pair).collect()
+                }
+                None => Some(vec![pair(args)?]),
+            }
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn resolve_antigravity_reader_content(
+    step: &Value,
+    pointer: &str,
+) -> Result<String, String> {
+    let stale = || "会话已更新，请重新读取".to_string();
+    if step
+        .get("source")
+        .and_then(Value::as_str)
+        .is_some_and(|source| source != "MODEL")
+        || step
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind != "PLANNER_RESPONSE")
+    {
+        return Err(stale());
+    }
+    let (index, field) = pointer
+        .strip_prefix(ANTIGRAVITY_READER_REF_PREFIX)
+        .and_then(|suffix| suffix.split_once('/'))
+        .ok_or_else(stale)?;
+    let index = index.parse::<usize>().map_err(|_| stale())?;
+    let call = antigravity_calls(step).nth(index).ok_or_else(stale)?;
+    let name = call
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(stale)?;
+    let args = antigravity_reader_args(call.get("args").unwrap_or(&Value::Null));
+    match field {
+        "input" => serde_json::to_string_pretty(&args).map_err(|_| stale()),
+        "diff" => {
+            let kind = normalize_tool(ToolSource::Gemini, name, None).kind;
+            let pairs = antigravity_diff_pairs(&args, kind).ok_or_else(stale)?;
+            let mut diff = String::new();
+            for (old, new) in pairs {
+                diff.push_str("@@\n");
+                for (prefix, text) in [('-', old), ('+', new)] {
+                    let normalized = text.replace("\r\n", "\n");
+                    let text = normalized.strip_suffix('\n').unwrap_or(&normalized);
+                    if !normalized.is_empty() {
+                        // Keep content resembling paired ---/+++ file headers visible in the reader.
+                        if prefix == '+'
+                            && text.starts_with("++ ")
+                            && diff
+                                .lines()
+                                .last()
+                                .is_some_and(|line| line.starts_with("--- "))
+                        {
+                            diff.push_str("@@\n");
+                        }
+                        for line in text.split('\n') {
+                            diff.push(prefix);
+                            diff.push_str(line);
+                            diff.push('\n');
+                        }
+                    }
+                }
+            }
+            Ok(diff)
+        }
+        _ => Err(stale()),
+    }
+}
+
+fn antigravity_model_blocks(
+    step: &Value,
+    step_id: &str,
+    full: &dyn Fn(String) -> Option<ContentRef>,
+) -> Vec<SessionBlock> {
+    let mut blocks = Vec::new();
+    if let Some(thinking) = step.get("thinking").and_then(Value::as_str) {
+        if !thinking.trim().is_empty() {
+            blocks.push(thinking_block(thinking.trim(), None, None, || {
+                full("/thinking".into())
+            }));
+        }
+    }
+    let content = extract_antigravity_content(step);
+    if !content.is_empty() {
+        blocks.push(SessionBlock::text(content));
+    }
+    for (tool_index, call) in antigravity_calls(step).enumerate() {
+        let Some(name) = call
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let args = antigravity_reader_args(call.get("args").unwrap_or(&Value::Null));
+        let mut block = tool_call_block(
+            ToolSource::Gemini,
+            format!("agy:{step_id}:{tool_index}"),
+            name,
+            &args,
+            || full(format!("{ANTIGRAVITY_READER_REF_PREFIX}{tool_index}/input")),
+        );
+        if let SessionBlock::ToolCall {
+            input_total_len, ..
+        } = &mut block
+        {
+            // The existing reader compares JavaScript string.length (UTF-16 code units).
+            let input = match &args {
+                Value::Null => String::new(),
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            };
+            *input_total_len = input.encode_utf16().count().min(u32::MAX as usize) as u32;
+        }
+        if let SessionBlock::ToolCall { kind, diff, .. } = &mut block {
+            if antigravity_diff_pairs(&args, *kind).is_none() {
+                // A partial chunk list must not advertise a complete change summary.
+                *diff = None;
+            } else if let Some(diff) = diff {
+                diff.full = full(format!("{ANTIGRAVITY_READER_REF_PREFIX}{tool_index}/diff"));
+            }
+        }
+        blocks.push(block);
+    }
+    blocks
+}
+
+fn antigravity_tool_result(
+    step: &Value,
+    call_id: &str,
+    tool_name: &str,
+    full: &dyn Fn(String) -> Option<ContentRef>,
+) -> SessionBlock {
+    // Tool output is literal text: user-request/metadata markers are not wrappers here.
+    let content = extract_antigravity_content(step);
+    let (output, pointer) = if content.trim().is_empty() {
+        (
+            step.get("error")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            "/error",
+        )
+    } else {
+        let pointer = if step.get("content").is_some_and(Value::is_object) {
+            "/content/text"
+        } else {
+            "/content"
+        };
+        (content, pointer)
+    };
+    let exit_code = if matches!(tool_name, "run_command" | "run_shell_command") {
+        antigravity_command_exit_code(step, &output)
+    } else {
+        None
+    };
+    let is_system_error = step.get("type").and_then(Value::as_str) == Some("ERROR_MESSAGE");
+    let status = if is_system_error {
+        ToolStatus::Error
+    } else {
+        match step.get("status").and_then(Value::as_str) {
+            Some("DONE") if exit_code.is_some_and(|code| code != 0) => ToolStatus::Error,
+            Some("DONE") => ToolStatus::Success,
+            Some("ERROR") => ToolStatus::Error,
+            Some("RUNNING") => ToolStatus::Pending,
+            Some("CANCELLED" | "CANCELED" | "INTERRUPTED") => ToolStatus::Interrupted,
+            _ => ToolStatus::Unknown,
+        }
+    };
+    let mut block = tool_result_block(call_id, status, &output, || full(pointer.into()));
+    if let SessionBlock::ToolResult {
+        exit_code: code, ..
+    } = &mut block
+    {
+        *code = exit_code;
+    }
+    block
+}
+
+/// DONE describes the tool step, not the process's exit status. Only inspect
+/// shell metadata before Output:, never arbitrary stdout or file contents.
+fn antigravity_command_exit_code(step: &Value, output: &str) -> Option<i32> {
+    if let Some(code) = step
+        .get("exit_code")
+        .and_then(Value::as_i64)
+        .and_then(|code| i32::try_from(code).ok())
+    {
+        return Some(code);
+    }
+    if !output.trim_start().starts_with("Created At:") {
+        return None;
+    }
+    for line in output.lines().take(12).map(str::trim) {
+        if line == "Output:" || line == "Command Output:" {
+            break;
+        }
+        if let Some(code) = line.strip_prefix("The command failed with exit code:") {
+            return code.trim().parse().ok();
+        }
+        if line == "The command completed successfully." {
+            return Some(0);
+        }
+    }
+    None
+}
+
+fn extract_antigravity_content(value: &Value) -> String {
+    match value.get("content") {
+        Some(Value::String(text)) => text.to_string(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("text").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(Value::Object(map)) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        _ => String::new(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_antigravity_timestamp_prefers_ts_over_created_at() {
+        let value = serde_json::json!({
+            "ts": 1771061953123i64,
+            "created_at": "2026-07-10T13:22:44Z"
+        });
+        assert_eq!(reader_timestamp(&value), Some(1_771_061_953_123));
+    }
+
+    #[test]
+    fn parse_antigravity_timestamp_normalizes_seconds_and_iso_to_millis() {
+        let val_sec = serde_json::json!({ "ts": 1771061953i64 });
+        assert_eq!(reader_timestamp(&val_sec), Some(1_771_061_953_000));
+
+        let val_iso = serde_json::json!({ "created_at": "2026-07-10T13:22:44Z" });
+        assert_eq!(reader_timestamp(&val_iso), Some(1_783_689_764_000));
+    }
+
+    #[test]
+    fn reader_keeps_distinct_adjacent_retries_and_unique_message_ids() {
+        let (_temp, path, ()) = antigravity_message_fixture();
+        let rows = [
+            serde_json::json!({"step_index":1,"type":"PLANNER_RESPONSE","content":"first",
+                "created_at":"2026-10-10T10:00:00.000000001Z"}),
+            serde_json::json!({"step_index":1,"type":"PLANNER_RESPONSE","content":"retry",
+                "created_at":"2026-10-10T10:00:00.000000002Z"}),
+        ];
+        fs::write(
+            &path,
+            rows.iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let messages = load_messages(&path).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "first");
+        assert_eq!(messages[1].content, "retry");
+        assert_ne!(messages[0].id, messages[1].id);
+    }
+
+    #[test]
+    fn reader_merges_nonadjacent_partial_updates_and_preserves_field_refs() {
+        use crate::session_manager::content::{
+            resolve_content_ref, SourceLocation, ValidatedSource,
+        };
+        let (temp, path, ()) = antigravity_message_fixture();
+        let thought = "think 🦀".repeat(300);
+        let output = "final output\n".repeat(100);
+        let command = "echo 🦀 ".repeat(300);
+        let rows = [
+            serde_json::json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE",
+                "created_at":"2026-10-10T10:00:00Z", "thinking":thought,
+                "tool_calls":[{"name":"run_command","args":{"CommandLine":serde_json::to_string(&command).unwrap()}}]}),
+            serde_json::json!({"step_index":2,"source":"MODEL","type":"RUN_COMMAND","status":"RUNNING",
+                "created_at":"2026-10-10T10:00:01Z","content":"draft"}),
+            // Status-only updates retain the original thinking/tool_calls and their source rows.
+            serde_json::json!({"step_index":1,"created_at":"2026-10-10T18:00:00+08:00","status":"DONE"}),
+            serde_json::json!({"step_index":2,"created_at":"2026-10-10T10:00:01Z","status":"DONE","content":output}),
+        ];
+        let original = rows
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, &original).unwrap();
+        let messages = load_messages(&path).unwrap();
+        assert_eq!(messages.len(), 2);
+        let source = ValidatedSource {
+            provider_id: "agy".into(),
+            raw: path.to_string_lossy().into_owned(),
+            location: SourceLocation::Path {
+                path: path.clone(),
+                root: temp.path().to_path_buf(),
+            },
+        };
+        let SessionBlock::Thinking {
+            full: Some(thinking),
+            ..
+        } = &messages[0].blocks[0]
+        else {
+            panic!("thinking")
+        };
+        assert_eq!(resolve_content_ref(&source, thinking).unwrap(), thought);
+        let SessionBlock::ToolCall {
+            id,
+            input_full: Some(input),
+            ..
+        } = &messages[0].blocks[1]
+        else {
+            panic!("call")
+        };
+        let args: Value =
+            serde_json::from_str(&resolve_content_ref(&source, input).unwrap()).unwrap();
+        assert_eq!(args["command"], command);
+        let SessionBlock::ToolResult {
+            call_id,
+            status: ToolStatus::Success,
+            full: Some(result),
+            ..
+        } = &messages[1].blocks[0]
+        else {
+            panic!("result")
+        };
+        assert_eq!(call_id, id);
+        assert_eq!(resolve_content_ref(&source, result).unwrap(), output);
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
+
+    #[test]
+    fn reader_keeps_empty_token_only_responses_and_string_content_arrays() {
+        let (_temp, path, ()) = antigravity_message_fixture();
+        fs::write(&path, concat!(
+            "{\"step_index\":0,\"type\":\"USER_INPUT\",\"content\":[\"hello\",{\"text\":\"world\"}]}\n",
+            "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":80,\"output_tokens\":12}\n"
+        )).unwrap();
+        let messages = load_messages(&path).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "hello\nworld");
+        assert_eq!(messages[1].meta.as_ref().unwrap().input_tokens, Some(80));
+    }
+
+    #[test]
+    fn reader_timestamp_compatibility_does_not_change_usage_dates() {
+        let row =
+            serde_json::json!({"created_at":"2026-10-10T10:00:00Z","ts":"2026-10-10T11:00:00Z"});
+        assert_eq!(timestamp(&row), parse_timestamp_to_ms(&row["created_at"]));
+        assert_eq!(reader_timestamp(&row), parse_timestamp_to_ms(&row["ts"]));
+    }
+
+    #[test]
+    fn reader_partial_tool_updates_expand_and_replayed_user_ids_are_unique() {
+        use crate::session_manager::content::{
+            resolve_content_ref, SourceLocation, ValidatedSource,
+        };
+        let (temp, path, ()) = antigravity_message_fixture();
+        let command = "echo test ".repeat(100);
+        let rows = [
+            serde_json::json!({"step_index":0,"type":"USER_INPUT","created_at":"2026-10-10T10:00:00Z","content":"first"}),
+            serde_json::json!({"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-10-10T10:00:01Z","content":"reply"}),
+            serde_json::json!({"step_index":1,"created_at":"2026-10-10T10:00:01Z","tool_calls":[{"name":"run_command","args":{"CommandLine":command}}]}),
+            serde_json::json!({"step_index":0,"type":"USER_INPUT","created_at":"2026-10-10T10:00:02Z","content":"retry"}),
+        ];
+        fs::write(
+            &path,
+            rows.iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let messages = load_messages(&path).unwrap();
+        assert_eq!(messages.len(), 3);
+        let ids: std::collections::HashSet<_> = messages.iter().map(|m| &m.id).collect();
+        assert_eq!(ids.len(), messages.len());
+        let source = ValidatedSource {
+            provider_id: "agy".into(),
+            raw: path.to_string_lossy().into_owned(),
+            location: SourceLocation::Path {
+                path,
+                root: temp.path().to_path_buf(),
+            },
+        };
+        let SessionBlock::ToolCall {
+            input_full: Some(input),
+            ..
+        } = &messages[1].blocks[1]
+        else {
+            panic!("tool")
+        };
+        let full: Value =
+            serde_json::from_str(&resolve_content_ref(&source, input).unwrap()).unwrap();
+        assert_eq!(full["command"], command);
+        let invalid = serde_json::json!({"source":"SYSTEM","type":"PLANNER_RESPONSE","tool_calls":[{"name":"run_command","args":{}}]});
+        assert!(!is_antigravity_planner(&invalid));
+        assert!(resolve_antigravity_reader_content(
+            &invalid,
+            &format!("{ANTIGRAVITY_READER_REF_PREFIX}0/input")
+        )
+        .is_err());
+    }
+
+    fn antigravity_message_fixture() -> (tempfile::TempDir, PathBuf, ()) {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp
+            .path()
+            .join("brain/agy-reader/.system_generated/logs/transcript_full.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        (temp, path, ())
+    }
+    #[test]
+    fn antigravity_structured_calls_preserve_order_and_results() {
+        use crate::session_manager::model::ToolKind;
+        let (_temp, path, _conn) = antigravity_message_fixture();
+        let rows = [
+            serde_json::json!({"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT",
+                "content":"<USER_REQUEST>检查文件</USER_REQUEST><ADDITIONAL_METADATA>hidden"}),
+            serde_json::json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE",
+                "thinking":"先检查状态", "content":"正在检查", "tool_calls":[
+                    {"name":"run_command", "args":{"CommandLine":"\"git status\"",
+                        "toolSummary":"\"Check git status\"", "toolAction":"\"Running command\""}},
+                    {"name":"view_file", "args":{"AbsolutePath":"\"/tmp/package.json\"",
+                        "StartLine":"1", "EndLine":"95"}}]}),
+            serde_json::json!({"step_index":2,"source":"MODEL","type":"RUN_COMMAND",
+                "status":"DONE", "created_at":"2026-10-10T10:00:01Z",
+                "content":"<USER_REQUEST>literal tool output</USER_REQUEST>"}),
+            serde_json::json!({"step_index":3,"source":"MODEL","type":"GENERIC",
+                "status":"ERROR","content":"permission denied"}),
+            serde_json::json!({"step_index":4,"source":"MODEL","type":"PLANNER_RESPONSE",
+                "content":"检查完成"}),
+        ];
+        std::fs::write(
+            &path,
+            rows.iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let messages = load_messages(&path).unwrap();
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[0].content, "检查文件");
+        assert!(messages.iter().all(|m| m.turn_id.as_deref() == Some("t1")));
+        assert_eq!(messages[1].id.as_deref(), Some("1"));
+        let blocks = &messages[1].blocks;
+        assert_eq!(blocks.len(), 4);
+        assert!(matches!(&blocks[0], SessionBlock::Thinking { text, .. } if text == "先检查状态"));
+        assert!(matches!(&blocks[1], SessionBlock::Text { text, .. } if text == "正在检查"));
+        assert!(
+            matches!(&blocks[2], SessionBlock::ToolCall { id, kind: ToolKind::Shell, title, detail, .. }
+            if id == "agy:1:0" && title == "Check git status" && detail.as_deref() == Some("Running command"))
+        );
+        assert!(
+            matches!(&blocks[3], SessionBlock::ToolCall { id, kind: ToolKind::Read, title, detail, .. }
+            if id == "agy:1:1" && title == "/tmp/package.json" && detail.as_deref() == Some(":1-95"))
+        );
+        assert_eq!(messages[2].role, "tool");
+        assert_eq!(messages[2].ts, Some(1_791_626_401_000));
+        assert!(
+            matches!(&messages[2].blocks[0], SessionBlock::ToolResult { call_id, status: ToolStatus::Success, preview, .. }
+            if call_id == "agy:1:0" && preview == "<USER_REQUEST>literal tool output</USER_REQUEST>")
+        );
+        assert!(
+            matches!(&messages[3].blocks[0], SessionBlock::ToolResult { call_id, status: ToolStatus::Error, .. }
+            if call_id == "agy:1:1")
+        );
+    }
+
+    #[test]
+    fn antigravity_tool_only_and_thinking_only_steps_survive_without_false_pairing() {
+        let (_temp, path, _conn) = antigravity_message_fixture();
+        let rows = [
+            serde_json::json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE",
+                "tool_calls":[{"name":"run_command","args":{"CommandLine":"pwd"}}]}),
+            serde_json::json!({"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE",
+                "thinking":"工具尚未完成"}),
+            serde_json::json!({"step_index":3,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"停止"}),
+            serde_json::json!({"step_index":4,"source":"MODEL","type":"GENERIC","status":"DONE","content":"unpaired"}),
+            serde_json::json!({"source":"MODEL","type":"PLANNER_RESPONSE",
+                "tool_calls":[{"name":"view_file","args":{}}]}),
+            serde_json::json!({"step_index":i64::MAX,"source":"MODEL","type":"PLANNER_RESPONSE",
+                "tool_calls":[{"name":"run_command","args":{}}]}),
+        ];
+        std::fs::write(
+            &path,
+            rows.iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let messages = load_messages(&path).unwrap();
+        assert_eq!(messages.len(), 6);
+        assert_eq!(messages[0].meta.as_ref().unwrap().output_tokens, None);
+        assert!(
+            matches!(&messages[0].blocks[0], SessionBlock::ToolCall { id, .. } if id == "agy:1:0")
+        );
+        assert!(matches!(
+            &messages[1].blocks[0],
+            SessionBlock::Thinking { .. }
+        ));
+        assert!(messages
+            .iter()
+            .flat_map(|m| &m.blocks)
+            .all(|b| !matches!(b, SessionBlock::ToolResult { .. })));
+        assert_eq!(messages[2].turn_id.as_deref(), Some("t1"));
+        assert!(
+            matches!(&messages[4].blocks[0], SessionBlock::ToolCall { id, .. } if id == "agy:row-4:0")
+        );
+    }
+
+    #[test]
+    fn antigravity_reused_indices_keep_each_execution_and_unique_call_ids() {
+        for new_turn in [true, false] {
+            let (_temp, path, _conn) = antigravity_message_fixture();
+            let planner = serde_json::json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE",
+                "tool_calls":[{"name":"run_command","args":{"CommandLine":"pwd"}}]});
+            let boundary = if new_turn {
+                serde_json::json!({"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"再试一次"})
+            } else {
+                serde_json::json!({"step_index":0,"source":"SYSTEM","type":"CHECKPOINT"})
+            };
+            let rows = [
+                planner.clone(),
+                serde_json::json!({"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","content":"original output"}),
+                boundary,
+                planner,
+                serde_json::json!({"step_index":2,"source":"MODEL","type":"GENERIC","status":"ERROR","content":"replayed output"}),
+            ];
+            std::fs::write(
+                &path,
+                rows.iter()
+                    .map(Value::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .unwrap();
+            let messages = load_messages(&path).unwrap();
+            let calls: Vec<_> = messages
+                .iter()
+                .flat_map(|m| &m.blocks)
+                .filter_map(|b| {
+                    if let SessionBlock::ToolCall { id, .. } = b {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let results: Vec<_> = messages
+                .iter()
+                .filter_map(|m| {
+                    if let SessionBlock::ToolResult {
+                        call_id,
+                        preview,
+                        status,
+                        ..
+                    } = &m.blocks[0]
+                    {
+                        Some((call_id, preview.as_str(), *status, m.turn_id.as_deref()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(calls.len(), 2);
+            assert_ne!(calls[0], calls[1]);
+            assert_eq!(results.len(), 2);
+            assert_eq!(
+                results[0],
+                (calls[0], "original output", ToolStatus::Success, Some("t0"))
+            );
+            assert_eq!(
+                results[1],
+                (
+                    calls[1],
+                    "replayed output",
+                    ToolStatus::Error,
+                    Some(if new_turn { "t1" } else { "t0" })
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn antigravity_pending_calls_do_not_cross_execution_boundaries() {
+        let boundaries = [
+            serde_json::json!({"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"new request"}),
+            serde_json::json!({"step_index":0,"source":"SYSTEM","type":"CHECKPOINT"}),
+            serde_json::json!({"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","content":"another planner"}),
+        ];
+        for boundary in boundaries {
+            let (_temp, path, _conn) = antigravity_message_fixture();
+            let rows = [
+                serde_json::json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE",
+                    "tool_calls":[{"name":"run_command","args":{"CommandLine":"pwd"}}]}),
+                boundary,
+                serde_json::json!({"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","content":"unrelated result"}),
+            ];
+            std::fs::write(
+                &path,
+                rows.iter()
+                    .map(Value::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .unwrap();
+            let messages = load_messages(&path).unwrap();
+            assert!(matches!(
+                &messages[0].blocks[0],
+                SessionBlock::ToolCall { .. }
+            ));
+            assert!(messages
+                .iter()
+                .flat_map(|m| &m.blocks)
+                .all(|b| !matches!(b, SessionBlock::ToolResult { .. })));
+        }
+    }
+
+    #[test]
+    fn antigravity_done_shell_failure_and_file_output_keep_distinct_statuses() {
+        let (_temp, path, _conn) = antigravity_message_fixture();
+        let failure = "Created At: 2026-10-11T00:00:00Z\nCompleted At: 2026-10-11T00:00:01Z\n    The command failed with exit code: 1\n    Output:\nerror details";
+        let rows = [
+            serde_json::json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE",
+                "tool_calls":[{"name":"run_command","args":{"CommandLine":"false"}},
+                    {"name":"view_file","args":{"AbsolutePath":"/tmp/log"}}]}),
+            serde_json::json!({"step_index":2,"source":"MODEL","type":"RUN_COMMAND","status":"DONE","content":failure}),
+            serde_json::json!({"step_index":3,"source":"MODEL","type":"VIEW_FILE","status":"DONE","content":failure}),
+        ];
+        std::fs::write(
+            &path,
+            rows.iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let messages = load_messages(&path).unwrap();
+        assert!(matches!(&messages[1].blocks[0], SessionBlock::ToolResult {
+            status: ToolStatus::Error, exit_code: Some(1), call_id, .. } if call_id == "agy:1:0"));
+        assert!(matches!(&messages[2].blocks[0], SessionBlock::ToolResult {
+            status: ToolStatus::Success, exit_code: None, call_id, .. } if call_id == "agy:1:1"));
+    }
+
+    #[test]
+    fn antigravity_shell_exit_codes_respect_metadata_and_lifecycle() {
+        let failure = "Created At: now\nThe command failed with exit code: -1\nOutput:\ndetails";
+        let cases = [
+            ("DONE", "Created At: now\nThe command completed successfully.\nOutput:\nThe command failed with exit code: 2", ToolStatus::Success, Some(0)),
+            ("DONE", "Created At: now\nOutput:\nThe command failed with exit code: 2", ToolStatus::Success, None),
+            ("DONE", "The command failed with exit code: 2", ToolStatus::Success, None),
+            ("DONE", failure, ToolStatus::Error, Some(-1)),
+            ("RUNNING", failure, ToolStatus::Pending, Some(-1)),
+            ("CANCELLED", failure, ToolStatus::Interrupted, Some(-1)),
+        ];
+        for (state, content, expected, code) in cases {
+            let step = serde_json::json!({"type":"GENERIC","status":state,"content":content});
+            assert!(
+                matches!(antigravity_tool_result(&step, "c1", "run_command", &|_| None),
+                SessionBlock::ToolResult { status, exit_code, .. } if status == expected && exit_code == code)
+            );
+        }
+        let explicit = serde_json::json!({"type":"GENERIC","status":"DONE","exit_code":124,
+            "content":"Created At: now\nThe command completed successfully.\nOutput:\n"});
+        assert!(matches!(
+            antigravity_tool_result(&explicit, "c2", "run_command", &|_| None),
+            SessionBlock::ToolResult {
+                status: ToolStatus::Error,
+                exit_code: Some(124),
+                ..
+            }
+        ));
+        let error = serde_json::json!({"type":"GENERIC","status":"ERROR","exit_code":0});
+        assert!(matches!(
+            antigravity_tool_result(&error, "c3", "run_shell_command", &|_| None),
+            SessionBlock::ToolResult {
+                status: ToolStatus::Error,
+                exit_code: Some(0),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn antigravity_result_statuses_and_type_guards() {
+        for (status, expected) in [
+            ("DONE", ToolStatus::Success),
+            ("ERROR", ToolStatus::Error),
+            ("RUNNING", ToolStatus::Pending),
+            ("CANCELLED", ToolStatus::Interrupted),
+            ("INVALID", ToolStatus::Unknown),
+        ] {
+            let step = serde_json::json!({"source":"MODEL","type":"GENERIC","status":status,"content":"output"});
+            assert!(is_antigravity_tool_result(&step, "run_command"));
+            assert!(
+                matches!(antigravity_tool_result(&step, "c1", "run_command", &|_| None),
+                SessionBlock::ToolResult { status, .. } if status == expected)
+            );
+        }
+        let error = serde_json::json!({"source":"SYSTEM","type":"ERROR_MESSAGE","status":"DONE","error":"invalid args"});
+        assert!(is_antigravity_tool_result(&error, "view_file"));
+        assert!(
+            matches!(antigravity_tool_result(&error, "c2", "view_file", &|_| None),
+            SessionBlock::ToolResult { status: ToolStatus::Error, preview, .. } if preview == "invalid args")
+        );
+        for (name, kind) in [
+            ("write_to_file", "CODE_ACTION"),
+            ("replace_file_content", "CODE_ACTION"),
+            ("multi_replace_file_content", "CODE_ACTION"),
+            ("list_dir", "LIST_DIRECTORY"),
+        ] {
+            assert!(is_antigravity_tool_result(
+                &serde_json::json!({"source":"MODEL","type":kind}),
+                name
+            ));
+        }
+        for step in [
+            serde_json::json!({"source":"USER_EXPLICIT","type":"USER_INPUT"}),
+            serde_json::json!({"source":"MODEL","type":"PLANNER_RESPONSE"}),
+            serde_json::json!({"source":"MODEL","type":"SEARCH_WEB"}),
+            serde_json::json!({"source":"SYSTEM","type":"EPHEMERAL_MESSAGE"}),
+        ] {
+            assert!(!is_antigravity_tool_result(&step, "run_command"));
+        }
+    }
+
+    #[test]
+    fn legacy_cli_file_tools_use_path_content_target_and_replacement() {
+        // Field names match the local CLI exports; all file names/content are synthetic.
+        let step = serde_json::json!({"tool_calls":[
+            {"name":"read_file","args":{"Path":"123","StartLine":"1","EndLine":"2"}},
+            {"name":"write_file","args":{"Path":"/tmp/new","Content":"{\"ok\":true}"}},
+            {"name":"edit_file","args":{"Path":"/tmp/existing","Target":"false","Replacement":"null"}}
+        ]});
+        let blocks = antigravity_model_blocks(&step, "1", &|_| None);
+        assert!(
+            matches!(&blocks[0], SessionBlock::ToolCall {kind:ToolKind::Read,title,detail,..}
+            if title == "123" && detail.as_deref() == Some(":1-2"))
+        );
+        assert!(
+            matches!(&blocks[1], SessionBlock::ToolCall {kind:ToolKind::Write,title,diff:Some(diff),..}
+            if title == "/tmp/new" && diff.added == 1 && diff.removed == 0)
+        );
+        assert!(
+            matches!(&blocks[2], SessionBlock::ToolCall {kind:ToolKind::Edit,title,diff:Some(diff),..}
+            if title == "/tmp/existing" && diff.added == 1 && diff.removed == 1)
+        );
+        let args = antigravity_reader_args(&step["tool_calls"][1]["args"]);
+        assert_eq!(args["content"], "{\"ok\":true}");
+        let args = antigravity_reader_args(&step["tool_calls"][2]["args"]);
+        assert_eq!(args["old_string"], "false");
+        assert_eq!(args["new_string"], "null");
+    }
+
+    #[test]
+    fn incomplete_multi_replacements_have_no_summary_or_diff_ref() {
+        // The local export includes this shape: the second chunk has replacement text
+        // and an end line but no target text. Keep the raw parameters, not a partial diff.
+        for chunks in [
+            serde_json::json!([
+                {"TargetContent":"old","ReplacementContent":"new","StartLine":1,"EndLine":1},
+                {"ReplacementContent":"more","EndLine":2,"AllowMultiple":false}
+            ]),
+            serde_json::json!([]),
+            serde_json::json!("[{<truncated>"),
+        ] {
+            let step = serde_json::json!({"tool_calls":[{"name":"multi_replace_file_content",
+                "args":{"TargetFile":"/tmp/file","ReplacementChunks":chunks}}]});
+            let blocks = antigravity_model_blocks(&step, "1", &|pointer| {
+                Some(ContentRef::Jsonl {
+                    offset: 0,
+                    len: 1,
+                    pointer,
+                })
+            });
+            assert!(matches!(
+                &blocks[0],
+                SessionBlock::ToolCall { diff: None, .. }
+            ));
+            assert!(resolve_antigravity_reader_content(
+                &step,
+                &format!("{ANTIGRAVITY_READER_REF_PREFIX}0/diff")
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn antigravity_reader_maps_args_without_decoding_text_twice() {
+        let args = serde_json::json!({
+            "CommandLine": "\"true\"", "toolSummary": "Run check",
+            "ReplacementChunks": "[{\"TargetContent\":\"true\",\"ReplacementContent\":\"null\"}]",
+            "Url": "\"https://example.com\"", "Overwrite": "true"
+        });
+        let normalized = antigravity_reader_args(&args);
+        assert_eq!(normalized["command"], "true");
+        assert_eq!(normalized["edits"][0]["old_string"], "true");
+        assert_eq!(normalized["edits"][0]["new_string"], "null");
+        assert_eq!(normalized["url"], "https://example.com");
+        assert_eq!(normalized["Overwrite"], true);
+        assert!(normalized.get("CommandLine").is_none());
+        let conflict =
+            antigravity_reader_args(&serde_json::json!({"command":"pwd", "CommandLine":"\"ls\""}));
+        assert_eq!(conflict["command"], "pwd");
+        assert_eq!(conflict["CommandLine"], "ls");
+    }
+
+    #[test]
+    fn antigravity_reader_preserves_literal_search_quotes() {
+        for key in ["query", "Query"] {
+            for text in ["\"exact phrase\"", "123", "true", "null", "{\"key\":1}"] {
+                let mut args = serde_json::json!({});
+                args[key] = serde_json::json!(text);
+                assert_eq!(antigravity_reader_args(&args)[key], text);
+            }
+        }
+    }
+
+    #[test]
+    fn antigravity_reader_refs_serve_normalized_inputs_and_complete_diffs() {
+        use crate::session_manager::content::{
+            resolve_content_ref, SourceLocation, ValidatedSource,
+        };
+        let (temp, path, _conn) = antigravity_message_fixture();
+        let long_old = "old line\n".repeat(100);
+        let step = serde_json::json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE",
+        "tool_calls":[
+            {"name":"run_command", "args":{"CommandLine":"\"true\"", "toolSummary":"Run check"}},
+            {"name":"multi_replace_file_content", "args":{"TargetFile":"\"/tmp/test\"", "ReplacementChunks":serde_json::to_string(&serde_json::json!([
+                {"TargetContent":long_old,"ReplacementContent":"new\r\n"},
+                {"TargetContent":"","ReplacementContent":"\n"}
+            ])).unwrap()}},
+            {"name":"write_to_file", "args":{"TargetFile":"\"/tmp/new\"", "CodeContent":"\"hello\\n\""}}
+        ]});
+        let original = format!("{step}\n");
+        std::fs::write(&path, &original).unwrap();
+        let source = ValidatedSource {
+            provider_id: "agy".into(),
+            raw: path.to_string_lossy().into_owned(),
+            location: SourceLocation::Path {
+                path: path.clone(),
+                root: temp.path().to_path_buf(),
+            },
+        };
+        let messages = load_messages(&path).unwrap();
+        let SessionBlock::ToolCall {
+            input_preview,
+            input_full,
+            title,
+            ..
+        } = &messages[0].blocks[0]
+        else {
+            panic!("call")
+        };
+        assert_eq!(title, "Run check");
+        assert!(input_full.is_none());
+        assert_eq!(
+            serde_json::from_str::<Value>(input_preview).unwrap()["command"],
+            "true"
+        );
+        let SessionBlock::ToolCall {
+            input_full: Some(input),
+            diff: Some(diff),
+            ..
+        } = &messages[0].blocks[1]
+        else {
+            panic!("long edit")
+        };
+        let normalized: Value =
+            serde_json::from_str(&resolve_content_ref(&source, input).unwrap()).unwrap();
+        assert_eq!(normalized["edits"][0]["old_string"], long_old);
+        let body = resolve_content_ref(&source, diff.full.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            format!("@@\n{}+new\n@@\n+\n", "-old line\n".repeat(100))
+        );
+        let SessionBlock::ToolCall {
+            diff: Some(write), ..
+        } = &messages[0].blocks[2]
+        else {
+            panic!("write")
+        };
+        assert_eq!(
+            resolve_content_ref(&source, write.full.as_ref().unwrap()).unwrap(),
+            "@@\n+hello\n"
+        );
+        for suffix in ["999/input", "0/diff", "1/input/extra", "../input"] {
+            let bad = ContentRef::Jsonl {
+                offset: 0,
+                len: original.len() as u32,
+                pointer: format!("{ANTIGRAVITY_READER_REF_PREFIX}{suffix}"),
+            };
+            assert!(resolve_content_ref(&source, &bad).is_err());
+        }
+        let other = ValidatedSource {
+            provider_id: "codex".into(),
+            ..source
+        };
+        assert!(resolve_content_ref(&other, input).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+    }
+
+    #[test]
+    fn antigravity_diff_preserves_content_that_looks_like_file_headers() {
+        let step = serde_json::json!({"source":"MODEL","type":"PLANNER_RESPONSE", "tool_calls":[
+            {"name":"replace_file_content", "args":{"TargetFile":"/tmp/file", "TargetContent":"\"-- a\"", "ReplacementContent":"\"++ b\""}}
+        ]});
+        let body = resolve_antigravity_reader_content(
+            &step,
+            &format!("{ANTIGRAVITY_READER_REF_PREFIX}0/diff"),
+        )
+        .unwrap();
+        assert_eq!(body, "@@\n--- a\n@@\n+++ b\n");
+    }
+
+    #[test]
+    fn antigravity_emoji_inputs_keep_full_params_accessible_to_existing_reader() {
+        let command = "echo 🦀".to_string() + &"🦀".repeat(420);
+        let step = serde_json::json!({"tool_calls":[{"name":"run_command", "args":{"CommandLine":serde_json::to_string(&command).unwrap()}}]});
+        let blocks = antigravity_model_blocks(&step, "1", &|pointer| {
+            Some(ContentRef::Jsonl {
+                offset: 0,
+                len: 1,
+                pointer,
+            })
+        });
+        let SessionBlock::ToolCall {
+            input_preview,
+            input_total_len,
+            input_full,
+            ..
+        } = &blocks[0]
+        else {
+            panic!("call")
+        };
+        assert!(input_full.is_some());
+        assert!(input_preview.encode_utf16().count() < *input_total_len as usize);
+        assert_eq!(
+            *input_total_len as usize,
+            antigravity_reader_args(&step["tool_calls"][0]["args"])
+                .to_string()
+                .encode_utf16()
+                .count()
+        );
+    }
+
+    #[test]
+    fn antigravity_reader_rejects_incomplete_diff_chunks_and_non_planner_refs() {
+        let incomplete = serde_json::json!({"edits":[{"old_string":"a","new_string":"b"},{"old_string":"missing"}]});
+        assert!(antigravity_diff_pairs(&incomplete, ToolKind::Edit).is_none());
+        let truncated =
+            antigravity_reader_args(&serde_json::json!({"ReplacementChunks":"[{<truncated>"}));
+        assert!(antigravity_diff_pairs(&truncated, ToolKind::Edit).is_none());
+        let result = serde_json::json!({"source":"MODEL","type":"GENERIC","tool_calls":[{"name":"run_command","args":{}}]});
+        assert!(resolve_antigravity_reader_content(
+            &result,
+            &format!("{ANTIGRAVITY_READER_REF_PREFIX}0/input")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn antigravity_long_content_refs_resolve_physical_jsonl_lines() {
+        use crate::session_manager::content::{
+            resolve_content_ref, SourceLocation, ValidatedSource,
+        };
+        let (temp, path, _conn) = antigravity_message_fixture();
+        let thought = "思考🦀".repeat(200);
+        let output = (0..30)
+            .map(|i| format!("第{i}行输出"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let args = serde_json::json!({"CommandLine": format!("\"{}\"", "echo hello ".repeat(60))});
+        let planner = serde_json::json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE",
+            "thinking":thought,"tool_calls":[{"name":"run_command","args":args}]});
+        let execution = serde_json::json!({"step_index":2,"source":"MODEL","type":"RUN_COMMAND",
+            "status":"DONE","content":[{"text":output}]});
+        // Invalid/blank lines, CRLF, indentation and no trailing newline all affect byte ranges.
+        std::fs::write(&path, format!("invalid\r\n\r\n  {planner}\r\n{execution}")).unwrap();
+        let messages = load_messages(&path).unwrap();
+        let source = ValidatedSource {
+            provider_id: "agy".into(),
+            raw: path.to_string_lossy().into_owned(),
+            location: SourceLocation::Path {
+                path: path.clone(),
+                root: temp.path().to_path_buf(),
+            },
+        };
+        let SessionBlock::Thinking {
+            full: Some(thinking_ref),
+            ..
+        } = &messages[0].blocks[0]
+        else {
+            panic!("missing thinking ref")
+        };
+        assert_eq!(resolve_content_ref(&source, thinking_ref).unwrap(), thought);
+        let SessionBlock::ToolCall {
+            input_full: Some(args_ref),
+            ..
+        } = &messages[0].blocks[1]
+        else {
+            panic!("missing args ref")
+        };
+        assert_eq!(
+            serde_json::from_str::<Value>(&resolve_content_ref(&source, args_ref).unwrap())
+                .unwrap(),
+            antigravity_reader_args(&args)
+        );
+        let SessionBlock::ToolResult {
+            full: Some(result_ref),
+            truncated: true,
+            total_len,
+            ..
+        } = &messages[1].blocks[0]
+        else {
+            panic!("missing result ref")
+        };
+        assert_eq!(*total_len, output.chars().count() as u32);
+        assert_eq!(resolve_content_ref(&source, result_ref).unwrap(), output);
+    }
+
     #[test]
     fn agy_binary_only_sessions_keep_index_metadata_without_fabricated_transcripts() {
         let dir = tempfile::tempdir().unwrap();
