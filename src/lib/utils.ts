@@ -15,9 +15,15 @@ const twMerge = extendTailwindMerge({
         "title",
         "page",
         "metric",
+        "hint",
       ],
       radius: ["control", "panel", "dialog"],
       shadow: ["v7-sm", "v7-md", "v7-lg"],
+      // 随界面密度变的尺寸：h-control 和调用方传的 h-8 要能互相覆盖
+      spacing: ["control", "control-sm", "nav-row", "card-y"],
+    },
+    classGroups: {
+      "min-h": [{ "min-h": ["card"] }],
     },
   },
 });

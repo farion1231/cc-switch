@@ -170,7 +170,6 @@
     "searchPlaceholder": "依名稱/備註/網址搜尋供應商...",
     "searchAriaLabel": "搜尋供應商",
     "searchScopeHint": "根據名稱、備註、官網和請求位址比對結果。",
-    "searchButtonTip": "搜尋供應商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 關閉",
     "searchCloseAriaLabel": "關閉供應商搜尋",
     "noSearchResults": "沒有符合搜尋條件的供應商。",
@@ -433,6 +432,12 @@
       "quotaDisplayLeft": "剩餘",
       "quotaDisplayUsed": "已用",
       "quotaDisplayHelp": "供應商卡片、授權中心和系統匣裡，各檔額度寫還剩多少還是已經用了多少。餘額和 Credits 始終寫剩下的。",
+      "density": "介面密度",
+      "densityHelp": "緊湊適合小螢幕，尺寸和舊版一樣。",
+      "densityComfortable": "舒適",
+      "densityCompact": "緊湊",
+      "zoom": "介面縮放",
+      "zoomHelp": "也可以按 {{shortcut}} + / {{shortcut}} − 調整，{{shortcut}} 0 復原。",
       "sidebarAndHeader": "側欄與頁首",
       "visibleApps": "在側欄顯示哪些應用",
       "goToApps": "前往「應用」",
@@ -871,16 +876,19 @@
     "minimizeToTray": "關閉時最小化至系統匣",
     "minimizeToTrayDescription": "勾選後點擊關閉按鈕會隱藏至系統匣，取消則直接退出應用程式。",
     "useAppWindowControls": "啟用應用程式等級視窗按鈕",
-    "useAppWindowControlsDescription": "開啟後使用應用程式自建的最小化、最大化/還原、關閉按鈕；關閉後沿用系統視窗模式。",
+    "useAppWindowControlsSummary": "使用應用程式自建的最小化、最大化和關閉按鈕",
     "enableClaudePluginIntegration": "套用至 Claude Code 外掛程式",
-    "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
+    "enableClaudePluginIntegrationSummary": "VS Code 外掛程式隨本軟體一起切換供應商",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
     "skipClaudeOnboardingDescription": "Claude Code 第一次啟動時會先走一遍引導流程，要求選擇主題並登入 Anthropic 帳號。如果你用的是第三方供應商，不需要登入官方帳號，開啟後就能略過這一步直接使用。原理是在 ~/.claude.json 中寫入 hasCompletedOnboarding: true；關閉時刪除該欄位，下次啟動會重新出現引導。",
+    "skipClaudeOnboardingSummary": "使用第三方供應商時免登入官方帳號",
     "codexAuth": "Codex 應用增強",
     "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
+    "preserveCodexOfficialAuthOnSwitchSummary": "切換第三方供應商時不清除官方登入",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
     "unifyCodexSessionHistoryDescription": "只影響 Codex CLI：CLI 的 resume 清單只顯示目前供應商的會話，開啟後官方訂閱改以共享的 custom 供應商標識執行，官方與第三方會話出現在同一清單中。Codex 桌面版更新後已經可以顯示全部會話，只用桌面版無需開啟。可選擇把現有官方會話一併遷入（遷移前自動備份），關閉時可按備份恢復。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
+    "unifyCodexSessionHistorySummary": "官方和第三方會話顯示在同一列表",
     "codexStackClassicSubagents": "聚合模式下子 agent 用經典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供應商時必須開啟，否則子 agent 收不到任務。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 裡開啟了 [features] multi_agent_v2，它比這個開關優先，開關不會生效",
@@ -899,10 +907,7 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
-      "showProfileSwitcher": "顯示專案切換",
-      "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口",
-      "showProviderSearch": "顯示供應商搜尋",
-      "showProviderSearchDescription": "在供應商頁頂部顯示搜尋按鈕，可依名稱、備註、官網和請求位址查找。關閉後仍可用 ⌘F / Ctrl+F 開啟搜尋"
+      "showProfileSwitcher": "顯示專案切換"
     },
     "terminal": {
       "title": "首選終端機",
@@ -4180,6 +4185,7 @@
     "expandSidebar": "展開側欄",
     "collapseSidebar": "收起側欄",
     "appsGroup": "應用",
+    "toolsGroup": "工具",
     "today": "今日 {{value}}",
     "todayRequests": "{{value}} 次",
     "todayHitRate": "命中 {{value}}",
@@ -4197,8 +4203,7 @@
       "route": "路由",
       "stack": "聚合"
     },
-    "needsAttention": "需要處理",
-    "back": "返回"
+    "needsAttention": "需要處理"
   },
   "appsPage": {
     "showInSidebar": "在側欄顯示 {{name}}",
@@ -4455,6 +4460,7 @@
     "clientHostHint": "用戶端連路由用的位址；留空依監聽位址",
     "clientHostInvalid": "請輸入用戶端能存取的 IP 位址或主機名稱",
     "clientHostHelp": "CC Switch 寫入用戶端設定的代理主機（含 Claude Desktop 的閘道位址）。留空時依監聽位址推導。用戶端無法透過本機回送存取時填寫，例如 WSL2（NAT 模式）中的 Claude Desktop 工作階段：將監聽位址設為 0.0.0.0，在此填入 WSL 能存取的 Windows IP（如 vEthernet (WSL) 介面卡的位址），並在防火牆中放行連接埠。",
+    "clientHostSummary": "寫進用戶端設定的代理主機，留空自動推導",
     "logging": "記錄請求用量",
     "loggingHelp": "關閉後，用量統計裡沒有經路由的請求明細。",
     "usingApps": "正在使用路由的應用 · {{count}}",
@@ -4746,10 +4752,6 @@
     },
     "bulk": {
       "selected": "已選 {{count}}",
-      "enableTo": "啟用到",
-      "enableToAria": "把選中的 {{count}} 個 Skill 啟用到",
-      "disable": "停用",
-      "disableAria": "在這個應用裡停用選中的 {{count}} 個 Skill",
       "uninstall": "解除安裝"
     },
     "piColumnTitle": "Pi 按 ~/.pi/agent/skills 裡有沒有這個目錄來判斷",
@@ -4763,9 +4765,9 @@
     "selectAllAria": "全選目前清單",
     "rowFail": "在 {{app}} 啟用失敗：{{error}}",
     "fixSync": "改同步方式",
-    "rowMoreAria": "{{name}} 的更多操作",
+    "rowUpdateAria": "更新 {{name}}",
     "openDir": "開啟資料夾",
-    "uninstallEllipsis": "解除安裝",
+    "openDirAria": "打開 {{name}} 的目錄",
     "listLabel": "已安裝的 Skill",
     "noMatch": "沒有符合「{{query}}」的 Skill",
     "noFilterMatch": "沒有符合篩選條件的 Skill",
@@ -4794,10 +4796,7 @@
       "backupAt": "備份在 {{path}}",
       "copiedName": "已複製 {{name}}",
       "openDirFailed": "無法開啟資料夾",
-      "noUpdatesInSelection": "選中的 Skill 沒有可用的更新",
-      "selectionAlreadyOn": "選中的 {{count}} 個 Skill 已經在 {{app}} 啟用",
-      "selectionAlreadyOff": "選中的 {{count}} 個 Skill 都沒有在 {{app}} 啟用",
-      "disabledSelection": "已在 {{app}} 停用 {{count}} 個 {{noun}}"
+      "noUpdatesInSelection": "選中的 Skill 沒有可用的更新"
     },
     "installTo": {
       "prefix": "安裝到：",
@@ -4871,9 +4870,6 @@
       "discoverBody": "列表可能不完整。",
       "updatesBody": "這些倉庫裡的 Skill 沒有檢查，更新結果可能不完整。"
     },
-    "headerUpdates": "{{count}} 個可更新",
-    "headerUpdatesShow": "只看可更新的 Skill",
-    "headerUpdatesClear": "顯示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 個）",
     "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },

@@ -912,6 +912,10 @@ describe("SwitchModePanel — mode layer", () => {
       await screen.findByLabelText("mode.status.routeLead route"),
     ).toHaveTextContent("route");
     expect(screen.getByTestId("connection-header")).toHaveTextContent("route");
+    // 页头不再重复模式名：哪个模式生效由模式页签上的「生效中」说明
+    expect(screen.getByTestId("connection-header")).not.toHaveTextContent(
+      "mode.names.route",
+    );
     fireEvent.click(screen.getByRole("button", { name: "mode.names.direct" }));
     expect(
       screen.getByLabelText("mode.status.routeLead route"),

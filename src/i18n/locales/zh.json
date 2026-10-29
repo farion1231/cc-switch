@@ -170,7 +170,6 @@
     "searchPlaceholder": "按名称/备注/网址搜索供应商...",
     "searchAriaLabel": "搜索供应商",
     "searchScopeHint": "根据名称、备注、官网和请求地址匹配结果。",
-    "searchButtonTip": "搜索供应商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 关闭",
     "searchCloseAriaLabel": "关闭供应商搜索",
     "noSearchResults": "没有符合搜索条件的供应商。",
@@ -433,6 +432,12 @@
       "quotaDisplayLeft": "剩余",
       "quotaDisplayUsed": "已用",
       "quotaDisplayHelp": "供应商卡片、授权中心和托盘里，各档额度写还剩多少还是已经用了多少。余额和 Credits 始终写剩下的。",
+      "density": "界面密度",
+      "densityHelp": "紧凑适合小屏幕，尺寸和旧版一样。",
+      "densityComfortable": "舒适",
+      "densityCompact": "紧凑",
+      "zoom": "界面缩放",
+      "zoomHelp": "也可以按 {{shortcut}} + / {{shortcut}} − 调，{{shortcut}} 0 复原。",
       "sidebarAndHeader": "侧栏与页头",
       "visibleApps": "在侧栏显示哪些应用",
       "goToApps": "前往「应用」",
@@ -871,16 +876,19 @@
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
     "useAppWindowControls": "启用应用级窗口按钮",
-    "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
+    "useAppWindowControlsSummary": "用应用自绘的最小化、最大化和关闭按钮",
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
-    "enableClaudePluginIntegrationDescription": "开启后 VS Code Claude Code 插件的供应商将随本软件切换",
+    "enableClaudePluginIntegrationSummary": "VS Code 插件随本软件一起切换供应商",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "Claude Code 第一次启动时会先走一遍引导流程，要求选主题并登录 Anthropic 账号。如果你用的是第三方供应商，不需要登录官方账号，开启后就能跳过这一步直接使用。原理是在 ~/.claude.json 里写入 hasCompletedOnboarding: true；关闭时删除该字段，下次启动会重新出现引导。",
+    "skipClaudeOnboardingSummary": "用第三方供应商时免登录官方账号",
     "codexAuth": "Codex 应用增强",
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
+    "preserveCodexOfficialAuthOnSwitchSummary": "切换第三方供应商时不清掉官方登录",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
     "unifyCodexSessionHistoryDescription": "只影响 Codex CLI：CLI 的 resume 列表只显示当前供应商的会话，开启后官方订阅改以共享的 custom 供应商标识运行，官方与第三方会话出现在同一列表中。Codex 桌面版更新后已经可以显示全部会话，只用桌面版无需开启。可选择把现有官方会话一并迁入（迁移前自动备份），关闭时可按备份恢复。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "unifyCodexSessionHistorySummary": "官方和第三方会话显示在同一列表",
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供应商时必须打开，否则子 agent 收不到任务。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",
@@ -899,10 +907,7 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
-      "showProfileSwitcher": "显示项目切换",
-      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口",
-      "showProviderSearch": "显示供应商搜索",
-      "showProviderSearchDescription": "在供应商页顶部显示搜索按钮，可按名称、备注、官网和请求地址查找。关掉后仍可用 ⌘F / Ctrl+F 打开搜索"
+      "showProfileSwitcher": "显示项目切换"
     },
     "terminal": {
       "title": "首选终端",
@@ -4179,6 +4184,7 @@
     "expandSidebar": "展开侧栏",
     "collapseSidebar": "收起侧栏",
     "appsGroup": "应用",
+    "toolsGroup": "工具",
     "today": "今日 {{value}}",
     "todayRequests": "{{value}} 次",
     "todayHitRate": "命中 {{value}}",
@@ -4196,8 +4202,7 @@
       "route": "路由",
       "stack": "聚合"
     },
-    "needsAttention": "需要处理",
-    "back": "返回"
+    "needsAttention": "需要处理"
   },
   "appsPage": {
     "showInSidebar": "在侧栏显示 {{name}}",
@@ -4454,6 +4459,7 @@
     "clientHostHint": "客户端连路由用的地址；留空按监听地址",
     "clientHostInvalid": "请输入客户端能访问到的 IP 地址或主机名",
     "clientHostHelp": "CC Switch 写进客户端配置的代理主机（含 Claude Desktop 的网关地址）。留空时按监听地址推导。客户端无法通过本机回环访问时填写，例如 WSL2（NAT 模式）里的 Claude Desktop 会话：把监听地址设为 0.0.0.0，在这里填 WSL 能访问到的 Windows IP（如 vEthernet (WSL) 网卡的地址），并在防火墙中放行端口。",
+    "clientHostSummary": "写进客户端配置的代理主机，留空自动推导",
     "logging": "记录请求用量",
     "loggingHelp": "关闭后，用量统计里没有经路由的请求明细。",
     "usingApps": "正在使用路由的应用 · {{count}}",
@@ -4745,10 +4751,6 @@
     },
     "bulk": {
       "selected": "已选 {{count}}",
-      "enableTo": "启用到",
-      "enableToAria": "把选中的 {{count}} 个 Skill 启用到",
-      "disable": "停用",
-      "disableAria": "在这个应用里停用选中的 {{count}} 个 Skill",
       "uninstall": "卸载"
     },
     "piColumnTitle": "Pi 按 ~/.pi/agent/skills 里有没有这个目录来判断",
@@ -4762,9 +4764,9 @@
     "selectAllAria": "全选当前列表",
     "rowFail": "在 {{app}} 启用失败：{{error}}",
     "fixSync": "改同步方式",
-    "rowMoreAria": "{{name}} 的更多操作",
+    "rowUpdateAria": "更新 {{name}}",
     "openDir": "打开目录",
-    "uninstallEllipsis": "卸载",
+    "openDirAria": "打开 {{name}} 的目录",
     "listLabel": "已安装的 Skill",
     "noMatch": "没有匹配“{{query}}”的 Skill",
     "noFilterMatch": "没有符合筛选条件的 Skill",
@@ -4793,10 +4795,7 @@
       "backupAt": "备份在 {{path}}",
       "copiedName": "已复制 {{name}}",
       "openDirFailed": "没能打开目录",
-      "noUpdatesInSelection": "选中的 Skill 没有可用的更新",
-      "selectionAlreadyOn": "选中的 {{count}} 个 Skill 已经在 {{app}} 启用",
-      "selectionAlreadyOff": "选中的 {{count}} 个 Skill 都没有在 {{app}} 启用",
-      "disabledSelection": "已在 {{app}} 停用 {{count}} 个 {{noun}}"
+      "noUpdatesInSelection": "选中的 Skill 没有可用的更新"
     },
     "installTo": {
       "prefix": "安装到：",
@@ -4870,9 +4869,6 @@
       "discoverBody": "列表可能不完整。",
       "updatesBody": "这些仓库里的 Skill 没有检查，更新结果可能不完整。"
     },
-    "headerUpdates": "{{count}} 个可更新",
-    "headerUpdatesShow": "只看可更新的 Skill",
-    "headerUpdatesClear": "显示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 个）",
     "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },

@@ -359,7 +359,7 @@ export function ProviderCard({
         dragHandleProps?.isDragging && "cursor-grabbing shadow-v7-md",
       )}
     >
-      <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
+      <div className="flex min-h-card items-center gap-3 py-card-y pe-3 ps-2">
         {dragHandleProps ? (
           <button
             type="button"

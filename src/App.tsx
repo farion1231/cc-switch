@@ -10,13 +10,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  ExternalLink,
-  KeyRound,
-  MoreHorizontal,
-  Plus,
-  Search,
-} from "lucide-react";
+import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
@@ -55,8 +49,9 @@ import {
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { setZoom, stepZoom } from "@/lib/interfacePrefs";
 import { deepClone } from "@/utils/deepClone";
-import { isLinux, isMac, isWindows } from "@/lib/platform";
+import { isLinux, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
   appPageBelongsTo,
@@ -859,10 +854,6 @@ function App() {
     setCurrentView("settings");
   };
 
-  const exitSettings = () => {
-    setCurrentView(settingsReturnViewRef.current);
-  };
-
   const selectApp = (app: AppId) => {
     if (managementBusyRef.current) return;
     if (confirmLeave(() => selectApp(app))) return;
@@ -874,7 +865,8 @@ function App() {
 
   const openPage = (page: GlobalPage | "settings") => {
     if (page === "settings") {
-      openSettings("general");
+      // 侧栏在设置里也一直在：已经在设置里再点「设置」不动，免得把当前分组打回「通用」
+      if (currentViewRef.current !== "settings") openSettings("general");
       return;
     }
     if (managementBusyRef.current) return;
@@ -916,7 +908,11 @@ function App() {
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
   const openPageFromNav = (page: GlobalPage | "settings") => {
     // 「设置」上的绿点说的是 CC Switch 有新版本，点进去直接到「关于」里的更新按钮
-    if (page === "settings" && hasUpdate) {
+    if (
+      page === "settings" &&
+      hasUpdate &&
+      currentViewRef.current !== "settings"
+    ) {
       openSettings("about");
       return;
     }
@@ -935,6 +931,24 @@ function App() {
         event.preventDefault();
         openSettingsRef.current("general");
         return;
+      }
+      // 界面缩放：= / +（含小键盘）放大、- 缩小、0 复原，档位见 ZOOM_LEVELS
+      if (mod && !event.altKey) {
+        if (event.key === "=" || event.key === "+") {
+          event.preventDefault();
+          stepZoom(1);
+          return;
+        }
+        if (event.key === "-") {
+          event.preventDefault();
+          stepZoom(-1);
+          return;
+        }
+        if (event.key === "0") {
+          event.preventDefault();
+          setZoom(1);
+          return;
+        }
       }
 
       if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -1405,25 +1419,6 @@ function App() {
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
-          {currentView === "providers" &&
-            (settingsData?.showProviderSearch ?? true) && (
-              <HoverTip
-                content={t("provider.searchButtonTip", {
-                  shortcut: isMac() ? "⌘F" : "Ctrl+F",
-                })}
-              >
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  className="h-8 w-8"
-                  aria-label={t("provider.searchAriaLabel")}
-                  aria-pressed={providerSearchOpen}
-                  onClick={() => setProviderSearchOpen((open) => !open)}
-                >
-                  <Search className="h-4 w-4" />
-                </Button>
-              </HoverTip>
-            )}
           {currentView === "providers" && (
             <Button
               variant="solid"
@@ -1743,6 +1738,10 @@ function App() {
       return (
         <SettingsPage
           section={settingsSection}
+          onSectionChange={(section) => {
+            setAppConfigScrollTarget(undefined);
+            setSettingsSection(section);
+          }}
           appConfigScrollTarget={appConfigScrollTarget}
           onImportSuccess={handleImportSuccess}
           onOpenApps={() => setCurrentView("apps")}
@@ -1762,14 +1761,8 @@ function App() {
           activeApp={activeApp}
           view={currentView}
           visibleApps={visibleApps}
-          settingsSection={settingsSection}
           onSelectApp={selectApp}
           onSelectPage={openPageFromNav}
-          onSelectSettingsSection={(section) => {
-            setAppConfigScrollTarget(undefined);
-            setSettingsSection(section);
-          }}
-          onExitSettings={exitSettings}
           appsUpdateAvailable={
             checkToolUpdatesOnStartup && toolUpdatesAvailable
           }

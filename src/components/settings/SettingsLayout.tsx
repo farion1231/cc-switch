@@ -4,7 +4,11 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
 
 /**
- * 设置页的版式（v7）：分节标题 15/600 → 带边框的卡片 → 一行一项，左边名称、右边控件。
+ * 设置页的版式（v7）：分节标题 → 带边框的卡片 → 一行一项，左边名称、右边控件。
+ *
+ * 一项设置的说明分两层：
+ * - summary：名称下面常驻一句话（≤ 20 字），只说这个开关做什么；名称一看就懂的项不写。
+ * - help：名称旁的「?」，悬停 / 点击弹出说明卡，放规则、平台差异、术语解释。摘要已经说完的不要再开「?」。
  */
 export function SettingsBlock({
   id,
@@ -61,6 +65,7 @@ export function SettingsCard({
 
 export function SettingsRow({
   label,
+  summary,
   help,
   description,
   control,
@@ -69,8 +74,11 @@ export function SettingsRow({
   className,
 }: {
   label: ReactNode;
+  /** 名称下面常驻的一句话摘要（≤ 20 字）：这个开关做什么 */
+  summary?: ReactNode;
+  /** 名称旁的「?」：规则、平台差异、术语解释，悬停 / 点击才展开 */
   help?: { title: string; body: ReactNode };
-  /** 只有真正的数据（路径、地址）才写在名称下面；说明进「?」 */
+  /** 这一项的数据（路径、地址），写在摘要下面 */
   description?: ReactNode;
   control?: ReactNode;
   htmlFor?: string;
@@ -81,7 +89,7 @@ export function SettingsRow({
   const Label = htmlFor ? "label" : "div";
   return (
     <div className={cn("px-4 py-3", className)}>
-      <div className="flex min-h-[28px] items-center gap-4">
+      <div className="flex min-h-control-sm items-center gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
             <Label
@@ -92,6 +100,10 @@ export function SettingsRow({
             </Label>
             {help && <HelpTip title={help.title}>{help.body}</HelpTip>}
           </div>
+          {summary && (
+            // 摘要比名称小 2px、用三级灰：看得清，扫读时又不和名称抢
+            <div className="mt-1 text-hint text-fg-3">{summary}</div>
+          )}
           {description && (
             <div className="mt-0.5 break-all text-caption text-fg-2">
               {description}
@@ -109,6 +121,7 @@ export function SettingsRow({
 
 export function SettingsSwitchRow({
   label,
+  summary,
   help,
   description,
   checked,
@@ -116,6 +129,7 @@ export function SettingsSwitchRow({
   disabled,
 }: {
   label: string;
+  summary?: ReactNode;
   help?: { title: string; body: ReactNode };
   description?: ReactNode;
   checked: boolean;
@@ -125,6 +139,7 @@ export function SettingsSwitchRow({
   return (
     <SettingsRow
       label={label}
+      summary={summary}
       help={help}
       description={description}
       control={

@@ -170,7 +170,6 @@
     "searchPlaceholder": "Search name, notes, or URL...",
     "searchAriaLabel": "Search providers",
     "searchScopeHint": "Matches provider name, notes, website, and API address.",
-    "searchButtonTip": "Search providers ({{shortcut}})",
     "searchCloseHint": "Press Esc to close",
     "searchCloseAriaLabel": "Close provider search",
     "noSearchResults": "No providers match your search.",
@@ -433,6 +432,12 @@
       "quotaDisplayLeft": "Left",
       "quotaDisplayUsed": "Used",
       "quotaDisplayHelp": "Whether each quota window on provider cards, in Accounts and in the tray shows how much is left or how much is used. Balances and Credits always show what is left.",
+      "density": "Density",
+      "densityHelp": "Compact suits small screens and matches earlier versions.",
+      "densityComfortable": "Comfortable",
+      "densityCompact": "Compact",
+      "zoom": "Zoom",
+      "zoomHelp": "You can also press {{shortcut}} + / {{shortcut}} −, and {{shortcut}} 0 to reset.",
       "sidebarAndHeader": "Sidebar and header",
       "visibleApps": "Apps shown in the sidebar",
       "goToApps": "Open Apps",
@@ -871,16 +876,19 @@
     "minimizeToTray": "Minimize to tray on close",
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
     "useAppWindowControls": "Enable app-level window controls",
-    "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
+    "useAppWindowControlsSummary": "Use the app's own minimize, maximize and close buttons",
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
-    "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
+    "enableClaudePluginIntegrationSummary": "The VS Code extension switches providers along with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "On first launch, Claude Code runs an onboarding flow that asks you to pick a theme and sign in to an Anthropic account. If you use a third-party provider you don't need that sign-in, so turning this on skips straight past it. It works by writing hasCompletedOnboarding: true to ~/.claude.json; turning it off removes that field, and the onboarding appears again on the next launch.",
+    "skipClaudeOnboardingSummary": "Skip the official login when using third-party providers",
     "codexAuth": "Codex App Enhancements",
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
+    "preserveCodexOfficialAuthOnSwitchSummary": "Keep the official login when switching to a third-party provider",
     "unifyCodexSessionHistory": "Unified Codex session history",
     "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistorySummary": "Show official and third-party sessions in one list",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
@@ -899,10 +907,7 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
-      "showProfileSwitcher": "Show project switcher",
-      "showProfileSwitcherDescription": "Show the project switcher in the main page header",
-      "showProviderSearch": "Show provider search",
-      "showProviderSearchDescription": "Show a search button at the top of the provider page to find providers by name, notes, website, or API address. When hidden, ⌘F / Ctrl+F still opens search"
+      "showProfileSwitcher": "Show project switcher"
     },
     "terminal": {
       "title": "Preferred Terminal",
@@ -4179,6 +4184,7 @@
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar",
     "appsGroup": "Apps",
+    "toolsGroup": "Tools",
     "today": "Today {{value}}",
     "todayRequests": "{{value}} req",
     "todayHitRate": "Hit {{value}}",
@@ -4196,8 +4202,7 @@
       "route": "Routing",
       "stack": "Aggregation"
     },
-    "needsAttention": "Needs attention",
-    "back": "Back"
+    "needsAttention": "Needs attention"
   },
   "appsPage": {
     "showInSidebar": "Show {{name}} in the sidebar",
@@ -4454,6 +4459,7 @@
     "clientHostHint": "Where clients connect. Empty: the listen address",
     "clientHostInvalid": "Enter an IP address or hostname that clients can reach",
     "clientHostHelp": "The host CC Switch writes into client configs (including Claude Desktop's gateway URL). Leave it empty to derive it from the listen address. Set it when clients can't reach this machine through loopback, e.g. Claude Desktop sessions inside WSL2 (NAT mode): set the listen address to 0.0.0.0 and enter a Windows IP that WSL can reach (such as the vEthernet (WSL) adapter address), and allow the port through the firewall.",
+    "clientHostSummary": "Proxy host written to client configs; derived when empty",
     "logging": "Record request usage",
     "loggingHelp": "When off, Usage has no per-request details for routed requests.",
     "usingApps": "Apps using routing · {{count}}",
@@ -4745,10 +4751,6 @@
     },
     "bulk": {
       "selected": "{{count}} selected",
-      "enableTo": "Enable in",
-      "enableToAria": "Enable the {{count}} selected Skills in",
-      "disable": "Turn off in",
-      "disableAria": "Turn off the {{count}} selected Skills in",
       "uninstall": "Uninstall"
     },
     "piColumnTitle": "Pi counts a Skill as enabled when its folder exists in ~/.pi/agent/skills",
@@ -4762,9 +4764,9 @@
     "selectAllAria": "Select all shown",
     "rowFail": "Enabling in {{app}} failed: {{error}}",
     "fixSync": "Change sync method",
-    "rowMoreAria": "More actions for {{name}}",
+    "rowUpdateAria": "Update {{name}}",
     "openDir": "Open folder",
-    "uninstallEllipsis": "Uninstall",
+    "openDirAria": "Open the folder for {{name}}",
     "listLabel": "Installed Skills",
     "noMatch": "No Skills match “{{query}}”",
     "noFilterMatch": "No Skills match the filters",
@@ -4793,10 +4795,7 @@
       "backupAt": "Backed up to {{path}}",
       "copiedName": "Copied {{name}}",
       "openDirFailed": "Couldn't open the folder",
-      "noUpdatesInSelection": "None of the selected Skills have updates",
-      "selectionAlreadyOn": "The {{count}} selected Skills are already enabled in {{app}}",
-      "selectionAlreadyOff": "None of the {{count}} selected Skills are enabled in {{app}}",
-      "disabledSelection": "Turned off {{count}} {{noun}} in {{app}}"
+      "noUpdatesInSelection": "None of the selected Skills have updates"
     },
     "installTo": {
       "prefix": "Install to: ",
@@ -4870,9 +4869,6 @@
       "discoverBody": "The list may be incomplete.",
       "updatesBody": "Skills from these repositories weren't checked, so the results may be incomplete."
     },
-    "headerUpdates": "{{count}} updates",
-    "headerUpdatesShow": "Show only Skills with updates",
-    "headerUpdatesClear": "Show all Skills",
     "updateAllCount": "Update all ({{count}})",
     "updatingProgress": "Updating {{done}}/{{total}}…"
   },

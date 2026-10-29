@@ -170,7 +170,6 @@
     "searchPlaceholder": "Adı, notları veya URL'yi arayın...",
     "searchAriaLabel": "Sağlayıcılarda ara",
     "searchScopeHint": "Sağlayıcının adı, notları, web sitesi ve API adresiyle eşleşir.",
-    "searchButtonTip": "Sağlayıcılarda ara ({{shortcut}})",
     "searchCloseHint": "Kapatmak için Esc tuşuna basın",
     "searchCloseAriaLabel": "Sağlayıcı aramasını kapat",
     "noSearchResults": "Aramanızla eşleşen sağlayıcı yok.",
@@ -410,6 +409,12 @@
       "quotaDisplayLeft": "Kalan",
       "quotaDisplayUsed": "Kullanılan",
       "quotaDisplayHelp": "Sağlayıcı kartlarındaki, Hesaplar'daki ve tepsideki her kota penceresinin ne kadar kaldığını veya ne kadar kullanıldığını gösterip göstermediği. Bakiyeler ve Krediler her zaman kalanları gösterir.",
+      "density": "Arayüz yoğunluğu",
+      "densityHelp": "Sıkı, küçük ekranlara uygundur ve önceki sürümlerle aynı boyuttadır.",
+      "densityComfortable": "Rahat",
+      "densityCompact": "Sıkı",
+      "zoom": "Yakınlaştırma",
+      "zoomHelp": "{{shortcut}} + / {{shortcut}} − ile de değiştirebilir, {{shortcut}} 0 ile sıfırlayabilirsiniz.",
       "sidebarAndHeader": "Kenar çubuğu ve başlık",
       "visibleApps": "Kenar çubuğunda gösterilen uygulamalar",
       "goToApps": "Uygulamaları seç",
@@ -848,16 +853,19 @@
     "minimizeToTray": "Kapatıldığında tepsiye küçült",
     "minimizeToTrayDescription": "İşaretlendiğinde kapat düğmesine basıldığında sistem tepsisinde gizlenir, aksi halde uygulama doğrudan çıkar.",
     "useAppWindowControls": "Uygulama düzeyinde pencere kontrollerini etkinleştir",
-    "useAppWindowControlsDescription": "Uygulama başlığındaki yerleşik küçültme, büyütme/geri yükleme ve kapatma düğmelerini kullanın.",
+    "useAppWindowControlsSummary": "Uygulamanın kendi küçült, büyüt ve kapat düğmelerini kullan",
     "enableClaudePluginIntegration": "Claude Code uzantısına uygula",
-    "enableClaudePluginIntegrationDescription": "Etkinleştirildiğinde VS Code Claude Code uzantı sağlayıcısı bu uygulamayla geçiş yapacak",
+    "enableClaudePluginIntegrationSummary": "VS Code uzantısı sağlayıcıyı bu uygulamayla birlikte değiştirir",
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
     "skipClaudeOnboardingDescription": "İlk başlatmada Claude Code, bir tema seçmenizi ve bir Anthropic hesabında oturum açmanızı isteyen bir katılım akışı çalıştırır. Üçüncü taraf bir sağlayıcı kullanıyorsanız bu oturum açma işlemine ihtiyacınız yoktur; bu nedenle, bunu açmak doğrudan atlar. ~/.claude.json'a hasCompletedOnboarding: true yazılarak çalışır; kapatıldığında bu alan kaldırılır ve bir sonraki başlatmada katılım yeniden görünür.",
+    "skipClaudeOnboardingSummary": "Üçüncü taraf sağlayıcılarda resmi girişi atla",
     "codexAuth": "Codex Uygulama Geliştirmeleri",
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
+    "preserveCodexOfficialAuthOnSwitchSummary": "Üçüncü taraf sağlayıcıya geçerken resmi girişi koru",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
     "unifyCodexSessionHistoryDescription": "Yalnızca Codex CLI'yi etkiler: devam edilebilir oturum listesi yalnızca mevcut sağlayıcının oturumlarını gösterir. Etkinleştirildiğinde resmi abonelik, paylaşılan \"özel\" sağlayıcı kimliği altında çalışır, böylece resmi ve üçüncü taraf oturumları tek bir listede görünür. Codex masaüstü uygulaması, yeni bir güncellemeden bu yana tüm oturumları gösterebilir, dolayısıyla yalnızca masaüstü kullanıcılarının buna ihtiyacı yoktur. İsteğe bağlı olarak mevcut resmi oturumları (öncelikle yedeklenen) taşıyabilir ve kapattığınızda bunları yedeklemeden geri yükleyebilirsiniz. Not: eski bir oturumun sağlayıcılar arasında sürdürülmesi başarısız olabilir, çünkü encrypted_content mantığının şifresi yalnızca onu oluşturan arka uç tarafından çözülebilir.",
+    "unifyCodexSessionHistorySummary": "Resmi ve üçüncü taraf oturumları tek listede göster",
     "codexStackClassicSubagents": "Birleştirmedaki klasik alt ajan araçları",
     "codexStackClassicSubagentsDescription": "Ana ajan ile alt ajan farklı sağlayıcılar kullandığında açık olmalıdır; aksi halde alt ajan görevini alamaz.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml, bu ayara göre öncelikli olan [features] multi_agent_v2'yi açar, dolayısıyla hiçbir etkisi olmaz.",
@@ -876,10 +884,7 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
-      "showProfileSwitcher": "Proje değiştiriciyi göster",
-      "showProfileSwitcherDescription": "Proje değiştiriciyi ana sayfa başlığında göster",
-      "showProviderSearch": "Sağlayıcı aramasını göster",
-      "showProviderSearchDescription": "Sağlayıcıları ada, notlara, web sitesine veya API adresine göre bulmak için sağlayıcı sayfasının üst kısmında bir arama düğmesi gösterin. Gizlendiğinde, ⌘F / Ctrl+F yine de aramayı açar"
+      "showProfileSwitcher": "Proje değiştiriciyi göster"
     },
     "terminal": {
       "title": "Tercih edilen terminal",
@@ -4156,6 +4161,7 @@
     "expandSidebar": "Kenar çubuğunu genişlet",
     "collapseSidebar": "Kenar çubuğunu daralt",
     "appsGroup": "Uygulamalar",
+    "toolsGroup": "Araçlar",
     "today": "Bugün {{value}}",
     "todayRequests": "{{value}} istek",
     "todayHitRate": "İsabet {{value}}",
@@ -4173,8 +4179,7 @@
       "route": "Yönlendirme",
       "stack": "Birleştirme"
     },
-    "needsAttention": "Dikkat edilmesi gerekiyor",
-    "back": "Geri"
+    "needsAttention": "Dikkat edilmesi gerekiyor"
   },
   "appsPage": {
     "showInSidebar": "Kenar çubuğunda {{name}}'yi göster",
@@ -4432,6 +4437,7 @@
     "clientHostHint": "İstemcilerin bağlandığı yer. Boş: dinleme adresi",
     "clientHostInvalid": "İstemcilerin ulaşabileceği bir IP adresi veya ana bilgisayar adı girin",
     "clientHostHelp": "CC Switch ana bilgisayarı istemci yapılandırmalarına yazar (Claude Desktop'nin ağ geçidi URL'si dahil). Dinleme adresinden türetmek için boş bırakın. İstemciler bu makineye geridöngü yoluyla erişemediğinde bunu ayarlayın; WSL2 içindeki Claude Desktop oturumları (NAT modu): dinleme adresini 0.0.0.0 olarak ayarlayın ve WSL'nin ulaşabileceği bir Windows IP girin (vEthernet (WSL) bağdaştırıcı adresi gibi) ve bağlantı noktasının güvenlik duvarı üzerinden geçmesine izin verin.",
+    "clientHostSummary": "İstemci yapılandırmasına yazılan proxy ana makinesi; boşsa otomatik",
     "logging": "İstek kullanımını kaydet",
     "loggingHelp": "Kapalıyken Kullanım, yönlendirilen istekler için istek başına ayrıntıya sahip değildir.",
     "usingApps": "Yönlendirmeyi kullanan uygulamalar · {{count}}",
@@ -4719,10 +4725,6 @@
     },
     "bulk": {
       "selected": "{{count}} seçildi",
-      "enableTo": "Şurada etkinleştir",
-      "enableToAria": "{{count}}'de seçilen Becerileri etkinleştirin",
-      "disable": "Şurada devre dışı bırak",
-      "disableAria": "{{count}}'de seçilen Becerileri kapatın",
       "uninstall": "Kaldır"
     },
     "piColumnTitle": "Pi, klasörü ~/.pi/agent/skills konumunda mevcut olduğunda bir Beceriyi etkin olarak sayar",
@@ -4736,9 +4738,9 @@
     "selectAllAria": "Gösterilenlerin tümünü seç",
     "rowFail": "{{app}}'de etkinleştirme başarısız oldu: {{error}}",
     "fixSync": "Eşitleme yöntemini değiştir",
-    "rowMoreAria": "{{name}} için diğer işlemler",
+    "rowUpdateAria": "{{name}} öğesini güncelle",
     "openDir": "Klasörü aç",
-    "uninstallEllipsis": "Kaldır",
+    "openDirAria": "{{name}} klasörünü aç",
     "listLabel": "Yüklü Beceriler",
     "noMatch": "“{{query}}” Beceri eşleşmesi yok",
     "noFilterMatch": "Filtrelerle eşleşen Beceri yok",
@@ -4767,10 +4769,7 @@
       "backupAt": "{{path}}'ye yedeklendi",
       "copiedName": "{{name}} kopyalandı",
       "openDirFailed": "Klasör açılamadı",
-      "noUpdatesInSelection": "Seçilen Becerilerin hiçbirinde güncelleme yok",
-      "selectionAlreadyOn": "{{count}}'nin seçilen Becerileri zaten {{app}}'de etkindir",
-      "selectionAlreadyOff": "Seçilen {{count}} Becerilerinden hiçbiri {{app}}'de etkin değil",
-      "disabledSelection": "{{app}}'de {{count}} {{noun}} kapatıldı"
+      "noUpdatesInSelection": "Seçilen Becerilerin hiçbirinde güncelleme yok"
     },
     "installTo": {
       "prefix": "Şuraya yükleyin:",
@@ -4844,9 +4843,6 @@
       "discoverBody": "Liste eksik olabilir.",
       "updatesBody": "Bu depolardaki beceriler kontrol edilmediğinden sonuçlar eksik olabilir."
     },
-    "headerUpdates": "{{count}} güncellemeleri",
-    "headerUpdatesShow": "Yalnızca güncellemeleri olan Becerileri göster",
-    "headerUpdatesClear": "Tüm Becerileri Göster",
     "updateAllCount": "Tümünü güncelle ({{count}})",
     "updatingProgress": "{{done}}/{{total}} güncelleniyor…"
   },

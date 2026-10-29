@@ -333,6 +333,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
           />
           <SettingsRow
             label={t("routingSettings.clientHost")}
+            summary={t("routingSettings.clientHostSummary")}
             help={{
               title: t("routingSettings.clientHost"),
               body: t("routingSettings.clientHostHelp"),
@@ -375,10 +376,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
           />
           <SettingsSwitchRow
             label={t("routingSettings.logging")}
-            help={{
-              title: t("routingSettings.logging"),
-              body: t("routingSettings.loggingHelp"),
-            }}
+            summary={t("routingSettings.loggingHelp")}
             checked={config?.enableLogging ?? false}
             disabled={!config}
             onCheckedChange={(value) => void toggleLogging(value)}
