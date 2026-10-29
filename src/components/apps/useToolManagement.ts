@@ -50,6 +50,8 @@ export const TOOL_NAMES = [
   "mcode",
   "kimi",
   "dsh",
+  "qoder",
+  "qodercn",
   "agy",
   "omp",
 ] as const;
@@ -207,9 +209,22 @@ ${AGY_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
 bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
-export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
-  ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
-  : POSIX_ONE_CLICK_INSTALL_COMMANDS;
+export function installCommandsFor(qoderTool: "qoder" | "qodercn") {
+  const base = isWindows()
+    ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
+    : POSIX_ONE_CLICK_INSTALL_COMMANDS;
+  const name = qoderTool === "qodercn" ? "Qoder CLI CN" : "Qoder CLI";
+  const url =
+    qoderTool === "qodercn"
+      ? "https://static.qoder.com.cn/qoder-cli-cn/install"
+      : "https://qoder.com/install";
+  const command = isWindows()
+    ? `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(`$ErrorActionPreference = 'Stop'; $env:PSModulePath = "$PSHOME\\Modules;$env:PSModulePath"; irm ${url}.ps1 | iex`)}`
+    : posixScriptInstallCommand(qoderTool === "qodercn" ? `${url}.sh` : url);
+  return `${base}\n# ${name}\n${command}`;
+}
+
+export const ONE_CLICK_INSTALL_COMMANDS = installCommandsFor("qoder");
 
 export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
@@ -223,6 +238,8 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
   dsh: "DeepSeek Harness",
+  qoder: "Qoder CLI",
+  qodercn: "Qoder CLI CN",
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
 };
@@ -245,6 +262,8 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   mcode: "mcode",
   kimi: "kimi",
   dsh: "dsh",
+  qoder: "qoder",
+  qodercn: "qoder-cn",
   agy: "agy",
   omp: "omp",
 };
@@ -346,7 +365,7 @@ export function useToolUpdatesAvailable(): boolean {
   );
 }
 
-export function useToolManagement() {
+export function useToolManagement(qoderTool: "qoder" | "qodercn" = "qoder") {
   const { t } = useTranslation();
   const {
     toolVersionsCache,
@@ -389,6 +408,11 @@ export function useToolManagement() {
   const updatableToolNames = useMemo(
     () =>
       TOOL_NAMES.filter((toolName) => {
+        if (
+          (toolName === "qoder" || toolName === "qodercn") &&
+          toolName !== qoderTool
+        )
+          return false;
         const tool = toolVersionByName.get(toolName);
         return (
           !busyTools.has(toolName) &&
@@ -397,7 +421,7 @@ export function useToolManagement() {
           isUpdateAvailable(tool?.version, tool?.latest_version)
         );
       }),
-    [toolVersionByName, busyTools, loadingTools],
+    [toolVersionByName, busyTools, loadingTools, qoderTool],
   );
 
   const refreshToolVersions = useCallback(
@@ -567,7 +591,7 @@ export function useToolManagement() {
 
   const handleCopyInstallCommands = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(ONE_CLICK_INSTALL_COMMANDS);
+      await navigator.clipboard.writeText(installCommandsFor(qoderTool));
       toast.success(t("settings.installCommandsCopied"), { closeButton: true });
     } catch (error) {
       console.error(
@@ -576,9 +600,9 @@ export function useToolManagement() {
       );
       toast.error(t("settings.installCommandsCopyFailed"));
     }
-  }, [t]);
+  }, [t, qoderTool]);
 
-  // 升级后自动补诊单个工具：静默后台执行。有冲突写入结果；无冲突则清掉该工具可能残留
+  // 安装 / 升级后自动补诊单个工具：静默后台执行。有冲突写入结果；无冲突则清掉该工具可能残留
   // 的过期冲突展示（外部卸载/修复后冲突可能已消失，不清会一直显示旧列表）。不弹 toast、
   // 不报错打扰——与用户主动点的全量诊断区别对待。
   const diagnoseToolSilently = useCallback(async (toolName: ToolName) => {
@@ -766,11 +790,8 @@ export function useToolManagement() {
                 void diagnoseToolSilently(toolName);
               } else {
                 succeeded += 1;
-                // 升级成功后无条件补诊：版本没变多半被另一处遮蔽，版本变了另一处也可能仍在，
-                // 两种都要刷新冲突展示（diagnoseToolSilently 无冲突时会自动清旧）。
-                if (action === "update") {
-                  void diagnoseToolSilently(toolName);
-                }
+                // 安装 / 升级成功后刷新路径、来源和冲突，避免只更新版本号、仍沿用安装前的空报告。
+                void diagnoseToolSilently(toolName);
               }
             } else {
               // 命令退出码为 0、但刷新后仍探不到版本：多半是"装上了却跑不起来"

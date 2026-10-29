@@ -306,6 +306,60 @@ describe("App integration with MSW", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
 
+  it("opens Qoder's provider picker from the standard app header and continues to native configuration", async () => {
+    const requestedApps: string[] = [];
+    server.use(
+      http.post("http://tauri.local/get_qoder_models", async ({ request }) => {
+        const { app } = (await request.json()) as { app: string };
+        requestedApps.push(app);
+        return HttpResponse.json({ providers: {}, currentModel: "auto" });
+      }),
+    );
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toBeInTheDocument(),
+    );
+    fireEvent.click(sidebarApp("Qoder CLI CN"));
+    await waitFor(() => expect(requestedApps).toContain("qoder-cn"));
+    expect(
+      await screen.findByRole("heading", {
+        name: /^(还没有供应商|provider.noProviders|No providers yet)$/,
+        hidden: true,
+      }),
+    ).toBeInTheDocument();
+    const header = document.querySelector(
+      "#content-area header",
+    ) as HTMLElement;
+    fireEvent.click(
+      within(header).getByRole("button", {
+        name: /^(添加供应商|provider.addProvider|Add provider)$/,
+        hidden: true,
+      }),
+    );
+    expect(
+      await screen.findByRole("textbox", {
+        name: /^(搜索预设供应商|providerPreset.searchAriaLabel|Search provider presets)$/,
+        hidden: true,
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^(自定义配置|providerPreset.custom|Custom Configuration)$/,
+        hidden: true,
+      }),
+    );
+    expect(await screen.findByRole("form", { hidden: true })).toHaveAttribute(
+      "id",
+      "qoder-provider-form",
+    );
+    expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/\/model|Add custom model/),
+    ).not.toBeInTheDocument();
+    expect(requestedApps).toContain("qoder-cn");
+  }, 15_000);
+
   it("refreshes the route pointer when the proxy fails over to another provider", async () => {
     let routeProviderId = "claude-1";
     let modeRequests = 0;

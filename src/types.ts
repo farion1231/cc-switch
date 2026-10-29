@@ -317,6 +317,8 @@ export interface VisibleApps {
   mcode: boolean;
   kimi: boolean;
   dsh?: boolean;
+  qoder: boolean;
+  "qoder-cn": boolean;
   agy: boolean;
   omp: boolean;
 }
@@ -466,6 +468,7 @@ export interface Settings {
   visibleApps?: VisibleApps;
   // 应用页和侧栏的应用顺序（应用 ID，拖动排序后写入；缺的应用按默认顺序插回）
   appOrder?: string[];
+  qoderEdition?: "global" | "cn";
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
@@ -773,6 +776,8 @@ export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
   dsh?: boolean;
+  qoder?: boolean;
+  "qoder-cn"?: boolean;
   agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;

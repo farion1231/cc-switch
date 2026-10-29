@@ -8,7 +8,11 @@ export type ManagedAuthProvider =
   | "claude_official";
 
 export type CodexLoginMethod = "browser" | "device_code";
-export type AuthCenterTarget = ManagedAuthProvider | "kimi_oauth";
+export type AuthCenterTarget =
+  | ManagedAuthProvider
+  | "kimi_oauth"
+  | "qoder_oauth"
+  | "qoder_cn_oauth";
 
 export const CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR =
   "codex_oauth_duplicate_account";

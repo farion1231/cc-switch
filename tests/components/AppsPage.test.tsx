@@ -35,13 +35,18 @@ const mocks = vi.hoisted(() => ({
   runToolLifecycleAction: vi.fn(),
   prepareToolUninstall: vi.fn(),
   copyText: vi.fn(),
+  appSettings: {
+    language: "en" as "en" | "zh",
+    qoderEdition: undefined as "global" | "cn" | undefined,
+  },
+  saveSettings: vi.fn(),
   info: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
   settings: {} as { visibleApps?: undefined; appOrder?: string[] },
   updateSettings: vi.fn(),
-  autoSaveSettings: vi.fn(async () => null),
+  autoSaveSettings: vi.fn(async (_updates: Record<string, unknown>) => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
 }));
@@ -52,13 +57,30 @@ vi.mock("@/lib/api/providers", () => ({
     getClaudeDesktopStatus: async () => mocks.desktopStatus,
   },
 }));
-vi.mock("@/hooks/useSettings", () => ({
-  useSettings: () => ({
-    settings: mocks.settings,
-    updateSettings: mocks.updateSettings,
-    autoSaveSettings: mocks.autoSaveSettings,
-  }),
-}));
+vi.mock("@/hooks/useSettings", async () => {
+  const { useState } = await import("react");
+  return {
+    useSettings: () => {
+      const [settings, setSettings] = useState({
+        ...mocks.appSettings,
+        ...mocks.settings,
+        visibleApps: undefined,
+      });
+      return {
+        settings,
+        updateSettings: (updates: Partial<typeof settings>) => {
+          mocks.updateSettings(updates);
+          setSettings((previous) => ({ ...previous, ...updates }));
+        },
+        autoSaveSettings: (updates: Partial<typeof settings>) => {
+          return mocks
+            .autoSaveSettings(updates)
+            .then(() => mocks.saveSettings(updates));
+        },
+      };
+    },
+  };
+});
 vi.mock("@dnd-kit/core", async () => {
   const actual =
     await vi.importActual<typeof import("@dnd-kit/core")>("@dnd-kit/core");
@@ -230,6 +252,11 @@ afterAll(() => {
 describe("AppsPage concurrent CLI upgrades", () => {
   beforeEach(() => {
     vi.resetModules();
+    mocks.appSettings = { language: "en", qoderEdition: undefined };
+    mocks.saveSettings.mockReset().mockImplementation(async (updates) => {
+      Object.assign(mocks.appSettings, updates);
+      return { requiresRestart: false };
+    });
     upgraded.clear();
     outdated.clear();
     missing.clear();
@@ -282,6 +309,190 @@ describe("AppsPage concurrent CLI upgrades", () => {
         upgraded.add(tool);
         missing.delete(tool);
       });
+  });
+
+  it("defaults Qoder to Chinese for a Chinese interface and installs only that edition", async () => {
+    mocks.appSettings.language = "zh";
+    missing.add("qodercn");
+    const user = userEvent.setup();
+    await renderApps();
+    expect(
+      screen.getByRole("button", { name: "qoder.chinaEdition" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.queryByText("Qoder CLI CN", { selector: "span" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      card("Qoder CLI").getByRole("button", {
+        name: "settings.toolInstall",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+        ["qodercn"],
+        "install",
+        expect.anything(),
+      ),
+    );
+  });
+
+  it.each([
+    ["global", "qoder", "C:/Users/me/.qoder/bin/qodercli/qodercli.exe"],
+    ["cn", "qodercn", "C:/Users/me/.qoder-cn/bin/qoderclicn/qoderclicn.exe"],
+  ] as const)(
+    "shows the %s Qoder installation path immediately after installing and on remount",
+    async (edition, tool, path) => {
+      mocks.appSettings.qoderEdition = edition;
+      missing.add("qoder").add("qodercn");
+      mocks.probeToolInstallations.mockImplementation(async (tools: string[]) =>
+        tools.map((name) =>
+          report(name, {
+            installs:
+              name === tool && !missing.has(name)
+                ? [
+                    {
+                      path,
+                      version: "2.0.0",
+                      runnable: true,
+                      error: null,
+                      source: "system",
+                      is_path_default: true,
+                    },
+                  ]
+                : [],
+          }),
+        ),
+      );
+      const user = userEvent.setup();
+      const view = await renderApps();
+      expect(card("Qoder CLI").queryByText(path)).not.toBeInTheDocument();
+
+      await user.click(
+        card("Qoder CLI").getByRole("button", {
+          name: "settings.toolInstall",
+        }),
+      );
+
+      expect(await card("Qoder CLI").findByText(path)).toHaveAttribute(
+        "title",
+        path,
+      );
+      expect(card("Qoder CLI").getByText("2.0.0")).toBeInTheDocument();
+      expect(mocks.probeToolInstallations).toHaveBeenCalledWith([tool]);
+
+      await user.click(
+        screen.getByRole("button", {
+          name: edition === "cn" ? "qoder.globalEdition" : "qoder.chinaEdition",
+        }),
+      );
+      expect(card("Qoder CLI").queryByText(path)).not.toBeInTheDocument();
+      expect(
+        card("Qoder CLI").getByText("common.notInstalled"),
+      ).toBeInTheDocument();
+      await user.click(
+        screen.getByRole("button", {
+          name: edition === "cn" ? "qoder.chinaEdition" : "qoder.globalEdition",
+        }),
+      );
+      expect(card("Qoder CLI").getByText(path)).toBeInTheDocument();
+
+      view.unmount();
+      const { AppsPage } = await import("@/components/apps/AppsPage");
+      mountApps(AppsPage);
+      expect(card("Qoder CLI").getByText(path)).toBeInTheDocument();
+      expect(mocks.listToolInstallations).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("persists the Qoder edition switch and uses it for uninstall and manual commands", async () => {
+    const user = userEvent.setup();
+    const view = await renderApps();
+    expect(
+      screen.getByRole("button", { name: "qoder.chinaEdition" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    await user.click(
+      screen.getByRole("button", { name: "qoder.chinaEdition" }),
+    );
+    await waitFor(() =>
+      expect(mocks.saveSettings).toHaveBeenCalledWith({ qoderEdition: "cn" }),
+    );
+    await openUninstall("Qoder CLI");
+    await waitFor(() =>
+      expect(mocks.prepareToolUninstall).toHaveBeenCalledWith(
+        "qodercn",
+        expect.anything(),
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "common.cancel" }));
+    view.unmount();
+    const { AppsPage } = await import("@/components/apps/AppsPage");
+    mountApps(AppsPage);
+    expect(
+      screen.getByRole("button", { name: "qoder.chinaEdition" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "settings.manualUninstallCommands",
+      }),
+    );
+    expect(
+      screen.getByText("npm uninstall -g @qodercn-ai/qoderclicn"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("npm uninstall -g @qoder-ai/qodercli"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the same Qoder row and fixed edition selector when switching versions", async () => {
+    const user = userEvent.setup();
+    await renderApps();
+    const row = screen
+      .getByText("Qoder CLI", { selector: "span" })
+      .closest("[data-tool-row]");
+    const selector = within(row as HTMLElement).getByRole("group", {
+      name: "qoder.edition",
+    });
+    expect(selector).toHaveClass("w-[260px]");
+    expect(
+      within(selector).getByRole("button", { name: "qoder.globalEdition" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await user.click(
+      within(selector).getByRole("button", { name: "qoder.chinaEdition" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(selector).getByRole("button", { name: "qoder.chinaEdition" }),
+      ).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(
+      screen
+        .getByText("Qoder CLI", { selector: "span" })
+        .closest("[data-tool-row]"),
+    ).toBe(row);
+    expect(
+      within(row as HTMLElement).getByRole("group", { name: "qoder.edition" }),
+    ).toBe(selector);
+    expect(within(selector).queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  it("restores the previous Qoder edition when saving fails", async () => {
+    mocks.saveSettings.mockRejectedValueOnce(new Error("settings unavailable"));
+    const user = userEvent.setup();
+    await renderApps();
+    await user.click(
+      screen.getByRole("button", { name: "qoder.chinaEdition" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "qoder.chinaEdition" }),
+      ).toHaveAttribute("aria-pressed", "false"),
+    );
+    expect(
+      screen.getByText("Qoder CLI", { selector: "span" }),
+    ).toBeInTheDocument();
   });
 
   it("copies only the selected application's manual command and switches installation methods", async () => {
@@ -723,7 +934,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       within(
         screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
       ).getAllByRole("button", { name: "appsPage.dragHandle" }),
-    ).toHaveLength(APP_IDS.length - 2);
+    ).toHaveLength(APP_IDS.length - 3);
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),
@@ -753,6 +964,40 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(mocks.updateSettings).toHaveBeenCalledWith({ appOrder: next });
     expect(mocks.autoSaveSettings).toHaveBeenCalledWith({ appOrder: next });
   });
+
+  it.each(["global", "cn"] as const)(
+    "keeps both Qoder editions in sidebar order when dragging the %s row",
+    async (edition) => {
+      mocks.appSettings.qoderEdition = edition;
+      await renderApps();
+      const onDragEnd = mocks.dragEndHandlers.at(-1);
+      expect(onDragEnd).toBeDefined();
+      act(() => {
+        onDragEnd?.({
+          active: { id: "qoder" },
+          over: { id: "codex" },
+        } as unknown as DragEndEvent);
+      });
+      const next = [
+        "claude",
+        "claude-desktop",
+        "qoder",
+        "qoder-cn",
+        ...APP_IDS.filter(
+          (app) =>
+            !["claude", "claude-desktop", "qoder", "qoder-cn"].includes(app),
+        ),
+      ];
+      expect(mocks.updateSettings).toHaveBeenCalledWith({ appOrder: next });
+      expect(mocks.autoSaveSettings).toHaveBeenCalledWith({ appOrder: next });
+      expect(rowApps("appsPage.sectionInstalled").slice(0, 4)).toEqual([
+        "claude",
+        "claude-desktop",
+        edition === "cn" ? "qoder-cn" : "qoder",
+        "codex",
+      ]);
+    },
+  );
 
   it("shows the selected path and command while retaining the resolved target for uninstall validation", async () => {
     const pending = deferred<ToolUninstallCandidate[]>();

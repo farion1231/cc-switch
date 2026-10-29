@@ -119,6 +119,11 @@ fn resolve_script_credentials(
         .map(|value| value.trim_end_matches('/').to_owned())
         .unwrap_or(provider_base_url);
 
+    let api_key = if crate::qoder_config::is_qoder(app_type) {
+        crate::qoder_config::resolve_credential(&api_key)
+    } else {
+        api_key
+    };
     (api_key, base_url)
 }
 
@@ -129,8 +134,8 @@ pub async fn query_usage(
     provider_id: &str,
 ) -> Result<UsageResult, AppError> {
     let (script_code, timeout, api_key, base_url, access_token, user_id, template_type) = {
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        let provider = providers.get(provider_id).ok_or_else(|| {
+        let provider = load_usage_provider(state, &app_type, provider_id)?;
+        let provider = provider.as_ref().ok_or_else(|| {
             AppError::localized(
                 "provider.not_found",
                 format!("供应商不存在: {provider_id}"),
@@ -202,8 +207,8 @@ pub async fn test_usage_script(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
-    let providers = state.db.get_all_providers(app_type.as_str())?;
-    let provider = providers.get(provider_id).ok_or_else(|| {
+    let provider = load_usage_provider(state, &app_type, provider_id)?;
+    let provider = provider.as_ref().ok_or_else(|| {
         AppError::localized(
             "provider.not_found",
             format!("供应商不存在: {provider_id}"),
@@ -225,6 +230,18 @@ pub async fn test_usage_script(
         template_type,
     )
     .await
+}
+
+fn load_usage_provider(
+    state: &AppState,
+    app: &AppType,
+    id: &str,
+) -> Result<Option<crate::provider::Provider>, AppError> {
+    if crate::qoder_config::is_qoder(app) {
+        crate::qoder_models::usage_provider(&state.db, app, id).map(Some)
+    } else {
+        state.db.get_provider_by_id(id, app.as_str())
+    }
 }
 
 /// Validate UsageScript configuration (boundary checks)
@@ -259,6 +276,37 @@ mod tests {
             settings_config,
             None,
         )
+    }
+
+    #[test]
+    fn qoder_usage_reads_native_credentials_and_resolves_script_environment_references() {
+        let variable = format!(
+            "CC_SWITCH_QODER_USAGE_TEST_{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        std::env::set_var(&variable, "fixture-resolved-key");
+        let expression = format!("${{{variable}}}");
+        let provider = provider_with_settings(
+            json!({"apiKey":expression,"baseUrl":"https://native.example/v1/"}),
+        );
+        for app in [AppType::Qoder, AppType::QoderCn] {
+            assert_eq!(
+                resolve_script_credentials(&app, &provider, None, None),
+                (
+                    "fixture-resolved-key".into(),
+                    "https://native.example/v1".into()
+                )
+            );
+            assert_eq!(
+                resolve_script_credentials(&app, &provider, Some(&expression), None).0,
+                "fixture-resolved-key"
+            );
+            assert_eq!(
+                resolve_script_credentials(&app, &provider, Some("explicit-key"), None).0,
+                "explicit-key"
+            );
+        }
+        std::env::remove_var(variable);
     }
 
     #[test]

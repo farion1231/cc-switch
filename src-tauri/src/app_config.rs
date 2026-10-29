@@ -14,6 +14,10 @@ pub struct McpApps {
     #[serde(default)]
     pub dsh: bool,
     #[serde(default)]
+    pub qoder: bool,
+    #[serde(default, rename = "qoder-cn")]
+    pub qoder_cn: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub claude: bool,
@@ -47,6 +51,8 @@ impl McpApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
+            AppType::Qoder => self.qoder,
+            AppType::QoderCn => self.qoder_cn,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
@@ -67,6 +73,8 @@ impl McpApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
+            AppType::Qoder => self.qoder = enabled,
+            AppType::QoderCn => self.qoder_cn = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
@@ -98,6 +106,12 @@ impl McpApps {
         if self.dsh {
             apps.push(AppType::Dsh);
         }
+        if self.qoder {
+            apps.push(AppType::Qoder);
+        }
+        if self.qoder_cn {
+            apps.push(AppType::QoderCn);
+        }
         if self.kimi {
             apps.push(AppType::Kimi);
         }
@@ -125,6 +139,8 @@ impl McpApps {
             && !self.opencode
             && !self.hermes
             && !self.agy
+            && !self.qoder
+            && !self.qoder_cn
             && !self.kimi
             && !self.dsh
             && !self.mcode
@@ -142,6 +158,10 @@ pub struct SkillApps {
     pub kimi: bool,
     #[serde(default)]
     pub dsh: bool,
+    #[serde(default)]
+    pub qoder: bool,
+    #[serde(default, rename = "qoder-cn")]
+    pub qoder_cn: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -176,6 +196,8 @@ impl SkillApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
+            AppType::Qoder => self.qoder,
+            AppType::QoderCn => self.qoder_cn,
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
@@ -196,6 +218,8 @@ impl SkillApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
+            AppType::Qoder => self.qoder = enabled,
+            AppType::QoderCn => self.qoder_cn = enabled,
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
@@ -227,6 +251,12 @@ impl SkillApps {
         if self.dsh {
             apps.push(AppType::Dsh);
         }
+        if self.qoder {
+            apps.push(AppType::Qoder);
+        }
+        if self.qoder_cn {
+            apps.push(AppType::QoderCn);
+        }
         if self.kimi {
             apps.push(AppType::Kimi);
         }
@@ -254,6 +284,8 @@ impl SkillApps {
             && !self.opencode
             && !self.hermes
             && !self.agy
+            && !self.qoder
+            && !self.qoder_cn
             && !self.kimi
             && !self.dsh
             && !self.mcode
@@ -481,6 +513,9 @@ pub enum AppType {
     Mcode,
     Kimi,
     Dsh,
+    Qoder,
+    #[serde(rename = "qoder-cn")]
+    QoderCn,
     Agy,
     Omp,
 }
@@ -500,6 +535,8 @@ impl AppType {
             AppType::Mcode => "mcode",
             AppType::Kimi => "kimi",
             AppType::Dsh => "dsh",
+            AppType::Qoder => "qoder",
+            AppType::QoderCn => "qoder-cn",
             AppType::Agy => "agy",
             AppType::Omp => "omp",
         }
@@ -553,6 +590,8 @@ impl AppType {
             AppType::Mcode,
             AppType::Kimi,
             AppType::Dsh,
+            AppType::Qoder,
+            AppType::QoderCn,
             AppType::Agy,
             AppType::Omp,
         ]
@@ -578,12 +617,14 @@ impl FromStr for AppType {
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
+            "qoder" => Ok(AppType::Qoder),
+            "qoder-cn" | "qodercn" => Ok(AppType::QoderCn),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, qoder, qoder-cn, agy, omp。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, qoder, qoder-cn, agy, omp."),
             )),
         }
     }
@@ -627,6 +668,8 @@ impl CommonConfigSnippets {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Qoder
+            | AppType::QoderCn
             | AppType::Omp
             | AppType::Agy => None,
         }
@@ -647,6 +690,8 @@ impl CommonConfigSnippets {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Qoder
+            | AppType::QoderCn
             | AppType::Omp
             | AppType::Agy => {}
         }
@@ -979,6 +1024,8 @@ impl MultiAppConfig {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Qoder
+            | AppType::QoderCn
             | AppType::Omp
             | AppType::Agy => return Ok(false),
         };
@@ -1028,6 +1075,8 @@ impl MultiAppConfig {
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Qoder
+                | AppType::QoderCn
                 | AppType::Omp
                 | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
             };

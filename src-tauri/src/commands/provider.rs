@@ -614,7 +614,17 @@ async fn query_provider_usage_inner(
         .db
         .get_all_providers(app_type.as_str())
         .map_err(|e| format!("Failed to get providers: {e}"))?;
-    let provider = providers.get(provider_id);
+    let native_provider = if crate::qoder_config::is_qoder(&app_type) {
+        Some(
+            crate::qoder_models::usage_provider(&state.db, &app_type, provider_id)
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
+    let provider = native_provider
+        .as_ref()
+        .or_else(|| providers.get(provider_id));
     let usage_script = provider
         .and_then(|p| p.meta.as_ref())
         .and_then(|m| m.usage_script.as_ref());

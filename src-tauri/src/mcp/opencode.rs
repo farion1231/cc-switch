@@ -266,6 +266,8 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         mcode: false,
                         kimi: false,
                         dsh: false,
+                        qoder: false,
+                        qoder_cn: false,
                         pi: false,
                         omp: false,
                     },

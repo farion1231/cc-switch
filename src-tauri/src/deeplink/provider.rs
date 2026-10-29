@@ -345,6 +345,11 @@ pub(crate) fn build_provider_from_request(
                 "Add DeepSeek Harness providers from the DeepSeek Harness page".into(),
             ));
         }
+        AppType::Qoder | AppType::QoderCn => {
+            return Err(AppError::InvalidInput(
+                "Manage Qoder custom models on the Qoder model settings page".into(),
+            ));
+        }
         AppType::Kimi => {
             return Err(AppError::InvalidInput(
                 "Add Kimi Code providers from the Kimi Code page".into(),

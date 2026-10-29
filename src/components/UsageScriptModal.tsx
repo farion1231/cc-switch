@@ -335,7 +335,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: root.apiKey,
             baseUrl: firstModel?.baseUrl || root.baseUrl,
           };
-        } else if (appId === "openclaw") {
+        } else if (
+          appId === "openclaw" ||
+          appId === "qoder" ||
+          appId === "qoder-cn"
+        ) {
           // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
           return {
             apiKey: (config as any).apiKey,

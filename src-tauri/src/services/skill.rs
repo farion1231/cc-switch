@@ -677,7 +677,12 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Dsh => {}
+            AppType::ClaudeDesktop
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Qoder
+            | AppType::QoderCn => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -731,6 +736,7 @@ impl SkillService {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::Qoder | AppType::QoderCn => crate::qoder_config::data_dir(app).join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1093,7 +1099,14 @@ impl SkillService {
                     let ssot_dir = Self::get_ssot_dir()?;
                     let source = ssot_dir.join(&directory);
                     let mut managed_destinations = Vec::new();
-                    for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+                    for app in [
+                        AppType::Mcode,
+                        AppType::Agy,
+                        AppType::Kimi,
+                        AppType::Dsh,
+                        AppType::Qoder,
+                        AppType::QoderCn,
+                    ] {
                         if skill.apps.is_enabled_for(&app) {
                             let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
                                 .join(&directory);
@@ -1183,6 +1196,8 @@ impl SkillService {
                                 | AppType::Agy
                                 | AppType::Kimi
                                 | AppType::Dsh
+                                | AppType::Qoder
+                                | AppType::QoderCn
                                 | AppType::Omp
                         ) {
                             continue;
@@ -1662,6 +1677,8 @@ impl SkillService {
             AppType::Agy,
             AppType::Kimi,
             AppType::Dsh,
+            AppType::Qoder,
+            AppType::QoderCn,
             AppType::Omp,
         ] {
             if skill.apps.is_enabled_for(&app) {
@@ -1678,7 +1695,13 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        if !(skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh) {
+        if !(skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.qoder
+            || skill.apps.qoder_cn)
+        {
             if dest.exists() {
                 fs::remove_dir_all(&dest)?;
             }
@@ -1686,12 +1709,17 @@ impl SkillService {
         }
 
         // 计算新哈希 + 解析新元数据
-        let metadata_source =
-            if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh {
-                &source
-            } else {
-                &dest
-            };
+        let metadata_source = if skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.qoder
+            || skill.apps.qoder_cn
+        {
+            &source
+        } else {
+            &dest
+        };
         let new_hash = Self::compute_dir_hash(metadata_source).ok();
         let skill_md = metadata_source.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
@@ -1719,38 +1747,48 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let mut updated_skill =
-            if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh {
-                Self::update_managed_skill_files(
-                    &source,
+        let mut updated_skill = if skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.qoder
+            || skill.apps.qoder_cn
+        {
+            Self::update_managed_skill_files(
+                &source,
+                &dest,
+                &skill.directory,
+                &deployments,
+                &[
+                    AppType::Mcode,
+                    AppType::Agy,
+                    AppType::Kimi,
+                    AppType::Dsh,
+                    AppType::Qoder,
+                    AppType::QoderCn,
+                ]
+                .iter()
+                .filter(|app| skill.apps.is_enabled_for(app))
+                .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
+                .collect::<Result<Vec<_>>>()?,
+                || {
+                    if !db.update_skill_metadata(&updated_metadata)? {
+                        return Err(anyhow!("Skill no longer installed: {}", skill.id));
+                    }
+                    Ok(updated_metadata)
+                },
+            )?
+        } else {
+            for (destination, deployment) in deployments {
+                Self::refresh_pi_skill_destination(
                     &dest,
-                    &skill.directory,
-                    &deployments,
-                    &[AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh]
-                        .iter()
-                        .filter(|app| skill.apps.is_enabled_for(app))
-                        .map(|app| {
-                            Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                    || {
-                        if !db.update_skill_metadata(&updated_metadata)? {
-                            return Err(anyhow!("Skill no longer installed: {}", skill.id));
-                        }
-                        Ok(updated_metadata)
-                    },
-                )?
-            } else {
-                for (destination, deployment) in deployments {
-                    Self::refresh_pi_skill_destination(
-                        &dest,
-                        &destination,
-                        &updated_metadata.directory,
-                        &deployment,
-                    )?;
-                }
-                Self::persist_updated_skill_metadata(db, &updated_metadata)?
-            };
+                    &destination,
+                    &updated_metadata.directory,
+                    &deployment,
+                )?;
+            }
+            Self::persist_updated_skill_metadata(db, &updated_metadata)?
+        };
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
         updated_skill.apps.omp = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Omp);
 
@@ -1763,6 +1801,8 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Qoder
+                    | AppType::QoderCn
                     | AppType::Omp
             ) {
                 continue;
@@ -1994,7 +2034,14 @@ impl SkillService {
                     .ok()
                     .flatten()
             };
-            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+            for app in [
+                AppType::Mcode,
+                AppType::Agy,
+                AppType::Kimi,
+                AppType::Dsh,
+                AppType::Qoder,
+                AppType::QoderCn,
+            ] {
                 if skill.apps.is_enabled_for(&app) {
                     let destination = Self::get_app_skills_dir(&app)?.join(&directory);
                     if let Some(deployment) =
@@ -2223,45 +2270,59 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
-        if matches!(app, AppType::Agy | AppType::Kimi | AppType::Dsh) {
+        if matches!(
+            app,
+            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Qoder | AppType::QoderCn
+        ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
             }
-            let directory = Self::require_valid_directory(&skill.directory)?;
-            let ssot = Self::get_ssot_dir()?;
-            let source = ssot.join(&directory);
-            let native_dir = Self::get_distinct_app_skills_dir(&ssot, app)?;
-            let native = native_dir.join(&directory);
-            Self::ensure_pi_skill_destination_matches(&source, &native, &directory)?;
-            fs::create_dir_all(&native_dir)?;
-            let staging = tempfile::Builder::new()
-                .prefix(".cc-switch-toggle-")
-                .tempdir_in(&native_dir)?;
-            let previous = staging.path().join("old");
-            let existed = native.exists() || Self::is_symlink(&native);
-            if existed {
-                fs::rename(&native, &previous)?;
-            }
-            skill.apps.set_enabled_for(app, enabled);
-            let result = (|| -> Result<()> {
-                if enabled {
-                    Self::sync_to_app_dir(&directory, app)?;
+            let skill_directory = skill.directory.clone();
+            let mut change = || -> Result<()> {
+                let directory = Self::require_valid_directory(&skill.directory)?;
+                let ssot = Self::get_ssot_dir()?;
+                let source = ssot.join(&directory);
+                let native_dir = Self::get_distinct_app_skills_dir(&ssot, app)?;
+                let native = native_dir.join(&directory);
+                Self::ensure_pi_skill_destination_matches(&source, &native, &directory)?;
+                fs::create_dir_all(&native_dir)?;
+                let staging = tempfile::Builder::new()
+                    .prefix(".cc-switch-toggle-")
+                    .tempdir_in(&native_dir)?;
+                let previous = staging.path().join("old");
+                let existed = native.exists() || Self::is_symlink(&native);
+                if existed {
+                    fs::rename(&native, &previous)?;
                 }
-                if !db.update_skill_apps(id, &skill.apps)? {
-                    return Err(anyhow!("Skill no longer installed: {id}"));
+                skill.apps.set_enabled_for(app, enabled);
+                let result = (|| -> Result<()> {
+                    if enabled {
+                        Self::sync_to_app_dir(&directory, app)?;
+                    }
+                    if !db.update_skill_apps(id, &skill.apps)? {
+                        return Err(anyhow!("Skill no longer installed: {id}"));
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    if native.exists() || Self::is_symlink(&native) {
+                        Self::remove_path(&native)?;
+                    }
+                    if existed {
+                        fs::rename(previous, native)?;
+                    }
+                    return Err(error);
                 }
                 Ok(())
-            })();
-            if let Err(error) = result {
-                if native.exists() || Self::is_symlink(&native) {
-                    Self::remove_path(&native)?;
-                }
-                if existed {
-                    fs::rename(previous, native)?;
-                }
-                return Err(error);
-            }
-            return Ok(());
+            };
+            return if enabled && crate::qoder_config::is_qoder(app) {
+                crate::qoder_config::enable_skill_and_commit(app, &skill_directory, || {
+                    change().map_err(|error| crate::error::AppError::Message(error.to_string()))
+                })
+                .map_err(Into::into)
+            } else {
+                change()
+            };
         }
 
         // 更新状态
@@ -2436,7 +2497,14 @@ impl SkillService {
 
             // An explicitly imported MCode link must point at the managed copy
             // so subsequent toggles and updates can verify its ownership.
-            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+            for app in [
+                AppType::Mcode,
+                AppType::Agy,
+                AppType::Kimi,
+                AppType::Dsh,
+                AppType::Qoder,
+                AppType::QoderCn,
+            ] {
                 if apps.is_enabled_for(&app) {
                     let projection = (|| -> Result<()> {
                         let native =
@@ -2485,6 +2553,8 @@ impl SkillService {
                         | AppType::Agy
                         | AppType::Kimi
                         | AppType::Dsh
+                        | AppType::Qoder
+                        | AppType::QoderCn
                         | AppType::Omp
                 ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
@@ -2597,6 +2667,8 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Qoder
+                | AppType::QoderCn
                 | AppType::Omp
         ) {
             return Ok(());
@@ -2779,6 +2851,8 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Qoder
+                | AppType::QoderCn
                 | AppType::Omp
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
@@ -2987,6 +3061,8 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Qoder
+                    | AppType::QoderCn
                     | AppType::Omp
             ) {
                 let source = ssot_dir.join(&directory);
@@ -3062,7 +3138,12 @@ impl SkillService {
         if app_dir.exists()
             && !matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
+                AppType::Mcode
+                    | AppType::Agy
+                    | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Qoder
+                    | AppType::QoderCn
             )
         {
             for entry in fs::read_dir(&app_dir)? {
@@ -4213,7 +4294,12 @@ impl SkillService {
         for app in AppType::all() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
+                AppType::Mcode
+                    | AppType::Agy
+                    | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Qoder
+                    | AppType::QoderCn
             ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;
@@ -5957,7 +6043,13 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn agy_and_kimi_skill_toggle_rolls_back_on_database_failure() {
-        for app in [AppType::Agy, AppType::Kimi, AppType::Dsh] {
+        for app in [
+            AppType::Agy,
+            AppType::Kimi,
+            AppType::Dsh,
+            AppType::Qoder,
+            AppType::QoderCn,
+        ] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
             let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);

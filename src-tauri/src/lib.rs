@@ -42,6 +42,9 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod proxy;
+mod qoder_accounts;
+pub mod qoder_config;
+pub mod qoder_models;
 mod services;
 mod session_manager;
 mod settings;
@@ -1238,6 +1241,7 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
             app.manage(services::kimi_oauth::KimiOAuthManager::default());
+            app.manage(commands::QoderAuthState::default());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1614,6 +1618,17 @@ pub fn run() {
             commands::delete_pi_prompt_template,
             // Pi native provider and session views
             commands::get_pi_current_state,
+            commands::get_qoder_models,
+            commands::save_qoder_provider,
+            commands::delete_qoder_provider,
+            commands::set_qoder_model,
+            commands::save_qoder_usage_script,
+            commands::get_qoder_auth_status,
+            commands::start_qoder_login,
+            commands::poll_qoder_login,
+            commands::cancel_qoder_login,
+            commands::use_qoder_account,
+            commands::delete_qoder_account,
             commands::update_pi_provider_usage_script,
             commands::get_pi_session_discovery,
             // Oh My Pi native provider and session views

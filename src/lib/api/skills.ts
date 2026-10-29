@@ -15,6 +15,8 @@ export type AppType =
   | "mcode"
   | "kimi"
   | "dsh"
+  | "qoder"
+  | "qoder-cn"
   | "agy"
   | "omp";
 
@@ -32,6 +34,8 @@ export interface SkillApps {
   mcode?: boolean;
   kimi?: boolean;
   dsh?: boolean;
+  qoder?: boolean;
+  "qoder-cn"?: boolean;
   agy?: boolean;
   omp?: boolean;
 }

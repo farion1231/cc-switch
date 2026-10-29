@@ -17,6 +17,8 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
   dsh: "DeepSeek Harness",
+  qoder: "Qoder CLI",
+  "qoder-cn": "Qoder CLI CN",
   agy: "Antigravity",
   omp: "Oh My Pi",
 };
@@ -34,6 +36,8 @@ const APP_ICON_NAME: Record<AppId, string> = {
   mcode: "minimax",
   kimi: "kimi",
   dsh: "deepseek",
+  qoder: "qoder",
+  "qoder-cn": "qoder",
   agy: "antigravity",
   omp: "omp",
 };

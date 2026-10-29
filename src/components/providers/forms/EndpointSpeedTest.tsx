@@ -22,6 +22,8 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   mcode: 8,
   kimi: 8,
   dsh: 8,
+  qoder: 8,
+  "qoder-cn": 8,
   agy: 8,
   omp: 8,
 };

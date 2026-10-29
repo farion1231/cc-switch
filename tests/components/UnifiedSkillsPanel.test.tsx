@@ -913,6 +913,8 @@ describe("UnifiedSkillsPanel", () => {
           mcode: false,
           kimi: false,
           dsh: false,
+          qoder: false,
+          "qoder-cn": false,
           agy: false,
         },
       },

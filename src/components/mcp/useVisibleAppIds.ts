@@ -1,6 +1,7 @@
+import { resolveVisibleApps } from "@/config/qoder";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api/types";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { useSettingsQuery } from "@/lib/query";
 
 /**
@@ -9,9 +10,9 @@ import { useSettingsQuery } from "@/lib/query";
  */
 export function useVisibleAppIds<T extends AppId>(appIds: readonly T[]): T[] {
   const { data: settings } = useSettingsQuery();
-  const visibleApps = settings?.visibleApps;
+  const { i18n } = useTranslation();
   return useMemo(() => {
-    const visible = { ...DEFAULT_VISIBLE_APPS, ...visibleApps };
+    const visible = resolveVisibleApps(settings, i18n.language);
     return appIds.filter((app) => visible[app]);
-  }, [appIds, visibleApps]);
+  }, [appIds, settings, i18n.language]);
 }

@@ -1,3 +1,4 @@
+import { resolveVisibleApps } from "@/config/qoder";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -24,7 +25,6 @@ import {
 } from "@/lib/query";
 import { piApi, sessionsApi, type AppId } from "@/lib/api";
 import type { SessionMeta } from "@/types";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
@@ -138,7 +138,7 @@ export function SessionManagerPage({
   fromApp,
   onOpenTerminalSettings,
 }: SessionManagerPageProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = useMemo(() => data ?? [], [data]);
@@ -195,14 +195,14 @@ export function SessionManagerPage({
 
   // 下拉里只列「应用」页设为显示的应用；Claude Code 的会话在 Claude Desktop 显示时也算
   const availableApps = useMemo(() => {
-    const visible = { ...DEFAULT_VISIBLE_APPS, ...settings?.visibleApps };
+    const visible = resolveVisibleApps(settings, i18n.language);
     return SESSION_APP_IDS.filter(
       (app) =>
         visible[app] ||
         (app === "claude" && visible["claude-desktop"]) ||
         app === appFilter,
     );
-  }, [settings?.visibleApps, appFilter]);
+  }, [settings, appFilter, i18n.language]);
 
   const scopedSessions = useMemo(
     () =>
