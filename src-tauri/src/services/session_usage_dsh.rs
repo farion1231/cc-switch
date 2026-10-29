@@ -1194,11 +1194,15 @@ mod tests {
             let db_path = dir.path().join("usage.db");
             let db = open_db(&db_path);
             let root = dir.path().join("sessions");
-            let path = root.join("project/session-test").join(if compressed {
-                "session.v4.jsonl.zstd"
-            } else {
-                "session.v4.jsonl"
-            });
+            // Match the separators produced by read_dir, including in Windows cursor keys.
+            let path = root
+                .join("project")
+                .join("session-test")
+                .join(if compressed {
+                    "session.v4.jsonl.zstd"
+                } else {
+                    "session.v4.jsonl"
+                });
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             let encode = |events: &[Value]| {
                 if compressed {
@@ -1213,7 +1217,10 @@ mod tests {
             };
             let start = 1_700_000_000_000;
             fs::write(&path, encode(&[header(), step_start(1, 1, start)])).unwrap();
-            assert_eq!(sync_dsh_usage_from(&db, &root).unwrap().imported, 0);
+            let initial = sync_dsh_usage_from(&db, &root).unwrap();
+            assert!(initial.errors.is_empty(), "{:?}", initial.errors);
+            assert_eq!(initial.files_scanned, 1);
+            assert_eq!(initial.imported, 0);
             assert_eq!(
                 cursor_byte_offset(&db, &path),
                 Some(fs::metadata(&path).unwrap().len() as i64)
