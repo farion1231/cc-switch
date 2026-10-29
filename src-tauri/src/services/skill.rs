@@ -8242,6 +8242,7 @@ mod tests {
         let db = Arc::new(Database::memory().expect("memory db"));
         let service = SkillService {
             repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
         };
 
         let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
@@ -8298,6 +8299,7 @@ mod tests {
         let db = Arc::new(Database::memory().expect("memory db"));
         let service = SkillService {
             repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
         };
 
         let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
@@ -8342,6 +8344,7 @@ mod tests {
         let db = Arc::new(Database::memory().expect("memory db"));
         let service = SkillService {
             repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
         };
 
         let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
@@ -8406,6 +8409,7 @@ mod tests {
         let db = Arc::new(Database::memory().expect("memory db"));
         let service = SkillService {
             repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
         };
 
         let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
@@ -8451,6 +8455,7 @@ mod tests {
         let db = Arc::new(Database::memory().expect("memory db"));
         let service = SkillService {
             repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
         };
 
         let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
