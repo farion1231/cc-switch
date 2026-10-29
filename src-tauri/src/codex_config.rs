@@ -2488,6 +2488,18 @@ fn codex_official_mirror_baseline(official: &Value, model: &str) -> Value {
 /// 靠这一点区分，免得把旧行误当镜像、丢掉用户填的窗口。
 fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> bool {
     let expected = codex_official_mirror_baseline(official, model);
+    // 旧格式只有 base_instructions。提示词和工具也须匹配，避免把 Anthropic
+    // 通用模板或从其他模型克隆的 Chat 条目误认成官方镜像。
+    if entry
+        .get("model_messages")
+        .and_then(|messages| messages.get("instructions_template"))
+        .is_none()
+        && ["base_instructions", "apply_patch_tool_type"]
+            .iter()
+            .any(|key| entry.get(*key) != expected.get(*key))
+    {
+        return false;
+    }
     let renamed_mirror = entry.get("description") == expected.get("description")
         && entry.get("description") != entry.get("display_name");
     (renamed_mirror || entry.get("display_name") == expected.get("display_name"))
@@ -3112,13 +3124,13 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         ) {
             continue;
         }
-        // 官方镜像只还原模型名及窗口、档位的显式差异，不能把官方能力当成用户填的存回库里。通用模板没有
-        // `model_messages`（走 Anthropic 的行不照搬）；旧版 ProxyChat 克隆的 gpt-5.5 模板
-        // 有，但带着用户填的显示名、窗口，下面逐项比对不上，照旧还原。
+        // 官方镜像只还原模型名及窗口、档位的显式差异，不能把官方能力当成用户填的存回库里。
+        // 新旧指令字段都可用于识别；通用模板和旧版 Chat 克隆仍需经过下面的镜像比对。
         if entry
             .get("model_messages")
             .and_then(|messages| messages.get("instructions_template"))
             .is_some()
+            || entry.get("base_instructions").is_some_and(Value::is_string)
         {
             let official = official.get_or_insert_with(codex_openai_official_models);
             if let Some(found) = find_codex_official_model(model, official)
