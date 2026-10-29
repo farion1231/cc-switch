@@ -2118,9 +2118,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "暂无额外选项",
     "noModelOptions": "模型选项，点击 + 添加",
-    "modelLimits": "Token 限制",
-    "limitContext": "上下文",
-    "limitOutput": "输出",
     "modelExtraFields": "模型属性",
     "noModelExtraFields": "模型属性 (variants, cost 等)，点击 + 添加",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2564,7 +2561,7 @@
       "scanTitle": "自动扫描会话日志",
       "scanHelpTitle": "会话日志是什么",
       "scanHelp": "各应用写在本机的会话记录。CC Switch 从里面读取用量，不开路由也有数据。",
-      "coverage": "覆盖 7 个应用：{{apps}}",
+      "coverage": "覆盖 {{total}} 个应用：{{apps}}",
       "cadenceOn": "启动时扫描一次，后台每 10 分钟一次；打开用量页时立即扫描，之后按所选间隔扫描",
       "cadenceOff": "自动扫描已关闭，只在点「立即同步」时扫描",
       "unsupported": "Hermes、OpenClaw 暂不支持用量统计",
@@ -5155,7 +5152,8 @@
       "title": "添加 DeepSeek Harness 供应商",
       "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"
     },
-    "sharedProviders": "Web、Desktop 共用这份供应商列表：添加、编辑、移除会一起写入 web 和 desktop profile（没有就先建好，Desktop 首次启动时会保留），以及已初始化的 headless、acp。",
+    "sharedProviders": "已添加的供应商会一起写进 DeepSeek Harness 的 Web 和 Desktop 配置（以及已初始化的 headless、acp），在 DeepSeek Harness 里选模型即可。",
+    "sharedProvidersNote": "Web 和 Desktop 共用这份列表",
     "account": {
       "help": "DeepSeek 账号用浏览器登录（OAuth），可以在这里登录，也可以在 DeepSeek Harness 里登录。登录信息保存在 $DSH_HOME/.credentials.yaml（默认 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一处登录或退出，两端同时生效，运行中的 DeepSeek Harness 会自动重新读取。账号路由的模型用量在用量页单独显示为「DeepSeek 账号（OAuth）」。",
       "statusFailed": "无法读取 DeepSeek 账号的登录状态",
@@ -5169,13 +5167,15 @@
       "balance": "余额 {{amount}}",
       "bonus": "赠金 {{amount}}",
       "balanceFailed": "余额暂时查不到",
-      "noticeSignedOutTitle": "未登录 DeepSeek 账号",
-      "noticeSignedOut": "在授权中心或 DeepSeek Harness 里用浏览器登录 DeepSeek 账号后，可直接使用账号下的模型；Web 和 Desktop 共用这份登录。",
-      "noticeExpiredTitle": "DeepSeek 账号登录已失效",
-      "noticeExpired": "请在授权中心或 DeepSeek Harness 里重新登录，Web 和 Desktop 会一起恢复。",
-      "noticeSignedIn": "DeepSeek 账号：{{name}}",
       "signedIn": "DeepSeek 账号已登录，Web 和 Desktop 都可以使用",
-      "signInFailed": "DeepSeek 账号登录失败"
+      "signInFailed": "DeepSeek 账号登录失败",
+      "presetName": "DeepSeek 官方登录",
+      "presetDescription": "用浏览器登录 DeepSeek 账号后，DeepSeek Harness 会直接提供账号下的模型，不用再添加供应商；Web 和 Desktop 共用这份登录。登录和退出在授权中心管理，登录后账号会出现在「已添加」里。",
+      "manageAccounts": "管理 DeepSeek 账号",
+      "cardSubtitle": "官方账号 · Web 和 Desktop 共用",
+      "expiredChip": "登录已失效",
+      "editDisabled": "账号下的模型由 DeepSeek Harness 自动提供，无需编辑。",
+      "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
   }
