@@ -320,11 +320,15 @@ impl Database {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
-                last_tail_fingerprint INTEGER
+                last_tail_fingerprint INTEGER,
+                parser_state TEXT
             )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 修复跑过未发布开发版 v24 的库：parser_state 随 v24 定稿，不单独 bump 版本
+        Self::add_column_if_missing(conn, "session_log_sync", "parser_state", "TEXT")?;
 
         // Session detail rows are pruned after rollup, so request IDs needed
         // for fork/rewrite deduplication live in a compact durable ledger.
@@ -632,6 +636,15 @@ impl Database {
                                     "BOOLEAN NOT NULL DEFAULT 0",
                                 )?;
                             }
+                        }
+                        // DSH 用量导入：游标处未完成请求的解析上下文
+                        if Self::table_exists(conn, "session_log_sync")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "session_log_sync",
+                                "parser_state",
+                                "TEXT",
+                            )?;
                         }
                         Self::set_user_version(conn, 24)?;
                     }
@@ -3909,6 +3922,52 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrate_v23_to_v24_preserves_existing_session_cursors() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY, last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0, last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER, last_tail_fingerprint INTEGER
+             );
+             INSERT INTO session_log_sync VALUES ('dsh:test', 11, 123, 12, 123, NULL);",
+        )?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let row: (i64, i64, Option<String>) = conn.query_row(
+            "SELECT last_modified, last_byte_offset, parser_state FROM session_log_sync",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(row, (11, 123, None));
+        Ok(())
+    }
+
+    #[test]
+    fn create_tables_patches_parser_state_into_unreleased_v24_dev_databases() -> Result<(), AppError>
+    {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY, last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0, last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER, last_tail_fingerprint INTEGER
+             );",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+        Database::create_tables_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert!(Database::has_column(
+            &conn,
+            "session_log_sync",
+            "parser_state"
+        )?);
+        Ok(())
+    }
 
     #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {

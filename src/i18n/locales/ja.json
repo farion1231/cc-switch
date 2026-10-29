@@ -197,6 +197,9 @@
       "forget": "最近使ったフォルダから削除",
       "confirm": "ターミナルを開く",
       "skipPermissions": "権限の確認をスキップ",
+      "extraArgs": "追加の引数（任意）",
+      "extraArgsPlaceholder": "例: --debug --append-system-prompt \"簡潔に答えて\"",
+      "extraArgsHint": "起動コマンドの後ろに付け、今回開くターミナルだけで使います。スペースで区切り、スペースを含む値は引用符で囲んでください。",
       "agySwitchTitle": "agy のログインを切り替えます",
       "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
       "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。"
@@ -728,6 +731,15 @@
       "saved": "保存済み",
       "unsavedChanges": "先に設定を保存してください",
       "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
+      "clear": "設定をクリア",
+      "clearing": "クリア中...",
+      "clearSuccess": "この端末の WebDAV 設定をクリアしました",
+      "clearFailed": "設定のクリアに失敗しました：{{error}}",
+      "clearConfirm": {
+        "title": "WebDAV 設定をクリア",
+        "message": "この端末に保存されている WebDAV のアドレス、ユーザー名、パスワード、リモートフォルダを削除し、自動同期を停止します。サーバーにアップロード済みのデータは削除されません。",
+        "confirm": "クリア"
+      },
       "fetchingRemote": "リモート情報を取得中...",
       "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
       "confirmDownload": {
@@ -1353,6 +1365,7 @@
     "groupByTime": "時間順",
     "groupByProject": "プロジェクト別",
     "desktopNote": "Claude Desktop には独自のセッション記録がないため、Claude Code のセッションを表示しています。",
+    "dshMergedNote": "DeepSeek Harness の Web と Desktop は同じセッション記録を共有しているため、ここではまとめて表示します。",
     "matchCount": "一致 {{count}} 件",
     "totalCount": "全 {{count}} 件",
     "selectAllMatches": "一致したものをすべて選択",
@@ -2105,9 +2118,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "追加オプションはありません",
     "noModelOptions": "モデルオプション、+ をクリックして追加",
-    "modelLimits": "トークン制限",
-    "limitContext": "コンテキスト",
-    "limitOutput": "出力",
     "modelExtraFields": "モデルプロパティ",
     "noModelExtraFields": "モデルプロパティ（variants、cost など）、+ をクリックして追加",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2245,6 +2255,11 @@
       "short": "セッションログ",
       "label": "{{app}} · セッションログ",
       "hint": "ルーティングがオフの間はクライアントのセッションログから読み取るため、どのプロバイダーかは区別できません"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek アカウント",
+      "label": "{{app}} · DeepSeek アカウント（OAuth）",
+      "hint": "セッションログから読み取った、DeepSeek アカウントのログインを使ったリクエストです。Web と Desktop はこのログインを共有するため、使用量はまとめて集計されます"
     },
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
@@ -2546,7 +2561,7 @@
       "scanTitle": "セッションログを自動スキャン",
       "scanHelpTitle": "セッションログとは",
       "scanHelp": "各アプリがこのコンピューターに書き込む会話記録です。CC Switch はここから使用量を読み取るので、ルーティングなしでもデータがあります。",
-      "coverage": "対象の 7 アプリ：{{apps}}",
+      "coverage": "対象の {{total}} アプリ：{{apps}}",
       "cadenceOn": "起動時とバックグラウンドで 10 分ごとにスキャン。使用量ページを開くとすぐにスキャンし、その後は選択した間隔でスキャン",
       "cadenceOff": "自動スキャンはオフです。「今すぐ同期」を押したときだけスキャンします",
       "unsupported": "Hermes と OpenClaw は使用量統計にまだ対応していません",
@@ -4171,6 +4186,7 @@
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
+    "expiredHintAccounts": "「アカウント」でこのアカウントに再ログインしてください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
   },
@@ -4602,6 +4618,7 @@
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
       "claudeNote": "（トップレベルの mcpServers）",
+      "dshNote": "（初期化済みのすべての profile に書き込みます：web、desktop、headless、acp）",
       "ok": "OK"
     },
     "templateLabels": {
@@ -5075,6 +5092,31 @@
     "empty": {
       "title": "DeepSeek Harness プロバイダーを追加",
       "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
+    },
+    "sharedProviders": "追加したプロバイダーは DeepSeek Harness の Web と Desktop の設定（初期化済みの headless、acp も含む）にまとめて書き込まれます。モデルは DeepSeek Harness の中で選びます。",
+    "sharedProvidersNote": "Web と Desktop で共有",
+    "account": {
+      "help": "DeepSeek アカウントはブラウザでログインします（OAuth）。ここでも DeepSeek Harness でもログインできます。ログイン情報は $DSH_HOME/.credentials.yaml（既定は ~/.dsh/.credentials.yaml） に保存され、DeepSeek Harness の Web と Desktop で共有されます。どこでログイン・ログアウトしても両方に反映され、実行中の DeepSeek Harness は自動で読み直します。アカウント経由のモデルの使用量は、使用量ページで「DeepSeek アカウント（OAuth）」として別に表示されます。",
+      "statusFailed": "DeepSeek アカウントのログイン状態を読み取れません",
+      "empty": "DeepSeek アカウントにログインしていません",
+      "unnamed": "DeepSeek アカウント",
+      "expired": "ログインの有効期限が切れました。再ログインしてください",
+      "shared": "Web と Desktop で共有",
+      "signOut": "ログアウト",
+      "signOutConfirm": "DeepSeek アカウント「{{name}}」からログアウトしますか？DeepSeek Harness の Web と Desktop の両方がログアウトされます。API キーのプロバイダーには影響しません。",
+      "signOutFailed": "DeepSeek アカウントからログアウトできませんでした",
+      "balance": "残高 {{amount}}",
+      "bonus": "ボーナス {{amount}}",
+      "balanceFailed": "現在残高を取得できません",
+      "signedIn": "DeepSeek アカウントにログインしました（Web と Desktop の両方で使えます）",
+      "signInFailed": "DeepSeek アカウントにログインできませんでした",
+      "presetName": "DeepSeek 公式ログイン",
+      "presetDescription": "ブラウザで DeepSeek アカウントにログインすると、DeepSeek Harness がアカウントのモデルをそのまま提供するため、プロバイダーを追加する必要はありません。Web と Desktop はこのログインを共有します。ログインとログアウトは認証センターで管理し、ログイン後はアカウントが「追加済み」に表示されます。",
+      "manageAccounts": "DeepSeek アカウントを管理",
+      "cardSubtitle": "公式アカウント · Web と Desktop で共有",
+      "expiredChip": "ログイン無効",
+      "editDisabled": "このアカウントのモデルは DeepSeek Harness が自動で提供するため、編集は不要です。",
+      "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
   }
