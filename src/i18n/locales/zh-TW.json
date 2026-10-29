@@ -197,6 +197,9 @@
       "forget": "從最近用過中移除",
       "confirm": "開啟終端機",
       "skipPermissions": "略過權限確認",
+      "extraArgs": "附加參數（選填）",
+      "extraArgsPlaceholder": "例如 --debug --append-system-prompt \"簡潔回答\"",
+      "extraArgsHint": "接在啟動命令後面，只用於這次開啟的終端機。用空格分隔，含空格的值用引號括起來。",
       "agySwitchTitle": "會切換 agy 的登入",
       "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
       "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。"
@@ -405,7 +408,7 @@
     },
     "unifyCodexHistory": {
       "title": "統一 Codex 會話歷史",
-      "message": "官方訂閱和第三方 API 將共用 custom 連線識別，Codex CLI 與桌面版均適用。切換連線後，已開啟的聊天可能需要重新開啟。目標後端可能不支援原有加密推理內容。\n\n可同時遷入現有官方對話歷史；遷移前自動備份，關閉時可依備份還原。",
+      "message": "官方訂閱和第三方 API 將共用 custom 連線識別，Codex CLI 與桌面版均適用。切換連線後，已開啟的聊天可能需要重新開啟。目標後端可能不支援原有加密推理內容。\n\n可同時遷入現有官方對話歷史；遷移前自動備份，關閉時可依備份還原。\n\n官方連線會使用 custom 而非內建 openai 身分，可能隱藏 Dot、語音輸入等桌面功能。若只需在支援跨供應商清單的桌面版查看對話，通常無需啟用。",
       "migrateExisting": "同時遷入現有官方會話歷史",
       "confirm": "我已了解，繼續開啟"
     },
@@ -417,7 +420,7 @@
     },
     "unifyCodexHistoryOff": {
       "title": "關閉統一會話歷史",
-      "message": "官方訂閱將重新使用 openai 連線識別。在 custom 下建立的對話仍保留該識別；桌面版能顯示它們，不代表連線已更新。之前遷入的官方對話可依備份帳本還原。",
+      "message": "官方訂閱將重新使用 openai 連線識別碼；原 custom 對話仍保留該識別碼，可能無法繼續連線。\n\n依備份還原只處理當時遷入的官方對話，不包括啟用期間新建或來源無法確認的 custom 對話；這些對話需要保留有效的原連線。\n\n如需使用原生官方桌面功能，停用後選擇 OpenAI Official，並完全結束、重新開啟 Codex。",
       "restoreBackup": "把開啟時遷入的官方會話還原回官方歷史（按備份精確還原）",
       "confirm": "關閉"
     },
@@ -734,6 +737,15 @@
       "saved": "已儲存",
       "unsavedChanges": "請先儲存設定",
       "saveBeforeSync": "請先儲存設定，再使用上傳/下載。",
+      "clear": "清除設定",
+      "clearing": "清除中...",
+      "clearSuccess": "已清除本機的 WebDAV 設定",
+      "clearFailed": "清除設定失敗：{{error}}",
+      "clearConfirm": {
+        "title": "清除 WebDAV 設定",
+        "message": "將從本機刪除已儲存的 WebDAV 位址、帳號、密碼和遠端目錄，並停止自動同步。雲端已上傳的資料不會被刪除。",
+        "confirm": "清除"
+      },
       "fetchingRemote": "取得遠端資訊...",
       "fetchRemoteFailed": "取得遠端資訊失敗，請檢查設定和網路後重試。",
       "confirmDownload": {
@@ -888,6 +900,7 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
     "unifyCodexSessionHistoryDescription": "官方訂閱和第三方 API 共用 custom 連線識別，使儲存的對話能夠跟隨連線切換。Codex 桌面版也適用：顯示全部對話不等於更新對話的連線。已開啟的聊天可能需要重新開啟才能採用新設定。可選擇遷入現有官方對話（遷移前自動備份），關閉時依備份還原。跨供應商續聊亦取決於目標後端是否支援原有加密推理內容。",
+    "unifyCodexDesktopCompatibility": "統一歷史主要用於 CLI 歷史清單，可能隱藏 Codex 桌面端的 Dot、語音輸入等官方功能。若目前桌面版本已能跨供應商列出對話，通常無需僅為查看歷史而啟用。",
     "codexManagedHistory": "遷入第三方舊對話",
     "codexManagedHistoryAction": "遷入舊對話",
     "codexManagedHistoryCompleted": "已檢查第三方舊對話，遷移 {{files}} 個檔案、{{rows}} 筆索引記錄。請重新開啟對話載入連線；若仍使用舊設定，請自行重新啟動 Codex。",
@@ -1376,6 +1389,7 @@
     "groupByTime": "按時間",
     "groupByProject": "按專案",
     "desktopNote": "Claude Desktop 沒有單獨的工作階段記錄，這裡顯示 Claude Code 的工作階段。",
+    "dshMergedNote": "DeepSeek Harness 的 Web 和 Desktop 共用同一份工作階段記錄，這裡合併顯示。",
     "matchCount": "符合 {{count}} 個工作階段",
     "totalCount": "共 {{count}} 個工作階段",
     "selectAllMatches": "全選符合結果",
@@ -2268,6 +2282,11 @@
       "short": "工作階段日誌",
       "label": "{{app}} · 工作階段日誌",
       "hint": "未開啟路由時從用戶端的工作階段日誌讀取，無法區分是哪家供應商"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek 帳號",
+      "label": "{{app}} · DeepSeek 帳號（OAuth）",
+      "hint": "從工作階段記錄讀取，使用的是 DeepSeek 帳號登入；Web 和 Desktop 共用這份登入，用量合併統計"
     },
     "stream": "串流",
     "nonStream": "非串流",
@@ -4194,6 +4213,7 @@
     "extraUsage": "超額用量",
     "expired": "工作階段已過期",
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
+    "expiredHintAccounts": "請在授權中心重新登入這個帳號",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
   },
@@ -4625,6 +4645,7 @@
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
       "claudeNote": "（頂層 mcpServers）",
+      "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -5098,6 +5119,28 @@
     "empty": {
       "title": "新增 DeepSeek Harness 供應商",
       "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"
+    },
+    "sharedProviders": "Web、Desktop 共用這份供應商列表：新增、編輯、移除會一起寫入 web 和 desktop profile（沒有就先建好，Desktop 首次啟動時會保留），以及已初始化的 headless、acp。",
+    "account": {
+      "help": "DeepSeek 帳號以瀏覽器登入（OAuth），可以在這裡登入，也可以在 DeepSeek Harness 裡登入。登入資訊儲存在 $DSH_HOME/.credentials.yaml（預設 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一處登入或登出，兩端同時生效，執行中的 DeepSeek Harness 會自動重新讀取。帳號路由的模型用量在用量頁單獨顯示為「DeepSeek 帳號（OAuth）」。",
+      "statusFailed": "無法讀取 DeepSeek 帳號的登入狀態",
+      "empty": "未登入 DeepSeek 帳號",
+      "unnamed": "DeepSeek 帳號",
+      "expired": "登入已失效，請重新登入",
+      "shared": "Web 與 Desktop 共用",
+      "signOut": "登出",
+      "signOutConfirm": "登出 DeepSeek 帳號「{{name}}」？DeepSeek Harness 的 Web 和 Desktop 會同時登出，API Key 供應商不受影響。",
+      "signOutFailed": "登出 DeepSeek 帳號失敗",
+      "balance": "餘額 {{amount}}",
+      "bonus": "贈金 {{amount}}",
+      "balanceFailed": "暫時查不到餘額",
+      "noticeSignedOutTitle": "未登入 DeepSeek 帳號",
+      "noticeSignedOut": "在授權中心或 DeepSeek Harness 裡以瀏覽器登入 DeepSeek 帳號後，可直接使用帳號下的模型；Web 和 Desktop 共用這份登入。",
+      "noticeExpiredTitle": "DeepSeek 帳號登入已失效",
+      "noticeExpired": "請在授權中心或 DeepSeek Harness 裡重新登入，Web 和 Desktop 會一起恢復。",
+      "noticeSignedIn": "DeepSeek 帳號：{{name}}",
+      "signedIn": "DeepSeek 帳號已登入，Web 和 Desktop 都可以使用",
+      "signInFailed": "DeepSeek 帳號登入失敗"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
   }

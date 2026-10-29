@@ -308,6 +308,9 @@ export function CodexAuthSettings({
         }
         onCheckedChange={handleUnifyHistoryChange}
       />
+      <p role="note" className="px-4 py-3 text-caption text-warning-text">
+        {t("settings.unifyCodexDesktopCompatibility")}
+      </p>
 
       {!settings.unifyCodexSessionHistory && hasUnifyBackup && (
         <SettingsRow

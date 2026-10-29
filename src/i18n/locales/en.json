@@ -197,6 +197,9 @@
       "forget": "Remove from recent",
       "confirm": "Open Terminal",
       "skipPermissions": "Skip permission prompts",
+      "extraArgs": "Extra arguments (optional)",
+      "extraArgsPlaceholder": "e.g. --debug --append-system-prompt \"Be brief\"",
+      "extraArgsHint": "Added after the launch command, for this terminal only. Separate with spaces; quote values that contain spaces.",
       "agySwitchTitle": "This switches agy's sign-in",
       "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
       "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can."
@@ -405,7 +408,7 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "Official subscriptions and third-party APIs will share the custom connection ID in both Codex CLI and desktop. Reopen loaded chats after switching connections. The destination backend may not support the original encrypted reasoning content.\n\nYou can also migrate existing official history, with a backup saved first and an option to restore it when turning this off.",
+      "message": "Official subscriptions and third-party APIs will share the custom connection ID in both Codex CLI and desktop. Reopen loaded chats after switching connections. The destination backend may not support the original encrypted reasoning content.\n\nYou can also migrate existing official history, with a backup saved first and an option to restore it when turning this off.\n\nOfficial connections use custom instead of the built-in openai identity, which may hide Dot, dictation, and other Desktop features. You usually do not need this option just to view chats in a Desktop version that already lists providers together.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
@@ -417,7 +420,7 @@
     },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "Official subscriptions will use the openai connection ID again. Sessions created under custom keep that ID; showing them in the desktop list does not change their connection. Previously migrated official sessions can be restored from the backup ledger.",
+      "message": "Official subscriptions will use the openai connection ID again. Existing custom chats keep that ID and may fail to reconnect.\n\nRestoring backups only covers official chats migrated at enable time. It excludes chats created while enabled and custom chats whose origin cannot be verified; keep a working original connection for those chats.\n\nTo use native official Desktop features, select OpenAI Official after disabling and fully quit and reopen Codex.",
       "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
       "confirm": "Turn off"
     },
@@ -734,6 +737,15 @@
       "saved": "Saved",
       "unsavedChanges": "Please save config first",
       "saveBeforeSync": "Save configuration first to enable upload/download.",
+      "clear": "Clear config",
+      "clearing": "Clearing...",
+      "clearSuccess": "WebDAV config cleared on this device",
+      "clearFailed": "Failed to clear config: {{error}}",
+      "clearConfirm": {
+        "title": "Clear WebDAV config",
+        "message": "This removes the saved WebDAV URL, username, password and remote folder from this device and stops auto sync. Data already uploaded to the server is not deleted.",
+        "confirm": "Clear"
+      },
       "fetchingRemote": "Fetching remote info...",
       "fetchRemoteFailed": "Failed to fetch remote info. Please check configuration and network.",
       "confirmDownload": {
@@ -888,6 +900,7 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
     "unifyCodexSessionHistoryDescription": "Official subscriptions and third-party APIs share the custom connection ID, so saved chats can follow connection changes. This applies to Codex desktop too: showing all chats does not update their saved connection. Reopen loaded chats to adopt new settings. Existing official history can be migrated with a backup and restored when this is turned off. Cross-provider continuation also depends on support for the original encrypted reasoning content.",
+    "unifyCodexDesktopCompatibility": "Unified history mainly serves CLI history lists and may hide Dot, dictation, or other official Codex Desktop features. If your Desktop version already lists chats across providers, you usually do not need it just to view history.",
     "codexManagedHistory": "Migrate legacy third-party chats",
     "codexManagedHistoryAction": "Migrate old chats",
     "codexManagedHistoryCompleted": "Legacy third-party chats checked: {{files}} files and {{rows}} index rows migrated. Reopen chats to load the connection; restart Codex yourself if it still uses old settings.",
@@ -1375,6 +1388,7 @@
     "groupByTime": "By time",
     "groupByProject": "By project",
     "desktopNote": "Claude Desktop has no session records of its own. Showing Claude Code sessions.",
+    "dshMergedNote": "DeepSeek Harness Web and Desktop share one set of session records, shown together here.",
     "matchCount": "{{count}} matching sessions",
     "totalCount": "{{count}} sessions",
     "selectAllMatches": "Select all matches",
@@ -2267,6 +2281,11 @@
       "short": "Session logs",
       "label": "{{app}} · Session logs",
       "hint": "Read from the client's session logs while routing is off, so the provider can't be told apart"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek account",
+      "label": "{{app}} · DeepSeek account (OAuth)",
+      "hint": "Read from session logs for requests made with the DeepSeek account sign-in; Web and Desktop share this sign-in, so their usage is combined"
     },
     "stream": "Stream",
     "nonStream": "Non-stream",
@@ -4193,6 +4212,7 @@
     "extraUsage": "Extra Usage",
     "expired": "Session expired",
     "expiredHint": "Run the {{tool}} command to refresh your login",
+    "expiredHintAccounts": "Sign in to this account again in Accounts",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
   },
@@ -4624,6 +4644,7 @@
       "failedTitle": "Some apps couldn't be read",
       "filesTitle": "Which files were read",
       "claudeNote": " (top-level mcpServers)",
+      "dshNote": " (written to every initialized profile: web, desktop, headless, acp)",
       "ok": "Got it"
     },
     "templateLabels": {
@@ -5097,6 +5118,28 @@
     "empty": {
       "title": "Add a DeepSeek Harness provider",
       "description": "Configure an endpoint, API key and models. Existing custom providers appear here automatically."
+    },
+    "sharedProviders": "Web and Desktop share this provider list: adding, editing and removing write to both the web and desktop profiles (created in advance if missing; Desktop keeps it on first launch) and to any initialized headless or acp profile.",
+    "account": {
+      "help": "The DeepSeek account signs in through the browser (OAuth), here or in DeepSeek Harness. The sign-in is stored in $DSH_HOME/.credentials.yaml (default ~/.dsh/.credentials.yaml) and shared by DeepSeek Harness Web and Desktop: signing in or out anywhere applies to both, and a running DeepSeek Harness reloads it automatically. Usage of the account's models appears separately on the Usage page as \"DeepSeek account (OAuth)\".",
+      "statusFailed": "Couldn't read the DeepSeek account sign-in",
+      "empty": "Not signed in to a DeepSeek account",
+      "unnamed": "DeepSeek account",
+      "expired": "Sign-in expired. Sign in again",
+      "shared": "Shared by Web and Desktop",
+      "signOut": "Sign out",
+      "signOutConfirm": "Sign out of the DeepSeek account \"{{name}}\"? DeepSeek Harness Web and Desktop will both be signed out. API key providers aren't affected.",
+      "signOutFailed": "Couldn't sign out of the DeepSeek account",
+      "balance": "Balance {{amount}}",
+      "bonus": "Bonus {{amount}}",
+      "balanceFailed": "Balance unavailable right now",
+      "noticeSignedOutTitle": "Not signed in to a DeepSeek account",
+      "noticeSignedOut": "Sign in to your DeepSeek account through the browser, in the Auth Center or in DeepSeek Harness, to use the account's models. Web and Desktop share this sign-in.",
+      "noticeExpiredTitle": "DeepSeek account sign-in expired",
+      "noticeExpired": "Sign in again in the Auth Center or DeepSeek Harness; Web and Desktop recover together.",
+      "noticeSignedIn": "DeepSeek account: {{name}}",
+      "signedIn": "Signed in to the DeepSeek account for both Web and Desktop",
+      "signInFailed": "Couldn't sign in to the DeepSeek account"
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
   }

@@ -197,6 +197,9 @@
       "forget": "最近使ったフォルダから削除",
       "confirm": "ターミナルを開く",
       "skipPermissions": "権限の確認をスキップ",
+      "extraArgs": "追加の引数（任意）",
+      "extraArgsPlaceholder": "例: --debug --append-system-prompt \"簡潔に答えて\"",
+      "extraArgsHint": "起動コマンドの後ろに付け、今回開くターミナルだけで使います。スペースで区切り、スペースを含む値は引用符で囲んでください。",
       "agySwitchTitle": "agy のログインを切り替えます",
       "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
       "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。"
@@ -405,7 +408,7 @@
     },
     "unifyCodexHistory": {
       "title": "Codex セッション履歴を統一",
-      "message": "公式サブスクリプションとサードパーティ API は、Codex CLI とデスクトップで custom 接続 ID を共有します。接続を切り替えた後は、開いているチャットを開き直してください。移行先が元の暗号化された推論内容に対応していない場合があります。\n\n既存の公式履歴もバックアップ後に移行でき、無効化時に復元できます。",
+      "message": "公式サブスクリプションとサードパーティ API は、Codex CLI とデスクトップで custom 接続 ID を共有します。接続を切り替えた後は、開いているチャットを開き直してください。移行先が元の暗号化された推論内容に対応していない場合があります。\n\n既存の公式履歴もバックアップ後に移行でき、無効化時に復元できます。\n\n公式接続は組み込みの openai ではなく custom を使用するため、Dot、音声入力などのデスクトップ機能が表示されなくなる場合があります。複数プロバイダーの会話を一覧表示できるデスクトップ版では、閲覧のためだけに有効にする必要は通常ありません。",
       "migrateExisting": "既存の公式セッション履歴も移行する",
       "confirm": "理解しました、オンにする"
     },
@@ -417,7 +420,7 @@
     },
     "unifyCodexHistoryOff": {
       "title": "セッション履歴の統一をオフにする",
-      "message": "公式サブスクリプションは再び openai 接続 ID を使用します。custom で作成したチャットの ID は維持されます。デスクトップに表示されても接続は更新されません。以前に移行した公式履歴はバックアップの記録に基づいて復元できます。",
+      "message": "公式サブスクリプションは再び openai の接続 ID を使用します。既存の custom 会話はその ID を保持し、再接続できなくなる場合があります。\n\n復元できるのは有効化時に移行した公式会話だけです。有効期間中に作成した会話や出所を確認できない custom 会話は対象外のため、有効な元の接続を維持してください。\n\n公式デスクトップ機能を使用するには、無効化後に OpenAI Official を選択し、Codex を完全に終了して開き直してください。",
       "restoreBackup": "オンにした際に移行した公式セッションを公式履歴へ復元する（バックアップから正確に復元）",
       "confirm": "オフにする"
     },
@@ -734,6 +737,15 @@
       "saved": "保存済み",
       "unsavedChanges": "先に設定を保存してください",
       "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
+      "clear": "設定をクリア",
+      "clearing": "クリア中...",
+      "clearSuccess": "この端末の WebDAV 設定をクリアしました",
+      "clearFailed": "設定のクリアに失敗しました：{{error}}",
+      "clearConfirm": {
+        "title": "WebDAV 設定をクリア",
+        "message": "この端末に保存されている WebDAV のアドレス、ユーザー名、パスワード、リモートフォルダを削除し、自動同期を停止します。サーバーにアップロード済みのデータは削除されません。",
+        "confirm": "クリア"
+      },
       "fetchingRemote": "リモート情報を取得中...",
       "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
       "confirmDownload": {
@@ -888,6 +900,7 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
     "unifyCodexSessionHistoryDescription": "公式サブスクリプションとサードパーティ API は custom 接続 ID を共有し、保存したチャットが接続の切り替えに追従できるようにします。Codex デスクトップにも適用されます。すべてのチャットが表示されても、保存済みの接続は更新されません。新しい設定を適用するには、開いているチャットを開き直してください。既存の公式履歴はバックアップ後に移行でき、無効化時に復元できます。別のプロバイダーでの再開には、元の暗号化された推論内容への対応も必要です。",
+    "unifyCodexDesktopCompatibility": "履歴の統一は主に CLI の履歴一覧向けです。有効にすると Codex デスクトップの Dot、音声入力などの公式機能が表示されなくなる場合があります。複数プロバイダーの会話を一覧表示できるデスクトップ版では、履歴閲覧のためだけに有効にする必要は通常ありません。",
     "codexManagedHistory": "以前のサードパーティチャットを移行",
     "codexManagedHistoryAction": "以前のチャットを移行",
     "codexManagedHistoryCompleted": "以前のサードパーティチャットを確認し、{{files}} ファイル、{{rows}} 件のインデックスを移行しました。チャットを開き直してください。以前の設定が使われる場合は、ご自身で Codex を再起動してください。",
@@ -1375,6 +1388,7 @@
     "groupByTime": "時間順",
     "groupByProject": "プロジェクト別",
     "desktopNote": "Claude Desktop には独自のセッション記録がないため、Claude Code のセッションを表示しています。",
+    "dshMergedNote": "DeepSeek Harness の Web と Desktop は同じセッション記録を共有しているため、ここではまとめて表示します。",
     "matchCount": "一致 {{count}} 件",
     "totalCount": "全 {{count}} 件",
     "selectAllMatches": "一致したものをすべて選択",
@@ -2267,6 +2281,11 @@
       "short": "セッションログ",
       "label": "{{app}} · セッションログ",
       "hint": "ルーティングがオフの間はクライアントのセッションログから読み取るため、どのプロバイダーかは区別できません"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek アカウント",
+      "label": "{{app}} · DeepSeek アカウント（OAuth）",
+      "hint": "セッションログから読み取った、DeepSeek アカウントのログインを使ったリクエストです。Web と Desktop はこのログインを共有するため、使用量はまとめて集計されます"
     },
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
@@ -4193,6 +4212,7 @@
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
+    "expiredHintAccounts": "「アカウント」でこのアカウントに再ログインしてください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
   },
@@ -4624,6 +4644,7 @@
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
       "claudeNote": "（トップレベルの mcpServers）",
+      "dshNote": "（初期化済みのすべての profile に書き込みます：web、desktop、headless、acp）",
       "ok": "OK"
     },
     "templateLabels": {
@@ -5097,6 +5118,28 @@
     "empty": {
       "title": "DeepSeek Harness プロバイダーを追加",
       "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
+    },
+    "sharedProviders": "Web と Desktop はこのプロバイダー一覧を共有します。追加・編集・削除は web と desktop の profile（なければ先に作成し、Desktop は初回起動時にそのまま使います）と、初期化済みの headless、acp にまとめて書き込まれます。",
+    "account": {
+      "help": "DeepSeek アカウントはブラウザでログインします（OAuth）。ここでも DeepSeek Harness でもログインできます。ログイン情報は $DSH_HOME/.credentials.yaml（既定は ~/.dsh/.credentials.yaml） に保存され、DeepSeek Harness の Web と Desktop で共有されます。どこでログイン・ログアウトしても両方に反映され、実行中の DeepSeek Harness は自動で読み直します。アカウント経由のモデルの使用量は、使用量ページで「DeepSeek アカウント（OAuth）」として別に表示されます。",
+      "statusFailed": "DeepSeek アカウントのログイン状態を読み取れません",
+      "empty": "DeepSeek アカウントにログインしていません",
+      "unnamed": "DeepSeek アカウント",
+      "expired": "ログインの有効期限が切れました。再ログインしてください",
+      "shared": "Web と Desktop で共有",
+      "signOut": "ログアウト",
+      "signOutConfirm": "DeepSeek アカウント「{{name}}」からログアウトしますか？DeepSeek Harness の Web と Desktop の両方がログアウトされます。API キーのプロバイダーには影響しません。",
+      "signOutFailed": "DeepSeek アカウントからログアウトできませんでした",
+      "balance": "残高 {{amount}}",
+      "bonus": "ボーナス {{amount}}",
+      "balanceFailed": "現在残高を取得できません",
+      "noticeSignedOutTitle": "DeepSeek アカウントにログインしていません",
+      "noticeSignedOut": "認証センターまたは DeepSeek Harness でブラウザから DeepSeek アカウントにログインすると、アカウントのモデルをそのまま使えます。Web と Desktop はこのログインを共有します。",
+      "noticeExpiredTitle": "DeepSeek アカウントのログインが無効です",
+      "noticeExpired": "認証センターまたは DeepSeek Harness で再ログインしてください。Web と Desktop の両方が復旧します。",
+      "noticeSignedIn": "DeepSeek アカウント：{{name}}",
+      "signedIn": "DeepSeek アカウントにログインしました（Web と Desktop の両方で使えます）",
+      "signInFailed": "DeepSeek アカウントにログインできませんでした"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
   }
