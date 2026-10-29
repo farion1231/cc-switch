@@ -1697,6 +1697,56 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_to_gemini_rebuilt_function_call_keeps_signature_on_part() {
+        // The shadow turn holds the signature but no replayable parts, so the
+        // assistant message is rebuilt from its tool_use blocks instead of
+        // being replayed verbatim.
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "provider-a",
+            "session-1",
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_1"),
+                "get_weather",
+                json!({ "city": "Tokyo" }),
+                Some("sig-xyz"),
+            )],
+        );
+
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "weather?" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(
+            input,
+            Some(&store),
+            Some("provider-a"),
+            Some("session-1"),
+        )
+        .unwrap();
+
+        let part = &result["contents"][1]["parts"][0];
+        assert_eq!(part["functionCall"]["name"], "get_weather");
+        assert_eq!(part["thoughtSignature"], "sig-xyz");
+        assert!(part["functionCall"].get("thoughtSignature").is_none());
+    }
+
+    #[test]
     fn anthropic_to_gemini_reattaches_thought_signature_as_part_sibling() {
         let store = GeminiShadowStore::with_limits(8, 4);
         store.record_assistant_turn(
