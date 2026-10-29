@@ -542,22 +542,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         try {
           const result = await uninstallMutation.mutateAsync(id);
           if (skill) done.push(skill);
-          if (result.preservedPiPath) {
-            cleanupWarnings.push(
-              t("skills.uninstallPiPreserved", {
-                path: result.preservedPiPath,
-              }),
-            );
-          } else if (result.piCleanupIncomplete) {
-            cleanupWarnings.push(t("skills.uninstallPiCleanupIncomplete"));
-          }
           if (result.cleanupFailures?.length) {
             cleanupWarnings.push(
               t("skills.uninstallCleanupIncomplete", {
                 details: result.cleanupFailures
-                  .map(
-                    ({ app, path, error }) =>
-                      `${app}: ${path ? `${path}: ` : ""}${error}`,
+                  .map(({ app, path, error }) =>
+                    [app, path, error].filter(Boolean).join(": "),
                   )
                   .join("; "),
               }),

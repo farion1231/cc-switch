@@ -195,10 +195,7 @@ impl Default for SkillStore {
 pub struct SkillUninstallResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub preserved_pi_path: Option<String>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub pi_cleanup_incomplete: bool,
+    /// 未能清理、仍留在应用目录中的副本（无法验证为托管副本、删除失败或目录无法解析）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cleanup_failures: Vec<SkillCleanupFailure>,
 }
@@ -206,13 +203,20 @@ pub struct SkillUninstallResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillCleanupFailure {
-    pub app: String,
+    /// None 表示整条记录的文件清理都被跳过（directory 非法）。
+    pub app: Option<String>,
     pub path: Option<String>,
     pub error: String,
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
+impl SkillCleanupFailure {
+    fn new(app: Option<&AppType>, path: Option<&Path>, error: impl std::fmt::Display) -> Self {
+        Self {
+            app: app.map(|app| app.as_str().to_string()),
+            path: path.map(|path| path.to_string_lossy().to_string()),
+            error: format!("{error:#}"),
+        }
+    }
 }
 
 /// Skill 更新检测结果
@@ -1091,144 +1095,145 @@ impl SkillService {
         // 全项目只有这一处调用且未暴露为命令，若在此直接返回 Err，用户就再也无法
         // 从界面删掉这条记录，只能手改 SQLite。安全目标是「不碰危险路径」，
         // 不是「把用户锁在坏状态里」。
-        let (backup_path, preserved_pi_path, pi_cleanup_incomplete) =
-            match Self::require_valid_directory(&skill.directory) {
-                Ok(directory) => {
-                    let ssot_dir = Self::get_ssot_dir()?;
-                    let source = ssot_dir.join(&directory);
-                    let mut managed_destinations = Vec::new();
-                    for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
-                        if skill.apps.is_enabled_for(&app) {
-                            let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
-                                .join(&directory);
-                            Self::inspect_skill_destination(&source, &destination, &directory)
-                                .with_context(|| {
-                                    format!(
-                                        "{} Skill could not be verified; uninstall cancelled",
-                                        app.as_str()
-                                    )
-                                })?;
-                            managed_destinations.push(destination);
-                        }
+        let backup_path = match Self::require_valid_directory(&skill.directory) {
+            Ok(directory) => {
+                let ssot_dir = Self::get_ssot_dir()?;
+                let source = ssot_dir.join(&directory);
+                let mut managed_destinations = Vec::new();
+                for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+                    if skill.apps.is_enabled_for(&app) {
+                        let destination =
+                            Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&directory);
+                        Self::inspect_skill_destination(&source, &destination, &directory)
+                            .with_context(|| {
+                                format!(
+                                    "{} Skill could not be verified; uninstall cancelled",
+                                    app.as_str()
+                                )
+                            })?;
+                        managed_destinations.push(destination);
                     }
-                    let mut preserved_paths = Vec::new();
-                    let mut pi_cleanup_incomplete = false;
-                    let mut removal_paths = Vec::new();
-
-                    for app in [AppType::Pi, AppType::Omp] {
-                        match Self::get_app_skills_dir(&app) {
-                            Ok(app_dir) => {
-                                if Self::paths_alias(&ssot_dir, &app_dir) {
-                                    // 原生目录直接使用 SSOT 时没有第二份副本；后续删除 SSOT 即完成清理。
-                                    log::debug!("Skill {id} 的 {app:?} Skills 目录与 SSOT 相同");
-                                    continue;
-                                }
-                                // 即使当前不存在也保留目标路径；备份期间可能有另一进程
-                                // 同步该 Skill，删除 SSOT 前必须重新检查一次。
-                                let destination = app_dir.join(&directory);
-                                if (destination.exists() || Self::is_symlink(&destination))
-                                    && Self::inspect_skill_destination(
-                                        &source,
-                                        &destination,
-                                        &directory,
-                                    )
-                                    .inspect_err(|err| {
-                                        log::warn!(
-                                            "Skill {id} 卸载时跳过 {app:?} 清理，保留 {}: {err}",
-                                            destination.display()
-                                        )
-                                    })
-                                    .is_err()
-                                {
-                                    preserved_paths.push(destination);
-                                    pi_cleanup_incomplete = true;
-                                } else {
-                                    removal_paths.push((app, destination));
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Skill {id} 卸载时无法解析 {app:?} Skills 目录，跳过清理: {err}"
-                                );
-                                pi_cleanup_incomplete = true;
-                            }
-                        }
-                    }
-
-                    let backup_path =
-                        Self::create_uninstall_backup_excluding(&skill, &preserved_paths)?
-                            .map(|path| path.to_string_lossy().to_string());
-
-                    for destination in managed_destinations {
-                        Self::remove_verified_skill_destination(&source, &destination, &directory)
-                            .context("Managed Skill could not be removed; uninstall cancelled")?;
-                    }
-
-                    // Pi、Omp 目录可能包含用户自己维护的同名 Skill。删除 SSOT 前仅移除
-                    // 能验证为 CC Switch 部署的副本；其余路径保留并返回警告。
-                    for (app, destination) in removal_paths {
-                        if let Err(err) = Self::remove_verified_skill_destination(
-                            &source,
-                            &destination,
-                            &directory,
-                        ) {
-                            log::warn!("Skill {id} 卸载时 {app:?} 清理失败，将继续卸载: {err}");
-                            pi_cleanup_incomplete = true;
-                            if destination.exists() || Self::is_symlink(&destination) {
-                                preserved_paths.push(destination);
-                            }
-                        }
-                    }
-
-                    for app in AppType::all() {
-                        if matches!(
-                            app,
-                            AppType::Pi
-                                | AppType::Mcode
-                                | AppType::Agy
-                                | AppType::Kimi
-                                | AppType::Dsh
-                                | AppType::Omp
-                        ) {
-                            continue;
-                        }
-                        if let Err(error) =
-                            Self::remove_from_app_preserving(&directory, &app, &preserved_paths)
-                        {
-                            cleanup_failures.push(SkillCleanupFailure {
-                                app: app.as_str().to_string(),
-                                path: Self::get_app_skills_dir(&app)
-                                    .ok()
-                                    .map(|dir| dir.join(&directory).to_string_lossy().to_string()),
-                                error: format!("{error:#}"),
-                            });
-                        }
-                    }
-
-                    // 从 SSOT 删除
-                    let skill_path = ssot_dir.join(&directory);
-                    if preserved_paths
-                        .iter()
-                        .any(|path| Self::paths_overlap(&skill_path, path))
-                    {
-                        log::warn!("Skill {id} 的 SSOT 路径与保留的原生副本重叠，跳过文件删除");
-                    } else if skill_path.exists() {
-                        fs::remove_dir_all(&skill_path)?;
-                    }
-                    (
-                        backup_path,
-                        preserved_paths.into_iter().next(),
-                        pi_cleanup_incomplete,
-                    )
                 }
-                Err(err) => {
-                    log::warn!(
+                let mut preserved_paths = Vec::new();
+                let mut removal_paths = Vec::new();
+
+                for app in [AppType::Pi, AppType::Omp] {
+                    match Self::get_app_skills_dir(&app) {
+                        Ok(app_dir) => {
+                            if Self::paths_alias(&ssot_dir, &app_dir) {
+                                // 原生目录直接使用 SSOT 时没有第二份副本；后续删除 SSOT 即完成清理。
+                                log::debug!("Skill {id} 的 {app:?} Skills 目录与 SSOT 相同");
+                                continue;
+                            }
+                            // 即使当前不存在也保留目标路径；备份期间可能有另一进程
+                            // 同步该 Skill，删除 SSOT 前必须重新检查一次。
+                            let destination = app_dir.join(&directory);
+                            let verified = if destination.exists() || Self::is_symlink(&destination)
+                            {
+                                Self::inspect_skill_destination(&source, &destination, &directory)
+                                    .map(|_| ())
+                            } else {
+                                Ok(())
+                            };
+                            match verified {
+                                Ok(()) => removal_paths.push((app, destination)),
+                                Err(err) => {
+                                    log::warn!(
+                                        "Skill {id} 卸载时跳过 {app:?} 清理，保留 {}: {err}",
+                                        destination.display()
+                                    );
+                                    cleanup_failures.push(SkillCleanupFailure::new(
+                                        Some(&app),
+                                        Some(&destination),
+                                        err,
+                                    ));
+                                    preserved_paths.push(destination);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            log::warn!(
+                                "Skill {id} 卸载时无法解析 {app:?} Skills 目录，跳过清理: {err}"
+                            );
+                            cleanup_failures.push(SkillCleanupFailure::new(Some(&app), None, err));
+                        }
+                    }
+                }
+
+                let backup_path =
+                    Self::create_uninstall_backup_excluding(&skill, &preserved_paths)?
+                        .map(|path| path.to_string_lossy().to_string());
+
+                for destination in managed_destinations {
+                    Self::remove_verified_skill_destination(&source, &destination, &directory)
+                        .context("Managed Skill could not be removed; uninstall cancelled")?;
+                }
+
+                // Pi、Omp 目录可能包含用户自己维护的同名 Skill。删除 SSOT 前仅移除
+                // 能验证为 CC Switch 部署的副本；其余路径保留并返回警告。
+                for (app, destination) in removal_paths {
+                    if let Err(err) =
+                        Self::remove_verified_skill_destination(&source, &destination, &directory)
+                    {
+                        log::warn!("Skill {id} 卸载时 {app:?} 清理失败，将继续卸载: {err}");
+                        cleanup_failures.push(SkillCleanupFailure::new(
+                            Some(&app),
+                            Some(&destination),
+                            err,
+                        ));
+                        if destination.exists() || Self::is_symlink(&destination) {
+                            preserved_paths.push(destination);
+                        }
+                    }
+                }
+
+                for app in AppType::all() {
+                    if matches!(
+                        app,
+                        AppType::Pi
+                            | AppType::Mcode
+                            | AppType::Agy
+                            | AppType::Kimi
+                            | AppType::Dsh
+                            | AppType::Omp
+                    ) {
+                        continue;
+                    }
+                    if let Err(error) =
+                        Self::remove_from_app_preserving(&directory, &app, &preserved_paths)
+                    {
+                        let path = Self::get_app_skills_dir(&app)
+                            .ok()
+                            .map(|dir| dir.join(&directory));
+                        cleanup_failures.push(SkillCleanupFailure::new(
+                            Some(&app),
+                            path.as_deref(),
+                            error,
+                        ));
+                    }
+                }
+
+                // 从 SSOT 删除
+                let skill_path = ssot_dir.join(&directory);
+                if preserved_paths
+                    .iter()
+                    .any(|path| Self::paths_overlap(&skill_path, path))
+                {
+                    log::warn!("Skill {id} 的 SSOT 路径与保留的原生副本重叠，跳过文件删除");
+                } else if skill_path.exists() {
+                    fs::remove_dir_all(&skill_path)?;
+                }
+                backup_path
+            }
+            Err(err) => {
+                log::warn!(
                     "Skill {id} 的 directory 非法（{:?}），跳过文件清理，仅删除数据库记录: {err}",
                     skill.directory
                 );
-                    (None, None, true)
-                }
-            };
+                cleanup_failures.push(SkillCleanupFailure::new(None, None, err));
+                None
+            }
+        };
 
         // 从数据库删除
         db.delete_skill(id)?;
@@ -1244,8 +1249,6 @@ impl SkillService {
 
         Ok(SkillUninstallResult {
             backup_path,
-            preserved_pi_path: preserved_pi_path.map(|path| path.to_string_lossy().to_string()),
-            pi_cleanup_incomplete,
             cleanup_failures,
         })
     }
@@ -6109,7 +6112,7 @@ mod tests {
             .unwrap()
             .contains("Codex original"));
         assert!(result.cleanup_failures.iter().any(|failure| {
-            failure.app == "codex"
+            failure.app.as_deref() == Some("codex")
                 && failure.path.as_deref() == Some(codex.to_string_lossy().as_ref())
                 && failure.error.contains("无法验证")
         }));
@@ -7259,10 +7262,9 @@ description: Test skill
             .expect("query skill")
             .is_none());
         assert_eq!(
-            result.preserved_pi_path,
-            Some(pi_skill.to_string_lossy().to_string())
+            preserved_pi_paths(&result),
+            vec![pi_skill.to_string_lossy().to_string()]
         );
-        assert!(result.pi_cleanup_incomplete);
         assert!(fs::read_to_string(pi_skill.join("SKILL.md"))
             .expect("read external skill")
             .contains("name: external"));
@@ -7330,10 +7332,9 @@ description: Test skill
 
         assert!(!source.exists(), "managed source must be removed");
         assert_eq!(
-            result.preserved_pi_path,
-            Some(shared_skill.to_string_lossy().to_string())
+            preserved_pi_paths(&result),
+            vec![shared_skill.to_string_lossy().to_string()]
         );
-        assert!(result.pi_cleanup_incomplete);
         assert!(fs::read_to_string(shared_skill.join("SKILL.md"))
             .expect("read shared external skill")
             .contains("name: external"));
@@ -7367,10 +7368,9 @@ description: Test skill
         let result = SkillService::uninstall(&db, &skill.id).expect("uninstall managed record");
 
         assert_eq!(
-            result.preserved_pi_path,
-            Some(pi_skill.to_string_lossy().to_string())
+            preserved_pi_paths(&result),
+            vec![pi_skill.to_string_lossy().to_string()]
         );
-        assert!(result.pi_cleanup_incomplete);
         assert!(
             SkillService::is_symlink(&pi_skill),
             "the aliased application cleanup must not remove the preserved link"
@@ -7419,10 +7419,9 @@ description: Test skill
 
         assert!(result.backup_path.is_none());
         assert_eq!(
-            result.preserved_pi_path,
-            Some(pi_skill.to_string_lossy().to_string())
+            preserved_pi_paths(&result),
+            vec![pi_skill.to_string_lossy().to_string()]
         );
-        assert!(result.pi_cleanup_incomplete);
         assert!(source.exists(), "the preserved path is nested under SSOT");
         assert!(pi_skill.exists(), "the external Pi skill must remain");
         assert!(db
@@ -7450,10 +7449,9 @@ description: Test skill
 
         assert!(result.backup_path.is_none());
         assert_eq!(
-            result.preserved_pi_path,
-            Some(pi_skill.to_string_lossy().to_string())
+            preserved_pi_paths(&result),
+            vec![pi_skill.to_string_lossy().to_string()]
         );
-        assert!(result.pi_cleanup_incomplete);
         assert!(pi_skill.join("SKILL.md").exists());
         assert!(db
             .get_installed_skill(&skill.id)
@@ -7479,8 +7477,7 @@ description: Test skill
         let result = SkillService::uninstall(&db, &skill.id).expect("uninstall aliased skill");
 
         assert!(!source.exists());
-        assert!(result.preserved_pi_path.is_none());
-        assert!(!result.pi_cleanup_incomplete);
+        assert!(result.cleanup_failures.is_empty());
         assert!(db
             .get_installed_skill(&skill.id)
             .expect("query skill")
@@ -7506,8 +7503,11 @@ description: Test skill
             SkillService::uninstall(&db, &skill.id).expect("uninstall with invalid Pi root");
 
         assert!(!source.exists());
-        assert!(result.preserved_pi_path.is_none());
-        assert!(result.pi_cleanup_incomplete);
+        assert!(preserved_pi_paths(&result).is_empty());
+        assert!(result
+            .cleanup_failures
+            .iter()
+            .any(|failure| failure.app.as_deref() == Some("pi") && failure.path.is_none()));
         assert!(db
             .get_installed_skill(&skill.id)
             .expect("query skill")
@@ -7584,6 +7584,15 @@ description: Test skill
             "settings.json would be written outside the test home: {}",
             config_dir.display()
         );
+    }
+
+    fn preserved_pi_paths(result: &SkillUninstallResult) -> Vec<String> {
+        result
+            .cleanup_failures
+            .iter()
+            .filter(|failure| failure.app.as_deref() == Some("pi"))
+            .filter_map(|failure| failure.path.clone())
+            .collect()
     }
 
     fn poisoned_skill(id: &str, directory: &str) -> InstalledSkill {
@@ -7918,7 +7927,10 @@ description: Test skill
         // ……但记录本身必须能删掉。db.delete_skill 全项目只有 uninstall 一处调用
         // 且未暴露为命令，若这里返回 Err，脏行就永远无法从界面清除。
         assert!(
-            result.pi_cleanup_incomplete,
+            result
+                .cleanup_failures
+                .iter()
+                .any(|failure| failure.app.is_none()),
             "skipped filesystem cleanup must be reported"
         );
         assert!(

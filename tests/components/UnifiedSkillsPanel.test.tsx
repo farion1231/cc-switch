@@ -529,7 +529,7 @@ describe("UnifiedSkillsPanel", () => {
   it("uninstalls through the row menu after confirming", async () => {
     m.installed = [makeSkill()];
     m.uninstall.mockResolvedValueOnce({
-      preservedPiPath: "/tmp/.pi/agent/skills/alpha-skill",
+      backupPath: "/tmp/.cc-switch/skill-backups/alpha-skill",
     });
     renderPanel();
     await openMenu("skillsPage.rowMoreAria", "skillsPage.uninstallEllipsis");
@@ -543,9 +543,9 @@ describe("UnifiedSkillsPanel", () => {
       expect(m.uninstall).toHaveBeenCalledWith("owner/repo:alpha-skill"),
     );
     await waitFor(() =>
-      expect(m.toastWarning).toHaveBeenCalledWith(
+      expect(m.toastSuccess).toHaveBeenCalledWith(
         "skills.uninstallSuccess",
-        expect.objectContaining({ description: "skills.uninstallPiPreserved" }),
+        expect.objectContaining({ description: "skills.backup.location" }),
       ),
     );
   });
