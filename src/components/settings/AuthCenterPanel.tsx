@@ -55,6 +55,7 @@ export function AuthCenterPanel({
   const agyOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const kimiOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const workbuddySectionRef = useRef<HTMLDivElement | null>(null);
+  const dshAccountSectionRef = useRef<HTMLDivElement | null>(null);
   const showAgy = isMac();
 
   useEffect(() => {
@@ -65,17 +66,19 @@ export function AuthCenterPanel({
     const sectionRef =
       authScrollTarget === "kimi_oauth"
         ? kimiOauthSectionRef
-        : authScrollTarget === "claude_official"
-          ? claudeOfficialSectionRef
-          : authScrollTarget === "github_copilot"
-            ? copilotSectionRef
-            : authScrollTarget === "codex_oauth"
-              ? codexOauthSectionRef
-              : authScrollTarget === "agy_oauth"
-                ? agyOauthSectionRef
-                : authScrollTarget === "workbuddy_account"
-                  ? workbuddySectionRef
-                  : xaiOauthSectionRef;
+        : authScrollTarget === "dsh_account"
+          ? dshAccountSectionRef
+          : authScrollTarget === "claude_official"
+            ? claudeOfficialSectionRef
+            : authScrollTarget === "github_copilot"
+              ? copilotSectionRef
+              : authScrollTarget === "codex_oauth"
+                ? codexOauthSectionRef
+                : authScrollTarget === "agy_oauth"
+                  ? agyOauthSectionRef
+                  : authScrollTarget === "workbuddy_account"
+                    ? workbuddySectionRef
+                    : xaiOauthSectionRef;
 
     const target = sectionRef.current;
     const container = findScrollContainer(root);
@@ -170,7 +173,7 @@ export function AuthCenterPanel({
       <div ref={kimiOauthSectionRef}>
         <KimiAccountLogin helpSide="bottom" />
       </div>
-      <div>
+      <div ref={dshAccountSectionRef}>
         <DshAccountLogin helpSide="bottom" />
       </div>
       {showAgy && (
