@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Notice } from "@/components/ui/notice";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
@@ -272,44 +271,5 @@ export function DshAccountLogin({ helpSide }: DshAccountLoginProps) {
         onCancel={() => setConfirmSignOut(false)}
       />
     </ManagedAccountsGroup>
-  );
-}
-
-/**
- * DeepSeek Harness / Desktop 供应商页顶部的一行：DeepSeek 账号（OAuth）的登录是两端共用的，
- * 不是这里的供应商卡片，单独说明当前登录了谁、余额多少。
- */
-export function DshAccountNotice() {
-  const { t } = useTranslation();
-  const status = useDshAccountStatus();
-  const data = status.data;
-  if (!data) return null;
-  if (!data.signedIn) {
-    return (
-      <Notice tone="neutral" title={t("dsh.account.noticeSignedOutTitle")}>
-        {t("dsh.account.noticeSignedOut")}
-      </Notice>
-    );
-  }
-  if (data.expired) {
-    return (
-      <Notice tone="warning" title={t("dsh.account.noticeExpiredTitle")}>
-        {t("dsh.account.noticeExpired")}
-      </Notice>
-    );
-  }
-  const balance = data.wallets.map(formatWallet).join(" · ");
-  return (
-    <Notice
-      tone="neutral"
-      title={t("dsh.account.noticeSignedIn", {
-        name: accountName(data, t("dsh.account.unnamed")),
-      })}
-    >
-      {balance && !data.error
-        ? `${t("dsh.account.balance", { amount: balance })} · `
-        : ""}
-      {t("dsh.account.shared")}
-    </Notice>
   );
 }

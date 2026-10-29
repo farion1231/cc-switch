@@ -52,7 +52,6 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isPiFamilyApp } from "@/config/appConfig";
-import { DshAccountNotice } from "./DshAccount";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
@@ -436,16 +435,6 @@ export function ProviderList({
         {piStateError ? ` ${piStateError}` : ""}
       </Notice>
     ) : null;
-  // DeepSeek 账号（OAuth）登录由 Web 与 Desktop 共用，不是供应商卡片，单独一行说明；
-  // 供应商列表也是共用的（写进所有已初始化的 profile），Web 和 Desktop 页面看到的是同一份
-  const dshAccountNotice =
-    appId === "dsh" ? (
-      <>
-        <DshAccountNotice />
-        <p className="m-0 text-caption text-fg-2">{t("dsh.sharedProviders")}</p>
-      </>
-    ) : null;
-
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
@@ -463,7 +452,6 @@ export function ProviderList({
     return (
       <div className="space-y-4">
         {piStateErrorNotice}
-        {dshAccountNotice}
         <ProviderEmptyState
           appId={appId}
           onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
@@ -576,6 +564,9 @@ export function ProviderList({
       {section.help && (
         <HelpTip title={section.help.title}>{section.help.body}</HelpTip>
       )}
+      {section.note && (
+        <span className="ms-1 font-normal text-fg-3">{section.note}</span>
+      )}
     </div>
   );
 
@@ -594,7 +585,6 @@ export function ProviderList({
   return (
     <div className="space-y-4">
       {piStateErrorNotice}
-      {dshAccountNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div

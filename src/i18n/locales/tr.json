@@ -5038,7 +5038,8 @@
       "title": "DeepSeek Harness sağlayıcısı ekle",
       "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
     },
-    "sharedProviders": "Web ve Desktop bu sağlayıcı listesini paylaşır: ekleme, düzenleme ve kaldırma web ve desktop profillerine (yoksa önceden oluşturulur; Desktop ilk açılışta korur) ve başlatılmış headless, acp profillerine birlikte yazılır.",
+    "sharedProviders": "Eklenen sağlayıcılar DeepSeek Harness'ın hem Web hem Desktop yapılandırmasına (ve başlatılmış headless, acp profillerine) yazılır; modeli DeepSeek Harness içinde seçin.",
+    "sharedProvidersNote": "Web ve Desktop ortak kullanır",
     "account": {
       "help": "DeepSeek hesabı tarayıcı üzerinden oturum açar (OAuth); burada veya DeepSeek Harness'ta oturum açabilirsiniz. Oturum $DSH_HOME/.credentials.yaml (varsayılan ~/.dsh/.credentials.yaml) içinde saklanır ve DeepSeek Harness Web ile Desktop tarafından paylaşılır: herhangi bir yerde oturum açmak veya kapatmak ikisine de uygulanır, çalışan DeepSeek Harness dosyayı otomatik olarak yeniden okur. Hesabın modellerinin kullanımı, Kullanım sayfasında ayrıca \"DeepSeek hesabı (OAuth)\" olarak görünür.",
       "statusFailed": "DeepSeek hesabı oturumu okunamadı",
@@ -5052,11 +5053,6 @@
       "balance": "Bakiye {{amount}}",
       "bonus": "Bonus {{amount}}",
       "balanceFailed": "Bakiye şu anda alınamıyor",
-      "noticeSignedOutTitle": "DeepSeek hesabında oturum açılmamış",
-      "noticeSignedOut": "Hesabın modellerini kullanmak için Yetkilendirme Merkezi'nde veya DeepSeek Harness'ta tarayıcı üzerinden DeepSeek hesabınızda oturum açın. Web ve Desktop bu oturumu paylaşır.",
-      "noticeExpiredTitle": "DeepSeek hesabı oturumunun süresi doldu",
-      "noticeExpired": "Yetkilendirme Merkezi'nde veya DeepSeek Harness'ta yeniden oturum açın; Web ve Desktop birlikte düzelir.",
-      "noticeSignedIn": "DeepSeek hesabı: {{name}}",
       "signedIn": "DeepSeek hesabında hem Web hem Desktop için oturum açıldı",
       "signInFailed": "DeepSeek hesabında oturum açılamadı"
     },

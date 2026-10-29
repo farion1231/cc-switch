@@ -5096,7 +5096,8 @@
       "title": "添加 DeepSeek Harness 供应商",
       "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"
     },
-    "sharedProviders": "Web、Desktop 共用这份供应商列表：添加、编辑、移除会一起写入 web 和 desktop profile（没有就先建好，Desktop 首次启动时会保留），以及已初始化的 headless、acp。",
+    "sharedProviders": "已添加的供应商会一起写进 DeepSeek Harness 的 Web 和 Desktop 配置（以及已初始化的 headless、acp），在 DeepSeek Harness 里选模型即可。",
+    "sharedProvidersNote": "Web 和 Desktop 共用这份列表",
     "account": {
       "help": "DeepSeek 账号用浏览器登录（OAuth），可以在这里登录，也可以在 DeepSeek Harness 里登录。登录信息保存在 $DSH_HOME/.credentials.yaml（默认 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一处登录或退出，两端同时生效，运行中的 DeepSeek Harness 会自动重新读取。账号路由的模型用量在用量页单独显示为「DeepSeek 账号（OAuth）」。",
       "statusFailed": "无法读取 DeepSeek 账号的登录状态",
@@ -5110,11 +5111,6 @@
       "balance": "余额 {{amount}}",
       "bonus": "赠金 {{amount}}",
       "balanceFailed": "余额暂时查不到",
-      "noticeSignedOutTitle": "未登录 DeepSeek 账号",
-      "noticeSignedOut": "在授权中心或 DeepSeek Harness 里用浏览器登录 DeepSeek 账号后，可直接使用账号下的模型；Web 和 Desktop 共用这份登录。",
-      "noticeExpiredTitle": "DeepSeek 账号登录已失效",
-      "noticeExpired": "请在授权中心或 DeepSeek Harness 里重新登录，Web 和 Desktop 会一起恢复。",
-      "noticeSignedIn": "DeepSeek 账号：{{name}}",
       "signedIn": "DeepSeek 账号已登录，Web 和 Desktop 都可以使用",
       "signInFailed": "DeepSeek 账号登录失败"
     },

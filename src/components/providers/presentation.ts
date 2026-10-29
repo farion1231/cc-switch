@@ -82,6 +82,8 @@ export interface ProviderSection {
   key: string;
   title?: string;
   help?: { title: string; body: string };
+  /** 标题后面一句常驻的灰字说明（DSH：Web 和 Desktop 共用这份列表） */
+  note?: string;
   emptyText?: string;
   items: { provider: Provider; presentation: CardPresentation }[];
 }
@@ -953,10 +955,15 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       title: t("providerCard.section.added", { count: added.length }),
       help: {
         title: t("providerCard.section.addedHelpTitle"),
-        body: t("providerCard.section.addedHelp", {
-          app: t(`apps.${app}`),
-        }),
+        // DSH 的供应商一起写进 Web 和 Desktop 两份配置，在这里说明
+        body:
+          app === "dsh"
+            ? t("dsh.sharedProviders")
+            : t("providerCard.section.addedHelp", {
+                app: t(`apps.${app}`),
+              }),
       },
+      note: app === "dsh" ? t("dsh.sharedProvidersNote") : undefined,
       emptyText: t("providerCard.section.addedEmpty"),
       items: added,
     },

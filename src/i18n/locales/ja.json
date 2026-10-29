@@ -5096,7 +5096,8 @@
       "title": "DeepSeek Harness プロバイダーを追加",
       "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
     },
-    "sharedProviders": "Web と Desktop はこのプロバイダー一覧を共有します。追加・編集・削除は web と desktop の profile（なければ先に作成し、Desktop は初回起動時にそのまま使います）と、初期化済みの headless、acp にまとめて書き込まれます。",
+    "sharedProviders": "追加したプロバイダーは DeepSeek Harness の Web と Desktop の設定（初期化済みの headless、acp も含む）にまとめて書き込まれます。モデルは DeepSeek Harness の中で選びます。",
+    "sharedProvidersNote": "Web と Desktop で共有",
     "account": {
       "help": "DeepSeek アカウントはブラウザでログインします（OAuth）。ここでも DeepSeek Harness でもログインできます。ログイン情報は $DSH_HOME/.credentials.yaml（既定は ~/.dsh/.credentials.yaml） に保存され、DeepSeek Harness の Web と Desktop で共有されます。どこでログイン・ログアウトしても両方に反映され、実行中の DeepSeek Harness は自動で読み直します。アカウント経由のモデルの使用量は、使用量ページで「DeepSeek アカウント（OAuth）」として別に表示されます。",
       "statusFailed": "DeepSeek アカウントのログイン状態を読み取れません",
@@ -5110,11 +5111,6 @@
       "balance": "残高 {{amount}}",
       "bonus": "ボーナス {{amount}}",
       "balanceFailed": "現在残高を取得できません",
-      "noticeSignedOutTitle": "DeepSeek アカウントにログインしていません",
-      "noticeSignedOut": "認証センターまたは DeepSeek Harness でブラウザから DeepSeek アカウントにログインすると、アカウントのモデルをそのまま使えます。Web と Desktop はこのログインを共有します。",
-      "noticeExpiredTitle": "DeepSeek アカウントのログインが無効です",
-      "noticeExpired": "認証センターまたは DeepSeek Harness で再ログインしてください。Web と Desktop の両方が復旧します。",
-      "noticeSignedIn": "DeepSeek アカウント：{{name}}",
       "signedIn": "DeepSeek アカウントにログインしました（Web と Desktop の両方で使えます）",
       "signInFailed": "DeepSeek アカウントにログインできませんでした"
     },
