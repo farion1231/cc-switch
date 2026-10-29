@@ -17,8 +17,8 @@ const allJieKouPresetGroups = [
   ["Hermes", hermesProviderPresets],
 ] as const;
 
-const defaultModelId = "claude-fable-5";
-const defaultModelName = "Claude Fable 5";
+const defaultModelId = "claude-fable-5-1";
+const defaultModelName = "Claude Fable 5.1";
 const anthropicBaseUrl = "https://api.jiekou.ai/anthropic";
 const openAiBaseUrl = "https://api.jiekou.ai/openai/v1";
 const brandDetails = {
@@ -128,9 +128,10 @@ describe("JieKou AI provider presets", () => {
       },
     });
     expect(Object.keys(preset.settingsConfig.models)).toEqual([
-      defaultModelId,
       "claude-opus-5-5",
-      "claude-fable-5-1",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5",
+      defaultModelId,
     ]);
     expect(`${preset.settingsConfig.options.baseURL}/chat/completions`).toBe(
       "https://api.jiekou.ai/openai/v1/chat/completions",
@@ -153,7 +154,7 @@ describe("JieKou AI provider presets", () => {
             input: ["text", "image"],
             contextWindow: 1000000,
             maxTokens: 128000,
-            cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+            cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
           }),
         ]),
       },

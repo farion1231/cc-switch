@@ -930,18 +930,28 @@ pub fn update_endpoint_last_used(
         .map_err(|e| e.to_string())
 }
 
-/// 排序就是故障转移队列的优先级，托盘按它列队列：改完重建托盘。
+/// 排序就是故障转移队列的优先级，托盘按它列队列：改完重建托盘。聚合名单也跟着重排，
+/// 客户端看到的聚合模型顺序才和界面一致。
+///
+/// 整段串行：异步命令不再在主线程排队，两次拖动的逐行写入会交错成哪次都不是的顺序。
+/// 聚合名单发布失败时报错（排序已经存下），再拖一次就会重试发布。
 #[tauri::command]
-pub fn update_providers_sort_order(
+pub async fn update_providers_sort_order(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
     app: String,
     updates: Vec<ProviderSortUpdate>,
 ) -> Result<bool, String> {
+    static SORT_ORDER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let changed = ProviderService::update_sort_order(state.inner(), app_type, updates)
+    let _serial = SORT_ORDER_LOCK.lock().await;
+    let changed = ProviderService::update_sort_order(state.inner(), app_type.clone(), updates)
         .map_err(|e| e.to_string())?;
+    let synced = crate::mode::controller::sync_stack_order(state.inner(), &app_type).await;
     crate::tray::refresh_tray_menu(&app_handle);
+    synced.map_err(|error| {
+        format!("排序已保存，但聚合模型顺序没能更新: {error} (Sort order saved, but the aggregated model order could not be updated)")
+    })?;
     Ok(changed)
 }
 

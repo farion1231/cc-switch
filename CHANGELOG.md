@@ -5,6 +5,96 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.21] - 2026-10-26
+
+This release lets Claude Code switch between several official Claude subscription accounts: accounts are added in the Auth Center through Claude Code's own `claude auth login`, an official card picks one, switching to that card moves its login into Claude Code's default sign-in, and Open Terminal on the card starts `claude` pinned to that account. Bound cards and the Auth Center show each account's plan and remaining quota. Open Terminal becomes a button on the card, Codex model rows can be dragged into order, and lightweight mode survives a restart. Fixes cover managed ChatGPT accounts shown as expired after a restart, Codex routing to the wrong `base_url`, Codex MCP entries carrying `timeout` / `autoApprove`, OpenCode and Grok Build installs under npm 12, Kimi Code usage times, and `models.yml` values with `&`, `*` or `!` refused for Oh My Pi.
+
+**Stats**: 52 commits | 152 files changed | +12138 insertions | -1379 deletions
+
+### Added
+
+- **Multiple Official Claude Accounts** (4dc05a9aa, 58fee0db2, 1409bad95, e550adcfb, 1ddb14e19; refs #1928): The Auth Center gets a Claude group (provider `claude_official`). Adding an account runs `claude auth login --claudeai` in the account's own `CLAUDE_CONFIG_DIR` under the app config dir, opens the authorize page and accepts a pasted code or callback URL when the browser cannot return to the CLI; cancelling or timing out kills the whole process tree (the Windows `claude.cmd` shim kept the pipe open). Account dirs mirror the shared settings (without credentials and routing keys), MCP servers and `CLAUDE.md` from `~/.claude`, and are re-synced after the provider editor writes `settings.json`. Switching to an official card that has an account moves only the seven account keys between Claude Code's default sign-in and the account slots, holding Claude Code's refresh, storage and config locks, comparing before the commit point and reading back after it; a step journal (Parked / Committed / Done, fingerprints only) finishes or drops an interrupted switch at the next switch or at startup, and the login is rolled back when the card pointer or `settings.json` write fails. When switching to a card with an account, a default login that is not in the Auth Center yet is saved as an account first, and the Auth Center list is refetched after any Claude switch (main window, tray or project). Cards on "Follow Claude Code login" leave the sign-in alone. A Claude config directory override (including WSL) blocks the switch and the UI points to Open Terminal. Tokens are never refreshed, uploaded or logged out by CC Switch; deleting an account only removes its folder.
+- **Claude Account Quota and Plan** (0d6386ed8, b3eb2ad19, e29968f52, 88c878ac9, 3837f460d): Bound official cards show the account (or note) and plan in the subtitle, with a badge when the login needs renewing, and the account's quota (on by default). The live account is read from the default sign-in, others from their folders; when an idle account's access token has expired, `claude -p /usage` runs in its folder (at most every 10 minutes per account) and the quota Claude Code caches in `.claude.json` is read, only when that run wrote it. The Auth Center shows the same quota and plan per account. Plans: Pro, Max 5x, Max 20x, Team, Team Premium, Enterprise; unknown plans are shown as is. The card without an account shows the default login's plan.
+- **Claude Account Picker on Official Cards** (fe08e10ae): Signed-in accounts first, then "Add or manage Claude accounts" (opens the Auth Center) and "Follow Claude Code login"; accounts are added only in the Auth Center, as on Codex.
+- **Drag to Reorder Codex Model Rows** (05034a4e4, refs #8870): Each row in the Codex provider form's model list has a drag handle (hidden with a single row), by pointer or keyboard, in direct and Stack layouts. When the first row stands for the default model, the new first row becomes the default.
+
+### Changed
+
+- **Open Terminal on the Card** (623246868, 45155e9dc): Open Terminal is an icon button left of Edit instead of a ⋯ menu item. Its tooltip reads "Open Terminal with This Provider" and adds "(Isolated)" for cards with their own address and key and for official cards bound to a Claude account, whose terminal starts with the account's `CLAUDE_CONFIG_DIR`; the dialog treats bound official cards as isolated too.
+- **Auth Center Headers** (93a3e8ec8, ee83fd896, 503957424, ea1645f95): Every service card ends its header with "Add account"; the empty state is text only and ChatGPT's login method is a compact select beside the button. The header "Delete all accounts" menu is gone (accounts are removed from their own row). Quota labels, values and countdowns have fixed widths so bars line up across accounts.
+- **Lightweight Mode Kept Across Restarts** (da0c84e4e): The state is stored in `settings.json`; the app starts in lightweight mode when it was quit in it, except for a cold start from a `ccswitch://` link.
+- **Hermes Default Provider** (ee2ef72f3): Hermes cards show "Default" and offer "Set as default" in the ⋯ menu, like OpenClaw, OpenCode and Kimi, instead of a power-icon "Enable" button.
+- **Stable Card Usage Column** (0c07d5095): The primary action slot has a fixed minimum width, so the usage block no longer shifts when a card becomes "In use".
+- **SSE MCP Warning** (c2110ebb0, refs #8882): The MCP drawer warns under "Write to" when an SSE server is enabled for Codex (connected over HTTP) or Pi / Antigravity (refused on save), including hidden apps that stay enabled.
+- **Claude Desktop Copilot Address Detection** (#8838): A `githubcopilot.com` upstream address disables the format selector like the Copilot provider type does; saving a Copilot card clears a leftover `gemini_native` format. The zh/en/ja manuals describe it.
+- **OpenCode OMO Profiles** (#8842): OMO and OMO Slim cards no longer offer the connectivity check.
+- **Turkish Catalog** (#8836): New strings translated and two wordings corrected.
+- **Presets**: DeepSeek presets use the Flash models instead of Pro everywhere (56fa007f4); Kimi K3.1 Pro and K3.1 Pro HighSpeed added to the official Kimi presets with low/high/max effort (d564adc35, refs #8867); MiniMax M3.1 Flash allows `max` effort in OpenClaw (03337b7e8); new ClinePass presets (refs #8885) and TeamoRouter Claude presets for OpenClaw, OpenCode, Pi and Hermes (#8266); the Claude Desktop OpenCode Go preset uses `https://opencode.ai/inference/go/anthropic`, and Go quota detection accepts both addresses (#8720, fixes #8779).
+
+### Fixed
+
+- **Managed ChatGPT Accounts Shown as Expired After a Restart** (0820ff73f, refs #8901): A refresh rejection only counts as an invalid refresh token for 401 or an explicit `refresh_token_expired` / `reused` / `invalidated` code, like Codex CLI; network, transient refresh and IO errors are returned as errors so the quota keeps its last good value and retries; failed per-account quota queries are refetched after a provider switch.
+- **Codex Routed to the Wrong `base_url`** (#8849, fixes #8848): The proxy reads the table `model_provider` selects instead of the first `base_url = "` in the text, which picked another table or a commented-out URL.
+- **Codex Remote-Compaction Usage Dropped Across Sync Passes** (#8879): The compensating event is keyed to its zero-last `token_count` line.
+- **Codex MCP Entries Carrying `timeout` / `autoApprove`** (cfc64971f, refs #8843): Both keys are dropped when writing `config.toml` (Codex warned about them and `--strict-config` refused the file); the stored spec is unchanged and a native `tool_timeout_sec` is still written.
+- **Codex Requests Rejected for a Foreign Azure Resource** (96f01af07, refs #8877): After Azure answers "created under a different Azure OpenAI resource", the single retry also drops the top-level ids of input items (except `item_reference`).
+- **Chat Completions Wrapped in a `data` Envelope** (80640b528, fixes #5658): Responses shaped like `{"data": {"choices": [...]}}` (ClinePass) are read on the Claude and Codex paths and billed; streaming is unaffected.
+- **OpenCode and Grok Build Installs under npm 12** (618af9d97, ff31d8409, refs #8863): npm installs and upgrades pass `--ignore-scripts=false --include=optional --allow-scripts=<package>`, so OpenCode's placeholder `opencode.exe` is replaced and Grok Build upgrades no longer keep running the old binary.
+- **Hermes Counted Twice on Windows** (5f0fc2537, refs #8839): A leftover `hermes.cmd` shadowed by `hermes.exe` in the same directory is no longer listed as a second install.
+- **Kimi Code Usage Times** (644f56642, refs #8899): Each request is dated when its model call finished instead of when the turn was committed; retained rows are re-dated the next time their session file changes.
+- **Oh My Pi Refused `models.yml` Values with `&`, `*` or `!`** (e332cfdb7, refs #8897): Anchors, aliases and tags are only detected where a node starts.
+- **Gemini `export KEY=value` Lines Ignored** (#8862, fixes #8861): Importing kept the key, and switching back to the default provider no longer deleted it from `~/.gemini/.env`.
+- **Applying a Project Without a Prompt Kept the Current Prompt** (882e7a6a4): Snapshots record "no active prompt" and applying one disables the enabled prompt.
+- **Usage Chart Jumped When Toggling the Sidebar** (#8548).
+
+### Repository
+
+- Issue and PR templates ask for a required Human Note (#8905); PRs from outside collaborators that change `SCHEMA_VERSION` are closed automatically (#8903); end-to-end proxy tests for inline `<think>` conversion (#8835).
+
+## [4.0.20] - 2026-10-24
+
+This release adds Oh My Pi as the thirteenth managed app: providers coexist in `models.yml` with enable/remove actions, MCP, Skills, prompts and sessions are supported, and the Apps page installs, updates and uninstalls `omp`. The Apps page is split into installed and not-installed sections, installed apps can be reordered by dragging and the sidebar follows that order. Official Kimi cards can be edited and removed from Kimi Code, and managed ChatGPT accounts can sign in through the browser. Other fixes cover an empty or negative DeepSeek balance shown as an expired plan, missing Kimi Code subagent usage, HTTP 429 on Skills updates, 401 on Pi usage queries with `$NAME` API keys, `<local-command-stdout>` as Claude Code session titles, and window dragging on Linux with app-level window controls.
+
+**Stats**: 37 commits | 198 files changed | +11737 insertions | -3046 deletions
+
+### Added
+
+- **Oh My Pi Support** (#6747, #8308; refs #6422, #6662, #8057): Oh My Pi (command `omp`) is a new additive app. The agent directory is `~/.omp/agent` (or `~/.omp/profiles/<name>/agent` for a named profile; `PI_CONFIG_DIR` and the XDG data dir are honored) and can be overridden in settings. Providers are edited in `models.yml` as text: only the one entry CC Switch writes is rewritten, entries with anchors, tags or flow style are refused instead of re-emitted, and the file is rolled back byte for byte when the database commit fails. Nodes are checked against omp 18.12's schema before writing (compat enums, `reasoningEffortMap` levels, `auth`, `authHeader`, discovery type, `injectV1`, `timeoutMs`), since one invalid node disables every custom provider; with only a legacy `models.json` present, adding a provider is refused until omp has migrated it. The Pi provider form, presets and fetched-model dialog are shared, with a discovery type selector under Advanced Options. Usage queries resolve an omp `apiKey` as an environment variable name (process env, then `.env` in the agent dir, config root and home) before falling back to the literal; `!command` values are never run. MCP goes to `mcp.json` (revision checked), Skills follow Pi (no DB column, state from `<agent>/skills`), the global prompt goes to `AGENTS.md`, and sessions are read through the Pi session reader with project images allowed in previews. The Apps page installs with the official installer (Bun when present, otherwise the verified binary), updates with `omp update` and recognizes the installer's binary for uninstall. The MCP and Skills matrices explain in the Oh My Pi column that omp also discovers servers and skills from other agents' directories. Local routing and usage import do not apply. Database schema 22 → 23 adds `enabled_omp` to `mcp_servers`.
+- **Browser Login for Managed ChatGPT Accounts** (#8288, fixes #8284): The Auth Center and the Codex provider form offer browser login (authorization code + PKCE with a loopback callback on port 1455) next to device-code login, including reauthentication, for workspaces that disable device codes.
+
+### Changed
+
+- **Apps Page Sections** (5bc562ce0, ba6a8a555): Rows are split into "Installed · N" and "Not installed · N"; empty sections are hidden and the page stays one table until the first detection finishes. A CLI counts as installed by the same check that offers Uninstall (`isToolPresent`). Claude Desktop is grouped by `installed` from `get_claude_desktop_status` (connected, Desktop's own `Claude` data directory, or a Claude.app bundle on macOS).
+- **Reorder Installed Apps** (b71141a86): Installed rows can be dragged; the single order is saved as `appOrder` in the device-level `settings.json` (not synced) and drives the sidebar and the default app. Apps missing from a saved order are inserted after their default predecessor.
+- **Official Kimi Cards Editable and Removable** (626529451): Editing keeps the connection managed by the Auth Center and fetches the account's own catalog through `kimi_oauth_models`, so picked models carry the official context window, capabilities and efforts. Official cards can be removed from `config.toml` like other Kimi providers (card and credential stay; "Add" restores it); deleting still requires removing first or the Auth Center.
+- **"No subscription" for Kimi Accounts Without a Plan** (c91aa7740): An empty `/usages` answer shows "No subscription" in the account row and the card's quota column.
+- **Balance Amount Always Shown** (72b056f6e, refs #8812): Balances at or below zero show "Balance <amount>" in red on the card and amber in the tray instead of "Balance used up"; a negative zero is written as 0.00.
+- **Chinese Failed-Quota Wording** (e68e69437): "额度没查到" / "額度沒查到" becomes "额度查询失败" / "額度查詢失敗" on cards, in the Auth Center and in the tray.
+- **Pi Fetched Models in a Dialog** (6c2fc74e3): "Fetch models" opens the shared picker for Pi and omp; checked models are added as rows and filled from presets or models.dev, unchecking removes the row.
+- **Pi Advanced Options** (5f6426400): Request headers, omp discovery and compat options move into a collapsed section; hints are rewritten in plain language.
+- **Copilot Upstream Format Shown as Automatic** (#8196, fixes #8195): Claude Code and Claude Desktop disable the format selector for Copilot and explain that routing picks the format per model.
+- **Usage Tab Counts** (28a2ebc0e): All three counts are queried at once and kept while new data loads.
+- **Pricing**: Seed Kimi K3.1 Pro and K3.1 Pro HighSpeed, including the bare `k3.1-pro` ids used by the Kimi Code plan.
+- **Turkish Catalog** (#8616): Turkish translations cover every English string again.
+- **Presets**: Model IDs refreshed to the latest vendor lineups across first-party, sponsor and relay presets; retired models dropped. EveryAPI sponsor and presets removed (the icon stays for existing providers).
+
+### Fixed
+
+- **Empty DeepSeek Balance Shown as an Expired Plan** (b9f317af5, refs #8812): `is_available` only says whether the balance covers calls; the balance is always reported valid and invalid keys go through the 401/403 path.
+- **Kimi Code Subagent Usage Missing** (f395cd6be, refs #8792): Every `agents/<agent>/wire.jsonl` is scanned; subagent `step.end` records with usage are imported, keyed by `messageId`, with a per-agent request index. The parent's `subagent.completed` summary is not counted.
+- **Antigravity Subagent Usage Imported as Unknown** (#8693): The model is recovered read-only from `conversations/<id>.db` (field 21, falling back to 19).
+- **Skills Downloads Throttled with HTTP 429** (442df1db7, refs #8813): Archive downloads send `CC-Switch/<version>` as the User-Agent.
+- **Pi `$NAME` API Keys Sent Verbatim to Usage Queries** (dcdcbcb47, refs #8822): `$NAME`, `${NAME}`, `$$` and `$!` are resolved with Pi's rules for Coding Plan, balance and usage-script requests; unset references and `!command` give an empty key; nothing is written back.
+- **`<local-command-stdout>` as Claude Code Session Titles** (#8799, fixes #8798): Title and summary skip injected local-command output and slash command records.
+- **Linux Window Dragging and Resize Cursors with App-Level Window Controls** (#8092, fixes #8091).
+- **Orphan Tool Result Media Placeholder** (#8157): The Codex Chat orphan path uses the "attached as native media" marker instead of pointing at a following user message.
+- **omp Duplicate Key Check Queried Pi** (6e040f4c8).
+
+### Upgrade notes
+
+- **Database schema 22 → 23** (adds `enabled_omp` to `mcp_servers`); the database is backed up before upgrading. Older versions refuse a version-23 database.
+- Oh My Pi is shown in the sidebar by default; turn it off on the Apps page.
+
 ## [4.0.19] - 2026-10-23
 
 This release adds Kimi Code as the twelfth managed app (the CLI and the desktop app share one configuration, so both are covered): providers coexist in `~/.kimi-code/config.toml` with add/remove/set-default actions, MCP, Skills, prompts, sessions and session-log usage are supported, and official Kimi subscriptions can be signed in to (several accounts in the Auth Center, each with its own credential slot, provider, nickname and quota). The usage page is reorganized around one scope bar, a selectable metric strip driving the trend chart and heatmap, and a tabbed detail panel with a rows-per-page choice. Other fixes cover Codex `unsupported call: exec` after switching between third-party GPT and direct models in aggregation, Settings → About freezing when launched from a terminal on Linux/WSL, Codex image input turned off by model-metadata fill, the "Unsupported content type: redacted_thinking" message in Claude Code's VS Code extension on Responses upstreams, macOS Claude subscription quota reading the wrong keychain item, Antigravity quota missing the Gemini group and Windows console windows, the Hermes dashboard on WSL, and Escape closing every stacked panel.

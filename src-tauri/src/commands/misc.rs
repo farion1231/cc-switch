@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 12] = [
+const VALID_TOOLS: [&str; 13] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "agy", "omp",
+    "dsh", "agy", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -629,6 +629,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "omp" => "Oh My Pi",
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
+        "dsh" => "DeepSeek Harness",
         "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
@@ -886,11 +887,16 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         ),
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
-        "grok" => Some("npm i -g @xai-official/grok@latest"),
-        "opencode" => Some("npm i -g opencode-ai@latest"),
+        "grok" => Some(
+            "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
+        ),
+        "opencode" => Some(
+            "npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
+        ),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
+        "dsh" => Some("npm i -g @deepseek-ai/dsh@latest --engine-strict"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -901,8 +907,12 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// `npm i -g` 时须追加的参数（前导空格已含），与 `npm_install_command_for` 的静态命令
 /// 保持一致，供锚定到某处 npm 的升级命令复用。
 ///
-/// Claude Code 的 postinstall 把平台 optional dependency 中的原生程序放到 bin/claude.exe。
-/// npm 12 拦截该脚本时会留下文本占位文件，Windows 执行后报“与 Windows 版本不兼容”。
+/// Claude Code / OpenCode 的 postinstall 把平台 optional dependency 中的原生程序放到
+/// bin/claude.exe / bin/opencode.exe。npm 12 拦截该脚本时会留下文本占位文件，
+/// Windows 执行后报“与 Windows 版本不兼容”。
+/// Grok Build 的 bin/grok 是 node launcher，postinstall 才把 optional dependency 里的
+/// 平台二进制解到 `~/.grok/bin/grok-<version>` 并 relink `grok`；被拦后 launcher 只要见到
+/// `~/.grok/bin/grok` 就直接运行它、不比对版本，于是 npm 升级 exit 0 却仍跑旧版。
 /// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
 /// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
 /// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
@@ -910,9 +920,12 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// 加双引号：逗号在 PowerShell 里会被当成数组分隔符，bash/cmd 都会剥掉这层引号。
 fn npm_install_extra_args(tool: &str) -> &'static str {
     match tool {
+        "dsh" => " --engine-strict",
         "claude" => {
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
         }
+        "grok" => " --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
+        "opencode" => " --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
         "mcode" => {
             " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
         }
@@ -1305,6 +1318,7 @@ async fn get_single_tool_version_impl(
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
+        "dsh" => fetch_npm_latest_for_tool(&client, "@deepseek-ai/dsh", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
@@ -1707,6 +1721,22 @@ fn extract_version(raw: &str) -> String {
 /// 工具未安装时的统一错误文案；WSL 路径会再拼上 `[WSL:{distro}] ` 前缀。
 const NOT_INSTALLED: &str = "not installed or not executable";
 
+/// 已定位到的可执行文件跑 `--version` 却什么都没输出时的诊断。文件在、拿不到版本，
+/// 就是「装了但跑不起来」：安装位置列表照样会列出它，这里若报没装，同一行会既在
+/// 「已安装」组里、又显示「未安装」和安装按钮。
+fn silent_version_probe_detail(status: std::process::ExitStatus) -> String {
+    match status.code() {
+        Some(0) => "`--version` printed nothing".to_string(),
+        Some(code) => format!("`--version` exited with code {code} and printed nothing"),
+        None => "`--version` was terminated and printed nothing".to_string(),
+    }
+}
+
+/// 已定位到的可执行文件启动失败（文件损坏、被安全软件拦截、不是有效程序等）时的诊断。
+fn launch_failure_detail(tool_path: &Path, err: &std::io::Error) -> String {
+    format!("failed to launch {}: {err}", tool_path.display())
+}
+
 /// CLI 版本探测的三态结果，跨平台统一各 probe（`try_get_version` /
 /// `try_get_version_wsl` / `scan_cli_version`）的返回，进而在 `ToolVersion` 上给出
 /// 结构化的 `installed_but_broken` 信号——避免前端靠匹配错误文案反推语义。
@@ -1890,7 +1920,7 @@ fn build_provider_command_line(shell: &str, launch_command: &str, cwd: Option<&P
         .map(|dir| {
             format!(
                 "cd {} && {}",
-                shell_single_quote(&dir.to_string_lossy()),
+                user_shell_quote(shell, &dir.to_string_lossy()),
                 launch_command
             )
         })
@@ -2240,6 +2270,45 @@ fn mcode_extra_search_paths(
         push_unique_path(&mut paths, launcher_dir(home.join(".minimax-code")));
     }
     paths.into_iter().collect()
+}
+
+/// PATHEXT 里 `.CMD` 是否排在 `.EXE` 之前。未设置或两者都不在时按 Windows 默认
+/// （`.EXE` 在前）处理。
+#[cfg(any(target_os = "windows", test))]
+fn pathext_prefers_cmd_over_exe(pathext: Option<&str>) -> bool {
+    let Some(pathext) = pathext else {
+        return false;
+    };
+    let position = |ext: &str| {
+        pathext
+            .split(';')
+            .map(str::trim)
+            .position(|entry| entry.eq_ignore_ascii_case(ext))
+    };
+    match (position(".cmd"), position(".exe")) {
+        (Some(cmd), Some(exe)) => cmd < exe,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+/// 同一目录里 `<tool>.cmd` 和 `<tool>.exe` 并存时，命令行敲 `<tool>` 只会按 PATHEXT
+/// 顺序命中其中一个，另一个被遮住。调用方只对已知是同一处安装多出来的入口用它
+/// （Hermes 换成 `.exe` 启动器后留下的旧 `hermes.cmd`，#8839）。
+#[cfg(any(target_os = "windows", test))]
+fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    let cmd_first = pathext_prefers_cmd_over_exe(pathext);
+    let shadowing_ext = if ext.eq_ignore_ascii_case("cmd") && !cmd_first {
+        "exe"
+    } else if ext.eq_ignore_ascii_case("exe") && cmd_first {
+        "cmd"
+    } else {
+        return false;
+    };
+    path.with_extension(shadowing_ext).is_file()
 }
 
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
@@ -2803,10 +2872,12 @@ fn run_windows_tool_version_command(
 /// the directory scan, so the displayed version matches what `tool` resolves
 /// to in a terminal (#4701).
 ///
-/// Returns `NotFound` when no entry is resolved on PATH (the caller falls back
-/// to `scan_cli_version` over the hardcoded/registry dirs); `FoundButFailed`
-/// when an entry was resolved but `--version` exited non-zero (installed but
-/// not runnable), which is reported as-is without falling back, so an old
+/// Returns `NotFound` when no entry is resolved on PATH, or the resolved entry
+/// fails to launch (the caller falls back to `scan_cli_version` over the
+/// hardcoded/registry dirs, which still reports it as broken when nothing else
+/// runs); `FoundButFailed` when an entry ran but no version came out of it —
+/// it exited non-zero or printed nothing (installed but not runnable).
+/// That is reported as-is without falling back, so an old
 /// install elsewhere cannot mask a broken default.
 #[cfg(target_os = "windows")]
 fn probe_path_default_version(tool: &str) -> ShellProbe {
@@ -2822,29 +2893,35 @@ fn probe_path_default_version(tool: &str) -> ShellProbe {
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
                 } else {
                     ShellProbe::Found(extract_version(raw))
                 }
             } else {
                 let err = if stderr.is_empty() { stdout } else { stderr };
                 if err.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
                 } else {
                     ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
                 }
             }
         }
+        // 启动不了不一定是装坏了：`where` 会列出 npm 留下的无扩展名 sh shim，同目录
+        // 没有 .cmd 时它可能排在最前，而终端会跳过它、去跑后面那份。交给目录扫描判断：
+        // 别处有能跑的就以它为准，都跑不起来扫描也会报「装了但跑不起来」。
         Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
 }
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
 fn scan_cli_version(tool: &str) -> ShellProbe {
+    scan_cli_version_in(tool, &build_tool_search_paths(tool))
+}
+
+fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf]) -> ShellProbe {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
-    let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
@@ -2854,8 +2931,11 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
     // 典型场景：工具已安装但当前环境跑不起来（如 openclaw 要求 Node v22.19+）。
     // 这类信息比笼统的 "not installed" 有用得多，循环结束未探到版本时回传。
     let mut exec_diagnostic: Option<String> = None;
+    // 文件在、却启动失败或没有任何输出时的首个诊断。没有更具体的报错时才用它：
+    // 文件在就不算没装（安装位置列表也会列出它）。
+    let mut silent_diagnostic: Option<String> = None;
 
-    for path in &search_paths {
+    for path in search_paths {
         #[cfg(target_os = "windows")]
         let new_path = format!("{};{}", path.display(), current_path);
 
@@ -2863,7 +2943,8 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
         let new_path = prepend_search_dir_to_path(path, &current_path);
 
         for tool_path in tool_executable_candidates(tool, path) {
-            if !tool_path.exists() {
+            // 只认文件：与工具同名的目录不是安装，否则启动失败会被当成「装了跑不起来」
+            if !tool_path.is_file() {
                 continue;
             }
 
@@ -2878,27 +2959,36 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
                     .output()
             };
 
-            if let Ok(out) = output {
-                let stdout = decode_command_output(&out.stdout).trim().to_string();
-                let stderr = decode_command_output(&out.stderr).trim().to_string();
-                if out.status.success() {
-                    let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                    if !raw.is_empty() {
-                        return ShellProbe::Found(extract_version(raw));
-                    }
+            let out = match output {
+                Ok(out) => out,
+                Err(e) => {
+                    silent_diagnostic.get_or_insert_with(|| launch_failure_detail(&tool_path, &e));
+                    continue;
+                }
+            };
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            if out.status.success() {
+                let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                if !raw.is_empty() {
+                    return ShellProbe::Found(extract_version(raw));
+                }
+                silent_diagnostic.get_or_insert_with(|| silent_version_probe_detail(out.status));
+            } else {
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                let detail = detail.trim();
+                if detail.is_empty() {
+                    silent_diagnostic
+                        .get_or_insert_with(|| silent_version_probe_detail(out.status));
                 } else if exec_diagnostic.is_none() {
-                    let detail = if stderr.is_empty() { stdout } else { stderr };
-                    let detail = detail.trim();
-                    if !detail.is_empty() {
-                        exec_diagnostic = Some(last_lines(detail, 4));
-                    }
+                    exec_diagnostic = Some(last_lines(detail, 4));
                 }
             }
         }
     }
 
-    // 有诊断 = 找到了可执行文件但 --version 报错（装了跑不起来）；否则视作未安装。
-    match exec_diagnostic {
+    // 有诊断 = 找到了可执行文件但拿不到版本（装了跑不起来），具体报错优先；否则视作未安装。
+    match exec_diagnostic.or(silent_diagnostic) {
         Some(detail) => ShellProbe::FoundButFailed(detail),
         None => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
@@ -3250,6 +3340,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
+    #[cfg(target_os = "windows")]
+    let pathext = std::env::var("PATHEXT").ok();
 
     for dir in &search_paths {
         #[cfg(target_os = "windows")]
@@ -3258,7 +3350,15 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         let new_path = prepend_search_dir_to_path(dir, &current_path);
 
         for tool_path in tool_executable_candidates(tool, dir) {
-            if !tool_path.exists() {
+            // 与 scan_cli_version 一致，只认文件，同名目录不算一处安装
+            if !tool_path.is_file() {
+                continue;
+            }
+            // Hermes 发布启动器时换成 .exe 不会删掉旧的 .cmd，两者同在它自己的 bin 目录，
+            // 只算命令行实际命中的那个（#8839）。其他工具同目录并存可能是两处真实安装
+            // （如 npm prefix 与原生安装同目录），保持分开列出。
+            #[cfg(target_os = "windows")]
+            if tool == "hermes" && shadowed_by_pathext_sibling(&tool_path, pathext.as_deref()) {
                 continue;
             }
             // canonicalize 解析软链后去重：/opt/homebrew/bin/x → Cellar/...、nvm shim 等
@@ -3330,6 +3430,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
         "omp" => Some("@oh-my-pi/pi-coding-agent"),
+        "dsh" => Some("@deepseek-ai/dsh"),
         _ => None,
     }
 }
@@ -3624,6 +3725,13 @@ fn anchored_npm_command(bin_path: &str, args: &str) -> Option<String> {
     ))
 }
 
+/// POSIX 官方自升级内部再调 npm 时，用环境变量放行该包的 postinstall 与 optional
+/// dependency（含义同 `npm_install_extra_args`），只作用于紧随其后的那条命令。
+#[cfg(not(target_os = "windows"))]
+fn npm_scripts_env_prefix(pkg: &str) -> String {
+    format!("npm_config_allow_scripts={pkg} npm_config_ignore_scripts=false npm_config_include=optional ")
+}
+
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
@@ -3871,9 +3979,15 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return anchored_official_update_command(tool, bin_path);
     }
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
-        return Some(grok_native_update_command(
-            anchored_official_update_command(tool, bin_path)?,
-        ));
+        // `[cli] installer = "npm"`（npm 包的 postinstall 写入）下，`grok update` 会 spawn
+        // `npm i -g @xai-official/grok@<version>`，靠 postinstall relink `~/.grok/bin/grok`。
+        // npm 12 拦截后仍 exit 0，`||` 后的官方 installer 不会接手，用户继续跑旧版。
+        // 环境变量只作用于 `||` 左侧这一条；internal / gh-release 模式不经 npm，不受影响。
+        return Some(grok_native_update_command(format!(
+            "{}{}",
+            npm_scripts_env_prefix("@xai-official/grok"),
+            anchored_official_update_command(tool, bin_path)?
+        )));
     }
     if tool == "mcode" {
         if let Some(root) = mcode_script_install_root(bin_path, real_target, McodeLayout::Posix) {
@@ -3895,18 +4009,23 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
         let mut update = anchored_official_update_command(tool, bin_path)?;
-        // npm-installed Claude delegates updates to npm. Keep the npm 12
+        // npm-installed Claude / OpenCode delegate updates to npm. Keep the npm 12
         // postinstall and optional dependency settings scoped to this process
         // tree; other installation sources retain their own update policy.
         // Gate on the real target rather than the launcher's source so npm
         // prefixes classified as `system` (Intel Homebrew node, nodejs.org pkg,
         // ~/.npm-global, distro node) are covered too: they have no sibling-npm
         // fallback, so a false-success update there could never self-heal.
-        if tool == "claude" && real_lower.contains("/node_modules/@anthropic-ai/claude-code/") {
-            update = format!(
-                "npm_config_allow_scripts={} npm_config_ignore_scripts=false npm_config_include=optional {update}",
-                npm_package_for(tool)?
-            );
+        // Bun-installed OpenCode upgrades through bun, not npm.
+        let npm_scripts_package = match tool {
+            "claude" => Some("@anthropic-ai/claude-code"),
+            "opencode" if !real_lower.contains("/.bun/") => Some("opencode-ai"),
+            _ => None,
+        };
+        if let Some(pkg) = npm_scripts_package {
+            if real_lower.contains(&format!("/node_modules/{pkg}/")) {
+                update = format!("{}{update}", npm_scripts_env_prefix(pkg));
+            }
         }
         return Some(match package_command {
             Some(fallback) => chain_update_commands(update, fallback, LifecycleCommandShell::Posix),
@@ -4092,7 +4211,7 @@ impl CommandDeadline {
 }
 
 #[cfg(target_os = "windows")]
-fn terminate_child_tree(child: &mut std::process::Child) -> bool {
+pub(crate) fn terminate_child_tree(child: &mut std::process::Child) -> bool {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
 
@@ -4106,7 +4225,7 @@ fn terminate_child_tree(child: &mut std::process::Child) -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn terminate_child_tree(child: &mut std::process::Child) -> bool {
+pub(crate) fn terminate_child_tree(child: &mut std::process::Child) -> bool {
     let process_group = -(child.id() as libc::pid_t);
     // SAFETY: runtime commands are placed in a dedicated process group before spawn.
     (unsafe { libc::kill(process_group, libc::SIGKILL) == 0 }) || child.kill().is_ok()
@@ -4316,6 +4435,54 @@ pub(crate) fn run_detected_tool_command_with_timeout(
             .spawn()
             .map_err(|e| format!("Failed to run {tool}: {e}"))?;
         wait_child_output(child, deadline)
+    }
+}
+
+/// 构造运行本机工具默认入口的命令（定位规则和 PATH 补全同 [`run_detected_tool_command_with_timeout`]），
+/// 不设 stdio、不等待：给要自己管子进程的调用方用（比如长时间运行、要往 stdin 写东西的登录）。
+/// `timeout` 只约束定位工具这一步。工具配置在 WSL 里时报错。
+pub(crate) fn detected_tool_command(
+    tool: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<std::process::Command, String> {
+    if !VALID_TOOLS.contains(&tool) {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    let deadline = CommandDeadline::from_timeout(Some(timeout));
+
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return Err(format!(
+            "{tool} runs in WSL; this action needs it on Windows"
+        ));
+    }
+
+    let tool_path = locate_default_tool(tool, deadline)?;
+    let dir = tool_path
+        .parent()
+        .ok_or_else(|| format!("Invalid {tool} executable path"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let new_path = format!("{};{}", dir.display(), effective_path_string());
+        Ok(build_windows_tool_command(&tool_path, args, &new_path))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let inherited = std::env::var_os("PATH")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let current_path = match login_shell_path(deadline) {
+            Some(login_path) => merge_path_segments(&login_path, &inherited),
+            None => inherited,
+        };
+        let mut cmd = std::process::Command::new(&tool_path);
+        cmd.args(args)
+            .env("PATH", format!("{}:{current_path}", dir.display()));
+        isolate_child_process_group(&mut cmd);
+        Ok(cmd)
     }
 }
 
@@ -4770,6 +4937,19 @@ pub async fn list_tool_installations(
     probe_tool_installations(tools).await
 }
 
+/// 这个工具的配置目录是不是指向 WSL（只有 Windows 上会是）。
+pub(crate) fn tool_runs_in_wsl(tool: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        wsl_distro_for_tool(tool).is_some()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = tool;
+        false
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     let override_dir = match tool {
@@ -4855,9 +5035,13 @@ pub async fn open_provider_terminal(
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
+    #[allow(non_snake_case)] skipPermissions: Option<bool>,
+    #[allow(non_snake_case)] extraArgs: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let launch_cwd = resolve_launch_cwd(cwd)?;
+    // 先拆参数：填错了直接报错，不必等到切完 agy 登录、写完临时文件。
+    let extra_args = split_launch_args(extraArgs.as_deref().unwrap_or_default())?;
 
     // 获取提供商配置
     let providers = ProviderService::list(state.inner(), app_type.clone())
@@ -4867,16 +5051,47 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
-    let launch = match app_type {
+    let mut launch = match app_type {
         AppType::Agy => {
             switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
             agy_terminal_launch(provider)?
+        }
+        AppType::Codex => codex_terminal_launch(state.db.as_ref(), provider)?,
+        AppType::Claude => {
+            use crate::services::provider::claude_official::{terminal_account, AccountTerminal};
+            match terminal_account(provider).map_err(|e| e.to_string())? {
+                Some(AccountTerminal::Dir(config_dir)) => {
+                    crate::services::claude_account::sync_shared(&config_dir);
+                    claude_account_terminal_launch(Some(config_dir))
+                }
+                Some(AccountTerminal::Default) => {
+                    crate::services::provider::claude_official::ensure_default_terminal_is_official(
+                        &state.db,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    claude_account_terminal_launch(None)
+                }
+                None => {
+                    let env_vars =
+                        extract_env_vars_from_config(&provider.settings_config, &app_type);
+                    claude_terminal_launch(&env_vars, &providerId)?
+                }
+            }
         }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
             claude_terminal_launch(&env_vars, &providerId)?
         }
     };
+    if skipPermissions == Some(true) {
+        launch.skip_permissions();
+    }
+    if let Err(e) = launch.append_user_args(extra_args) {
+        for file in &launch.cleanup {
+            let _ = std::fs::remove_file(file);
+        }
+        return Err(e);
+    }
 
     launch_provider_terminal(&launch, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
@@ -4985,6 +5200,201 @@ struct ProviderLaunch {
     cleanup: Vec<PathBuf>,
 }
 
+impl ProviderLaunch {
+    /// 用户在「打开终端」里勾了跳过权限确认：只加给这一次启动，不写进任何配置。
+    fn skip_permissions(&mut self) {
+        // Claude Code 和 agy 的参数同名；Codex 跳过确认的同时也关掉沙箱。
+        let flag = match self.program {
+            "codex" => "--dangerously-bypass-approvals-and-sandbox",
+            _ => "--dangerously-skip-permissions",
+        };
+        self.args.push(flag.to_string());
+        self.batch_command.push(' ');
+        self.batch_command.push_str(flag);
+    }
+
+    /// 用户在「打开终端」里填的附加参数，接在 CC Switch 生成的参数后面，同样只给这一次。
+    /// Windows 上每个参数经 .bat 变量传、用引号包住，cmd 的 `&`、`|` 之类不会接出别的命令。
+    fn append_user_args(&mut self, args: Vec<String>) -> Result<(), String> {
+        // Codex 的启动行带 `call`：`%` 会再展开一遍、引号里的 `^` 会加倍，和 `-c` 值同一条限制。
+        if cfg!(target_os = "windows") && args.iter().any(|arg| arg.contains(['"', '%', '^'])) {
+            return Err("附加参数里有 Windows 终端传不过去的字符（\" % ^）".to_string());
+        }
+        for (arg, var) in args.into_iter().zip(USER_ARG_BATCH_VARS) {
+            // 程序按 Windows 的规则拆命令行：收尾引号前的反斜杠要成对，否则 `C:\work\` 会把
+            // 引号当成内容吞掉。
+            let trailing = arg.len() - arg.trim_end_matches('\\').len();
+            let quoted_value = format!("{arg}{}", "\\".repeat(trailing));
+            self.batch_command.push_str(&format!(" \"%{var}%\""));
+            self.batch_vars.push((var, quoted_value));
+            self.args.push(arg);
+        }
+        Ok(())
+    }
+}
+
+/// 附加参数在 .bat 里经这些变量传，也是附加参数的个数上限（各平台一样）。
+const USER_ARG_BATCH_VARS: [&str; 16] = [
+    "CC_SWITCH_ARG0",
+    "CC_SWITCH_ARG1",
+    "CC_SWITCH_ARG2",
+    "CC_SWITCH_ARG3",
+    "CC_SWITCH_ARG4",
+    "CC_SWITCH_ARG5",
+    "CC_SWITCH_ARG6",
+    "CC_SWITCH_ARG7",
+    "CC_SWITCH_ARG8",
+    "CC_SWITCH_ARG9",
+    "CC_SWITCH_ARG10",
+    "CC_SWITCH_ARG11",
+    "CC_SWITCH_ARG12",
+    "CC_SWITCH_ARG13",
+    "CC_SWITCH_ARG14",
+    "CC_SWITCH_ARG15",
+];
+
+/// 把附加参数按空白拆开：单引号或双引号括起来的部分算同一个参数（引号本身去掉），没有
+/// 反斜杠转义（Windows 路径里全是反斜杠）。只拆成参数，不经 shell，`;`、`&`、`|` 原样交给 CLI。
+fn split_launch_args(input: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    for c in input.chars() {
+        if c.is_control() && !(quote.is_none() && c.is_whitespace()) {
+            return Err("附加参数里不能有换行等控制字符".to_string());
+        }
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => current.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                in_word = true;
+            }
+            None if c.is_whitespace() => {
+                if in_word {
+                    args.push(std::mem::take(&mut current));
+                    in_word = false;
+                }
+            }
+            None => {
+                current.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return Err("附加参数里的引号没有配对".to_string());
+    }
+    if in_word {
+        args.push(current);
+    }
+    if args.len() > USER_ARG_BATCH_VARS.len() {
+        return Err(format!("附加参数最多 {} 个", USER_ARG_BATCH_VARS.len()));
+    }
+    Ok(args)
+}
+
+/// Codex 的 `-c` 值在 .bat 里经这些变量传（值里可能有 `&` 之类 cmd 的特殊字符）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const CODEX_OVERRIDE_BATCH_VARS: [&str; 24] = [
+    "CC_SWITCH_CODEX_C0",
+    "CC_SWITCH_CODEX_C1",
+    "CC_SWITCH_CODEX_C2",
+    "CC_SWITCH_CODEX_C3",
+    "CC_SWITCH_CODEX_C4",
+    "CC_SWITCH_CODEX_C5",
+    "CC_SWITCH_CODEX_C6",
+    "CC_SWITCH_CODEX_C7",
+    "CC_SWITCH_CODEX_C8",
+    "CC_SWITCH_CODEX_C9",
+    "CC_SWITCH_CODEX_C10",
+    "CC_SWITCH_CODEX_C11",
+    "CC_SWITCH_CODEX_C12",
+    "CC_SWITCH_CODEX_C13",
+    "CC_SWITCH_CODEX_C14",
+    "CC_SWITCH_CODEX_C15",
+    "CC_SWITCH_CODEX_C16",
+    "CC_SWITCH_CODEX_C17",
+    "CC_SWITCH_CODEX_C18",
+    "CC_SWITCH_CODEX_C19",
+    "CC_SWITCH_CODEX_C20",
+    "CC_SWITCH_CODEX_C21",
+    "CC_SWITCH_CODEX_C22",
+    "CC_SWITCH_CODEX_C23",
+];
+
+/// Codex：卡就是当前直连的那家时直接跑 `codex`；否则用 `-c` 只对这个进程换成它，Key 经
+/// 环境变量传（见 `codex_terminal`），不改 `config.toml`。
+fn codex_terminal_launch(
+    db: &crate::database::Database,
+    provider: &crate::provider::Provider,
+) -> Result<ProviderLaunch, String> {
+    use crate::services::provider::codex_terminal;
+    let plan = codex_terminal::terminal_launch(db, provider).map_err(|e| e.to_string())?;
+    let mut overrides = plan.overrides;
+    let mut cleanup = Vec::new();
+    if let Some(catalog) = plan.catalog {
+        let path = unique_temp_path("codex_catalog", "json");
+        std::fs::write(&path, catalog).map_err(|e| format!("写入临时模型目录失败: {e}"))?;
+        overrides.push(codex_terminal::catalog_override(&path.to_string_lossy()));
+        cleanup.push(path);
+    }
+    codex_launch(&provider.name, overrides, plan.env, cleanup.clone()).inspect_err(|_| {
+        for file in &cleanup {
+            let _ = std::fs::remove_file(file);
+        }
+    })
+}
+
+fn codex_launch(
+    name: &str,
+    overrides: Vec<String>,
+    env: Vec<(&'static str, Option<String>)>,
+    cleanup: Vec<PathBuf>,
+) -> Result<ProviderLaunch, String> {
+    if overrides.len() > CODEX_OVERRIDE_BATCH_VARS.len() {
+        return Err(format!("「{name}」要覆盖的 Codex 配置项太多"));
+    }
+    // cmd 不认 `\"`，值里有双引号就会把后面的 `&` 等字符露在引号外面；`call` 会把 `%` 再展开
+    // 一遍、把引号里的 `^` 加倍。
+    if cfg!(target_os = "windows")
+        && overrides
+            .iter()
+            .any(|value| value.contains(['"', '%', '^']))
+    {
+        return Err(format!(
+            "「{name}」的 Codex 配置里有 Windows 终端传不过去的字符（\" % ^），请先切换到这张卡再打开终端"
+        ));
+    }
+
+    let mut args = Vec::new();
+    // npm 装的是 codex.cmd：不加 `call` 跑完不回到启动 .bat，后面删临时文件（含 Key 的
+    // .bat 本身）的几行就不执行了。
+    let mut batch_command = String::from("call codex");
+    let mut batch_vars = Vec::new();
+    for (value, var) in overrides.into_iter().zip(CODEX_OVERRIDE_BATCH_VARS) {
+        args.push("-c".to_string());
+        args.push(value.clone());
+        batch_command.push_str(&format!(" -c \"%{var}%\""));
+        batch_vars.push((var, value));
+    }
+    Ok(ProviderLaunch {
+        title: if args.is_empty() {
+            "Starting Codex with its current config"
+        } else {
+            "Using this provider for Codex in this terminal only (config.toml is unchanged)"
+        },
+        detail: None,
+        program: "codex",
+        args,
+        batch_command,
+        env,
+        batch_vars,
+        cleanup,
+    })
+}
+
 /// Claude Code：把卡上的 env 写进临时 settings 文件，`claude --settings <文件>` 启动。
 fn claude_terminal_launch(
     env_vars: &[(String, String)],
@@ -5014,6 +5424,39 @@ fn claude_terminal_launch(
         batch_vars: Vec::new(),
         cleanup: vec![config_file],
     })
+}
+
+/// Claude 官方卡绑了账号：`CLAUDE_CONFIG_DIR` 放在启动环境里（不用 `--settings`）。
+/// 变量在进程启动前就设好，Claude Code 一开始预取钥匙串读的就是这个账号的条目
+/// （写在 settings 里的话 macOS 上前 30 秒会用默认登录的令牌）。会把它指向别处的变量一并清掉。
+/// 绑号卡的终端：清掉会改走别家服务或别的登录的变量，再指定账号目录；`None` 是账号正在默认
+/// 槽位里，去掉 `CLAUDE_CONFIG_DIR` 用默认目录。
+fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> ProviderLaunch {
+    let mut env: Vec<(&'static str, Option<String>)> =
+        crate::services::claude_account::login::CLAUDE_ACCOUNT_UNSET
+            .iter()
+            .map(|name| (*name, None))
+            .collect();
+    env.push((
+        "CLAUDE_CONFIG_DIR",
+        config_dir
+            .as_ref()
+            .map(|dir| dir.to_string_lossy().into_owned()),
+    ));
+    ProviderLaunch {
+        title: if config_dir.is_some() {
+            "Using this Claude account's config directory:"
+        } else {
+            "Using this Claude account via Claude Code's current sign-in."
+        },
+        detail: config_dir,
+        program: "claude",
+        args: Vec::new(),
+        batch_command: "claude".to_string(),
+        env,
+        batch_vars: Vec::new(),
+        cleanup: Vec::new(),
+    }
 }
 
 /// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着
@@ -5198,7 +5641,15 @@ fn shell_word(value: &str) -> String {
 /// 交给用户 shell 执行的启动命令。有环境变量时经 `env` 设置或清除，值从启动脚本读进来的
 /// `CC_SWITCH_LAUNCH_ENV_<n>` 取，不出现在命令行里。
 #[cfg_attr(windows, allow(dead_code))]
+#[cfg(test)]
 fn unix_launch_command(launch: &ProviderLaunch) -> String {
+    unix_launch_command_in(launch, "/bin/sh")
+}
+
+/// 同上，参数按用户 shell 的规则加引号：这条命令由用户 shell 解析（见
+/// `build_provider_command_line`），附加参数又是用户随手填的文本。
+#[cfg_attr(windows, allow(dead_code))]
+fn unix_launch_command_in(launch: &ProviderLaunch, shell: &str) -> String {
     let mut words = Vec::new();
     if !launch.env.is_empty() {
         words.push("env".to_string());
@@ -5216,7 +5667,7 @@ fn unix_launch_command(launch: &ProviderLaunch) -> String {
         }
     }
     words.push(launch.program.to_string());
-    words.extend(launch.args.iter().map(|arg| shell_word(arg)));
+    words.extend(launch.args.iter().map(|arg| user_shell_word(shell, arg)));
     words.join(" ")
 }
 
@@ -5272,7 +5723,7 @@ fn build_unix_launcher_script(
     }
     script.push_str(&build_provider_command_line(
         shell,
-        &unix_launch_command(launch),
+        &unix_launch_command_in(launch, shell),
         cwd,
     ));
     script.push('\n');
@@ -5813,8 +6264,9 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
         .collect();
 
     // setlocal 段里设的变量（含 Key）在程序退出后随 endlocal 撤掉，不留在这个 cmd 会话里。
+    // 注册表里开了延迟展开的机器上，值里的 `!名字!` 会被替换：这一段显式关掉。
     let content = format!(
-        "@echo off\r\n{cwd_command}setlocal\r\n{set_lines}echo {title}\r\n{command}\r\nendlocal\r\n{cleanup}del \"%~f0\" >nul 2>&1\r\n",
+        "@echo off\r\n{cwd_command}setlocal DisableDelayedExpansion\r\n{set_lines}echo {title}\r\n{command}\r\nendlocal\r\n{cleanup}del \"%~f0\" >nul 2>&1\r\n",
         title = escape_windows_batch_value(launch.title),
         command = launch.batch_command,
     );
@@ -5856,6 +6308,34 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
 #[cfg_attr(windows, allow(dead_code))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+/// fish 的单引号里 `\'` 和 `\\` 仍是转义，POSIX 的 `'"'"'` 写法会让引号错位、接出别的命令。
+#[cfg_attr(windows, allow(dead_code))]
+fn is_fish_shell(shell: &str) -> bool {
+    shell.rsplit('/').next().unwrap_or(shell) == "fish"
+}
+
+/// 交给用户 shell（而不是启动脚本的 sh）解析的一段文本加引号。
+#[cfg_attr(windows, allow(dead_code))]
+fn user_shell_quote(shell: &str, value: &str) -> String {
+    if is_fish_shell(shell) {
+        format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+    } else {
+        shell_single_quote(value)
+    }
+}
+
+/// `shell_word` 的用户 shell 版本：只含安全字符时原样写。
+#[cfg_attr(windows, allow(dead_code))]
+fn user_shell_word(shell: &str, value: &str) -> String {
+    let word = shell_word(value);
+    // zsh 把开头的 `=名字` 展开成命令路径（`=sh` → `/bin/sh`），找不到还会直接报错。
+    if word == value && !value.starts_with('=') {
+        word
+    } else {
+        user_shell_quote(shell, value)
+    }
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -6735,6 +7215,148 @@ mod tests {
     }
 
     #[test]
+    fn split_launch_args_groups_quoted_values_without_a_shell() {
+        assert_eq!(split_launch_args("  ").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            split_launch_args(
+                "--debug --append-system-prompt \"be brief; ok\" --mcp-config 'C:\\a b\\mcp.json'\n-x=\"\""
+            )
+            .unwrap(),
+            vec![
+                "--debug",
+                "--append-system-prompt",
+                "be brief; ok",
+                "--mcp-config",
+                "C:\\a b\\mcp.json",
+                "-x=",
+            ]
+        );
+        // 引号可以接在词中间，引号里也能放另一种引号
+        assert_eq!(
+            split_launch_args("--name=\"it's\" ''").unwrap(),
+            vec!["--name=it's", ""]
+        );
+        assert!(split_launch_args("--append-system-prompt \"oops").is_err());
+        assert!(split_launch_args("\"line\nbreak\"").is_err());
+        let too_many = vec!["-v"; USER_ARG_BATCH_VARS.len() + 1].join(" ");
+        assert!(split_launch_args(&too_many).is_err());
+    }
+
+    #[test]
+    fn fish_gets_its_own_quoting_for_user_text() {
+        let mut launch = claude_account_terminal_launch(None);
+        launch.env.clear();
+        launch
+            .append_user_args(vec!["x\\'; printf INJECTED; #".into(), "C:\\work\\".into()])
+            .unwrap();
+        assert_eq!(
+            unix_launch_command_in(&launch, "/opt/homebrew/bin/fish"),
+            "claude 'x\\\\\\'; printf INJECTED; #' 'C:\\\\work\\\\'"
+        );
+        assert_eq!(
+            unix_launch_command_in(&launch, "/bin/zsh"),
+            "claude 'x\\'\"'\"'; printf INJECTED; #' 'C:\\work\\'"
+        );
+        // .bat 里收尾的反斜杠成对，Unix 参数保持原样
+        assert_eq!(launch.batch_vars[1].1, "C:\\work\\\\");
+        assert_eq!(launch.args[1], "C:\\work\\");
+        assert_eq!(
+            build_provider_command_line("/usr/bin/fish", "claude", Some(Path::new("/tmp/a\\'b"))),
+            "'/usr/bin/fish' -ic 'cd '\"'\"'/tmp/a\\\\\\'\"'\"'b'\"'\"' && claude'"
+        );
+        let mut launch = claude_account_terminal_launch(None);
+        launch.env.clear();
+        launch.append_user_args(vec!["=sh".into()]).unwrap();
+        assert_eq!(unix_launch_command_in(&launch, "/bin/zsh"), "claude '=sh'");
+    }
+
+    #[test]
+    fn user_args_follow_the_generated_args_and_pass_through_batch_vars() {
+        let mut launch = claude_account_terminal_launch(None);
+        launch.env.clear();
+        launch.skip_permissions();
+        launch
+            .append_user_args(vec!["--append-system-prompt".into(), "a & b | c".into()])
+            .unwrap();
+        assert_eq!(
+            unix_launch_command(&launch),
+            "claude --dangerously-skip-permissions --append-system-prompt 'a & b | c'"
+        );
+        assert_eq!(
+            launch.batch_command,
+            "claude --dangerously-skip-permissions \"%CC_SWITCH_ARG0%\" \"%CC_SWITCH_ARG1%\""
+        );
+        assert_eq!(
+            launch.batch_vars,
+            vec![
+                ("CC_SWITCH_ARG0", "--append-system-prompt".to_string()),
+                ("CC_SWITCH_ARG1", "a & b | c".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn skip_permissions_appends_the_flag_on_every_platform() {
+        let mut launch = claude_account_terminal_launch(None);
+        launch.env.clear();
+        launch.skip_permissions();
+        assert_eq!(
+            unix_launch_command(&launch),
+            "claude --dangerously-skip-permissions"
+        );
+        assert_eq!(
+            launch.batch_command,
+            "claude --dangerously-skip-permissions"
+        );
+
+        let mut launch = agy_key_launch();
+        launch.skip_permissions();
+        assert!(unix_launch_command(&launch).ends_with(
+            "agy --gemini_dir=/home/me/.cc-switch/agy/relay --dangerously-skip-permissions"
+        ));
+        assert_eq!(
+            launch.batch_command,
+            format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\" --dangerously-skip-permissions")
+        );
+    }
+
+    #[test]
+    fn codex_launch_passes_overrides_as_separate_arguments() {
+        let mut launch = codex_launch(
+            "Kimi",
+            vec![
+                "model_provider='custom'".to_string(),
+                "model_providers.custom={name='K',base_url='https://k.example/v1?a=1&b=2'}"
+                    .to_string(),
+            ],
+            vec![("CC_SWITCH_CODEX_API_KEY", Some("sk-kimi".to_string()))],
+            Vec::new(),
+        )
+        .unwrap();
+        launch.skip_permissions();
+        assert_eq!(
+            launch.args,
+            vec![
+                "-c",
+                "model_provider='custom'",
+                "-c",
+                "model_providers.custom={name='K',base_url='https://k.example/v1?a=1&b=2'}",
+                "--dangerously-bypass-approvals-and-sandbox",
+            ]
+        );
+        assert!(!unix_launch_command(&launch).contains("sk-kimi"));
+        assert_eq!(
+            launch.batch_command,
+            "call codex -c \"%CC_SWITCH_CODEX_C0%\" -c \"%CC_SWITCH_CODEX_C1%\" --dangerously-bypass-approvals-and-sandbox"
+        );
+        assert_eq!(launch.batch_vars[1].0, "CC_SWITCH_CODEX_C1");
+
+        let plain = codex_launch("Kimi", Vec::new(), Vec::new(), Vec::new()).unwrap();
+        assert_eq!(plain.batch_command, "call codex");
+        assert!(plain.args.is_empty());
+    }
+
+    #[test]
     fn agy_login_launch_picks_the_model_for_this_session_only() {
         let mut row = crate::provider::Provider::with_id(
             "login".into(),
@@ -7092,7 +7714,9 @@ mod tests {
         assert_eq!(npm_package_for("grok"), Some("@xai-official/grok"));
         assert_eq!(
             npm_install_command_for("grok"),
-            Some("npm i -g @xai-official/grok@latest")
+            Some(
+                "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
+            )
         );
         assert_eq!(official_update_args("grok"), Some("update"));
 
@@ -7100,7 +7724,7 @@ mod tests {
             assert_eq!(
                 tool_action_shell_command_for_shell("grok", action, LifecycleCommandShell::Posix)
                     .as_deref(),
-                Some("npm i -g @xai-official/grok@latest")
+                npm_install_command_for("grok")
             );
         }
 
@@ -7113,8 +7737,33 @@ mod tests {
                 LifecycleCommandShell::WindowsBatch,
             )
             .as_deref(),
-            Some("npm i -g @xai-official/grok@latest")
+            npm_install_command_for("grok")
         );
+    }
+
+    #[test]
+    fn dsh_lifecycle_uses_npm_and_keeps_engine_checks_for_anchored_updates() {
+        let expected = "npm i -g @deepseek-ai/dsh@latest --engine-strict";
+        assert_eq!(posix_install_command_for("dsh"), expected);
+        assert_eq!(npm_package_for("dsh"), Some("@deepseek-ai/dsh"));
+        for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
+            assert_eq!(
+                tool_action_shell_command_for_shell("dsh", action, LifecycleCommandShell::Posix)
+                    .as_deref(),
+                Some(expected)
+            );
+            assert_eq!(
+                tool_action_shell_command_for_shell(
+                    "dsh",
+                    action,
+                    LifecycleCommandShell::WindowsBatch
+                )
+                .as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(official_update_args("dsh"), None);
+        assert_eq!(npm_install_extra_args("dsh"), " --engine-strict");
     }
 
     #[test]
@@ -7857,7 +8506,7 @@ mod tests {
         #[test]
         fn opencode_windows_static_fallback_skips_official_upgrade() {
             let cmd = static_fallback_command("opencode");
-            assert_eq!(cmd, "npm i -g opencode-ai@latest");
+            assert_eq!(cmd, npm_install_command_for("opencode").unwrap());
             assert!(!cmd.contains("opencode upgrade"));
         }
 
@@ -7882,8 +8531,9 @@ mod tests {
             let cmd = anchored_command_from_paths("grok", &bin_path, &bin_path);
             let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
             let expected = format!(
-                "{} i -g @xai-official/grok@latest",
-                expect_quoted_path(&npm_full)
+                "{} i -g @xai-official/grok@latest{}",
+                expect_quoted_path(&npm_full),
+                npm_install_extra_args("grok")
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
@@ -7992,7 +8642,10 @@ mod tests {
                 "native installer first: {install}"
             );
             assert!(
-                install.ends_with("|| call npm i -g @xai-official/grok@latest"),
+                install.ends_with(&format!(
+                    "|| call {}",
+                    npm_install_command_for("grok").unwrap()
+                )),
                 "npm fallback should remain available: {install}"
             );
             let expected_encoded = powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT);
@@ -8339,7 +8992,7 @@ mod tests {
             assert!(
                 grok.starts_with(
                     "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh "
-                ) && grok.contains(" || npm i -g @xai-official/grok@latest"),
+                ) && grok.ends_with(&format!(" || {}", npm_install_command_for("grok").unwrap())),
                 "WSL grok install should prefer native POSIX installer with npm fallback: {grok}"
             );
             assert!(!grok.contains("| bash"));
@@ -8511,7 +9164,12 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some(format!("/Users/me/.grok/bin/grok update || {GROK_INSTALL_UNIX}").as_str())
+                Some(
+                    format!(
+                        "npm_config_allow_scripts=@xai-official/grok npm_config_ignore_scripts=false npm_config_include=optional /Users/me/.grok/bin/grok update || {GROK_INSTALL_UNIX}"
+                    )
+                    .as_str()
+                )
             );
         }
 
@@ -8526,8 +9184,12 @@ mod tests {
                 "/Users/me/.grok/downloads/grok-macos-aarch64",
             )
             .expect("native grok should anchor");
-            assert!(cmd.contains("x.ai/cli/install.sh"), "{cmd}");
-            assert!(!cmd.contains("npm"), "npm must not be the fallback: {cmd}");
+            let (_, fallback) = cmd.split_once(" || ").unwrap();
+            assert!(fallback.contains("x.ai/cli/install.sh"), "{cmd}");
+            assert!(
+                !fallback.contains("npm"),
+                "npm must not be the fallback: {cmd}"
+            );
         }
 
         #[test]
@@ -8539,7 +9201,12 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some(format!("/Users/me/bin/grok update || {GROK_INSTALL_UNIX}").as_str())
+                Some(
+                    format!(
+                        "npm_config_allow_scripts=@xai-official/grok npm_config_ignore_scripts=false npm_config_include=optional /Users/me/bin/grok update || {GROK_INSTALL_UNIX}"
+                    )
+                    .as_str()
+                )
             );
         }
 
@@ -8628,7 +9295,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
                 )
             );
         }
@@ -8704,6 +9371,43 @@ mod tests {
                     )
                 );
             }
+        }
+
+        #[test]
+        fn opencode_npm_sources_scope_postinstall_settings_to_primary_and_fallback() {
+            // opencode-ai's postinstall lays the platform binary over the text
+            // placeholder at bin/opencode.exe; npm 12 blocks it by default (#8863).
+            let dir = "/Users/me/.nvm/versions/node/v22/bin";
+            let path = format!("{dir}/opencode");
+            let mut install = inst(&path, true);
+            install.real = PathBuf::from(
+                "/Users/me/.nvm/versions/node/v22/lib/node_modules/opencode-ai/bin/opencode.exe",
+            );
+            let command = installs_anchored_command("opencode", &[install]).unwrap();
+            let (primary, fallback) = command.split_once(" || ").unwrap();
+            assert_eq!(
+                primary,
+                format!(
+                    "npm_config_allow_scripts=opencode-ai npm_config_ignore_scripts=false npm_config_include=optional {path} upgrade"
+                )
+            );
+            assert_eq!(
+                fallback,
+                format!(
+                    "PATH='{dir}':\"$PATH\" {dir}/npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"
+                )
+            );
+            assert_eq!(
+                anchored_command_from_paths(
+                    "opencode",
+                    "/usr/local/bin/opencode",
+                    "/usr/local/lib/node_modules/opencode-ai/bin/opencode.exe",
+                ),
+                Some(
+                    "npm_config_allow_scripts=opencode-ai npm_config_ignore_scripts=false npm_config_include=optional /usr/local/bin/opencode upgrade"
+                        .to_string()
+                )
+            );
         }
 
         #[test]
@@ -9641,7 +10345,12 @@ mod tests {
                 !parts[0].contains('|'),
                 "native installer should avoid pipe: {cmd}"
             );
-            assert!(parts[1].contains("npm i -g"), "npm second: {cmd}");
+            // npm 12 拦截 postinstall 时升级 exit 0 却留在旧版（#8863）。
+            assert_eq!(
+                parts[1].trim(),
+                npm_install_command_for("grok").unwrap(),
+                "npm second: {cmd}"
+            );
         }
 
         #[test]
@@ -9692,12 +10401,12 @@ mod tests {
             assert!(!static_fallback_command("gemini").contains("gemini update"));
             assert_eq!(
                 static_fallback_command("grok"),
-                "npm i -g @xai-official/grok@latest"
+                "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
             );
             assert!(!static_fallback_command("grok").contains("grok update"));
             assert_eq!(
                 static_fallback_command("opencode"),
-                "opencode upgrade || npm i -g opencode-ai@latest"
+                "opencode upgrade || npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"
             );
             assert_eq!(
                 static_fallback_command("openclaw"),
@@ -10263,6 +10972,103 @@ mod tests {
         let candidates = tool_executable_candidates("opencode", &dir);
 
         assert_eq!(candidates, vec![PathBuf::from("/usr/local/bin/opencode")]);
+    }
+
+    /// 文件在、却拿不到版本（起不来 / 没输出）算「装了但跑不起来」，不算没装：
+    /// 安装位置列表照样列出这类文件，报没装会让应用页同一行既在「已安装」组又显示安装按钮。
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn scan_cli_version_reports_present_but_silent_executable_as_broken() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let make_dir = |name: &str, script: Option<&str>| {
+            let dir = root.path().join(name);
+            std::fs::create_dir_all(&dir).expect("dir should be created");
+            let tool = dir.join("kimi");
+            match script {
+                Some(body) => {
+                    std::fs::write(&tool, format!("#!/bin/sh\n{body}\n"))
+                        .expect("script should be written");
+                    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
+                        .expect("script should be executable");
+                }
+                // 不可执行的文件：启动失败
+                None => std::fs::write(&tool, "").expect("file should be written"),
+            }
+            dir
+        };
+        let silent = make_dir("silent", Some("exit 0"));
+        let silent_failure = make_dir("silent-failure", Some("exit 3"));
+        let not_executable = make_dir("not-executable", None);
+        let loud_failure = make_dir("loud-failure", Some("echo boom >&2\nexit 1"));
+        let working = make_dir("working", Some("echo 'kimi 1.2.3'"));
+        let empty = root.path().join("empty");
+        std::fs::create_dir_all(&empty).expect("dir should be created");
+        // 与工具同名的目录不是安装
+        let same_name_dir = root.path().join("same-name-dir");
+        std::fs::create_dir_all(same_name_dir.join("kimi")).expect("dir should be created");
+
+        let broken_detail = |paths: &[PathBuf]| match scan_cli_version_in("kimi", paths) {
+            ShellProbe::FoundButFailed(detail) => detail,
+            ShellProbe::Found(v) => panic!("expected broken, got version {v}"),
+            ShellProbe::NotFound(e) => panic!("expected broken, got not found: {e}"),
+        };
+
+        assert!(broken_detail(std::slice::from_ref(&silent)).contains("printed nothing"));
+        assert!(broken_detail(std::slice::from_ref(&silent_failure))
+            .contains("exited with code 3 and printed nothing"));
+        assert!(
+            broken_detail(std::slice::from_ref(&not_executable)).starts_with("failed to launch")
+        );
+        // 具体报错优先于笼统诊断
+        assert_eq!(broken_detail(&[silent.clone(), loud_failure]), "boom");
+        // 别处有能跑的安装仍以它为准
+        assert!(matches!(
+            scan_cli_version_in("kimi", &[silent, working]),
+            ShellProbe::Found(v) if v == "1.2.3"
+        ));
+        assert!(matches!(
+            scan_cli_version_in("kimi", &[empty, same_name_dir]),
+            ShellProbe::NotFound(_)
+        ));
+    }
+
+    #[test]
+    fn pathext_order_decides_whether_cmd_beats_exe() {
+        assert!(!pathext_prefers_cmd_over_exe(None));
+        assert!(!pathext_prefers_cmd_over_exe(Some(
+            ".COM;.EXE;.BAT;.CMD;.VBS;.JS"
+        )));
+        assert!(pathext_prefers_cmd_over_exe(Some(".com;.cmd;.exe")));
+        assert!(pathext_prefers_cmd_over_exe(Some(".COM;.CMD")));
+        assert!(!pathext_prefers_cmd_over_exe(Some(".COM;.BAT")));
+    }
+
+    #[test]
+    fn same_dir_cmd_is_shadowed_by_exe_sibling_issue_8839() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let cmd = dir.path().join("hermes.cmd");
+        let exe = dir.path().join("hermes.exe");
+        std::fs::write(&cmd, "").expect("cmd launcher should be created");
+
+        let default_pathext = Some(".COM;.EXE;.BAT;.CMD");
+        // A lone launcher is the install itself.
+        assert!(!shadowed_by_pathext_sibling(&cmd, default_pathext));
+
+        std::fs::write(&exe, "").expect("exe launcher should be created");
+        assert!(shadowed_by_pathext_sibling(&cmd, default_pathext));
+        assert!(!shadowed_by_pathext_sibling(&exe, default_pathext));
+
+        // A PATHEXT that lists .CMD first makes the .cmd the one that runs.
+        let cmd_first = Some(".COM;.CMD;.EXE");
+        assert!(!shadowed_by_pathext_sibling(&cmd, cmd_first));
+        assert!(shadowed_by_pathext_sibling(&exe, cmd_first));
+
+        // A different tool's launcher in the same directory never shadows.
+        let other = dir.path().join("codex.cmd");
+        std::fs::write(&other, "").expect("other launcher should be created");
+        assert!(!shadowed_by_pathext_sibling(&other, default_pathext));
     }
 
     #[cfg(target_os = "windows")]

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, Plus, AlertTriangle, RefreshCw } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
+import type { CodexLoginMethod } from "@/lib/api/auth";
 import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
@@ -94,6 +95,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   helpSide,
 }) => {
   const { t, i18n } = useTranslation();
+  const [loginMethod, setLoginMethod] =
+    React.useState<CodexLoginMethod>("browser");
 
   const {
     accounts,
@@ -114,9 +117,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     removeAccount,
     setDefaultAccount,
     cancelAuth,
-    logout,
     refetchStatus,
-  } = useCodexOauth();
+  } = useCodexOauth(loginMethod);
   const accountUsers = useManagedAccountUsers("codex_oauth", defaultAccountId);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
@@ -160,11 +162,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
-    if (!target) return;
-    if (target.kind === "all") {
-      logout();
-      return;
-    }
+    // 标题行没有「删除全部」，只会是单个账号
+    if (target?.kind !== "one") return;
     removeAccount(target.accountId);
     if (selectedAccountId === target.accountId) {
       onSelectionInvalidated?.();
@@ -463,20 +462,35 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         defaultValue: "还没有登录 {{service}} 账号。",
         service: "ChatGPT",
       })}
-      loginLabel={t("codexOauth.loginWithChatGPT", "使用 ChatGPT 登录")}
       onAdd={addAccount}
+      loginControl={
+        <Select
+          value={loginMethod}
+          onValueChange={(value) => setLoginMethod(value as CodexLoginMethod)}
+          disabled={isAddingAccount}
+        >
+          <SelectTrigger
+            aria-label={t("codexOauth.loginMethod")}
+            className="h-7 w-[136px]"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent align="end">
+            <SelectItem value="browser">
+              {t("codexOauth.browserLogin")}
+            </SelectItem>
+            <SelectItem value="device_code">
+              {t("codexOauth.deviceCodeLogin")}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      }
       canReauth
       onReauth={reauthAccount}
       onSetDefault={setDefaultAccount}
       settingDefault={isSettingDefaultAccount}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
-      }
-      onRemoveAll={() =>
-        setRemoveTarget({
-          kind: "all",
-          accountIds: accounts.map((account) => account.id),
-        })
       }
       removing={isRemovingAccount}
       login={{

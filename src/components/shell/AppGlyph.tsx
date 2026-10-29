@@ -16,8 +16,14 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   pi: "Pi",
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
+  dsh: "DeepSeek Harness",
   agy: "Antigravity",
   omp: "Oh My Pi",
+};
+
+/** 侧栏里用的短名（侧栏窄，全名在悬停提示里）；没列的应用沿用 {@link APP_DISPLAY_NAME}。 */
+export const APP_SIDEBAR_NAME: Partial<Record<AppId, string>> = {
+  dsh: "DSH",
 };
 
 const APP_ICON_NAME: Record<AppId, string> = {
@@ -32,6 +38,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   pi: "pi",
   mcode: "minimax",
   kimi: "kimi",
+  dsh: "deepseek",
   agy: "antigravity",
   omp: "omp",
 };

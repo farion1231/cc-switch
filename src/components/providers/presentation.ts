@@ -722,8 +722,10 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
-      const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
-      const protectedReason = live ? officialReason : undefined;
+      // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
+      // 官方卡不能直接删，删号在授权中心（连登录一起删）
+      const deleteProtectedReason =
+        official && live ? t("kimi.oauth.managedHint") : undefined;
       if (official) {
         chips.push({
           key: "official",
@@ -753,11 +755,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         buttons.push({
           key: "remove",
           label: t("providerCard.action.remove"),
-          disabledReason:
-            protectedReason ??
-            (current
-              ? t("providerCard.reason.currentCannotRemove")
-              : undefined),
+          disabledReason: current
+            ? t("providerCard.reason.defaultCannotRemove")
+            : undefined,
           onClick: () => actions.remove(p),
         });
       }
@@ -771,9 +771,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           chips,
           buttons,
           menuItems: menuItems.length ? menuItems : undefined,
-          editDisabledReason: officialReason,
           deleteDisabledReason:
-            protectedReason ??
+            deleteProtectedReason ??
             (current ? t("providerCard.reason.inUseCannotDelete") : undefined),
         },
       });
@@ -909,16 +908,18 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       }
     }
 
+    // Hermes 跟 OpenClaw / OpenCode 一样是累加式：model.provider 只是默认那家，
+    // 「设为默认」收在「更多」菜单里，主操作位只留「移除」
     if (app === "hermes") {
       if (p.id === input.hermesCurrentId) {
         isDefault = true;
-        status = { label: t("providerCard.status.current"), dot: "direct" };
-        removeReason = t("providerCard.reason.currentCannotRemove");
+        status = { label: t("providerCard.status.default"), dot: "direct" };
+        removeReason = t("providerCard.reason.defaultCannotRemove");
       } else {
-        buttons.push({
-          key: "use",
-          label: t("providerCard.action.enable"),
-          onClick: () => actions.setDefault(p),
+        menuItems.push({
+          key: "setDefault",
+          label: t("providerCard.action.setDefault"),
+          onSelect: () => actions.setDefault(p),
           disabledReason: readOnlyReason,
         });
       }
