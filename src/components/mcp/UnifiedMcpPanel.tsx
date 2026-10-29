@@ -2,7 +2,14 @@ import React, { useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useMcpConnectivity } from "@/hooks/useMcpConnectivity";
 import { useTranslation } from "react-i18next";
-import { Download, MoreHorizontal, Pencil, Plus, Server } from "lucide-react";
+import {
+  Activity,
+  Download,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Server,
+} from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -155,7 +162,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     error: loadError,
     refetch,
   } = useAllMcpServers();
-  const connections = useMcpConnectivity(isError ? undefined : serversMap);
+  const connectivity = useMcpConnectivity(isError ? undefined : serversMap);
   const toggleAppMutation = useToggleMcpApp();
   const bulkToggleAppMutation = useBulkToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
@@ -600,6 +607,16 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
               type="button"
               variant="quiet"
               size="regular"
+              disabled={!connectivity.canCheck || connectivity.checking}
+              onClick={connectivity.checkAll}
+            >
+              <Activity className="h-4 w-4" strokeWidth={2} />
+              {t("mcpPage.checkConnectivity")}
+            </Button>
+            <Button
+              type="button"
+              variant="quiet"
+              size="regular"
               disabled={controlsDisabled}
               onClick={() => void handleImport()}
             >
@@ -838,7 +855,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                           (app) => server.apps[app],
                         );
                         const connection = enabled
-                          ? (connections[id] ?? "checking")
+                          ? (connectivity.states[id] ?? "unchecked")
                           : "disabled";
                         const rowFailedApps = appIds.filter(
                           (app) => fails[failKey(id, app)],
@@ -879,7 +896,9 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                       ? "bg-success"
                                       : connection === "disconnected"
                                         ? "bg-danger"
-                                        : "bg-fg-3",
+                                        : connection === "checking"
+                                          ? "animate-pulse bg-fg-3"
+                                          : "bg-fg-3",
                                   )}
                                 />
                                 <span
@@ -1007,6 +1026,16 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                   align="end"
                                   className="min-w-[200px]"
                                 >
+                                  {enabled && (
+                                    <DropdownMenuItem
+                                      disabled={connection === "checking"}
+                                      onSelect={() =>
+                                        connectivity.checkServer(id)
+                                      }
+                                    >
+                                      {t("mcpPage.testConnection")}
+                                    </DropdownMenuItem>
+                                  )}
                                   <DropdownMenuItem
                                     onSelect={() =>
                                       void copyJson(

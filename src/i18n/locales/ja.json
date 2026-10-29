@@ -4542,7 +4542,10 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "接続を確認",
+    "testConnection": "接続をテスト",
     "connection": {
+      "unchecked": "未確認",
       "connected": "接続成功",
       "disconnected": "接続失敗",
       "checking": "接続を確認中",

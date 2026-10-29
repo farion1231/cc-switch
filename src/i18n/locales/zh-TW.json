@@ -4543,7 +4543,10 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "檢查連通性",
+    "testConnection": "測試連線",
     "connection": {
+      "unchecked": "未檢查",
       "connected": "連線成功",
       "disconnected": "連線失敗",
       "checking": "正在檢查連線",
