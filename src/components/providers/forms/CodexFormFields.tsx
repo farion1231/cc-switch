@@ -7,6 +7,24 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type Modifier,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -44,6 +62,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  GripVertical,
   Loader2,
   Plus,
   Trash2,
@@ -56,6 +75,7 @@ import {
   DirectModeFormatWarning,
   EndpointField,
   FullUrlToggle,
+  GptContextWindowHint,
   ModelDropdown,
   type DirectModeFormatNotice,
 } from "./shared";
@@ -211,6 +231,10 @@ interface CodexFormFieldsProps {
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
   onCatalogModelsChange?: (models: CodexCatalogModel[]) => void;
+  // Auto Review (approval reviewer) model: `modelCatalog.autoReviewModel`, one of
+  // the catalog rows. Codex only; the Stack layout omits it (aggregation settings apply).
+  autoReviewModel?: string;
+  onAutoReviewModelChange?: (model: string) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -272,6 +296,79 @@ function withDefaultModelFirst<T extends CodexCatalogModel>(
   return [models[index], ...models.filter((_, i) => i !== index)];
 }
 
+// 拖动行首手柄换行序。`currentDefault` 是第一行代表的默认模型（`model`），为 null 时第一行
+// 不代表它（没填、或不在列表里）；否则换到最前面的那一行成为新的默认模型，和删行一样取第一个
+// 填了名字的行。
+export function reorderCatalogRows<T extends { rowId: string; model: string }>(
+  rows: T[],
+  activeId: string,
+  overId: string,
+  currentDefault: string | null,
+): { rows: T[]; defaultModel?: string } | null {
+  const from = rows.findIndex((row) => row.rowId === activeId);
+  const to = rows.findIndex((row) => row.rowId === overId);
+  if (from === -1 || to === -1 || from === to) return null;
+  const next = arrayMove(rows, from, to);
+  if (currentDefault === null) return { rows: next };
+  const first = next.map((row) => row.model.trim()).find(Boolean);
+  return first && first !== currentDefault
+    ? { rows: next, defaultModel: first }
+    : { rows: next };
+}
+
+// 模型列表只能上下拖。
+const verticalOnly: Modifier[] = [({ transform }) => ({ ...transform, x: 0 })];
+
+function SortableCatalogRow({
+  id,
+  canDrag,
+  children,
+}: {
+  id: string;
+  canDrag: boolean;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled: !canDrag });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+        position: "relative",
+        zIndex: isDragging ? 10 : undefined,
+      }}
+      className={cn(
+        "flex items-start gap-1",
+        isDragging && "rounded-control bg-surface shadow-v7-md",
+      )}
+    >
+      {/* 只有一行时没东西可换，手柄隐藏但留着位置，各列照旧和表头对齐 */}
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        disabled={!canDrag}
+        className="flex h-8 w-4 shrink-0 cursor-grab items-center justify-center text-fg-3 hover:text-fg-1 active:cursor-grabbing disabled:invisible"
+        aria-label={t("provider.dragHandle", { defaultValue: "拖拽排序" })}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
 // Compares rows (with rowId) to incoming models (without) by data fields only,
 // so both sync effects can use the same equality definition. Hidden native-profile
 // fields are included so switching between providers with identical visible fields
@@ -317,6 +414,10 @@ const CODEX_REASONING_LEVELS = [
 // Select value standing for "don't write the effort key" (Radix Select items
 // can't use an empty string). Shared by the main and subagent effort pickers.
 const EFFORT_INHERIT = "__inherit__";
+// 自动审批模型下拉的「不写覆盖、用 Codex 的默认」（Radix Select 不收空值）。
+const AUTO_REVIEW_DEFAULT = "__codex_default__";
+// Codex 不写覆盖时用的审批模型（codex-rs `DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL`）。
+const CODEX_AUTO_REVIEW_MODEL = "codex-auto-review";
 
 // Trigger label for the picked levels, kept narrow for the catalog cell. Each
 // run of three or more adjacent canonical levels collapses to "first → last"
@@ -440,9 +541,13 @@ function ReasoningLevelsEditor({
         sideOffset={6}
         avoidCollisions
         collisionPadding={8}
-        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border"
+        // Flipping alone can't help when neither side of the trigger has
+        // room for the whole panel (short window, row mid-form): cap it to
+        // the space Radix measured and let the level list scroll instead of
+        // cutting off the bottom, including the default-level picker.
+        className="z-[1000] flex max-h-[var(--radix-popover-content-available-height)] w-[var(--radix-popover-trigger-width)] flex-col p-0 border-border"
       >
-        <Command>
+        <Command className="min-h-0 flex-1">
           <CommandInput
             placeholder={t("codexConfig.reasoningLevelsSearch", {
               defaultValue: "Search reasoning levels...",
@@ -474,7 +579,7 @@ function ReasoningLevelsEditor({
           </CommandList>
         </Command>
         {selected.length > 0 && (
-          <div className="border-t border-border p-2">
+          <div className="shrink-0 border-t border-border p-2">
             <span className="text-xs text-fg-2">
               {t("codexConfig.defaultReasoningLevelLabel", {
                 defaultValue: "Default level",
@@ -581,6 +686,8 @@ export function CodexFormFields({
   promptCacheRouting,
   onPromptCacheRoutingChange,
   catalogModels = [],
+  autoReviewModel = "",
+  onAutoReviewModelChange,
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
@@ -1064,6 +1171,36 @@ export function CodexFormFields({
     [catalogRows, linkedDefaultIndex, onModelChange],
   );
 
+  const catalogDragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  // 拖动换行序：第一行就是默认模型，换到最前面的那一行当场成为新的 `model`。
+  const handleCatalogDragEnd = useCallback(
+    ({ active, over }: DragEndEvent) => {
+      if (!over) return;
+      const result = reorderCatalogRows(
+        catalogRowsRef.current,
+        String(active.id),
+        String(over.id),
+        linkedDefaultIndex >= 0 ? trimmedDefaultModel : null,
+      );
+      if (!result) return;
+      if (result.defaultModel) onModelChange?.(result.defaultModel);
+      commitCatalogRows(result.rows);
+    },
+    [
+      catalogRowsRef,
+      commitCatalogRows,
+      linkedDefaultIndex,
+      onModelChange,
+      trimmedDefaultModel,
+    ],
+  );
+
   // 按弹窗里的勾选增删列表行：留下的行原样不动，新勾的追加到末尾并补参数。
   const handleApplyFetchedCatalogRows = useCallback(
     ({ add, remove }: FetchedModelSelection) => {
@@ -1146,6 +1283,32 @@ export function CodexFormFields({
     onCatalogModelsChange,
     trimmedDefaultModel,
   ]);
+
+  // 自动审批模型只能选列表里的：审批请求和主对话发给同一家，后端也只写目录里有的模型。
+  const autoReviewChoices = useMemo(() => {
+    const seen = new Set<string>();
+    const choices: { model: string; label: string }[] = [];
+    for (const row of catalogRows) {
+      const model = row.model.trim();
+      if (!model || seen.has(model)) continue;
+      seen.add(model);
+      choices.push({ model, label: row.displayName?.trim() || model });
+    }
+    return choices;
+  }, [catalogRows]);
+  const trimmedAutoReviewModel = autoReviewModel.trim();
+  const autoReviewSelectValue = autoReviewChoices.some(
+    (choice) => choice.model === trimmedAutoReviewModel,
+  )
+    ? trimmedAutoReviewModel
+    : AUTO_REVIEW_DEFAULT;
+  // 不写覆盖时 Codex 先找目录里的 codex-auto-review：没有列表（用 Codex 自带的列表）或列表里
+  // 就有它时用它，否则由主模型自己审批。
+  const autoReviewDefaultIsCodex =
+    autoReviewChoices.length === 0 ||
+    autoReviewChoices.some(
+      (choice) => choice.model === CODEX_AUTO_REVIEW_MODEL,
+    );
 
   // 子代理模型不在模型映射里：Codex 拿不到它的窗口和推理档位；经路由转成 Chat / Anthropic
   // 协议时还会被换成默认模型（转换路径只放行映射里的模型）。没有映射、走原生 Responses 的
@@ -1526,7 +1689,7 @@ export function CodexFormFields({
   const renderCatalogRows = () => (
     <div className="space-y-2">
       {/* 列头：md+ 显示 */}
-      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px] gap-2 pe-1 ps-6 text-xs font-medium text-fg-2 md:grid">
         <span>
           {t("codexConfig.catalogColumnDisplay", {
             defaultValue: "菜单显示名",
@@ -1550,95 +1713,122 @@ export function CodexFormFields({
         <span />
       </div>
 
-      {catalogRows.map((row, index) => (
-        <div
-          key={row.rowId}
-          className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]"
+      <DndContext
+        sensors={catalogDragSensors}
+        modifiers={verticalOnly}
+        collisionDetection={closestCenter}
+        onDragEnd={handleCatalogDragEnd}
+      >
+        <SortableContext
+          items={catalogRows.map((row) => row.rowId)}
+          strategy={verticalListSortingStrategy}
         >
-          <Input
-            value={row.displayName ?? ""}
-            onChange={(event) =>
-              handleUpdateCatalogRow(index, {
-                displayName: event.target.value,
-              })
-            }
-            placeholder={t("codexConfig.catalogDisplayNamePlaceholder", {
-              defaultValue: "例如: DeepSeek V4 Flash",
-            })}
-            aria-label={t("codexConfig.catalogColumnDisplay", {
-              defaultValue: "菜单显示名",
-            })}
-          />
-          <div className="flex gap-1">
-            <Input
-              value={row.model}
-              onChange={(event) =>
-                handleUpdateCatalogRow(index, {
-                  model: event.target.value,
-                })
-              }
-              placeholder={t("codexConfig.catalogModelPlaceholder", {
-                defaultValue: "例如: deepseek-v4-flash",
-              })}
-              aria-label={t("codexConfig.catalogColumnModel", {
-                defaultValue: "实际请求模型",
-              })}
-              className="flex-1"
-            />
-            {fetchedModels.length > 0 && (
-              <ModelDropdown
-                models={fetchedModels}
-                onSelect={(id) =>
-                  handleSelectFetchedCatalogModel(row.rowId, id)
-                }
-              />
-            )}
+          <div className="space-y-2">
+            {catalogRows.map((row, index) => (
+              <SortableCatalogRow
+                key={row.rowId}
+                id={row.rowId}
+                canDrag={catalogRows.length > 1}
+              >
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]">
+                  <Input
+                    value={row.displayName ?? ""}
+                    onChange={(event) =>
+                      handleUpdateCatalogRow(index, {
+                        displayName: event.target.value,
+                      })
+                    }
+                    placeholder={t(
+                      "codexConfig.catalogDisplayNamePlaceholder",
+                      {
+                        defaultValue: "例如: DeepSeek V4 Flash",
+                      },
+                    )}
+                    aria-label={t("codexConfig.catalogColumnDisplay", {
+                      defaultValue: "菜单显示名",
+                    })}
+                  />
+                  <div className="flex gap-1">
+                    <Input
+                      value={row.model}
+                      onChange={(event) =>
+                        handleUpdateCatalogRow(index, {
+                          model: event.target.value,
+                        })
+                      }
+                      placeholder={t("codexConfig.catalogModelPlaceholder", {
+                        defaultValue: "例如: deepseek-v4-flash",
+                      })}
+                      aria-label={t("codexConfig.catalogColumnModel", {
+                        defaultValue: "实际请求模型",
+                      })}
+                      className="flex-1"
+                    />
+                    {fetchedModels.length > 0 && (
+                      <ModelDropdown
+                        models={fetchedModels}
+                        onSelect={(id) =>
+                          handleSelectFetchedCatalogModel(row.rowId, id)
+                        }
+                      />
+                    )}
+                  </div>
+                  <Input
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    value={row.contextWindow ?? ""}
+                    onChange={(event) =>
+                      handleUpdateCatalogRow(index, {
+                        contextWindow: event.target.value.replace(/[^\d]/g, ""),
+                      })
+                    }
+                    placeholder={t("codexConfig.contextWindowPlaceholder", {
+                      defaultValue: "例如: 128000",
+                    })}
+                    aria-label={t("codexConfig.catalogColumnContext", {
+                      defaultValue: "上下文窗口",
+                    })}
+                  />
+                  <ReasoningLevelsEditor
+                    levels={row.reasoningLevels}
+                    defaultLevel={row.defaultReasoningLevel}
+                    onLevelsChange={(levels) =>
+                      handleUpdateCatalogRow(index, {
+                        reasoningLevels: levels,
+                      })
+                    }
+                    onDefaultLevelChange={(level) =>
+                      handleUpdateCatalogRow(index, {
+                        defaultReasoningLevel: level,
+                      })
+                    }
+                  />
+                  <HoverTip
+                    content={t("common.delete", { defaultValue: "删除" })}
+                  >
+                    <Button
+                      aria-label={t("common.delete", { defaultValue: "删除" })}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="text-fg-2 hover:text-destructive"
+                      onClick={() => handleRemoveCatalogRow(index)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </HoverTip>
+                  <GptContextWindowHint
+                    modelId={row.model}
+                    contextWindow={row.contextWindow}
+                    className="col-span-full px-1"
+                  />
+                </div>
+              </SortableCatalogRow>
+            ))}
           </div>
-          <Input
-            type="number"
-            min={1}
-            inputMode="numeric"
-            value={row.contextWindow ?? ""}
-            onChange={(event) =>
-              handleUpdateCatalogRow(index, {
-                contextWindow: event.target.value.replace(/[^\d]/g, ""),
-              })
-            }
-            placeholder={t("codexConfig.contextWindowPlaceholder", {
-              defaultValue: "例如: 128000",
-            })}
-            aria-label={t("codexConfig.catalogColumnContext", {
-              defaultValue: "上下文窗口",
-            })}
-          />
-          <ReasoningLevelsEditor
-            levels={row.reasoningLevels}
-            defaultLevel={row.defaultReasoningLevel}
-            onLevelsChange={(levels) =>
-              handleUpdateCatalogRow(index, {
-                reasoningLevels: levels,
-              })
-            }
-            onDefaultLevelChange={(level) =>
-              handleUpdateCatalogRow(index, {
-                defaultReasoningLevel: level,
-              })
-            }
-          />
-          <HoverTip content={t("common.delete", { defaultValue: "删除" })}>
-            <Button
-              aria-label={t("common.delete", { defaultValue: "删除" })}
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="text-fg-2 hover:text-destructive"
-              onClick={() => handleRemoveCatalogRow(index)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </HoverTip>
-        </div>
-      ))}
+        </SortableContext>
+      </DndContext>
     </div>
   );
 
@@ -1962,7 +2152,7 @@ export function CodexFormFields({
                 type="button"
                 variant={null}
                 size="sm"
-                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
               >
                 {stackAdvancedExpanded ? (
                   <ChevronDown className="h-4 w-4" />
@@ -2071,7 +2261,7 @@ export function CodexFormFields({
       {defaultModelField}
 
       {/* 子代理 —— config.toml 的 [agents] default_subagent_model / default_subagent_reasoning_effort。
-          留空删键，子代理跟随主模型；聚合模式下不写进 live。 */}
+          留空删键，子代理跟随主模型；聚合模式下不写进 live（改用聚合设置）。 */}
       {category !== "official" && onSubagentModelChange && (
         <div className="space-y-1.5">
           {labelWithHelp(
@@ -2080,7 +2270,7 @@ export function CodexFormFields({
             }),
             t("codexConfig.subagentModelHint", {
               defaultValue:
-                "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，子代理跟随主模型。",
+                "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，改用聚合页签「聚合设置」里的子代理模型。",
             }),
             "codexSubagentModel",
           )}
@@ -2137,6 +2327,66 @@ export function CodexFormFields({
         </div>
       )}
 
+      {/* 自动审批 —— 写进模型目录每一行的 auto_review_model_override，Codex 按主模型那一行
+          选审批模型。只能选列表里的模型；聚合模式下不生效，改用聚合设置。 */}
+      {category !== "official" && onAutoReviewModelChange && (
+        <div className="space-y-1.5">
+          {labelWithHelp(
+            t("codexConfig.autoReviewModelLabel", {
+              defaultValue: "自动审批模型",
+            }),
+            t("codexConfig.autoReviewModelHint", {
+              defaultValue:
+                "Codex 开了自动审批（Approve for me）时，判断操作能不能放行用的模型。审批请求和主对话发给同一家，所以只能选这张卡模型列表里的。聚合模式下不生效，改用聚合页签「聚合设置」里的自动审批模型。改完需要重启 Codex。",
+            }),
+            "codexAutoReviewModel",
+          )}
+          <Select
+            value={autoReviewSelectValue}
+            onValueChange={(next) => {
+              // 表单里的 Radix Select 带一个隐藏的原生 select：编辑页加载时列表和已存的值同时
+              // 到达，值先于选项注册，它会回报一次空串。选项都不是空值，空串只能是这个，忽略。
+              if (!next) return;
+              onAutoReviewModelChange(next === AUTO_REVIEW_DEFAULT ? "" : next);
+            }}
+            disabled={autoReviewChoices.length === 0}
+          >
+            <SelectTrigger
+              id="codexAutoReviewModel"
+              aria-label={t("codexConfig.autoReviewModelLabel", {
+                defaultValue: "自动审批模型",
+              })}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={AUTO_REVIEW_DEFAULT}>
+                {autoReviewDefaultIsCodex
+                  ? t("codexConfig.autoReviewModelCodexDefault", {
+                      defaultValue: "Codex 默认（codex-auto-review）",
+                    })
+                  : t("codexConfig.autoReviewModelMainDefault", {
+                      defaultValue: "主模型自己审批（默认）",
+                    })}
+              </SelectItem>
+              {autoReviewChoices.map((choice) => (
+                <SelectItem key={choice.model} value={choice.model}>
+                  {choice.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {autoReviewChoices.length === 0 && (
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.autoReviewModelNoList", {
+                defaultValue:
+                  "这张卡没有模型列表：Codex 会用官方的 codex-auto-review 审批，只有部分转发 ChatGPT 账号的中转认它，不认就会报 404。在上面的模型列表里加上模型后就能选。",
+              })}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* 高级选项 —— 上游格式/思考能力/自定义 UA；预设供应商通常无需展开 */}
       {category !== "official" && (
         <Collapsible
@@ -2149,7 +2399,7 @@ export function CodexFormFields({
               type="button"
               variant={null}
               size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
             >
               {advancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />

@@ -1,8 +1,10 @@
 #![allow(non_snake_case)]
 
+mod agy_account;
 mod auth;
 mod auxiliary;
 mod balance;
+mod claude_account;
 mod codex_oauth;
 mod coding_plan;
 mod config;
@@ -14,10 +16,12 @@ mod failover;
 mod global_proxy;
 mod hermes;
 mod import_export;
+mod kimi_oauth;
 mod mcp;
 mod misc;
 mod model_fetch;
 mod omo;
+mod omp;
 mod openclaw;
 mod pi;
 mod plugin;
@@ -39,9 +43,11 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
+pub use agy_account::*;
 pub use auth::*;
 pub use auxiliary::*;
 pub use balance::*;
+pub use claude_account::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;
@@ -53,10 +59,12 @@ pub use failover::*;
 pub use global_proxy::*;
 pub use hermes::*;
 pub use import_export::*;
+pub use kimi_oauth::*;
 pub use mcp::*;
 pub use misc::*;
 pub use model_fetch::*;
 pub use omo::*;
+pub(crate) use omp::*;
 pub use openclaw::*;
 pub(crate) use pi::*;
 pub use plugin::*;

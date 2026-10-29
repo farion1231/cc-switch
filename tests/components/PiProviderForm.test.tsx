@@ -8,8 +8,23 @@ import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
+import { piProviderPresets } from "@/config/piProviderPresets";
 
 const TAURI_ENDPOINT = "http://tauri.local";
+
+type User = ReturnType<typeof userEvent.setup>;
+
+// 拉到模型会自动打开勾选弹窗；关掉它，接着测每行的下拉。
+async function fetchModelsAndClosePicker(user: User) {
+  await user.click(
+    screen.getByRole("button", { name: "providerForm.fetchModels" }),
+  );
+  await screen.findByRole("dialog");
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+}
 
 function completeModel(id: string, name = id.trim() || "Model") {
   return {
@@ -43,9 +58,94 @@ vi.mock("@/components/JsonEditor", () => ({
   ),
 }));
 
+// 请求头、模型自动发现和接口兼容性收在默认折叠的「高级选项」里
+function openAdvancedOptions() {
+  fireEvent.click(
+    screen.getByRole("button", { name: "providerForm.advancedOptionsToggle" }),
+  );
+}
+
 describe("PiProviderForm", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("shows a preset's provider key and blocks saving when it is already taken", async () => {
+    const user = userEvent.setup();
+    const preset = piProviderPresets.find((entry) => entry.name === "Kimi")!;
+    server.use(
+      http.post("http://tauri.local/get_providers", () =>
+        HttpResponse.json({
+          [preset.providerKey]: {
+            id: preset.providerKey,
+            name: "Kimi",
+            settingsConfig: {},
+          },
+        }),
+      ),
+    );
+    const onSubmit = vi.fn();
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save Pi provider"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
+    );
+    await user.click(screen.getByRole("button", { name: "Kimi" }));
+    expect(screen.getByLabelText("pi.form.providerKey")).toHaveValue(
+      preset.providerKey,
+    );
+    expect(
+      await screen.findByText("pi.form.providerKeyDuplicate"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save Pi provider" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "pi.form.providerKeyDuplicate",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("checks provider keys against the current app only", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post("http://tauri.local/get_providers", async ({ request }) => {
+        const { app } = (await request.json()) as { app: string };
+        const key = app === "pi" ? "pi-only" : "omp-only";
+        return HttpResponse.json({
+          [key]: { id: key, name: key, settingsConfig: {} },
+        });
+      }),
+    );
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save omp provider"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    const keyInput = screen.getByLabelText("pi.form.providerKey");
+
+    // Pi 已有的标识在 omp 里可以用
+    await user.clear(keyInput);
+    await user.type(keyInput, "pi-only");
+    await waitFor(() =>
+      expect(
+        screen.queryByText("pi.form.providerKeyDuplicate"),
+      ).not.toBeInTheDocument(),
+    );
+
+    await user.clear(keyInput);
+    await user.type(keyInput, "omp-only");
+    expect(
+      await screen.findByText("pi.form.providerKeyDuplicate"),
+    ).toBeInTheDocument();
   });
 
   it("starts in the same editable custom state as OpenCode", async () => {
@@ -61,9 +161,7 @@ describe("PiProviderForm", () => {
     );
 
     // 表单直接铺在添加页里，不再套一层卡片
-    expect(container.querySelector("#provider-form")).not.toHaveClass(
-      "glass",
-    );
+    expect(container.querySelector("#provider-form")).not.toHaveClass("glass");
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.websiteUrl")).toBeInTheDocument();
@@ -92,8 +190,9 @@ describe("PiProviderForm", () => {
     const apiFormat = document.querySelector("#pi-provider-api-select");
     const apiKey = screen.getByLabelText("pi.form.credential");
     const baseUrl = screen.getByLabelText("Base URL");
-    const headers = screen.getByText("Headers");
-    const compatibility = screen.getByText("pi.form.compatibility");
+    const advanced = screen.getByRole("button", {
+      name: "providerForm.advancedOptionsToggle",
+    });
     const models = screen.getByText("模型配置");
 
     expect(apiFormat).toHaveAttribute("role", "combobox");
@@ -103,13 +202,25 @@ describe("PiProviderForm", () => {
     expect(apiKey.compareDocumentPosition(baseUrl)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(baseUrl.compareDocumentPosition(headers)).toBe(
+    expect(baseUrl.compareDocumentPosition(models)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+    // 高级选项和 Claude Code、Codex 一样排在模型配置后面
+    expect(models.compareDocumentPosition(advanced)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    // 请求头和兼容性收在高级选项里，默认不展开
+    expect(advanced).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Headers")).not.toBeInTheDocument();
+    expect(screen.queryByText("pi.form.compatibility")).not.toBeInTheDocument();
+
+    openAdvancedOptions();
+    const headers = screen.getByText("Headers");
+    const compatibility = screen.getByText("pi.form.compatibility");
     expect(headers.compareDocumentPosition(compatibility)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(compatibility.compareDocumentPosition(models)).toBe(
+    expect(models.compareDocumentPosition(headers)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
 
@@ -140,6 +251,7 @@ describe("PiProviderForm", () => {
       screen.getByRole("button", { name: "providerPreset.custom" }),
     );
 
+    openAdvancedOptions();
     expect(screen.getByText("Headers")).toBeInTheDocument();
     expect(
       screen.getByText("No custom headers configured"),
@@ -159,8 +271,8 @@ describe("PiProviderForm", () => {
     expect(
       within(
         document.querySelector("#pi-provider-compat") as HTMLElement,
-      ).queryByRole("button", { name: /pi\.form\.compatibility/ }),
-    ).not.toBeInTheDocument();
+      ).getByRole("button", { name: "pi.form.compatibility" }),
+    ).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.getByText("pi.form.noCompatibilityOptions"),
     ).toBeInTheDocument();
@@ -195,6 +307,7 @@ describe("PiProviderForm", () => {
       />,
     );
 
+    openAdvancedOptions();
     const compatibilitySection = document.querySelector("#pi-provider-compat");
     expect(compatibilitySection).not.toBeNull();
 
@@ -440,6 +553,7 @@ describe("PiProviderForm", () => {
       },
     });
 
+    openAdvancedOptions();
     await waitFor(() => {
       expect(screen.getByLabelText("pi.form.credential")).toHaveValue(
         "json-key",
@@ -673,6 +787,7 @@ describe("PiProviderForm", () => {
       target: { value: "16384" },
     });
 
+    openAdvancedOptions();
     await user.click(screen.getByRole("button", { name: "Add header" }));
     const headerName = screen.getByLabelText("Header");
     fireEvent.change(headerName, {
@@ -716,6 +831,7 @@ describe("PiProviderForm", () => {
       />,
     );
 
+    openAdvancedOptions();
     expect(
       document.querySelector("#pi-header-identity"),
     ).not.toBeInTheDocument();
@@ -771,6 +887,98 @@ describe("PiProviderForm", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("drops injectV1 when omp discovery leaves openai-models-list", async () => {
+    const user = userEvent.setup();
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save omp provider"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+        initialData={{
+          name: "gateway",
+          settingsConfig: {
+            baseUrl: "https://gateway.example.com/v3/compat",
+            api: "openai-completions",
+            discovery: {
+              type: "openai-models-list",
+              injectV1: false,
+              timeoutMs: 500,
+            },
+          },
+        }}
+      />,
+    );
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+
+    // omp 只允许 openai-models-list 带 injectV1，其余子键照旧保留
+    openAdvancedOptions();
+    await user.click(document.querySelector("#omp-discovery-type")!);
+    await user.click(
+      await screen.findByRole("option", {
+        name: "omp.form.discoveryTypes.ollama",
+      }),
+    );
+    expect(JSON.parse(configEditor.value).discovery).toEqual({
+      type: "ollama",
+      timeoutMs: 500,
+    });
+  });
+
+  it("writes omp presets without Pi-only fields and edits discovery", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save omp preset"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Kimi", { selector: "span" }));
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    const preset = JSON.parse(configEditor.value);
+    // omp 的 models.yml 没有供应商级 name，也没有 thinkingLevelMap
+    expect(preset).not.toHaveProperty("name");
+    expect(preset.models.length).toBeGreaterThan(0);
+    for (const model of preset.models) {
+      expect(model).not.toHaveProperty("thinkingLevelMap");
+    }
+
+    expect(document.querySelector("#omp-discovery-type")).toBeNull();
+    openAdvancedOptions();
+    await user.click(document.querySelector("#omp-discovery-type")!);
+    await user.click(
+      await screen.findByRole("option", {
+        name: "omp.form.discoveryTypes.openaiModelsList",
+      }),
+    );
+    expect(JSON.parse(configEditor.value).discovery).toEqual({
+      type: "openai-models-list",
+    });
+
+    await user.click(document.querySelector("#omp-discovery-type")!);
+    await user.click(
+      await screen.findByRole("option", { name: "omp.form.discoveryOff" }),
+    );
+    expect(JSON.parse(configEditor.value)).not.toHaveProperty("discovery");
+
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save omp preset" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(onSubmit.mock.calls[0][0].settingsConfig),
+    ).not.toHaveProperty("name");
+  });
+
   it("keeps preset model order without exposing a default-model field", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
@@ -797,6 +1005,8 @@ describe("PiProviderForm", () => {
     expect(config.models.map((model: { id: string }) => model.id)).toEqual([
       "kimi-k2.7-code",
       "kimi-k3",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro-highspeed",
       "kimi-k2.7-code-highspeed",
       "kimi-k2.6",
     ]);
@@ -808,6 +1018,8 @@ describe("PiProviderForm", () => {
     ).toEqual([
       { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
       { id: "kimi-k3", name: "Kimi K3" },
+      { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro" },
+      { id: "kimi-k3.1-pro-highspeed", name: "Kimi K3.1 Pro HighSpeed" },
       { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
       { id: "kimi-k2.6", name: "Kimi K2.6" },
     ]);
@@ -965,6 +1177,7 @@ describe("PiProviderForm", () => {
     fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
       target: { value: "777" },
     });
+    openAdvancedOptions();
     await user.click(screen.getByRole("button", { name: "Add header" }));
     const headerName = screen.getByLabelText("Header");
     fireEvent.change(headerName, { target: { value: "user-agent" } });
@@ -972,9 +1185,7 @@ describe("PiProviderForm", () => {
     fireEvent.change(screen.getByLabelText("Value"), {
       target: { value: "pi-test-agent/1.0" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
 
     await waitFor(() =>
       expect(requestBody).toEqual({
@@ -1053,9 +1264,7 @@ describe("PiProviderForm", () => {
     fireEvent.change(endpoint, {
       target: { value: "https://current.example/v1" },
     });
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
 
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await waitFor(() =>
@@ -1113,9 +1322,7 @@ describe("PiProviderForm", () => {
       },
     );
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
@@ -1164,9 +1371,7 @@ describe("PiProviderForm", () => {
       target: { value: "https://provider-a.example/v1" },
     });
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
@@ -1217,9 +1422,7 @@ describe("PiProviderForm", () => {
         }}
       />,
     );
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
@@ -1278,9 +1481,7 @@ describe("PiProviderForm", () => {
       },
     );
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
 
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
@@ -1360,9 +1561,7 @@ describe("PiProviderForm", () => {
       },
     );
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
 
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
@@ -1377,6 +1576,7 @@ describe("PiProviderForm", () => {
     await user.click(
       screen.getByRole("button", { name: "展开或收起模型详情" }),
     );
+    // models.dev 按地址认出了这家，GPT 窗口照用它登记的值，不封顶。
     await waitFor(() =>
       expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
         400000,
@@ -1432,9 +1632,7 @@ describe("PiProviderForm", () => {
       { target: { value: "https://api.moonshot.cn/v1" } },
     );
     await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    await fetchModelsAndClosePicker(user);
     const modelIdInput = screen.getByLabelText("pi.form.modelId");
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
@@ -2426,6 +2624,144 @@ describe("PiProviderForm", () => {
     expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toMatchObject({
       baseUrl: "https://api.example.com/v1",
       models: [{ id: "model" }],
+    });
+  });
+
+  describe("fetched model picker", () => {
+    function serveModels(ids: string[]) {
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+          HttpResponse.json(ids.map((id) => ({ id, ownedBy: "example" }))),
+        ),
+        http.get(MODELS_DEV_API_URL, () =>
+          HttpResponse.json({
+            example: {
+              api: "https://api.example.com/v1",
+              models: {
+                "model-x": {
+                  reasoning: true,
+                  reasoning_options: [
+                    { type: "effort", values: ["low", "medium", "high"] },
+                  ],
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                  limit: { context: 123456, output: 32000 },
+                },
+              },
+            },
+          }),
+        ),
+      );
+    }
+
+    async function fillCustomProvider(
+      user: User,
+      appId: "pi" | "omp",
+    ): Promise<HTMLTextAreaElement> {
+      render(
+        <PiProviderForm
+          appId={appId}
+          submitLabel="Save picked provider"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />,
+      );
+      await user.click(
+        screen.getByRole("button", { name: "providerPreset.custom" }),
+      );
+      fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+        target: { value: "literal-key" },
+      });
+      fireEvent.change(
+        screen.getByPlaceholderText("https://api.example.com/v1"),
+        { target: { value: "https://api.example.com/v1" } },
+      );
+      return screen.getByLabelText(
+        "provider.configJson",
+      ) as HTMLTextAreaElement;
+    }
+
+    async function pickModels(user: User, toggle: string[]) {
+      await user.click(
+        screen.getByRole("button", { name: "providerForm.fetchModels" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      for (const id of toggle) {
+        await user.click(within(dialog).getByRole("checkbox", { name: id }));
+      }
+      await user.click(
+        within(dialog).getByRole("button", {
+          name: "providerForm.modelPicker.apply",
+        }),
+      );
+    }
+
+    it("adds checked models with models.dev metadata and removes unchecked ones", async () => {
+      const user = userEvent.setup();
+      serveModels(["model-x", "model-y", "model-z"]);
+      const configEditor = await fillCustomProvider(user, "pi");
+      await user.click(
+        screen.getByRole("button", { name: "pi.form.addModel" }),
+      );
+      fireEvent.change(screen.getByLabelText("pi.form.modelId"), {
+        target: { value: "model-z" },
+      });
+
+      // model-z 已在列表里、默认勾着：取消勾选就是移除。
+      await pickModels(user, ["model-x", "model-y", "model-z"]);
+
+      await waitFor(() =>
+        expect(JSON.parse(configEditor.value).models[0]).toMatchObject({
+          contextWindow: 123456,
+        }),
+      );
+      const models = JSON.parse(configEditor.value).models;
+      expect(models.map((model: { id: string }) => model.id)).toEqual([
+        "model-x",
+        "model-y",
+      ]);
+      expect(models[0]).toMatchObject({
+        name: "model-x",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 123456,
+        maxTokens: 32000,
+        thinkingLevelMap: {
+          off: null,
+          minimal: null,
+          low: "low",
+          medium: "medium",
+          high: "high",
+          xhigh: null,
+          max: null,
+        },
+      });
+      // models.dev 没有这款：留 Pi 默认值，窗口和输出上限由用户自己填。
+      expect(models[1]).toMatchObject({
+        name: "model-y",
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(models[1]).not.toHaveProperty("contextWindow");
+      expect(models[1]).not.toHaveProperty("thinkingLevelMap");
+    });
+
+    it("adds picked models to omp without a thinking map", async () => {
+      const user = userEvent.setup();
+      serveModels(["model-x"]);
+      const configEditor = await fillCustomProvider(user, "omp");
+
+      await pickModels(user, ["model-x"]);
+
+      await waitFor(() =>
+        expect(JSON.parse(configEditor.value).models[0]).toMatchObject({
+          id: "model-x",
+          reasoning: true,
+          contextWindow: 123456,
+        }),
+      );
+      expect(JSON.parse(configEditor.value).models[0]).not.toHaveProperty(
+        "thinkingLevelMap",
+      );
     });
   });
 });

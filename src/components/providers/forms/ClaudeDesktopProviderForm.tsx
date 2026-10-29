@@ -48,10 +48,16 @@ import {
   type ClaudeDesktopRoleId,
 } from "@/config/claudeDesktopProviderPresets";
 import {
+  fetchCodexOauthModels,
   fetchModelsForConfig,
+  fetchXaiOauthModels,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+} from "@/lib/api/copilot";
 import {
   providersApi,
   type ClaudeDesktopDefaultRoute,
@@ -379,6 +385,12 @@ export function ClaudeDesktopProviderForm({
   );
   const activeProviderType =
     activePreset?.providerType ?? initialData?.meta?.providerType;
+  // Codex/xAI OAuth ignore editable URLs and use fixed backend endpoints.
+  const usesAutomaticCopilotFormat =
+    activeProviderType === "github_copilot" ||
+    (activeProviderType !== "codex_oauth" &&
+      activeProviderType !== "xai_oauth" &&
+      baseUrl.includes("githubcopilot.com"));
   const { isAuthenticated: isCopilotAuthenticated, accounts: copilotAccounts } =
     useCopilotAuth();
   const {
@@ -414,6 +426,7 @@ export function ClaudeDesktopProviderForm({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: baseUrl,
   });
 
   const applyDesktopPreset = (preset: ClaudeDesktopProviderPreset) => {
@@ -540,7 +553,100 @@ export function ClaudeDesktopProviderForm({
     setProxyRoutes(normalizeProxyRows(defaultProxyRouteRows));
   }, [defaultProxyRouteRows, effectiveMode, proxyRoutes.length]);
 
+  // 托管 OAuth 供应商没有地址和 Key，模型列表走各自账号的接口（与 Claude Code 表单一致）。
+  // 换账号或换供应商（含切回普通供应商）后旧列表作废，在途请求的结果也丢弃。
+  const managedModelsRequestRef = useRef(0);
+  useEffect(() => {
+    managedModelsRequestRef.current += 1;
+    setFetchedModels([]);
+    setIsFetchingModels(false);
+  }, [
+    usesManagedOAuth,
+    activeProviderType,
+    selectedGitHubAccountId,
+    selectedCodexAccountId,
+    selectedXaiAccountId,
+  ]);
+
+  const handleFetchManagedModels = async () => {
+    let request: Promise<FetchedModel[]>;
+    if (activeProviderType === "github_copilot") {
+      if (!isCopilotAuthenticated) {
+        toast.error(
+          t("copilot.loginRequired", {
+            defaultValue: "请先登录 GitHub Copilot",
+          }),
+        );
+        return;
+      }
+      request = (
+        selectedGitHubAccountId
+          ? copilotGetModelsForAccount(selectedGitHubAccountId)
+          : copilotGetModels()
+      ).then((models) =>
+        models.map((m) => ({ id: m.id, ownedBy: m.vendor || null })),
+      );
+    } else if (activeProviderType === "codex_oauth") {
+      if (!isCodexOauthAuthenticated) {
+        toast.error(
+          t("codexOauth.loginRequired", {
+            defaultValue: "请先登录 ChatGPT 账号",
+          }),
+        );
+        return;
+      }
+      request = fetchCodexOauthModels(selectedCodexAccountId);
+    } else if (activeProviderType === "xai_oauth") {
+      if (!isXaiOauthAuthenticated) {
+        toast.error(
+          t("xaiOauth.loginRequired", {
+            defaultValue: "请先登录 xAI 账号",
+          }),
+        );
+        return;
+      }
+      request = fetchXaiOauthModels(selectedXaiAccountId);
+    } else {
+      return;
+    }
+
+    const requestId = managedModelsRequestRef.current + 1;
+    managedModelsRequestRef.current = requestId;
+    setIsFetchingModels(true);
+    try {
+      const models = await request;
+      if (managedModelsRequestRef.current !== requestId) return;
+      setFetchedModels(models);
+      toast.success(
+        t("providerForm.fetchModelsSuccess", {
+          count: models.length,
+          defaultValue: `已获取 ${models.length} 个模型`,
+        }),
+      );
+    } catch (error) {
+      if (managedModelsRequestRef.current !== requestId) return;
+      console.warn("[ClaudeDesktop] Failed to fetch managed models:", error);
+      if (activeProviderType === "github_copilot") {
+        toast.error(
+          t("copilot.loadModelsFailed", {
+            defaultValue: "加载 Copilot 模型列表失败",
+          }),
+        );
+      } else {
+        showFetchModelsError(error, t);
+      }
+    } finally {
+      if (managedModelsRequestRef.current === requestId) {
+        setIsFetchingModels(false);
+      }
+    }
+  };
+
   const handleFetchModels = async () => {
+    if (usesManagedOAuth) {
+      await handleFetchManagedModels();
+      return;
+    }
     if (!baseUrl.trim() || !apiKey.trim()) {
       showFetchModelsError(null, t, {
         hasBaseUrl: Boolean(baseUrl.trim()),
@@ -775,6 +881,12 @@ export function ClaudeDesktopProviderForm({
       return acc;
     }, {});
 
+    // Gemini format takes precedence in backend auth detection. Clear it only
+    // when saving Copilot, keeping the local selection if the URL changes back.
+    const savedApiFormat =
+      usesAutomaticCopilotFormat && apiFormat === "gemini_native"
+        ? "anthropic"
+        : apiFormat;
     const meta: ProviderMeta = {
       ...(initialData?.meta ?? {}),
       claudeDesktopMode: effectiveMode,
@@ -782,7 +894,7 @@ export function ClaudeDesktopProviderForm({
         activeProviderType === "xai_oauth"
           ? "openai_responses"
           : effectiveMode === "proxy"
-            ? apiFormat
+            ? savedApiFormat
             : "anthropic",
     };
 
@@ -830,23 +942,21 @@ export function ClaudeDesktopProviderForm({
 
   const renderActionButtons = (onAdd: () => void, addLabel: string) => (
     <div className="flex gap-1">
-      {!usesManagedOAuth && (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={handleFetchModels}
-          disabled={isFetchingModels}
-          className="h-7 gap-1"
-        >
-          {isFetchingModels ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Download className="h-3.5 w-3.5" />
-          )}
-          {t("providerForm.fetchModels", { defaultValue: "获取模型" })}
-        </Button>
-      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={handleFetchModels}
+        disabled={isFetchingModels}
+        className="h-7 gap-1"
+      >
+        {isFetchingModels ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Download className="h-3.5 w-3.5" />
+        )}
+        {t("providerForm.fetchModels", { defaultValue: "获取模型" })}
+      </Button>
       <Button
         type="button"
         variant="outline"
@@ -1021,12 +1131,23 @@ export function ClaudeDesktopProviderForm({
                       </Label>
                       <Select
                         value={apiFormat}
+                        disabled={usesAutomaticCopilotFormat}
                         onValueChange={(value) =>
                           setApiFormat(value as ClaudeApiFormat)
                         }
                       >
                         <SelectTrigger className="w-full">
-                          <SelectValue />
+                          <SelectValue
+                            key={
+                              usesAutomaticCopilotFormat
+                                ? "automatic"
+                                : "manual"
+                            }
+                          >
+                            {usesAutomaticCopilotFormat
+                              ? t("copilot.automaticFormat")
+                              : undefined}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="anthropic">
@@ -1053,6 +1174,11 @@ export function ClaudeDesktopProviderForm({
                           </SelectItem>
                         </SelectContent>
                       </Select>
+                      {usesAutomaticCopilotFormat && (
+                        <p className="text-xs leading-relaxed text-fg-2">
+                          {t("copilot.automaticFormatHint")}
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1064,25 +1190,23 @@ export function ClaudeDesktopProviderForm({
                             defaultValue: "模型映射",
                           })}
                         </Label>
-                        {!usesManagedOAuth && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={handleFetchModels}
-                            disabled={isFetchingModels}
-                            className="h-7 gap-1"
-                          >
-                            {isFetchingModels ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Download className="h-3.5 w-3.5" />
-                            )}
-                            {t("providerForm.fetchModels", {
-                              defaultValue: "获取模型",
-                            })}
-                          </Button>
-                        )}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleFetchModels}
+                          disabled={isFetchingModels}
+                          className="h-7 gap-1"
+                        >
+                          {isFetchingModels ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
+                          {t("providerForm.fetchModels", {
+                            defaultValue: "获取模型",
+                          })}
+                        </Button>
                       </div>
                       <p className="text-xs leading-relaxed text-fg-2">
                         {t("claudeDesktop.routeMapHint", {

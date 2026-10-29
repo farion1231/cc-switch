@@ -55,6 +55,9 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Hermes => "Hermes",
         AppType::Pi => "Pi",
         AppType::Mcode => "MiniMax Code",
+        AppType::Kimi => "Kimi Code",
+        AppType::Agy => "Antigravity",
+        AppType::Omp => "Oh My Pi",
     }
 }
 
@@ -97,10 +100,8 @@ pub struct TrayTexts {
     pub failover_note: &'static str,
     pub mode_route: &'static str,
     pub mode_stack: &'static str,
-    pub mode_mapping: &'static str,
     pub needs_routing_suffix: &'static str,
     pub official_blocked_suffix: &'static str,
-    pub mapping_suffix: &'static str,
     pub open_app_page: &'static str,
     pub add_provider: &'static str,
     pub almost_out: &'static str,
@@ -109,7 +110,6 @@ pub struct TrayTexts {
     pub problem_attach_failed: &'static str,
     pub problem_switch_failed: &'static str,
     pub problem_more: &'static str,
-    pub desktop_unavailable: &'static str,
     /// 出问题时托盘图标的悬停提示：`{problem}` 是问题区第一条
     pub tooltip_problem: &'static str,
     /// 反馈行（灰字）：直连切换 / Claude Desktop 切换，`{app}` `{name}`
@@ -132,7 +132,6 @@ pub struct TrayTexts {
     pub tier_used: &'static str,
     pub tier_used_up: &'static str,
     pub balance: &'static str,
-    pub balance_used_up: &'static str,
     pub plan_expired: &'static str,
     pub used_amount: &'static str,
     pub quota_failed: &'static str,
@@ -203,10 +202,8 @@ impl TrayTexts {
                 failover_note: "Picked from the queue automatically; change it on the app page",
                 mode_route: "Routing",
                 mode_stack: "Aggregation",
-                mode_mapping: "Model mapping",
                 needs_routing_suffix: " (needs routing)…",
                 official_blocked_suffix: " (official plans don't go through routing)",
-                mapping_suffix: " · Model mapping",
                 open_app_page: "Open {app} page",
                 add_provider: "Add provider…",
                 almost_out: "almost out",
@@ -216,8 +213,6 @@ impl TrayTexts {
                     "{app}: {mode} couldn't reconnect at startup; back to direct",
                 problem_switch_failed: "{app} didn't switch: {reason}",
                 problem_more: "{count} more issues — open CC Switch to see them",
-                desktop_unavailable:
-                    "The routing service isn't running; {name} is unavailable for now",
                 tooltip_problem: "CC Switch · Needs attention: {problem}",
                 feedback_switched: "{app} switched to {name}. Restart {app} to apply",
                 feedback_stack_default:
@@ -237,7 +232,6 @@ impl TrayTexts {
                 tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
                 balance: "Balance {value}",
-                balance_used_up: "Balance used up",
                 plan_expired: "Plan expired",
                 used_amount: "Used {value}",
                 quota_failed: "Quota unavailable",
@@ -267,10 +261,8 @@ impl TrayTexts {
                 texts.failover_note = "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz";
                 texts.mode_route = "Yönlendirme";
                 texts.mode_stack = "Birleştirme";
-                texts.mode_mapping = "Model eşleme";
                 texts.needs_routing_suffix = " (yönlendirme gerekir)…";
                 texts.official_blocked_suffix = " (resmî abonelikler yönlendirmeyi kullanmaz)";
-                texts.mapping_suffix = " · Model eşleme";
                 texts.open_app_page = "{app} sayfasını aç";
                 texts.add_provider = "Sağlayıcı ekle…";
                 texts.almost_out = "bitmek üzere";
@@ -279,7 +271,6 @@ impl TrayTexts {
                 texts.problem_attach_failed = "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü";
                 texts.problem_switch_failed = "{app} geçiş yapamadı: {reason}";
                 texts.problem_more = "{count} sorun daha var — görmek için CC Switch'i açın";
-                texts.desktop_unavailable = "Yönlendirme hizmeti çalışmıyor; {name} şu anda kullanılamıyor";
                 texts.tooltip_problem = "CC Switch · İlgilenilmesi gerekiyor: {problem}";
                 texts.feedback_switched = "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın";
                 texts.feedback_stack_default = "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın";
@@ -298,7 +289,6 @@ impl TrayTexts {
                 texts.tier_used = "{label} %{value} kullanıldı";
                 texts.tier_used_up = "{label} tükendi";
                 texts.balance = "Bakiye {value}";
-                texts.balance_used_up = "Bakiye tükendi";
                 texts.plan_expired = "Planın süresi doldu";
                 texts.used_amount = "Kullanılan: {value}";
                 texts.quota_failed = "Kota bilgisi alınamıyor";
@@ -325,10 +315,8 @@ impl TrayTexts {
                 failover_note: "キューの順に自動で選ばれます（変更はアプリのページで）",
                 mode_route: "ルーティング",
                 mode_stack: "集約",
-                mode_mapping: "モデルマッピング",
                 needs_routing_suffix: "（ルーティングが必要）…",
                 official_blocked_suffix: "（公式サブスクリプションはルーティングを通りません）",
-                mapping_suffix: " · モデルマッピング",
                 open_app_page: "{app} のページを開く",
                 add_provider: "プロバイダーを追加…",
                 almost_out: "残りわずか",
@@ -338,8 +326,6 @@ impl TrayTexts {
                 problem_switch_failed: "{app} を切り替えられませんでした：{reason}",
                 problem_more:
                     "ほかに {count} 件の問題があります。CC Switch を開いて確認してください",
-                desktop_unavailable:
-                    "ルーティングサービスが動いていないため、{name} は今使えません",
                 tooltip_problem: "CC Switch · 対応が必要：{problem}",
                 feedback_switched:
                     "{app} を {name} に切り替えました。反映するには {app} を再起動してください",
@@ -359,7 +345,6 @@ impl TrayTexts {
                 tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
                 balance: "残高 {value}",
-                balance_used_up: "残高なし",
                 plan_expired: "プラン期限切れ",
                 used_amount: "使用 {value}",
                 quota_failed: "残量を取得できません",
@@ -386,10 +371,8 @@ impl TrayTexts {
                 failover_note: "依佇列自動選擇，要調整請到應用頁",
                 mode_route: "路由",
                 mode_stack: "聚合",
-                mode_mapping: "模型映射",
                 needs_routing_suffix: "（需要路由）…",
                 official_blocked_suffix: "（官方訂閱不經過路由）",
-                mapping_suffix: " · 模型映射",
                 open_app_page: "開啟 {app} 頁面",
                 add_provider: "新增供應商…",
                 almost_out: "快用完",
@@ -398,7 +381,6 @@ impl TrayTexts {
                 problem_attach_failed: "{app}：上次的{mode}沒能接上，已回到直連",
                 problem_switch_failed: "{app} 沒切換成功：{reason}",
                 problem_more: "還有 {count} 個問題，開啟 CC Switch 查看",
-                desktop_unavailable: "路由服務沒在執行，{name} 暫時無法使用",
                 tooltip_problem: "CC Switch · 需要處理：{problem}",
                 feedback_switched: "{app} 已切換到 {name}，重新啟動 {app} 後生效",
                 feedback_stack_default: "{app} 的預設供應商改為 {name}，重新啟動 {app} 後生效",
@@ -417,12 +399,11 @@ impl TrayTexts {
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "餘額 {value}",
-                balance_used_up: "餘額已用完",
                 plan_expired: "方案已過期",
                 used_amount: "已使用 {value}",
-                quota_failed: "額度沒查到",
-                quota_failed_login_expired: "額度沒查到：登入已過期",
-                quota_failed_token_refresh_pending: "額度沒查到：權杖待重新整理",
+                quota_failed: "額度查詢失敗",
+                quota_failed_login_expired: "額度查詢失敗：登入已過期",
+                quota_failed_token_refresh_pending: "額度查詢失敗：權杖待重新整理",
                 reset_on_date: "{labelSp}額度 {when}重置",
                 reset_at_time: "{labelSp}額度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -444,10 +425,8 @@ impl TrayTexts {
                 failover_note: "按队列自动选择，要调整请到应用页",
                 mode_route: "路由",
                 mode_stack: "聚合",
-                mode_mapping: "模型映射",
                 needs_routing_suffix: "（需要路由）…",
                 official_blocked_suffix: "（官方订阅不经过路由）",
-                mapping_suffix: " · 模型映射",
                 open_app_page: "打开 {app} 页面",
                 add_provider: "添加供应商…",
                 almost_out: "快用完",
@@ -456,7 +435,6 @@ impl TrayTexts {
                 problem_attach_failed: "{app}：上次的{mode}没能接上，已回到直连",
                 problem_switch_failed: "{app} 没切换成功：{reason}",
                 problem_more: "还有 {count} 个问题，打开 CC Switch 查看",
-                desktop_unavailable: "路由服务没在运行，{name} 暂时不可用",
                 tooltip_problem: "CC Switch · 需要处理：{problem}",
                 feedback_switched: "{app} 已切换到 {name}，重启 {app} 后生效",
                 feedback_stack_default: "{app} 的默认供应商改为 {name}，重启 {app} 后生效",
@@ -475,12 +453,11 @@ impl TrayTexts {
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "余额 {value}",
-                balance_used_up: "余额已用完",
                 plan_expired: "套餐已过期",
                 used_amount: "已使用 {value}",
-                quota_failed: "额度没查到",
-                quota_failed_login_expired: "额度没查到：登录已过期",
-                quota_failed_token_refresh_pending: "额度没查到：令牌待刷新",
+                quota_failed: "额度查询失败",
+                quota_failed_login_expired: "额度查询失败：登录已过期",
+                quota_failed_token_refresh_pending: "额度查询失败：令牌待刷新",
                 reset_on_date: "{labelSp}额度 {when}重置",
                 reset_at_time: "{labelSp}额度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -501,6 +478,13 @@ impl TrayTexts {
             ..Self::from_language(language)
         }
     }
+}
+
+/// 托盘用的语言：设置里的语言，没设过时按系统区域（托盘面板的文案也跟它走）。
+pub(crate) fn tray_language() -> String {
+    crate::settings::get_settings()
+        .language
+        .unwrap_or_else(|| detect_system_tray_language().to_string())
 }
 
 /// 按占位符填模板。
@@ -599,6 +583,8 @@ struct QuotaLine {
     /// 档名（重置说明用；余额等没有档名）。
     label: Option<&'static str>,
     resets_at: Option<String>,
+    /// 要上色的那段数值（还有余额时的金额，照卡片 `balanceLine` 的 `emphasis`）；其余为空。
+    emphasis: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -643,6 +629,7 @@ fn tier_line(
         left,
         label: Some(label),
         resets_at,
+        emphasis: None,
     }
 }
 
@@ -726,6 +713,9 @@ fn resets_at_from_extra(extra: Option<&str>) -> Option<String> {
 }
 
 fn amount(value: f64, unit: Option<&str>) -> String {
+    // `{:.2}` 会把 -0.0 和舍入到 0 的小负数写成 -0.00（DeepSeek 欠费归零时就回 "-0.00"）
+    let rounded = (value * 100.0).round() / 100.0;
+    let value = if rounded == 0.0 { 0.0 } else { value };
     match unit.map(str::trim).filter(|unit| !unit.is_empty()) {
         Some(unit) => format!("{value:.2} {unit}"),
         None => format!("{value:.2}"),
@@ -740,6 +730,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
             left: -1.0,
             label: None,
             resets_at: None,
+            emphasis: None,
         });
     }
     let unit = data.unit.as_deref();
@@ -753,18 +744,18 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         }
     }
     if let Some(remaining) = data.remaining {
-        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）
+        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
+        // 用完也照写金额（欠费就是负数，#8812），整行变色、金额不另上绿色
         let left = if remaining <= 0.0 { 0.0 } else { f64::INFINITY };
-        let text = if remaining <= 0.0 {
-            texts.balance_used_up.to_string()
-        } else {
-            fill(texts.balance, &[("value", &amount(remaining, unit))])
-        };
+        let value = amount(remaining, unit);
+        let text = fill(texts.balance, &[("value", &value)]);
+        let emphasis = (remaining > 0.0).then_some(value);
         return Some(QuotaLine {
             text,
             left,
             label: None,
             resets_at: None,
+            emphasis,
         });
     }
     data.used.map(|used| QuotaLine {
@@ -772,6 +763,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         left: f64::INFINITY,
         label: None,
         resets_at: None,
+        emphasis: None,
     })
 }
 
@@ -949,25 +941,43 @@ fn usage_view(
     // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
     // 并顺手 invalidate，防止后续重建继续命中过期数据。
     let source = tray_usage_source(app_type, provider);
-    if let Some(TrayUsageSource::ManagedCodex(account_id)) = &source {
+    if !matches!(
+        source,
+        Some(TrayUsageSource::ManagedCodex(_) | TrayUsageSource::Subscription)
+    ) {
+        // 在用的不是客户端自己的订阅：应用级订阅缓存是别家留下的，不能沿用。
+        usage_cache.invalidate_subscription(app_type);
+    }
+    if source.is_none() {
+        usage_cache.invalidate_script(app_type, provider_id);
+        return None;
+    }
+    cached_usage_view(usage_cache, texts, app_type, provider_id, source.as_ref())
+}
+
+/// 只读缓存的额度（不清缓存）：托盘面板给子面板里每一家写额度时用，
+/// 不在用的那家也只看主界面卡片查过、留在缓存里的结果，不另发请求。
+fn cached_usage_view(
+    usage_cache: &UsageCache,
+    texts: &TrayTexts,
+    app_type: &AppType,
+    provider_id: &str,
+    source: Option<&TrayUsageSource>,
+) -> Option<QuotaView> {
+    if let Some(TrayUsageSource::ManagedCodex(account_id)) = source {
         // No fallback: a missing account snapshot must not display another
         // account's quota from a provider cache or the CLI subscription cache.
         return usage_cache
             .with_codex_oauth(account_id, |quota| format_subscription_quota(texts, quota))
             .flatten();
     }
-    if source == Some(TrayUsageSource::Subscription) {
+    if source == Some(&TrayUsageSource::Subscription) {
         // 只读订阅缓存：卡片查到的和托盘悬停查到的都写在这里，两边不会各说各的。
         return usage_cache
             .with_subscription(app_type, |quota| format_subscription_quota(texts, quota))
             .flatten();
     }
-    // 在用的不是客户端自己的订阅：应用级订阅缓存是别家留下的，不能沿用。
-    usage_cache.invalidate_subscription(app_type);
-    if source.is_none() {
-        usage_cache.invalidate_script(app_type, provider_id);
-        return None;
-    }
+    source?;
     // 脚本缓存（Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
     usage_cache
         .with_script(app_type, provider_id, |result| {
@@ -1089,8 +1099,6 @@ enum TrayMode {
     /// 路由 + 自动故障转移：子菜单只读（#6022）。
     Failover,
     Stack,
-    /// Claude Desktop 没有模式 tab。
-    Desktop,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1137,11 +1145,10 @@ impl AppSnapshot {
         self.providers.iter().find(|p| p.id == id)
     }
 
-    /// 这个应用现在靠路由服务：路由 / 聚合中，或 Desktop 在用模型映射卡。
+    /// 这个应用现在靠路由服务：路由 / 聚合中。
     fn uses_service(&self) -> bool {
         match self.mode {
             TrayMode::Route | TrayMode::Failover | TrayMode::Stack => true,
-            TrayMode::Desktop => self.current().is_some_and(|p| p.needs_routing),
             TrayMode::Direct => false,
         }
     }
@@ -1212,9 +1219,6 @@ fn provider_entry(app: &AppType, provider: &Provider) -> ProviderEntry {
 }
 
 fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
-    if *app == AppType::ClaudeDesktop {
-        return TrayMode::Desktop;
-    }
     if !crate::mode::current::is_proxy(app) {
         return TrayMode::Direct;
     }
@@ -1465,13 +1469,16 @@ struct FeedbackRecord {
 static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(None));
 
 /// 切换成功后要不要说一句：客户端只在启动时读配置的才说；Claude Code 直连、路由 / 故障转移
-/// 换一家立即生效，不说。
+/// 换一家立即生效，不说。Claude Desktop 换一家都要重启 Desktop（路由那家的模型列表写在配置
+/// 里，聚合换默认也一样）。
 fn switch_feedback(app: &AppType, mode: TrayMode, name: String) -> Option<TrayFeedback> {
     match mode {
-        TrayMode::Desktop => Some(TrayFeedback::Switched {
-            app: app.clone(),
-            name,
-        }),
+        TrayMode::Direct | TrayMode::Route | TrayMode::Stack if *app == AppType::ClaudeDesktop => {
+            Some(TrayFeedback::Switched {
+                app: app.clone(),
+                name,
+            })
+        }
         TrayMode::Direct
             if matches!(app, AppType::Codex | AppType::Gemini | AppType::GrokBuild) =>
         {
@@ -1521,18 +1528,10 @@ fn current_feedback() -> Option<TrayFeedback> {
     record.as_ref().map(|r| r.feedback.clone())
 }
 
-/// 点了托盘图标：这次弹出的菜单里已经有反馈行了，算显示过；下次重建（悬停图标时）就拿掉。
-/// 只算会弹出菜单的点击：Windows 左键是打开主界面，不算。
-pub fn note_tray_click(button: tauri::tray::MouseButton) {
-    let opens_menu = match button {
-        tauri::tray::MouseButton::Right => true,
-        tauri::tray::MouseButton::Left => !cfg!(target_os = "windows"),
-        _ => false,
-    };
-    if opens_menu {
-        if let Some(record) = lock(&FEEDBACK).as_mut() {
-            record.seen = true;
-        }
+/// 托盘面板收起：面板里已经显示过反馈行了，下次弹出时不再显示。
+pub fn mark_feedback_seen() {
+    if let Some(record) = lock(&FEEDBACK).as_mut() {
+        record.seen = true;
     }
 }
 
@@ -1659,8 +1658,7 @@ fn app_row_title(texts: &TrayTexts, snapshot: &AppSnapshot) -> String {
     let mode_word = match snapshot.mode {
         TrayMode::Route | TrayMode::Failover => Some(texts.mode_route),
         TrayMode::Stack => Some(texts.mode_stack),
-        TrayMode::Desktop if current.is_some_and(|p| p.needs_routing) => Some(texts.mode_mapping),
-        _ => None,
+        TrayMode::Direct => None,
     };
     if let Some(word) = mode_word {
         parts.push(word.to_string());
@@ -1798,22 +1796,6 @@ fn provider_rows(texts: &TrayTexts, snapshot: &AppSnapshot) -> Vec<TrayEntry> {
                 })
                 .collect()
         }
-        TrayMode::Desktop => {
-            let listed: Vec<&ProviderEntry> = snapshot.providers.iter().collect();
-            let names = display_names(&listed);
-            listed
-                .iter()
-                .zip(names)
-                .map(|(p, name)| {
-                    let text = if p.needs_routing {
-                        format!("{name}{}", texts.mapping_suffix)
-                    } else {
-                        name
-                    };
-                    TrayEntry::check(provider_id_for(app, &p.id), text, true, is_current(p))
-                })
-                .collect()
-        }
     }
 }
 
@@ -1837,24 +1819,10 @@ fn app_children(
             ),
             None => texts.header_stack.to_string(),
         }),
-        TrayMode::Desktop => None,
     };
     if let Some(header) = header {
         children.push(TrayEntry::label(format!("info:{app}:header"), header));
     }
-    if snapshot.mode == TrayMode::Desktop && snapshot.service_down {
-        if let Some(current) = snapshot.current() {
-            children.push(TrayEntry::item(
-                format!("nav:app:{app}:service"),
-                fill(
-                    texts.desktop_unavailable,
-                    &[("name", &truncate_chars(&current.name, MAX_NAME_CHARS))],
-                ),
-            ));
-            children.push(TrayEntry::Separator);
-        }
-    }
-
     children.extend(provider_rows(texts, snapshot));
 
     // 额度说明行：可点（打开应用页），文字才是正常对比度。
@@ -2055,12 +2023,309 @@ fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, A
     Ok(TrayModel { entries, status })
 }
 
-/// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 聚合模式，或 Claude Desktop 在用
-/// 模型映射卡（和 `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
+/// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 聚合模式（含 Claude Desktop；和
+/// `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
 fn routing_in_use(app_state: &AppState) -> bool {
     app_state.proxy_service.running_now() == Some(true)
-        && (crate::mode::current::proxy_flags(crate::mode::controller::PROXY_APPS).contains(&true)
-            || crate::claude_desktop_config::current_provider_uses_proxy(&app_state.db))
+        && crate::mode::current::proxy_flags(crate::mode::controller::PROXY_APPS).contains(&true)
+}
+
+// ─── 模型 → 托盘面板 ───────────────────────────────────────────────────────────
+
+/// 托盘面板（`tray_panel`）要的数据。文字都在这里按托盘语言写好；每一行带原生菜单的事件 id，
+/// 点击回到 `handle_tray_menu_event`，行为和原生菜单一致。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelModel {
+    pub problems: Vec<PanelLink>,
+    pub feedback: Option<String>,
+    pub apps: Vec<PanelApp>,
+    pub lightweight: bool,
+    /// 有应用在用路由服务时「退出」的后果，写在退出按钮的提示里。
+    pub quit_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelLink {
+    pub id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelApp {
+    pub app: String,
+    pub name: &'static str,
+    /// 在用那家的名字。
+    pub current: Option<String>,
+    /// 直连 / 路由 / 聚合。
+    pub mode: &'static str,
+    /// 同一模式的机器可读值（`direct` / `route` / `stack`），面板按它给模式名上主题色。
+    pub mode_kind: &'static str,
+    /// 子面板标题下的说明（「路由 · 故障转移开启中」等）。
+    pub header: Option<String>,
+    pub attention: Option<&'static str>,
+    pub quota: Option<PanelQuota>,
+    /// 还没有供应商：点这一行去添加。
+    pub add_id: Option<String>,
+    pub add_text: String,
+    pub rows: Vec<PanelRow>,
+}
+
+/// 应用行下面的额度：每档一行（文字照托盘菜单），加一条说明（没查到的原因 / 快用完时何时重置）。
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelQuota {
+    pub lines: Vec<PanelQuotaLine>,
+    /// 没查到时的原因（每档的重置时间写在各自的行上，不再写进说明）。
+    pub note: Option<String>,
+    /// ChatGPT 订阅（Codex）可用的额度重置次数；没有这项数据时为空。
+    pub reset_credits: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelQuotaLine {
+    pub text: String,
+    /// 剩余百分比（0–100）；余额这种没有总额的为空，不画进度条。
+    pub left: Option<f64>,
+    pub warn: bool,
+    /// 这一档什么时候重置（ISO 8601），前端按本地时间写。
+    pub resets_at: Option<String>,
+    /// `text` 里要上绿色的那段数值（还有余额时的金额）；其余为空。
+    pub emphasis: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelRow {
+    /// `provider` / `check` / `item` / `label` / `separator`
+    pub kind: &'static str,
+    pub id: String,
+    pub text: String,
+    pub enabled: bool,
+    pub checked: bool,
+    pub provider: Option<PanelProvider>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelProvider {
+    pub name: String,
+    pub hint: Option<String>,
+    pub icon: Option<String>,
+    pub icon_color: Option<String>,
+    pub quota: Option<PanelQuota>,
+}
+
+fn panel_quota(
+    texts: &TrayTexts,
+    view: &QuotaView,
+    now: chrono::DateTime<chrono::Local>,
+    reset_credits: Option<usize>,
+) -> PanelQuota {
+    match view {
+        QuotaView::Lines(lines) => PanelQuota {
+            lines: lines
+                .iter()
+                .map(|line| PanelQuotaLine {
+                    text: line.text.clone(),
+                    left: line.left.is_finite().then(|| line.left.clamp(0.0, 100.0)),
+                    warn: line.left < WARN_BELOW_PERCENT,
+                    resets_at: line.resets_at.clone(),
+                    emphasis: line.emphasis.clone(),
+                })
+                .collect(),
+            note: None,
+            reset_credits,
+        },
+        QuotaView::Failed(_) => PanelQuota {
+            lines: Vec::new(),
+            note: quota_note(texts, view, now),
+            reset_credits: None,
+        },
+    }
+}
+
+/// 缓存里 ChatGPT 订阅（客户端登录或托管 Codex 账号）还能用几次额度重置。
+fn cached_reset_credits(
+    usage_cache: &UsageCache,
+    app_type: &AppType,
+    source: Option<&TrayUsageSource>,
+) -> Option<usize> {
+    let count = |quota: &crate::services::subscription::SubscriptionQuota| {
+        quota
+            .reset_credits
+            .as_ref()
+            .map(|credits| credits.expires_at.len())
+    };
+    match source? {
+        TrayUsageSource::ManagedCodex(account_id) => {
+            usage_cache.with_codex_oauth(account_id, count).flatten()
+        }
+        TrayUsageSource::Subscription => usage_cache.with_subscription(app_type, count).flatten(),
+        TrayUsageSource::Script => None,
+    }
+}
+
+/// 菜单 id 里带的供应商 id：`prov:<应用>:<id>`、`nav:needs:<应用>:<id>`、`info:<应用>:blocked:<id>`。
+fn row_provider_id<'a>(id: &'a str, app: &str) -> Option<&'a str> {
+    id.strip_prefix(&format!("prov:{app}:"))
+        .or_else(|| id.strip_prefix(&format!("nav:needs:{app}:")))
+        .or_else(|| id.strip_prefix(&format!("info:{app}:blocked:")))
+        .filter(|id| !id.is_empty())
+}
+
+fn panel_rows(
+    usage_cache: &UsageCache,
+    texts: &TrayTexts,
+    snapshot: &AppSnapshot,
+    rows: &indexmap::IndexMap<String, Provider>,
+    now: chrono::DateTime<chrono::Local>,
+) -> (Option<String>, Vec<PanelRow>) {
+    let app = snapshot.app.as_str();
+    let header_id = format!("info:{app}:header");
+    let children = app_children(texts, snapshot, now);
+    let mut header = None;
+    let rows = children
+        .into_iter()
+        .filter_map(|entry| {
+            let (id, text, enabled, checked) = match entry {
+                TrayEntry::Separator => {
+                    return Some(PanelRow {
+                        kind: "separator",
+                        id: String::new(),
+                        text: String::new(),
+                        enabled: false,
+                        checked: false,
+                        provider: None,
+                    })
+                }
+                TrayEntry::Submenu { .. } => return None,
+                TrayEntry::Item { id, text, enabled } => (id, text, enabled, false),
+                TrayEntry::Check {
+                    id,
+                    text,
+                    enabled,
+                    checked,
+                } => (id, text, enabled, checked),
+            };
+            if id == header_id {
+                header = Some(text);
+                return None;
+            }
+            let provider = row_provider_id(&id, app).and_then(|provider_id| {
+                let provider = rows.get(provider_id)?;
+                let source = tray_usage_source(&snapshot.app, provider);
+                Some(PanelProvider {
+                    name: provider.name.clone(),
+                    hint: provider_hint(provider),
+                    icon: provider.icon.clone(),
+                    icon_color: provider.icon_color.clone(),
+                    quota: cached_usage_view(
+                        usage_cache,
+                        texts,
+                        &snapshot.app,
+                        provider_id,
+                        source.as_ref(),
+                    )
+                    .map(|view| {
+                        let credits =
+                            cached_reset_credits(usage_cache, &snapshot.app, source.as_ref());
+                        panel_quota(texts, &view, now, credits)
+                    }),
+                })
+            });
+            let kind = if provider.is_some() {
+                "provider"
+            } else if id.starts_with("profile_") {
+                "check"
+            } else if enabled {
+                "item"
+            } else {
+                "label"
+            };
+            Some(PanelRow {
+                kind,
+                id,
+                text,
+                enabled,
+                checked,
+                provider,
+            })
+        })
+        .collect();
+    (header, rows)
+}
+
+pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, AppError> {
+    let texts = TrayTexts::current();
+    let (snapshots, status) = collect_status(app_state, &texts)?;
+    let now = chrono::Local::now();
+
+    let mut apps = Vec::with_capacity(snapshots.len());
+    for snapshot in &snapshots {
+        let app = snapshot.app.as_str();
+        let providers = app_state.db.get_all_providers(app)?;
+        let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
+        let credits = snapshot
+            .current_id
+            .as_deref()
+            .and_then(|id| providers.get(id))
+            .and_then(|provider| {
+                let source = tray_usage_source(&snapshot.app, provider);
+                cached_reset_credits(&app_state.usage_cache, &snapshot.app, source.as_ref())
+            });
+        let quota = snapshot
+            .quota
+            .as_ref()
+            .map(|view| panel_quota(&texts, view, now, credits));
+        apps.push(PanelApp {
+            app: app.to_string(),
+            name: app_display_name(&snapshot.app),
+            current: snapshot.current().map(|p| p.name.clone()),
+            mode: match snapshot.mode {
+                TrayMode::Direct => texts.header_direct,
+                TrayMode::Route | TrayMode::Failover => texts.mode_route,
+                TrayMode::Stack => texts.mode_stack,
+            },
+            mode_kind: match snapshot.mode {
+                TrayMode::Direct => "direct",
+                TrayMode::Route | TrayMode::Failover => "route",
+                TrayMode::Stack => "stack",
+            },
+            header,
+            attention: snapshot.needs_attention.then_some(texts.needs_attention),
+            quota,
+            add_id: snapshot
+                .providers
+                .is_empty()
+                .then(|| format!("nav:add:{app}")),
+            add_text: texts.add_provider.to_string(),
+            rows,
+        });
+    }
+
+    Ok(PanelModel {
+        problems: status
+            .problems
+            .iter()
+            .map(|problem| PanelLink {
+                id: problem_id(problem),
+                text: problem_text(&texts, problem),
+            })
+            .collect(),
+        feedback: status
+            .feedback
+            .as_ref()
+            .map(|feedback| feedback_text(&texts, feedback)),
+        apps,
+        lightweight: crate::lightweight::is_lightweight_mode(),
+        quit_hint: status
+            .routing_in_use
+            .then(|| texts.quit_stops_routing.to_string()),
+    })
 }
 
 // ─── 模型 → Tauri 菜单 ─────────────────────────────────────────────────────────
@@ -2121,6 +2386,20 @@ pub fn create_tray_menu(
 
     let mut handles = HashMap::new();
     let mut builder = MenuBuilder::new(app);
+    // Linux 点图标只能出原生菜单，最上面放一项打开托盘面板。
+    #[cfg(target_os = "linux")]
+    {
+        let texts = crate::tray_panel::PanelTexts::current();
+        let item = MenuItem::with_id(
+            app,
+            crate::tray_panel::OPEN_PANEL_ID,
+            texts.open_panel,
+            true,
+            None::<&str>,
+        )
+        .map_err(menu_error)?;
+        builder = builder.item(&item).separator();
+    }
     for entry in &model.entries {
         builder = match attach_entry(app, entry, &mut handles)? {
             Some(item) => builder.item(&item),
@@ -2133,6 +2412,15 @@ pub fn create_tray_menu(
     update_problem_indicator(app, &texts, &model.status.problems);
     *lock(&LAST_STATUS) = model.status;
     Ok(menu)
+}
+
+/// 不挂原生菜单的平台（点图标出托盘面板）：只更新图标圆点、悬停提示和状态记账。
+pub fn sync_tray_status(app: &tauri::AppHandle, app_state: &AppState) -> Result<(), AppError> {
+    let texts = TrayTexts::current();
+    let (_, status) = collect_status(app_state, &texts)?;
+    update_problem_indicator(app, &texts, &status.problems);
+    *lock(&LAST_STATUS) = status;
+    Ok(())
 }
 
 // ─── 图标圆点和悬停提示 ───────────────────────────────────────────────────────
@@ -2281,6 +2569,11 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     }
     #[cfg(not(target_os = "linux"))]
     {
+        crate::tray_panel::notify_changed(app);
+        // 出面板时托盘上没挂原生菜单，没有标题要改
+        if !crate::tray_panel::uses_native_menu() {
+            return;
+        }
         let Some(app_state) = app.try_state::<AppState>() else {
             return;
         };
@@ -2306,17 +2599,48 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
-        match create_tray_menu(app, state.inner()) {
-            Ok(new_menu) => {
-                if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                    if let Err(e) = tray.set_menu(Some(new_menu)) {
-                        log::error!("刷新托盘菜单失败: {e}");
+        if crate::tray_panel::uses_native_menu() {
+            match create_tray_menu(app, state.inner()) {
+                Ok(new_menu) => {
+                    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                        if let Err(e) = tray.set_menu(Some(new_menu)) {
+                            log::error!("刷新托盘菜单失败: {e}");
+                        }
                     }
                 }
+                Err(e) => log::error!("创建托盘菜单失败: {e}"),
             }
-            Err(e) => log::error!("创建托盘菜单失败: {e}"),
+        } else if let Err(e) = sync_tray_status(app, state.inner()) {
+            log::error!("更新托盘状态失败: {e}");
         }
     }
+    crate::tray_panel::notify_changed(app);
+}
+
+/// 设置里切换了原生托盘菜单 / 托盘面板：当场换掉托盘的点击行为，不用重启。
+/// 换成原生菜单时挂上重建的菜单、收起面板；换成面板时摘掉菜单（`refresh_tray_menu` 只更新图标状态）。
+pub fn apply_tray_style(app: &tauri::AppHandle) {
+    let native = crate::tray_panel::uses_native_menu();
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if native {
+            crate::tray_panel::hide_panel(app);
+        } else {
+            if let Err(e) = tray.set_menu(None::<Menu<tauri::Wry>>) {
+                log::error!("摘掉托盘菜单失败: {e}");
+            }
+            // 菜单没了，旧句柄不再更新标题。
+            lock(&TRAY_SECTION_SUBMENUS).clear();
+        }
+        if let Err(e) = tray.set_show_menu_on_left_click(native_menu_on_left_click(native)) {
+            log::warn!("设置托盘左键行为失败: {e}");
+        }
+    }
+    refresh_tray_menu(app);
+}
+
+/// 左键是否直接出原生菜单：用面板时不出；Windows 的习惯是左键打开主界面、右键出菜单。
+pub fn native_menu_on_left_click(native: bool) -> bool {
+    native && cfg!(not(target_os = "windows"))
 }
 
 /// 悬停到托盘图标时：问题区该出现 / 该消失了（路由服务停了、又起来了）、反馈行显示过了或到点了，
@@ -2520,7 +2844,6 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
         let Some(app_state) = app_handle.try_state::<AppState>() else {
             return;
         };
-        let desktop_was_mapping = crate::commands::desktop_uses_mapping(app_state.inner(), scope);
         match crate::services::profile::ProfileService::apply(app_state.inner(), &profile_id, scope)
         {
             Ok(warnings) => {
@@ -2551,7 +2874,6 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
                     app_state.inner(),
                     &profile_id,
                     scope,
-                    desktop_was_mapping,
                 );
             }
             Err(e) => {
@@ -2583,10 +2905,6 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
     let app_handle = app.clone();
     let provider_id = provider_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
-        let desktop_was_mapping = app_type == AppType::ClaudeDesktop
-            && app_handle.try_state::<AppState>().is_some_and(|state| {
-                crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
-            });
         match handle_provider_click(&app_handle, &app_type, &provider_id) {
             Ok(ClickOutcome::Switched { mode, name }) => {
                 clear_app_problems(&app_type);
@@ -2594,21 +2912,6 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
                     record_feedback(&app_handle, feedback);
                 }
                 emit_switched(&app_handle, &app_type, &provider_id);
-                if app_type == AppType::ClaudeDesktop {
-                    // 换上模型映射卡要把路由服务拉起来、换走时别人不用就停掉（同主界面
-                    // `switch_provider`），对齐之后再重建一次。
-                    let handle = app_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        if let Some(state) = handle.try_state::<AppState>() {
-                            crate::mode::controller::sync_desktop_mapping_service(
-                                state.inner(),
-                                desktop_was_mapping,
-                            )
-                            .await;
-                        }
-                        refresh_tray_menu(&handle);
-                    });
-                }
             }
             Ok(ClickOutcome::NeedsRoute) => {
                 navigate(
@@ -2747,6 +3050,7 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             log::info!("退出应用");
             app.exit(0);
         }
+        crate::tray_panel::OPEN_PANEL_ID => crate::tray_panel::show_at_cursor(app),
         _ => {
             if let Some(navigation) = parse_nav_id(event_id) {
                 navigate(app, navigation);
@@ -2898,6 +3202,90 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     }
 
     join_all(usage_futures).await;
+}
+
+/// 托盘面板发起过的脚本额度查询：(应用, 供应商 id) → 上次查询时间。
+static PANEL_SCRIPT_QUERIES: Lazy<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// 托盘面板弹出时：子面板里每一家都写额度，不在用的那几家也要有数据。开了自动查询的脚本
+/// 供应商（余额、套餐），缓存里还没有、或距面板上次替它查已超过它自己的自动查询间隔，就在
+/// 后台补查一次——和主界面供应商卡片是同一个查询，结果写进 `UsageCache` 后面板跟着刷新。
+/// 自动查询间隔为 0（关掉了）的不查；在用的那家由 `refresh_all_usage_in_tray` 负责。
+pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
+    use crate::commands::CopilotAuthState;
+    use futures::future::join_all;
+
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let visible_apps = crate::settings::get_settings()
+        .visible_apps
+        .unwrap_or_default();
+    let mut due = Vec::new();
+    for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
+        let rows = match app_state.db.get_all_providers(app_type.as_str()) {
+            Ok(rows) => rows,
+            Err(e) => {
+                log::warn!("[Tray] 读取{}供应商失败: {e}", app_display_name(app_type));
+                continue;
+            }
+        };
+        for (id, provider) in &rows {
+            if tray_usage_source(app_type, provider) != Some(TrayUsageSource::Script) {
+                continue;
+            }
+            let interval_minutes = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .and_then(|script| script.auto_query_interval)
+                .unwrap_or(0);
+            if interval_minutes == 0 {
+                continue;
+            }
+            let interval = std::time::Duration::from_secs(interval_minutes * 60);
+            let cached = app_state
+                .usage_cache
+                .with_script(app_type, id, |_| ())
+                .is_some();
+            let key = (app_type.clone(), id.clone());
+            let mut queried = lock(&PANEL_SCRIPT_QUERIES);
+            let is_due = match queried.get(&key) {
+                Some(at) => at.elapsed() >= interval,
+                // 主界面已经查过（缓存里有）：从现在起算间隔
+                None => !cached,
+            };
+            if is_due || !queried.contains_key(&key) {
+                queried.insert(key, std::time::Instant::now());
+            }
+            if is_due {
+                due.push((app_type.clone(), id.clone()));
+            }
+        }
+    }
+
+    let queries = due.into_iter().map(|(app_type, provider_id)| {
+        let app = app.clone();
+        async move {
+            let result = crate::commands::queryProviderUsage(
+                app.clone(),
+                app.state::<AppState>(),
+                app.state::<CopilotAuthState>(),
+                app.state::<crate::commands::XaiOAuthState>(),
+                provider_id.clone(),
+                app_type.as_str().to_string(),
+            )
+            .await;
+            if let Err(e) = result {
+                log::debug!(
+                    "[Tray] 刷新{}供应商 {provider_id} 用量失败: {e}",
+                    app_display_name(&app_type)
+                );
+            }
+        }
+    });
+    join_all(queries).await;
 }
 
 #[cfg(test)]
@@ -3275,8 +3663,29 @@ mod tests {
         );
         assert_eq!(
             one(balance(0.0, Some(100.0))),
-            Some(("余额已用完".to_string(), false))
+            Some(("余额 0.00 CNY".to_string(), false))
         );
+        // 欠费照写负数；-0.0 和舍入到 0 的小负数不写成 -0.00（#8812）
+        assert_eq!(
+            one(balance(-24.96, None)),
+            Some(("余额 -24.96 CNY".to_string(), false))
+        );
+        assert_eq!(
+            one(balance(-0.0, None)),
+            Some(("余额 0.00 CNY".to_string(), false))
+        );
+        assert_eq!(
+            one(balance(-0.004, None)),
+            Some(("余额 0.00 CNY".to_string(), false))
+        );
+
+        // 面板只给还有的余额金额上绿色；用完的那行整行变色，金额不另上色
+        let emphasis = |data| match format_script_result(&zh(), &usage_result(true, vec![data])) {
+            Some(QuotaView::Lines(lines)) => lines[0].emphasis.clone(),
+            _ => panic!("expected quota lines"),
+        };
+        assert_eq!(emphasis(balance(82.1, None)), Some("82.10 CNY".to_string()));
+        assert_eq!(emphasis(balance(0.0, Some(100.0))), None);
     }
 
     #[test]
@@ -3315,7 +3724,7 @@ mod tests {
         assert_eq!(title(failed.clone()), None);
         assert_eq!(
             quota_note(&zh(), &failed.unwrap(), now()).as_deref(),
-            Some("额度没查到")
+            Some("额度查询失败")
         );
 
         let login =
@@ -3323,7 +3732,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &login).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：登录已过期")
+            Some("额度查询失败：登录已过期")
         );
         let pending = SubscriptionQuota::error(
             "claude",
@@ -3333,7 +3742,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &pending).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：令牌待刷新")
+            Some("额度查询失败：令牌待刷新")
         );
         // 没有凭据时不说话。
         let missing =
@@ -3887,31 +4296,34 @@ mod tests {
     }
 
     #[test]
-    fn desktop_submenu_marks_mapping_cards_without_a_mode_header() {
+    fn desktop_uses_the_same_mode_rows_as_the_routing_apps() {
         let mut mapping = entry("kimi", "Kimi For Coding");
         mapping.needs_routing = true;
-        let app = snapshot(
+        let mut official = entry("official", "Claude Desktop Official");
+        official.official = true;
+        official.blocked_from_routing = true;
+        let direct = snapshot(
             AppType::ClaudeDesktop,
-            TrayMode::Desktop,
-            vec![mapping, entry("official", "Claude Desktop Official")],
+            TrayMode::Direct,
+            vec![mapping.clone(), official.clone()],
         );
-        let menu = model(&[], &[app]);
-        assert_eq!(
-            text_of(&menu[2]),
-            "Claude Desktop · 模型映射 · Kimi For Coding"
-        );
-        let children = children_of(&menu, &AppType::ClaudeDesktop);
-        assert_eq!(
-            texts_of(&children),
-            [
-                "Kimi For Coding · 模型映射",
-                "Claude Desktop Official",
-                "---",
-                "打开 Claude Desktop 页面"
-            ]
-        );
+        let children = children_of(&model(&[], &[direct]), &AppType::ClaudeDesktop);
+        // 直连下要经路由的卡点了去应用页弹「需要路由」，不直接切。
         assert!(
-            matches!(&children[0], TrayEntry::Check { id, .. } if id == "prov:claude-desktop:kimi")
+            matches!(&children[1], TrayEntry::Item { id, .. } if id == "nav:needs:claude-desktop:kimi")
+        );
+
+        let mut routed = snapshot(
+            AppType::ClaudeDesktop,
+            TrayMode::Route,
+            vec![mapping, official],
+        );
+        routed.current_id = Some("kimi".to_string());
+        let menu = model(&[], &[routed]);
+        assert_eq!(text_of(&menu[2]), "Claude Desktop · 路由 · Kimi For Coding");
+        let children = children_of(&menu, &AppType::ClaudeDesktop);
+        assert!(
+            matches!(&children[1], TrayEntry::Check { id, checked: true, .. } if id == "prov:claude-desktop:kimi")
         );
     }
 
@@ -3919,7 +4331,7 @@ mod tests {
     fn service_down_shows_the_problem_row_and_needs_attention_instead_of_quota() {
         let mut mapping = entry("kimi", "Kimi For Coding");
         mapping.needs_routing = true;
-        let mut desktop = snapshot(AppType::ClaudeDesktop, TrayMode::Desktop, vec![mapping]);
+        let mut desktop = snapshot(AppType::ClaudeDesktop, TrayMode::Route, vec![mapping]);
         desktop.service_down = true;
         desktop.quota = Some(QuotaView::Lines(vec![tier_line(
             &zh(),
@@ -3939,13 +4351,11 @@ mod tests {
         assert_eq!(text_of(&menu[2]), "打开 CC Switch");
         assert_eq!(
             text_of(&menu[4]),
-            "Claude Desktop · 模型映射 · Kimi For Coding · 需要处理"
+            "Claude Desktop · 路由 · Kimi For Coding · 需要处理"
         );
+        // 子菜单和其他路由应用一样以模式标题开头，服务没在跑由顶部问题区说。
         let children = children_of(&menu, &AppType::ClaudeDesktop);
-        assert_eq!(
-            text_of(&children[0]),
-            "路由服务没在运行，Kimi For Coding 暂时不可用"
-        );
+        assert_eq!(text_of(&children[0]), "路由");
     }
 
     #[test]
@@ -4210,10 +4620,13 @@ mod tests {
             switch_feedback(&AppType::Claude, TrayMode::Direct, name()),
             None
         );
-        assert!(matches!(
-            switch_feedback(&AppType::ClaudeDesktop, TrayMode::Desktop, name()),
-            Some(TrayFeedback::Switched { .. })
-        ));
+        // Desktop 只在启动时读配置：直连、路由换一家都要重启。
+        for mode in [TrayMode::Direct, TrayMode::Route] {
+            assert!(matches!(
+                switch_feedback(&AppType::ClaudeDesktop, mode, name()),
+                Some(TrayFeedback::Switched { .. })
+            ));
+        }
         for app in [AppType::Claude, AppType::Codex] {
             assert!(matches!(
                 switch_feedback(&app, TrayMode::Stack, name()),
@@ -4283,7 +4696,7 @@ mod tests {
     }
 
     #[test]
-    fn feedback_goes_away_after_the_menu_showed_it_or_two_minutes() {
+    fn feedback_goes_away_after_the_panel_showed_it_or_two_minutes() {
         let record = |at: std::time::Instant| {
             *lock(&FEEDBACK) = Some(FeedbackRecord {
                 feedback: TrayFeedback::Switched {
@@ -4296,10 +4709,8 @@ mod tests {
         };
         record(std::time::Instant::now());
         assert!(current_feedback().is_some());
-        // 中键不弹菜单；右键弹菜单 = 这次菜单里已经显示过。
-        note_tray_click(tauri::tray::MouseButton::Middle);
-        assert!(current_feedback().is_some());
-        note_tray_click(tauri::tray::MouseButton::Right);
+        // 面板收起 = 这次面板里已经显示过。
+        mark_feedback_seen();
         assert!(current_feedback().is_none());
         assert!(lock(&FEEDBACK).is_none());
 

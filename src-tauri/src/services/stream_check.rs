@@ -24,7 +24,10 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::{get_adapter, ClaudeAdapter, ProviderAdapter};
+use crate::proxy::providers::{get_adapter, ClaudeAdapter, GeminiAdapter, ProviderAdapter};
+
+/// Google Gemini 默认端点（agy 未配置自定义端点时使用）。
+const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
 /// 健康状态枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -174,9 +177,24 @@ impl StreamCheckService {
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
+            AppType::Omp => crate::omp_config::provider_base_url(&provider.settings_config),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
+            // agy 的 settings 与 Gemini 同形（env.GOOGLE_GEMINI_BASE_URL），借用 Gemini
+            // adapter 提取；未配置端点时 agy 自身走 Google 默认端点，这里保持一致。
+            AppType::Agy => {
+                if crate::services::provider::agy_direct::is_official(provider) {
+                    return Err(AppError::Message(
+                        "Official providers do not expose a reachability-check target".to_string(),
+                    ));
+                }
+                Ok(GeminiAdapter::new()
+                    .extract_base_url(provider)
+                    .ok()
+                    .filter(|url| !url.trim().is_empty())
+                    .unwrap_or_else(|| DEFAULT_GEMINI_BASE_URL.to_string()))
+            }
             _ => get_adapter(app_type)
                 .ok_or_else(|| {
                     AppError::InvalidInput(format!(
@@ -514,5 +532,57 @@ mod tests {
         official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
         official.category = Some("official".to_string());
         assert!(StreamCheckService::resolve_base_url(&AppType::Codex, &official).is_err());
+    }
+
+    #[test]
+    fn test_resolve_base_url_agy_uses_gemini_env_and_google_default() {
+        let custom = make_provider(
+            serde_json::json!({ "env": { "GEMINI_API_KEY": "k", "GOOGLE_GEMINI_BASE_URL": "https://relay.example/" } }),
+        );
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::Agy, &custom).unwrap(),
+            "https://relay.example"
+        );
+
+        let unset = make_provider(serde_json::json!({ "env": { "GEMINI_API_KEY": "k" } }));
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::Agy, &unset).unwrap(),
+            DEFAULT_GEMINI_BASE_URL
+        );
+
+        let mut official = make_provider(serde_json::json!({ "env": {} }));
+        official.category = Some("official".to_string());
+        assert!(StreamCheckService::resolve_base_url(&AppType::Agy, &official).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_agy_reachability_check_end_to_end() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
+                    .await;
+            }
+        });
+        let provider = make_provider(serde_json::json!({
+            "env": { "GEMINI_API_KEY": "k", "GOOGLE_GEMINI_BASE_URL": format!("http://{addr}") }
+        }));
+        let result = StreamCheckService::check_with_retry(
+            &AppType::Agy,
+            &provider,
+            &StreamCheckConfig::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(result.success, "{}", result.message);
+        assert_eq!(result.http_status, Some(404));
     }
 }

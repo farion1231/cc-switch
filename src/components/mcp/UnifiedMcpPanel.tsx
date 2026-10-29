@@ -42,6 +42,7 @@ import {
   MatrixColumnHighlight,
   MatrixSearch,
   NeutralBadge,
+  ompDiscoveryColumnNote,
   resolveBulkScope,
   showUndoToast,
 } from "./AppMatrix";
@@ -87,11 +88,20 @@ const IMPORT_SOURCE_FILES: Record<
   opencode: { file: "~/.config/opencode/opencode.json" },
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
+  agy: { file: "~/.gemini/config/mcp_config.json" },
+  kimi: { file: "~/.kimi-code/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
+  omp: { file: "~/.omp/agent/mcp.json" },
 };
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
-const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set(["mcode", "pi"]);
+const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
+  "mcode",
+  "kimi",
+  "pi",
+  "agy",
+  "omp",
+]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
 interface WriteFailure {
@@ -790,6 +800,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             scopeKind={scope.kind}
                             noun={noun}
                             disabled={controlsDisabled}
+                            {...ompDiscoveryColumnNote(app, t)}
                             onEnableRest={() => void handleBulk(app, true)}
                             onDisableAll={() => void handleBulk(app, false)}
                           />
@@ -834,6 +845,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             server.homepage ||
                             mcpPresets.find((item) => item.id === id)?.docs,
                         );
+                        const displayName = server.name?.trim() || id;
+                        const hasCustomName = Boolean(
+                          server.name?.trim() && server.name.trim() !== id,
+                        );
                         return (
                           <li
                             key={id}
@@ -846,11 +861,19 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             <div className="flex min-w-0 flex-1 flex-col pe-3">
                               <div className="flex min-w-0 items-center gap-1.5">
                                 <span
-                                  title={id}
+                                  title={displayName}
                                   className="min-w-0 truncate text-body font-medium"
                                 >
-                                  {id}
+                                  {displayName}
                                 </span>
+                                {hasCustomName && (
+                                  <span
+                                    title={id}
+                                    className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
+                                  >
+                                    {id}
+                                  </span>
+                                )}
                                 <NeutralBadge mono>
                                   {transportOf(server.server)}
                                 </NeutralBadge>
@@ -1034,7 +1057,9 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
 
       <V7ConfirmDialog
         open={deleteId !== null}
-        title={t("mcpPage.deleteTitle", { id: deleteId ?? "" })}
+        title={t("mcpPage.deleteTitle", {
+          id: deleteTarget?.name?.trim() || deleteId || "",
+        })}
         body={
           deleteApps.length
             ? t("mcpPage.deleteBodyApps", {

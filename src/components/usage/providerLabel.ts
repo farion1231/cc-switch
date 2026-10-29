@@ -14,7 +14,9 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "OpenCode (Session)": "opencode",
   "Grok Build (Session)": "grokbuild",
   "MiniMax Code (Session)": "mcode",
+  "Kimi Code (Session)": "kimi",
   "Pi (Session)": "pi",
+  "Antigravity (Session)": "agy",
 };
 
 export interface UsageProviderLabel {

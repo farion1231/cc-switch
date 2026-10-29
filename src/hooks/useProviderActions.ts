@@ -15,6 +15,7 @@ import type {
   OpenClawProviderConfig,
   OpenClawDefaultModel,
 } from "@/types";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
@@ -25,6 +26,7 @@ import {
   useSwitchProviderMutation,
 } from "@/lib/query";
 import { usageKeys } from "@/lib/query/usage";
+import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
@@ -167,13 +169,10 @@ export function useProviderActions(
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider, options?: { acknowledgedRouting?: boolean }) => {
-      // Claude Desktop 切到模型映射卡时，后端会自动拉起路由服务，不用提醒；
-      // 其余应用必须开启当前应用的 takeover（只看全局进程会漏判别的应用已接管的情况）。
+      // 必须开启当前应用的 takeover（只看全局进程会漏判别的应用已接管的情况）。
       // 确认框 F 里选了「仍然直连切换」的不再重复提醒。
       const routingReady =
-        activeApp === "claude-desktop" ||
-        isProxyTakeover === true ||
-        options?.acknowledgedRouting === true;
+        isProxyTakeover === true || options?.acknowledgedRouting === true;
       const proxyRequiredReason = routingReady
         ? null
         : getRoutingReason(activeApp, provider, t);
@@ -263,14 +262,9 @@ export function useProviderActions(
             messageKey = "notifications.grokBuildRestartRequired";
             defaultMessage = "切换成功，请重启 Grok Build 以生效";
           } else if (activeApp === "claude-desktop") {
-            if (provider.meta?.claudeDesktopMode === "proxy") {
-              messageKey = "notifications.claudeDesktopProxyRestartRequired";
-              defaultMessage =
-                "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效";
-            } else {
-              messageKey = "notifications.claudeDesktopRestartRequired";
-              defaultMessage = "切换成功，重启 Claude Desktop 后生效";
-            }
+            // 直连、路由换一家都改了 Desktop 的配置文件，它只在启动时读
+            messageKey = "notifications.claudeDesktopRestartRequired";
+            defaultMessage = "切换成功，重启 Claude Desktop 后生效";
           } else if (
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
@@ -279,7 +273,10 @@ export function useProviderActions(
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
           }
-          toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+          const message = result?.route
+            ? routeSwitchNotification(result.route, activeApp, provider.name, t)
+            : t(messageKey, { defaultValue: defaultMessage });
+          toast.success(message, {
             closeButton: true,
           });
         }
@@ -310,8 +307,8 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi") {
-          await piApi.updateProviderUsageScript(provider.id, script);
+        if (activeApp === "pi" || activeApp === "omp") {
+          await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }
@@ -344,9 +341,63 @@ export function useProviderActions(
     [activeApp, queryClient, t],
   );
 
-  // Set provider as default model (OpenClaw only)
+  // OpenCode：只写 opencode.json 顶层 model，small_model 不动
+  const setOpenCodeDefaultModel = useCallback(
+    async (provider: Provider, modelId?: string) => {
+      const modelIds = getOpencodeDeclaredModels(
+        provider.id,
+        provider.settingsConfig,
+      ).map((model) => model.id);
+      if (modelIds.length === 0) {
+        toast.error(
+          t("notifications.openclawNoModels", {
+            defaultValue: "该供应商没有配置模型",
+          }),
+        );
+        return;
+      }
+      const selected = modelId ?? modelIds[0];
+      if (!modelIds.includes(selected)) {
+        toast.error(
+          t("notifications.openclawModelNotFound", {
+            defaultValue: "所选模型已不存在，请刷新后重试",
+          }),
+        );
+        return;
+      }
+
+      try {
+        await providersApi.setOpenCodeDefaultModel(
+          `${provider.id}/${selected}`,
+        );
+        await queryClient.invalidateQueries({
+          queryKey: ["opencodeDefaultModel"],
+        });
+        toast.success(
+          t("notifications.openclawDefaultModelSet", {
+            defaultValue: "已设为默认模型",
+          }),
+          { closeButton: true },
+        );
+      } catch (error) {
+        toast.error(
+          extractErrorMessage(error) ||
+            t("notifications.openclawDefaultModelSetFailed", {
+              defaultValue: "设置默认模型失败",
+            }),
+        );
+      }
+    },
+    [queryClient, t],
+  );
+
+  // Set provider as default model (OpenClaw / OpenCode)
   const setAsDefaultModel = useCallback(
     async (provider: Provider, modelId?: string) => {
+      if (activeApp === "opencode") {
+        await setOpenCodeDefaultModel(provider, modelId);
+        return;
+      }
       const config = provider.settingsConfig as OpenClawProviderConfig;
       if (!config.models || config.models.length === 0) {
         toast.error(
@@ -404,7 +455,7 @@ export function useProviderActions(
         toast.error(detail);
       }
     },
-    [queryClient, t],
+    [activeApp, queryClient, setOpenCodeDefaultModel, t],
   );
 
   return {

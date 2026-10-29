@@ -13,6 +13,7 @@ import {
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
+export const KIMI_OFFICIAL_PROVIDER_ID = "managed:kimi-code";
 
 export type CodexOfficialIdentity =
   | "native_login"
@@ -92,6 +93,12 @@ export function isOfficialAccount(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
+  if (appId === "kimi") {
+    const config = provider.settingsConfig.provider as
+      | { type?: string; oauth?: { key?: unknown } }
+      | undefined;
+    return config?.type === "kimi" && nonEmptyString(config?.oauth?.key);
+  }
   return (
     provider.category === "official" ||
     resolveCodexOfficialIdentity(appId, provider) !== null
@@ -107,6 +114,27 @@ export function supportsFailover(
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
   return !supportsOfficialProxyTakeover(appId, provider);
+}
+
+/**
+ * 能否做「检测连通」（对 base_url 的可达性探测）。
+ *
+ * 探测需要一个真实的上游地址，所以两类卡片不参与：
+ * - 官方账号卡：base_url 故意留空，走客户端默认 / OAuth 端点；
+ * - OMO / OMO Slim：`settings_config` 里只有 agents / categories 的模型映射，
+ *   没有 `npm` 与 `options.baseURL`，后端无从解析探测目标。要测上游请到它引用的
+ *   OpenCode 供应商卡片上测。
+ */
+export function supportsConnectivityCheck(
+  appId: AppId,
+  provider: Pick<Provider, "category">,
+): boolean {
+  if (appId === "mcode" || appId === "kimi") return false;
+  return (
+    provider.category !== "official" &&
+    provider.category !== "omo" &&
+    provider.category !== "omo-slim"
+  );
 }
 
 /** Keep the UI capability rule aligned with the Rust takeover policy. */

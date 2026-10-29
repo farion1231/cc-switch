@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
-use super::validation::{extract_server_spec, validate_server_spec};
+use super::validation::{extract_server_spec, spec_transport_type, validate_server_spec};
 
 fn should_sync_codex_mcp() -> bool {
     // Codex 未安装/未初始化时：~/.codex 目录不存在。
@@ -248,6 +248,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         name: id.clone(),
                         server: spec_v,
                         apps: McpApps {
+                            agy: false,
                             claude: false,
                             codex: true,
                             gemini: false,
@@ -255,7 +256,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             opencode: false,
                             hermes: false,
                             mcode: false,
+                            kimi: false,
                             pi: false,
+                            omp: false,
                         },
                         description: None,
                         homepage: None,
@@ -342,7 +345,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
         for id in ids {
             let spec = enabled.get(&id).expect("spec must exist");
             // 复用通用转换函数（已包含扩展字段支持）
-            match json_server_to_toml_table(spec) {
+            match json_server_to_codex_toml_table(spec) {
                 Ok(table) => {
                     servers_tbl[&id[..]] = Item::Table(table);
                 }
@@ -467,7 +470,7 @@ pub fn sync_single_server_to_codex(
     }
 
     // 将 JSON 服务器规范转换为 TOML 表
-    let toml_table = json_server_to_toml_table(server_spec)?;
+    let toml_table = json_server_to_codex_toml_table(server_spec)?;
     upsert_mcp_server_table(&mut doc, id, toml_table)?;
 
     // 写回文件
@@ -617,23 +620,22 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
     }
 }
 
-/// 写出侧的传输类型，与导入侧 [`codex_entry_transport_type`] 对称。
-///
-/// 规范里可能没有 `type`（面板 JSON 模式粘贴 `{"url": …}`、deeplink 都不补），
-/// 此时不能一律当 stdio：那样会写出 `command = ""` 再带上 `url`，Codex 对这种
-/// 条目报 `url is not supported for stdio`，整份 config.toml 加载失败，其它
-/// 正常的 MCP 也跟着失效。显式写了 stdio 却只有 `url` 的规范同理。
-fn spec_transport_type(spec: &Value) -> &str {
-    let has = |key: &str| {
-        spec.get(key)
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| !s.trim().is_empty())
-    };
-    let explicit = spec.get("type").and_then(|v| v.as_str());
-    if matches!(explicit, None | Some("stdio")) && !has("command") && has("url") {
-        return "http";
+/// 共享规范里其他客户端的字段，Codex 的 `[mcp_servers.*]` 不认识：
+/// `timeout`（Gemini CLI / Cline 等，单位各家不同）、`autoApprove`（Cline 等）。
+/// 写进去 Codex 会报 ignored-settings 警告，`--strict-config` 直接拒绝加载。
+/// 只在 Codex 输出里去掉，库里的共享规范不动，其他客户端照常使用。
+/// `timeout` 不换算成 `tool_timeout_sec`：各客户端单位不一，猜错会把超时放大或缩小
+/// 一千倍；需要时直接在规范里写 Codex 原生的 `tool_timeout_sec`，会原样写出。
+const NON_CODEX_SERVER_FIELDS: &[&str] = &["timeout", "autoApprove"];
+
+/// Codex 专用的 JSON → TOML 转换：在通用转换的基础上去掉 Codex 不认的字段。
+/// Grok Build 复用通用转换，不受影响。
+fn json_server_to_codex_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
+    let mut table = json_server_to_toml_table(spec)?;
+    for key in NON_CODEX_SERVER_FIELDS {
+        table.remove(key);
     }
-    explicit.unwrap_or("stdio")
+    Ok(table)
 }
 
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
@@ -1052,6 +1054,44 @@ mod tests {
             );
         }
         assert!(remote.get("scopes").is_some());
+    }
+
+    #[test]
+    fn codex_table_drops_other_clients_timeout_and_auto_approve() {
+        // #8843：`timeout` / `autoApprove` 是其他客户端的字段，Codex 严格加载会拒绝。
+        let spec = json!({
+            "type": "stdio",
+            "command": "echo",
+            "timeout": 900000,
+            "autoApprove": ["read_document"],
+            "tool_timeout_sec": 120,
+            "startup_timeout_sec": 20
+        });
+        let table = json_server_to_codex_toml_table(&spec).unwrap();
+        assert!(table.get("timeout").is_none());
+        assert!(table.get("autoApprove").is_none());
+        // Codex 原生字段照常写出
+        assert_eq!(
+            table
+                .get("tool_timeout_sec")
+                .and_then(|item| item.as_integer()),
+            Some(120)
+        );
+        assert_eq!(
+            table
+                .get("startup_timeout_sec")
+                .and_then(|item| item.as_integer()),
+            Some(20)
+        );
+        assert_eq!(
+            table.get("command").and_then(|item| item.as_str()),
+            Some("echo")
+        );
+
+        // 通用转换（Grok Build 复用）不变
+        let shared = json_server_to_toml_table(&spec).unwrap();
+        assert!(shared.get("timeout").is_some());
+        assert!(shared.get("autoApprove").is_some());
     }
 
     #[test]

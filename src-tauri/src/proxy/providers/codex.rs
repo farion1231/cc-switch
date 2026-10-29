@@ -1066,6 +1066,12 @@ impl ProviderAdapter for CodexAdapter {
                 if let Some(url) = crate::grok_config::extract_base_url(config_str) {
                     return Ok(url.trim_end_matches('/').to_string());
                 }
+                // The table `model_provider` selects, read the way Codex reads it. The text
+                // scans below remain for a top-level `openai_base_url` and for TOML that
+                // does not parse.
+                if let Some(url) = extract_codex_base_url_from_toml(config_str) {
+                    return Ok(url.trim_end_matches('/').to_string());
+                }
                 if let Some(start) = config_str.find("base_url = \"") {
                     let rest = &config_str[start + 12..];
                     if let Some(end) = rest.find('"') {
@@ -1559,6 +1565,49 @@ wire_api = "responses"
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_extract_base_url_from_selected_config_provider() {
+        let adapter = CodexAdapter::new();
+        let configs = [
+            // Another provider table comes first.
+            r#"model_provider = "relay"
+
+[model_providers.azure]
+name = "Azure"
+base_url = "https://azure.example.com/v1"
+env_key = "AZURE_OPENAI_API_KEY"
+
+[model_providers.relay]
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+"#,
+            // The previous URL is commented out above the current one.
+            r#"model_provider = "relay"
+
+[model_providers.relay]
+name = "Relay"
+# base_url = "https://old-relay.example.com/v1"
+base_url = "https://relay.example.com/v1"
+"#,
+            // No spaces around `=`.
+            r#"model_provider = "relay"
+
+[model_providers.relay]
+name = "Relay"
+base_url="https://relay.example.com/v1/"
+"#,
+        ];
+
+        for config in configs {
+            let provider = create_provider(json!({ "config": config }));
+            assert_eq!(
+                adapter.extract_base_url(&provider).unwrap(),
+                "https://relay.example.com/v1",
+                "config:\n{config}"
+            );
+        }
     }
 
     #[test]

@@ -12,6 +12,17 @@ const authState = vi.hoisted(() => ({
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
 }));
+const modelFetchMocks = vi.hoisted(() => ({
+  fetchCodexOauthModels: vi.fn(),
+}));
+
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/model-fetch")>();
+  return {
+    ...actual,
+    fetchCodexOauthModels: modelFetchMocks.fetchCodexOauthModels,
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: {
@@ -87,6 +98,65 @@ function renderForm(
 describe("ClaudeDesktopProviderForm", () => {
   beforeEach(() => {
     authState.codexReauthRequired = false;
+    toastMocks.error.mockReset();
+    modelFetchMocks.fetchCodexOauthModels.mockReset();
+  });
+
+  it("托管 OAuth 供应商也能获取模型并在映射行里选择（#8426）", async () => {
+    modelFetchMocks.fetchCodexOauthModels.mockResolvedValue([
+      { id: "gpt-5.6", ownedBy: "openai" },
+    ]);
+    renderForm({
+      name: "Codex OAuth Provider",
+      category: "third_party",
+      settingsConfig: { env: {} },
+      meta: {
+        providerType: "codex_oauth",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct-managed",
+        },
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "upstream-model" },
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /获取模型/ }));
+
+    await waitFor(() =>
+      expect(modelFetchMocks.fetchCodexOauthModels).toHaveBeenCalledWith(
+        "acct-managed",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: "Select model" }).length,
+      ).toBeGreaterThan(0),
+    );
+  });
+
+  it("未登录的 Copilot 获取模型时提示先登录", async () => {
+    renderForm({
+      name: "Copilot Provider",
+      category: "third_party",
+      settingsConfig: { env: {} },
+      meta: {
+        providerType: "github_copilot",
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "claude-sonnet-5" },
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /获取模型/ }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith("请先登录 GitHub Copilot"),
+    );
   });
 
   it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
@@ -115,8 +185,184 @@ describe("ClaudeDesktopProviderForm", () => {
       });
       expect(modelModePicker).toHaveTextContent("模型映射");
       expect(modelModePicker).toBeDisabled();
+      if (providerType === "github_copilot") {
+        const formatControl = screen
+          .getByText("copilot.automaticFormat")
+          .closest("button");
+        expect(formatControl).toBeDisabled();
+        expect(screen.getByText(/copilot.automaticFormatHint/)).toBeVisible();
+      }
     },
   );
+
+  it.each(["codex_oauth", "xai_oauth"])(
+    "%s 忽略 Copilot 地址并保留自身协议与认证方式",
+    (providerType) => {
+      renderForm({
+        name: "Managed OAuth Provider",
+        settingsConfig: {
+          env: { ANTHROPIC_BASE_URL: "https://api.githubcopilot.com" },
+        },
+        meta: {
+          providerType,
+          claudeDesktopMode: "proxy",
+          apiFormat: "openai_responses",
+        },
+      });
+
+      expect(
+        screen.queryByText("copilot.automaticFormat"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("copilot.automaticFormatHint"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("copilot-auth-section"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByTestId(
+          providerType === "codex_oauth"
+            ? "codex-oauth-section"
+            : "xai-oauth-section",
+        ),
+      ).toBeVisible();
+      if (providerType === "codex_oauth") {
+        expect(
+          screen
+            .getAllByRole("combobox")
+            .find((control) =>
+              control.textContent?.includes(
+                "OpenAI Responses API (需开启路由)",
+              ),
+            ),
+        ).toBeEnabled();
+      }
+    },
+  );
+
+  it.each([
+    "anthropic",
+    "openai_chat",
+    "openai_responses",
+    "gemini_native",
+  ] as const)("手动配置 Copilot 地址时禁用旧格式 %s 的手选", (apiFormat) => {
+    renderForm({
+      name: "Custom Copilot",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
+          ANTHROPIC_AUTH_TOKEN: "test-token",
+        },
+      },
+      meta: { claudeDesktopMode: "proxy", apiFormat },
+    });
+
+    expect(
+      screen.getByText("copilot.automaticFormat").closest("button"),
+    ).toBeDisabled();
+    expect(screen.getByText("copilot.automaticFormatHint")).toBeVisible();
+    expect(screen.getByLabelText("API Key")).toBeVisible();
+    expect(
+      screen.queryByTestId("copilot-auth-section"),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "https://api.githubcopilot.com",
+      "https://api.githubcopilot.com",
+      "anthropic",
+    ],
+    ["https://api.example.com", "https://api.githubcopilot.com", "anthropic"],
+    [
+      "https://api.githubcopilot.com",
+      "https://api.example.com",
+      "gemini_native",
+    ],
+    ["https://api.example.com", "https://api.example.com", "gemini_native"],
+  ])(
+    "遗留 Gemini 格式从 %s 编辑为 %s 后保存为 %s",
+    async (initialUrl, finalUrl, expectedFormat) => {
+      const { onSubmit } = renderForm({
+        name: "Legacy Gemini Provider",
+        settingsConfig: {
+          api_format: "gemini_native",
+          env: {
+            ANTHROPIC_BASE_URL: initialUrl,
+            ANTHROPIC_AUTH_TOKEN: "test-token",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          apiFormat: "gemini_native",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-model" },
+          },
+        },
+      });
+
+      fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
+        target: { value: finalUrl },
+      });
+      if (finalUrl.includes("githubcopilot.com")) {
+        expect(
+          screen.getByText("copilot.automaticFormat").closest("button"),
+        ).toBeDisabled();
+      }
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      const values = onSubmit.mock.calls[0][0];
+      expect(values.meta.apiFormat).toBe(expectedFormat);
+      expect(values.meta.providerType).toBeUndefined();
+      expect(values.meta.authBinding).toBeUndefined();
+      expect(JSON.parse(values.settingsConfig).env).toMatchObject({
+        ANTHROPIC_BASE_URL: finalUrl,
+        ANTHROPIC_AUTH_TOKEN: "test-token",
+      });
+    },
+  );
+
+  it("修改自定义上游地址时同步切换自动格式并保留原格式", async () => {
+    renderForm({
+      name: "Custom Provider",
+      settingsConfig: {
+        env: { ANTHROPIC_BASE_URL: "https://api.example.com" },
+      },
+      meta: { claudeDesktopMode: "proxy", apiFormat: "openai_chat" },
+    });
+
+    const formatControl = screen
+      .getAllByRole("combobox")
+      .find((control) =>
+        control.textContent?.includes("OpenAI Chat Completions (需开启路由)"),
+      );
+    expect(formatControl).toBeEnabled();
+    expect(
+      screen.queryByText("copilot.automaticFormatHint"),
+    ).not.toBeInTheDocument();
+
+    const endpoint = screen.getByLabelText("providerForm.apiEndpoint");
+    fireEvent.change(endpoint, {
+      target: { value: "https://api.business.githubcopilot.com" },
+    });
+    expect(formatControl).toBeDisabled();
+    await waitFor(() =>
+      expect(formatControl).toHaveTextContent("copilot.automaticFormat"),
+    );
+    expect(screen.getByText("copilot.automaticFormatHint")).toBeVisible();
+
+    fireEvent.change(endpoint, {
+      target: { value: "https://api.example.com" },
+    });
+    expect(formatControl).toBeEnabled();
+    expect(formatControl).toHaveTextContent(
+      "OpenAI Chat Completions (需开启路由)",
+    );
+    expect(
+      screen.queryByText("copilot.automaticFormatHint"),
+    ).not.toBeInTheDocument();
+  });
 
   it("新建自定义供应商默认使用直连并显示模型列表", () => {
     renderForm(undefined);

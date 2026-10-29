@@ -396,10 +396,15 @@ const DIRECTORY_BUDGET_COST: u64 = 4096;
 /// 文件同理：空文件与不足一块的小文件照样占 inode 和一个磁盘块。只按内容字节
 /// 计费时，一个全是空文件的归档能让预算读数一直停在 0，条目上限就成了唯一防线。
 const FILE_ENTRY_BUDGET_COST: u64 = DIRECTORY_BUDGET_COST;
-/// 压缩体上限。解压预算只有在 ZipArchive 建起来之后才生效，而那时整个响应体
-/// 已经在内存里了，所以下载这一步需要自己的上限。技能仓库是 Markdown，
-/// 128 MiB 的压缩包已经远超正常规模。
-const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
+/// 压缩体上限。解压预算只有在 ZipArchive 建起来之后才生效，所以下载这一步需要
+/// 自己的上限。下载的是整个仓库归档，`docs/` 里的图片、GIF 常常比技能本身大
+/// 一个数量级（#8421：scientific-agent-skills 压缩包 235 MiB，技能只有 20 MiB），
+/// 曾经的 128 MiB 会把这类仓库挡在门外。响应体流式落到临时文件而不进内存，
+/// 上限对齐解压预算：压缩体超过解压后能容纳的总量，解压那一步也必然失败。
+const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
+
+/// 技能归档下载请求的 User-Agent。
+const SKILL_DOWNLOAD_USER_AGENT: &str = concat!("CC-Switch/", env!("CARGO_PKG_VERSION"));
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -655,7 +660,7 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode => {}
+            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -689,6 +694,15 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::Omp => {
+                return Ok(crate::omp_config::get_omp_agent_dir()?.join("skills"));
+            }
+            AppType::Agy => {
+                return Ok(crate::config::get_home_dir()
+                    .join(".gemini")
+                    .join("config")
+                    .join("skills"));
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -698,6 +712,7 @@ impl SkillService {
 
         Ok(match app {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
+            AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -707,6 +722,8 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
+            AppType::Agy => home.join(".gemini").join("config").join("skills"),
         })
     }
 
@@ -780,6 +797,7 @@ impl SkillService {
         let mut skills = db.get_all_installed_skills()?;
         for skill in skills.values_mut() {
             skill.apps.pi = Self::skill_exists_in_app(&skill.directory, &AppType::Pi);
+            skill.apps.omp = Self::skill_exists_in_app(&skill.directory, &AppType::Omp);
         }
         Ok(skills.into_values().collect())
     }
@@ -1056,107 +1074,119 @@ impl SkillService {
                 Ok(directory) => {
                     let ssot_dir = Self::get_ssot_dir()?;
                     let source = ssot_dir.join(&directory);
-                    let mcode_destination = if skill.apps.mcode {
-                        let destination =
-                            Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Mcode)?
+                    let mut managed_destinations = Vec::new();
+                    for app in [AppType::Mcode, AppType::Agy, AppType::Kimi] {
+                        if skill.apps.is_enabled_for(&app) {
+                            let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
                                 .join(&directory);
-                        Self::inspect_pi_skill_destination(&source, &destination, &directory)
-                            .context(
-                                "MiniMax Code Skill could not be verified; uninstall cancelled",
-                            )?;
-                        Some(destination)
-                    } else {
-                        None
-                    };
-                    let mut preserved_pi_path: Option<PathBuf> = None;
+                            Self::inspect_pi_skill_destination(&source, &destination, &directory)
+                                .with_context(|| {
+                                format!(
+                                    "{} Skill could not be verified; uninstall cancelled",
+                                    app.as_str()
+                                )
+                            })?;
+                            managed_destinations.push(destination);
+                        }
+                    }
+                    let mut preserved_paths = Vec::new();
                     let mut pi_cleanup_incomplete = false;
-                    let mut pi_removal_path = None;
+                    let mut removal_paths = Vec::new();
 
-                    match Self::get_app_skills_dir(&AppType::Pi) {
-                        Ok(pi_dir) => {
-                            let destination = pi_dir.join(&directory);
-                            if Self::paths_alias(&ssot_dir, &pi_dir) {
-                                // Pi 直接使用 SSOT 时没有第二份副本；后续删除 SSOT 即完成清理。
-                                log::debug!("Skill {id} 的 Pi Skills 目录与 SSOT 相同");
-                            } else {
+                    for app in [AppType::Pi, AppType::Omp] {
+                        match Self::get_app_skills_dir(&app) {
+                            Ok(app_dir) => {
+                                if Self::paths_alias(&ssot_dir, &app_dir) {
+                                    // 原生目录直接使用 SSOT 时没有第二份副本；后续删除 SSOT 即完成清理。
+                                    log::debug!("Skill {id} 的 {app:?} Skills 目录与 SSOT 相同");
+                                    continue;
+                                }
                                 // 即使当前不存在也保留目标路径；备份期间可能有另一进程
                                 // 同步该 Skill，删除 SSOT 前必须重新检查一次。
-                                pi_removal_path = Some(destination.clone());
-                                if destination.exists() || Self::is_symlink(&destination) {
-                                    if let Err(err) = Self::inspect_pi_skill_destination(
+                                let destination = app_dir.join(&directory);
+                                if (destination.exists() || Self::is_symlink(&destination))
+                                    && Self::inspect_pi_skill_destination(
                                         &source,
                                         &destination,
                                         &directory,
-                                    ) {
+                                    )
+                                    .inspect_err(|err| {
                                         log::warn!(
-                                            "Skill {id} 卸载时跳过 Pi 清理，保留 {}: {err}",
+                                            "Skill {id} 卸载时跳过 {app:?} 清理，保留 {}: {err}",
                                             destination.display()
-                                        );
-                                        preserved_pi_path = Some(destination);
-                                        pi_removal_path = None;
-                                        pi_cleanup_incomplete = true;
-                                    }
+                                        )
+                                    })
+                                    .is_err()
+                                {
+                                    preserved_paths.push(destination);
+                                    pi_cleanup_incomplete = true;
+                                } else {
+                                    removal_paths.push((app, destination));
                                 }
                             }
-                        }
-                        Err(err) => {
-                            log::warn!(
-                                "Skill {id} 卸载时无法解析 Pi Skills 目录，跳过 Pi 清理: {err}"
-                            );
-                            pi_cleanup_incomplete = true;
+                            Err(err) => {
+                                log::warn!(
+                                    "Skill {id} 卸载时无法解析 {app:?} Skills 目录，跳过清理: {err}"
+                                );
+                                pi_cleanup_incomplete = true;
+                            }
                         }
                     }
 
-                    let backup_path = Self::create_uninstall_backup_excluding(
-                        &skill,
-                        preserved_pi_path.as_deref(),
-                    )?
-                    .map(|path| path.to_string_lossy().to_string());
+                    let backup_path =
+                        Self::create_uninstall_backup_excluding(&skill, &preserved_paths)?
+                            .map(|path| path.to_string_lossy().to_string());
 
-                    if let Some(destination) = mcode_destination {
+                    for destination in managed_destinations {
                         Self::remove_verified_pi_destination(&source, &destination, &directory)
-                            .context(
-                                "MiniMax Code Skill could not be removed; uninstall cancelled",
-                            )?;
+                            .context("Managed Skill could not be removed; uninstall cancelled")?;
                     }
 
-                    // Pi 目录可能包含用户自己维护的同名 Skill。删除 SSOT 前仅移除
+                    // Pi、Omp 目录可能包含用户自己维护的同名 Skill。删除 SSOT 前仅移除
                     // 能验证为 CC Switch 部署的副本；其余路径保留并返回警告。
-                    if let Some(destination) = pi_removal_path {
-                        let removal =
-                            Self::remove_verified_pi_destination(&source, &destination, &directory);
-                        if let Err(err) = removal {
-                            log::warn!("Skill {id} 卸载时 Pi 清理失败，将继续卸载: {err}");
+                    for (app, destination) in removal_paths {
+                        if let Err(err) =
+                            Self::remove_verified_pi_destination(&source, &destination, &directory)
+                        {
+                            log::warn!("Skill {id} 卸载时 {app:?} 清理失败，将继续卸载: {err}");
                             pi_cleanup_incomplete = true;
                             if destination.exists() || Self::is_symlink(&destination) {
-                                preserved_pi_path = Some(destination);
+                                preserved_paths.push(destination);
                             }
                         }
                     }
 
                     // 其他应用沿用既有的逐项容错行为。
                     for app in AppType::all() {
-                        if matches!(app, AppType::Pi | AppType::Mcode) {
+                        if matches!(
+                            app,
+                            AppType::Pi
+                                | AppType::Omp
+                                | AppType::Mcode
+                                | AppType::Agy
+                                | AppType::Kimi
+                        ) {
                             continue;
                         }
-                        let _ = Self::remove_from_app_preserving(
-                            &directory,
-                            &app,
-                            preserved_pi_path.as_deref(),
-                        );
+                        let _ =
+                            Self::remove_from_app_preserving(&directory, &app, &preserved_paths);
                     }
 
                     // 从 SSOT 删除
                     let skill_path = ssot_dir.join(&directory);
-                    let overlaps_preserved_pi = preserved_pi_path
-                        .as_deref()
-                        .is_some_and(|path| Self::paths_overlap(&skill_path, path));
-                    if overlaps_preserved_pi {
-                        log::warn!("Skill {id} 的 SSOT 路径与保留的 Pi 副本重叠，跳过文件删除");
+                    if preserved_paths
+                        .iter()
+                        .any(|path| Self::paths_overlap(&skill_path, path))
+                    {
+                        log::warn!("Skill {id} 的 SSOT 路径与保留的原生副本重叠，跳过文件删除");
                     } else if skill_path.exists() {
                         fs::remove_dir_all(&skill_path)?;
                     }
-                    (backup_path, preserved_pi_path, pi_cleanup_incomplete)
+                    (
+                        backup_path,
+                        preserved_paths.into_iter().next(),
+                        pi_cleanup_incomplete,
+                    )
                 }
                 Err(err) => {
                     log::warn!(
@@ -1498,6 +1528,7 @@ impl SkillService {
             .get_installed_skill(skill_id)?
             .ok_or_else(|| anyhow!("Skill not found: {skill_id}"))?;
         skill.apps.pi = Self::skill_exists_in_app(&skill.directory, &AppType::Pi);
+        skill.apps.omp = Self::skill_exists_in_app(&skill.directory, &AppType::Omp);
 
         // 本函数后续三种危险操作都用 directory 拼路径：备份源（把任意目录复制进
         // 备份区并在界面列出）、remove_dir_all（删任意目录）、copy_dir_recursive
@@ -1526,6 +1557,9 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
         if skill.apps.pi {
             Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Pi)?;
+        }
+        if skill.apps.omp {
+            Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Omp)?;
         }
 
         // 下载仓库
@@ -1598,11 +1632,18 @@ impl SkillService {
         }
         Self::require_valid_directory(&current_skill.directory)?;
         current_skill.apps.pi = Self::skill_exists_in_app(&current_skill.directory, &AppType::Pi);
+        current_skill.apps.omp = Self::skill_exists_in_app(&current_skill.directory, &AppType::Omp);
         let skill = current_skill;
 
         let dest = ssot_dir.join(&skill.directory);
         let mut deployments = Vec::new();
-        for app in [AppType::Pi, AppType::Mcode] {
+        for app in [
+            AppType::Pi,
+            AppType::Omp,
+            AppType::Mcode,
+            AppType::Agy,
+            AppType::Kimi,
+        ] {
             if skill.apps.is_enabled_for(&app) {
                 let destination =
                     Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&skill.directory);
@@ -1617,7 +1658,7 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        if !skill.apps.mcode {
+        if !(skill.apps.mcode || skill.apps.agy || skill.apps.kimi) {
             if dest.exists() {
                 fs::remove_dir_all(&dest)?;
             }
@@ -1625,7 +1666,11 @@ impl SkillService {
         }
 
         // 计算新哈希 + 解析新元数据
-        let metadata_source = if skill.apps.mcode { &source } else { &dest };
+        let metadata_source = if skill.apps.mcode || skill.apps.agy || skill.apps.kimi {
+            &source
+        } else {
+            &dest
+        };
         let new_hash = Self::compute_dir_hash(metadata_source).ok();
         let skill_md = metadata_source.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
@@ -1653,13 +1698,24 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let mut updated_skill = if skill.apps.mcode {
-            Self::update_mcode_skill_files(&source, &dest, &skill.directory, &deployments, || {
-                if !db.update_skill_metadata(&updated_metadata)? {
-                    return Err(anyhow!("Skill no longer installed: {}", skill.id));
-                }
-                Ok(updated_metadata)
-            })?
+        let mut updated_skill = if skill.apps.mcode || skill.apps.agy || skill.apps.kimi {
+            Self::update_managed_skill_files(
+                &source,
+                &dest,
+                &skill.directory,
+                &deployments,
+                &[AppType::Mcode, AppType::Agy, AppType::Kimi]
+                    .iter()
+                    .filter(|app| skill.apps.is_enabled_for(app))
+                    .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
+                    .collect::<Result<Vec<_>>>()?,
+                || {
+                    if !db.update_skill_metadata(&updated_metadata)? {
+                        return Err(anyhow!("Skill no longer installed: {}", skill.id));
+                    }
+                    Ok(updated_metadata)
+                },
+            )?
         } else {
             for (destination, deployment) in deployments {
                 Self::refresh_pi_skill_destination(
@@ -1672,10 +1728,14 @@ impl SkillService {
             Self::persist_updated_skill_metadata(db, &updated_metadata)?
         };
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
+        updated_skill.apps.omp = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Omp);
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
-            if matches!(app, AppType::Pi | AppType::Mcode) {
+            if matches!(
+                app,
+                AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Agy | AppType::Kimi
+            ) {
                 continue;
             }
             if let Err(e) = Self::sync_to_app_dir(&updated_skill.directory, &app) {
@@ -1689,6 +1749,7 @@ impl SkillService {
 
     // Keep the old SSOT and native copies until metadata is committed. In particular,
     // a failed native write must not make the old copy appear to be a user edit.
+    #[cfg(test)]
     fn update_mcode_skill_files<T>(
         source: &Path,
         ssot: &Path,
@@ -1696,8 +1757,25 @@ impl SkillService {
         deployments: &[(PathBuf, PiSkillDeployment)],
         commit: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
+        Self::update_managed_skill_files(
+            source,
+            ssot,
+            directory,
+            deployments,
+            &[Self::get_app_skills_dir(&AppType::Mcode)?.join(directory)],
+            commit,
+        )
+    }
+
+    fn update_managed_skill_files<T>(
+        source: &Path,
+        ssot: &Path,
+        directory: &str,
+        deployments: &[(PathBuf, PiSkillDeployment)],
+        native_targets: &[PathBuf],
+        commit: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
         Self::validate_sync_source_dir(source, directory)?;
-        let native = Self::get_app_skills_dir(&AppType::Mcode)?.join(directory);
         let mut targets = vec![(ssot.to_path_buf(), false)];
         for (destination, deployment) in deployments {
             Self::ensure_pi_skill_destination_matches(ssot, destination, directory)?;
@@ -1706,8 +1784,10 @@ impl SkillService {
                 matches!(deployment, PiSkillDeployment::Symlink { .. }),
             ));
         }
-        if !native.exists() && !Self::is_symlink(&native) {
-            targets.push((native, Self::get_sync_method() != SyncMethod::Copy));
+        for native in native_targets {
+            if !native.exists() && !Self::is_symlink(native) {
+                targets.push((native.clone(), Self::get_sync_method() != SyncMethod::Copy));
+            }
         }
 
         let mut staged = Vec::new();
@@ -1717,7 +1797,7 @@ impl SkillService {
                 .context("Skill destination has no parent")?;
             fs::create_dir_all(parent)?;
             let staging = tempfile::Builder::new()
-                .prefix(".mcode-skill-update-")
+                .prefix(".managed-skill-update-")
                 .tempdir_in(parent)?;
             let replacement = staging.path().join("new");
             if symlink {
@@ -1885,17 +1965,27 @@ impl SkillService {
                     .ok()
                     .flatten()
             };
-            if skill.apps.mcode {
-                let destination = Self::get_app_skills_dir(&AppType::Mcode)?.join(&directory);
-                if let Some(deployment) =
-                    Self::inspect_pi_skill_destination(&src, &destination, &directory)
-                        .ok()
-                        .flatten()
-                {
-                    mcode_deployments.push((directory.clone(), destination, deployment));
+            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi] {
+                if skill.apps.is_enabled_for(&app) {
+                    let destination = Self::get_app_skills_dir(&app)?.join(&directory);
+                    if let Some(deployment) =
+                        Self::inspect_pi_skill_destination(&src, &destination, &directory)
+                            .ok()
+                            .flatten()
+                    {
+                        mcode_deployments.push((directory.clone(), destination, deployment));
+                    }
                 }
             }
-
+            // Omp 没有开关列，是否部署只看原生目录里有没有 CC Switch 的副本。
+            let omp_destination = Self::get_app_skills_dir(&AppType::Omp)?.join(&directory);
+            if let Some(deployment) =
+                Self::inspect_pi_skill_destination(&src, &omp_destination, &directory)
+                    .ok()
+                    .flatten()
+            {
+                mcode_deployments.push((directory.clone(), omp_destination, deployment));
+            }
             // 优先 rename（同文件系统原子操作），失败则 copy+delete
             match fs::rename(&src, &dst) {
                 Ok(()) => {
@@ -2104,6 +2194,47 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
+        if matches!(app, AppType::Agy | AppType::Kimi) {
+            if !enabled && !skill.apps.is_enabled_for(app) {
+                return Ok(());
+            }
+            let directory = Self::require_valid_directory(&skill.directory)?;
+            let ssot = Self::get_ssot_dir()?;
+            let source = ssot.join(&directory);
+            let native_dir = Self::get_distinct_app_skills_dir(&ssot, app)?;
+            let native = native_dir.join(&directory);
+            Self::ensure_pi_skill_destination_matches(&source, &native, &directory)?;
+            fs::create_dir_all(&native_dir)?;
+            let staging = tempfile::Builder::new()
+                .prefix(".cc-switch-toggle-")
+                .tempdir_in(&native_dir)?;
+            let previous = staging.path().join("old");
+            let existed = native.exists() || Self::is_symlink(&native);
+            if existed {
+                fs::rename(&native, &previous)?;
+            }
+            skill.apps.set_enabled_for(app, enabled);
+            let result = (|| -> Result<()> {
+                if enabled {
+                    Self::sync_to_app_dir(&directory, app)?;
+                }
+                if !db.update_skill_apps(id, &skill.apps)? {
+                    return Err(anyhow!("Skill no longer installed: {id}"));
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                if native.exists() || Self::is_symlink(&native) {
+                    Self::remove_path(&native)?;
+                }
+                if existed {
+                    fs::rename(previous, native)?;
+                }
+                return Err(error);
+            }
+            return Ok(());
+        }
+
         // 更新状态
         skill.apps.set_enabled_for(app, enabled);
 
@@ -2116,7 +2247,7 @@ impl SkillService {
 
         // Pi follows its native exists=active rule; other apps keep their
         // established persisted desired-state flags.
-        if !matches!(app, AppType::Pi) {
+        if !matches!(app, AppType::Pi | AppType::Omp) {
             db.update_skill_apps(id, &skill.apps)?;
         }
 
@@ -2222,7 +2353,7 @@ impl SkillService {
         }
         search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
 
-        for selection in imports {
+        'imports: for selection in imports {
             // selection.directory 由前端 IPC 直接传入、此前全程无校验，而它既被
             // 用来探测源目录、又作为 copy_dir_recursive 的目标、最后还原样入库。
             // 在入口处拒掉，同时切断「脏值 sink」和「脏值来源」两条线。
@@ -2272,52 +2403,56 @@ impl SkillService {
             // 其他应用保存用户选择；Pi 的 exists=active 必须直接来自原生目录。
             let mut apps = selection.apps;
             apps.pi = Self::skill_exists_in_app(&dir_name, &AppType::Pi);
+            apps.omp = Self::skill_exists_in_app(&dir_name, &AppType::Omp);
 
             // An explicitly imported MCode link must point at the managed copy
             // so subsequent toggles and updates can verify its ownership.
-            if apps.mcode {
-                let projection = (|| -> Result<()> {
-                    let native = Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Mcode)?
-                        .join(&dir_name);
-                    if Self::is_symlink(&native) && !Self::paths_alias(&native, &dest) {
-                        if Self::compute_pi_deployment_hash(&native)?
-                            != Self::compute_pi_deployment_hash(&dest)?
-                        {
-                            return Err(anyhow!(
-                                "MCode Skill 与托管副本内容不同，拒绝替换链接: {dir_name}"
-                            ));
+            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi] {
+                if apps.is_enabled_for(&app) {
+                    let projection = (|| -> Result<()> {
+                        let native =
+                            Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&dir_name);
+                        if Self::is_symlink(&native) && !Self::paths_alias(&native, &dest) {
+                            if Self::compute_pi_deployment_hash(&native)?
+                                != Self::compute_pi_deployment_hash(&dest)?
+                            {
+                                return Err(anyhow!(
+                                    "Skill 与托管副本内容不同，拒绝替换链接: {dir_name}"
+                                ));
+                            }
+                            if let Some(deployment) =
+                                Self::inspect_pi_skill_destination(&native, &native, &dir_name)?
+                            {
+                                Self::refresh_pi_skill_destination(
+                                    &dest,
+                                    &native,
+                                    &dir_name,
+                                    &deployment,
+                                )?;
+                            }
+                        } else {
+                            Self::preflight_install_destination(&dest, &dir_name, &app)?;
                         }
-                        if let Some(deployment) =
-                            Self::inspect_pi_skill_destination(&native, &native, &dir_name)?
-                        {
-                            Self::refresh_pi_skill_destination(
-                                &dest,
-                                &native,
-                                &dir_name,
-                                &deployment,
-                            )?;
+                        if !native.exists() {
+                            Self::sync_to_app_dir(&dir_name, &app)?;
                         }
-                    } else {
-                        Self::preflight_install_destination(&dest, &dir_name, &AppType::Mcode)?;
+                        Ok(())
+                    })();
+                    if let Err(error) = projection {
+                        skipped_mcode.push(format!("{dir_name}: {error}"));
+                        continue 'imports;
                     }
-                    if !native.exists() {
-                        Self::sync_to_app_dir(&dir_name, &AppType::Mcode)?;
-                    }
-                    Ok(())
-                })();
-                if let Err(error) = projection {
-                    skipped_mcode.push(format!("{dir_name}: {error}"));
-                    continue;
                 }
             }
-
             // 勾选的应用里还没有这个 Skill（它是在别处发现的）：导入时就投影过去。
             // 只存标志的话，界面显示已启用、应用却读不到，要等下次切换供应商才补上。
             // 已经在应用目录里的保持原样；投影失败就不记这个应用的启用，
             // 让库里的标志始终等于磁盘上的事实。
             for app in AppType::all() {
-                if matches!(app, AppType::Pi | AppType::Mcode)
-                    || !apps.is_enabled_for(&app)
+                if matches!(
+                    app,
+                    AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Agy | AppType::Kimi
+                ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
                 {
                     continue;
@@ -2421,7 +2556,10 @@ impl SkillService {
     fn preflight_install_destination(source: &Path, directory: &str, app: &AppType) -> Result<()> {
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
-        if !matches!(app, AppType::Pi | AppType::Mcode) {
+        if !matches!(
+            app,
+            AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Agy | AppType::Kimi
+        ) {
             return Ok(());
         }
         let destination = app_dir.join(directory);
@@ -2595,7 +2733,10 @@ impl SkillService {
 
         let dest = app_dir.join(&directory);
 
-        if matches!(app, AppType::Pi | AppType::Mcode) && (dest.exists() || Self::is_symlink(&dest))
+        if matches!(
+            app,
+            AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Agy | AppType::Kimi
+        ) && (dest.exists() || Self::is_symlink(&dest))
         {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
         }
@@ -2766,13 +2907,13 @@ impl SkillService {
 
     /// 从应用目录删除 Skill（支持 symlink 和真实目录）
     pub fn remove_from_app(directory: &str, app: &AppType) -> Result<()> {
-        Self::remove_from_app_preserving(directory, app, None)
+        Self::remove_from_app_preserving(directory, app, &[])
     }
 
     fn remove_from_app_preserving(
         directory: &str,
         app: &AppType,
-        preserved_path: Option<&Path>,
+        preserved_paths: &[PathBuf],
     ) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
@@ -2786,13 +2927,19 @@ impl SkillService {
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
         let skill_path = app_dir.join(&directory);
 
-        if preserved_path.is_some_and(|path| Self::paths_overlap(&skill_path, path)) {
-            log::debug!("Skill {directory} 的 {app:?} 路径与保留的 Pi 副本相同，跳过删除");
+        if preserved_paths
+            .iter()
+            .any(|path| Self::paths_overlap(&skill_path, path))
+        {
+            log::debug!("Skill {directory} 的 {app:?} 路径与保留的原生副本相同，跳过删除");
             return Ok(());
         }
 
         if skill_path.exists() || Self::is_symlink(&skill_path) {
-            if matches!(app, AppType::Pi | AppType::Mcode) {
+            if matches!(
+                app,
+                AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Agy | AppType::Kimi
+            ) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;
             }
@@ -2816,12 +2963,12 @@ impl SkillService {
     fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Omp
         )
     }
 
     /// 「立即重新同步」：按数据库里的开关和当前同步方式，把 Skill 重新投影到各应用目录，
-    /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi 不由这里同步，不在结果里）。
+    /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi、Omp 不由这里同步，不在结果里）。
     pub fn resync_all_apps(db: &Arc<Database>) -> Vec<SkillAppSyncOutcome> {
         let _state_guard = skill_state_read_guard();
         AppType::all()
@@ -2861,9 +3008,9 @@ impl SkillService {
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        // Unselected MCode directories may have been installed outside CC Switch.
+        // Unselected MCode, Agy and Kimi directories may have been installed outside CC Switch.
         // Explicit disable/uninstall handles removal of managed deployments.
-        if app_dir.exists() && !matches!(app, AppType::Mcode) {
+        if app_dir.exists() && !matches!(app, AppType::Mcode | AppType::Agy | AppType::Kimi) {
             for entry in fs::read_dir(&app_dir)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -3541,15 +3688,36 @@ impl SkillService {
         // 原来这里立刻 keep()，任何一步失败——下载超时、ARCHIVE_TOO_LARGE、解压出错
         // ——都会把半个解压目录永久留在磁盘上，反复触发即可持续填盘。
         let temp_dir = tempfile::tempdir()?;
-        let temp_path = temp_dir.path().to_path_buf();
+        let temp_path = temp_dir.path();
 
         // Exercise the real install/update flow without network access in unit tests.
         #[cfg(test)]
         if let Some(fixture) = &self.repo_fixture {
-            Self::copy_dir_recursive(fixture, &temp_path)?;
+            Self::copy_dir_recursive(fixture, temp_path)?;
             return Ok((temp_dir, repo.branch.clone()));
         }
 
+        let branch = Self::try_repo_branches(repo, temp_path, |url| async move {
+            self.download_and_extract(&url, temp_path).await
+        })
+        .await?;
+        Ok((temp_dir, branch))
+    }
+
+    /// 依次尝试「配置分支 → main → master」，返回第一个下载成功的分支。
+    ///
+    /// 只有「分支不存在」（HTTP 404）才换下一个分支：超时、超过体积上限、解压失败、
+    /// 网络错误换个分支也不会好，继续试只会让 master 的 404 盖掉真实原因，界面变成
+    /// 「仓库或分支不存在」。抽成接收 `attempt` 的函数是为了不联网也能单测这条规则。
+    async fn try_repo_branches<F, Fut>(
+        repo: &SkillRepo,
+        temp_path: &Path,
+        mut attempt: F,
+    ) -> Result<String>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
         let mut branches = Vec::new();
         if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
             branches.push(repo.branch.as_str());
@@ -3569,26 +3737,62 @@ impl SkillService {
             );
             Self::assert_github_archive_url(&url, &repo.owner, &repo.name)?;
 
-            match self.download_and_extract(&url, &temp_path).await {
-                Ok(_) => return Ok((temp_dir, branch.to_string())),
-                Err(e) => {
+            match attempt(url).await {
+                Ok(()) => return Ok(branch.to_string()),
+                Err(e) if Self::is_branch_not_found(&e) => {
                     // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
                     // 否则 N 个候选分支等于 N 倍的落盘量堆在同一个目录里。
-                    let _ = fs::remove_dir_all(&temp_path);
-                    let _ = fs::create_dir_all(&temp_path);
+                    let _ = fs::remove_dir_all(temp_path);
+                    let _ = fs::create_dir_all(temp_path);
                     last_error = Some(e);
-                    continue;
                 }
+                Err(e) => return Err(Self::with_repo_context(e, repo)),
             }
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
+        Err(last_error
+            .map(|e| Self::with_repo_context(e, repo))
+            .unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
+    }
+
+    /// 归档地址返回 404，即这个分支（或整个仓库）不存在。
+    fn is_branch_not_found(error: &anyhow::Error) -> bool {
+        serde_json::from_str::<serde_json::Value>(&error.to_string())
+            .is_ok_and(|v| v["code"] == "DOWNLOAD_FAILED" && v["context"]["status"] == "404")
+    }
+
+    /// 给结构化错误补上仓库坐标。
+    ///
+    /// 下载 / 解压这一层只拿到 URL，报出的错误不带 owner / name；而前端文案
+    /// （如 `skills.error.downloadTimeout`）要插值 `{{owner}}/{{name}}`，缺了就会把
+    /// 占位符原样显示出来。已有的键不覆盖，非结构化错误原样返回。
+    fn with_repo_context(error: anyhow::Error, repo: &SkillRepo) -> anyhow::Error {
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&error.to_string()) else {
+            return error;
+        };
+        let Some(context) = value
+            .get_mut("context")
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            return error;
+        };
+        for (key, val) in [("owner", &repo.owner), ("name", &repo.name)] {
+            context
+                .entry(key)
+                .or_insert_with(|| serde_json::Value::String(val.clone()));
+        }
+        anyhow::anyhow!(value.to_string())
     }
 
     /// 下载并解压 ZIP
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
         let client = crate::proxy::http_client::get();
-        let response = client.get(url).send().await?;
+        // 共享客户端不带默认 User-Agent；GitHub 归档下载对无 UA 请求更容易被限流成 429（#8813）
+        let response = client
+            .get(url)
+            .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT)
+            .send()
+            .await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -3606,22 +3810,25 @@ impl SkillService {
         // 逐块读并卡住压缩体大小：`response.bytes()` 会先把攻击者控制的整个归档
         // 收进内存，之后才轮到 ZipArchive 和解压预算——那时候堆已经被吃光了。
         // 不能只信 Content-Length（可以撒谎或缺失），必须按实际收到的字节数算。
+        // 归档写进匿名临时文件（关闭即删，失败路径也不留残留），内存只占一个块。
         let mut response = response;
-        let mut body: Vec<u8> = Vec::new();
+        let mut body = std::io::BufWriter::new(tempfile::tempfile()?);
+        let mut received: u64 = 0;
         while let Some(chunk) = response.chunk().await? {
-            if body.len().saturating_add(chunk.len()) as u64 > MAX_ARCHIVE_DOWNLOAD_BYTES {
+            received = received.saturating_add(chunk.len() as u64);
+            if received > MAX_ARCHIVE_DOWNLOAD_BYTES {
                 let limit_mb = (MAX_ARCHIVE_DOWNLOAD_BYTES / 1024 / 1024).to_string();
                 return Err(anyhow::anyhow!(format_skill_error(
-                    "ARCHIVE_TOO_LARGE",
+                    "ARCHIVE_DOWNLOAD_TOO_LARGE",
                     &[("limit_mb", &limit_mb)],
-                    Some("checkZipContent"),
+                    None,
                 )));
             }
-            body.extend_from_slice(&chunk);
+            std::io::Write::write_all(&mut body, &chunk)?;
         }
 
-        let cursor = std::io::Cursor::new(body);
-        let archive = zip::ZipArchive::new(cursor)?;
+        let file = body.into_inner().map_err(|e| e.into_error())?;
+        let archive = zip::ZipArchive::new(file)?;
         Self::extract_repo_archive(archive, dest)
     }
 
@@ -3866,7 +4073,7 @@ impl SkillService {
 
     fn resolve_uninstall_backup_source_excluding(
         skill: &InstalledSkill,
-        excluded_path: Option<&Path>,
+        excluded_paths: &[PathBuf],
     ) -> Result<Option<PathBuf>> {
         // 返回值会被整目录复制进 ~/.cc-switch/skill-backups/ 并由 get_skill_backups
         // 在界面上列出——脏 directory 在这里等于任意文件读取 + 外泄通道。
@@ -3874,13 +4081,17 @@ impl SkillService {
 
         let ssot_path = Self::get_ssot_dir()?.join(&directory);
         if ssot_path.is_dir()
-            && !excluded_path.is_some_and(|path| Self::paths_overlap(&ssot_path, path))
+            && !excluded_paths
+                .iter()
+                .any(|path| Self::paths_overlap(&ssot_path, path))
         {
             return Ok(Some(ssot_path));
         }
 
         for app in AppType::all() {
-            if matches!(app, AppType::Mcode) && !skill.apps.mcode {
+            if matches!(app, AppType::Mcode | AppType::Agy | AppType::Kimi)
+                && !skill.apps.is_enabled_for(&app)
+            {
                 continue;
             }
             let app_dir = match Self::get_app_skills_dir(&app) {
@@ -3889,7 +4100,9 @@ impl SkillService {
             };
             let candidate = app_dir.join(&directory);
             if candidate.is_dir()
-                && !excluded_path.is_some_and(|path| Self::paths_overlap(&candidate, path))
+                && !excluded_paths
+                    .iter()
+                    .any(|path| Self::paths_overlap(&candidate, path))
             {
                 return Ok(Some(candidate));
             }
@@ -3963,15 +4176,15 @@ impl SkillService {
     }
 
     fn create_uninstall_backup(skill: &InstalledSkill) -> Result<Option<PathBuf>> {
-        Self::create_uninstall_backup_excluding(skill, None)
+        Self::create_uninstall_backup_excluding(skill, &[])
     }
 
     fn create_uninstall_backup_excluding(
         skill: &InstalledSkill,
-        excluded_path: Option<&Path>,
+        excluded_paths: &[PathBuf],
     ) -> Result<Option<PathBuf>> {
         let Some(source_path) =
-            Self::resolve_uninstall_backup_source_excluding(skill, excluded_path)?
+            Self::resolve_uninstall_backup_source_excluding(skill, excluded_paths)?
         else {
             log::warn!(
                 "Skill {} 卸载前未找到可备份的目录，将跳过备份",
@@ -4841,6 +5054,145 @@ mod tests {
         }
     }
 
+    fn branch_fallback_repo(branch: &str) -> SkillRepo {
+        SkillRepo {
+            owner: "acme".to_string(),
+            name: "skills".to_string(),
+            branch: branch.to_string(),
+            enabled: true,
+        }
+    }
+
+    fn http404_error() -> anyhow::Error {
+        anyhow!(format_skill_error(
+            "DOWNLOAD_FAILED",
+            &[("status", "404")],
+            Some("http404"),
+        ))
+    }
+
+    /// 按分支名返回预设结果，并记下实际尝试过的分支。
+    async fn run_branch_fallback(
+        repo: &SkillRepo,
+        mut outcome: impl FnMut(&str) -> Result<()>,
+    ) -> (Result<String>, Vec<String>) {
+        let temp = tempdir().unwrap();
+        let mut attempted = Vec::new();
+        let result = SkillService::try_repo_branches(repo, temp.path(), |url| {
+            let branch = url
+                .rsplit('/')
+                .next()
+                .and_then(|file| file.strip_suffix(".zip"))
+                .unwrap()
+                .to_string();
+            let result = outcome(&branch);
+            attempted.push(branch);
+            async move { result }
+        })
+        .await;
+        (result, attempted)
+    }
+
+    fn error_json(error: &anyhow::Error) -> serde_json::Value {
+        serde_json::from_str(&error.to_string()).expect("structured skill error")
+    }
+
+    #[tokio::test]
+    async fn branch_fallback_keeps_non_404_error_from_main() {
+        let repo = branch_fallback_repo("main");
+
+        // 超过下载上限：不再去试 master，原始错误原样报出
+        let (result, attempted) = run_branch_fallback(&repo, |branch| match branch {
+            "main" => Err(anyhow!(format_skill_error(
+                "ARCHIVE_DOWNLOAD_TOO_LARGE",
+                &[("limit_mb", "512")],
+                None,
+            ))),
+            _ => Err(http404_error()),
+        })
+        .await;
+        assert_eq!(attempted, ["main"]);
+        let err = error_json(&result.unwrap_err());
+        assert_eq!(err["code"], "ARCHIVE_DOWNLOAD_TOO_LARGE");
+        assert_eq!(err["context"]["limit_mb"], "512");
+
+        // 超时（结构化与 reqwest 那种非结构化两种形状）同样不被 master 的 404 盖掉
+        let (result, attempted) = run_branch_fallback(&repo, |branch| match branch {
+            "main" => Err(anyhow!(format_skill_error(
+                "DOWNLOAD_TIMEOUT",
+                &[("timeout", "30")],
+                Some("checkNetwork"),
+            ))),
+            _ => Err(http404_error()),
+        })
+        .await;
+        assert_eq!(attempted, ["main"]);
+        assert_eq!(error_json(&result.unwrap_err())["code"], "DOWNLOAD_TIMEOUT");
+
+        let (result, attempted) = run_branch_fallback(&repo, |branch| match branch {
+            "main" => Err(anyhow!("operation timed out")),
+            _ => Err(http404_error()),
+        })
+        .await;
+        assert_eq!(attempted, ["main"]);
+        assert_eq!(result.unwrap_err().to_string(), "operation timed out");
+    }
+
+    #[tokio::test]
+    async fn branch_fallback_moves_on_only_after_404() {
+        // main 404、master 成功：装得上，且记下真实分支
+        let (result, attempted) =
+            run_branch_fallback(&branch_fallback_repo("main"), |branch| match branch {
+                "master" => Ok(()),
+                _ => Err(http404_error()),
+            })
+            .await;
+        assert_eq!(result.unwrap(), "master");
+        assert_eq!(attempted, ["main", "master"]);
+
+        // 自定义分支 404 时照旧回落到 main
+        let (result, attempted) =
+            run_branch_fallback(&branch_fallback_repo("dev"), |branch| match branch {
+                "main" => Ok(()),
+                _ => Err(http404_error()),
+            })
+            .await;
+        assert_eq!(result.unwrap(), "main");
+        assert_eq!(attempted, ["dev", "main"]);
+    }
+
+    #[tokio::test]
+    async fn branch_fallback_error_carries_repo_coordinates() {
+        // 只有 master 的仓库在 master 上出错：报的是 master 的错误，
+        // 且补上前端文案插值要用的 owner / name
+        let (result, attempted) =
+            run_branch_fallback(&branch_fallback_repo("main"), |branch| match branch {
+                "master" => Err(anyhow!(format_skill_error(
+                    "DOWNLOAD_TIMEOUT",
+                    &[("timeout", "30")],
+                    Some("checkNetwork"),
+                ))),
+                _ => Err(http404_error()),
+            })
+            .await;
+        assert_eq!(attempted, ["main", "master"]);
+        let err = error_json(&result.unwrap_err());
+        assert_eq!(err["code"], "DOWNLOAD_TIMEOUT");
+        assert_eq!(err["context"]["owner"], "acme");
+        assert_eq!(err["context"]["name"], "skills");
+        assert_eq!(err["context"]["timeout"], "30");
+        assert_eq!(err["suggestion"], "checkNetwork");
+
+        // 全部 404：报最后一个 404，同样带坐标
+        let (result, attempted) =
+            run_branch_fallback(&branch_fallback_repo("main"), |_| Err(http404_error())).await;
+        assert_eq!(attempted, ["main", "master"]);
+        let err = error_json(&result.unwrap_err());
+        assert_eq!(err["code"], "DOWNLOAD_FAILED");
+        assert_eq!(err["context"]["status"], "404");
+        assert_eq!(err["context"]["owner"], "acme");
+    }
+
     #[test]
     fn assert_github_archive_url_pins_host_and_path() {
         let ok = "https://github.com/owner/repo/archive/refs/heads/main.zip";
@@ -5480,10 +5832,79 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn agy_and_kimi_skill_toggle_rolls_back_on_database_failure() {
+        for app in [AppType::Agy, AppType::Kimi] {
+            let temp = tempdir().unwrap();
+            let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+            let db = Arc::new(Database::memory().unwrap());
+            let mut skill = poisoned_skill("local:test-skill", "test-skill");
+            skill.apps.set_enabled_for(&app, true);
+            db.save_skill(&skill).unwrap();
+            let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+            write_skill(&source, "original");
+            SkillService::sync_to_app_dir(&skill.directory, &app).unwrap();
+            let native = SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join(&skill.directory);
+            let original = fs::read(native.join("SKILL.md")).unwrap();
+            db.conn
+                .lock()
+                .unwrap()
+                .execute_batch("PRAGMA query_only=ON")
+                .unwrap();
+            assert!(SkillService::toggle_app(&db, &skill.id, &app, false).is_err());
+            assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+            assert!(db
+                .get_installed_skill(&skill.id)
+                .unwrap()
+                .unwrap()
+                .apps
+                .is_enabled_for(&app));
+            db.conn
+                .lock()
+                .unwrap()
+                .execute_batch("PRAGMA query_only=OFF")
+                .unwrap();
+            SkillService::toggle_app(&db, &skill.id, &app, false).unwrap();
+            assert!(!native.exists());
+            SkillService::toggle_app(&db, &skill.id, &app, true).unwrap();
+            assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn agy_unmanaged_copy_survives_sync_migration_and_uninstall() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+        skill.apps.claude = true;
+        db.save_skill(&skill).unwrap();
+        let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+        let native = SkillService::get_app_skills_dir(&AppType::Agy)
+            .unwrap()
+            .join(&skill.directory);
+        write_skill(&source, "same-content");
+        SkillService::copy_dir_recursive(&source, &native).unwrap();
+        let original = fs::read(native.join("SKILL.md")).unwrap();
+        SkillService::sync_to_app(&db, &AppType::Agy).unwrap();
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+        SkillService::migrate_storage(&db, SkillStorageLocation::Unified).unwrap();
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+        SkillService::uninstall(&db, &skill.id).unwrap();
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn mcode_unmanaged_copy_survives_sync_migration_and_uninstall() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
@@ -5505,12 +5926,143 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn kimi_unmanaged_copy_survives_resync_migration_and_uninstall() {
+        for native_content in ["same-content", "external"] {
+            let temp = tempdir().unwrap();
+            let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+            let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+            let db = Arc::new(Database::memory().unwrap());
+            let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+            skill.apps.claude = true;
+            db.save_skill(&skill).unwrap();
+            let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+            let native = SkillService::get_app_skills_dir(&AppType::Kimi)
+                .unwrap()
+                .join(&skill.directory);
+            write_skill(&source, "same-content");
+            write_skill(&native, native_content);
+            let original = fs::read(native.join("SKILL.md")).unwrap();
+            let outcomes = SkillService::resync_all_apps(&db);
+            assert!(
+                outcomes
+                    .iter()
+                    .find(|result| result.app == "kimi")
+                    .unwrap()
+                    .ok
+            );
+            assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+            SkillService::toggle_app(&db, &skill.id, &AppType::Kimi, false).unwrap();
+            assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+            SkillService::migrate_storage(&db, SkillStorageLocation::Unified).unwrap();
+            assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+            SkillService::uninstall(&db, &skill.id).unwrap();
+            assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+            assert!(db.get_installed_skill(&skill.id).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn kimi_skill_enable_rejects_external_directory_without_changing_files_or_flags() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("local:test-skill", "test-skill");
+        let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+        let native = SkillService::get_app_skills_dir(&AppType::Kimi)
+            .unwrap()
+            .join(&skill.directory);
+        write_skill(&source, "managed");
+        write_skill(&native, "external");
+        let original = fs::read(native.join("SKILL.md")).unwrap();
+        skill.apps.kimi = true;
+        assert!(SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::Kimi).is_err());
+        assert!(db.get_installed_skill(&skill.id).unwrap().is_none());
+        skill.apps.kimi = false;
+        db.save_skill(&skill).unwrap();
+        assert!(SkillService::toggle_app(&db, &skill.id, &AppType::Kimi, true).is_err());
+        assert!(
+            !db.get_installed_skill(&skill.id)
+                .unwrap()
+                .unwrap()
+                .apps
+                .kimi
+        );
+        assert!(SkillService::remove_from_app(&skill.directory, &AppType::Kimi).is_err());
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial]
+    fn agy_imported_external_symlink_can_toggle_without_changing_its_source() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let external = temp.path().join("external-skill");
+        write_skill(&external, "external");
+        let original = fs::read(external.join("SKILL.md")).unwrap();
+        let native = SkillService::get_app_skills_dir(&AppType::Agy)
+            .unwrap()
+            .join("test-skill");
+        fs::create_dir_all(native.parent().unwrap()).unwrap();
+        SkillService::create_symlink(&external, &native).unwrap();
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps {
+                    agy: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .unwrap();
+        assert!(SkillService::paths_alias(
+            &native,
+            &SkillService::get_ssot_dir().unwrap().join("test-skill")
+        ));
+        SkillService::toggle_app(&db, &imported[0].id, &AppType::Agy, false).unwrap();
+        assert!(!native.exists());
+        assert_eq!(fs::read(external.join("SKILL.md")).unwrap(), original);
+        SkillService::toggle_app(&db, &imported[0].id, &AppType::Agy, true).unwrap();
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+
+        SkillService::remove_path(&native).unwrap();
+        SkillService::create_symlink(&external, &native).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("test-skill"),
+            "different",
+        );
+        let empty_db = Arc::new(Database::memory().unwrap());
+        assert!(SkillService::import_from_apps(
+            &empty_db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps {
+                    agy: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .is_err());
+        assert!(empty_db.get_all_installed_skills().unwrap().is_empty());
+        assert!(SkillService::paths_alias(&native, &external));
+        assert_eq!(fs::read(external.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
     #[cfg(unix)]
     #[serial_test::serial]
     fn mcode_imported_external_symlink_can_toggle_without_changing_its_source() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let external = temp.path().join("external-skill");
@@ -5527,6 +6079,7 @@ mod tests {
                 directory: "test-skill".into(),
                 apps: SkillApps {
                     mcode: true,
+                    kimi: false,
                     ..Default::default()
                 },
             }],
@@ -5555,6 +6108,7 @@ mod tests {
                 directory: "test-skill".into(),
                 apps: SkillApps {
                     mcode: true,
+                    kimi: false,
                     ..Default::default()
                 },
             }],
@@ -5571,7 +6125,7 @@ mod tests {
         for native_content in [None, Some("shared"), Some("different")] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
-            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
             let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
             let db = Arc::new(Database::memory().unwrap());
             let claude = SkillService::get_app_skills_dir(&AppType::Claude)
@@ -5590,6 +6144,7 @@ mod tests {
                     directory: "test-skill".into(),
                     apps: SkillApps {
                         mcode: true,
+                        kimi: false,
                         ..Default::default()
                     },
                 }],
@@ -5621,7 +6176,7 @@ mod tests {
     fn mcode_skill_import_continues_after_a_conflicting_copy() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let native = SkillService::get_app_skills_dir(&AppType::Mcode).unwrap();
@@ -5637,6 +6192,7 @@ mod tests {
                 directory: directory.into(),
                 apps: SkillApps {
                     mcode: true,
+                    kimi: false,
                     ..Default::default()
                 },
             })
@@ -5660,7 +6216,7 @@ mod tests {
     fn import_deploys_the_skill_to_selected_apps_that_do_not_have_it() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let app_copy = |app: AppType| {
@@ -5704,7 +6260,7 @@ mod tests {
     fn import_does_not_record_an_app_the_skill_could_not_be_deployed_to() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         write_skill(
@@ -5746,7 +6302,7 @@ mod tests {
     async fn mcode_copy_updates_and_disables_without_losing_external_changes() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let db = Arc::new(Database::memory().unwrap());
         let mut skill = poisoned_skill("anthropics/skills:algorithmic-art", "algorithmic-art");
         skill.repo_owner = Some("anthropics".into());
@@ -5791,7 +6347,7 @@ mod tests {
         for symlink in [false, true] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
-            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
             let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
             let db = Arc::new(Database::memory().unwrap());
             let mut skill = poisoned_skill("test-skill", "test-skill");
@@ -5887,7 +6443,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let ssot = SkillService::get_ssot_dir().unwrap().join("test-skill");
         let source = temp.path().join("download");
         let native = SkillService::get_app_skills_dir(&AppType::Mcode)
@@ -6047,34 +6603,36 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn mcode_uninstall_keeps_modified_copy_and_record_until_cleanup_succeeds() {
-        let temp = tempdir().unwrap();
-        let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
-        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
-        let db = Arc::new(Database::memory().unwrap());
-        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
-        skill.apps.mcode = true;
-        db.save_skill(&skill).unwrap();
-        let source = SkillService::get_ssot_dir().unwrap().join("test-skill");
-        let native = SkillService::get_app_skills_dir(&AppType::Mcode)
-            .unwrap()
-            .join("test-skill");
-        write_skill(&source, "managed");
-        SkillService::copy_dir_recursive(&source, &native).unwrap();
-        fs::write(native.join("local.txt"), "user changes").unwrap();
-        assert!(SkillService::uninstall(&db, &skill.id).is_err());
-        assert!(db.get_installed_skill(&skill.id).unwrap().is_some());
-        assert!(source.join("SKILL.md").exists());
-        assert_eq!(
-            fs::read_to_string(native.join("local.txt")).unwrap(),
-            "user changes"
-        );
-        fs::remove_file(native.join("local.txt")).unwrap();
-        SkillService::uninstall(&db, &skill.id).unwrap();
-        assert!(db.get_installed_skill(&skill.id).unwrap().is_none());
-        assert!(!native.exists());
-        assert!(!source.exists());
+    fn mcode_and_kimi_uninstall_keep_modified_copy_and_record_until_cleanup_succeeds() {
+        for app in [AppType::Mcode, AppType::Kimi] {
+            let temp = tempdir().unwrap();
+            let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+            let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+            let db = Arc::new(Database::memory().unwrap());
+            let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+            skill.apps.set_enabled_for(&app, true);
+            db.save_skill(&skill).unwrap();
+            let source = SkillService::get_ssot_dir().unwrap().join("test-skill");
+            let native = SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join("test-skill");
+            write_skill(&source, "managed");
+            SkillService::copy_dir_recursive(&source, &native).unwrap();
+            fs::write(native.join("local.txt"), "user changes").unwrap();
+            assert!(SkillService::uninstall(&db, &skill.id).is_err());
+            assert!(db.get_installed_skill(&skill.id).unwrap().is_some());
+            assert!(source.join("SKILL.md").exists());
+            assert_eq!(
+                fs::read_to_string(native.join("local.txt")).unwrap(),
+                "user changes"
+            );
+            fs::remove_file(native.join("local.txt")).unwrap();
+            SkillService::uninstall(&db, &skill.id).unwrap();
+            assert!(db.get_installed_skill(&skill.id).unwrap().is_none());
+            assert!(!native.exists());
+            assert!(!source.exists());
+        }
     }
 
     #[test]
@@ -6239,9 +6797,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn uninstall_treats_an_aliased_pi_root_as_the_ssot() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6265,9 +6823,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn uninstall_warns_when_the_pi_root_cannot_be_resolved() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(Path::new("relative/pi-agent"));
 
@@ -6291,36 +6849,67 @@ mod tests {
 
     /// CC_SWITCH_TEST_HOME 隔离守卫（serial 测试间互斥由 #[serial] 保证，
     /// 守卫只负责在测试结束后恢复原值）。
-    struct TestHomeGuard(Option<std::ffi::OsString>);
+    struct TestHomeGuard {
+        home: PathBuf,
+        previous: Option<std::ffi::OsString>,
+        previous_kimi_home: Option<std::ffi::OsString>,
+    }
     impl TestHomeGuard {
         fn set(home: &Path) -> Self {
-            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            let guard = Self {
+                home: home.to_path_buf(),
+                previous: std::env::var_os("CC_SWITCH_TEST_HOME"),
+                previous_kimi_home: std::env::var_os("KIMI_CODE_HOME"),
+            };
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            std::env::set_var("KIMI_CODE_HOME", home.join(".kimi-code"));
             guard
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
-            match self.0.take() {
+            match self.previous_kimi_home.take() {
+                Some(value) => std::env::set_var("KIMI_CODE_HOME", value),
+                None => std::env::remove_var("KIMI_CODE_HOME"),
+            }
+            match self.previous.take() {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
     }
 
-    struct StorageLocationGuard(SkillStorageLocation);
-    impl StorageLocationGuard {
-        fn set(location: SkillStorageLocation) -> Self {
+    /// 设置/恢复存储位置都会写 `settings.json`，所以必须借用一个已生效的
+    /// `TestHomeGuard`：借用保证它在 HOME 隔离之后创建、在 HOME 恢复之前 drop，
+    /// 不会写到真实 `~/.cc-switch/settings.json`（Windows 上该文件被占用时原子替换
+    /// 会报 os error 32 / 1176）。
+    struct StorageLocationGuard<'a> {
+        home: &'a TestHomeGuard,
+        previous: SkillStorageLocation,
+    }
+    impl<'a> StorageLocationGuard<'a> {
+        fn set(home: &'a TestHomeGuard, location: SkillStorageLocation) -> Self {
+            assert_settings_write_isolated(home);
             let previous = crate::settings::get_skill_storage_location();
             crate::settings::set_skill_storage_location(location)
                 .expect("set test skill storage location");
-            Self(previous)
+            Self { home, previous }
         }
     }
-    impl Drop for StorageLocationGuard {
+    impl Drop for StorageLocationGuard<'_> {
         fn drop(&mut self) {
-            let _ = crate::settings::set_skill_storage_location(self.0);
+            assert_settings_write_isolated(self.home);
+            let _ = crate::settings::set_skill_storage_location(self.previous);
         }
+    }
+
+    fn assert_settings_write_isolated(home: &TestHomeGuard) {
+        let config_dir = crate::config::get_home_dir().join(".cc-switch");
+        assert!(
+            config_dir.starts_with(&home.home),
+            "settings.json would be written outside the test home: {}",
+            config_dir.display()
+        );
     }
 
     fn poisoned_skill(id: &str, directory: &str) -> InstalledSkill {
@@ -6533,9 +7122,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn aliased_skill_roots_reject_sync_and_remove_without_deleting_the_source() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6562,9 +7151,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn migrate_storage_rejects_an_aliased_destination_before_moving_skills() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6595,9 +7184,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn migrate_storage_safely_leaves_an_existing_pi_ssot_alias() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6669,11 +7258,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     #[serial_test::serial]
-    fn migrate_storage_retargets_managed_pi_and_mcode_symlinks() {
-        for app in [AppType::Pi, AppType::Mcode] {
-            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+    fn migrate_storage_retargets_managed_pi_mcode_and_kimi_symlinks() {
+        for app in [AppType::Pi, AppType::Mcode, AppType::Kimi] {
             let temp = tempdir().expect("tempdir");
             let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
             let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
 
             let db = std::sync::Arc::new(Database::memory().expect("memory db"));
@@ -6711,9 +7300,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn migrate_storage_retargets_an_equivalent_relative_pi_symlink() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join("pi-agent"));
 
@@ -6750,10 +7339,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn migrate_storage_skips_bad_rows_without_moving_foreign_dirs() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
-
         let temp = tempdir().expect("tempdir");
         let _guard = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_guard, SkillStorageLocation::CcSwitch);
 
         // migrate_storage 会 fs::rename / remove_dir_all，脏 directory 能把
         // SSOT 之外的任意目录搬走或删掉。
@@ -6791,7 +7379,7 @@ mod tests {
         fs::write(secrets.join("id_rsa"), b"PRIVATE").expect("write secret");
 
         let skill = poisoned_skill("owner/repo:evil", "../../secrets");
-        let result = SkillService::resolve_uninstall_backup_source_excluding(&skill, None);
+        let result = SkillService::resolve_uninstall_backup_source_excluding(&skill, &[]);
 
         assert!(
             result.is_err(),
@@ -7027,7 +7615,7 @@ mod tests {
                     .expect("isolated database sentinel");
                 let _home = TestHomeGuard::set(home.path());
                 assert_eq!(crate::config::get_app_config_dir(), config_dir);
-                let _storage = StorageLocationGuard::set(location);
+                let _storage = StorageLocationGuard::set(&_home, location);
                 let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
                 let remote = tempdir().expect("remote repo");
                 let db = Arc::new(Database::memory().expect("memory db"));
