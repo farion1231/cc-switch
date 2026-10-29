@@ -196,6 +196,7 @@
       "recent": "最近用過",
       "forget": "從最近用過中移除",
       "confirm": "開啟終端機",
+      "skipPermissions": "略過權限確認",
       "agySwitchTitle": "會切換 agy 的登入",
       "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
       "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。"

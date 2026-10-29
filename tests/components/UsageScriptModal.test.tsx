@@ -155,6 +155,49 @@ describe("UsageScriptModal official subscription hint", () => {
   });
 });
 
+describe("UsageScriptModal Claude official card bound to an account", () => {
+  // 卡片和托盘在没保存开关时默认查这个号的额度，配置页也要显示为已开
+  it("shows usage enabled by default when nothing was saved", async () => {
+    const onSave = vi.fn();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <UsageScriptModal
+          provider={{
+            id: "claude-bound",
+            name: "Claude Official",
+            category: "official",
+            settingsConfig: { env: {} },
+            meta: {
+              authBinding: {
+                source: "managed_account",
+                authProvider: "claude_official",
+                accountId: "acct-1",
+              },
+            },
+          }}
+          appId="claude"
+          isOpen
+          onClose={() => {}}
+          onSave={onSave}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        templateType: "official_subscription",
+      }),
+    );
+  });
+});
+
 /**
  * Oh My Pi has its own `AppId` ("omp"), so it never matched the `pi` branch
  * and both built-in tests reported "API key is empty" on an omp card. The

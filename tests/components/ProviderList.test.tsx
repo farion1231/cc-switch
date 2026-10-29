@@ -1037,7 +1037,6 @@ describe("ProviderList Component", () => {
       // Pi 只有启用 / 停用，没有路由、队列、健康状态
       for (const props of [currentCards.at(-1), inactiveCards.at(-1)]) {
         expect(props.isCurrent).toBe(false);
-        expect(props.isInConfig).toBe(true);
         expect(props.presentation.showHealth).toBeFalsy();
         expect(props.presentation.move).toBeUndefined();
         expect(
@@ -1086,7 +1085,7 @@ describe("ProviderList Component", () => {
         .at(-1);
       expect(latestCardProps).toMatchObject({
         isCurrent: false,
-        isInConfig: true,
+        presentation: { buttons: [{ key: "remove" }] },
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBeUndefined();
     });
@@ -1175,7 +1174,7 @@ describe("ProviderList Component", () => {
         .at(-1);
       expect(latestCardProps).toMatchObject({
         isCurrent: false,
-        isInConfig: false,
+        presentation: { buttons: [{ key: "add" }] },
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBe(
         "pi.current.stateUnavailableHint",
