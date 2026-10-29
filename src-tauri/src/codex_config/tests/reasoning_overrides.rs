@@ -184,3 +184,87 @@ fn official_gpt_reasoning_overrides_survive_catalog_recovery() {
         }
     });
 }
+
+fn legacy_official_rows() -> Vec<Value> {
+    let mut rows = official_gpt_rows();
+    for row in &mut rows {
+        row.as_object_mut().unwrap().remove("model_messages");
+    }
+    normalize_codex_native_rows(rows).unwrap()
+}
+
+#[test]
+fn legacy_official_reasoning_overrides_survive_catalog_recovery() {
+    with_official_models(legacy_official_rows(), || {
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::ProxyChat,
+        ] {
+            for model in ["gpt-6-sol", "openai/gpt-6-sol"] {
+                for spec in [
+                    json!({
+                        "model": model, "reasoningLevels": ["max", "ultra"],
+                        "defaultReasoningLevel": "max",
+                    }),
+                    json!({
+                        "model": model, "reasoningLevels": ["low", "xhigh"],
+                        "defaultReasoningLevel": "xhigh",
+                    }),
+                    json!({ "model": model }),
+                ] {
+                    let models = json!([spec]);
+                    let catalog = json!({ "models": catalog_for(models.clone(), "", profile) });
+                    assert!(catalog["models"][0].get("model_messages").is_none());
+                    assert_eq!(
+                        catalog["models"][0]["base_instructions"],
+                        "GPT-6 Sol prompt"
+                    );
+                    let recovered =
+                        build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+                    assert_eq!(
+                        recovered["models"][0]["reasoningLevels"],
+                        models[0]["reasoningLevels"]
+                    );
+                    assert_eq!(recovered["models"], models, "{model}: {profile:?}");
+                    let regenerated = codex_model_catalog_from_settings(
+                        &json!({ "modelCatalog": recovered }),
+                        "",
+                        profile,
+                    )
+                    .unwrap()
+                    .unwrap();
+                    assert_eq!(regenerated, catalog);
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn legacy_official_match_keeps_template_rows_user_values() {
+    let rows = legacy_official_rows();
+    let settings = json!({ "modelCatalog": { "models": [{
+        "model": "gpt-6-sol", "displayName": "GPT-6-SOL",
+        "baseInstructions": "GPT-6 Sol prompt",
+        "inputModalities": rows[1]["input_modalities"],
+        "supportsParallelToolCalls": false,
+    }] } });
+    with_official_models(rows.clone(), || {
+        for profile in [
+            CodexCatalogToolProfile::Anthropic,
+            CodexCatalogToolProfile::ProxyChat,
+        ] {
+            // Anthropic has the same prompt but different tools; the legacy Chat
+            // template has the same tools but a different model's prompt.
+            let catalog = codex_model_catalog_from_specs(
+                &codex_catalog_model_specs(&settings),
+                &rows[2],
+                profile,
+                128_000,
+            );
+            let recovered = build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+            assert_eq!(recovered["models"][0]["displayName"], "GPT-6-SOL");
+            assert_eq!(recovered["models"][0]["supportsParallelToolCalls"], false);
+        }
+    });
+}
