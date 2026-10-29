@@ -2431,6 +2431,8 @@ pub fn create_tray_menu(
 }
 
 /// 不挂原生菜单的平台（点图标出托盘面板）：只更新图标圆点、悬停提示和状态记账。
+/// Linux 始终挂原生菜单，走 `menu_sync::refresh`，用不到这条。
+#[cfg(not(target_os = "linux"))]
 pub fn sync_tray_status(app: &tauri::AppHandle, app_state: &AppState) -> Result<(), AppError> {
     let texts = TrayTexts::current();
     let (_, status) = collect_status(app_state, &texts)?;
