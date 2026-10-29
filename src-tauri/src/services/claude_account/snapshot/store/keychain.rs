@@ -2,7 +2,8 @@
 //!
 //! - 读：`find-generic-password -a <account> -s <service> -w`，输出就是凭据 JSON；
 //! - 写：`security -i` 从 stdin 读一行 `add-generic-password -U -a … -s … -X <hex>`，令牌不出现在
-//!   命令行参数里（`ps` 看不到）；
+//!   命令行参数里（`ps` 看不到）；一行超出 `security -i` 的缓冲时（连了 OAuth 类 MCP 服务器后
+//!   `mcpOAuth` 很容易撑大），和 Claude Code 一样改经命令行参数写；
 //! - 删：`delete-generic-password`。
 //!
 //! Claude Code 写钥匙串失败（非暂时性）时会改写槽位里的 `.credentials.json` 并删掉条目，
@@ -18,8 +19,9 @@ use crate::services::claude_account::layout;
 
 const SECURITY: &str = "/usr/bin/security";
 const TIMEOUT: Duration = Duration::from_secs(5);
-/// `security -i` 一行的上限。Claude Code 超过时改走命令行参数（令牌会出现在进程列表里），
-/// 我们直接拒绝。
+/// `security -i` 一行的上限（它按 4096 字节的缓冲读行，超出的部分会被当成下一条命令）。
+/// 超过时和 Claude Code 一样改走命令行参数：令牌会短暂出现在进程列表里，但这一条 Claude Code
+/// 自己每次刷新令牌也是这么写的，拒绝写入只会让切换失败（#9002）。
 const MAX_LINE: usize = 4032;
 /// 没有这个条目
 const EXIT_NOT_FOUND: i32 = 44;
@@ -63,20 +65,23 @@ impl CredentialStore for KeychainStore {
     }
 
     fn write(&self, slot: &Slot, secret: &Secret) -> Result<(), AppError> {
-        let line = format!(
-            "add-generic-password -U -a \"{}\" -s \"{}\" -X \"{}\"\n",
-            layout::keychain_account(),
-            slot.keychain_service(),
-            hex_encode(&secret.to_bytes()),
-        );
-        if line.len() > MAX_LINE {
-            return Err(AppError::localized(
-                "claude.snapshot.too_large",
-                "Claude Code 的登录信息太大，无法写入钥匙串，没有切换",
-                "Claude Code's sign-in data is too large for the keychain, so nothing was switched.",
-            ));
-        }
-        let output = run(Command::new(SECURITY).arg("-i"), Some(line.as_bytes()))?;
+        let hex = hex_encode(&secret.to_bytes());
+        let output = match add_invocation(
+            &layout::keychain_account(),
+            &slot.keychain_service(),
+            &hex,
+        ) {
+            AddInvocation::Stdin(line) => {
+                run(Command::new(SECURITY).arg("-i"), Some(line.as_bytes()))?
+            }
+            AddInvocation::Args(args) => {
+                log::warn!(
+                    "[ClaudeAccount] 登录信息超出 security -i 缓冲（{} 字节），改经命令行参数写入钥匙串",
+                    hex.len() / 2
+                );
+                run(Command::new(SECURITY).args(&args), None)?
+            }
+        };
         match output.code {
             0 => FileStore.delete(slot),
             EXIT_LOCKED => Err(locked()),
@@ -101,6 +106,35 @@ impl CredentialStore for KeychainStore {
             _ => Err(failed("delete")),
         }
     }
+}
+
+/// 写一条 `add-generic-password` 的方式：放得进 `security -i` 一行就经 stdin，否则经命令行参数。
+/// 里面有凭据的 hex，只在测试里能打印。
+#[cfg_attr(test, derive(Debug, PartialEq))]
+enum AddInvocation {
+    Stdin(String),
+    Args(Vec<String>),
+}
+
+fn add_invocation(account: &str, service: &str, hex: &str) -> AddInvocation {
+    let line = format!("add-generic-password -U -a \"{account}\" -s \"{service}\" -X \"{hex}\"\n");
+    if line.len() <= MAX_LINE {
+        return AddInvocation::Stdin(line);
+    }
+    AddInvocation::Args(
+        [
+            "add-generic-password",
+            "-U",
+            "-a",
+            account,
+            "-s",
+            service,
+            "-X",
+            hex,
+        ]
+        .map(String::from)
+        .to_vec(),
+    )
 }
 
 struct Output {
@@ -195,5 +229,42 @@ mod tests {
         assert_eq!(hex_decode(&hex_encode(bytes)).unwrap(), bytes);
         assert!(hex_decode("xyz").is_none());
         assert!(hex_decode("abc").is_none());
+    }
+
+    #[test]
+    fn small_payload_goes_through_stdin() {
+        let hex = hex_encode(br#"{"claudeAiOauth":{}}"#);
+        match add_invocation("me", "Claude Code-credentials", &hex) {
+            AddInvocation::Stdin(line) => {
+                assert!(line.len() <= MAX_LINE);
+                assert!(line.ends_with(&format!("-X \"{hex}\"\n")));
+            }
+            other => panic!("expected stdin, got {other:?}"),
+        }
+    }
+
+    /// #9002：连了 OAuth 类 MCP 服务器后凭据 JSON 有 3 KB 左右，hex 后超出 `security -i` 一行，
+    /// 要和 Claude Code 一样改经命令行参数写，而不是拒绝切换。
+    #[test]
+    fn large_payload_falls_back_to_args() {
+        let json = format!(r#"{{"mcpOAuth":{{"t":"{}"}}}}"#, "x".repeat(3100));
+        let hex = hex_encode(json.as_bytes());
+        assert_eq!(
+            add_invocation("me", "Claude Code-credentials", &hex),
+            AddInvocation::Args(
+                [
+                    "add-generic-password",
+                    "-U",
+                    "-a",
+                    "me",
+                    "-s",
+                    "Claude Code-credentials",
+                    "-X",
+                    &hex,
+                ]
+                .map(String::from)
+                .to_vec()
+            )
+        );
     }
 }

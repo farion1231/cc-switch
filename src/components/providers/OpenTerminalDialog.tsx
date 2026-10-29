@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -28,6 +29,8 @@ const MAX_RECENT = 5;
 /** 跳过权限确认按应用分别记住：同一个人可能只在其中一个工具里这么用 */
 const skipPermissionsKey = (appId: AppId) =>
   `cc-switch:terminal:skip-permissions:${appId}`;
+/** 附加参数同样按应用记住：各个 CLI 的参数互不通用 */
+const extraArgsKey = (appId: AppId) => `cc-switch:terminal:extra-args:${appId}`;
 
 function readRecent(): string[] {
   try {
@@ -62,6 +65,23 @@ function writeSkipPermissions(appId: AppId, value: boolean) {
     else window.localStorage.removeItem(skipPermissionsKey(appId));
   } catch {
     // 同上，只是记住上次的选择
+  }
+}
+
+function readExtraArgs(appId: AppId): string {
+  try {
+    return window.localStorage.getItem(extraArgsKey(appId)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeExtraArgs(appId: AppId, value: string) {
+  try {
+    if (value) window.localStorage.setItem(extraArgsKey(appId), value);
+    else window.localStorage.removeItem(extraArgsKey(appId));
+  } catch {
+    // 同上，只是记住上次填的
   }
 }
 
@@ -183,6 +203,7 @@ export function OpenTerminalDialog({
   const [dir, setDir] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [skipPermissions, setSkipPermissions] = useState(false);
+  const [extraArgs, setExtraArgs] = useState("");
   const queryClient = useQueryClient();
 
   // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
@@ -215,6 +236,7 @@ export function OpenTerminalDialog({
     setRecent(stored);
     setDir(stored[0] ?? null);
     setSkipPermissions(readSkipPermissions(appId));
+    setExtraArgs(readExtraArgs(appId));
     setOpening(false);
   }, [provider, appId]);
 
@@ -239,15 +261,18 @@ export function OpenTerminalDialog({
   const handleOpen = async () => {
     if (!provider || !dir || opening) return;
     setOpening(true);
+    const args = extraArgs.trim();
     try {
       await providersApi.openTerminal(provider.id, appId, {
         cwd: dir,
         skipPermissions,
+        ...(args ? { extraArgs: args } : {}),
       });
       writeRecent(
         [dir, ...recent.filter((item) => item !== dir)].slice(0, MAX_RECENT),
       );
       writeSkipPermissions(appId, skipPermissions);
+      writeExtraArgs(appId, args);
       toast.success(t("provider.terminalOpened"));
       if (agyWillSwitch) {
         void queryClient.invalidateQueries({
@@ -401,6 +426,31 @@ export function OpenTerminalDialog({
               </code>
             </span>
           </label>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="open-terminal-extra-args"
+              className="text-caption text-fg-3"
+            >
+              {t("provider.openTerminalDialog.extraArgs")}
+            </label>
+            <Input
+              id="open-terminal-extra-args"
+              value={extraArgs}
+              disabled={opening}
+              onChange={(event) => setExtraArgs(event.target.value)}
+              placeholder={t(
+                "provider.openTerminalDialog.extraArgsPlaceholder",
+              )}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              className="font-mono"
+            />
+            <p className="text-caption text-fg-3">
+              {t("provider.openTerminalDialog.extraArgsHint")}
+            </p>
+          </div>
         </div>
 
         <DialogFooter>

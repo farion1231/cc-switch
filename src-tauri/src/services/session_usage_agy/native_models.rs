@@ -187,6 +187,9 @@ mod tests {
 
     #[test]
     fn uses_step_references_including_zero_instead_of_generation_order() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(
@@ -215,6 +218,9 @@ mod tests {
 
     #[test]
     fn skips_missing_references_and_malformed_metadata() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(&path, &[(1, 0, "gemini-4-argon")]);
@@ -235,6 +241,9 @@ mod tests {
 
     #[test]
     fn prefers_tiered_model_id_and_falls_back_to_the_base_name() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(
@@ -268,6 +277,9 @@ mod tests {
 
     #[test]
     fn reads_committed_wal_and_returns_promptly_for_an_exclusive_writer() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(&path, &[(1, 0, "gemini-4-argon")]);
