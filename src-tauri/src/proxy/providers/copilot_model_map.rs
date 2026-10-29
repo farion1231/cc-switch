@@ -134,6 +134,14 @@ pub fn resolve_against_models(client_id: &str, models: &[CopilotModel]) -> Optio
     match_copilot_model(client_id, models, None).and_then(|matched| matched.replacement_id)
 }
 
+/// Exact-or-family match returning the full model record (vendor + endpoints).
+pub fn resolve_model_record<'a>(
+    client_id: &str,
+    models: &'a [CopilotModel],
+) -> Option<&'a CopilotModel> {
+    match_copilot_model(client_id, models, None).map(|matched| matched.model)
+}
+
 pub fn resolve_model(client_id: &str, models: &[CopilotModel]) -> Option<ResolvedCopilotModel> {
     // Legacy/vendor lookups must not filter out models without Codex transports.
     let model = match_copilot_model(client_id, models, None)?.model;
