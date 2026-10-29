@@ -2831,6 +2831,10 @@ pub fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // 渲染进程死亡后自动恢复没能完成时，这里补一次重载：左键托盘、快捷面板
+        // 的「打开主窗口」、托盘导航入口都走这个函数，只 show 白屏窗口救不回来
+        #[cfg(target_os = "windows")]
+        crate::webview_recovery::reload_if_renderer_failure_pending(&window);
         #[cfg(target_os = "linux")]
         {
             crate::linux_fix::nudge_main_window(window.clone(), "tray-show-main");
@@ -3083,13 +3087,10 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     match event_id {
         "show_main" => show_main_window(app),
         "reload_ui" => {
-            // 手动重载即视为恢复完成，清掉单实例兜底标志
-            #[cfg(target_os = "windows")]
-            crate::webview_recovery::RENDERER_FAILURE_PENDING
-                .store(false, std::sync::atomic::Ordering::SeqCst);
             // Windows 下的重载走恢复模块（带日志）；其他平台直接重载
             #[cfg(target_os = "windows")]
             if let Err(e) = crate::webview_recovery::reload_main_window(app) {
+                // 重载失败时保留故障标志：手动路径还能再试
                 log::error!("托盘重载主界面失败: {e}");
             }
             #[cfg(not(target_os = "windows"))]

@@ -80,6 +80,8 @@ pub struct PanelTexts {
     pub in_use: &'static str,
     pub no_match: &'static str,
     pub open_main: &'static str,
+    /// 界面卡死/白屏时的重载入口（渲染进程被杀后 JS 已死，只能从 Rust 侧重载）
+    pub reload_ui: &'static str,
     pub quit: &'static str,
     pub settings: &'static str,
     pub lightweight_mode: &'static str,
@@ -106,6 +108,11 @@ impl PanelTexts {
                 in_use: "In use",
                 no_match: "No matching providers",
                 open_main: "Open main window",
+                reload_ui: if language == "tr" {
+                    "Arayüzü yenile"
+                } else {
+                    "Reload UI"
+                },
                 quit: "Quit",
                 settings: "Settings",
                 lightweight_mode: if language == "tr" {
@@ -129,6 +136,7 @@ impl PanelTexts {
                 in_use: "使用中",
                 no_match: "一致するプロバイダーはありません",
                 open_main: "メインウィンドウを開く",
+                reload_ui: "UIを再読み込み",
                 quit: "終了",
                 settings: "設定",
                 lightweight_mode: "軽量モード",
@@ -148,6 +156,7 @@ impl PanelTexts {
                 in_use: "使用中",
                 no_match: "沒有符合的供應商",
                 open_main: "開啟主視窗",
+                reload_ui: "重新載入介面",
                 quit: "結束",
                 settings: "設定",
                 lightweight_mode: "輕量模式",
@@ -167,6 +176,7 @@ impl PanelTexts {
                 in_use: "使用中",
                 no_match: "没有匹配的供应商",
                 open_main: "打开主窗口",
+                reload_ui: "刷新界面",
                 quit: "退出",
                 settings: "设置",
                 lightweight_mode: "轻量模式",
@@ -389,6 +399,10 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         }
         _ => {}
     });
+    // 面板也是 WebView2：渲染进程被系统杀掉时它自己会白屏/卡住（面板失焦只隐藏、
+    // 进程常驻，下次弹出时 JS 已死）。同样挂上崩溃自动恢复。
+    #[cfg(target_os = "windows")]
+    crate::webview_recovery::install(app, PANEL_LABEL);
     Ok(window)
 }
 

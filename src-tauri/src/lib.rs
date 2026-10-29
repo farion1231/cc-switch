@@ -1463,7 +1463,7 @@ pub fn run() {
             // Windows: 渲染进程被系统（常见于内存压力）杀掉后 WebView2 只留白屏，
             // wry/tauri 都不暴露 ProcessFailed；挂 COM 事件在死亡发生时自动重载
             #[cfg(target_os = "windows")]
-            crate::webview_recovery::install(app.handle());
+            crate::webview_recovery::install(app.handle(), crate::webview_recovery::MAIN_WINDOW_LABEL);
 
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();

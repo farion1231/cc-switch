@@ -75,7 +75,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     // install 挂在已被销毁的旧窗口上，启动时的轻量模式自动恢复也会走到这条
     // 路径重建），必须补装，否则用过一次轻量模式后渲染进程死亡就又是永久白屏
     #[cfg(target_os = "windows")]
-    crate::webview_recovery::install(app);
+    crate::webview_recovery::install(app, crate::webview_recovery::MAIN_WINDOW_LABEL);
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
