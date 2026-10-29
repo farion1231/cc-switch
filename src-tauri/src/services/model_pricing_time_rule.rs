@@ -589,6 +589,60 @@ mod tests {
         );
     }
 
+    /// `local_parts` 的**分钟**分量必须真的来自时间戳，不能只由小时推出。
+    ///
+    /// 上面那条测试的三个时间戳都恰好落在整点，所以「分钟被丢掉」这种改法
+    /// （`hour * 60` 而不 `+ minute`）能让全套测试保持全绿——而它会把
+    /// `00:30-08:30` 这种窗口悄悄当成 `00:00-08:00` 用，错算半小时的账。
+    /// 这条测试把分钟钉住：30 分钟和 45 分钟都必须原样出现。
+    #[test]
+    fn local_parts_keeps_the_minute_of_the_hour() {
+        // UTC 00:30 → 当天第 30 分钟
+        assert_eq!(
+            local_parts(0, SUNDAY_MIDNIGHT_UTC + 30 * 60),
+            Some((Weekday::Sun, 30, date("2026-03-01")))
+        );
+        // UTC+08:00 的 08:45 → 525 分钟，日期不变
+        assert_eq!(
+            local_parts(8 * 60, SUNDAY_MIDNIGHT_UTC + 45 * 60),
+            Some((Weekday::Sun, 8 * 60 + 45, date("2026-03-01")))
+        );
+        // UTC-05:00 的 19:07 → 1147 分钟，且已跨到前一天
+        assert_eq!(
+            local_parts(-5 * 60, SUNDAY_MIDNIGHT_UTC + 7 * 60),
+            Some((Weekday::Sat, 19 * 60 + 7, date("2026-02-28")))
+        );
+    }
+
+    /// 整条匹配链在**非整点**时间戳上也要对：上面所有 resolve 用的都是
+    /// 整点，分钟被丢掉的改法同样能活下来。这里用 sample_rule 的
+    /// `00:30-08:30` 窗口，取 08:15（命中）和 08:45（不命中）两个点。
+    #[test]
+    fn resolve_time_rule_uses_sub_hour_timestamps() {
+        let rules = vec![sample_rule()];
+        let candidates = vec!["deepseek-chat".to_string()];
+
+        // 08:15 落在 00:30-08:30 内
+        assert_eq!(
+            resolve_time_rule(
+                &rules,
+                &candidates,
+                SUNDAY_MIDNIGHT_UTC + 8 * 3600 + 15 * 60
+            )
+            .map(|rule| rule.id.as_str()),
+            Some("rule-1")
+        );
+        // 08:45 已经出窗；没有兜底规则，所以一条都不命中
+        assert_eq!(
+            resolve_time_rule(
+                &rules,
+                &candidates,
+                SUNDAY_MIDNIGHT_UTC + 8 * 3600 + 45 * 60
+            ),
+            None
+        );
+    }
+
     #[test]
     fn local_parts_rejects_an_offset_fixedoffset_cannot_represent() {
         // 远超出 FixedOffset 的 ±24h 上限，返回 None 而不是panic
@@ -697,6 +751,22 @@ mod tests {
         let mut rule = sample_rule();
         rule.utc_offset_minutes = 1440;
         assert!(normalize_time_rule(rule, 0).is_err());
+
+        // ±23:59 是文档写明的上限，也必须真的被接受——否则「> MAX」被写成
+        // 「>= MAX」时，UTC+23:59 的用户会被无声拒绝，而没有任何测试会红。
+        let mut upper = sample_rule();
+        upper.utc_offset_minutes = 1439;
+        assert_eq!(
+            normalize_time_rule(upper, 0).unwrap().utc_offset_minutes,
+            1439
+        );
+
+        let mut lower = sample_rule();
+        lower.utc_offset_minutes = -1439;
+        assert_eq!(
+            normalize_time_rule(lower, 0).unwrap().utc_offset_minutes,
+            -1439
+        );
     }
 
     #[test]
@@ -704,6 +774,19 @@ mod tests {
         let mut rule = sample_rule();
         rule.weekday_mask = 0;
         assert!(normalize_time_rule(rule, 0).is_err());
+
+        // bit6 是周日，128 及以上的位不在周一至周日之内，必须被拒绝。
+        // 少了上界检查时这种掩码会存进去，然后一条规则都匹配不上。
+        let mut too_wide = sample_rule();
+        too_wide.weekday_mask = 128;
+        assert!(normalize_time_rule(too_wide, 0).is_err());
+
+        let mut all_seven = sample_rule();
+        all_seven.weekday_mask = WEEKDAY_MASK_ALL;
+        assert_eq!(
+            normalize_time_rule(all_seven, 0).unwrap().weekday_mask,
+            WEEKDAY_MASK_ALL
+        );
     }
 
     #[test]
@@ -715,6 +798,39 @@ mod tests {
         let mut rule = sample_rule();
         rule.end_minute = 1441;
         assert!(normalize_time_rule(rule, 0).is_err());
+
+        // 1440 = 次日零点，是窗口右端点的合法值（半开区间的末端），
+        // 必须真的被接受；「> MAX_END」被写成「>= MAX_END」时它会静默失效。
+        let mut edge = sample_rule();
+        edge.end_minute = 1440;
+        assert_eq!(normalize_time_rule(edge, 0).unwrap().end_minute, 1440);
+    }
+
+    /// 一条规则的偏移不可用（`local_parts` 返回 None）时，`resolve_time_rule`
+    /// 必须**跳过它继续看下一条**，而不是整体放弃——否则一个坏偏移会让同一
+    /// 模型下所有排在其后的规则一起失效，请求静默回落到基准价。
+    #[test]
+    fn resolve_time_rule_skips_a_rule_whose_offset_is_unusable() {
+        let mut broken = sample_rule();
+        broken.id = "broken".to_string();
+        broken.utc_offset_minutes = 1_000_000; // FixedOffset 表示不了
+        broken.start_minute = 0;
+        broken.end_minute = 1440;
+
+        let mut fallback = sample_rule();
+        fallback.id = "fallback".to_string();
+        fallback.start_minute = 0;
+        fallback.end_minute = 1440;
+
+        let rules = vec![broken, fallback];
+        let candidates = vec!["deepseek-chat".to_string()];
+
+        assert_eq!(
+            resolve_time_rule(&rules, &candidates, SUNDAY_MIDNIGHT_UTC)
+                .map(|rule| rule.id.as_str()),
+            Some("fallback"),
+            "an unusable offset must skip its rule, not abort the whole search"
+        );
     }
 
     #[test]
