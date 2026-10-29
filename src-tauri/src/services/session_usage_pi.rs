@@ -65,8 +65,11 @@ pub(crate) struct Flavor {
     pub(crate) data_source: &'static str,
     /// Placeholder `provider_id` for rows the entry does not attribute.
     pub(crate) provider_placeholder: &'static str,
-    /// Reserved `session_log_sync` row that stores this app's child cutoff.
-    pub(crate) cutoff_key: &'static str,
+    /// Reserved `session_log_sync` row that stores this app's child cutoff,
+    /// for apps whose parent sessions project nested session usage (Pi's
+    /// pi-subagents). `None`: nested session files are the only record of
+    /// their usage, so they always count.
+    pub(crate) cutoff_key: Option<&'static str>,
     /// Prefix on the synthesized `request_id` and `semantic_id` hashes.
     pub(crate) id_prefix: &'static str,
     /// Hash domain separator. Pi's value is frozen: the dedup ledger outlives
@@ -87,7 +90,7 @@ pub(crate) const PI: Flavor = Flavor {
     app_type: "pi",
     data_source: "pi_session",
     provider_placeholder: "_pi_session",
-    cutoff_key: "pi:child-cutoff",
+    cutoff_key: Some("pi:child-cutoff"),
     id_prefix: "pi_session",
     hash_tag: "pi-session",
     label: "Pi",
@@ -186,7 +189,7 @@ struct ChildScope {
     imported: HashSet<PathBuf>,
     /// Extension-less session paths; a file below one of them is a nested subagent or fork session.
     stems: HashSet<PathBuf>,
-    /// Unix seconds of this build's first Pi import.
+    /// Unix seconds of this build's first import; `i64::MIN` when the flavor has no cutoff.
     cutoff: i64,
 }
 
@@ -279,7 +282,10 @@ fn child_cutoff(
     flavor: &'static Flavor,
     cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
 ) -> Result<i64, AppError> {
-    if let Some(cursor) = cursors.get(flavor.cutoff_key) {
+    let Some(cutoff_key) = flavor.cutoff_key else {
+        return Ok(i64::MIN);
+    };
+    if let Some(cursor) = cursors.get(cutoff_key) {
         return Ok(cursor.last_synced_at);
     }
     let now = chrono::Utc::now().timestamp();
@@ -287,7 +293,7 @@ fn child_cutoff(
     conn.execute(
         "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
          VALUES (?1, 0, 0, ?2)",
-        rusqlite::params![flavor.cutoff_key, now],
+        rusqlite::params![cutoff_key, now],
     )
     .map_err(|error| {
         AppError::Database(format!("写入 {} 子会话起算时间失败: {error}", flavor.label))
@@ -323,7 +329,7 @@ fn sync_single_pi_file(
 
     let file_path_string = file_path.to_string_lossy().to_string();
     let modified = metadata_modified_nanos(&metadata);
-    let revision = pi_file_revision(file_path, &metadata, modified)?;
+    let revision = pi_file_revision(flavor, file_path, &metadata, modified)?;
     let previous = decode_pi_sync_state(cursors.get(&file_path_string));
     if previous.is_some_and(|state| state.revision == revision) {
         return Ok(SessionSyncResult::default());
@@ -337,7 +343,7 @@ fn sync_single_pi_file(
         Some(state)
             if state.revision.complete
                 && revision.file_size > state.revision.file_size
-                && pi_prefix_tail_matches(file_path, state.revision)? =>
+                && pi_prefix_tail_matches(flavor, file_path, state.revision)? =>
         {
             (state.last_line_offset, Some(state.revision.file_size))
         }
@@ -365,7 +371,13 @@ fn sync_single_pi_file(
         }
     }
 
-    update_pi_sync_state_on_conn(&tx, &file_path_string, revision, parsed.last_complete_line)?;
+    update_pi_sync_state_on_conn(
+        &tx,
+        flavor,
+        &file_path_string,
+        revision,
+        parsed.last_complete_line,
+    )?;
     tx.commit().map_err(|error| {
         AppError::Database(format!("提交 {} 用量导入事务失败: {error}", flavor.label))
     })?;
@@ -406,6 +418,7 @@ fn decode_pi_sync_state(
 
 fn update_pi_sync_state_on_conn(
     conn: &rusqlite::Connection,
+    flavor: &'static Flavor,
     file_path: &str,
     revision: PiFileRevision,
     last_line_offset: i64,
@@ -417,11 +430,14 @@ fn update_pi_sync_state_on_conn(
         "UPDATE session_log_sync SET last_synced_at = ?2 WHERE file_path = ?1",
         rusqlite::params![file_path, revision.encoded()],
     )
-    .map_err(|error| AppError::Database(format!("更新 Pi 会话同步状态失败: {error}")))?;
+    .map_err(|error| {
+        AppError::Database(format!("更新 {} 会话同步状态失败: {error}", flavor.label))
+    })?;
     Ok(())
 }
 
 fn pi_file_revision(
+    flavor: &'static Flavor,
     file_path: &Path,
     metadata: &fs::Metadata,
     modified_nanos: i64,
@@ -429,11 +445,14 @@ fn pi_file_revision(
     let tail_len = metadata.len().min(REVISION_TAIL_BYTES);
     let mut tail = vec![0; tail_len as usize];
     if tail_len > 0 {
-        let mut file = File::open(file_path)
-            .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
+        let mut file = File::open(file_path).map_err(|error| {
+            AppError::Config(format!("无法打开 {} 会话文件: {error}", flavor.label))
+        })?;
         file.seek(SeekFrom::Start(metadata.len() - tail_len))
             .and_then(|_| file.read_exact(&mut tail))
-            .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件尾部: {error}")))?;
+            .map_err(|error| {
+                AppError::Config(format!("无法读取 {} 会话文件尾部: {error}", flavor.label))
+            })?;
     }
 
     let complete = tail.last() == Some(&b'\n');
@@ -446,15 +465,22 @@ fn pi_file_revision(
     })
 }
 
-fn pi_prefix_tail_matches(file_path: &Path, previous: PiFileRevision) -> Result<bool, AppError> {
+fn pi_prefix_tail_matches(
+    flavor: &'static Flavor,
+    file_path: &Path,
+    previous: PiFileRevision,
+) -> Result<bool, AppError> {
     let tail_len = previous.file_size.min(REVISION_TAIL_BYTES);
     let mut tail = vec![0; tail_len as usize];
     if tail_len > 0 {
-        let mut file = File::open(file_path)
-            .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
+        let mut file = File::open(file_path).map_err(|error| {
+            AppError::Config(format!("无法打开 {} 会话文件: {error}", flavor.label))
+        })?;
         file.seek(SeekFrom::Start(previous.file_size - tail_len))
             .and_then(|_| file.read_exact(&mut tail))
-            .map_err(|error| AppError::Config(format!("无法校验 Pi 会话追加边界: {error}")))?;
+            .map_err(|error| {
+                AppError::Config(format!("无法校验 {} 会话追加边界: {error}", flavor.label))
+            })?;
     }
     Ok(pi_tail_fingerprint(&tail) == previous.tail_fingerprint)
 }
@@ -768,8 +794,8 @@ fn parse_usage_record(
 
     let identity = pi_request_identity(flavor, entry, kind, usage_value, carrier);
 
-    // Oh My Pi writes the measured generation time (`duration`, milliseconds)
-    // on the call itself. Pi initializes an assistant message's timestamp
+    // Oh My Pi writes the measured request duration (`duration`, milliseconds,
+    // first-token wait included) on the call itself. Pi initializes an assistant message's timestamp
     // before the request and appends the entry on message_end, so there the
     // difference between the two is an estimate that includes first-token
     // waiting; other usage carriers have no equivalent request-start timestamp.
@@ -1212,7 +1238,7 @@ mod tests {
             "INSERT OR REPLACE INTO session_log_sync
              (file_path, last_modified, last_line_offset, last_synced_at)
              VALUES (?1, 0, 0, ?2)",
-            rusqlite::params![PI.cutoff_key, seconds],
+            rusqlite::params![PI.cutoff_key.expect("Pi cutoff key"), seconds],
         )?;
         Ok(())
     }
@@ -2376,7 +2402,7 @@ mod tests {
             let conn = lock_conn!(db.conn);
             Ok(conn.query_row(
                 "SELECT last_synced_at FROM session_log_sync WHERE file_path = ?1",
-                [PI.cutoff_key],
+                [PI.cutoff_key.expect("Pi cutoff key")],
                 |row| row.get(0),
             )?)
         };

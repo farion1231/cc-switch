@@ -10,13 +10,21 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::services::session_usage::SessionSyncResult;
 use crate::services::session_usage_pi::{sync_flavor, Flavor};
-use std::path::PathBuf;
+use crate::session_manager::providers::{omp, pi};
+use serde_json::Value;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
+
+/// Room for the 256-byte title slot plus any multi-byte title, never a whole
+/// session line.
+const TITLE_SLOT_PROBE_BYTES: u64 = 4096;
 
 pub(crate) const OMP: Flavor = Flavor {
     app_type: "omp",
     data_source: "omp_session",
     provider_placeholder: "_omp_session",
-    cutoff_key: "omp:child-cutoff",
+    cutoff_key: None,
     id_prefix: "omp_session",
     hash_tag: "omp-session",
     label: "Oh My Pi",
@@ -26,9 +34,45 @@ pub(crate) const OMP: Flavor = Flavor {
 };
 
 fn session_files() -> Result<Vec<PathBuf>, String> {
-    crate::session_manager::providers::pi::session_files_for(
-        &crate::session_manager::providers::omp::OMP,
-    )
+    let files = pi::session_files_for(&omp::OMP)?;
+    Ok(own_files(files, shares_root_with_pi()))
+}
+
+/// Both apps honor `PI_CODING_AGENT_SESSION_DIR`, so one store can hold both.
+/// There only files opening with Oh My Pi's title slot are its own; the rest
+/// are Pi's and stay with the Pi importer, or they would be counted twice.
+fn own_files(files: Vec<PathBuf>, shared_with_pi: bool) -> Vec<PathBuf> {
+    if !shared_with_pi {
+        return files;
+    }
+    files
+        .into_iter()
+        .filter(|file| opens_with_title_slot(file))
+        .collect()
+}
+
+fn shares_root_with_pi() -> bool {
+    let canonical = |root: PathBuf| fs::canonicalize(&root).unwrap_or(root);
+    let pi_roots: Vec<PathBuf> = pi::session_roots().into_iter().map(canonical).collect();
+    omp::session_roots()
+        .into_iter()
+        .map(canonical)
+        .any(|root| pi_roots.contains(&root))
+}
+
+fn opens_with_title_slot(file: &Path) -> bool {
+    let Ok(handle) = File::open(file) else {
+        return false;
+    };
+    let mut line = String::new();
+    if BufReader::new(handle.take(TITLE_SLOT_PROBE_BYTES))
+        .read_line(&mut line)
+        .is_err()
+    {
+        return false;
+    }
+    serde_json::from_str::<Value>(line.trim())
+        .is_ok_and(|value| value.get("type").and_then(Value::as_str) == Some("title"))
 }
 
 /// Import usage from every Oh My Pi session file under the session browser's
@@ -143,5 +187,81 @@ mod tests {
         assert_eq!(result.imported, 0);
         assert_eq!(result.errors.len(), 1);
         Ok(())
+    }
+
+    fn assistant_line(id: &str, timestamp: &str, input: u64) -> String {
+        format!(
+            r#"{{"type":"message","id":"{id}","parentId":null,"timestamp":"{timestamp}","message":{{"role":"assistant","content":[],"api":"openai-completions","provider":"workbuddy","model":"deepseek-v4.1-flash","usage":{{"input":{input},"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":{input},"cost":{{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}},"stopReason":"stop"}}}}"#
+        )
+    }
+
+    const TITLE_SLOT: &str =
+        r#"{"type":"title","v":1,"title":"","updatedAt":"2026-08-22T02:12:51.066Z","pad":""}"#;
+
+    #[test]
+    fn subagent_sessions_older_than_the_first_sync_still_count() -> Result<(), AppError> {
+        // Oh My Pi keeps subagent usage only in `<session>/<id>.jsonl`; the
+        // parent's task result carries it in `details`, never as message
+        // usage, so no cutoff may hand it back to the parent.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let parent = temp.path().join("2026-08-22T02-12-51-066Z_parent.jsonl");
+        let children = temp.path().join("2026-08-22T02-12-51-066Z_parent");
+        fs::create_dir_all(&children).expect("subagent dir");
+        let child = children.join("PageScout.jsonl");
+        write_lines(
+            &parent,
+            &[
+                TITLE_SLOT,
+                r#"{"type":"session","version":3,"id":"parent","timestamp":"2026-08-22T02:12:51.066Z","cwd":"/work"}"#,
+                &assistant_line("a1", "2026-08-22T02:13:00.000Z", 100),
+                r#"{"type":"message","id":"task-1","parentId":"a1","timestamp":"2026-08-22T02:20:00.000Z","message":{"role":"toolResult","toolCallId":"call","toolName":"task","content":[],"details":{"usage":{"input":500,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":501,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}}}"#,
+            ],
+        );
+        write_lines(
+            &child,
+            &[
+                TITLE_SLOT,
+                r#"{"type":"session","version":3,"id":"child","timestamp":"2026-08-22T02:14:00.000Z","cwd":"/work","parentSession":"parent"}"#,
+                &assistant_line("c1", "2026-08-22T02:15:00.000Z", 500),
+            ],
+        );
+
+        let db = Database::memory()?;
+        let result = sync_pi_files(&db, &OMP, &[parent, child]);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.imported, 2);
+
+        let conn = lock_conn!(db.conn);
+        let input: i64 = conn.query_row(
+            "SELECT SUM(input_tokens) FROM proxy_request_logs WHERE data_source = 'omp_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(input, 600);
+        Ok(())
+    }
+
+    #[test]
+    fn a_store_shared_with_pi_leaves_pi_files_to_pi() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let omp_file = temp.path().join("omp.jsonl");
+        let pi_file = temp.path().join("pi.jsonl");
+        write_lines(
+            &omp_file,
+            &[
+                TITLE_SLOT,
+                r#"{"type":"session","version":3,"id":"omp","timestamp":"2026-10-29T13:16:32.926Z","cwd":"/work"}"#,
+            ],
+        );
+        write_lines(
+            &pi_file,
+            &[
+                r#"{"type":"session","version":3,"id":"pi","timestamp":"2026-10-29T13:16:32.926Z","cwd":"/work"}"#,
+            ],
+        );
+        let files = vec![omp_file.clone(), pi_file];
+
+        assert_eq!(own_files(files.clone(), false), files);
+        assert_eq!(own_files(files, true), vec![omp_file]);
     }
 }
