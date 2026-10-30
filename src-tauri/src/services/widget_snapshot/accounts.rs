@@ -687,9 +687,11 @@ mod tests {
 
     #[test]
     fn in_use_accounts_refresh_more_often() {
-        let now = Instant::now();
+        // 只往后加：Windows 的 Instant 从开机算起，CI 机器刚开机时往前减 30 分钟会溢出 panic
+        let start = Instant::now();
+        let now = start + Duration::from_secs(60 * 60);
         let cached = |age: u64| CachedQuota {
-            at: now - Duration::from_secs(age),
+            at: start + Duration::from_secs(60 * 60 - age),
             quota: AccountQuota::None,
         };
         assert!(is_due(None, false, now));
