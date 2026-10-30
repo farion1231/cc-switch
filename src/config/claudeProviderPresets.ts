@@ -1823,7 +1823,7 @@ export const providerPresets: ProviderPreset[] = [
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
@@ -1843,7 +1843,7 @@ export const providerPresets: ProviderPreset[] = [
     family: "streamlake",
     regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key?channel=ccswitch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
