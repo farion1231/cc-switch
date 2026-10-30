@@ -221,6 +221,34 @@ pub fn provider_config_fingerprint(settings_config: &str) -> String {
 }
 
 impl Database {
+    pub fn backfill_claude_desktop_projects(&self) -> Result<usize, AppError> {
+        // Unchanged session files are not re-imported, so repair retained gateway
+        // rows from the existing index as well as handling newly imported evidence.
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE proxy_request_logs SET (project_key, project_path, project_name) = (
+                 SELECT p.project_key,
+                        CASE WHEN proxy_request_logs.project_path = ''
+                             THEN p.project_path ELSE proxy_request_logs.project_path END,
+                        CASE WHEN proxy_request_logs.project_name = ''
+                             THEN p.project_name ELSE proxy_request_logs.project_name END
+                 FROM session_projects p
+                 WHERE p.app_type IN ('claude-desktop', 'claude')
+                   AND p.session_key = proxy_request_logs.session_key AND p.project_key <> ''
+                 ORDER BY (p.app_type = 'claude-desktop') DESC LIMIT 1
+             )
+             WHERE app_type = 'claude-desktop' AND project_key = '' AND session_key <> ''
+               AND COALESCE(data_source, 'proxy') = 'proxy'
+               AND EXISTS (
+                 SELECT 1 FROM session_projects p
+                 WHERE p.app_type IN ('claude-desktop', 'claude')
+                   AND p.session_key = proxy_request_logs.session_key AND p.project_key <> ''
+               )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("补齐 Desktop 代理明细项目失败: {e}")))
+    }
+
     /// Repair retained project identities using current Git metadata, without
     /// inferring relationships from directory names or changing provider evidence.
     pub fn normalize_worktree_projects(&self) -> Result<usize, AppError> {
@@ -504,7 +532,13 @@ impl Database {
                 project_key = ?3,
                 project_path = CASE WHEN project_path = '' THEN ?4 ELSE project_path END,
                 project_name = CASE WHEN project_name = '' THEN ?5 ELSE project_name END
-             WHERE app_type = ?1 AND session_key = ?2
+             WHERE (app_type = ?1 OR (
+                       ?1 = 'claude' AND app_type = 'claude-desktop'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM session_projects
+                           WHERE app_type = 'claude-desktop' AND session_key = ?2
+                       )
+                   )) AND session_key = ?2
                AND ?2 <> '' AND ?3 <> '' AND project_key = ''
                AND COALESCE(data_source, 'proxy') = 'proxy'",
             params![
@@ -535,7 +569,10 @@ impl Database {
         conn.query_row(
             "SELECT app_type, session_key, project_key, project_path, project_name, source
              FROM session_projects
-             WHERE app_type = ?1 AND session_key = ?2",
+             WHERE app_type IN (
+                       ?1, CASE WHEN ?1 = 'claude-desktop' THEN 'claude' ELSE ?1 END
+                   ) AND session_key = ?2
+             ORDER BY (app_type = ?1) DESC LIMIT 1",
             params![app_type, session_key],
             |row| {
                 Ok(SessionProject {
@@ -1059,6 +1096,148 @@ mod tests {
             "def-123"
         );
         assert_eq!(normalize_session_key("gemini", "  s-1  "), "s-1");
+    }
+
+    #[test]
+    fn claude_desktop_project_uses_claude_index_with_exact_app_precedence() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let project =
+            project_from_cwd("claude", "shared", "/synthetic/project", "session_meta").unwrap();
+        db.upsert_session_project(&project)?;
+        assert_eq!(
+            db.session_project("claude-desktop", "shared")?,
+            Some(project.clone())
+        );
+        assert!(db.session_project("codex", "shared")?.is_none());
+        assert!(db.session_project("claude-desktop", "other")?.is_none());
+
+        let log = crate::proxy::usage::logger::RequestLog {
+            request_id: "desktop-project".into(),
+            provider_id: "synthetic-provider".into(),
+            app_type: "claude-desktop".into(),
+            model: "model-a".into(),
+            request_model: "model-a".into(),
+            pricing_model: String::new(),
+            usage: crate::proxy::usage::parser::TokenUsage::default(),
+            cost: None,
+            latency_ms: 1,
+            first_token_ms: None,
+            status_code: 200,
+            error_message: None,
+            session_id: Some("user_synthetic_session_shared".into()),
+            provider_type: None,
+            is_streaming: true,
+            cost_multiplier: "1".into(),
+        };
+        crate::proxy::usage::logger::UsageLogger::new(&db).log_request(&log)?;
+        {
+            let conn = lock_conn!(db.conn);
+            let recorded: (String, String, String) = conn.query_row(
+                "SELECT app_type, session_key, project_key FROM proxy_request_logs WHERE request_id='desktop-project'",
+                [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            assert_eq!(
+                recorded,
+                (
+                    "claude-desktop".into(),
+                    "shared".into(),
+                    project.project_key.clone()
+                )
+            );
+        }
+
+        let exact = project_from_cwd(
+            "claude-desktop",
+            "shared",
+            "/synthetic/exact",
+            "session_meta",
+        )
+        .unwrap();
+        db.upsert_session_project(&exact)?;
+        assert_eq!(db.session_project("claude-desktop", "shared")?, Some(exact));
+        assert_eq!(db.session_project("claude", "shared")?, Some(project));
+        Ok(())
+    }
+
+    #[test]
+    fn claude_desktop_project_backfills_both_arrival_orders_and_retained_rows(
+    ) -> Result<(), AppError> {
+        for index_first in [false, true] {
+            let db = Database::memory()?;
+            let project =
+                project_from_cwd("claude", "shared", "/synthetic/project", "session_meta").unwrap();
+            if index_first {
+                db.upsert_session_project(&project)?;
+            }
+            {
+                let conn = lock_conn!(db.conn);
+                for (id, app, session, known, source, status) in [
+                    ("success", "claude-desktop", "shared", "", "proxy", 200),
+                    ("failure", "claude-desktop", "shared", "", "proxy", 500),
+                    (
+                        "known",
+                        "claude-desktop",
+                        "shared",
+                        "/synthetic/known",
+                        "proxy",
+                        200,
+                    ),
+                    ("other-app", "codex", "shared", "", "proxy", 200),
+                    ("other-session", "claude-desktop", "other", "", "proxy", 200),
+                    ("native", "claude-desktop", "shared", "", "session_log", 200),
+                ] {
+                    conn.execute(
+                        "INSERT INTO proxy_request_logs
+                         (request_id, provider_id, provider_name_snapshot, app_type, model,
+                          latency_ms, status_code, created_at, session_key, project_key,
+                          data_source, input_tokens, total_cost_usd,
+                          attribution_source, attribution_confidence, attribution_reason)
+                         VALUES (?1, 'synthetic-provider', 'Synthetic Provider', ?2, 'model-a',
+                                 1, ?6, 100, ?3, ?4, ?5, 123, '0.0123', 'proxy', 'exact', 'routed')",
+                        params![id, app, session, known, source, status],
+                    )?;
+                }
+            }
+            if index_first {
+                assert_eq!(db.backfill_claude_desktop_projects()?, 2);
+            } else {
+                db.upsert_session_project(&project)?;
+            }
+            assert_eq!(db.backfill_claude_desktop_projects()?, 0);
+            let conn = lock_conn!(db.conn);
+            for (id, expected) in [
+                ("success", project.project_key.as_str()),
+                ("failure", project.project_key.as_str()),
+                ("known", "/synthetic/known"),
+                ("other-app", ""),
+                ("other-session", ""),
+                ("native", ""),
+            ] {
+                let row: (String, String, String, String, String, String, i64, String) = conn.query_row(
+                    "SELECT project_key, provider_id, provider_name_snapshot,
+                            attribution_source, attribution_confidence, attribution_reason,
+                            input_tokens, total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+                )?;
+                assert_eq!(
+                    row,
+                    (
+                        expected.into(),
+                        "synthetic-provider".into(),
+                        "Synthetic Provider".into(),
+                        "proxy".into(),
+                        "exact".into(),
+                        "routed".into(),
+                        123,
+                        "0.0123".into()
+                    ),
+                    "{id}; index_first={index_first}"
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]

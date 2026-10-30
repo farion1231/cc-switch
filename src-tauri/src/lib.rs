@@ -764,6 +764,12 @@ pub fn run() {
                 Err(error) => log::warn!("[USAGE-ATTR] worktree 项目键归并失败: {error}"),
             }
 
+            match app_state.db.backfill_claude_desktop_projects() {
+                Ok(count) if count > 0 => log::info!("[USAGE-ATTR] 已补齐 {count} 条 Desktop 请求项目"),
+                Ok(_) => {}
+                Err(error) => log::warn!("[USAGE-ATTR] Desktop 请求项目补齐失败: {error}"),
+            }
+
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
             // ============================================================
