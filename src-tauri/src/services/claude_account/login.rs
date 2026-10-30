@@ -464,6 +464,44 @@ fn spawn_login(
 pub fn apply_account_env(cmd: &mut std::process::Command, config_dir: &Path) {
     clear_account_env(cmd);
     cmd.env("CLAUDE_CONFIG_DIR", config_dir);
+    apply_global_proxy_env(cmd);
+}
+
+/// 把设置里的全局代理交给 Claude Code 子进程。
+///
+/// 全局代理只作用于进程内的 reqwest 客户端；Claude Code（Node）只认 `HTTPS_PROXY`
+/// 这类环境变量、不读系统代理设置，不传的话登录换令牌、`/usage` 都会直连出去。
+/// 只传 http(s)：Claude Code 不支持 SOCKS 代理。大小写两套都设，Node 优先读小写。
+/// 没配全局代理时不动，子进程照旧继承 CC Switch 的环境变量。
+pub fn apply_global_proxy_env(cmd: &mut std::process::Command) {
+    let Some(url) = crate::proxy::http_client::get_current_proxy_url() else {
+        return;
+    };
+    for (key, value) in global_proxy_env(&url, |key| std::env::var_os(key).is_some()) {
+        cmd.env(key, value);
+    }
+}
+
+fn global_proxy_env(url: &str, is_set: impl Fn(&str) -> bool) -> Vec<(&'static str, String)> {
+    let is_http = url::Url::parse(url.trim())
+        .map(|parsed| matches!(parsed.scheme(), "http" | "https"))
+        .unwrap_or(false);
+    if !is_http {
+        return Vec::new();
+    }
+    let url = url.trim().to_string();
+    let mut vars: Vec<(&'static str, String)> =
+        ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+            .into_iter()
+            .map(|key| (key, url.clone()))
+            .collect();
+    // 用户自己设了 NO_PROXY 就沿用，没设才补上本机地址
+    if !is_set("NO_PROXY") && !is_set("no_proxy") {
+        for key in ["NO_PROXY", "no_proxy"] {
+            vars.push((key, "localhost,127.0.0.1,::1".to_string()));
+        }
+    }
+    vars
 }
 
 /// 清掉会把 Claude Code 指到别的登录、别的接口的变量（`CLAUDE_CONFIG_DIR` 由调用方决定）。
@@ -485,6 +523,29 @@ mod tests {
 
     /// 取消登录要终止整棵进程树：后代进程还占着输出管道的话，读输出的线程永远等不到
     /// EOF（Windows 上 claude.cmd → node 就是这样）。这里用 sh → sleep 模拟。
+    #[test]
+    fn global_proxy_env_passes_http_proxies_only() {
+        let vars = global_proxy_env("http://127.0.0.1:7890", |_| false);
+        for key in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] {
+            assert!(
+                vars.contains(&(key, "http://127.0.0.1:7890".to_string())),
+                "{key}"
+            );
+        }
+        assert!(vars.contains(&("NO_PROXY", "localhost,127.0.0.1,::1".to_string())));
+
+        // 用户的 NO_PROXY 不覆盖
+        let vars = global_proxy_env("https://proxy.example.com:8443", |key| key == "no_proxy");
+        assert!(vars
+            .iter()
+            .all(|(key, _)| !key.eq_ignore_ascii_case("NO_PROXY")));
+        assert_eq!(vars.len(), 4);
+
+        // Claude Code 不支持 SOCKS，不传
+        assert!(global_proxy_env("socks5://127.0.0.1:1080", |_| false).is_empty());
+        assert!(global_proxy_env("not a url", |_| false).is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn cancel_ends_descendants_holding_the_output_pipe() {

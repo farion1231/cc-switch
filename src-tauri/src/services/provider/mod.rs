@@ -5696,10 +5696,19 @@ impl ProviderService {
         // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
 
+        // 累加式写 live 失败（如配置文件解析不了）时要撤回这一行，先记下原来的
+        let existing_row = if app_type.is_additive_mode() {
+            state
+                .db
+                .get_provider_by_id(&provider.id, app_type.as_str())?
+        } else {
+            None
+        };
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
+        // Additive mode apps (OpenCode, OpenClaw, Hermes): optionally write to live config.
         if app_type.is_additive_mode() {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
             if matches!(app_type, AppType::OpenCode)
@@ -5712,8 +5721,13 @@ impl ProviderService {
             if !add_to_live {
                 return Ok(true);
             }
-            write_live_for_state(state, &app_type, &provider)?;
-            return Ok(true);
+            return Self::keep_row_if_written(
+                state,
+                &app_type,
+                &provider.id,
+                existing_row.as_ref(),
+                write_live_for_state(state, &app_type, &provider),
+            );
         }
 
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
