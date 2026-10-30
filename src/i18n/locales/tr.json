@@ -2236,8 +2236,8 @@
       "requestCacheHit": "{{value}} istek · Önbellek isabeti {{rate}}"
     },
     "cacheBreakdown": {
-      "models": "Model önbellek dağılımı",
-      "modelsIn": "Model önbellek dağılımı · {{provider}}",
+      "models": "Model girdi payı",
+      "modelsIn": "Model girdi payı · {{provider}}",
       "providersInput": "Sağlayıcı girdi payı",
       "weightedRate": "Ağırlıklı önbellek isabet oranı",
       "readOfInput": "Okuma {{read}} / Girdi {{input}}",

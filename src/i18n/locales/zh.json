@@ -2272,8 +2272,8 @@
       "requestCacheHit": "{{value}} 次请求 · 缓存命中 {{rate}}"
     },
     "cacheBreakdown": {
-      "models": "模型缓存构成",
-      "modelsIn": "模型缓存构成 · {{provider}}",
+      "models": "模型输入占比",
+      "modelsIn": "模型输入占比 · {{provider}}",
       "providersInput": "供应商输入占比",
       "weightedRate": "加权缓存命中率",
       "readOfInput": "命中 {{read}} / 输入 {{input}}",

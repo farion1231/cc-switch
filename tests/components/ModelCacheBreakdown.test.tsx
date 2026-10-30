@@ -46,8 +46,9 @@ describe("ModelCacheBreakdown", () => {
     expect(rows[0]).toHaveTextContent("large-no-hit");
     expect(rows[0]).toHaveTextContent("0.0%");
     expect(rows[1]).toHaveTextContent("90.0%");
-    // A 100-token cache write belongs in the denominator and has its own segment.
-    expect(within(rows[0]).getByText("缓存写入 100")).toBeInTheDocument();
+    // The shared chart weights by total input, including writes and excluding output.
+    expect(within(rows[0]).getByText("900")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("100")).toBeInTheDocument();
     expect(screen.queryByText("45.0%")).not.toBeInTheDocument();
   });
 
@@ -63,10 +64,10 @@ describe("ModelCacheBreakdown", () => {
     const rows = within(screen.getByRole("list")).getAllByRole("listitem");
     expect(rows[1]).toHaveTextContent("zero-input");
     expect(rows[1]).toHaveTextContent("—");
-    expect(rows[1]).toHaveTextContent("缓存命中 0");
-    expect(rows[2]).toHaveTextContent("缓存数据缺失");
-    expect(rows[2]).not.toHaveTextContent("缓存命中 0");
-    expect(screen.getAllByText("90.0%")).toHaveLength(2);
+    expect(within(rows[1]).getByText("0")).toBeInTheDocument();
+    expect(rows).toHaveLength(2);
+    expect(screen.queryByText("missing")).not.toBeInTheDocument();
+    expect(rows[0]).toHaveTextContent("90.0%");
   });
 
   it("never collapses long or unpriced model lists into an other bucket", () => {
@@ -89,9 +90,10 @@ describe("ModelCacheBreakdown", () => {
         stats={[{ ...model("missing", 0, 0), freshInputTokens: undefined }]}
       />,
     );
-    expect(screen.getAllByText("—")).toHaveLength(2);
+    expect(screen.getAllByText("—")).toHaveLength(1);
     expect(screen.queryByText(/命中 0 \/ 输入 0/)).not.toBeInTheDocument();
     expect(screen.getAllByText("缓存数据缺失")).toHaveLength(2);
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
   });
 
   it("shows an empty state for a scope without model records", () => {

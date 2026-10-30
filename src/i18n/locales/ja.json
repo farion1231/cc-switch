@@ -2272,8 +2272,8 @@
       "requestCacheHit": "{{value}} リクエスト · キャッシュヒット {{rate}}"
     },
     "cacheBreakdown": {
-      "models": "モデル別キャッシュ内訳",
-      "modelsIn": "モデル別キャッシュ内訳 · {{provider}}",
+      "models": "モデル別入力比率",
+      "modelsIn": "モデル別入力比率 · {{provider}}",
       "providersInput": "プロバイダー別入力割合",
       "weightedRate": "加重キャッシュヒット率",
       "readOfInput": "ヒット {{read}} / 入力 {{input}}",

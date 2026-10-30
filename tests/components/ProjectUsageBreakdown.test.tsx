@@ -138,7 +138,14 @@ describe("ProjectUsageBreakdown", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "usage.share.metric.cache" }),
     );
-    expect(screen.getByText("model-a")).toBeInTheDocument();
+    expect(shareCharts.at(-1)?.data).toEqual([
+      {
+        key: "model-a",
+        label: "model-a",
+        value: 100,
+        detail: "10 requests · Cache hit 90.0%",
+      },
+    ]);
     expect(useModelStatsMock).toHaveBeenLastCalledWith(
       range,
       expect.objectContaining({
@@ -223,7 +230,7 @@ describe("ProjectUsageBreakdown", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "usage.share.metric.cache" }),
     );
-    const chart = shareCharts.at(-1);
+    const chart = shareCharts.filter((item) => item.onSelect).at(-1);
     expect(chart?.data).toHaveLength(8);
     expect(chart?.includeZeroValues).toBe(true);
     expect(chart?.maxSlices).toBe(8);

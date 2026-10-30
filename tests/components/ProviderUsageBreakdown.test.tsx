@@ -4,12 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { ProviderUsageBreakdown } from "@/components/usage/ProviderUsageBreakdown";
 import type { UsageRangeSelection } from "@/types/usage";
+import type { UsageShareDatum } from "@/components/usage/UsageShareChart";
 
 const useModelStatsMock = vi.hoisted(() => vi.fn());
+const shareCharts = vi.hoisted(() => [] as Array<{ data: UsageShareDatum[] }>);
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, values?: { value?: string; rate?: string }) =>
+      key === "usage.share.requestCacheHit"
+        ? `${values?.value} requests · Cache hit ${values?.rate}`
+        : key,
     i18n: { resolvedLanguage: "en", language: "en" },
   }),
 }));
@@ -19,13 +24,17 @@ vi.mock("@/lib/query/usage", () => ({
 }));
 
 vi.mock("@/components/usage/UsageShareChart", () => ({
-  UsageShareChart: () => <div data-testid="share-chart" />,
+  UsageShareChart: (props: { data: UsageShareDatum[] }) => {
+    shareCharts.push(props);
+    return <div data-testid="share-chart" />;
+  },
 }));
 
 const range: UsageRangeSelection = { preset: "today" };
 
 describe("ProviderUsageBreakdown", () => {
   beforeEach(() => {
+    shareCharts.length = 0;
     useModelStatsMock.mockReset();
     useModelStatsMock.mockReturnValue({ data: [] });
   });
@@ -60,7 +69,7 @@ describe("ProviderUsageBreakdown", () => {
     );
   });
 
-  it("opens model cache composition without changing the provider scope", async () => {
+  it("reuses the model share chart with input weights and cache hit details", async () => {
     useModelStatsMock.mockReturnValue({
       data: [
         {
@@ -94,9 +103,15 @@ describe("ProviderUsageBreakdown", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "usage.share.metric.cache" }),
     );
-    expect(screen.getByText("model-a")).toBeInTheDocument();
-    expect(screen.getAllByText("80.0%").length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("share-chart")).not.toBeInTheDocument();
+    expect(screen.getByTestId("share-chart")).toBeInTheDocument();
+    expect(shareCharts.at(-1)?.data).toEqual([
+      {
+        key: "model-a",
+        label: "model-a",
+        value: 1000,
+        detail: "12 requests · Cache hit 80.0%",
+      },
+    ]);
     expect(useModelStatsMock).toHaveBeenLastCalledWith(
       range,
       { providerId: "p-1", providerAppType: "codex", projectKey: "/repo" },

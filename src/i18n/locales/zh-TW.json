@@ -2273,8 +2273,8 @@
       "requestCacheHit": "{{value}} 次請求 · 快取命中 {{rate}}"
     },
     "cacheBreakdown": {
-      "models": "模型快取構成",
-      "modelsIn": "模型快取構成 · {{provider}}",
+      "models": "模型輸入佔比",
+      "modelsIn": "模型輸入佔比 · {{provider}}",
       "providersInput": "供應商輸入占比",
       "weightedRate": "加權快取命中率",
       "readOfInput": "命中 {{read}} / 輸入 {{input}}",

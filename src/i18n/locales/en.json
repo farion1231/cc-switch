@@ -2272,8 +2272,8 @@
       "requestCacheHit": "{{value}} requests · Cache hit {{rate}}"
     },
     "cacheBreakdown": {
-      "models": "Model cache composition",
-      "modelsIn": "Model cache composition · {{provider}}",
+      "models": "Model input share",
+      "modelsIn": "Model input share · {{provider}}",
       "providersInput": "Provider input share",
       "weightedRate": "Weighted cache hit rate",
       "readOfInput": "Read {{read}} / Input {{input}}",
