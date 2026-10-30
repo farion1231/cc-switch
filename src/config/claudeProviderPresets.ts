@@ -1613,12 +1613,41 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#2932E1",
   },
   {
+    // 讯飞星辰 MaaS 按量计费（活动送的 Token 也走这里），Key 与 Coding Plan
+    // 不通用：拿这边的 Key 调 maas-coding-api 会报 429 authorization failed
+    // （#9036）。地址与模型见 maas.xfyun.cn 文档「3.1.3 Anthropic」。
+    // 文档示例用 x-api-key，网关同样认 Bearer（假 Key 实测两种头都报 apikey
+    // not found，不带 Key 才报 Unauthorized）。各档只用 spark-x2.6：用户实测
+    // 过的就是它，spark-x2.6-4b 的工具调用没验证过。Anthropic 接口输入加输出
+    // 上限 256K（模型表写的 1M 不适用），非 claude-* id 的默认 200K 窗口在
+    // 上限内，不带 [1M] 也不钉窗口
+    name: "Astron MaaS",
+    family: "astron",
+    planKey: "payg",
+    websiteUrl: "https://maas.xfyun.cn",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://maas-api.cn-huabei-1.xf-yun.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "spark-x2.6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "spark-x2.6",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "spark-x2.6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "spark-x2.6",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: ["https://maas-api.cn-huabei-1.xf-yun.com/anthropic"],
+    icon: "astron",
+  },
+  {
     // 讯飞官方 Claude Code 配置：www.xfyun.cn/doc/spark/CodingPlan.html。
     // 请求一律用别名 astron-code-latest，底层模型（Spark X2 等）在控制台套餐
     // 页切换；/anthropic 之外的 /v1、/v2 是 Responses / Chat，不能混用。
     // 非 claude-* 模型 id 按 200K 默认窗口处理，钉成与 Codex 预设相同的官方
     // 保守值 92160（官方建议 <96k）
     name: "Astron Coding Plan",
+    family: "astron",
+    planKey: "codingPlan",
     websiteUrl: "https://maas.xfyun.cn/packageSubscription",
     apiKeyUrl: "https://maas.xfyun.cn/packageSubscription",
     settingsConfig: {
