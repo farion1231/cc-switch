@@ -1611,6 +1611,13 @@
     "openReleaseNotesFailed": "Failed to open release notes:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "Config file {{path}} (this provider only)",
+      "hint": "Shows this provider's part of the file in the app's own format and writes it there on save. Global settings such as the default model are not here. Comments typed here are not saved.",
+      "invalid": "Invalid {{format}}: {{error}}",
+      "scope": "Only the {{section}} node belongs here. Change the Provider Key in the field above.",
+      "schema": "Some fields have the wrong type. Check them against the form above."
+    },
     "supplierName": "Provider Name",
     "supplierNameRequired": "Provider Name *",
     "supplierNamePlaceholder": "e.g., Anthropic Official",
@@ -5029,6 +5036,8 @@
     },
     "modelSelectionHint": "Use the switch button on a provider card to select it. To choose another model, use /model in Kimi Code.",
     "contextSize": "Context size",
+    "configTomlScope": "Only [providers.{{key}}] and its own [models.*] tables belong here. Change the Provider Key in the field above.",
+    "configTomlSchema": "Incomplete config: check the provider's type, and each model's model and max_context_size (a positive integer).",
     "capabilities": {
       "image_in": "Image input",
       "thinking": "Thinking",

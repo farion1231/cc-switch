@@ -1611,6 +1611,13 @@
     "openReleaseNotesFailed": "リリースノートを開けませんでした:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "設定ファイル {{path}}（このプロバイダーのみ）",
+      "hint": "このプロバイダーの部分をアプリ本来の形式で表示し、保存時にこのファイルへ書き込みます。デフォルトモデルなどのグローバル設定はここにはありません。ここに書いたコメントは保存されません。",
+      "invalid": "{{format}} の形式が正しくありません：{{error}}",
+      "scope": "ここには {{section}} ノードだけを書けます。プロバイダーキーは上の欄で変更してください。",
+      "schema": "型が正しくない項目があります。上のフォームと照らし合わせて確認してください。"
+    },
     "supplierName": "プロバイダー名",
     "supplierNameRequired": "プロバイダー名 *",
     "supplierNamePlaceholder": "例: Anthropic Official",
@@ -5029,6 +5036,8 @@
     },
     "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
     "contextSize": "コンテキスト長",
+    "configTomlScope": "ここには [providers.{{key}}] とそれに属する [models.*] テーブルだけを書けます。プロバイダーキーは上の欄で変更してください。",
+    "configTomlSchema": "設定が不完全です：プロバイダーの type と、各モデルの model・max_context_size（正の整数）を確認してください。",
     "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
     "empty": {
       "title": "Kimi Code プロバイダーを追加",

@@ -1612,6 +1612,13 @@
     "openReleaseNotesFailed": "開啟更新日誌失敗："
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "設定檔 {{path}}（只顯示這一家）",
+      "hint": "按應用自己的格式顯示這一家在檔案裡的部分，儲存後寫進這個檔案；預設模型等全域設定不在這裡。在這裡寫的註解不會儲存。",
+      "invalid": "{{format}} 格式錯誤：{{error}}",
+      "scope": "這裡只能寫 {{section}} 這一個節點；供應商標識請在上方修改。",
+      "schema": "有欄位的類型不對，請對照上方表單檢查。"
+    },
     "supplierName": "供應商名稱",
     "supplierNameRequired": "供應商名稱 *",
     "supplierNamePlaceholder": "例如：Anthropic 官方",
@@ -5030,6 +5037,8 @@
     },
     "modelSelectionHint": "點擊供應商卡片的切換按鈕選擇預設供應商；若要指定其他模型，請在 Kimi Code 中使用 /model。",
     "contextSize": "上下文長度",
+    "configTomlScope": "這裡只能寫 [providers.{{key}}] 和屬於它的 [models.*] 表；供應商標識請在上方修改。",
+    "configTomlSchema": "設定不完整：請檢查供應商的 type，以及每個模型的 model 和 max_context_size（正整數）。",
     "deleteSessionHint": "請在 Kimi Code 中刪除，以同時更新工作階段索引和歷史紀錄。",
     "empty": {
       "title": "新增 Kimi Code 供應商",
