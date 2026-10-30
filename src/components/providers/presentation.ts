@@ -82,6 +82,8 @@ export interface ProviderSection {
   key: string;
   title?: string;
   help?: { title: string; body: string };
+  /** 标题后面一句常驻的灰字说明（DSH：Web 和 Desktop 共用这份列表） */
+  note?: string;
   emptyText?: string;
   items: { provider: Provider; presentation: CardPresentation }[];
 }
@@ -700,6 +702,8 @@ export interface AdditiveInput {
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
+  /** 「已添加」里列表外另画的卡（DSH 的 DeepSeek 账号卡），计入标题数字 */
+  extraAdded?: number;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
@@ -950,13 +954,20 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   return [
     {
       key: "added",
-      title: t("providerCard.section.added", { count: added.length }),
+      title: t("providerCard.section.added", {
+        count: added.length + (input.extraAdded ?? 0),
+      }),
       help: {
         title: t("providerCard.section.addedHelpTitle"),
-        body: t("providerCard.section.addedHelp", {
-          app: t(`apps.${app}`),
-        }),
+        // DSH 的供应商一起写进 Web 和 Desktop 两份配置，在这里说明
+        body:
+          app === "dsh"
+            ? t("dsh.sharedProviders")
+            : t("providerCard.section.addedHelp", {
+                app: t(`apps.${app}`),
+              }),
       },
+      note: app === "dsh" ? t("dsh.sharedProvidersNote") : undefined,
       emptyText: t("providerCard.section.addedEmpty"),
       items: added,
     },
