@@ -58,9 +58,9 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 <tr>
 <td width="180"><a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/"><img src="assets/partners/logos/pateway.png" alt="PatewayAI" width="150"></a></td>
-<td>PatewayAI のご支援に感謝します！PatewayAI はヘビーな AI 開発者向けに、公式直結の高品質モデル API 中継サービスを専門に提供するプロバイダーです。Claude シリーズ全モデルおよび Codex シリーズに対応し、100% 公式ソースから直接提供。混ぜ物・水増しは一切なく、検証も歓迎します。課金は透明で、トークン単位の請求書を 1 件ずつ照合可能です。
-エンタープライズ級の高同時接続にも対応し、法人のお客様には専用の管理プラットフォームを提供。正式契約および請求書発行に対応しており、詳細は公式サイトの連絡先よりお問い合わせください。
-現在、<a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">このリンク</a>からご登録いただくと $3 のトライアルクレジットを進呈。チャージは最安で元価格の 60%、友達紹介は双方にボーナスが付与され、紹介報酬は最大 $150！</td>
+<td>PatewayAI のご支援に感謝します！PatewayAI は経験豊富な AI 開発者向けの API 中継サービスプロバイダーで、Claude、GPT シリーズ、そして中国の主要モデルを幅広くフルサポートしています。すべてのモデルは公式の高品質チャネルから提供され、希釈や偽装は一切なく、課金明細も透明で確認できます。
+エコノミーモードは最安で元価格の 5%。<a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">このリンク</a>から登録すると $1 の無料トライアルクレジットがもらえ、不定期のキャンペーンで無料クレジットを受け取ることもできます。
+企業向けの高並列処理、専用管理コンソール、正式な契約書とインボイスにも対応し、最大 $150 の双方向紹介チャージ報酬も用意しています。</td>
 </tr>
 
 <tr>
@@ -109,8 +109,8 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode は、Claude Code・Codex・最新の Gemini モデルを統合したオールインワンのAIコーディングプラットフォームで、安定性・高速性・コストパフォーマンスに優れた開発サービスを提供します。柔軟なサブスクリプションプランを備え、レスポンスも非常に高速です。さらに、CC Switch ユーザー向けの特典として、<a href="https://aigocode.net/invite/CC-SWITCH">このリンク</a>から登録すると、初回チャージ時に10％分のボーナスクレジットが付与されます！</td>
+<td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
+<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode はトークン従量課金だけではない、サブスクリプション型の AI コーディングプラットフォームです。1 つのアカウント・月額プランで Claude Code、Codex、Gemini を使い放題、中国本土から直接接続でき、レスポンスも高速です。<a href="https://aigocode.net/invite/CC-SWITCH">このリンク</a>からサブスクリプションすると 10% のクレジットが追加でもらえます！</td>
 </tr>
 
 <tr>
@@ -128,6 +128,11 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 <tr>
 <td width="180"><a href="https://subrouter.ai/register?aff=l3ri"><img src="assets/partners/logos/subrouter-banner.png" alt="SubRouter" width="150"></a></td>
 <td>本プロジェクトをご支援いただいている SubRouter に感謝します！SubRouter は、AI サービス事業者向けのマーケットプレイス兼スマートルーティングプラットフォームです。事業者は独立した運営サイトを立ち上げ、プランを公開し、ユーザー・モデル・価格を管理でき、ユーザーはマーケットでサービスを見つけ、統一された API を通じて安定かつ高効率なモデル呼び出しを利用できます。<a href="https://subrouter.ai/register?aff=l3ri">こちらのリンク</a>から登録してください！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://open.ospreyai.cn"><img src="assets/partners/logos/ospreyai-banner.png" alt="OspreyAI" width="150"></a></td>
+<td>OspreyAI のご支援に感謝します！ACS OspreyAI は開発者と企業向けのワンストップ・マルチモデル API サービスプラットフォームです。1 つの API Key で Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、Tencent Hunyuan など国内外の主要モデルを呼び出せます。OpenAI、Anthropic などの主要 API プロトコルに対応し、Claude Code、Codex、OpenCode、Pi、Hermes などの主要 AI ツールでも利用できます。海外モデルは公式価格より 20〜40%、中国国内モデルは 30〜50% お得です。チャージと請求の一元化、使用量の確認、モデルの柔軟な切り替えに対応し、AI アプリ開発、コンテンツ制作、自動化ワークフローなどに適しています。<a href="https://open.ospreyai.cn">このリンク</a>からアカウントを作成すると特典を受けられ、国内外の主要モデルにすぐ接続できます。</td>
 </tr>
 
 <tr>
