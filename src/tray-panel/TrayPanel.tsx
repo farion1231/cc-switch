@@ -46,12 +46,13 @@ type Tab = "config" | "usage";
 const TAB_KEY = "cc-switch-tray-tab";
 /** 主界面保存语言用的键 */
 const LANGUAGE_KEY = "language";
-const MAIN_MAX_HEIGHT = 620;
+/** 约能放下 6 个应用行，再多就在列表里滚动 */
+const MAIN_MAX_HEIGHT = 480;
 /** 使用固定画布时，窗口在一次弹出里的最大高度 */
 const CANVAS_MAX_HEIGHT = 760;
 /** 分开摆时窗口四周留的透明边距，给卡片的阴影（系统窗口阴影已关掉） */
 const SHADOW_MARGIN = 16;
-const SUB_MAX_HEIGHT = 540;
+const SUB_MAX_HEIGHT = 480;
 /** 悬停多久展开子面板；已经展开时换应用不等，只有鼠标正朝子面板移动才暂缓 */
 const HOVER_OPEN_MS = 50;
 /** 正朝子面板移动时隔这么久再看一次：鼠标停下了或偏离了就切换 */
@@ -336,10 +337,12 @@ function matches(row: PanelRow, query: string) {
 function SubRow({
   row,
   texts,
+  checkedText,
   onAction,
 }: {
   row: PanelRow;
   texts: PanelTexts;
+  checkedText: string | null;
   onAction: (id: string) => void;
 }) {
   if (row.kind === "separator") {
@@ -400,7 +403,7 @@ function SubRow({
       </span>
       {inUse && (
         <span className="text-[11px] font-medium text-blue-500">
-          {texts.inUse}
+          {checkedText ?? texts.inUse}
         </span>
       )}
       {provider?.quota && (
@@ -468,6 +471,7 @@ function SubPanel({
               key={`${row.id}-${index}`}
               row={row}
               texts={texts}
+              checkedText={app.checkedText}
               onAction={onAction}
             />
           ))

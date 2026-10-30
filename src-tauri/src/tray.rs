@@ -34,13 +34,23 @@ const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
 
-/// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
-pub const TRAY_APPS: [AppType; 5] = [
+/// 进托盘的应用，顺序和侧栏一致（`APP_IDS`）。累加式应用和 Antigravity 没有「当前供应商」，
+/// 子菜单见 [`TrayMode::Additive`]、[`TrayMode::Cards`]。
+pub const TRAY_APPS: [AppType; 14] = [
     AppType::Claude,
     AppType::ClaudeDesktop,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
+    AppType::OpenCode,
+    AppType::OpenClaw,
+    AppType::Hermes,
+    AppType::Pi,
+    AppType::Mcode,
+    AppType::Kimi,
+    AppType::Dsh,
+    AppType::Agy,
+    AppType::Omp,
 ];
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
@@ -99,6 +109,18 @@ pub struct TrayTexts {
     pub header_stack: &'static str,
     /// 聚合子菜单标题，写出默认那家：`{name}`
     pub header_stack_default: &'static str,
+    /// 累加式应用的子菜单标题
+    pub header_additive: &'static str,
+    /// Antigravity 的子菜单标题
+    pub header_cards: &'static str,
+    /// 累加式应用读不到客户端配置（这时不知道哪些已添加，不让点）
+    pub additive_unavailable: &'static str,
+    /// 累加式应用已添加几家：`{count}`
+    pub added_count: &'static str,
+    /// Antigravity 有几张卡：`{count}`
+    pub cards_count: &'static str,
+    /// 面板里累加式应用已添加那一行的标记（切换式应用写「使用中」）
+    pub added_label: &'static str,
     pub failover_note: &'static str,
     pub mode_route: &'static str,
     pub mode_stack: &'static str,
@@ -120,6 +142,8 @@ pub struct TrayTexts {
     pub feedback_stack_default: &'static str,
     /// 反馈行：应用项目
     pub feedback_profile: &'static str,
+    /// 反馈行：累加式应用添加了一家
+    pub feedback_added: &'static str,
     pub tier_five_hour: &'static str,
     pub tier_weekly: &'static str,
     pub tier_fable: &'static str,
@@ -220,6 +244,13 @@ impl TrayTexts {
                 feedback_stack_default:
                     "{app}'s default provider is now {name}. Restart {app} to apply",
                 feedback_profile: "Applied project \u{201c}{name}\u{201d} to {app}",
+                feedback_added: "Added {name} to {app}",
+                header_additive: "Click one to add it to the config",
+                header_cards: "Cards don't need enabling. Open a terminal from the app page",
+                additive_unavailable: "Can't read the config file",
+                added_count: "{count} added",
+                cards_count: "{count} cards",
+                added_label: "Added",
                 tier_five_hour: "5-hour",
                 tier_weekly: "Weekly",
                 tier_fable: "Fable",
@@ -277,6 +308,14 @@ impl TrayTexts {
                 texts.feedback_switched = "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın";
                 texts.feedback_stack_default = "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın";
                 texts.feedback_profile = "{name} projesi {app} uygulamasına uygulandı";
+                texts.feedback_added = "{name}, {app} uygulamasına eklendi";
+                texts.header_additive = "Yapılandırmaya eklemek için tıklayın";
+                texts.header_cards =
+                    "Kartların etkinleştirilmesi gerekmez. Terminali uygulama sayfasından açın";
+                texts.additive_unavailable = "Yapılandırma dosyası okunamıyor";
+                texts.added_count = "{count} eklendi";
+                texts.cards_count = "{count} kart";
+                texts.added_label = "Eklendi";
                 texts.tier_five_hour = "5 saatlik";
                 texts.tier_weekly = "Haftalık";
                 texts.tier_fable = "Fable";
@@ -333,6 +372,13 @@ impl TrayTexts {
                     "{app} を {name} に切り替えました。反映するには {app} を再起動してください",
                 feedback_stack_default: "{app} のデフォルトのプロバイダーを {name} に変更しました。反映するには {app} を再起動してください",
                 feedback_profile: "プロジェクト「{name}」を {app} に適用しました",
+                feedback_added: "{name} を {app} に追加しました",
+                header_additive: "クリックして設定に追加",
+                header_cards: "カードの有効化は不要です。アプリページからターミナルを開いてください",
+                additive_unavailable: "設定ファイルを読み取れません",
+                added_count: "{count} 件追加済み",
+                cards_count: "カード {count} 枚",
+                added_label: "追加済み",
                 tier_five_hour: "5時間",
                 tier_weekly: "週間",
                 tier_fable: "Fable",
@@ -387,6 +433,13 @@ impl TrayTexts {
                 feedback_switched: "{app} 已切換到 {name}，重新啟動 {app} 後生效",
                 feedback_stack_default: "{app} 的預設供應商改為 {name}，重新啟動 {app} 後生效",
                 feedback_profile: "已把專案「{name}」套用到 {app}",
+                feedback_added: "已把 {name} 新增至 {app}",
+                header_additive: "點一家新增至設定",
+                header_cards: "卡片不用啟用，到應用頁開啟終端機",
+                additive_unavailable: "讀不到設定檔",
+                added_count: "已新增 {count} 家",
+                cards_count: "{count} 張卡片",
+                added_label: "已新增",
                 tier_five_hour: "5 小時",
                 tier_weekly: "每週",
                 tier_fable: "Fable",
@@ -441,6 +494,13 @@ impl TrayTexts {
                 feedback_switched: "{app} 已切换到 {name}，重启 {app} 后生效",
                 feedback_stack_default: "{app} 的默认供应商改为 {name}，重启 {app} 后生效",
                 feedback_profile: "已把项目「{name}」用到 {app}",
+                feedback_added: "已把 {name} 添加到 {app}",
+                header_additive: "点一家添加到配置",
+                header_cards: "卡片不用启用，到应用页打开终端",
+                additive_unavailable: "读不到配置文件",
+                added_count: "已添加 {count} 家",
+                cards_count: "{count} 张卡片",
+                added_label: "已添加",
                 tier_five_hour: "5 小时",
                 tier_weekly: "每周",
                 tier_fable: "Fable",
@@ -1132,6 +1192,10 @@ enum TrayMode {
     /// 路由 + 自动故障转移：子菜单只读（#6022）。
     Failover,
     Stack,
+    /// 累加式应用：几家共存，勾 = 已写进配置，点一家 = 添加。
+    Additive,
+    /// Antigravity：卡片不用启用（只作用于它打开的终端），点一家 = 去应用页。
+    Cards,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1165,6 +1229,8 @@ struct AppSnapshot {
     queue: Vec<String>,
     /// 聚合名单。
     stack_members: Vec<String>,
+    /// 累加式应用已写进配置的那几家；读不到配置时为 `None`。
+    added: Option<Vec<String>>,
     quota: Option<QuotaView>,
     /// 路由服务该在跑却没在跑。
     service_down: bool,
@@ -1182,7 +1248,7 @@ impl AppSnapshot {
     fn uses_service(&self) -> bool {
         match self.mode {
             TrayMode::Route | TrayMode::Failover | TrayMode::Stack => true,
-            TrayMode::Direct => false,
+            TrayMode::Direct | TrayMode::Additive | TrayMode::Cards => false,
         }
     }
 }
@@ -1265,7 +1331,69 @@ fn provider_entry(
     }
 }
 
+/// 这个应用有「在用的那家」（累加式应用和 Antigravity 没有）。
+fn has_current_provider(app: &AppType) -> bool {
+    !app.is_additive_mode() && *app != AppType::Agy
+}
+
+/// 累加式应用已写进配置的那几家，和主界面 `isInConfig` 同一口径（OMO / OMO Slim 看当前启用的
+/// 那家）。读不到客户端配置时为 `None`，不让一份坏配置把整个托盘带崩。
+fn added_provider_ids(
+    db: &crate::database::Database,
+    app: &AppType,
+    rows: &indexmap::IndexMap<String, Provider>,
+) -> Option<Vec<String>> {
+    let live = match app {
+        AppType::OpenCode => crate::opencode_config::get_providers().and_then(|providers| {
+            let mut ids: Vec<String> = providers.keys().cloned().collect();
+            for variant in [crate::services::omo::STANDARD, crate::services::omo::SLIM] {
+                ids.extend(
+                    db.get_current_omo_provider(app.as_str(), variant.category)?
+                        .map(|provider| provider.id),
+                );
+            }
+            Ok(ids)
+        }),
+        AppType::OpenClaw => crate::openclaw_config::get_providers()
+            .map(|providers| providers.keys().cloned().collect()),
+        AppType::Hermes => crate::hermes_config::get_providers()
+            .map(|providers| providers.keys().cloned().collect()),
+        AppType::Pi => crate::pi_config::read_pi_native_providers()
+            .map(|providers| providers.keys().cloned().collect()),
+        AppType::Omp => {
+            crate::omp_config::get_providers().map(|providers| providers.keys().cloned().collect())
+        }
+        // MiniMax Code、Kimi、DeepSeek Harness：标记跟着写入一起提交，不用读客户端文件。
+        _ => Ok(rows
+            .values()
+            .filter(|provider| {
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.live_config_managed)
+                    == Some(true)
+            })
+            .map(|provider| provider.id.clone())
+            .collect()),
+    };
+    match live {
+        // 配置里可能有没导入的，只算列得出来的。
+        Ok(ids) => Some(ids.into_iter().filter(|id| rows.contains_key(id)).collect()),
+        Err(e) => {
+            // 每次悬停托盘都会读，不打 warn。
+            log::debug!("[Tray] 读取{}配置失败: {e}", app_display_name(app));
+            None
+        }
+    }
+}
+
 fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
+    if app.is_additive_mode() {
+        return TrayMode::Additive;
+    }
+    if *app == AppType::Agy {
+        return TrayMode::Cards;
+    }
     if !crate::mode::current::is_proxy(app) {
         return TrayMode::Direct;
     }
@@ -1299,13 +1427,22 @@ fn collect_app_snapshot(
         .map(|(_, provider)| provider_entry(app, provider, &claude_accounts))
         .collect();
     // 代理模式下是代理路由到的那家（含故障转移切过去的）。
-    let current_id = crate::mode::current::provider_for(
-        &app_state.db,
-        app,
-        crate::mode::current::Purpose::InUse,
-    )?
-    .filter(|id| rows.contains_key(id));
+    let current_id = if has_current_provider(app) {
+        crate::mode::current::provider_for(
+            &app_state.db,
+            app,
+            crate::mode::current::Purpose::InUse,
+        )?
+        .filter(|id| rows.contains_key(id))
+    } else {
+        None
+    };
     let mode = tray_mode(app_state, app);
+    let added = if mode == TrayMode::Additive {
+        added_provider_ids(&app_state.db, app, &rows)
+    } else {
+        None
+    };
 
     let queue = if mode == TrayMode::Failover {
         app_state
@@ -1357,6 +1494,7 @@ fn collect_app_snapshot(
         current_id,
         queue,
         stack_members,
+        added,
         quota,
         service_down: false,
         needs_attention: false,
@@ -1509,6 +1647,8 @@ enum TrayFeedback {
     StackDefault { app: AppType, name: String },
     /// 应用项目：同时改了供应商、MCP、Skills、提示词。
     ProfileApplied { app: AppType, name: String },
+    /// 累加式应用添加了一家。
+    Added { app: AppType, name: String },
 }
 
 struct FeedbackRecord {
@@ -1525,6 +1665,10 @@ static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(N
 /// 里，聚合换默认也一样）。
 fn switch_feedback(app: &AppType, mode: TrayMode, name: String) -> Option<TrayFeedback> {
     match mode {
+        TrayMode::Additive => Some(TrayFeedback::Added {
+            app: app.clone(),
+            name,
+        }),
         TrayMode::Direct | TrayMode::Route | TrayMode::Stack if *app == AppType::ClaudeDesktop => {
             Some(TrayFeedback::Switched {
                 app: app.clone(),
@@ -1592,6 +1736,7 @@ fn feedback_text(texts: &TrayTexts, feedback: &TrayFeedback) -> String {
         TrayFeedback::Switched { app, name } => (texts.feedback_switched, app, name),
         TrayFeedback::StackDefault { app, name } => (texts.feedback_stack_default, app, name),
         TrayFeedback::ProfileApplied { app, name } => (texts.feedback_profile, app, name),
+        TrayFeedback::Added { app, name } => (texts.feedback_added, app, name),
     };
     fill(
         template,
@@ -1703,18 +1848,35 @@ fn problem_id(problem: &TrayProblem) -> String {
     }
 }
 
-/// 应用行标题：`<应用全称> · [模式词 · ]<在用供应商>[ · <额度>][ · 快用完][ · 需要处理]`。
+/// 没有「在用的那家」的应用行上写什么：已添加几家 / 有几张卡。
+fn membership_summary(texts: &TrayTexts, snapshot: &AppSnapshot) -> Option<String> {
+    match snapshot.mode {
+        TrayMode::Additive => Some(match &snapshot.added {
+            Some(added) => fill(texts.added_count, &[("count", &added.len().to_string())]),
+            None => texts.additive_unavailable.to_string(),
+        }),
+        TrayMode::Cards => Some(fill(
+            texts.cards_count,
+            &[("count", &snapshot.providers.len().to_string())],
+        )),
+        _ => None,
+    }
+}
+
+/// 应用行标题：`<应用全称> · [模式词 · ]<在用供应商>[ · <额度>][ · 快用完][ · 需要处理]`；
+/// 没有在用那家的应用是 `<应用全称> · <已添加几家 / 几张卡>`。
 fn app_row_title(texts: &TrayTexts, snapshot: &AppSnapshot) -> String {
     let mut parts: Vec<String> = vec![app_display_name(&snapshot.app).to_string()];
     let current = snapshot.current();
     let mode_word = match snapshot.mode {
         TrayMode::Route | TrayMode::Failover => Some(texts.mode_route),
         TrayMode::Stack => Some(texts.mode_stack),
-        TrayMode::Direct => None,
+        TrayMode::Direct | TrayMode::Additive | TrayMode::Cards => None,
     };
     if let Some(word) = mode_word {
         parts.push(word.to_string());
     }
+    parts.extend(membership_summary(texts, snapshot));
     if let Some(provider) = current {
         parts.push(truncate_chars(&provider.name, MAX_NAME_CHARS));
     }
@@ -1848,6 +2010,37 @@ fn provider_rows(texts: &TrayTexts, snapshot: &AppSnapshot) -> Vec<TrayEntry> {
                 })
                 .collect()
         }
+        TrayMode::Additive => {
+            let listed: Vec<&ProviderEntry> = snapshot.providers.iter().collect();
+            let names = display_names(&listed);
+            listed
+                .iter()
+                .zip(names)
+                .map(|(p, name)| match &snapshot.added {
+                    Some(added) => TrayEntry::check(
+                        provider_id_for(app, &p.id),
+                        name,
+                        true,
+                        added.contains(&p.id),
+                    ),
+                    // 不知道哪些已添加：同主界面读不到 Pi 配置时，一律不能改。
+                    None => {
+                        TrayEntry::label(format!("info:{}:blocked:{}", app.as_str(), p.id), name)
+                    }
+                })
+                .collect()
+        }
+        TrayMode::Cards => {
+            let listed: Vec<&ProviderEntry> = snapshot.providers.iter().collect();
+            let names = display_names(&listed);
+            listed
+                .iter()
+                .zip(names)
+                .map(|(p, name)| {
+                    TrayEntry::item(format!("nav:app:{}:card:{}", app.as_str(), p.id), name)
+                })
+                .collect()
+        }
     }
 }
 
@@ -1871,6 +2064,11 @@ fn app_children(
             ),
             None => texts.header_stack.to_string(),
         }),
+        TrayMode::Additive if snapshot.added.is_none() => {
+            Some(texts.additive_unavailable.to_string())
+        }
+        TrayMode::Additive => Some(texts.header_additive.to_string()),
+        TrayMode::Cards => Some(texts.header_cards.to_string()),
     };
     if let Some(header) = header {
         children.push(TrayEntry::label(format!("info:{app}:header"), header));
@@ -2111,12 +2309,14 @@ pub struct PanelApp {
     pub name: &'static str,
     /// 在用那家的名字。
     pub current: Option<String>,
-    /// 直连 / 路由 / 聚合。
-    pub mode: &'static str,
+    /// 直连 / 路由 / 聚合；没有在用那家的应用写已添加几家 / 几张卡。
+    pub mode: String,
     /// 同一模式的机器可读值（`direct` / `route` / `stack`），面板按它给模式名上主题色。
     pub mode_kind: &'static str,
     /// 子面板标题下的说明（「路由 · 故障转移开启中」等）。
     pub header: Option<String>,
+    /// 勾着的那行写什么；为空时写「使用中」。
+    pub checked_text: Option<&'static str>,
     pub attention: Option<&'static str>,
     pub quota: Option<PanelQuota>,
     /// 还没有供应商：点这一行去添加。
@@ -2221,11 +2421,13 @@ fn cached_reset_credits(
     }
 }
 
-/// 菜单 id 里带的供应商 id：`prov:<应用>:<id>`、`nav:needs:<应用>:<id>`、`info:<应用>:blocked:<id>`。
+/// 菜单 id 里带的供应商 id：`prov:<应用>:<id>`、`nav:needs:<应用>:<id>`、`info:<应用>:blocked:<id>`、
+/// `nav:app:<应用>:card:<id>`。
 fn row_provider_id<'a>(id: &'a str, app: &str) -> Option<&'a str> {
     id.strip_prefix(&format!("prov:{app}:"))
         .or_else(|| id.strip_prefix(&format!("nav:needs:{app}:")))
         .or_else(|| id.strip_prefix(&format!("info:{app}:blocked:")))
+        .or_else(|| id.strip_prefix(&format!("nav:app:{app}:card:")))
         .filter(|id| !id.is_empty())
 }
 
@@ -2341,17 +2543,21 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             app: app.to_string(),
             name: app_display_name(&snapshot.app),
             current: snapshot.current().map(|p| p.name.clone()),
-            mode: match snapshot.mode {
-                TrayMode::Direct => texts.header_direct,
-                TrayMode::Route | TrayMode::Failover => texts.mode_route,
-                TrayMode::Stack => texts.mode_stack,
-            },
+            mode: membership_summary(&texts, snapshot).unwrap_or_else(|| {
+                match snapshot.mode {
+                    TrayMode::Route | TrayMode::Failover => texts.mode_route,
+                    TrayMode::Stack => texts.mode_stack,
+                    _ => texts.header_direct,
+                }
+                .to_string()
+            }),
             mode_kind: match snapshot.mode {
-                TrayMode::Direct => "direct",
+                TrayMode::Direct | TrayMode::Additive | TrayMode::Cards => "direct",
                 TrayMode::Route | TrayMode::Failover => "route",
                 TrayMode::Stack => "stack",
             },
             header,
+            checked_text: (snapshot.mode == TrayMode::Additive).then_some(texts.added_label),
             attention: snapshot.needs_attention.then_some(texts.needs_attention),
             quota,
             add_id: snapshot
@@ -3036,7 +3242,7 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
 enum ClickOutcome {
     /// 切过去了；`mode` 是点击时的模式，决定要不要出反馈行。
     Switched { mode: TrayMode, name: String },
-    /// 已经在用 / 故障转移开着（只读）：什么都不做。
+    /// 已经在用 / 已添加 / 故障转移开着（只读）：什么都不做。
     Unchanged,
     /// 直连下点了需要路由的那家：不直接切。
     NeedsRoute,
@@ -3053,6 +3259,10 @@ fn handle_provider_click(
         return Ok(ClickOutcome::Unchanged);
     };
     let state = app_state.inner();
+    let mode = tray_mode(state, app_type);
+    if mode == TrayMode::Additive {
+        return add_provider_from_tray(state, app_type, provider_id);
+    }
     let current = crate::mode::current::provider_for(
         &state.db,
         app_type,
@@ -3061,7 +3271,6 @@ fn handle_provider_click(
     if current.as_deref() == Some(provider_id) {
         return Ok(ClickOutcome::Unchanged);
     }
-    let mode = tray_mode(state, app_type);
     if mode == TrayMode::Failover {
         log::info!(
             "{} 的故障转移开着，托盘只读，不切换",
@@ -3080,6 +3289,33 @@ fn handle_provider_click(
     Ok(ClickOutcome::Switched {
         mode,
         name: provider.name,
+    })
+}
+
+/// 累加式应用点一家：和主界面的「添加 / 启用」同一条路（Kimi 的添加不改默认模型，其他走
+/// `switch`）。托盘只加不减：移除要确认，默认那家还不能移除，这些都留在主界面。
+fn add_provider_from_tray(
+    state: &AppState,
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<ClickOutcome, AppError> {
+    let rows = state.db.get_all_providers(app_type.as_str())?;
+    let provider = rows
+        .get(provider_id)
+        .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+    let addable = added_provider_ids(&state.db, app_type, &rows)
+        .is_some_and(|added| !added.iter().any(|id| id == provider_id));
+    if !addable {
+        return Ok(ClickOutcome::Unchanged);
+    }
+    if *app_type == AppType::Kimi {
+        crate::services::ProviderService::add_to_live_config(state, app_type.clone(), provider_id)?;
+    } else {
+        crate::services::ProviderService::switch(state, app_type.clone(), provider_id)?;
+    }
+    Ok(ClickOutcome::Switched {
+        mode: TrayMode::Additive,
+        name: provider.name.clone(),
     })
 }
 
@@ -3223,7 +3459,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     let mut usage_futures = Vec::new();
 
     for app_type in TRAY_APPS.iter() {
-        if !visible_apps.is_visible(app_type) {
+        if !visible_apps.is_visible(app_type) || !has_current_provider(app_type) {
             continue;
         }
 
@@ -3421,7 +3657,7 @@ mod tests {
     }
 
     #[test]
-    fn tray_lists_switch_apps_in_sidebar_order_without_additive_apps() {
+    fn tray_lists_every_app_in_sidebar_order() {
         let names: Vec<&str> = TRAY_APPS.iter().map(app_display_name).collect();
         assert_eq!(
             names,
@@ -3430,12 +3666,28 @@ mod tests {
                 "Claude Desktop",
                 "Codex",
                 "Gemini CLI",
-                "Grok Build"
+                "Grok Build",
+                "OpenCode",
+                "OpenClaw",
+                "Hermes",
+                "Pi",
+                "MiniMax Code",
+                "Kimi Code",
+                "DeepSeek Harness",
+                "Antigravity",
+                "Oh My Pi",
             ]
         );
-        for app in TRAY_APPS {
-            assert!(!app.is_additive_mode(), "{app:?} 是累加式应用，不进托盘");
-        }
+        // 新应用接进来时别再漏掉托盘。
+        let all: Vec<AppType> = AppType::all().collect();
+        assert!(all.iter().all(|app| TRAY_APPS.contains(app)));
+    }
+
+    #[test]
+    fn apps_without_a_current_provider_are_additive_or_antigravity() {
+        assert!(has_current_provider(&AppType::Claude));
+        assert!(!has_current_provider(&AppType::OpenCode));
+        assert!(!has_current_provider(&AppType::Agy));
     }
 
     #[test]
@@ -4303,11 +4555,100 @@ mod tests {
             providers,
             queue: Vec::new(),
             stack_members: Vec::new(),
+            added: None,
             quota: None,
             service_down: false,
             needs_attention: false,
             profiles: None,
         }
+    }
+
+    fn additive(added: Option<Vec<&str>>) -> AppSnapshot {
+        let mut snapshot = snapshot(
+            AppType::OpenCode,
+            TrayMode::Additive,
+            vec![entry("a", "Alpha"), entry("b", "Beta")],
+        );
+        snapshot.current_id = None;
+        snapshot.added = added.map(|ids| ids.into_iter().map(str::to_string).collect());
+        snapshot
+    }
+
+    #[test]
+    fn managed_flag_decides_what_is_added_for_apps_without_a_live_read() {
+        let db = crate::database::Database::memory().unwrap();
+        let row = |id: &str, managed: serde_json::Value| {
+            let mut row = provider(
+                serde_json::json!({ "liveConfigManaged": managed }),
+                serde_json::json!({}),
+            );
+            row.id = id.to_string();
+            (id.to_string(), row)
+        };
+        let rows: indexmap::IndexMap<String, Provider> = [
+            row("in", serde_json::json!(true)),
+            row("out", serde_json::json!(false)),
+        ]
+        .into_iter()
+        .collect();
+
+        for app in [AppType::Mcode, AppType::Kimi, AppType::Dsh] {
+            assert_eq!(
+                added_provider_ids(&db, &app, &rows),
+                Some(vec!["in".to_string()]),
+                "{app:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn additive_rows_check_what_is_added_and_click_to_add() {
+        let snapshot = additive(Some(vec!["a"]));
+        assert_eq!(app_row_title(&zh(), &snapshot), "OpenCode · 已添加 1 家");
+        assert_eq!(
+            provider_rows(&zh(), &snapshot),
+            vec![
+                TrayEntry::check("prov:opencode:a", "Alpha", true, true),
+                TrayEntry::check("prov:opencode:b", "Beta", true, false),
+            ]
+        );
+        assert_eq!(
+            switch_feedback(&AppType::OpenCode, TrayMode::Additive, "Beta".into()),
+            Some(TrayFeedback::Added {
+                app: AppType::OpenCode,
+                name: "Beta".into()
+            })
+        );
+    }
+
+    #[test]
+    fn additive_rows_cannot_be_clicked_when_the_config_is_unreadable() {
+        let snapshot = additive(None);
+        assert_eq!(app_row_title(&zh(), &snapshot), "OpenCode · 读不到配置文件");
+        assert_eq!(
+            provider_rows(&zh(), &snapshot),
+            vec![
+                TrayEntry::label("info:opencode:blocked:a", "Alpha"),
+                TrayEntry::label("info:opencode:blocked:b", "Beta"),
+            ]
+        );
+    }
+
+    #[test]
+    fn antigravity_cards_open_the_app_page_instead_of_switching() {
+        let mut snapshot = snapshot(AppType::Agy, TrayMode::Cards, vec![entry("a", "Alpha")]);
+        snapshot.current_id = None;
+        assert_eq!(app_row_title(&zh(), &snapshot), "Antigravity · 1 张卡片");
+        let rows = provider_rows(&zh(), &snapshot);
+        assert_eq!(rows, vec![TrayEntry::item("nav:app:agy:card:a", "Alpha")]);
+        assert_eq!(
+            parse_nav_id("nav:app:agy:card:a"),
+            Some(TrayNavigation {
+                app: Some("agy".to_string()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(row_provider_id("nav:app:agy:card:a", "agy"), Some("a"));
     }
 
     fn model(problems: &[TrayProblem], apps: &[AppSnapshot]) -> Vec<TrayEntry> {

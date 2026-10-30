@@ -73,6 +73,8 @@ export interface PanelApp {
   mode: string;
   modeKind: AppMode;
   header: string | null;
+  /** 勾着的那行写什么；为空时写「使用中」 */
+  checkedText: string | null;
   attention: string | null;
   quota: PanelQuota | null;
   addId: string | null;
