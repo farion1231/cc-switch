@@ -247,7 +247,7 @@ export const setApiKeyInConfig = (
 
 // ========== Codex base_url utils ==========
 
-const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
+const TOML_SECTION_HEADER_PATTERN = /^\s*\[{1,2}([^\]\r\n]+)\]{1,2}\s*$/;
 const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
 // 点分键的一段（基本字符串、字面字符串或裸键）及其后的 "." 或结尾
 const TOML_DOTTED_KEY_SEGMENT_PATTERN =

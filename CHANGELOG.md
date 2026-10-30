@@ -5,6 +5,65 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.22] - 2026-10-30
+
+This release adds DeepSeek Harness as the 14th managed app: providers are written to its Web and Desktop profiles together, MCP, Skills and the global prompt are synced, sessions can be browsed, the Apps page installs, upgrades and uninstalls it, a DeepSeek account can be signed in from the Auth Center with its balance shown, and session usage is imported. Oh My Pi session usage is imported too. Open Terminal gains a skip-permissions option, extra arguments and a Codex launch path; WebDAV settings can be cleared; Skills can open their folder and Discover rows open their docs; Copilot Claude models go through native `/v1/messages` so prompt caching works. Fixes cover Claude account switching on macOS with OAuth MCP servers, adding Claude accounts behind the global proxy, Claude Desktop defaulting new sessions to the Fable tier, MiniMax's exhausted weekly window disappearing, balances of inactive providers not refreshing, proxy requests that loop back into the proxy, Gemini thought signatures and Vertex tool turns, xAI rejecting Codex 0.163's `include` marker, and oversized error bodies stored in the usage log.
+
+**Stats**: 56 commits | 221 files changed | +15498 insertions | -1173 deletions
+
+### Added
+
+- **DeepSeek Harness** (#8795, #8986, 2baa68621, dfa291237, efb955bd1, f283a55f6): New additive app `dsh` (database 23 → 24 adds `enabled_dsh` to MCP and Skills). Providers (OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, reusing the Pi vendor presets) are written to the `cordis.patch.yml` of the `web` and `desktop` profiles together (both are created when missing, plus any initialized `headless` / `acp` profile), with the API key kept in `$DSH_HOME/.credentials.yaml`; other plugin config and unknown fields are preserved, writes roll back on failure, a profile whose copy has diverged refuses edits, and the factory profile commented out with `[]` can be written the first time. stdio / Streamable HTTP MCP, Skills and the global prompt are synced; JSONL and multi-frame zstd sessions are readable (thinking, tool calls, compaction replacements, `DSH_HOME`). The Apps page installs, upgrades (`--engine-strict`) and uninstalls `@deepseek-ai/dsh` via npm. A DeepSeek account can be signed in from the Auth Center (browser OAuth, shared by Web and Desktop) with its balance and granted credit; the add dialog offers "DeepSeek official sign-in", and a signed-in account appears as a read-only official card in "Added" (derived from the sign-in, never stored or synced). Session usage is imported incrementally, with account-routed requests shown as "DeepSeek account (OAuth)". The shared model editor of OpenCode, MiniMax Code and DeepSeek Harness now lays out capability switches and context / max output fields like Pi and Kimi, and DSH gets structured thinking levels and per-model compatibility options. No local routing.
+- **Oh My Pi Session Usage** (#9046, fixes #8939): The Pi importer becomes a shared engine with a flavor; Oh My Pi gets its own app type and data source. It skips the fixed-width title slot, bills `model_usage` entries recorded outside the conversation, uses the measured duration for latency, counts subagent sessions older than the first sync, and imports only files opening with its title slot when both apps resolve the same store. Pi's identities and cursors are unchanged.
+- **Open Terminal: Skip Permissions and Extra Arguments** (03b475fb8, ebb00da11): A checkbox starts Claude Code / Antigravity with `--dangerously-skip-permissions` (Codex: `--dangerously-bypass-approvals-and-sandbox`), and an optional "Extra arguments" field appends flags. Both apply to that launch only, are remembered per app after the terminal opens and are never written to config. Arguments split on whitespace with single / double quotes (no backslash escapes), at most 16; on macOS / Linux each is quoted for the user's shell (fish quoted separately, a leading `=` quoted for zsh), on Windows each goes through a quoted batch variable and values with `"` `%` `^` are refused; the launcher uses `setlocal DisableDelayedExpansion`.
+- **Open a Codex Terminal from a Card** (6776bc06b): Third-party cards with their own route launch `codex -c ...` (the key through `env_key`, never the command line), neutralizing keys the current provider left where possible and refusing when a leftover cannot be neutralized; the current direct card, or an official / default card that is the current proxy route, launches plain `codex`. Every launch sets `CODEX_HOME` to the managed config dir.
+- **Clear the WebDAV Config** (7201d81bf, refs #8977): A "Clear config" button behind a confirmation removes the device-local URL, username, password and remote folder; uploaded data is left alone. The auto-sync worker re-reads settings after taking the sync lock, so an upload queued behind a clear exits.
+- **Skills: Open Folder, Copy Name, Discover Docs** (#8993, 0b8a53e37, refs #9039): Installed rows get "Open folder" in the ⋯ menu (replacing "Copy directory name") and copy the skill name on click; Discover rows (configured repos and skills.sh) get an "Open docs" button for `readmeUrl`, falling back to the repo page.
+- **Astron Coding Plan for Claude Code** (12e9fe53f, refs #9036): The `/anthropic` endpoint with `astron-code-latest` on every tier and `CLAUDE_CODE_MAX_CONTEXT_TOKENS=92160`; search aliases 讯飞 / 星火 / spark.
+
+### Changed
+
+- **Copilot Claude Models on Native `/v1/messages`** (#8908): Anthropic models whose live `/models` entry lists `/v1/messages` are passed through natively instead of bridged to `/chat/completions`, which dropped `cache_control` and broke prefix caching at Claude Code's mid-conversation system messages (measured ~35% → ~95% cache hits on long sessions). Thinking blocks are stripped only on OpenAI-format bridges; Copilot is covered by the thinking rectifiers.
+- **Skill Repo Discovery Per Repo** (#8907, fixes #1426): Adding, enabling, disabling or removing a repo discovers only that repo; successful results are cached for 10 minutes and the refresh button bypasses the cache.
+- **Bound Claude Official Quota in Tray and Usage Settings** (67cce7ad3): The tray gets an account-scoped Claude account source (on by default, refreshed on hover, no fallback to the default login's cache); the usage settings dialog shows bound cards as enabled and tests against the bound account.
+- **Claude Desktop Gateway Auth** (#5123, #7488, fixes #7482): The token is accepted from `Authorization: Bearer` or `x-api-key` (Bearer preferred), compared in constant time, with one 401 for every failure.
+- **Claude Accounts with the Config Dir in WSL** (0133facca): The Auth Center explains that Claude accounts are not supported yet and disables Add account / Re-login; the card form and subtitle say so. The help text now says switching changes running sessions too.
+- **Help Tips and Tooltips** (#8593): MCP / Skills matrix cells no longer show the app name tooltip on top of the status tooltip (the name shows on the header icon); help cards open to the right, are capped at 300px, wrap long paths and scroll inside; the OMO form uses the shared `HelpTip`.
+- **Auth Center Section Jump** (#8964): Jumping to a section scrolls only the panel body, re-aligns while sections above load, and stops when the user scrolls.
+- **Additive App Config Read Errors** (c1933fd04, refs #9044): OpenCode, OpenClaw and Hermes show the read error above the list or empty state (like Pi), and a failed add restores or deletes the row instead of leaving an orphan.
+- **Expired Managed Account Hint** (16b6575d0, refs #7573): ChatGPT and xAI managed accounts say "Sign in to this account again in Accounts" instead of naming a command that does not exist.
+- **Sidebar Today Usage** (7f82b85b5): Inset to line up with the mode badge text.
+- **Codex Official Model List Diagnostics** (11485ee78, refs #8966): Failures log the reqwest source chain.
+- **Presets**: OspreyAI sponsor presets for Claude Code, Claude Desktop, Codex, OpenCode, OpenClaw, Hermes and Pi (9433caabe); TokenFlux moves to tokenflux.com with tokenflux.dev as a fallback endpoint (839efbe24); StreamLake API key links carry `?channel=ccswitch` (ebdedbee4); DIT.ai, PatewayAI and AIGoCode promotion copy refreshed (03e19fe73, c2aa4e0b2, 3e75b96e1).
+
+### Fixed
+
+- **Claude Account Switch Refused on macOS with OAuth MCP Servers** (6c998b4dc, refs #9002): The default slot keeps `mcpOAuth`, pushing the hex payload past the 4032-byte `security -i` line; large payloads now go through argv like Claude Code does.
+- **Adding a Claude Account Failed with 403 Behind the Global Proxy** (33aaf8e74, refs #9038): `claude auth login`, `claude -p /usage` and `claude auth status` get `HTTPS_PROXY` / `HTTP_PROXY` (both cases) and a loopback `NO_PROXY`; SOCKS is skipped.
+- **Claude Desktop Defaulted New Sessions to Fable** (#7491, fixes #7457, #8973): `inferenceModels` is written in the UI tier order Sonnet → Opus → Fable → Haiku in direct mode, mapped routes and the native card's default routes.
+- **MiniMax Weekly Window Vanished When Exhausted** (#8124, fixes #8123): `current_weekly_status=2` is shown as an exhausted weekly tier; status 3 stays hidden.
+- **Balances of Inactive Providers Not Refreshed** (#8342, fixes #8335): The auto query interval applies to every provider, not only the current one.
+- **Requests Looping Back into the Proxy** (#8598): An upstream URL resolving to the proxy's own listener fails with a configuration error instead of forwarding into itself.
+- **Gemini `thoughtSignature` Inside `functionCall`** (#6690, df753b5ef, refs #6833): Rebuilt function calls carry the replayed signature at Part level; for Gemini 3+ the first unsigned `functionCall` of each step in the current turn gets the skip signature.
+- **Vertex Gemini Rejected Tool Turns with Trailing Text** (064ae4220, refs #8988): `functionResponse` parts and the rest of a user message become separate user contents, in every message so history stays byte-stable.
+- **WebSearch `blocked_domains` Rejected on Responses** (326b394be, refs #8979): Passed through as `filters.blocked_domains` on API-key Responses routes; the ChatGPT Codex OAuth route still refuses it explicitly.
+- **xAI Rejected Codex 0.163+ Requests** (#8997, fixes #8996): `output.encrypted_content` is dropped from `include` for xAI only.
+- **Codex Section Detection Missed `[[array]]` Headers** (#9029, fixes #9023).
+- **OpenCode V2 Connectivity Check** (ed494fbc7, refs #8969): Reads `settings.baseURL` and the native package names.
+- **Huge Error Bodies Stored in the Usage Log** (#9010, part of #6706): `error_message` is capped at 4096 characters on write; existing rows are unchanged.
+- **Windows Tray Clicks Under Third-Party Hosts** (#8729, closes #8565): When the icon rect is unavailable (e.g. MyDockFinder), the click is synthesized at the cursor.
+- **Kimi Upgrade Stuck on Versions Before 0.43.0** (da2635118, refs #9032): Older builds go through their package manager or rerun the official installer instead of `kimi upgrade --yes`.
+- **A CLI That Runs but Prints No Version** (e78f641ca): Reported as found but not runnable instead of installed-but-"not installed"; only regular files count as installs.
+- **Antigravity Sessions Shadowed by Another Root's Index Entry** (115677a1c, refs #8941): A transcript-backed entry replaces an index-only one, so usage is imported and the session opens.
+
+### Docs
+
+- Guide to switching Claude subscription accounts (d288057f3), linked from the v4.0.21 notes (dd81bc95b); DIT.ai moved ahead of OpenModel in the README sponsor table (ee8ee25eb).
+
+### Repository
+
+- Contributing guide requires a self-written Human Note (df511e82e); WSL2 checks are manual-only and Antigravity SQLite tests skip when the temp dir lacks SQLite support (03ec9dbb6); a Windows path comparison in an Antigravity test (4ed071500).
+
 ## [4.0.21] - 2026-10-26
 
 This release lets Claude Code switch between several official Claude subscription accounts: accounts are added in the Auth Center through Claude Code's own `claude auth login`, an official card picks one, switching to that card moves its login into Claude Code's default sign-in, and Open Terminal on the card starts `claude` pinned to that account. Bound cards and the Auth Center show each account's plan and remaining quota. Open Terminal becomes a button on the card, Codex model rows can be dragged into order, and lightweight mode survives a restart. Fixes cover managed ChatGPT accounts shown as expired after a restart, Codex routing to the wrong `base_url`, Codex MCP entries carrying `timeout` / `autoApprove`, OpenCode and Grok Build installs under npm 12, Kimi Code usage times, and `models.yml` values with `&`, `*` or `!` refused for Oh My Pi.
