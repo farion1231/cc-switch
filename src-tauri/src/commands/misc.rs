@@ -4250,8 +4250,8 @@ fn locate_default_tool(
             if path_default.as_ref() == Some(&real) {
                 return Ok(candidate);
             }
-            if seen.insert(real) {
-                candidates.push(candidate);
+            if seen.insert(real.clone()) {
+                candidates.push((candidate, real));
             }
         }
     }
@@ -4260,13 +4260,62 @@ fn locate_default_tool(
         return Ok(path);
     }
 
+    #[cfg(not(target_os = "windows"))]
+    if candidates.len() > 1 {
+        if let Some(target) = candidates
+            .iter()
+            .find_map(|(candidate, real)| mise_shim_target(tool, candidate, real, deadline))
+        {
+            return Ok(target);
+        }
+    }
+
     match candidates.as_slice() {
-        [only] => Ok(only.clone()),
+        [(only, _)] => Ok(only.clone()),
         [] => Err(format!("{tool} is not installed")),
         _ => Err(format!(
             "{tool} is installed but its default installation is ambiguous"
         )),
     }
+}
+
+/// mise 的 shim 是指向 mise 本体的软链，canonicalize 后和它调度的真身不是同一个文件，
+/// 按真身去重时 shim 与 `installs/node/<版本>/bin/<tool>` 会被算成两处安装。登录 shell
+/// 问不出默认入口时，让 mise 自己说 shim 现在指向哪个文件（按用户的 mise 配置选版本，
+/// 与终端里跑这个 shim 的结果一致），直接用那个真身。不是 mise shim 或解析失败返回 None。
+#[cfg(not(target_os = "windows"))]
+fn mise_shim_target(
+    tool: &str,
+    candidate: &Path,
+    real: &Path,
+    deadline: Option<CommandDeadline>,
+) -> Option<std::path::PathBuf> {
+    use std::ffi::OsStr;
+    use std::process::{Command, Stdio};
+
+    let is_mise_shim = candidate.parent().and_then(Path::file_name) == Some(OsStr::new("shims"))
+        && real.file_name() == Some(OsStr::new("mise"));
+    if !is_mise_shim {
+        return None;
+    }
+
+    let mut cmd = Command::new(real);
+    cmd.args(["which", tool])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // GUI 进程的工作目录是 `/`；在 home 下解析，与新开终端看到的 mise 配置一致。
+    if let Some(home) = dirs::home_dir() {
+        cmd.current_dir(home);
+    }
+    isolate_child_process_group(&mut cmd);
+    let out = wait_child_output(cmd.spawn().ok()?, deadline).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let raw = decode_command_output(&out.stdout);
+    let target = std::path::PathBuf::from(first_abs_path_line(&raw)?);
+    target.is_file().then_some(target)
 }
 
 #[derive(Clone, Copy)]
@@ -11149,6 +11198,52 @@ mod tests {
 
         assert!(paths.contains(&home.join(".local/share/mise/shims")));
         assert!(paths.contains(&node_bin));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn mise_shim_target_resolves_shim_through_mise_which() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let root = temp.path();
+        let node_bin = root.join("installs/node/22.12.0/bin");
+        std::fs::create_dir_all(&node_bin).expect("node bin should be created");
+        let target = node_bin.join("claude");
+        std::fs::write(&target, "").expect("target should be written");
+
+        let mise_dir = root.join("bin");
+        std::fs::create_dir_all(&mise_dir).expect("mise dir should be created");
+        let mise = mise_dir.join("mise");
+        std::fs::write(
+            &mise,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = which ] && [ \"$2\" = claude ] && echo '{}'\n",
+                target.display()
+            ),
+        )
+        .expect("fake mise should be written");
+        std::fs::set_permissions(&mise, std::fs::Permissions::from_mode(0o755))
+            .expect("fake mise should be executable");
+
+        let shims = root.join("shims");
+        std::fs::create_dir_all(&shims).expect("shims dir should be created");
+        let shim = shims.join("claude");
+        std::os::unix::fs::symlink(&mise, &shim).expect("shim symlink should be created");
+        let shim_real = std::fs::canonicalize(&shim).expect("shim should canonicalize");
+
+        assert_eq!(
+            mise_shim_target("claude", &shim, &shim_real, None),
+            Some(target.clone())
+        );
+        // 不是 mise shim 的候选不去问 mise。
+        let target_real = std::fs::canonicalize(&target).expect("target should canonicalize");
+        assert_eq!(
+            mise_shim_target("claude", &target, &target_real, None),
+            None
+        );
+        // mise 说不出路径（工具没装在当前版本里）时不猜。
+        assert_eq!(mise_shim_target("codex", &shim, &shim_real, None), None);
     }
 
     #[cfg(not(target_os = "windows"))]
