@@ -12,6 +12,7 @@
 //! - `session_meta` → 提取唯一 thread_id（子代理的 session_id 指向父线程）
 //! - `turn_context` / `event_msg` (type=thread_settings_applied) → 提取当前 model
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
+//! - `token_usage_record` → 随后的 token_count last 为 0 时补记这次用量
 
 use crate::codex_config::get_codex_config_dir;
 use crate::codex_rollout_file;
@@ -205,6 +206,9 @@ struct ParsedTokenEvent {
     signature: TokenUsageSignature,
     delta: DeltaTokens,
     event_index: Option<u32>,
+    /// 不占用 `token_count` 序号的用量。远程压缩只写 `token_usage_record` 时用它，
+    /// 避免把后面每次请求的 `event_index` 都往后挤。
+    request_suffix: Option<String>,
     model: String,
     timestamp: Option<String>,
     /// 按事件时间戳估出来的请求耗时（含首字等待）和首字时间；估不出来为 None。
@@ -461,6 +465,8 @@ struct ParsedCodexFile {
     root_timestamp: Option<DateTime<Utc>>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
+    /// `token_usage_record` 后面紧跟 last 全 0 的 `token_count` 时补记的用量。
+    usage_record_events: Vec<ParsedTokenEvent>,
     line_offset: i64,
     /// Bytes actually read, including an incomplete final record. Persisted in
     /// `last_byte_offset` only to detect file changes, never used as a seek
@@ -904,6 +910,77 @@ fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) ->
     }
 }
 
+fn usage_matches(last: &CumulativeTokens, usage: &CumulativeTokens) -> bool {
+    last.input == usage.input
+        && last.cached_input == usage.cached_input
+        && last.cache_write_input == usage.cache_write_input
+        && last.output == usage.output
+}
+
+fn usage_is_zero(usage: &CumulativeTokens) -> bool {
+    usage.input == 0 && usage.cached_input == 0 && usage.cache_write_input == 0 && usage.output == 0
+}
+
+fn delta_from_usage(usage: &CumulativeTokens) -> DeltaTokens {
+    let input = usage.input.min(u32::MAX as u64) as u32;
+    let cached_input = usage.cached_input.min(usage.input).min(u32::MAX as u64) as u32;
+    let fresh_input = input.saturating_sub(cached_input);
+    DeltaTokens {
+        input,
+        cached_input,
+        cache_write_input: (usage.cache_write_input.min(u32::MAX as u64) as u32).min(fresh_input),
+        output: usage.output.min(u32::MAX as u64) as u32,
+    }
+}
+
+fn signature_for_last_usage(usage: &CumulativeTokens) -> TokenUsageSignature {
+    TokenUsageSignature {
+        total: None,
+        last: Some(TokenCountersSignature {
+            input: Some(usage.input),
+            cached_input: Some(usage.cached_input),
+            output: Some(usage.output),
+            reasoning_output: None,
+            total: Some(usage.input.saturating_add(usage.output)),
+        }),
+    }
+}
+
+struct PendingUsageRecord {
+    key: String,
+    usage: CumulativeTokens,
+    timestamp: Option<String>,
+    model: String,
+}
+
+fn push_unmatched_usage(
+    events: &mut Vec<ParsedTokenEvent>,
+    pending: PendingUsageRecord,
+    flush_line_offset: i64,
+    has_billable_tokens: &mut bool,
+) {
+    let delta = delta_from_usage(&pending.usage);
+    if delta.is_zero() {
+        return;
+    }
+    *has_billable_tokens = true;
+    // 事件挂在补偿它的 token_count 行上而不是记录行：记录行可能在更早的
+    // 同步轮就被游标越过（首轮无可计费内容也推进游标），挂回记录行会被
+    // `line_offset <= last_offset` 门永久丢弃。配对 token_count 行必然晚于
+    // 任何已有游标（每轮全量重解析、追加写文件），且 `usage:<key>` 请求 ID
+    // 保证重解析不重复入账。
+    events.push(ParsedTokenEvent {
+        line_offset: flush_line_offset,
+        signature: signature_for_last_usage(&pending.usage),
+        delta,
+        event_index: None,
+        request_suffix: Some(format!("usage:{}", pending.key)),
+        model: pending.model,
+        timestamp: pending.timestamp,
+        timing: None,
+    });
+}
+
 fn update_high_water(high_water: &mut CumulativeTokens, current: &CumulativeTokens) {
     high_water.input = high_water.input.max(current.input);
     high_water.cached_input = high_water.cached_input.max(current.cached_input);
@@ -1191,6 +1268,8 @@ fn parse_codex_file_with_index(
     let mut history_base_thread_id = None;
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
+    let mut usage_record_events = Vec::new();
+    let mut pending_usage: Option<PendingUsageRecord> = None;
     let mut line_offset = 0i64;
     let mut observed_bytes = 0i64;
     let mut has_billable_tokens = false;
@@ -1227,7 +1306,8 @@ fn parse_codex_file_with_index(
         let is_event_msg = line.contains("\"event_msg\"");
         let is_turn_context = line.contains("\"turn_context\"");
         let is_session_meta = line.contains("\"session_meta\"");
-        if !is_event_msg && !is_turn_context && !is_session_meta {
+        let is_usage_record = line.contains("\"token_usage_record\"");
+        if !is_event_msg && !is_turn_context && !is_session_meta && !is_usage_record {
             continue;
         }
         if is_event_msg
@@ -1395,6 +1475,22 @@ fn parse_codex_file_with_index(
                 let last = info
                     .get("last_token_usage")
                     .and_then(parse_cumulative_tokens);
+                if let Some(pending) = pending_usage.take() {
+                    // 对得上的 last 已经由这条 token_count 入账。last 为 0 是远程压缩
+                    // 把本次用量只写在 token_usage_record 里之后的空快照。其它对不上的
+                    // 记录只用于耗时，不能再记一行。
+                    let covered = last
+                        .as_ref()
+                        .is_some_and(|last| usage_matches(last, &pending.usage));
+                    if !covered && last.as_ref().is_some_and(usage_is_zero) {
+                        push_unmatched_usage(
+                            &mut usage_record_events,
+                            pending,
+                            line_offset,
+                            &mut has_billable_tokens,
+                        );
+                    }
+                }
                 if total.is_none() && last.is_none() {
                     continue;
                 }
@@ -1499,9 +1595,40 @@ fn parse_codex_file_with_index(
                     signature,
                     delta,
                     event_index: nonzero_index,
+                    request_suffix: None,
                     model: current_model.clone(),
                     timestamp,
                     timing,
+                });
+            }
+            "token_usage_record" => {
+                pending_usage = None;
+                let Some(payload) = value.get("payload") else {
+                    continue;
+                };
+                let Some(usage) = payload.get("usage").and_then(parse_cumulative_tokens) else {
+                    continue;
+                };
+                if usage_is_zero(&usage) {
+                    continue;
+                }
+                let response_id = payload
+                    .get("response_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let key = if response_id.is_empty() {
+                    format!("line{line_offset}")
+                } else {
+                    response_id.to_string()
+                };
+                pending_usage = Some(PendingUsageRecord {
+                    key,
+                    usage,
+                    timestamp: value
+                        .get("timestamp")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                    model: current_model.clone(),
                 });
             }
             _ => {}
@@ -1515,6 +1642,7 @@ fn parse_codex_file_with_index(
         root_timestamp,
         parent,
         token_events,
+        usage_record_events,
         line_offset,
         observed_bytes: compressed_size
             .and_then(|size| i64::try_from(size).ok())
@@ -2046,7 +2174,7 @@ fn sync_single_codex_file(
     }
 
     let mut result = CodexFileSyncResult::default();
-    let mut to_insert: Vec<(&ParsedTokenEvent, u32)> = Vec::new();
+    let mut to_insert: Vec<(&ParsedTokenEvent, String)> = Vec::new();
     for (token_offset, event) in parsed.token_events.iter().enumerate() {
         let Some(event_index) = event.event_index else {
             continue;
@@ -2060,7 +2188,16 @@ fn sync_single_codex_file(
         if event.line_offset <= last_offset {
             continue;
         }
-        to_insert.push((event, event_index));
+        to_insert.push((event, event_index.to_string()));
+    }
+    for event in &parsed.usage_record_events {
+        let Some(suffix) = event.request_suffix.as_deref() else {
+            continue;
+        };
+        if event.line_offset <= last_offset {
+            continue;
+        }
+        to_insert.push((event, suffix.to_string()));
     }
 
     // 分批事务写库：逐行 autocommit（journal_mode=delete 下每行一整套
@@ -2084,9 +2221,8 @@ fn sync_single_codex_file(
         let mut batch_imported = 0u32;
         let mut batch_skipped = 0u32;
         let mut batch_suspected = 0u32;
-        for (event, event_index) in batch {
-            let request_id =
-                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{event_index}");
+        for (event, suffix) in batch {
+            let request_id = format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{suffix}");
             match insert_codex_session_entry_on_conn(
                 &tx,
                 &request_id,
@@ -2520,6 +2656,203 @@ mod tests {
                 "rate_limits": { "limit_id": limit_id }
             }
         })
+    }
+
+    fn token_usage_record_at(
+        response_id: &str,
+        input: u64,
+        cached: u64,
+        output: u64,
+        timestamp: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "token_usage_record",
+            "payload": {
+                "response_id": response_id,
+                "usage": {
+                    "input_tokens": input,
+                    "cached_input_tokens": cached,
+                    "cache_write_input_tokens": 0,
+                    "output_tokens": output,
+                    "reasoning_output_tokens": 0,
+                    "total_tokens": input + output
+                }
+            }
+        })
+    }
+
+    fn codex_usage_rows(db: &Database) -> Result<Vec<(String, i64, i64)>, AppError> {
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT request_id, input_tokens, output_tokens
+                 FROM proxy_request_logs WHERE data_source = 'codex_session'
+                 ORDER BY request_id",
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(rows)
+    }
+
+    #[test]
+    fn remote_compaction_usage_record_is_imported_when_the_following_token_count_is_zero(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_compact", 26_705, 0, 491, "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        let result = sync_test_file(&db, &path, &[&path])?;
+
+        assert_eq!(result.imported, 1, "compaction usage must be imported");
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+        assert!(rows[0].0.ends_with(":usage:resp_compact"));
+        Ok(())
+    }
+
+    #[test]
+    fn remote_compaction_usage_record_survives_a_sync_pass_before_its_token_count(
+    ) -> Result<(), AppError> {
+        // The usage record and its compensating zero-last token_count can land
+        // in different sync passes (the token_count may lag by the whole tool
+        // execution window). The first pass has nothing billable and advances
+        // the cursor past the record; the compensating event must still be
+        // imported by the pass that finally sees the token_count.
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_compact", 26_705, 0, 491, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        let first = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(first.imported, 0, "nothing billable yet");
+
+        append_jsonl(
+            &path,
+            token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:05:02Z"),
+        );
+
+        let second = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(
+            second.imported, 1,
+            "compaction usage must be imported once its token_count arrives"
+        );
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+        assert!(rows[0].0.ends_with(":usage:resp_compact"));
+
+        // A later pass that reparses the file (any new content) must not bill
+        // the compensating event again: the record is re-discovered on every
+        // reparse, so the line-offset gate plus the `usage:<key>` request id
+        // are what keep it at exactly one row.
+        append_jsonl(
+            &path,
+            token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:06:02Z"),
+        );
+        let third = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(third.imported, 0, "compensating event must not re-import");
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn usage_record_covered_by_token_count_is_not_imported_twice() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_turn", 26_705, 1_000, 491, "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(
+                    26_705,
+                    1_000,
+                    491,
+                    26_705,
+                    1_000,
+                    491,
+                    "default",
+                    "2026-07-10T03:00:03Z",
+                ),
+            ],
+        );
+
+        let result = sync_test_file(&db, &path, &[&path])?;
+
+        assert_eq!(result.imported, 1);
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+        assert_eq!(
+            rows[0].0,
+            format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:1")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn already_scanned_compaction_stays_behind_the_cursor() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_compact", 26_705, 0, 491, "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:00:02Z"),
+            ],
+        );
+        let metadata = fs::metadata(&path).unwrap();
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO session_log_sync
+                    (file_path, last_modified, last_line_offset, last_byte_offset, last_synced_at)
+                 VALUES (?1, ?2, 100, ?3, 0)",
+                rusqlite::params![
+                    path.to_string_lossy().to_string(),
+                    metadata_modified_nanos(&metadata),
+                    i64::try_from(metadata.len()).unwrap()
+                ],
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        }
+
+        let result = sync_test_file(&db, &path, &[&path])?;
+
+        assert_eq!(result.imported, 0);
+        assert!(codex_usage_rows(&db)?.is_empty());
+        Ok(())
     }
 
     fn sync_test_file(
@@ -3756,6 +4089,19 @@ mod tests {
         supported
     }
 
+    /// 缓存是进程级的，`serial` 只互斥带标记的测试：不带标记的测试（如续写页
+    /// 解析会经 `load_parent_timeline` 缓存前序页）可能同时写入别的条目。
+    /// 数条目时只数本测试临时目录下的键，不数全局总数。
+    fn cached_parent_timelines_under(dir: &Path) -> usize {
+        replay_caches()
+            .lock()
+            .unwrap()
+            .parent_timelines
+            .keys()
+            .filter(|path| path.starts_with(dir))
+            .count()
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_parent_malformed_lines_do_not_defer_child_or_prevent_warm_skip() -> Result<(), AppError>
@@ -3845,16 +4191,16 @@ mod tests {
         });
         assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
 
-        let caches = replay_caches().lock().unwrap();
         match first_timeline {
             Some(first_timeline) => {
-                assert_eq!(caches.parent_timelines.len(), 1);
+                assert_eq!(cached_parent_timelines_under(temp.path()), 1);
+                let caches = replay_caches().lock().unwrap();
                 assert!(Arc::ptr_eq(
                     &first_timeline,
                     &caches.parent_timelines[&parent].timeline
                 ));
             }
-            None => assert!(caches.parent_timelines.is_empty()),
+            None => assert_eq!(cached_parent_timelines_under(temp.path()), 0),
         }
         Ok(())
     }
@@ -3888,10 +4234,7 @@ mod tests {
         assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 2);
 
         let expected_entries = usize::from(parent_cache_supported(&parent));
-        assert_eq!(
-            replay_caches().lock().unwrap().parent_timelines.len(),
-            expected_entries
-        );
+        assert_eq!(cached_parent_timelines_under(temp.path()), expected_entries);
         Ok(())
     }
 
@@ -3958,10 +4301,7 @@ mod tests {
             .is_empty());
         assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
         let expected_entries = usize::from(parent_cache_supported(&parent));
-        assert_eq!(
-            replay_caches().lock().unwrap().parent_timelines.len(),
-            expected_entries
-        );
+        assert_eq!(cached_parent_timelines_under(temp.path()), expected_entries);
     }
 
     #[cfg(any(unix, windows))]

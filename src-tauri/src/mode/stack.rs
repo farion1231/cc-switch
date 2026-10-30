@@ -1606,8 +1606,8 @@ mod tests {
                     ))
                     .collect::<Vec<_>>(),
                 vec![
-                    ("kimi-k3-turbo", "Kimi / kimi-k3-turbo", false),
                     ("kimi-k3", "Kimi / Kimi K3", true),
+                    ("kimi-k3-turbo", "Kimi / kimi-k3-turbo", false),
                 ]
             );
             assert!(published.iter().all(|model| desktop_keeps(&model.id)));
