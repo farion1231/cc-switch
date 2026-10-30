@@ -834,11 +834,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     auth: grokAuth(),
-    config: grokPresetConfig("TokenFlux", "https://tokenflux.dev/v1"),
+    config: grokPresetConfig("TokenFlux", "https://tokenflux.com/v1"),
     category: "aggregator",
+    endpointCandidates: [
+      "https://tokenflux.com/v1",
+      "https://tokenflux.dev/v1",
+    ],
     icon: "tokenflux",
   },
   {
