@@ -4967,7 +4967,8 @@
       "updating": "Updating…",
       "loading": "Checking quota…",
       "refresh": "Refresh quota",
-      "refreshAria": "Refresh quota for {{login}}"
+      "refreshAria": "Refresh quota for {{login}}",
+      "refreshAll": "Refresh all"
     },
     "agy": {
       "reauthNote": "Sign-in expired, can't switch to it",

@@ -4968,7 +4968,8 @@
       "updating": "更新中…",
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
-      "refreshAria": "重新整理 {{login}} 的額度"
+      "refreshAria": "重新整理 {{login}} 的額度",
+      "refreshAll": "全部重新整理"
     },
     "agy": {
       "reauthNote": "登入憑證已失效，無法切換過去",

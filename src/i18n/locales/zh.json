@@ -4967,7 +4967,8 @@
       "updating": "更新中…",
       "loading": "正在查询额度…",
       "refresh": "刷新额度",
-      "refreshAria": "刷新 {{login}} 的额度"
+      "refreshAria": "刷新 {{login}} 的额度",
+      "refreshAll": "全部刷新"
     },
     "agy": {
       "reauthNote": "登录凭据已失效，切不过去",

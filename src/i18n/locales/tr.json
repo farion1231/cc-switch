@@ -4951,7 +4951,8 @@
       "updating": "Güncelleniyor…",
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
-      "refreshAria": "{{login}} için kotayı yenileyin"
+      "refreshAria": "{{login}} için kotayı yenileyin",
+      "refreshAll": "Tümünü yenile"
     },
     "agy": {
       "reauthNote": "Oturum süresi doldu, bu hesaba geçilemiyor",
