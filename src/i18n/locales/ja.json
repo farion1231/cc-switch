@@ -4967,7 +4967,8 @@
       "updating": "更新中…",
       "loading": "残量を確認中…",
       "refresh": "残量を更新",
-      "refreshAria": "{{login}} の残量を更新"
+      "refreshAria": "{{login}} の残量を更新",
+      "refreshAll": "すべて更新"
     },
     "agy": {
       "reauthNote": "ログイン情報が失効しているため切り替えできません",
