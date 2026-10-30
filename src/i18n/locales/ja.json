@@ -4838,7 +4838,7 @@
       "sourceRepos": "リポジトリ · {{count}}",
       "reload": "リポジトリを読み直す",
       "listLabel": "インストールできる Skill",
-      "installed": "インストール済み · {{count}} アプリ",
+      "installed": "インストール済み",
       "installedAria": "{{name}} は {{count}} アプリにインストール済み。「インストール済み」で表示",
       "dirTaken": "フォルダー名は {{name}}（{{source}}）が使用中",
       "installing": "インストール中",
