@@ -232,6 +232,29 @@
         "oauthTitle": "OAuth Kimlik Doğrulama Modu",
         "oauthHint": "Google’ın resmî hizmeti kişisel OAuth kimlik doğrulaması kullanır; API anahtarı girmeniz gerekmez. İlk kullanımda oturum açmanız için tarayıcı otomatik açılır.",
         "apiKeyPlaceholder": "Gemini API Anahtarını girin"
+      },
+      "claudeAccount": {
+        "label": "Sign-in method",
+        "default": "Follow Claude Code login",
+        "defaultDescription": "The account changes with the current Claude Code login",
+        "missing": "Account not on this computer",
+        "manage": "Add or manage Claude accounts",
+        "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
+        "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
+        "claudeAccount": "Claude account",
+        "reauthBadge": "Re-login required",
+        "terminalHint": "Use via Open Terminal",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team Premium",
+          "enterprise": "Enterprise"
+        },
+        "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
+        "wslHint": "Not supported in WSL"
       }
     },
     "duplicateLiveIdsLoadFailed": "Sağlayıcı tanımlayıcıları yapılandırmadan okunamadı. Lütfen yapılandırmayı düzeltip tekrar deneyin.",
@@ -1602,13 +1625,13 @@
       "packycode": "PackyCode, CC Switch’in resmi ortağıdır. Bu bağlantıyı kullanarak kaydolun ve %10 indirimden yararlanmak için şarj sırasında \"cc-switch\" promosyon kodunu girin",
       "apikeyfun": "APIKEY.FUN, CC Switch kullanıcıları için özel bir fırsat sunuyor. Kalıcı %5'e varan yükleme indirimlerinden yararlanmak için özel bağlantı aracılığıyla kaydolun.",
       "apinebula": "APINEBULA, CC Switch kullanıcılarına özel bir indirim sunuyor: bağlantıyı kullanarak kaydolun ve %10 indirimden yararlanmak için ilk yükleme sırasında \"ccswitch\" promosyon kodunu girin.",
-      "patewayai": "PatewayAI, CC Switch kullanıcılarına özel avantajlar sunuyor. 3$ kredi almak için bu bağlantı üzerinden kaydolun.",
+      "patewayai": "PatewayAI, deneyimli yapay zekâ geliştiricilerine yönelik bir API aktarma hizmeti sağlayıcısıdır; Claude, GPT serisi ve yaygın Çin modellerinin geniş bir yelpazesini tam olarak destekler. Tüm modeller resmi, yüksek kaliteli kanallardan gelir; asla seyreltilmez veya taklit edilmez, faturalandırma ayrıntıları şeffaf ve doğrulanabilirdir. Ekonomi modunda fiyatlar orijinal fiyatın %5'ine kadar düşer. Bu bağlantı üzerinden kaydolarak ücretsiz 1$ deneme kredisi alın ve ek ücretsiz kredi için ara sıra düzenlenen kampanyalara katılın. Platform ayrıca kurumsal düzeyde eşzamanlılık, özel yönetim paneli, resmi sözleşme ve fatura desteği sunar ve 150$'a kadar iki yönlü yönlendirme yükleme ödülü verir.",
       "claudecn": "ClaudeCN, kayıtlı bir şirket tarafından işletilen, kurumsal satın alma süreçlerini kurumsal ödemeler, sözleşmeler ve uyumluluk garantileriyle destekleyen kurumsal düzeyde bir yapay zeka ağ geçididir.",
       "runapi": "RunAPI, CC Switch kullanıcılarına özel avantajlar sunar. Bu bağlantı aracılığıyla kaydolun ve ilk yüklemenizde %10 indirimin keyfini çıkarın.",
       "opencode_go": "OpenCode Go, çeşitli kodlama modellerine abonelik erişimi sunar. Plan ayrıntılarını görüntüleyin ve bu bağlantı aracılığıyla abone olun.",
       "dmxapi": "Claude Code özel modeli şimdi %66 İNDİRİM!",
       "cubence": "Cubence, CC Switch’in resmi ortağıdır. Bu bağlantıyı kullanarak kaydolun ve her yüklemede %10 indirim kazanmak için yükleme sırasında \"CCSWITCH\" promosyon kodunu girin",
-      "aigocode": "AIGoCode, CC Switch’in resmi ortağıdır. Bu bağlantıyı kullanarak kaydolun ve ilk yüklemenizde %10 bonus kredi kazanın!",
+      "aigocode": "Yalnızca token başına ödeme değil, abonelik tabanlı bir yapay zekâ kodlama platformu. Tek hesap ve tek aylık planla Claude Code, Codex ve Gemini; Çin anakarasından doğrudan bağlantı ve hızlı yanıtlar. Bu bağlantı üzerinden abone olarak %10 ek kredi kazanın!",
       "rightcode": "RightCode, CC Switch’in resmi ortağıdır. Bu bağlantıyı kullanarak kaydolun ve her yüklemede %5 bonus kredi kazanın!",
       "aicodemirror": "AICodeMirror, CC Switch’in resmi ortağıdır. %20 indirimden yararlanmak için bu bağlantıyı kullanarak kaydolun!",
       "aicoding": "AI Coding, CC Switch kullanıcılarına özel bir indirim sunuyor — ilk yüklemenizde %10 indirim!",
@@ -4351,7 +4374,6 @@
       "routing": "Yönlendirme",
       "currentDefault": "Mevcut varsayılan",
       "defaultAfterSwitch": "Geçişten sonra varsayılan",
-      "current": "Mevcut",
       "default": "Varsayılan"
     },
     "action": {
@@ -4368,7 +4390,8 @@
       "edit": "{{name}}'yi düzenleyin",
       "more": "{{name}} için diğer işlemler",
       "moveUp": "{{name}}'yi yukarı taşı",
-      "moveDown": "{{name}}'yi aşağı taşı"
+      "moveDown": "{{name}}'yi aşağı taşı",
+      "openTerminal": "Open a terminal with {{name}}"
     },
     "chip": {
       "official": "Resmi",
@@ -4680,7 +4703,11 @@
       "tags": "Etiketler",
       "tagsPlaceholder": "Virgülle ayrılmış, ör. dokümanlar, web",
       "homepage": "Ana sayfa",
-      "docs": "Dokümanlar"
+      "docs": "Dokümanlar",
+      "sseAsHttpBody": "{{apps}} only supports stdio and HTTP (Streamable HTTP), so this URL will be used as an HTTP server; it won't connect if the server only speaks SSE. If the server also offers Streamable HTTP, switch to HTTP.",
+      "sseAsHttpTitle": "{{apps}} doesn't support SSE and will connect over HTTP",
+      "sseRejectedBody": "These apps only support stdio and HTTP (Streamable HTTP), so writing to them will fail on save. Switch to HTTP, or untick these apps.",
+      "sseRejectedTitle": "SSE isn't supported by {{apps}}"
     },
     "resync": "Bu anahtarlardan her uygulamanın yapılandırmasını yeniden yazın"
   },
@@ -4881,7 +4908,10 @@
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz."
+      "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
+      "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
+      "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL."
     },
     "addAccount": "Hesap ekle",
     "accountMenu": "{{login}} için daha fazla eylem",
@@ -4933,6 +4963,21 @@
       "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",
       "switched": "Hesap değiştirildi. Yeni agy oturumları bu hesabı kullanacak.",
       "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın."
+    },
+    "claude": {
+      "addedOn": "Added {{date}}",
+      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
+      "loginExpiresOn": "Sign-in expires around {{date}}; sign in again after that",
+      "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
+      "pasteHint": "Paste the address from the browser's address bar after authorizing, or the code shown on the page.",
+      "pasteLabel": "Authorization code or address",
+      "pasteSubmit": "Submit",
+      "pasteSubmitted": "Submitted. Finishing sign-in…",
+      "pasteToggle": "Didn't come back here after authorizing?",
+      "reauthNote": "Sign-in expired. Sign in again.",
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
+      "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
+      "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
     }
   },
   "kimi": {

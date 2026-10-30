@@ -30,6 +30,7 @@ import _ikuncode from "./ikuncode.jpg";
 import _modelflare from "./modelflare.jpg";
 import _nekocode from "./nekocode-icon.png";
 import _openmodel from "./openmodel.jpg";
+import _ospreyai from "./ospreyai.png";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
 import _qiniu from "./qiniu.png";
@@ -187,6 +188,7 @@ export const iconUrls: Record<string, string> = {
   modelflare: _modelflare,
   nekocode: _nekocode,
   openmodel: _openmodel,
+  ospreyai: _ospreyai,
   pateway: _pateway,
   pipellm: _pipellm,
   qiniu: _qiniu,
