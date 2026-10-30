@@ -35,6 +35,13 @@ export interface RequestLog {
   errorMessage?: string;
   createdAt: number;
   dataSource?: string;
+  projectKey?: string;
+  projectName?: string;
+  projectPath?: string;
+  attributionSource?: string;
+  attributionConfidence?: string;
+  attributionReason?: string;
+  providerNameSnapshot?: string;
 }
 
 export interface SessionSyncResult {
@@ -119,6 +126,14 @@ export interface ProviderStats {
   requestCount: number;
   /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
   totalTokens: number;
+  /** 新增输入（已按客户端输入语义归一化，不含缓存） */
+  freshInputTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  /** 可缓存输入 = 新增输入 + 缓存写入 + 缓存命中 */
+  cacheableInputTokens?: number;
+  /** cache_read / cacheable_input，0–1；分母为 0 时 UI 显示 — */
+  cacheHitRate?: number;
   totalCost: string;
   successRate: number;
   avgLatencyMs: number;
@@ -136,11 +151,46 @@ export interface ProviderStats {
   estFirstTokenMedianMs?: number | null;
 }
 
+export interface ProjectStats {
+  projectKey: string;
+  projectName: string;
+  projectPath: string;
+  requestCount: number;
+  totalTokens: number;
+  totalCost: string;
+  freshInputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  cacheableInputTokens: number;
+  cacheHitRate: number;
+  appCount: number;
+  providerCount: number;
+  lastActiveAt: number;
+}
+
+export interface ProjectOption {
+  projectKey: string;
+  projectName: string;
+  projectPath: string;
+  requestCount: number;
+}
+
+export interface DataQualityStats {
+  totalRequests: number;
+  unknownProviderRequests: number;
+  unknownProjectRequests: number;
+}
+
 export interface ModelStats {
   model: string;
   requestCount: number;
   /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
   totalTokens: number;
+  freshInputTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cacheableInputTokens?: number;
+  cacheHitRate?: number;
   totalCost: string;
   avgCostPerRequest: string;
   successRate: number;
@@ -156,15 +206,20 @@ export interface ModelStats {
 
 export interface LogFilters {
   appType?: string;
+  /** 供应商所属客户端；providerId 只有配合 appType 才是唯一键 */
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
   model?: string;
+  projectKey?: string;
+  projectKeys?: string[];
   statusCode?: number;
   startDate?: number;
   endDate?: number;
 }
 
 /**
- * Dashboard 顶栏的全局筛选维度，作用于 Hero / 趋势图 / 三个统计 Tab。
+ * Dashboard 顶栏的全局筛选维度，作用于指标、图表、四类明细和数据质量提示。
  *
  * - `providerName` 按展示名精确匹配（与 Provider 统计列表同口径，含
  *   "Claude (Session)" 等会话占位名）；
@@ -173,8 +228,15 @@ export interface LogFilters {
  */
 export interface UsageScopeFilters {
   appType?: string;
+  /** 供应商所属客户端；providerId 只有配合 appType 才是唯一键 */
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
   model?: string;
+  /** 兼容单项目下钻；全局选择使用 projectKeys。 */
+  projectKey?: string;
+  /** 项目集合取并集；未传或空数组表示全部，空字符串成员表示未识别项目。 */
+  projectKeys?: string[];
 }
 
 export interface ProviderLimitStatus {

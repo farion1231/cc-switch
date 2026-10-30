@@ -123,13 +123,14 @@ impl Database {
         // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
         let aggregation_sql = format!(
             "INSERT OR REPLACE INTO usage_daily_rollups
-                (date, app_type, provider_id, model, request_model, pricing_model,
+                (date, app_type, provider_id, model, request_model, pricing_model, data_source,
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
-                 input_token_semantics, total_cost_usd, avg_latency_ms)
+                 input_token_semantics, total_cost_usd, avg_latency_ms,
+                 project_key, project_name, project_path, provider_name_snapshot)
             SELECT
-                d, a, p, m, rm, pm,
+                d, a, p, m, rm, pm, ds,
                 COALESCE(old.request_count, 0) + new_req,
                 COALESCE(old.success_count, 0) + new_succ,
                 COALESCE({fresh_old_input}, 0) + new_in,
@@ -142,13 +143,22 @@ impl Database {
                     THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.request_count, 0)
                           + new_lat * new_req)
                          / (COALESCE(old.request_count, 0) + new_req)
-                    ELSE 0 END
+                    ELSE 0 END,
+                pk,
+                COALESCE(NULLIF(old.project_name, ''), pname, ''),
+                COALESCE(NULLIF(old.project_path, ''), ppath, ''),
+                COALESCE(NULLIF(old.provider_name_snapshot, ''), psnap, '')
             FROM (
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
                     l.app_type as a, l.provider_id as p, l.model as m,
                     COALESCE(l.request_model, '') as rm,
                     COALESCE(l.pricing_model, '') as pm,
+                    COALESCE(l.data_source, 'proxy') as ds,
+                    l.project_key as pk,
+                    COALESCE(MAX(NULLIF(l.project_name, '')), '') as pname,
+                    COALESCE(MAX(NULLIF(l.project_path, '')), '') as ppath,
+                    COALESCE(MAX(NULLIF(l.provider_name_snapshot, '')), '') as psnap,
                     COUNT(*) as new_req,
                     SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END) as new_succ,
                     COALESCE(SUM({fresh_detail_input}), 0) as new_in,
@@ -159,12 +169,14 @@ impl Database {
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
                 FROM proxy_request_logs l
                 WHERE l.created_at < ?1 AND {effective_filter}
-                GROUP BY d, a, p, m, rm, pm
+                GROUP BY d, a, p, m, rm, pm, ds, pk
             ) agg
             LEFT JOIN usage_daily_rollups old
                 ON old.date = agg.d AND old.app_type = agg.a
                 AND old.provider_id = agg.p AND old.model = agg.m
-                AND old.request_model = agg.rm AND old.pricing_model = agg.pm"
+                AND old.request_model = agg.rm AND old.pricing_model = agg.pm
+                AND old.data_source = agg.ds
+                AND old.project_key = agg.pk"
         );
 
         conn.execute(&aggregation_sql, [cutoff])
@@ -278,6 +290,69 @@ mod tests {
                 row.get(0)
             })?;
         assert_eq!(remaining, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn rollup_keeps_project_dimension_and_snapshots() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            for (index, project) in ["/work/repo-a", "/work/repo-b"].iter().enumerate() {
+                for row in 0..2 {
+                    conn.execute(
+                        "INSERT INTO proxy_request_logs (
+                            request_id, provider_id, app_type, model,
+                            input_tokens, output_tokens, cache_read_tokens,
+                            cache_creation_tokens, total_cost_usd, latency_ms,
+                            status_code, created_at,
+                            project_key, project_name, project_path,
+                            provider_name_snapshot, attribution_source,
+                            attribution_confidence
+                        ) VALUES (?1, 'p1', 'codex', 'gpt-5.1-codex',
+                            100, 10, 20, 5, '0.01', 100, 200, ?2,
+                            ?3, ?4, ?3, 'Provider One', 'activation', 'high')",
+                        rusqlite::params![
+                            format!("rollup-project-{index}-{row}"),
+                            old_ts + index as i64 * 10 + row,
+                            project,
+                            format!("repo-{}", (b'a' + index as u8) as char),
+                        ],
+                    )?;
+                }
+            }
+        }
+
+        let deleted = db.rollup_and_prune(30)?;
+        assert_eq!(deleted, 4);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let rows: Vec<(String, String, String, String, i64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT project_key, project_name, project_path, provider_name_snapshot,
+                        request_count
+                 FROM usage_daily_rollups
+                 ORDER BY project_key",
+            )?;
+            let mapped = stmt.query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?;
+            mapped.collect::<Result<Vec<_>, _>>()?
+        };
+        assert_eq!(rows.len(), 2, "one rollup row per project");
+        assert_eq!(rows[0].0, "/work/repo-a");
+        assert_eq!(rows[0].1, "repo-a");
+        assert_eq!(rows[0].3, "Provider One");
+        assert_eq!(rows[0].4, 2);
+        assert_eq!(rows[1].0, "/work/repo-b");
+        assert_eq!(rows[1].4, 2);
         Ok(())
     }
 

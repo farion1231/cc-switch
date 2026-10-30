@@ -18,7 +18,11 @@ import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 interface ModelStatsTableProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
+  projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   refreshIntervalMs: number;
 }
@@ -26,16 +30,32 @@ interface ModelStatsTableProps {
 export function ModelStatsTable({
   range,
   appType,
+  providerAppType,
+  providerId,
   providerName,
+  projectKey,
+  projectKeys,
   model,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t, i18n } = useTranslation();
   const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
-  const { data: stats, isLoading } = useModelStats(
+  const {
+    data: stats,
+    isLoading,
+    isPlaceholderData,
+  } = useModelStats(
     range,
-    { appType, providerName, model },
+    {
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -47,10 +67,19 @@ export function ModelStatsTable({
   );
   const pagination = useClientPagination(
     rows,
-    JSON.stringify([range, appType, providerName, model]),
+    JSON.stringify([
+      range,
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    ]),
   );
 
-  if (isLoading) {
+  if (isLoading || isPlaceholderData) {
     return <div className={usageTable.skeleton} />;
   }
 
@@ -82,13 +111,14 @@ export function ModelStatsTable({
               <th className={cn(usageTable.th, usageTable.groupGap)}>
                 {t("usage.tokens")}
               </th>
+              <th className={usageTable.th}>{t("usage.cacheHitRate")}</th>
               <PerformanceHeaders />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className={usageTable.empty}>
+                <td colSpan={8} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>
@@ -116,6 +146,11 @@ export function ModelStatsTable({
                     title={fmtInt(stat.totalTokens, locale)}
                   >
                     {formatTokensCompact(stat.totalTokens, locale)}
+                  </td>
+                  <td className={usageTable.td}>
+                    {(stat.cacheableInputTokens ?? 0) > 0
+                      ? `${((stat.cacheHitRate ?? 0) * 100).toFixed(1)}%`
+                      : "—"}
                   </td>
                   <PerformanceCells stat={stat} />
                 </tr>

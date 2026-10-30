@@ -5,8 +5,22 @@ import {
   createTestQueryClient,
   renderWithQueryClient as render,
 } from "../utils/testQueryClient";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageTrendChart } from "@/components/usage/UsageTrendChart";
+
+const useUsageTrendsMock = vi.hoisted(() => vi.fn());
+
+const trendRows = [
+  {
+    date: "2026-09-30T00:00:00Z",
+    requestCount: 12,
+    totalInputTokens: 100,
+    totalOutputTokens: 50,
+    totalCacheCreationTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCost: "0.01",
+  },
+];
 
 vi.mock("recharts", async (importOriginal) => {
   const recharts = await importOriginal<typeof import("recharts")>();
@@ -40,21 +54,16 @@ vi.mock("react-i18next", () => ({
 }));
 
 vi.mock("@/lib/query/usage", () => ({
-  useUsageTrends: () => ({
-    data: [
-      {
-        date: "2026-09-30T00:00:00Z",
-        requestCount: 12,
-        totalInputTokens: 100,
-        totalOutputTokens: 50,
-        totalCacheCreationTokens: 0,
-        totalCacheReadTokens: 0,
-        totalCost: "0.01",
-      },
-    ],
-    isLoading: false,
-  }),
+  useUsageTrends: (...args: unknown[]) => useUsageTrendsMock(...args),
 }));
+
+beforeEach(() => {
+  useUsageTrendsMock.mockReset().mockReturnValue({
+    data: trendRows,
+    isLoading: false,
+    isPlaceholderData: false,
+  });
+});
 
 describe("UsageTrendChart (single metric)", () => {
   it("titles the chart with the metric picked on the metric strip", () => {
@@ -84,6 +93,51 @@ describe("UsageTrendChart (single metric)", () => {
     expect(
       screen.getByRole("heading", { name: "usage.trend.titleMetric" }),
     ).toBeInTheDocument();
+  });
+
+  it("hides the previous scope chart while the new scope is pending", () => {
+    const { container, rerender } = render(
+      <UsageTrendChart
+        range={{ preset: "7d" }}
+        metric="tokens"
+        refreshIntervalMs={0}
+      />,
+    );
+    expect(container.querySelector(".recharts-bar-rectangle")).not.toBeNull();
+
+    useUsageTrendsMock.mockReturnValue({
+      data: trendRows,
+      isLoading: false,
+      isPlaceholderData: true,
+      isFetching: true,
+    });
+    rerender(
+      <UsageTrendChart
+        range={{ preset: "30d" }}
+        projectKeys={["synthetic-project"]}
+        metric="tokens"
+        refreshIntervalMs={0}
+      />,
+    );
+    expect(container.querySelector(".animate-spin")).not.toBeNull();
+    expect(container.querySelector(".recharts-bar-rectangle")).toBeNull();
+
+    useUsageTrendsMock.mockReturnValue({
+      data: trendRows,
+      isLoading: false,
+      isPlaceholderData: false,
+      isFetching: true,
+    });
+    rerender(
+      <UsageTrendChart
+        range={{ preset: "30d" }}
+        projectKeys={["synthetic-project"]}
+        metric="tokens"
+        refreshIntervalMs={0}
+      />,
+    );
+    expect(container.querySelector(".animate-spin")).toBeNull();
+    expect(container.querySelector(".recharts-bar-rectangle")).not.toBeNull();
   });
 });
 

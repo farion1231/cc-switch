@@ -2237,6 +2237,79 @@
     "realTotalHint": "Input + Output + 缓存写入 + 缓存命中",
     "freshInput": "新增输入",
     "cacheHitRate": "缓存命中率",
+    "project": "项目",
+    "projectFilter": {
+      "selected": "已选 {{count}} 个项目",
+      "label": "项目",
+      "title": "按项目筛选",
+      "all": "全部项目",
+      "unknown": "未识别项目"
+    },
+    "projects": {
+      "apps": "应用数",
+      "providers": "供应商数",
+      "lastActive": "最后活跃",
+      "share": "占项目比例"
+    },
+    "providers": {
+      "expandModels": "展开模型占比"
+    },
+    "share": {
+      "metricLabel": "占比口径",
+      "metric": {
+        "tokens": "Token",
+        "cost": "费用",
+        "requests": "请求",
+        "cache": "缓存"
+      },
+      "providers": "供应商占比",
+      "providersAria": "项目供应商占比",
+      "models": "模型占比",
+      "modelsAria": "模型占比",
+      "modelsIn": "模型占比 · {{provider}}",
+      "cacheHit": "缓存命中 {{rate}}",
+      "requestCount": "{{value}} 次请求",
+      "total": "合计",
+      "other": "其他",
+      "allProviders": "全部供应商",
+      "requestCacheHit": "{{value}} 次请求 · 缓存命中 {{rate}}"
+    },
+    "cacheBreakdown": {
+      "models": "模型输入占比",
+      "modelsIn": "模型输入占比 · {{provider}}",
+      "providersInput": "供应商输入占比",
+      "weightedRate": "加权缓存命中率",
+      "readOfInput": "命中 {{read}} / 输入 {{input}}",
+      "help": "命中率 = 缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中），按 Token 加权，不含输出。零输入显示 —，缺失数据不计入汇总。",
+      "read": "缓存命中",
+      "write": "缓存写入",
+      "fresh": "新增输入",
+      "order": "按输入量降序",
+      "missing": "缓存数据缺失",
+      "excluded": "{{count}} 个模型缺少缓存数据，未计入汇总",
+      "loadError": "加载用量失败"
+    },
+    "attributionSource": "归属来源",
+    "attributionConfidence": "归属置信度",
+    "attributionReason": "未归属原因",
+    "attribution": {
+      "source": {
+        "unknown": "未知",
+        "proxy": "代理日志",
+        "session_meta": "会话元数据",
+        "activation": "供应商时间线",
+        "dedup": "去重回填",
+        "pre_migration_no_evidence": "迁移前无证据"
+      },
+      "confidence": {
+        "unknown": "未知",
+        "exact": "精确",
+        "high": "高"
+      }
+    },
+    "quality": {
+      "summary": "未识别供应商 {{provider}} 条、未识别项目 {{project}} 条请求"
+    },
     "requestLogs": "请求日志",
     "providerStats": "Provider 统计",
     "modelStats": "模型统计",
@@ -2253,6 +2326,7 @@
     "requestModel": "请求模型",
     "responseModel": "返回模型",
     "noData": "暂无数据",
+    "loading": "加载中…",
     "unknownProvider": "未知供应商",
     "sessionProvider": {
       "short": "会话日志",
@@ -2509,6 +2583,7 @@
     },
     "tabs": {
       "label": "明细",
+      "projects": "项目",
       "providers": "供应商",
       "models": "模型",
       "pricing": "定价"

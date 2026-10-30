@@ -7,7 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
@@ -82,6 +82,8 @@ const EXPANDED_KEY = "cc-switch.sessionManager.expandedProjects";
 
 describe("SessionManagerPage", () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 0, 15, 12));
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     platform.mac = false;
@@ -175,6 +177,10 @@ describe("SessionManagerPage", () => {
     };
 
     setSessionFixtures(sessions, messages);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("shows Oh My Pi sessions from its app and in the all-apps filter", async () => {

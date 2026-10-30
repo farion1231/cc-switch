@@ -21,6 +21,10 @@ const usageApiMock = vi.hoisted(() => ({
   syncSessionUsage: vi.fn(),
   getSessionUsageLastSync: vi.fn(),
   rebuildCodexUsage: vi.fn(),
+  getUsageProjects: vi.fn(),
+  getProjectStats: vi.fn(),
+  getUsageDataQuality: vi.fn(),
+  getRequestLogs: vi.fn(),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -209,6 +213,15 @@ describe("UsageDashboard", () => {
     useModelStatsMock.mockReturnValue({ data: [] });
     useSummaryByAppMock.mockReturnValue({ data: [] });
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 5 });
+    usageApiMock.getUsageProjects.mockReset().mockResolvedValue([]);
+    usageApiMock.getProjectStats.mockReset().mockResolvedValue([]);
+    usageApiMock.getUsageDataQuality.mockReset().mockResolvedValue({
+      unknownProviderRequests: 0,
+      unknownProjectRequests: 0,
+    });
+    usageApiMock.getRequestLogs
+      .mockReset()
+      .mockResolvedValue({ total: 5, data: [] });
     usageApiMock.getSessionUsageLastSync.mockReset().mockResolvedValue(null);
     usageApiMock.syncSessionUsage.mockResolvedValue({
       imported: 2,
@@ -440,9 +453,12 @@ describe("UsageDashboard", () => {
   it("picks a model from the provider's submenu", async () => {
     const user = userEvent.setup();
     useModelStatsMock.mockImplementation(
-      (_range: unknown, filters: { providerName?: string }) => ({
+      (
+        _range: unknown,
+        filters: { providerId?: string; providerAppType?: string },
+      ) => ({
         data:
-          filters.providerName === "DeepSeek"
+          filters.providerId === "p1" && filters.providerAppType === "claude"
             ? [{ model: "deepseek-chat", requestCount: 7 }]
             : [],
       }),
@@ -466,6 +482,365 @@ describe("UsageDashboard", () => {
       ),
     );
     expect(scopeTrigger()).toHaveTextContent("DeepSeek / deepseek-chat");
+  });
+
+  it("links app and multiple projects through provider and model candidates", async () => {
+    const user = userEvent.setup();
+    const projects = ["alpha", "beta"].map((name) => ({
+      projectKey: `synthetic-${name}`,
+      projectName: `Synthetic Project ${name}`,
+      projectPath: `synthetic-path/${name}`,
+      requestCount: 17,
+    }));
+    usageApiMock.getUsageProjects.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(args[4] ? [] : projects),
+    );
+    useProviderStatsMock.mockReturnValue({
+      data: [
+        {
+          providerId: "synthetic-provider-id",
+          appType: "codex",
+          providerName: "Synthetic Provider",
+          requestCount: 12,
+        },
+      ],
+    });
+    useModelStatsMock.mockImplementation(
+      (
+        _range: unknown,
+        filters: {
+          providerId?: string;
+          providerAppType?: string;
+          projectKeys?: string[];
+        },
+      ) => ({
+        data:
+          filters.providerId === "synthetic-provider-id" &&
+          filters.providerAppType === "codex" &&
+          filters.projectKeys?.length === 2
+            ? [{ model: "synthetic-model", requestCount: 5 }]
+            : [],
+      }),
+    );
+    renderDashboard();
+    await user.click(screen.getByRole("button", { name: "Codex" }));
+    await user.click(
+      screen.getByRole("button", { name: "usage.projectFilter.label" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemcheckbox", {
+        name: /Synthetic Project alpha/,
+      }),
+    );
+    await user.click(
+      screen.getByRole("menuitemcheckbox", {
+        name: /Synthetic Project beta/,
+      }),
+    );
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("button", { name: "usage.projectFilter.selected:2" }),
+    ).toBeInTheDocument();
+    await user.click(scopeTrigger());
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: /Synthetic Provider/,
+      }),
+    );
+    await waitFor(() =>
+      expect(usageApiMock.getUsageProjects).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(Number),
+        "codex",
+        "codex",
+        "synthetic-provider-id",
+        "Synthetic Provider",
+        undefined,
+      ),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Synthetic Provider / usage.modelFilter.label",
+      }),
+    );
+    const provider = await screen.findByRole("menuitem", {
+      name: /Synthetic Provider/,
+    });
+    provider.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(useModelStatsMock.mock.calls.map((call) => call[1])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          appType: "codex",
+          providerId: "synthetic-provider-id",
+          providerAppType: "codex",
+          projectKeys: expect.arrayContaining([
+            "synthetic-alpha",
+            "synthetic-beta",
+          ]),
+        }),
+      ]),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          providerId: "synthetic-provider-id",
+          providerAppType: "codex",
+          projectKeys: expect.arrayContaining([
+            "synthetic-alpha",
+            "synthetic-beta",
+          ]),
+          model: undefined,
+        }),
+      ),
+    );
+    expect(requestLogTableMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        providerId: "synthetic-provider-id",
+        providerAppType: "codex",
+        projectKeys: expect.arrayContaining([
+          "synthetic-alpha",
+          "synthetic-beta",
+        ]),
+        model: undefined,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "usage.projectFilter.selected:2" }),
+    );
+    expect(
+      await screen.findByRole("menuitemcheckbox", {
+        name: "Synthetic Project alpha 0",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("supports project unions, unknown projects, clearing, and scoped results", async () => {
+    const user = userEvent.setup();
+    const projects = [
+      { key: "synthetic-alpha", name: "Synthetic Alpha" },
+      { key: "synthetic-beta", name: "Synthetic Beta" },
+      { key: "", name: "" },
+    ].map(({ key, name }) => ({
+      projectKey: key,
+      projectName: name,
+      projectPath: key ? `synthetic-path/${key}` : "",
+      requestCount: 1,
+      totalTokens: 100,
+      totalCost: "0.1",
+      freshInputTokens: 10,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 90,
+      cacheableInputTokens: 100,
+      cacheHitRate: 0.9,
+      appCount: 1,
+      providerCount: 1,
+      lastActiveAt: 1,
+    }));
+    usageApiMock.getUsageProjects.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(args[6] ? [] : projects),
+    );
+    usageApiMock.getProjectStats.mockImplementation((...args: unknown[]) => {
+      const keys = args[7] as string[] | undefined;
+      return Promise.resolve(
+        projects.filter((p) => !keys?.length || keys.includes(p.projectKey)),
+      );
+    });
+    usageApiMock.getUsageDataQuality.mockResolvedValue({
+      unknownProviderRequests: 3,
+      unknownProjectRequests: 2,
+    });
+    renderDashboard();
+    await user.click(screen.getByRole("button", { name: "Codex" }));
+    await user.click(
+      screen.getByRole("tab", { name: /^usage\.tabs\.projects/ }),
+    );
+    await screen.findByRole("button", { name: "Synthetic Beta" });
+    await user.click(
+      screen.getByRole("button", { name: "usage.projectFilter.label" }),
+    );
+    await user.click(
+      screen.getByRole("menuitemcheckbox", { name: /Synthetic Alpha/ }),
+    );
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    const singleProjectButtons = screen.getAllByRole("button", {
+      name: "Synthetic Alpha",
+    });
+    expect(singleProjectButtons).toHaveLength(2);
+    await user.click(singleProjectButtons[0]);
+    await user.click(
+      screen.getByRole("menuitemcheckbox", {
+        name: "usage.projectFilter.unknown 1",
+      }),
+    );
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("button", { name: "usage.projectFilter.selected:2" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Synthetic Beta" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "usage.projectFilter.unknown",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.projects 2" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(usageApiMock.getUsageDataQuality).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(Number),
+        "codex",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        expect.arrayContaining(["synthetic-alpha", ""]),
+      ),
+    );
+    expect(screen.getByText("usage.quality.summary:3,2")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "usage.projectFilter.selected:2",
+      }),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: /usage.projectFilter.all/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: "usage.projectFilter.label" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Synthetic Beta" }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("hides old data quality counts while a new project scope is pending", async () => {
+    const user = userEvent.setup();
+    usageApiMock.getUsageProjects.mockResolvedValue([
+      {
+        projectKey: "synthetic-project",
+        projectName: "Synthetic Project",
+        projectPath: "synthetic-path/project",
+        requestCount: 1,
+      },
+    ]);
+    let resolveScopedQuality:
+      | ((value: {
+          unknownProviderRequests: number;
+          unknownProjectRequests: number;
+        }) => void)
+      | undefined;
+    usageApiMock.getUsageDataQuality.mockImplementation(
+      (...args: unknown[]) => {
+        const projectKeys = args[7] as string[] | undefined;
+        if (projectKeys?.length) {
+          return new Promise((resolve) => {
+            resolveScopedQuality = resolve;
+          });
+        }
+        return Promise.resolve({
+          unknownProviderRequests: 0,
+          unknownProjectRequests: 6,
+        });
+      },
+    );
+    renderDashboard();
+    expect(
+      await screen.findByText("usage.quality.summary:0,6"),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "usage.projectFilter.label" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemcheckbox", {
+        name: "Synthetic Project 1",
+      }),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(resolveScopedQuality).toBeDefined());
+    expect(
+      screen.queryByText("usage.quality.summary:0,6"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveScopedQuality?.({
+        unknownProviderRequests: 2,
+        unknownProjectRequests: 0,
+      });
+    });
+    expect(
+      await screen.findByText("usage.quality.summary:2,0"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the project count before opening the project tab", async () => {
+    renderDashboard();
+    expect(
+      await screen.findByRole("tab", { name: "usage.tabs.projects 0" }),
+    ).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("keeps tab counts visible until the new filter results arrive", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+    await screen.findByRole("tab", { name: "usage.requestLogs 5" });
+    await screen.findByRole("tab", { name: "usage.tabs.projects 0" });
+
+    let resolveLogs!: (result: { total: number; data: never[] }) => void;
+    let resolveProjects!: (result: []) => void;
+    usageApiMock.getRequestLogs.mockReturnValue(
+      new Promise((resolve) => {
+        resolveLogs = resolve;
+      }),
+    );
+    usageApiMock.getProjectStats.mockReturnValue(
+      new Promise((resolve) => {
+        resolveProjects = resolve;
+      }),
+    );
+    useProviderStatsMock.mockReturnValue({
+      ...useProviderStatsMock.mock.results.at(-1)?.value,
+      isPlaceholderData: true,
+    });
+    useModelStatsMock.mockReturnValue({
+      data: [],
+      isPlaceholderData: true,
+    });
+    await user.click(screen.getByRole("button", { name: "pick-custom" }));
+    expect(
+      screen.getByRole("tab", { name: "usage.requestLogs 5" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.projects 0" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.providers 1" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.models 0" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveLogs({ total: 8, data: [] });
+      resolveProjects([]);
+    });
+    expect(
+      await screen.findByRole("tab", { name: "usage.requestLogs 8" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "usage.requestLogs 5" }),
+    ).not.toBeInTheDocument();
   });
 
   it("persists refresh interval changes", async () => {
@@ -687,6 +1062,17 @@ describe("UsageDashboard", () => {
     );
 
     logsTab.focus();
+    await user.keyboard("{ArrowRight}");
+    const projectsTab = screen.getByRole("tab", {
+      name: /^usage\.tabs\.projects/,
+    });
+    expect(projectsTab).toHaveAttribute("aria-selected", "true");
+    expect(projectsTab).toHaveFocus();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      "usage-tab-projects",
+    );
+
     await user.keyboard("{ArrowRight}");
     const providersTab = screen.getByRole("tab", {
       name: /^usage\.tabs\.providers/,

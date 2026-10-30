@@ -22,7 +22,8 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
-use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
+use crate::services::usage_stats::{find_model_pricing, DedupKey};
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use std::fs;
 use std::time::SystemTime;
@@ -36,6 +37,8 @@ struct OpenCodeMessageData {
     cache_write_tokens: u32,
     cost: f64,
     model_id: String,
+    /// V2 `model.providerID`：OpenCode 原生供应商线索。
+    provider_id: Option<String>,
     timestamp_ms: i64,
     /// 耗时终点优先取 time.streamed（流式结束，不含工具执行），缺失或异常时
     /// 退回 time.completed；离线回填只有整条消息的起止时间，没有首字时间，
@@ -152,6 +155,21 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         }
 
         let mut session_had_error = false;
+        let session_key =
+            crate::services::usage_attribution::normalize_session_key("opencode", session_id);
+        let project = query_session_directory(&opencode_conn, schema, session_id).and_then(|dir| {
+            crate::services::usage_attribution::project_from_cwd(
+                "opencode",
+                &session_key,
+                &dir,
+                "session_meta",
+            )
+        });
+        if let Some(project) = project.as_ref() {
+            if let Err(err) = db.upsert_session_project(project) {
+                log::warn!("[OPENCODE-SYNC] 写入会话项目失败 {session_id}: {err}");
+            }
+        }
 
         // 查询该会话的所有 assistant 消息
         let mut session_has_incomplete_usage = false;
@@ -161,7 +179,13 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
                 for (message_id, msg_data) in &query_result.messages {
                     let request_id = format!("opencode_session:{session_id}:{message_id}");
 
-                    match insert_opencode_message(db, &request_id, msg_data, session_id) {
+                    match insert_opencode_message(
+                        db,
+                        &request_id,
+                        msg_data,
+                        session_id,
+                        project.as_ref(),
+                    ) {
                         Ok(true) => result.imported += 1,
                         Ok(false) => result.skipped += 1,
                         Err(e) => {
@@ -254,6 +278,26 @@ fn query_sessions(
     }
 
     Ok(sessions)
+}
+
+/// 尽力读取会话目录；旧库没有 `directory` 列时返回 None。
+fn query_session_directory(
+    conn: &rusqlite::Connection,
+    schema: OpenCodeSchema,
+    session_id: &str,
+) -> Option<String> {
+    let table = match schema {
+        OpenCodeSchema::V1 => "session",
+        OpenCodeSchema::V2 => "session_v2",
+    };
+    conn.query_row(
+        &format!("SELECT directory FROM {table} WHERE id = ?1"),
+        [session_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
 }
 
 /// 查询某会话的已完成计费消息（V1: assistant，V2: assistant + compaction），
@@ -386,6 +430,16 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         })
         .unwrap_or("unknown")
         .to_string();
+    let provider_id = match value.get("model") {
+        Some(model) if model.is_object() => model
+            .get("providerID")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        _ => value
+            .get("providerID")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+    };
 
     let timestamp_ms = value
         .get("time")
@@ -421,6 +475,7 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         cache_write_tokens,
         cost,
         model_id,
+        provider_id,
         timestamp_ms,
         latency_ms,
     })
@@ -432,6 +487,7 @@ fn insert_opencode_message(
     request_id: &str,
     msg: &OpenCodeMessageData,
     session_id: &str,
+    project: Option<&crate::services::usage_attribution::SessionProject>,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
@@ -457,9 +513,39 @@ fn insert_opencode_message(
         cache_creation_tokens: msg.cache_write_tokens,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if crate::services::usage_attribution::skip_if_duplicate_with_project(
+        &conn, request_id, &dedup_key, project,
+    )? {
         return Ok(false);
     }
+
+    let attribution = match msg.provider_id.as_deref() {
+        Some(provider_id)
+            if crate::services::usage_attribution::provider_name_snapshot_on_conn(
+                &conn,
+                provider_id,
+                "opencode",
+            )?
+            .is_some() =>
+        {
+            crate::services::usage_attribution::Attribution::exact(provider_id, "session_meta")
+        }
+        Some(_) => crate::services::usage_attribution::Attribution::unknown(
+            "_opencode_session",
+            "native_provider_not_mapped",
+        ),
+        None => crate::services::usage_attribution::Attribution::unknown(
+            "_opencode_session",
+            "no_native_provider",
+        ),
+    };
+    let provider_name_snapshot =
+        crate::services::usage_attribution::provider_name_snapshot_on_conn(
+            &conn,
+            &attribution.provider_id,
+            "opencode",
+        )?
+        .unwrap_or_default();
 
     // 如果 opencode 已经提供了费用，直接使用；否则从模型定价计算
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
@@ -518,10 +604,12 @@ fn insert_opencode_message(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            , project_key, project_name, project_path, session_key,
+            attribution_source, attribution_confidence, attribution_reason, provider_name_snapshot
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)",
         rusqlite::params![
             request_id,
-            "_opencode_session",   // provider_id
+            attribution.provider_id,
             "opencode",            // app_type
             msg.model_id,
             msg.model_id,          // request_model = model
@@ -545,6 +633,14 @@ fn insert_opencode_message(
             "1.0",                 // cost_multiplier
             created_at,
             "opencode_session",    // data_source
+            project.map(|p| p.project_key.as_str()).unwrap_or(""),
+            project.map(|p| p.project_name.as_str()).unwrap_or(""),
+            project.map(|p| p.project_path.as_str()).unwrap_or(""),
+            project.map(|p| p.session_key.as_str()).unwrap_or(""),
+            attribution.source,
+            attribution.confidence,
+            attribution.reason,
+            provider_name_snapshot,
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 OpenCode 会话日志失败: {e}")))?;
