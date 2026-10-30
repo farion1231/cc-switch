@@ -12,10 +12,16 @@ import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { OpenCodeModel, OpenCodeProviderOptions } from "@/types";
 import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
+import {
+  DSH_ACCOUNT_PRESET_ID,
+  dshAccountPreset,
+  dshProviderPresets,
+} from "@/config/dshProviderPresets";
 import { mcodePresetModelSources } from "@/config/presetModelMetadata";
 import { BasicFormFields } from "./BasicFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { usePresetStep } from "./presetStep";
 import { normalizeRequestHeaders } from "./helpers/requestHeaders";
 import {
   mergeOpencodeExtraOptionRows,
@@ -28,10 +34,6 @@ const API_FORMATS = [
   { value: "openai-completions", label: "OpenAI Chat Completions" },
   { value: "openai-responses", label: "OpenAI Responses" },
 ];
-const PRESET_ENTRIES = mcodeProviderPresets.map((preset, index) => ({
-  id: String(index),
-  preset,
-}));
 const configSchema = z
   .object({
     api: z.string().optional(),
@@ -69,6 +71,7 @@ const normalizeKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9-]/g, "");
 
 export function McodeProviderForm({
+  appId,
   providerId,
   initialData,
   onSubmit,
@@ -77,8 +80,21 @@ export function McodeProviderForm({
   showButtons = true,
   onSubmittingChange,
   onSubmitReadyChange,
+  onAccountLoginChange,
+  onManageAuthAccounts,
 }: ProviderFormProps) {
   const { t } = useTranslation();
+  const presets = appId === "dsh" ? dshProviderPresets : mcodeProviderPresets;
+  const presetEntries = [
+    // DeepSeek 账号和 Kimi 一样放在「账号登录」组：选中后去授权中心登录，不新建供应商
+    ...(appId === "dsh"
+      ? [{ id: DSH_ACCOUNT_PRESET_ID, preset: dshAccountPreset }]
+      : []),
+    ...presets.map((preset, index) => ({
+      id: String(index),
+      preset,
+    })),
+  ];
   const isDarkMode = useDarkMode();
   const [config, setConfig] = useState<McodeConfig>(
     initialData?.settingsConfig ?? {
@@ -92,8 +108,17 @@ export function McodeProviderForm({
   const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 2));
   const [jsonValid, setJsonValid] = useState(true);
   const [presetId, setPresetId] = useState("custom");
+  const step = usePresetStep();
+  const isAccountLogin = !initialData && presetId === DSH_ACCOUNT_PRESET_ID;
+  const showAccountLogin = isAccountLogin && (!step || step.step === "form");
+  useEffect(() => {
+    onAccountLoginChange?.(showAccountLogin);
+    return () => onAccountLoginChange?.(false);
+  }, [showAccountLogin, onAccountLoginChange]);
   const preset =
-    presetId === "custom" ? undefined : mcodeProviderPresets[Number(presetId)];
+    presetId === "custom" || isAccountLogin
+      ? undefined
+      : presets[Number(presetId)];
   const category = initialData?.category ?? preset?.category ?? "custom";
   const [extraOptions, setExtraOptions] = useState(
     toOpencodeExtraOptions(config.options ?? {}),
@@ -104,7 +129,7 @@ export function McodeProviderForm({
   // references embed it, so it is fixed once the provider exists.
   const isEdit = Boolean(initialData);
   const [providerKey, setProviderKey] = useState(providerId ?? "");
-  const { data: existing } = useProvidersQuery("mcode");
+  const { data: existing } = useProvidersQuery(appId);
   const keyTaken =
     !isEdit &&
     Object.prototype.hasOwnProperty.call(
@@ -125,11 +150,13 @@ export function McodeProviderForm({
   });
   const name = form.watch("name");
   const ready = Boolean(
-    jsonValid &&
+    !isAccountLogin &&
+      jsonValid &&
       name.trim() &&
       (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
       config.options?.baseURL?.trim() &&
-      config.options?.apiKey?.trim() &&
+      (config.options?.apiKey?.trim() ||
+        (appId === "dsh" && config.apiKeyEnv)) &&
       Object.keys(config.models ?? {}).length,
   );
   useEffect(() => {
@@ -144,8 +171,8 @@ export function McodeProviderForm({
     update({ ...config, options: { ...config.options, ...next } });
   const choosePreset = (id: string) => {
     setPresetId(id);
-    const selected =
-      id === "custom" ? undefined : mcodeProviderPresets[Number(id)];
+    if (id === DSH_ACCOUNT_PRESET_ID) return;
+    const selected = id === "custom" ? undefined : presets[Number(id)];
     const next = selected?.settingsConfig ?? {
       kind: "custom",
       enabled: true,
@@ -165,6 +192,47 @@ export function McodeProviderForm({
       settingsConfig: JSON.stringify(next),
     });
   };
+  const presetSelector = !initialData && (
+    <ProviderPresetSelector
+      selectedPresetId={presetId}
+      presetEntries={presetEntries}
+      presetCategoryLabels={{
+        custom: t("providerPreset.custom"),
+        cn_official: t("providerForm.categoryCnOfficial"),
+        aggregator: t("providerForm.categoryAggregation"),
+        third_party: t("providerForm.categoryThirdParty"),
+      }}
+      onPresetChange={choosePreset}
+      category={category}
+    />
+  );
+  if (isAccountLogin) {
+    return (
+      <Form {...form}>
+        <form
+          id="provider-form"
+          className="space-y-6"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          {presetSelector}
+          {showAccountLogin && (
+            <div className="space-y-3">
+              <p className="text-body text-fg-2">
+                {t("dsh.account.presetDescription")}
+              </p>
+              <Button
+                type="button"
+                variant="neutral"
+                onClick={() => onManageAuthAccounts?.("dsh_account")}
+              >
+                {t("dsh.account.manageAccounts")}
+              </Button>
+            </div>
+          )}
+        </form>
+      </Form>
+    );
+  }
   return (
     <Form {...form}>
       <form
@@ -203,20 +271,7 @@ export function McodeProviderForm({
           }
         })}
       >
-        {!initialData && (
-          <ProviderPresetSelector
-            selectedPresetId={presetId}
-            presetEntries={PRESET_ENTRIES}
-            presetCategoryLabels={{
-              custom: t("providerPreset.custom"),
-              cn_official: t("providerForm.categoryCnOfficial"),
-              aggregator: t("providerForm.categoryAggregation"),
-              third_party: t("providerForm.categoryThirdParty"),
-            }}
-            onPresetChange={choosePreset}
-            category={category}
-          />
-        )}
+        {presetSelector}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -266,6 +321,7 @@ export function McodeProviderForm({
             }
           />
           <OpenCodeFormFields
+            modelDialect={appId === "dsh" ? "dsh" : "opencode"}
             apiFormats={API_FORMATS}
             presetModelSources={mcodePresetModelSources}
             npm={config.api ?? "anthropic-messages"}

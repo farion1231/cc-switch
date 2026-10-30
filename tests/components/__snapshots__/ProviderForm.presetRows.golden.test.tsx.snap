@@ -137,10 +137,10 @@ exports[`ProviderForm 预设新增行金标 > claude > Nvidia 1`] = `
       "env": {
         "ANTHROPIC_AUTH_TOKEN": "sk-golden-test",
         "ANTHROPIC_BASE_URL": "https://integrate.api.nvidia.com",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "moonshotai/kimi-k3[1M]",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "moonshotai/kimi-k3[1M]",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "moonshotai/kimi-k3[1M]",
-        "ANTHROPIC_MODEL": "moonshotai/kimi-k3[1M]",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "moonshotai/kimi-k2.6",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "moonshotai/kimi-k2.6",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "moonshotai/kimi-k2.6",
+        "ANTHROPIC_MODEL": "moonshotai/kimi-k2.6",
         "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
       },
     },
@@ -198,7 +198,7 @@ exports[`ProviderForm 预设新增行金标 > codex > E-FlowCode 1`] = `
         "OPENAI_API_KEY": "sk-golden-test",
       },
       "config": "model_provider = "custom"
-model = "gpt-5.6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -225,14 +225,6 @@ exports[`ProviderForm 预设新增行金标 > codex > Nvidia 1`] = `
     "iconColor": "#000000",
     "meta": {
       "apiFormat": "openai_chat",
-      "codexChatReasoning": {
-        "effortParam": "reasoning_effort",
-        "effortValueMode": "passthrough",
-        "outputFormat": "reasoning_content",
-        "supportsEffort": true,
-        "supportsThinking": true,
-        "thinkingParam": "none",
-      },
       "endpointAutoSelect": true,
     },
     "name": "Nvidia",
@@ -244,7 +236,7 @@ exports[`ProviderForm 预设新增行金标 > codex > Nvidia 1`] = `
         "OPENAI_API_KEY": "sk-golden-test",
       },
       "config": "model_provider = "custom"
-model = "moonshotai/kimi-k3"
+model = "moonshotai/kimi-k2.6"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -256,19 +248,13 @@ requires_openai_auth = true",
       "modelCatalog": {
         "models": [
           {
-            "contextWindow": 1048576,
-            "defaultReasoningLevel": "high",
-            "displayName": "Kimi K3",
+            "contextWindow": 262144,
+            "displayName": "Kimi K2.6",
             "inputModalities": [
               "text",
               "image",
             ],
-            "model": "moonshotai/kimi-k3",
-            "reasoningLevels": [
-              "low",
-              "high",
-              "max",
-            ],
+            "model": "moonshotai/kimi-k2.6",
           },
         ],
       },

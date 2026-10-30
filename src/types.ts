@@ -315,6 +315,10 @@ export interface VisibleApps {
   hermes: boolean;
   pi: boolean;
   mcode: boolean;
+  kimi: boolean;
+  dsh?: boolean;
+  agy: boolean;
+  omp: boolean;
 }
 
 // WebDAV 同步状态
@@ -379,6 +383,8 @@ export interface UsageDisplaySettings {
   sidebarTodayItems?: string[];
   /** 请求日志列显隐：只存用户改过的列（列 id → 是否显示） */
   requestLogColumns?: Record<string, boolean>;
+  /** 用量趋势图的样式（见 `TREND_CHART_TYPES`），缺省为柱形图 */
+  trendChartType?: string;
 }
 
 // 应用设置类型（用于设置对话框与 Tauri API）
@@ -420,6 +426,8 @@ export interface Settings {
   showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
+  // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
+  nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
   // Run official Codex under the shared "custom" provider id so future
@@ -456,6 +464,8 @@ export interface Settings {
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
+  // 应用页和侧栏的应用顺序（应用 ID，拖动排序后写入；缺的应用按默认顺序插回）
+  appOrder?: string[];
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
@@ -474,6 +484,8 @@ export interface Settings {
   hermesConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
+  // 覆盖 Oh My Pi agent 配置目录（可选）
+  ompConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -759,6 +771,9 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   mcode?: boolean;
+  kimi?: boolean;
+  dsh?: boolean;
+  agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;
@@ -768,6 +783,7 @@ export interface McpApps {
   openclaw: boolean;
   hermes: boolean;
   pi?: boolean;
+  omp?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -929,6 +945,8 @@ export interface OpenClawModel {
     maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
     supportsTools?: boolean; // 自定义供应商声明模型支持工具调用
     toolSchemaProfile?: string; // 工具 schema 清理档案（如 llama-server 用 "llamacpp"）
+    supportsReasoningEffort?: boolean; // 接受 reasoning effort 参数
+    supportedReasoningEfforts?: string[]; // 接口接受的 effort 档位
   };
 }
 

@@ -7,6 +7,7 @@ import type {
   UniversalProvidersMap,
 } from "@/types";
 import type { AppId } from "./types";
+import type { RouteSwitchResult } from "@/types/proxy";
 
 export interface ProviderSortUpdate {
   id: string;
@@ -20,14 +21,21 @@ export interface ProviderSwitchEvent {
 
 export interface SwitchResult {
   warnings: string[];
+  route?: RouteSwitchResult;
 }
 
 export interface OpenTerminalOptions {
   cwd?: string;
+  /** 启动时跳过权限确认：Claude Code 与 agy 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox` */
+  skipPermissions?: boolean;
+  /** 追加在生成的参数后面，后端按空白拆分、引号括起的算一个 */
+  extraArgs?: string;
 }
 
 export interface ClaudeDesktopStatus {
   supported: boolean;
+  /** 本机装了 Claude Desktop（按它的数据目录或 macOS 应用包推断；接入了也算） */
+  installed: boolean;
   configured: boolean;
   appliedId?: string | null;
   profilePath?: string | null;
@@ -131,6 +139,11 @@ export const providersApi = {
     return await invoke("delete_provider", { id, app: appId });
   },
 
+  /** Kimi「添加」：写进 config.toml 但不改默认模型（「切换」才改） */
+  async addToLiveConfig(id: string, appId: AppId): Promise<boolean> {
+    return await invoke("add_provider_to_live_config", { id, app: appId });
+  },
+
   /**
    * Remove provider from live config only (for additive mode apps like OpenCode)
    * Does NOT delete from database - provider remains in the list
@@ -201,11 +214,13 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd } = options ?? {};
+    const { cwd, skipPermissions, extraArgs } = options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
+      skipPermissions,
+      extraArgs,
     });
   },
 
@@ -223,6 +238,15 @@ export const providersApi = {
    */
   async getOpenCodeLiveProviderIds(): Promise<string[]> {
     return await invoke("get_opencode_live_provider_ids");
+  },
+
+  /** OpenCode 顶层 model（`<provider>/<model>`），没写时为 null */
+  async getOpenCodeDefaultModel(): Promise<string | null> {
+    return await invoke("get_opencode_default_model");
+  },
+
+  async setOpenCodeDefaultModel(model: string): Promise<void> {
+    await invoke("set_opencode_default_model", { model });
   },
 
   /**

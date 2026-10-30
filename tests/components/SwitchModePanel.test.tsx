@@ -86,10 +86,18 @@ function renderPanel(
   onSwitch = vi.fn(),
 ) {
   const queryClient = createTestQueryClient();
+  const statusSlot = document.createElement("div");
   const view = render(
     <QueryClientProvider client={queryClient}>
+      <div
+        data-testid="connection-header"
+        ref={(node) => {
+          node?.appendChild(statusSlot);
+        }}
+      />
       <SwitchModePanel
         app={app}
+        statusSlot={statusSlot}
         providers={providers}
         currentProviderId={Object.keys(providers)[0] ?? ""}
         isLoading={false}
@@ -380,7 +388,9 @@ describe("SwitchModePanel — Claude Desktop", () => {
       map: provider("map"),
     });
 
-    expect(await screen.findByText("→ map")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("mode.status.routeLead map"),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /mode\.names\.stack/ }),
     ).toBeInTheDocument();
@@ -693,7 +703,10 @@ describe("SwitchModePanel — mode layer", () => {
         const body = (await request.json()) as { providerId: string };
         routeCalls.push(body);
         route = body.providerId;
-        return HttpResponse.json(null);
+        return HttpResponse.json({
+          kind: "remembered",
+          clientConfigChanged: false,
+        });
       }),
     );
     const takeover = captureTakeover();
@@ -717,7 +730,7 @@ describe("SwitchModePanel — mode layer", () => {
     expect(onSwitch).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
-        "mode.toast.defaultRemembered",
+        "已记住供应商 kimi，客户端接入路由或聚合后使用。",
         expect.anything(),
       ),
     );
@@ -789,7 +802,7 @@ describe("SwitchModePanel — mode layer", () => {
     renderPanel("claude", { a: provider("a"), kimi: provider("kimi") });
 
     // 等模式读到了再换页签：生效的模式一变，查看的那格会跳回生效的那格
-    await screen.findByText("→ a");
+    await screen.findByLabelText("mode.status.routeLead a");
     fireEvent.click(screen.getByRole("button", { name: /mode\.names\.stack/ }));
     // 默认和路由目标是同一个指针：路由中改它就是当场换路由，只能在切换时的确认框里选
     expect(await screen.findByTestId("menu-setDefault-kimi")).toBeDisabled();
@@ -861,6 +874,31 @@ describe("SwitchModePanel — mode layer", () => {
     );
   });
 
+  it.each(["route", "stack"] as const)(
+    "keeps %s status gray when the service runs but the app is detached",
+    async (mode) => {
+      mockMode(mode, "a");
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_app_mode`, () =>
+          HttpResponse.json({
+            mode,
+            attached: false,
+            routeProviderId: "a",
+            directProviderId: "a",
+          }),
+        ),
+      );
+      renderPanel("claude", { a: provider("a") });
+      await screen.findByLabelText(new RegExp(`mode.status.${mode}Lead`));
+      expect(
+        screen.getByTestId("connection-header").querySelector(".bg-fg-3"),
+      ).not.toBeNull();
+      expect(
+        screen.getByTestId("connection-header").querySelector(`.bg-${mode}`),
+      ).toBeNull();
+    },
+  );
+
   it("shows only the route target in the status line, not the local address", async () => {
     mockMode("route", "route");
     server.use(
@@ -870,7 +908,14 @@ describe("SwitchModePanel — mode layer", () => {
     );
     renderPanel("gemini", { route: provider("route") });
 
-    expect(await screen.findByText("→ route")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("mode.status.routeLead route"),
+    ).toHaveTextContent("route");
+    expect(screen.getByTestId("connection-header")).toHaveTextContent("route");
+    fireEvent.click(screen.getByRole("button", { name: "mode.names.direct" }));
+    expect(
+      screen.getByLabelText("mode.status.routeLead route"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/15721/)).not.toBeInTheDocument();
   });
 });

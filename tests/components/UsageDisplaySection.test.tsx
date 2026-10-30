@@ -148,54 +148,28 @@ describe("UsageDisplaySection", () => {
     expect(trigger).toHaveTextContent("usage.display.sidebarTodayItems.none");
   });
 
-  it("shows and hides request log columns", async () => {
+  it("picks the trend chart style and keeps the other display settings", async () => {
     const user = userEvent.setup();
-    const onChange = vi.fn().mockResolvedValue(true);
+    const onChange = vi.fn();
     render(
-      <UsageDisplaySection
-        value={{ currency: "CNY", requestLogColumns: { app: false } }}
-        onChange={onChange}
-      />,
+      <UsageDisplaySection value={{ currency: "CNY" }} onChange={onChange} />,
     );
+    const trigger = screen.getByRole("combobox", {
+      name: "usage.display.trendChartType",
+    });
+    // 没设置过按柱形图
+    expect(trigger).toHaveTextContent("usage.display.trendChartTypes.bar");
 
+    await user.click(trigger);
     await user.click(
-      screen.getByRole("button", {
-        name: "usage.display.logColumns: usage.display.logColumnsSummary",
+      await screen.findByRole("option", {
+        name: "usage.display.trendChartTypes.area",
       }),
     );
-    expect(
-      screen.queryByRole("menuitemcheckbox", { name: "usage.time" }),
-    ).not.toBeInTheDocument();
-    const status = await screen.findByRole("menuitemcheckbox", {
-      name: "usage.statusCode",
-    });
-    expect(status).toHaveAttribute("aria-checked", "false");
-    await user.click(status);
-
-    // 菜单不关，可以接着勾；保存时其它显示设置原样带上，只存改过的列
-    expect(onChange).toHaveBeenLastCalledWith({
+    expect(onChange).toHaveBeenCalledWith({
       currency: "CNY",
-      requestLogColumns: { app: false, statusCode: true },
+      trendChartType: "area",
     });
-    expect(
-      screen.getByRole("menuitemcheckbox", { name: "usage.statusCode" }),
-    ).toHaveAttribute("aria-checked", "true");
-
-    // 勾回默认值的列不再写进设置
-    await user.click(
-      screen.getByRole("menuitemcheckbox", { name: "usage.app" }),
-    );
-    expect(onChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      requestLogColumns: { statusCode: true },
-    });
-
-    await user.click(
-      screen.getByRole("menuitem", { name: "usage.logColumns.reset" }),
-    );
-    expect(onChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      requestLogColumns: {},
-    });
+    expect(trigger).toHaveTextContent("usage.display.trendChartTypes.area");
   });
 });

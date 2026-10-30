@@ -468,9 +468,12 @@ export function loginAccountKey(
     case "codex":
       return "chatgpt";
     case "gemini":
+    case "agy":
       return "google";
     case "grokbuild":
       return "xai";
+    case "kimi":
+      return "kimi";
     default:
       return "claude";
   }
