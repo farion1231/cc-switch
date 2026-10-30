@@ -380,6 +380,8 @@ function MainDirectory({
                 <SortableSidebarApp
                   key={app}
                   app={app}
+                  collapsed={collapsed}
+                  selected={onAppPage && activeApp === app}
                   disabled={!settings || savingOrder}
                 >
                   <AppNavItem
@@ -484,10 +486,14 @@ function modeTag(
 
 function SortableSidebarApp({
   app,
+  collapsed,
+  selected,
   disabled,
   children,
 }: {
   app: AppId;
+  collapsed: boolean;
+  selected: boolean;
   disabled: boolean;
   children: ReactNode;
 }) {
@@ -519,7 +525,11 @@ function SortableSidebarApp({
         {...listeners}
         disabled={disabled}
         aria-label={t("appsPage.dragHandle", { name: APP_DISPLAY_NAME[app] })}
-        className="absolute start-0 top-1/2 flex h-6 w-3 -translate-y-1/2 touch-none items-center justify-center rounded text-fg-2 opacity-0 hover:text-fg-1 focus-visible:opacity-100 group-hover:opacity-100 cursor-grab active:cursor-grabbing"
+        className={cn(
+          "absolute top-1/2 flex h-6 w-5 -translate-y-1/2 touch-none items-center justify-center rounded text-fg-2 opacity-0 hover:text-fg-1 focus-visible:opacity-100 group-hover:opacity-100 cursor-grab active:cursor-grabbing",
+          collapsed ? "start-[26px]" : "start-4",
+          selected ? "bg-selected" : "bg-sidebar",
+        )}
       >
         <GripVertical className="h-3 w-3" />
       </button>
