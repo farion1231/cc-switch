@@ -61,12 +61,18 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 某窗口恢复成功后是否该清掉故障标志。只有主窗口：手动路径（打开主窗口、
+/// 托盘菜单、二次启动）都冲主窗口去，面板恢复成功不代表主窗口没问题。
+fn clears_pending_flag(label: &str) -> bool {
+    label == MAIN_WINDOW_LABEL
+}
+
 /// 渲染进程死亡的处理入口（COM 回调线程调用）。返回是否触发了 reload。
 fn handle_renderer_exit(app: &tauri::AppHandle, label: &str) -> bool {
     use tauri::Manager;
     // 故障标志只针对主窗口：手动路径（打开主窗口、托盘菜单、二次启动）都是冲
     // 主窗口去的。面板自己的渲染进程死亡直接重载面板即可，不该拖着主窗口重载。
-    let is_main = label == MAIN_WINDOW_LABEL;
+    let is_main = clears_pending_flag(label);
     if is_main {
         // 标志只在真正恢复成功后清除；这里先置位，reload 失败时留给手动路径兜底
         RENDERER_FAILURE_PENDING.store(true, Ordering::SeqCst);
@@ -89,7 +95,11 @@ fn handle_renderer_exit(app: &tauri::AppHandle, label: &str) -> bool {
     match window.reload() {
         Ok(()) => {
             log::warn!("[WebViewRecovery] 渲染进程死亡，已自动重载界面（{label}）");
-            RENDERER_FAILURE_PENDING.store(false, Ordering::SeqCst);
+            // 只有主窗口的成功才清故障标志：面板恢复成功不代表主窗口没事，
+            // 主窗口此前的待恢复故障仍要留给手动路径兜底
+            if clears_pending_flag(label) {
+                RENDERER_FAILURE_PENDING.store(false, Ordering::SeqCst);
+            }
             true
         }
         Err(error) => {
@@ -209,5 +219,13 @@ mod tests {
         assert!(cooldown_elapsed(20_000, 5_000));
         // 时钟回拨时宁可多恢复一次，也不卡死在永远等不到的冷却上
         assert!(cooldown_elapsed(1_000, 5_000));
+    }
+
+    #[test]
+    fn only_the_main_window_clears_the_pending_failure_flag() {
+        // 面板恢复成功不能清掉主窗口的待恢复故障：手动路径冲的是主窗口，
+        // 标志被误清后主窗口白屏就再没有兜底重载了
+        assert!(clears_pending_flag(MAIN_WINDOW_LABEL));
+        assert!(!clears_pending_flag("tray-panel"));
     }
 }
