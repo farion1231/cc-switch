@@ -879,6 +879,23 @@ requires_openai_auth = true`,
     icon: "subrouter",
   },
   {
+    name: "OspreyAI",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 目录（open.ospreyai.cn/api/pricing，2026-10-30）有 gpt-6.1-sol，令牌选 GPT 分组；
+    // /v1/responses 假 Key 探测 401，未用真 Key 验证
+    config: generateThirdPartyConfig(
+      "ospreyai",
+      "https://open.ospreyai.cn/v1",
+      "gpt-6.1-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",

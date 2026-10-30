@@ -131,6 +131,11 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
+<td width="180"><a href="https://open.ospreyai.cn"><img src="assets/partners/logos/ospreyai-banner.png" alt="OspreyAI" width="150"></a></td>
+<td>OspreyAI のご支援に感謝します！ACS OspreyAI は開発者と企業向けのワンストップ・マルチモデル API サービスプラットフォームです。1 つの API Key で Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、Tencent Hunyuan など国内外の主要モデルを呼び出せます。OpenAI、Anthropic などの主要 API プロトコルに対応し、Claude Code、Codex、OpenCode、Pi、Hermes などの主要 AI ツールでも利用できます。海外モデルは公式価格より 20〜40%、中国国内モデルは 30〜50% お得です。チャージと請求の一元化、使用量の確認、モデルの柔軟な切り替えに対応し、AI アプリ開発、コンテンツ制作、自動化ワークフローなどに適しています。<a href="https://open.ospreyai.cn">このリンク</a>からアカウントを作成すると特典を受けられ、国内外の主要モデルにすぐ接続できます。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
 </tr>

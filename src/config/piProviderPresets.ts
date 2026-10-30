@@ -693,6 +693,27 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    name: "OspreyAI",
+    providerKey: "cc-switch-ospreyai",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    settingsConfig: {
+      name: "OspreyAI",
+      baseUrl: "https://open.ospreyai.cn",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     providerKey: "cc-switch-shengsuanyun",
