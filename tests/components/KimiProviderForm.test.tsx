@@ -335,6 +335,29 @@ describe("KimiProviderForm", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps provider key composition local until the IME commits", () => {
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <KimiProviderForm
+          appId="kimi"
+          submitLabel="Save"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    const key = screen.getByLabelText("opencode.providerKey");
+
+    fireEvent.compositionStart(key);
+    fireEvent.change(key, { target: { value: "Te好st" } });
+    // The IME still owns the marked text; normalizing it here would replace the
+    // composition range and duplicate the typed letters.
+    expect(key).toHaveValue("Te好st");
+
+    fireEvent.compositionEnd(key, { data: "Te好st" });
+    expect(key).toHaveValue("test");
+  });
+
   it("flags a preset whose provider key collides with an existing card", async () => {
     const user = userEvent.setup();
     const selected = kimiProviderPresets.find(
