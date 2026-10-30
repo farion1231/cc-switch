@@ -258,7 +258,7 @@ describe("ClaudeOfficialSection", () => {
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     renderSelect();
     expect(
-      await screen.findByText(/Claude Code 的登录会换成选中的账号/),
+      await screen.findByText(/Claude Code 的登录会实时换成选中的账号/),
     ).toBeInTheDocument();
   });
 
@@ -309,6 +309,41 @@ describe("ClaudeOfficialSection", () => {
     renderSelect();
     expect(
       await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
+    ).toBeInTheDocument();
+  });
+
+  it("greys out sign-in when the Claude config dir is in WSL", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ blocked: "wsl" }));
+    const auth = baseAuth();
+    auth.accounts = [
+      {
+        ...account("old:org", "old@example.com"),
+        requires_reauth: true,
+      },
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    renderSection();
+
+    expect(
+      await screen.findByText(
+        "Claude 配置目录在 WSL 里，暂不支持添加和切换 Claude 账号。",
+      ),
+    ).toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "添加账号" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(add);
+    const reauth = screen.getByRole("button", { name: "重新登录" });
+    expect(reauth).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(reauth);
+    expect(auth.addAccount).not.toHaveBeenCalled();
+  });
+
+  it("says WSL isn't supported on the card form", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ blocked: "wsl" }));
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSelect();
+    expect(
+      await screen.findByText(/Claude 配置目录在 WSL 里，暂不支持 Claude 账号/),
     ).toBeInTheDocument();
   });
 

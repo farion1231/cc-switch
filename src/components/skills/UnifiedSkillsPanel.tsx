@@ -866,14 +866,24 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
-  const copyDirectory = async (skill: InstalledSkill) => {
+  const copyName = async (skill: InstalledSkill) => {
     try {
-      await copyText(skill.directory);
-      toast.success(t("skillsPage.toast.copiedDir", { dir: skill.directory }), {
+      await copyText(skill.name);
+      toast.success(t("skillsPage.toast.copiedName", { name: skill.name }), {
         closeButton: true,
       });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const openDirectory = async (skill: InstalledSkill) => {
+    try {
+      await skillsApi.openSkillDir(skill.directory);
+    } catch (error) {
+      toast.error(t("skillsPage.toast.openDirFailed"), {
+        description: extractErrorMessage(error),
+      });
     }
   };
 
@@ -1416,7 +1426,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     onFixSync={() => setStorageOpen(true)}
                     onUpdate={() => void updateIds([skill.id])}
                     onOpenDocs={() => void openDocs(skill)}
-                    onCopyDir={() => void copyDirectory(skill)}
+                    onCopyName={() => void copyName(skill)}
+                    onOpenDir={() => void openDirectory(skill)}
                     onUninstall={() => {
                       if (writeLockRef.current || interactionBlocked) return;
                       setConfirm({ kind: "uninstall", ids: [skill.id] });
@@ -1778,7 +1789,8 @@ interface InstalledRowProps {
   onFixSync: () => void;
   onUpdate: () => void;
   onOpenDocs: () => void;
-  onCopyDir: () => void;
+  onCopyName: () => void;
+  onOpenDir: () => void;
   onUninstall: () => void;
 }
 
@@ -1799,7 +1811,8 @@ function InstalledRow({
   onFixSync,
   onUpdate,
   onOpenDocs,
-  onCopyDir,
+  onCopyName,
+  onOpenDir,
   onUninstall,
 }: InstalledRowProps) {
   const { t } = useTranslation();
@@ -1834,12 +1847,13 @@ function InstalledRow({
       </span>
       <div className="ms-2 flex min-w-0 flex-1 flex-col pe-3">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span
-            title={skill.name}
-            className="min-w-0 truncate text-body font-medium"
+          <button
+            type="button"
+            onClick={onCopyName}
+            className="min-w-0 cursor-copy truncate text-start text-body font-medium hover:text-fg-1 hover:underline hover:underline-offset-[3px]"
           >
             {skill.name}
-          </span>
+          </button>
           {showDir && (
             <span
               title={skill.directory}
@@ -1954,8 +1968,8 @@ function InstalledRow({
                 {t("mcpPage.openDocs")}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onSelect={onCopyDir}>
-              {t("skillsPage.copyDir")}
+            <DropdownMenuItem onSelect={onOpenDir}>
+              {t("skillsPage.openDir")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
