@@ -2173,6 +2173,7 @@
     "universalDetail": "同步到 Claude Code、Codex、Gemini CLI",
     "manageUniversal": "管理現有的統一供應商 ›",
     "loginWith": {
+      "deepseek": "使用 DeepSeek 帳號登入",
       "kimi": "使用 Kimi 帳號登入",
       "claude": "用 Claude 帳號登入",
       "chatgpt": "用 ChatGPT 帳號登入",

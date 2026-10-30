@@ -2172,6 +2172,7 @@
     "universalDetail": "Claude Code・Codex・Gemini CLI に同期",
     "manageUniversal": "既存の統合プロバイダーを管理 ›",
     "loginWith": {
+      "deepseek": "DeepSeek アカウントでログイン",
       "kimi": "Kimi アカウントでログイン",
       "claude": "Claude アカウントでログイン",
       "chatgpt": "ChatGPT アカウントでログイン",
