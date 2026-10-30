@@ -3,6 +3,8 @@
  * 不参与显示。新增预设时，名字里搜不到的常用叫法加在这里。
  */
 export const PRESET_SEARCH_ALIASES: Record<string, string> = {
+  "Astron Coding Plan": "讯飞 星火 spark xfyun iflytek",
+  "Astron MaaS": "讯飞 星火 星辰 spark xfyun iflytek",
   "AWS Bedrock (AKSK)": "amazon 亚马逊",
   "AWS Bedrock (API Key)": "amazon 亚马逊",
   "Azure OpenAI": "microsoft 微软 foundry",

@@ -449,6 +449,57 @@ describe("OpenCodeFormFields", () => {
     expect(props.onModelsChange).not.toHaveBeenCalled();
   });
 
+  it("keeps fetched models when the parent re-renders with equal headers", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "old-model", ownedBy: null },
+    ]);
+    const { props, rerender } = renderOpenCodeForm({ headers: {} });
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
+    const dialog = await screen.findByRole("dialog");
+
+    // Forms without custom headers may pass a fresh {} on every render.
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} headers={{}} />
+      </FormShell>,
+    );
+
+    expect(
+      within(dialog).getByRole("checkbox", { name: "old-model" }),
+    ).toBeInTheDocument();
+    expect(fetchModelsForConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an in-flight fetch when the parent re-renders with equal headers", async () => {
+    let resolveFetch!: (
+      models: Awaited<ReturnType<typeof fetchModelsForConfig>>,
+    ) => void;
+    vi.mocked(fetchModelsForConfig).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    const { props, rerender } = renderOpenCodeForm({ headers: {} });
+    const fetchButton = screen.getByRole("button", { name: FETCH });
+    fireEvent.click(fetchButton);
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} headers={{}} />
+      </FormShell>,
+    );
+    expect(fetchButton).toBeDisabled();
+
+    await act(async () => {
+      resolveFetch([{ id: "new-model", ownedBy: null }]);
+    });
+    expect(
+      within(await screen.findByRole("dialog")).getByRole("checkbox", {
+        name: "new-model",
+      }),
+    ).toBeEnabled();
+  });
+
   it.each(["empty", "failure"])(
     "drops the previous list after an %s refresh without changing configured models",
     async (result) => {

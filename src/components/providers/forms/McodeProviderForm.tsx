@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Label } from "@/components/ui/label";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -291,12 +291,11 @@ export function McodeProviderForm({
                     *
                   </span>
                 </Label>
-                <Input
+                <ImeSafeInput
                   id="mcode-provider-key"
                   value={providerKey}
-                  onChange={(event) =>
-                    setProviderKey(normalizeKey(event.target.value))
-                  }
+                  onValueChange={setProviderKey}
+                  normalize={normalizeKey}
                   disabled={isEdit}
                   placeholder={t("opencode.providerKeyPlaceholder")}
                   autoComplete="off"

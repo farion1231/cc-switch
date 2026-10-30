@@ -134,21 +134,30 @@ export function ProviderList({
     appId,
   );
 
-  const { data: opencodeLiveIds, isPending: isOpencodeLiveIdsPending } =
-    useQuery({
-      queryKey: ["opencodeLiveProviderIds"],
-      queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
-      enabled: appId === "opencode",
-    });
+  const {
+    data: opencodeLiveIds,
+    isPending: isOpencodeLiveIdsPending,
+    error: opencodeLiveIdsError,
+  } = useQuery({
+    queryKey: ["opencodeLiveProviderIds"],
+    queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
+    enabled: appId === "opencode",
+  });
   const { data: opencodeDefaultModel } = useQuery({
     queryKey: ["opencodeDefaultModel"],
     queryFn: () => providersApi.getOpenCodeDefaultModel(),
     enabled: appId === "opencode",
   });
-  const { data: openclawLiveIds, isPending: isOpenclawLiveIdsPending } =
-    useOpenClawLiveProviderIds(appId === "openclaw");
-  const { data: hermesLiveIds, isPending: isHermesLiveIdsPending } =
-    useHermesLiveProviderIds(appId === "hermes");
+  const {
+    data: openclawLiveIds,
+    isPending: isOpenclawLiveIdsPending,
+    error: openclawLiveIdsError,
+  } = useOpenClawLiveProviderIds(appId === "openclaw");
+  const {
+    data: hermesLiveIds,
+    isPending: isHermesLiveIdsPending,
+    error: hermesLiveIdsError,
+  } = useHermesLiveProviderIds(appId === "hermes");
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
     appId === "openclaw",
@@ -457,6 +466,35 @@ export function ProviderList({
         {piStateError ? ` ${piStateError}` : ""}
       </Notice>
     ) : null;
+
+  // 累加式应用读不了 live 配置（如 YAML 写坏了）时，列表和空状态看起来跟没配置过一样，
+  // 添加 / 移除又会报错，所以在顶部说清楚
+  const liveIdsError =
+    appId === "opencode"
+      ? opencodeLiveIdsError
+      : appId === "openclaw"
+        ? openclawLiveIdsError
+        : appId === "hermes"
+          ? hermesLiveIdsError
+          : null;
+  const liveIdsErrorMessage = liveIdsError
+    ? extractErrorMessage(liveIdsError)
+    : "";
+  const liveConfigErrorNotice = liveIdsError ? (
+    <Notice
+      tone="warning"
+      title={t("provider.liveConfigReadFailed", {
+        app: t(`apps.${appId}`),
+        defaultValue: "无法读取 {{app}} 配置文件",
+      })}
+    >
+      {t("provider.liveConfigReadFailedHint", {
+        defaultValue: "修好配置文件之前，添加、移除供应商都会失败。",
+      })}
+      {liveIdsErrorMessage ? ` ${liveIdsErrorMessage}` : ""}
+    </Notice>
+  ) : null;
+
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
@@ -474,6 +512,7 @@ export function ProviderList({
     return (
       <div className="space-y-4">
         {piStateErrorNotice}
+        {liveConfigErrorNotice}
         <ProviderEmptyState
           appId={appId}
           onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
@@ -607,6 +646,7 @@ export function ProviderList({
   return (
     <div className="space-y-4">
       {piStateErrorNotice}
+      {liveConfigErrorNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div
