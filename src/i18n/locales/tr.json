@@ -2591,7 +2591,11 @@
       "title": "Kullanım ayarları",
       "pricingSummary": "Milyon token başına model fiyatlarını belirleyin veya models.dev üzerinden eşitleyin.",
       "managePricing": "Fiyatlandırmayı yönet…"
-    }
+    },
+    "inFlight": "Uçuşta",
+    "inFlightHint": "Bu sağlayıcı için şu anda sürmekte olan çıkarım akışları (canlı, akış yanıtları dahil)",
+    "inFlightUnfilteredHint": "Sağlayıcı başına, tüm modeller dahil sayılır — yukarıdaki model filtresi bu sayıyı daraltmaz.",
+    "inFlightNoRowsYet": "Şu anda uçuşta olan çıkarım akışları: {{streams}}. Bu aralıkta henüz tamamlanan kayıt yok — canlı durum proxy panelinde."
   },
   "usageScript": {
     "title": "Kullanım Sorgusunu Yapılandır",
