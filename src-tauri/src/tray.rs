@@ -2,8 +2,8 @@
 //!
 //! 结构：问题区（出问题才有）→ 反馈行（托盘里刚做完要重启才生效的操作）→ 打开 CC Switch →
 //! 切换式应用的子菜单（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build；在「应用」页
-//! 隐藏的不列）→ 轻量模式 → 打开官方网站 / 退出 CC Switch。累加式应用（OpenCode / OpenClaw /
-//! Hermes / Pi / MiniMax Code）不进托盘；托盘里不切模式、不启停路由服务。
+//! 隐藏的不列）以及其他应用的管理入口 → 轻量模式 → 打开官方网站 / 退出 CC Switch。
+//! 应用顺序跟随侧栏；托盘里不切模式、不启停路由服务。
 //!
 //! 分三层：`collect_*` 从数据库和设备状态读出快照，`build_menu_model` 把快照变成纯数据的菜单
 //! 模型（单测覆盖这一层），`attach_*` 把模型挂到 Tauri 原生菜单上。
@@ -34,7 +34,7 @@ const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
 
-/// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
+/// Apps with quick provider switching. Other apps open their management page.
 pub const TRAY_APPS: [AppType; 5] = [
     AppType::Claude,
     AppType::ClaudeDesktop,
@@ -42,6 +42,34 @@ pub const TRAY_APPS: [AppType; 5] = [
     AppType::Gemini,
     AppType::GrokBuild,
 ];
+
+/// Device-local sidebar order, including navigation-only apps. Keep insertion of
+/// newly introduced apps consistent with frontend `orderAppIds`.
+fn ordered_visible_apps(settings: &crate::settings::AppSettings) -> Vec<AppType> {
+    let defaults: Vec<_> = AppType::all().collect();
+    let mut ordered = Vec::new();
+    for id in settings.app_order.iter().flatten() {
+        if let Some(app) = defaults.iter().find(|app| app.as_str() == id) {
+            if !ordered.contains(app) {
+                ordered.push(app.clone());
+            }
+        }
+    }
+    for (index, app) in defaults.iter().enumerate() {
+        if ordered.contains(app) {
+            continue;
+        }
+        let at = defaults[..index]
+            .iter()
+            .rev()
+            .find_map(|previous| ordered.iter().position(|item| item == previous))
+            .map_or(0, |position| position + 1);
+        ordered.insert(at, app.clone());
+    }
+    let visible = settings.visible_apps.clone().unwrap_or_default();
+    ordered.retain(|app| visible.is_visible(app));
+    ordered
+}
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
 fn app_display_name(app: &AppType) -> &'static str {
@@ -1274,6 +1302,20 @@ fn collect_app_snapshot(
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
+    if !TRAY_APPS.contains(app) {
+        return Ok(AppSnapshot {
+            app: app.clone(),
+            mode: TrayMode::Direct,
+            providers: Vec::new(),
+            current_id: None,
+            queue: Vec::new(),
+            stack_members: Vec::new(),
+            quota: None,
+            service_down: false,
+            needs_attention: false,
+            profiles: None,
+        });
+    }
     let rows = app_state.db.get_all_providers(app.as_str())?;
     let providers: Vec<ProviderEntry> = sort_providers(&rows)
         .into_iter()
@@ -1906,6 +1948,9 @@ fn app_entry(
     now: chrono::DateTime<chrono::Local>,
 ) -> TrayEntry {
     let app = snapshot.app.as_str();
+    if !TRAY_APPS.contains(&snapshot.app) {
+        return TrayEntry::item(format!("nav:app:{app}"), app_display_name(&snapshot.app));
+    }
     if snapshot.providers.is_empty() {
         return TrayEntry::item(
             format!("nav:add:{app}"),
@@ -2003,7 +2048,6 @@ fn collect_snapshots(
     texts: &TrayTexts,
 ) -> Result<(Vec<AppSnapshot>, Vec<TrayProblem>), AppError> {
     let settings = crate::settings::get_settings();
-    let visible_apps = settings.visible_apps.clone().unwrap_or_default();
     let running = service_running(app_state);
     let profiles = if settings.show_profile_switcher {
         app_state.db.get_all_profiles()?
@@ -2012,7 +2056,7 @@ fn collect_snapshots(
     };
 
     let mut snapshots = Vec::new();
-    for app in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
+    for app in &ordered_visible_apps(&settings) {
         snapshots.push(collect_app_snapshot(
             app_state, texts, &settings, app, running, &profiles,
         )?);
@@ -2102,6 +2146,8 @@ pub struct PanelApp {
     pub quota: Option<PanelQuota>,
     /// 还没有供应商：点这一行去添加。
     pub add_id: Option<String>,
+    /// Apps without exclusive provider switching open their management page.
+    pub open_id: Option<String>,
     pub add_text: String,
     pub rows: Vec<PanelRow>,
 }
@@ -2300,6 +2346,26 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
         let app = snapshot.app.as_str();
+        if !TRAY_APPS.contains(&snapshot.app) {
+            apps.push(PanelApp {
+                app: app.to_string(),
+                name: app_display_name(&snapshot.app),
+                current: None,
+                mode: "",
+                mode_kind: "direct",
+                header: None,
+                attention: None,
+                quota: None,
+                add_id: None,
+                open_id: Some(format!("nav:app:{app}")),
+                add_text: fill(
+                    texts.open_app_page,
+                    &[("app", app_display_name(&snapshot.app))],
+                ),
+                rows: Vec::new(),
+            });
+            continue;
+        }
         let providers = app_state.db.get_all_providers(app)?;
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
@@ -2331,6 +2397,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             header,
             attention: snapshot.needs_attention.then_some(texts.needs_attention),
             quota,
+            open_id: None,
             add_id: snapshot
                 .providers
                 .is_empty()
@@ -3392,13 +3459,50 @@ mod tests {
     // ─── 基础 ───
 
     #[test]
+    fn navigation_only_apps_open_management_instead_of_add_provider() {
+        let texts = TrayTexts::from_language("en");
+        for app in [AppType::Hermes, AppType::Kimi, AppType::Agy] {
+            let expected = format!("nav:app:{}", app.as_str());
+            let item = snapshot(app, TrayMode::Direct, vec![]);
+            assert!(matches!(app_entry(&texts, &item, chrono::Local::now()),
+                TrayEntry::Item { id, .. } if id == expected));
+        }
+    }
+
+    #[test]
+    fn tray_order_matches_sidebar_and_filters_hidden_apps() {
+        let mut settings = crate::settings::AppSettings::default();
+        let mut order: Vec<_> = AppType::all().map(|app| app.as_str().to_string()).collect();
+        order.retain(|id| id != "kimi");
+        order.insert(0, "kimi".into());
+        order.insert(0, "future-app".into());
+        order.push("kimi".into());
+        settings.app_order = Some(order);
+        settings.visible_apps = Some(
+            serde_json::from_value(serde_json::Value::Object(
+                AppType::all()
+                    .map(|app| (app.as_str().to_string(), serde_json::json!(true)))
+                    .collect(),
+            ))
+            .unwrap(),
+        );
+        let apps = ordered_visible_apps(&settings);
+        assert_eq!(apps.first(), Some(&AppType::Kimi));
+        assert_eq!(apps.len(), AppType::all().count());
+        let mut visible = settings.visible_apps.clone().unwrap();
+        visible.kimi = false;
+        settings.visible_apps = Some(visible);
+        assert!(!ordered_visible_apps(&settings).contains(&AppType::Kimi));
+    }
+
+    #[test]
     fn tray_id_is_unique_to_app() {
         assert_eq!(TRAY_ID, "cc-switch");
         assert_ne!(TRAY_ID, "main");
     }
 
     #[test]
-    fn tray_lists_switch_apps_in_sidebar_order_without_additive_apps() {
+    fn quick_switch_apps_exclude_additive_apps() {
         let names: Vec<&str> = TRAY_APPS.iter().map(app_display_name).collect();
         assert_eq!(
             names,
@@ -3411,7 +3515,10 @@ mod tests {
             ]
         );
         for app in TRAY_APPS {
-            assert!(!app.is_additive_mode(), "{app:?} 是累加式应用，不进托盘");
+            assert!(
+                !app.is_additive_mode(),
+                "{app:?} 是累加式应用，不能独占切换供应商"
+            );
         }
     }
 
