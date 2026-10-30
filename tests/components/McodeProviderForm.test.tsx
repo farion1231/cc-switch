@@ -245,6 +245,27 @@ describe("McodeProviderForm", () => {
     expect(submit.mock.calls[0][0].providerKey).toBe("mykey");
   });
 
+  it("keeps provider key composition local until the IME commits", () => {
+    render(
+      <McodeProviderForm
+        appId="mcode"
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    const key = screen.getByLabelText(/opencode\.providerKey/);
+
+    fireEvent.compositionStart(key);
+    fireEvent.change(key, { target: { value: "Te好st" } });
+    // The IME still owns the marked text; normalizing it here would replace the
+    // composition range and duplicate the typed letters.
+    expect(key).toHaveValue("Te好st");
+
+    fireEvent.compositionEnd(key, { data: "Te好st" });
+    expect(key).toHaveValue("test");
+  });
+
   it("locks the provider key when editing", () => {
     render(
       <McodeProviderForm
