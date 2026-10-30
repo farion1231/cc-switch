@@ -441,9 +441,12 @@ fn copilot_quota(
 async fn query(app: &AppHandle, account: &ListedAccount) -> Result<SubscriptionQuota, String> {
     let id = account.id.clone();
     match account.auth_provider {
-        "claude_official" => crate::commands::get_claude_account_quota(id)
-            .await
-            .map(|q| q.quota),
+        // 和卡片同一条路：结果也会按账号写进托盘缓存
+        "claude_official" => {
+            crate::commands::get_claude_account_quota(app.clone(), app.state(), id)
+                .await
+                .map(|q| q.quota)
+        }
         "github_copilot" => crate::commands::copilot_get_usage_for_account(id, app.state())
             .await
             .map(copilot_quota),
