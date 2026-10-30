@@ -3019,7 +3019,8 @@ requires_openai_auth = true`,
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "streamlake",
@@ -5006,15 +5007,19 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "tokenflux",
-      "https://tokenflux.dev/v1",
+      "https://tokenflux.com/v1",
       "gpt-6.1-sol",
     ),
+    endpointCandidates: [
+      "https://tokenflux.com/v1",
+      "https://tokenflux.dev/v1",
+    ],
     icon: "tokenflux",
   },
   {

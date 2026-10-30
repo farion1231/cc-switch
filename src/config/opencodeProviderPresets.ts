@@ -3272,7 +3272,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "StreamLake",
@@ -4721,13 +4722,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "TokenFlux",
       options: {
-        baseURL: "https://tokenflux.dev/v1",
+        baseURL: "https://tokenflux.com/v1",
         apiKey: "",
         setCacheKey: true,
       },

@@ -2580,7 +2580,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       name: "streamlake",
       base_url:
@@ -3981,11 +3982,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
       name: "tokenflux",
-      base_url: "https://tokenflux.dev",
+      base_url: "https://tokenflux.com",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [

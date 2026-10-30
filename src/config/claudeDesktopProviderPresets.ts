@@ -2499,10 +2499,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     category: "aggregator",
-    baseUrl: "https://tokenflux.dev",
+    baseUrl: "https://tokenflux.com",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
@@ -2511,6 +2511,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-haiku-5-5",
       true,
     ),
+    endpointCandidates: ["https://tokenflux.com", "https://tokenflux.dev"],
     icon: "tokenflux",
   },
   {

@@ -1746,7 +1746,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "cn",
     providerKey: "cc-switch-streamlake",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       name: "StreamLake",
       baseUrl: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
@@ -3353,11 +3354,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TokenFlux",
     providerKey: "cc-switch-token-flux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
       name: "TokenFlux",
-      baseUrl: "https://tokenflux.dev",
+      baseUrl: "https://tokenflux.com",
       api: "anthropic-messages",
       apiKey: "",
       models: [

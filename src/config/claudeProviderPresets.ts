@@ -1823,7 +1823,8 @@ export const providerPresets: ProviderPreset[] = [
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
@@ -3090,15 +3091,16 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://tokenflux.dev",
+        ANTHROPIC_BASE_URL: "https://tokenflux.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "aggregator",
+    endpointCandidates: ["https://tokenflux.com", "https://tokenflux.dev"],
     icon: "tokenflux",
   },
   {
