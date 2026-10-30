@@ -82,14 +82,27 @@ pub struct ClaudeAccount {
 impl ClaudeAccount {
     /// 界面上显示的名字：邮箱 > 组织名 > `Claude (<key 前 6 位>)`。
     pub fn label(&self) -> String {
-        self.email
-            .clone()
-            .or_else(|| self.org_name.clone())
-            .unwrap_or_else(|| {
-                let short: String = self.id.chars().take(6).collect();
-                format!("Claude ({short})")
-            })
+        account_label(&self.id, self.email.as_deref(), self.org_name.as_deref())
     }
+}
+
+fn account_label(id: &str, email: Option<&str>, org_name: Option<&str>) -> String {
+    email.or(org_name).map(str::to_string).unwrap_or_else(|| {
+        let short: String = id.chars().take(6).collect();
+        format!("Claude ({short})")
+    })
+}
+
+/// 按磁盘上的账号表给出每个账号的显示名（同 [`ClaudeAccount::label`]）：托盘拿不到管理器时用。
+pub fn labels_on_disk(data_dir: &Path) -> HashMap<String, String> {
+    load_store(data_dir)
+        .accounts
+        .iter()
+        .map(|(key, data)| {
+            let label = account_label(key, data.email.as_deref(), data.org_name.as_deref());
+            (key.clone(), label)
+        })
+        .collect()
 }
 
 pub struct LoginStart {
