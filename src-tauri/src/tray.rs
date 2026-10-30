@@ -44,7 +44,7 @@ pub const TRAY_APPS: [AppType; 5] = [
 ];
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
-fn app_display_name(app: &AppType) -> &'static str {
+pub(crate) fn app_display_name(app: &AppType) -> &'static str {
     match app {
         AppType::Claude => "Claude Code",
         AppType::ClaudeDesktop => "Claude Desktop",
@@ -129,6 +129,12 @@ pub struct TrayTexts {
     pub tier_gemini_pro: &'static str,
     pub tier_gemini_flash: &'static str,
     pub tier_gemini_flash_lite: &'static str,
+    /// Antigravity（agy）的四档：Gemini 一组、Claude/GPT 一组，各有 5 小时和每周。
+    /// 托盘不显示 agy，桌面小组件给授权中心的 agy 账号写额度时用。
+    pub tier_agy_gemini_five_hour: &'static str,
+    pub tier_agy_gemini_weekly: &'static str,
+    pub tier_agy_third_party_five_hour: &'static str,
+    pub tier_agy_third_party_weekly: &'static str,
     pub tier_premium: &'static str,
     pub tier_left: &'static str,
     pub tier_used: &'static str,
@@ -229,6 +235,10 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
+                tier_agy_gemini_five_hour: "Gemini 5-hour",
+                tier_agy_gemini_weekly: "Gemini weekly",
+                tier_agy_third_party_five_hour: "Claude/GPT 5-hour",
+                tier_agy_third_party_weekly: "Claude/GPT weekly",
                 tier_premium: "Premium",
                 tier_left: "{label} {value}% left",
                 tier_used: "{label} {value}% used",
@@ -286,6 +296,10 @@ impl TrayTexts {
                 texts.tier_gemini_pro = "Pro";
                 texts.tier_gemini_flash = "Flash";
                 texts.tier_gemini_flash_lite = "Flash Lite";
+                texts.tier_agy_gemini_five_hour = "Gemini 5 saatlik";
+                texts.tier_agy_gemini_weekly = "Gemini haftalık";
+                texts.tier_agy_third_party_five_hour = "Claude/GPT 5 saatlik";
+                texts.tier_agy_third_party_weekly = "Claude/GPT haftalık";
                 texts.tier_premium = "Premium";
                 texts.tier_left = "{label} %{value} kaldı";
                 texts.tier_used = "{label} %{value} kullanıldı";
@@ -342,6 +356,10 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
+                tier_agy_gemini_five_hour: "Gemini 5時間",
+                tier_agy_gemini_weekly: "Gemini 週間",
+                tier_agy_third_party_five_hour: "Claude/GPT 5時間",
+                tier_agy_third_party_weekly: "Claude/GPT 週間",
                 tier_premium: "プレミアム",
                 tier_left: "{label} 残り {value}%",
                 tier_used: "{label} 使用済み {value}%",
@@ -396,6 +414,10 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
+                tier_agy_gemini_five_hour: "Gemini 5 小時",
+                tier_agy_gemini_weekly: "Gemini 每週",
+                tier_agy_third_party_five_hour: "Claude/GPT 5 小時",
+                tier_agy_third_party_weekly: "Claude/GPT 每週",
                 tier_premium: "進階請求",
                 tier_left: "{labelSp}剩餘 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
@@ -450,6 +472,10 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
+                tier_agy_gemini_five_hour: "Gemini 5 小时",
+                tier_agy_gemini_weekly: "Gemini 每周",
+                tier_agy_third_party_five_hour: "Claude/GPT 5 小时",
+                tier_agy_third_party_weekly: "Claude/GPT 每周",
                 tier_premium: "高级请求",
                 tier_left: "{labelSp}剩余 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
@@ -534,11 +560,16 @@ enum TierGroup {
     GeminiPro,
     GeminiFlash,
     GeminiFlashLite,
+    AgyGeminiFiveHour,
+    AgyGeminiWeekly,
+    AgyThirdPartyFiveHour,
+    AgyThirdPartyWeekly,
     Premium,
 }
 
 const TIER_GROUPS: &[(TierGroup, &[&str])] = {
     use crate::services::subscription as s;
+    use crate::services::subscription_agy as agy;
     &[
         (TierGroup::FiveHour, &[s::TIER_FIVE_HOUR]),
         (
@@ -556,6 +587,19 @@ const TIER_GROUPS: &[(TierGroup, &[&str])] = {
         (TierGroup::GeminiPro, &[s::TIER_GEMINI_PRO]),
         (TierGroup::GeminiFlash, &[s::TIER_GEMINI_FLASH]),
         (TierGroup::GeminiFlashLite, &[s::TIER_GEMINI_FLASH_LITE]),
+        (
+            TierGroup::AgyGeminiFiveHour,
+            &[agy::TIER_AGY_GEMINI_FIVE_HOUR],
+        ),
+        (TierGroup::AgyGeminiWeekly, &[agy::TIER_AGY_GEMINI_WEEKLY]),
+        (
+            TierGroup::AgyThirdPartyFiveHour,
+            &[agy::TIER_AGY_THIRD_PARTY_FIVE_HOUR],
+        ),
+        (
+            TierGroup::AgyThirdPartyWeekly,
+            &[agy::TIER_AGY_THIRD_PARTY_WEEKLY],
+        ),
         (TierGroup::Premium, &["premium"]),
     ]
 };
@@ -573,6 +617,10 @@ fn tier_label(texts: &TrayTexts, group: TierGroup, tier_name: &str) -> &'static 
         TierGroup::GeminiPro => texts.tier_gemini_pro,
         TierGroup::GeminiFlash => texts.tier_gemini_flash,
         TierGroup::GeminiFlashLite => texts.tier_gemini_flash_lite,
+        TierGroup::AgyGeminiFiveHour => texts.tier_agy_gemini_five_hour,
+        TierGroup::AgyGeminiWeekly => texts.tier_agy_gemini_weekly,
+        TierGroup::AgyThirdPartyFiveHour => texts.tier_agy_third_party_five_hour,
+        TierGroup::AgyThirdPartyWeekly => texts.tier_agy_third_party_weekly,
         TierGroup::Premium => texts.tier_premium,
     }
 }
@@ -2574,6 +2622,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     #[cfg(not(target_os = "linux"))]
     {
         crate::tray_panel::notify_changed(app);
+        crate::services::widget_snapshot::schedule_export(app);
         // 出面板时托盘上没挂原生菜单，没有标题要改
         if !crate::tray_panel::uses_native_menu() {
             return;
@@ -2619,6 +2668,7 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
         }
     }
     crate::tray_panel::notify_changed(app);
+    crate::services::widget_snapshot::schedule_export(app);
 }
 
 /// 设置里切换了原生托盘菜单 / 托盘面板：当场换掉托盘的点击行为，不用重启。
