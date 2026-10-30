@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 import {
+  extractCodexAgentsMaxThreads,
   extractCodexAgentsString,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexMultiAgentV2Total,
   extractCodexTopLevelInt,
   removeCodexTopLevelField,
+  setCodexAgentsMaxThreads,
   setCodexAgentsString,
   setCodexBaseUrl,
   setCodexModelName,
@@ -660,5 +663,80 @@ describe("Codex [agents] subagent defaults", () => {
     const updated = setCodexAgentsString(input, "default_subagent_model", "m");
     expect(() => parseToml(updated)).not.toThrow();
     expect((parseToml(updated) as any).agents).toEqual({ max_threads: 4 });
+  });
+});
+
+describe("Codex [agents] sub-agent concurrency limit", () => {
+  const base = [
+    'model = "gpt-a"',
+    "",
+    "[mcp_servers.fs]",
+    'command = "fs"',
+  ].join("\n");
+
+  it("writes max_threads into a new [agents] table and removes it when cleared", () => {
+    const updated = setCodexAgentsMaxThreads(base, 8);
+    expect((parseToml(updated) as any).agents).toEqual({ max_threads: 8 });
+    expect(extractCodexAgentsMaxThreads(updated)).toBe(8);
+
+    const cleared = setCodexAgentsMaxThreads(updated, undefined);
+    expect(cleared.trim()).toBe(base);
+    expect(extractCodexAgentsMaxThreads(cleared)).toBeUndefined();
+  });
+
+  it("keeps the canonical name in place and the other [agents] keys", () => {
+    const input = [
+      "[agents]",
+      "max_concurrent_threads_per_session = 2 # mine",
+      'default_subagent_model = "m"',
+    ].join("\n");
+    expect(extractCodexAgentsMaxThreads(input)).toBe(2);
+
+    const updated = setCodexAgentsMaxThreads(input, 12);
+    expect(updated).toContain("max_concurrent_threads_per_session = 12");
+    expect(updated).not.toContain("max_threads");
+    expect((parseToml(updated) as any).agents.default_subagent_model).toBe("m");
+
+    const cleared = setCodexAgentsMaxThreads(updated, undefined);
+    expect((parseToml(cleared) as any).agents).toEqual({
+      default_subagent_model: "m",
+    });
+  });
+
+  it("drops the duplicate spelling so Codex does not reject the config", () => {
+    const input =
+      "[agents]\nmax_threads = 2\nmax_concurrent_threads_per_session = 3\n";
+    const updated = setCodexAgentsMaxThreads(input, 5);
+    expect((parseToml(updated) as any).agents).toEqual({
+      max_concurrent_threads_per_session: 5,
+    });
+  });
+
+  it("does not mistake the multi_agent_v2 key for the [agents] one", () => {
+    const input = [
+      "[features.multi_agent_v2]",
+      "enabled = true",
+      "max_concurrent_threads_per_session = 6",
+    ].join("\n");
+    expect(extractCodexAgentsMaxThreads(input)).toBeUndefined();
+    expect(extractCodexMultiAgentV2Total(input)).toBe(6);
+
+    const parsed = parseToml(setCodexAgentsMaxThreads(input, 4)) as any;
+    expect(parsed.agents).toEqual({ max_threads: 4 });
+    expect(
+      parsed.features.multi_agent_v2.max_concurrent_threads_per_session,
+    ).toBe(6);
+  });
+
+  it("reads half-edited TOML line by line and ignores 0", () => {
+    expect(
+      extractCodexAgentsMaxThreads("[agents]\nmax_threads = 7\nbroken = ["),
+    ).toBe(7);
+    expect(
+      extractCodexAgentsMaxThreads("[agents]\nmax_threads = 0\n"),
+    ).toBeUndefined();
+    expect(extractCodexAgentsMaxThreads("agents = { max_threads = 3 }\n")).toBe(
+      3,
+    );
   });
 });

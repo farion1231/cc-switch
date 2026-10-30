@@ -1541,45 +1541,64 @@ export const extractCodexAgentsString = (
   return undefined;
 };
 
-// 写入或删除 `[agents]` 里的一个字符串键；空值删除，删完表里没别的就连表头一起删。
-// 用户把 agents 写成行内表或点号键时按行改不了：改完解析失败就原样返回。
-export const setCodexAgentsString = (
+// 在 `[agents]` 里写入一个键（valueText 为 undefined 时删除），并删掉 dropKeys 里的同义写法；
+// 删完表里没别的就连表头一起删。用户把 agents 写成行内表或点号键时按行改不了：改完解析失败
+// 就原样返回。
+const writeCodexAgentsLine = (
   configText: string,
-  key: CodexAgentsStringKey,
-  value: string,
+  key: string,
+  valueText: string | undefined,
+  dropKeys: string[] = [],
 ): string => {
-  const trimmed = value.trim();
   const normalizedText = normalizeTomlText(configText);
   const lines = normalizedText ? normalizedText.split("\n") : [];
   const range = getTomlSectionRange(lines, CODEX_AGENTS_SECTION);
-  const replacementLine = `${key} = ${tomlBasicString(trimmed)}`;
+  const replacementLine = `${key} = ${valueText}`;
 
   if (range) {
-    const lineIndex = findTomlLineInRange(
-      lines,
-      tomlStringAssignmentPatterns(key).anyValue,
-      range.bodyStartIndex,
-      range.bodyEndIndex,
-    );
-    if (!trimmed) {
-      if (lineIndex === -1) return normalizedText;
-      lines.splice(lineIndex, 1);
+    let bodyEndIndex = range.bodyEndIndex;
+    const findLine = (name: string) =>
+      findTomlLineInRange(
+        lines,
+        tomlStringAssignmentPatterns(name).anyValue,
+        range.bodyStartIndex,
+        bodyEndIndex,
+      );
+    let removed = false;
+    for (const name of valueText === undefined
+      ? [key, ...dropKeys]
+      : dropKeys) {
+      const index = findLine(name);
+      if (index === -1) continue;
+      lines.splice(index, 1);
+      bodyEndIndex -= 1;
+      removed = true;
+    }
+    if (valueText === undefined) {
+      if (!removed) return normalizedText;
       const bodyEmpty = lines
-        .slice(range.bodyStartIndex, range.bodyEndIndex - 1)
+        .slice(range.bodyStartIndex, bodyEndIndex)
         .every((line) => line.trim() === "");
       if (bodyEmpty) {
         lines.splice(
           range.headerLineIndex,
-          range.bodyEndIndex - 1 - range.headerLineIndex,
+          bodyEndIndex - range.headerLineIndex,
         );
       }
-    } else if (lineIndex !== -1) {
-      lines[lineIndex] = replacementLine;
     } else {
-      lines.splice(getTomlSectionInsertIndex(lines, range), 0, replacementLine);
+      const lineIndex = findLine(key);
+      if (lineIndex !== -1) {
+        lines[lineIndex] = replacementLine;
+      } else {
+        lines.splice(
+          getTomlSectionInsertIndex(lines, { ...range, bodyEndIndex }),
+          0,
+          replacementLine,
+        );
+      }
     }
   } else {
-    if (!trimmed) return normalizedText;
+    if (valueText === undefined) return normalizedText;
     if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
       lines.push("");
     }
@@ -1597,6 +1616,114 @@ export const setCodexAgentsString = (
     return candidate;
   } catch {
     return normalizedText;
+  }
+};
+
+// 写入或删除 `[agents]` 里的一个字符串键；空值删除。
+export const setCodexAgentsString = (
+  configText: string,
+  key: CodexAgentsStringKey,
+  value: string,
+): string => {
+  const trimmed = value.trim();
+  return writeCodexAgentsLine(
+    configText,
+    key,
+    trimmed ? tomlBasicString(trimmed) : undefined,
+  );
+};
+
+// ========== Codex [agents] sub-agent concurrency limit ==========
+
+// 子代理并发上限（不含主线程）。Codex 的全局设置，不随供应商切换。codex-rs 0.150 起改名
+// max_concurrent_threads_per_session，旧名 max_threads 留作别名：新写入用旧名（各版本都认），
+// 已经写了新名就改新名。两种写法同时出现 Codex 报重复字段，所以只留一个。
+const CODEX_AGENTS_MAX_THREADS_KEY = "max_threads";
+const CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY =
+  "max_concurrent_threads_per_session";
+
+const positiveInteger = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : undefined;
+
+export const extractCodexAgentsMaxThreads = (
+  configText: string | undefined | null,
+): number | undefined => {
+  const text = normalizeTomlText(
+    typeof configText === "string" ? configText : "",
+  );
+  if (!text) return undefined;
+  try {
+    const agents = (parseToml(text) as Record<string, any>)[
+      CODEX_AGENTS_SECTION
+    ];
+    return (
+      positiveInteger(agents?.[CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY]) ??
+      positiveInteger(agents?.[CODEX_AGENTS_MAX_THREADS_KEY])
+    );
+  } catch {
+    // 编辑中的 TOML 解析不了时按行在 [agents] 里找。
+  }
+  const lines = text.split("\n");
+  const range = getTomlSectionRange(lines, CODEX_AGENTS_SECTION);
+  if (!range) return undefined;
+  for (const key of [
+    CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY,
+    CODEX_AGENTS_MAX_THREADS_KEY,
+  ]) {
+    const pattern = new RegExp(`^\\s*${key}\\s*=\\s*(\\d+)\\s*(?:#.*)?$`);
+    for (let i = range.bodyStartIndex; i < range.bodyEndIndex; i += 1) {
+      const match = lines[i].match(pattern);
+      if (match) return positiveInteger(Number(match[1]));
+    }
+  }
+  return undefined;
+};
+
+// 写入上限；undefined 删掉两种写法，回到 Codex 默认值。
+export const setCodexAgentsMaxThreads = (
+  configText: string,
+  maxThreads: number | undefined,
+): string => {
+  const lines = normalizeTomlText(configText).split("\n");
+  const range = getTomlSectionRange(lines, CODEX_AGENTS_SECTION);
+  const hasCanonical =
+    !!range &&
+    findTomlLineInRange(
+      lines,
+      tomlStringAssignmentPatterns(CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY)
+        .anyValue,
+      range.bodyStartIndex,
+      range.bodyEndIndex,
+    ) !== -1;
+  const [key, other] = hasCanonical
+    ? [CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY, CODEX_AGENTS_MAX_THREADS_KEY]
+    : [CODEX_AGENTS_MAX_THREADS_KEY, CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY];
+  return writeCodexAgentsLine(
+    configText,
+    key,
+    positiveInteger(maxThreads)?.toString(),
+    [other],
+  );
+};
+
+// `[features.multi_agent_v2]` 里含主线程的总数：写了就盖过新版子 agent 工具的上限。
+export const extractCodexMultiAgentV2Total = (
+  configText: string | undefined | null,
+): number | undefined => {
+  const text = normalizeTomlText(
+    typeof configText === "string" ? configText : "",
+  );
+  if (!text) return undefined;
+  try {
+    const v2 = (parseToml(text) as Record<string, any>).features
+      ?.multi_agent_v2;
+    return typeof v2 === "object" && v2 !== null
+      ? positiveInteger(v2[CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY])
+      : undefined;
+  } catch {
+    return undefined;
   }
 };
 
