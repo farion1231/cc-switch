@@ -58,9 +58,9 @@ Offizielle Kanäle von Claude Code / Codex / Gemini zu 38 % / 2 % / 9 % des Orig
 
 <tr>
 <td width="180"><a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/"><img src="assets/partners/logos/pateway.png" alt="PatewayAI" width="150"></a></td>
-<td>Danke an PatewayAI für die Unterstützung dieses Projekts! PatewayAI ist ein API-Relay-Anbieter für anspruchsvolle KI-Entwickler, der sich auf das direkte Relayen offizieller hochwertiger Modell-APIs konzentriert. Er bietet die komplette Claude-Reihe und die Codex-Serie, zu 100 % aus offiziellen Kanälen bezogen — keine Verwässerung, keine Fälschungen, Überprüfung ausdrücklich erwünscht. Die Abrechnung ist transparent, und jede Rechnung auf Token-Ebene lässt sich Zeile für Zeile prüfen.
-Er unterstützt zudem unternehmensgerechte Nebenläufigkeit und stellt Unternehmenskunden eine dedizierte Verwaltungsplattform bereit — formelle Verträge und Rechnungsstellung sind verfügbar; Kontaktdaten finden Sie auf der offiziellen Website.
-Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">diesen Link</a> und erhalten Sie ein Testguthaben von 3 $. Aufladungen sind ab 60 % des Originalpreises möglich, mit einem beidseitigen Empfehlungsbonus von bis zu 150 $!</td>
+<td>Danke an PatewayAI für die Unterstützung dieses Projekts! PatewayAI ist ein API-Relay-Anbieter für erfahrene KI-Entwickler und unterstützt Claude, die GPT-Serie sowie zahlreiche gängige chinesische Modelle vollständig. Alle Modelle stammen aus offiziellen, hochwertigen Kanälen – nie verwässert, nie gefälscht – und die Abrechnung ist transparent und nachvollziehbar.
+Im Economy-Modus zahlen Sie ab 5 % des Originalpreises. Registrieren Sie sich über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">diesen Link</a> und erhalten Sie 1 $ kostenloses Testguthaben; bei gelegentlichen Aktionen gibt es zusätzlich Gratisguthaben.
+Die Plattform unterstützt außerdem Parallelität auf Unternehmensniveau, eine eigene Verwaltungskonsole, formelle Verträge und Rechnungen und bietet einen beidseitigen Empfehlungsbonus auf Aufladungen von bis zu 150 $.</td>
 </tr>
 
 <tr>
@@ -109,8 +109,8 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.net/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
+<td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
+<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine abonnementbasierte KI-Coding-Plattform – nicht nur Abrechnung pro Token. Ein Konto, ein Monatsplan für Claude Code, Codex und Gemini, mit Direktverbindung in Festlandchina und schnellen Antworten. Abonnieren Sie über <a href="https://aigocode.net/invite/CC-SWITCH">diesen Link</a> und erhalten Sie zusätzlich 10 % Guthaben!</td>
 </tr>
 
 <tr>
@@ -128,6 +128,11 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 <tr>
 <td width="180"><a href="https://subrouter.ai/register?aff=l3ri"><img src="assets/partners/logos/subrouter-banner.png" alt="SubRouter" width="150"></a></td>
 <td>Danke an SubRouter für die Unterstützung dieses Projekts! SubRouter ist ein Marktplatz und eine intelligente Routing-Plattform für Betreiber von KI-Diensten. Händler können eigene Betriebsseiten starten, Pakete veröffentlichen sowie Nutzer, Modelle und Preise verwalten, während Nutzer im Marktplatz Dienste entdecken und über eine einzige einheitliche API zuverlässige und effiziente Modellaufrufe nutzen. Registrieren Sie sich über <a href="https://subrouter.ai/register?aff=l3ri">diesen Link</a>!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://open.ospreyai.cn"><img src="assets/partners/logos/ospreyai-banner.png" alt="OspreyAI" width="150"></a></td>
+<td>Danke an OspreyAI für die Unterstützung dieses Projekts! ACS OspreyAI ist eine All-in-One-Multimodell-API-Plattform für Entwickler und Unternehmen. Mit einem einzigen API-Key rufen Sie führende chinesische und internationale Modelle auf, darunter Claude, Gemini, GPT, GLM, Kimi, Qwen, DeepSeek und Tencent Hunyuan. Die Plattform ist mit gängigen API-Protokollen wie OpenAI und Anthropic kompatibel und funktioniert mit KI-Tools wie Claude Code, Codex, OpenCode, Pi und Hermes. Internationale Modelle sind 20–40 % günstiger als die offiziellen Preise, chinesische Modelle 30–50 %. Einheitliches Aufladen, einheitliche Abrechnung, Nutzungsabfragen und flexibler Modellwechsel machen die Plattform ideal für KI-Anwendungsentwicklung, Content-Produktion und automatisierte Workflows. Erstellen Sie über <a href="https://open.ospreyai.cn">diesen Link</a> ein Konto, um einen Rabatt zu erhalten und schnell führende Modelle aus China und aller Welt anzubinden.</td>
 </tr>
 
 <tr>

@@ -340,6 +340,30 @@ describe("UsageDashboard", () => {
     ).toBeInTheDocument();
   });
 
+  it("filters to Oh My Pi separately from Pi", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    // Two products, two filters: the chip must query appType "omp" and must
+    // not be confused with Pi's.
+    await user.click(screen.getByRole("button", { name: "Oh My Pi" }));
+
+    await waitFor(() =>
+      expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+        expect.anything(),
+        { appType: "omp" },
+        expect.anything(),
+      ),
+    );
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appType: "omp" }),
+    );
+    expect(screen.getByRole("button", { name: "Pi" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Oh My Pi", pressed: true }),
+    ).toBeInTheDocument();
+  });
+
   it("starts with the app filter passed in from an app page", () => {
     renderDashboard({ initialAppType: "codex" });
 

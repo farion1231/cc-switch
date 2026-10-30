@@ -277,6 +277,36 @@ describe("credential failures", () => {
     failed("expired");
     expect(screen.getByText("登录已过期")).toBeInTheDocument();
   });
+
+  it("names the CLI command to run for a CLI login", () => {
+    renderQuota([], false, { success: false, credentialStatus: "expired" });
+    expect(screen.getByText("请运行 claude 命令刷新登录")).toBeInTheDocument();
+  });
+
+  it("points accounts CC Switch manages to Accounts instead of a command", () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <SubscriptionQuotaView
+          quota={{
+            tool: "codex_oauth",
+            credentialStatus: "expired",
+            credentialMessage: null,
+            success: false,
+            tiers: [],
+            extraUsage: null,
+            error: null,
+            queriedAt: now,
+          }}
+          loading={false}
+          refetch={vi.fn()}
+        />
+      </I18nextProvider>,
+    );
+    expect(
+      screen.getByText("请在授权中心重新登录这个账号"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/codex_oauth/)).not.toBeInTheDocument();
+  });
 });
 
 describe("ChatGPT saved limit resets", () => {
