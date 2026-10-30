@@ -1220,7 +1220,12 @@ fn sort_providers(providers: &indexmap::IndexMap<String, Provider>) -> Vec<(&Str
     sorted
 }
 
-fn provider_hint(provider: &Provider) -> Option<String> {
+/// 副标题：备注 > 绑定的 Claude 账号（同主界面卡片） > 官网域名。
+fn provider_hint(
+    app: &AppType,
+    provider: &Provider,
+    claude_accounts: &HashMap<String, String>,
+) -> Option<String> {
     if let Some(notes) = provider
         .notes
         .as_deref()
@@ -1229,6 +1234,11 @@ fn provider_hint(provider: &Provider) -> Option<String> {
         .filter(|notes| !notes.is_empty())
     {
         return Some(truncate_chars(notes, 24));
+    }
+    if let Some(label) =
+        claude_bound_account_id(app, provider).and_then(|id| claude_accounts.get(&id))
+    {
+        return Some(label.clone());
     }
     let url = provider.website_url.as_deref()?.trim();
     let host = url
@@ -1240,11 +1250,15 @@ fn provider_hint(provider: &Provider) -> Option<String> {
     (!host.is_empty()).then(|| host.to_string())
 }
 
-fn provider_entry(app: &AppType, provider: &Provider) -> ProviderEntry {
+fn provider_entry(
+    app: &AppType,
+    provider: &Provider,
+    claude_accounts: &HashMap<String, String>,
+) -> ProviderEntry {
     ProviderEntry {
         id: provider.id.clone(),
         name: provider.name.clone(),
-        hint: provider_hint(provider),
+        hint: provider_hint(app, provider, claude_accounts),
         needs_routing: provider_needs_routing(app, provider),
         official: is_official_account(app, provider),
         blocked_from_routing: blocked_from_routing(app, provider),
@@ -1275,9 +1289,14 @@ fn collect_app_snapshot(
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
     let rows = app_state.db.get_all_providers(app.as_str())?;
+    let claude_accounts = if *app == AppType::Claude {
+        crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
+    } else {
+        HashMap::new()
+    };
     let providers: Vec<ProviderEntry> = sort_providers(&rows)
         .into_iter()
-        .map(|(_, provider)| provider_entry(app, provider))
+        .map(|(_, provider)| provider_entry(app, provider, &claude_accounts))
         .collect();
     // 代理模式下是代理路由到的那家（含故障转移切过去的）。
     let current_id = crate::mode::current::provider_for(
@@ -2253,7 +2272,11 @@ fn panel_rows(
                 let source = tray_usage_source(&snapshot.app, provider);
                 Some(PanelProvider {
                     name: provider.name.clone(),
-                    hint: provider_hint(provider),
+                    hint: snapshot
+                        .providers
+                        .iter()
+                        .find(|entry| entry.id == provider_id)
+                        .and_then(|entry| entry.hint.clone()),
                     icon: provider.icon.clone(),
                     icon_color: provider.icon_color.clone(),
                     quota: cached_usage_view(
@@ -3939,6 +3962,31 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn claude_bound_card_hint_shows_account_unless_noted() {
+        let accounts = HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]);
+        let mut provider = claude_bound_provider(Some("acct-1"), None);
+        provider.website_url = Some("https://www.anthropic.com".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &provider, &accounts).as_deref(),
+            Some("me@example.com")
+        );
+
+        provider.notes = Some("Work".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &provider, &accounts).as_deref(),
+            Some("Work")
+        );
+
+        // 账号不在这台电脑上：退回官网域名
+        let mut missing = claude_bound_provider(Some("acct-2"), None);
+        missing.website_url = Some("https://www.anthropic.com".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &missing, &accounts).as_deref(),
+            Some("www.anthropic.com")
+        );
     }
 
     #[test]
