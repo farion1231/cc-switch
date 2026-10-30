@@ -12,6 +12,8 @@ pub struct McpApps {
     #[serde(default)]
     pub kimi: bool,
     #[serde(default)]
+    pub dsh: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub claude: bool,
@@ -46,6 +48,7 @@ impl McpApps {
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
             AppType::Rpi => self.rpi,
             AppType::Omp => self.omp,
@@ -66,6 +69,7 @@ impl McpApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
+            AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::Rpi => self.rpi = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
@@ -94,6 +98,9 @@ impl McpApps {
         }
         if self.agy {
             apps.push(AppType::Agy);
+        }
+        if self.dsh {
+            apps.push(AppType::Dsh);
         }
         if self.kimi {
             apps.push(AppType::Kimi);
@@ -126,6 +133,7 @@ impl McpApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.dsh
             && !self.mcode
             && !self.pi
             && !self.rpi
@@ -140,6 +148,8 @@ pub struct SkillApps {
     pub mcode: bool,
     #[serde(default)]
     pub kimi: bool,
+    #[serde(default)]
+    pub dsh: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -176,6 +186,7 @@ impl SkillApps {
             AppType::Rpi => self.rpi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Dsh => self.dsh,
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
@@ -196,6 +207,7 @@ impl SkillApps {
             AppType::Rpi => self.rpi = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
+            AppType::Dsh => self.dsh = enabled,
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
@@ -223,6 +235,9 @@ impl SkillApps {
         }
         if self.agy {
             apps.push(AppType::Agy);
+        }
+        if self.dsh {
+            apps.push(AppType::Dsh);
         }
         if self.kimi {
             apps.push(AppType::Kimi);
@@ -255,6 +270,7 @@ impl SkillApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.dsh
             && !self.mcode
             && !self.pi
             && !self.rpi
@@ -481,6 +497,7 @@ pub enum AppType {
     Rpi,
     Mcode,
     Kimi,
+    Dsh,
     Agy,
     Omp,
 }
@@ -500,6 +517,7 @@ impl AppType {
             AppType::Rpi => "rpi",
             AppType::Mcode => "mcode",
             AppType::Kimi => "kimi",
+            AppType::Dsh => "dsh",
             AppType::Agy => "agy",
             AppType::Omp => "omp",
         }
@@ -520,6 +538,7 @@ impl AppType {
                 | AppType::Rpi
                 | AppType::Mcode
                 | AppType::Kimi
+                | AppType::Dsh
                 | AppType::Omp
         )
     }
@@ -553,6 +572,7 @@ impl AppType {
             AppType::Rpi,
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Dsh,
             AppType::Agy,
             AppType::Omp,
         ]
@@ -578,12 +598,13 @@ impl FromStr for AppType {
             "rpi" => Ok(AppType::Rpi),
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
+            "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             other => Err(AppError::localized(
                 "unsupported_app",
-format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, kimi, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, kimi, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, kimi, dsh, agy, omp。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, kimi, dsh, agy, omp."),
             )),
         }
     }
@@ -627,8 +648,9 @@ impl CommonConfigSnippets {
             | AppType::Rpi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Agy
-            | AppType::Omp => None,
+            | AppType::Dsh
+            | AppType::Omp
+            | AppType::Agy => None,
         }
     }
 
@@ -647,8 +669,9 @@ impl CommonConfigSnippets {
             | AppType::Rpi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Agy
-            | AppType::Omp => {}
+            | AppType::Dsh
+            | AppType::Omp
+            | AppType::Agy => {}
         }
     }
 }
@@ -979,8 +1002,9 @@ impl MultiAppConfig {
             | AppType::Rpi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Agy
-            | AppType::Omp => return Ok(false),
+            | AppType::Dsh
+            | AppType::Omp
+            | AppType::Agy => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1028,8 +1052,9 @@ impl MultiAppConfig {
                 | AppType::Rpi
                 | AppType::Mcode
                 | AppType::Kimi
-                | AppType::Agy
-                | AppType::Omp => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Dsh
+                | AppType::Omp
+                | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

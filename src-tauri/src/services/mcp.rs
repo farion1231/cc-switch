@@ -34,18 +34,39 @@ impl McpService {
             .map(|s| s.apps.clone())
             .unwrap_or_default();
 
+        // Keep our disabled OMP tombstone in step with edits while the checkbox is off.
+        let managed_omp = server.apps.omp
+            || prev_apps.omp
+            || previous.as_ref().is_some_and(|saved| {
+                mcp::omp::is_disabled_managed(&saved.id, &saved.server).unwrap_or(false)
+            });
         // Native MCP writes and managed state commit together; keep each native
         // application's file update inside the same rollback chain.
         let save_with_db = || state.db.save_mcp_server(&server);
         let save_with_omp = || {
-            if server.apps.omp || prev_apps.omp {
+            if managed_omp {
                 mcp::omp::sync_and_commit(
                     &server.id,
-                    mcp::omp::OmpChange::from_enabled(&server.server, server.apps.omp),
+                    mcp::omp::OmpChange::from_previous(
+                        &server.server,
+                        previous.as_ref().map_or(&server.server, |s| &s.server),
+                        server.apps.omp,
+                    ),
                     save_with_db,
                 )
             } else {
                 save_with_db()
+            }
+        };
+        let save_with_dsh = || {
+            if server.apps.dsh || prev_apps.dsh {
+                mcp::dsh::sync_and_commit(
+                    &server.id,
+                    server.apps.dsh.then_some(&server.server),
+                    save_with_omp,
+                )
+            } else {
+                save_with_omp()
             }
         };
         let save_with_kimi = || {
@@ -53,10 +74,10 @@ impl McpService {
                 mcp::kimi::sync_and_commit(
                     &server.id,
                     server.apps.kimi.then_some(&server.server),
-                    save_with_omp,
+                    save_with_dsh,
                 )
             } else {
-                save_with_omp()
+                save_with_dsh()
             }
         };
         let save_with_agy = || {
@@ -125,11 +146,18 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
-            let delete_with_kimi = || {
-                if server.apps.kimi {
-                    mcp::kimi::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
+            let delete_with_dsh = || {
+                if server.apps.dsh {
+                    mcp::dsh::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
                 } else {
                     state.db.delete_mcp_server(id)
+                }
+            };
+            let delete_with_kimi = || {
+                if server.apps.kimi {
+                    mcp::kimi::sync_and_commit(id, None, delete_with_dsh)
+                } else {
+                    delete_with_dsh()
                 }
             };
             let delete_with_omp = || {
@@ -226,6 +254,7 @@ impl McpService {
             app,
             AppType::Mcode
                 | AppType::Kimi
+                | AppType::Dsh
                 | AppType::Pi
                 | AppType::Rpi
                 | AppType::Agy
@@ -244,6 +273,8 @@ impl McpService {
                         mcp::agy::AgyChange::from_enabled(spec),
                         commit,
                     )?;
+                } else if app == AppType::Dsh {
+                    mcp::dsh::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Kimi {
                     mcp::kimi::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
@@ -287,6 +318,7 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Dsh
                     | AppType::Pi
                     | AppType::Rpi
                     | AppType::Agy
@@ -313,6 +345,10 @@ impl McpService {
         match app {
             AppType::Claude => {
                 mcp::sync_single_server_to_claude(&Default::default(), &server.id, &server.server)?;
+                // 各官方账号目录镜像默认 .claude.json 的 mcpServers
+                crate::services::claude_account::sync_all_shared(
+                    &crate::config::get_app_config_dir(),
+                );
             }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
@@ -348,6 +384,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
+            AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
             AppType::Pi | AppType::Rpi => mcp::pi::sync(app, &server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
@@ -367,6 +404,7 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Dsh
                     | AppType::Pi
                     | AppType::Rpi
                     | AppType::Agy
@@ -381,7 +419,12 @@ impl McpService {
 
     fn remove_server_from_app(_state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
         match app {
-            AppType::Claude => mcp::remove_server_from_claude(id)?,
+            AppType::Claude => {
+                mcp::remove_server_from_claude(id)?;
+                crate::services::claude_account::sync_all_shared(
+                    &crate::config::get_app_config_dir(),
+                );
+            }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
@@ -400,8 +443,8 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
+            AppType::Dsh => mcp::dsh::sync(id, None)?,
             AppType::Pi | AppType::Rpi => mcp::pi::sync(app, id, None)?,
-
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
         }
@@ -513,6 +556,7 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Dsh
                     | AppType::Pi
                     | AppType::Rpi
                     | AppType::Agy
@@ -826,7 +870,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 12] = [
+        let results: [(&str, Result<usize, AppError>); 13] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -835,6 +879,7 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("kimi", mcp::kimi::import(state)),
+            ("dsh", mcp::dsh::import(state)),
             ("pi", mcp::pi::import(state, &AppType::Pi)),
             ("rpi", mcp::pi::import(state, &AppType::Rpi)),
             ("agy", mcp::agy::import(state)),

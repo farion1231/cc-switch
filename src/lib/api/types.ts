@@ -11,6 +11,7 @@ export type AppId =
   | "pi"
   | "rpi"
   | "kimi"
+  | "dsh"
   | "mcode"
   | "agy"
   | "omp";

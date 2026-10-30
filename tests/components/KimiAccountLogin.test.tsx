@@ -87,9 +87,9 @@ async function setup(status = signedOut) {
   return { ...view, client };
 }
 
-// 空状态的「登录 Kimi」先打开区域选择，再点选择块里的「登录 Kimi」
+// 「添加账号」先打开区域选择，再点选择块里的「登录 Kimi」
 async function start() {
-  fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
+  fireEvent.click(screen.getByRole("button", { name: "添加账号" }));
   fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
   await flush();
 }
@@ -156,7 +156,7 @@ describe("Kimi official account login", () => {
 
   it("signs in to the region chosen before starting", async () => {
     await setup();
-    fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
+    fireEvent.click(screen.getByRole("button", { name: "添加账号" }));
     fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.global" }));
     fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
     await flush();
@@ -245,7 +245,7 @@ describe("Kimi official account login", () => {
     });
     expect(screen.queryByText(device.userCode)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "kimi.oauth.signIn" }),
+      screen.getByRole("button", { name: "添加账号" }),
     ).toBeEnabled();
   });
 

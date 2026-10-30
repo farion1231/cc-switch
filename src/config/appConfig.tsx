@@ -30,6 +30,7 @@ export const APP_IDS: AppId[] = [
   "rpi",
   "mcode",
   "kimi",
+  "dsh",
   "agy",
   "omp",
 ];
@@ -47,6 +48,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   rpi: true,
   mcode: true,
   kimi: true,
+  dsh: true,
   agy: true,
   omp: true,
 };
@@ -86,6 +88,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "rpi",
   "mcode",
   "kimi",
+  "dsh",
   "agy",
   "omp",
 ];
@@ -137,12 +140,21 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "rpi" | "mcode" | "kimi" | "omp"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "rpi"
+  | "mcode"
+  | "kimi"
+  | "dsh"
+  | "omp"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
+  "dsh",
   "opencode",
   "openclaw",
   "hermes",
@@ -190,6 +202,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "rpi",
   "mcode",
   "kimi",
+  "dsh",
   "agy",
   "omp",
 ];
@@ -295,6 +308,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  dsh: {
+    label: "DeepSeek Harness",
+    icon: <ProviderIcon icon="deepseek" name="DeepSeek Harness" size={14} />,
+    activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
   },
   kimi: {
     label: "Kimi Code",

@@ -72,6 +72,7 @@ export function AddProviderDialog({
     appId !== "rpi" &&
     appId !== "omp" &&
     appId !== "mcode" &&
+    appId !== "dsh" &&
     appId !== "kimi" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
@@ -297,6 +298,7 @@ export function AddProviderDialog({
           appId === "rpi" ||
           appId === "mcode" ||
           appId === "kimi" ||
+          appId === "dsh" ||
           appId === "omp") &&
         values.providerKey
       ) {

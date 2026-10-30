@@ -5,6 +5,7 @@ import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Form, FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -99,6 +100,9 @@ const PRESETS = [
     preset,
   })),
 ];
+
+const normalizeProviderKey = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9-]/g, "");
 
 export function KimiProviderForm({
   providerId,
@@ -515,14 +519,12 @@ export function KimiProviderForm({
                 <Label htmlFor="kimi-provider-key" className={REQUIRED_LABEL}>
                   {t("opencode.providerKey")}
                 </Label>
-                <Input
+                <ImeSafeInput
                   id="kimi-provider-key"
                   value={providerKey}
                   disabled={isEdit}
-                  onChange={(e) => {
-                    const next = e.target.value
-                      .toLowerCase()
-                      .replace(/[^a-z0-9-]/g, "");
+                  normalize={normalizeProviderKey}
+                  onValueChange={(next) => {
                     const rename = (key: string) =>
                       key.startsWith(`${modelKeyPrefix}/`)
                         ? `${next || "custom"}/${key.slice(modelKeyPrefix.length + 1)}`

@@ -44,16 +44,15 @@ const provider: Provider = {
 
 describe("RPI usage polling", () => {
   it.each([true, false])(
-    "uses native membership (%s), not current-provider state",
-    (isInConfig) => {
+    "uses the configured interval regardless of current-provider state (%s)",
+    (isCurrent) => {
       usageQuery.mockClear();
       render(
         <QueryClientProvider client={createTestQueryClient()}>
           <ProviderCard
             provider={provider}
             appId="rpi"
-            isCurrent={false}
-            isInConfig={isInConfig}
+            isCurrent={isCurrent}
             presentation={{ chips: [], buttons: [] }}
             onEdit={vi.fn()}
             onDelete={vi.fn()}
@@ -65,8 +64,6 @@ describe("RPI usage polling", () => {
             providerId={provider.id}
             appId="rpi"
             usageEnabled={true}
-            isCurrent={false}
-            isInConfig={isInConfig}
           />
         </QueryClientProvider>,
       );
@@ -75,7 +72,7 @@ describe("RPI usage polling", () => {
         expect(args).toEqual([
           provider.id,
           "rpi",
-          { enabled: true, autoQueryInterval: isInConfig ? 10 : 0 },
+          { enabled: true, autoQueryInterval: 10 },
         ]);
       }
     },

@@ -30,7 +30,9 @@ export function ProviderEmptyState({
     appId === "kimi" ||
     appId === "omp"
       ? appId
-      : null;
+      : appId === "dsh"
+        ? "dsh"
+        : null;
   // RPI uses the same empty-state copy as Pi.
   const emptyCopyKey = emptyCopyNs === "rpi" ? "pi" : emptyCopyNs;
   // Antigravity 没有切换，这句「切换只替换关键字段」对它不成立
