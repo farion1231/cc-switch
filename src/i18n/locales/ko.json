@@ -198,7 +198,11 @@
       "confirm": "터미널 열기",
       "agySwitchTitle": "agy 로그인 계정이 변경됩니다",
       "agySwitchBody": "터미널을 열기 전에 agy 로그인 계정을 {{account}}(으)로 변경합니다. 이후 새로 실행하는 모든 agy는 이 계정을 사용합니다.",
-      "agySwitchRunning": "실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며, 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. 먼저 해당 agy를 모두 종료하는 것이 좋습니다."
+      "agySwitchRunning": "실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며, 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. 먼저 해당 agy를 모두 종료하는 것이 좋습니다.",
+      "skipPermissions": "권한 확인 건너뛰기",
+      "extraArgs": "추가 인수(선택 사항)",
+      "extraArgsPlaceholder": "예: --debug --append-system-prompt \"간결하게 답변하세요\"",
+      "extraArgsHint": "실행 명령 뒤에 추가되며, 이번에 여는 터미널에만 적용됩니다. 인수는 공백으로 구분하고, 공백이 포함된 값은 따옴표로 묶으세요."
     },
     "name": "이름",
     "namePlaceholder": "예: Claude 공식",
@@ -270,7 +274,9 @@
     "formSubtitleStack": "{{app}} (통합 모드)",
     "editCurrentNoticeFile": "사용 중인 공급자입니다. 저장하면",
     "editCurrentNoticeFileEnd": "에 즉시 저장되며, 다음 요청부터 적용됩니다.",
-    "editCurrentNotice": "사용 중인 공급자입니다. 저장하면 즉시 적용되며, 다음 요청부터 새 설정을 사용합니다."
+    "editCurrentNotice": "사용 중인 공급자입니다. 저장하면 즉시 적용되며, 다음 요청부터 새 설정을 사용합니다.",
+    "liveConfigReadFailed": "{{app}} 설정 파일을 읽을 수 없습니다",
+    "liveConfigReadFailedHint": "설정 파일의 문제를 해결하기 전까지는 공급자를 추가하거나 제거할 수 없습니다."
   },
   "claudeCode": {
     "needsRouting": "라우팅 필요",
@@ -754,6 +760,15 @@
         "warning": "원격 서버의 기존 동기화 데이터를 덮어쓰게 됩니다.",
         "legacyNotice": "이전 버전의 클라우드 경로에 있는 데이터가 감지되었습니다. 이번 업로드는 새 경로 v2/db-v6에 저장하며 이전 경로는 덮어쓰지 않습니다.",
         "confirm": "업로드 확인"
+      },
+      "clear": "설정 지우기",
+      "clearing": "지우는 중...",
+      "clearSuccess": "이 기기의 WebDAV 설정을 지웠습니다",
+      "clearFailed": "설정을 지우지 못했습니다: {{error}}",
+      "clearConfirm": {
+        "title": "WebDAV 설정 지우기",
+        "message": "이 기기에 저장된 WebDAV 서버 URL, 계정, 비밀번호 및 원격 루트 디렉터리 설정을 삭제하고 자동 동기화를 중지합니다. 서버에 이미 업로드된 데이터는 삭제되지 않습니다.",
+        "confirm": "지우기"
       }
     },
     "syncType": {
@@ -1574,7 +1589,8 @@
       "rawMatch": "원문에서 일치하는 내용",
       "expandContent": "전체 콘텐츠 표시",
       "collapseContent": "접기"
-    }
+    },
+    "dshMergedNote": "DeepSeek Harness의 Web과 Desktop은 동일한 세션 기록을 공유합니다. 이 기록은 여기에 통합하여 표시됩니다."
   },
   "console": {
     "providerSwitchReceived": "수신된 공급자 전환 이벤트:",
@@ -1625,13 +1641,13 @@
       "packycode": "PackyCode는 CC Switch의 공식 파트너입니다. 이 링크를 사용하여 등록하고 충전 시 \"cc-switch\" 프로모션 코드를 입력하면 10% 할인을 받을 수 있습니다.",
       "apikeyfun": "APIKEY.FUN은 CC Switch 사용자에게 특별 혜택을 제공합니다. 전용 링크로 가입하면 충전 시 최대 5% 할인을 영구적으로 받을 수 있습니다.",
       "apinebula": "APINEBULA는 CC Switch 사용자에게 특별 할인을 제공합니다. 전용 링크로 가입하고 충전 시 \"ccswitch\" 할인 코드를 입력하면 10% 할인을 받을 수 있습니다.",
-      "patewayai": "PatewayAI는 CC Switch 사용자에게 특별한 혜택을 제공합니다. 이 링크를 통해 등록하시면 $3 크레딧을 받으실 수 있습니다.",
+      "patewayai": "PatewayAI는 숙련된 AI 개발자를 위한 API 중계 서비스로, Claude, GPT 시리즈와 중국의 다양한 주요 모델을 완벽하게 지원합니다. 모든 모델은 공식 고품질 채널을 통해 제공되며, 모델의 성능을 낮추거나 다른 모델로 속여 제공하지 않습니다. 요금 내역도 투명하게 확인할 수 있습니다. 이코노미 모드에서는 정상가의 최저 5% 가격으로 이용할 수 있습니다. 이 링크로 가입하면 1달러 상당의 무료 체험 크레딧을 받을 수 있으며, 수시로 진행되는 프로모션을 통해 무료 크레딧을 추가로 받을 수도 있습니다. 기업용 동시 요청 처리, 전용 관리 콘솔, 정식 계약 및 청구서 발행을 지원합니다. 또한 초대한 사람과 초대받은 사람 모두를 대상으로 최대 150달러의 충전 추천 보너스를 제공합니다.",
       "claudecn": "ClaudeCN은 등록된 회사가 운영하는 엔터프라이즈급 AI 게이트웨이로, 기업 지불, 계약 및 규정 준수 보장을 통해 기업 조달 프로세스를 지원합니다.",
       "runapi": "RunAPI는 CC Switch 사용자에게 특별한 혜택을 제공합니다. 이 링크를 통해 등록하고 첫 충전 시 10% 할인을 받으세요.",
       "opencode_go": "OpenCode Go는 다양한 코딩 모델에 대한 구독 액세스를 제공합니다. 이 링크를 통해 요금제 세부정보를 확인하고 구독하세요.",
       "dmxapi": "Claude Code 독점 모델 66% OFF!",
       "cubence": "Cubence는 CC Switch의 공식 파트너입니다. 이 링크로 가입하고 충전 시 프로모션 코드 ‘CCSWITCH’를 입력하면 매번 10% 할인을 받을 수 있습니다.",
-      "aigocode": "AIGoCode는 CC Switch의 공식 파트너입니다. 이 링크를 사용하여 등록하고 첫 번째 충전 시 10% 보너스 크레딧을 받으세요!",
+      "aigocode": "단순히 토큰 사용량에 따라 요금을 부과하는 데 그치지 않는 구독형 AI 코딩 플랫폼입니다. 계정 하나로 월간 요금제를 통해 Claude Code, Codex, Gemini를 이용할 수 있으며, 중국 본토에서 직접 접속할 수 있어 응답이 빠릅니다. 이 링크로 구독하면 크레딧을 10% 추가로 받을 수 있습니다!",
       "rightcode": "RightCode는 CC Switch의 공식 파트너입니다. 이 링크를 사용하여 등록하고 충전할 때마다 5% 보너스 크레딧을 받으세요!",
       "aicodemirror": "AICodeMirror는 CC Switch의 공식 파트너입니다. 이 링크를 통해 등록하시면 20% 할인을 받으실 수 있습니다!",
       "aicoding": "AI Coding은 CC Switch 사용자에게 독점 할인을 제공합니다. 첫 충전 시 10% 할인이 제공됩니다!",
@@ -1664,7 +1680,8 @@
       "grooroute": "GrooRoute Pro는 OpenAI, Claude, DeepSeek 등 주요 모델을 지원하는 안정적인 AI API 중계 플랫폼으로, 종량제와 구독 요금제를 제공합니다. CC Switch 사용자는 이 링크로 가입하면 체험 크레딧 5위안을 무료로 받을 수 있습니다!",
       "dit": "같은 모델을 더 저렴하게 이용하세요. OpenAI 호환 API 하나로 GPT, Claude, Gemini 등 50개 이상의 모델을 호출하고, 160개 이상의 공급자 중 가격 대비 성능이 가장 좋은 곳으로 요청을 보냅니다. 요금은 일반적으로 공식 가격보다 30~70% 저렴합니다. Base URL과 API Key만 바꾸면 기존 기술 스택을 그대로 유지하면서 사용할 수 있습니다. CC Switch 사용자는 이 링크로 가입하고 프로모션 코드 \"cc-switch\"를 사용하면 신규 가입 후 첫 충전 시 30% 할인을 받을 수 있습니다!",
       "buytoken": "BuyToken은 Claude Code, Codex, DeepSeek 등의 중계 서비스를 제공하며 기업용 동시 처리와 빠른 세금계산서 발행을 지원합니다. 안정적이고 장기적인 서비스 운영을 지향합니다. CC Switch 사용자는 이 링크로 가입하면 체험 크레딧 3위안과 첫 충전 10% 할인을 받을 수 있습니다!",
-      "vapi": "V-API는 3년간 운영해 온 브랜드로, 개인·개발자·기업에 안정적이고 빠르며 안전한 LLM API 서비스를 제공합니다. 계약 체결과 중국의 정식 세금계산서 발행(일반/전용 부가가치세)을 지원합니다. CC Switch 사용자는 이 링크로 가입하면 첫 주문에서 2위안 즉시 할인과 10% 할인을 받을 수 있습니다!"
+      "vapi": "V-API는 3년간 운영해 온 브랜드로, 개인·개발자·기업에 안정적이고 빠르며 안전한 LLM API 서비스를 제공합니다. 계약 체결과 중국의 정식 세금계산서 발행(일반/전용 부가가치세)을 지원합니다. CC Switch 사용자는 이 링크로 가입하면 첫 주문에서 2위안 즉시 할인과 10% 할인을 받을 수 있습니다!",
+      "ospreyai": "ACS OspreyAI는 개발자와 기업을 위한 통합 멀티 모델 API 서비스 플랫폼입니다. API 키 하나로 Claude, Gemini, GPT, GLM, Kimi, Qwen, DeepSeek, Tencent Hunyuan 등 중국과 그 밖의 국가에서 제공하는 주요 모델을 사용할 수 있습니다. OpenAI, Anthropic 등 주요 API 프로토콜과 호환되며, Claude Code, Codex, OpenCode, Pi, Hermes 등 널리 쓰이는 AI 도구에서도 사용할 수 있습니다. 공식 가격 대비 중국 외 국가의 모델은 20~40%, 중국 모델은 30~50% 저렴하게 이용할 수 있습니다. 충전과 청구를 통합 관리하고, 사용량을 조회하며, 모델을 유연하게 전환할 수 있어 AI 앱 개발, 콘텐츠 제작 및 워크플로 자동화에 적합합니다. 이 링크로 계정을 만들면 할인 혜택을 받고 중국과 그 밖의 국가에서 제공하는 주요 모델을 빠르게 이용할 수 있습니다."
     },
     "presets": {
       "ucloud": "Compshare",
@@ -2105,9 +2122,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "추가 옵션이 설정되지 않았습니다.",
     "noModelOptions": "모델 옵션, 추가하려면 +를 클릭하세요.",
-    "modelLimits": "토큰 한도",
-    "limitContext": "컨텍스트",
-    "limitOutput": "출력",
     "modelExtraFields": "모델 속성",
     "noModelExtraFields": "모델 속성(variants, cost 등). +를 눌러 추가하세요",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2546,7 +2560,7 @@
       "scanTitle": "세션 로그를 자동으로 스캔",
       "scanHelpTitle": "세션 로그란?",
       "scanHelp": "각 앱이 이 컴퓨터에 저장하는 대화 기록입니다. CC Switch가 여기에서 사용량을 읽으므로 라우팅을 사용하지 않아도 데이터가 표시됩니다.",
-      "coverage": "7개 앱 포함: {{apps}}",
+      "coverage": "{{total}}개 앱 포함: {{apps}}",
       "cadenceOn": "시작 시 한 번, 이후 백그라운드에서 10분마다 스캔합니다. 사용량 페이지를 열면 즉시 스캔한 뒤 선택한 간격으로 계속 스캔합니다",
       "cadenceOff": "자동 스캔이 꺼져 있습니다. 지금 동기화를 클릭한 경우에만 로그가 검사됩니다.",
       "unsupported": "Hermes 및 OpenClaw는 아직 사용 통계를 지원하지 않습니다.",
@@ -2589,6 +2603,11 @@
       "title": "사용량 설정",
       "pricingSummary": "백만 개 토큰당 모델별 요금을 설정하거나 models.dev에서 동기화하세요.",
       "managePricing": "요금 관리…"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek 계정",
+      "label": "{{app}} · DeepSeek 계정(OAuth)",
+      "hint": "DeepSeek 계정으로 로그인하여 보낸 요청의 사용량을 세션 로그에서 읽습니다. Web과 Desktop이 로그인 정보를 공유하므로 사용량을 합산합니다"
     }
   },
   "usageScript": {
@@ -4172,7 +4191,8 @@
     "expired": "세션이 만료되었습니다.",
     "expiredHint": "{{tool}} 명령을 실행해 로그인을 갱신하세요.",
     "queryFailed": "조회 실패",
-    "refresh": "새로 고침"
+    "refresh": "새로 고침",
+    "expiredHintAccounts": "인증 센터에서 이 계정에 다시 로그인하세요"
   },
   "nav": {
     "mainLabel": "메인 네비게이션",
@@ -4602,7 +4622,8 @@
       "failedTitle": "일부 앱을 읽을 수 없습니다",
       "filesTitle": "읽은 파일",
       "claudeNote": " (최상위 mcpServers)",
-      "ok": "확인"
+      "ok": "확인",
+      "dshNote": " (초기화된 모든 프로필에 기록: web, desktop, headless, acp)"
     },
     "templateLabels": {
       "sequential-thinking": "순차적 사고"
@@ -4947,7 +4968,8 @@
       "updating": "업데이트 중…",
       "loading": "할당량 확인 중…",
       "refresh": "할당량 새로 고침",
-      "refreshAria": "{{login}}의 할당량 새로 고침"
+      "refreshAria": "{{login}}의 할당량 새로 고침",
+      "refreshAll": "모두 새로 고침"
     },
     "agy": {
       "reauthNote": "로그인이 만료되어 전환할 수 없습니다",
@@ -5076,6 +5098,31 @@
       "title": "DeepSeek Harness 공급자 추가",
       "description": "API 엔드포인트, API 키, 모델을 설정하세요. 기존 사용자 지정 공급자는 여기에 자동으로 표시됩니다."
     },
-    "deleteSessionHint": "기본 세션 기록과의 일관성을 유지하려면 DeepSeek Harness에서 이 세션을 삭제하세요."
+    "deleteSessionHint": "기본 세션 기록과의 일관성을 유지하려면 DeepSeek Harness에서 이 세션을 삭제하세요.",
+    "sharedProviders": "추가한 공급자 설정은 DeepSeek Harness의 Web과 Desktop 설정 파일에 모두 저장되며, 초기화된 headless 및 acp 프로필에도 저장됩니다. DeepSeek Harness에서 모델을 선택하면 됩니다.",
+    "sharedProvidersNote": "Web과 Desktop이 이 목록을 공유합니다",
+    "account": {
+      "help": "DeepSeek 계정에는 브라우저를 통해 로그인합니다(OAuth). 여기에서 또는 DeepSeek Harness에서 로그인할 수 있습니다. 로그인 정보는 $DSH_HOME/.credentials.yaml(기본값: ~/.dsh/.credentials.yaml)에 저장되며, DeepSeek Harness의 Web과 Desktop에서 함께 사용합니다. 어느 곳에서 로그인하거나 로그아웃하든 양쪽에 모두 적용되며, 실행 중인 DeepSeek Harness는 변경된 로그인 정보를 자동으로 다시 읽습니다. 이 계정을 통해 사용한 모델의 사용량은 사용량 페이지에 ‘DeepSeek 계정(OAuth)’으로 별도 표시됩니다.",
+      "statusFailed": "DeepSeek 계정의 로그인 상태를 읽을 수 없습니다",
+      "empty": "DeepSeek 계정에 로그인되어 있지 않습니다",
+      "unnamed": "DeepSeek 계정",
+      "expired": "로그인이 만료되었습니다. 다시 로그인하세요",
+      "shared": "Web과 Desktop에서 함께 사용",
+      "signOut": "로그아웃",
+      "signOutConfirm": "DeepSeek 계정 ‘{{name}}’에서 로그아웃하시겠습니까? DeepSeek Harness의 Web과 Desktop에서 모두 로그아웃됩니다. API 키를 사용하는 공급자에는 영향을 주지 않습니다.",
+      "signOutFailed": "DeepSeek 계정에서 로그아웃하지 못했습니다",
+      "balance": "잔액 {{amount}}",
+      "bonus": "보너스 {{amount}}",
+      "balanceFailed": "지금은 잔액을 조회할 수 없습니다",
+      "signedIn": "DeepSeek 계정에 로그인했습니다. Web과 Desktop에서 모두 사용할 수 있습니다",
+      "signInFailed": "DeepSeek 계정에 로그인하지 못했습니다",
+      "presetName": "DeepSeek 공식 로그인",
+      "presetDescription": "브라우저에서 DeepSeek 계정에 로그인하면 DeepSeek Harness가 해당 계정으로 사용할 수 있는 모델을 바로 제공하므로 공급자를 추가할 필요가 없습니다. Web과 Desktop은 동일한 로그인 정보를 사용합니다. 로그인과 로그아웃은 인증 센터에서 관리하며, 로그인한 계정은 ‘추가됨’ 목록에 표시됩니다.",
+      "manageAccounts": "DeepSeek 계정 관리",
+      "cardSubtitle": "공식 계정 · Web과 Desktop에서 함께 사용",
+      "expiredChip": "로그인 만료",
+      "editDisabled": "DeepSeek Harness가 이 계정으로 사용할 수 있는 모델을 자동으로 제공하므로 편집할 필요가 없습니다.",
+      "managedHint": "이 계정은 인증 센터에서 관리합니다. 로그아웃하면 이 카드가 사라집니다."
+    }
   }
 }
