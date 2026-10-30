@@ -368,12 +368,10 @@ mod tests {
         ];
         let sessions = scan_roots(&roots);
         assert_eq!(sessions.len(), 1);
-        // Windows accepts both separators; compare the resolved transcript paths.
+        // Compare as paths: on Windows the joined segments mix `/` and `\`.
         assert_eq!(
-            Path::new(sessions[0].source_path.as_deref().unwrap())
-                .canonicalize()
-                .unwrap(),
-            logs.join("transcript_full.jsonl").canonicalize().unwrap()
+            sessions[0].source_path.as_deref().map(Path::new),
+            Some(logs.join("transcript_full.jsonl").as_path())
         );
     }
 
