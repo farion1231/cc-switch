@@ -58,9 +58,9 @@ Offizielle Kanäle von Claude Code / Codex / Gemini zu 38 % / 2 % / 9 % des Orig
 
 <tr>
 <td width="180"><a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/"><img src="assets/partners/logos/pateway.png" alt="PatewayAI" width="150"></a></td>
-<td>Danke an PatewayAI für die Unterstützung dieses Projekts! PatewayAI ist ein API-Relay-Anbieter für anspruchsvolle KI-Entwickler, der sich auf das direkte Relayen offizieller hochwertiger Modell-APIs konzentriert. Er bietet die komplette Claude-Reihe und die Codex-Serie, zu 100 % aus offiziellen Kanälen bezogen — keine Verwässerung, keine Fälschungen, Überprüfung ausdrücklich erwünscht. Die Abrechnung ist transparent, und jede Rechnung auf Token-Ebene lässt sich Zeile für Zeile prüfen.
-Er unterstützt zudem unternehmensgerechte Nebenläufigkeit und stellt Unternehmenskunden eine dedizierte Verwaltungsplattform bereit — formelle Verträge und Rechnungsstellung sind verfügbar; Kontaktdaten finden Sie auf der offiziellen Website.
-Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">diesen Link</a> und erhalten Sie ein Testguthaben von 3 $. Aufladungen sind ab 60 % des Originalpreises möglich, mit einem beidseitigen Empfehlungsbonus von bis zu 150 $!</td>
+<td>Danke an PatewayAI für die Unterstützung dieses Projekts! PatewayAI ist ein API-Relay-Anbieter für erfahrene KI-Entwickler und unterstützt Claude, die GPT-Serie sowie zahlreiche gängige chinesische Modelle vollständig. Alle Modelle stammen aus offiziellen, hochwertigen Kanälen – nie verwässert, nie gefälscht – und die Abrechnung ist transparent und nachvollziehbar.
+Im Economy-Modus zahlen Sie ab 5 % des Originalpreises. Registrieren Sie sich über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">diesen Link</a> und erhalten Sie 1 $ kostenloses Testguthaben; bei gelegentlichen Aktionen gibt es zusätzlich Gratisguthaben.
+Die Plattform unterstützt außerdem Parallelität auf Unternehmensniveau, eine eigene Verwaltungskonsole, formelle Verträge und Rechnungen und bietet einen beidseitigen Empfehlungsbonus auf Aufladungen von bis zu 150 $.</td>
 </tr>
 
 <tr>
