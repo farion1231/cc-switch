@@ -693,6 +693,27 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    name: "OspreyAI",
+    providerKey: "cc-switch-ospreyai",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    settingsConfig: {
+      name: "OspreyAI",
+      baseUrl: "https://open.ospreyai.cn",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     providerKey: "cc-switch-shengsuanyun",
@@ -1746,7 +1767,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "cn",
     providerKey: "cc-switch-streamlake",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       name: "StreamLake",
       baseUrl: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
@@ -1767,7 +1789,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "intl",
     providerKey: "cc-switch-kat-coder",
     websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key?channel=ccswitch",
     settingsConfig: {
       name: "StreamLake en",
       baseUrl: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
@@ -3353,11 +3375,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TokenFlux",
     providerKey: "cc-switch-token-flux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
       name: "TokenFlux",
-      baseUrl: "https://tokenflux.dev",
+      baseUrl: "https://tokenflux.com",
       api: "anthropic-messages",
       apiKey: "",
       models: [
