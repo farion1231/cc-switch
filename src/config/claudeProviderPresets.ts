@@ -535,6 +535,24 @@ export const providerPresets: ProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    name: "OspreyAI",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    // open.ospreyai.cn/api/pricing（2026-10-30）：Claude 走 /v1/messages，Haiku 只有
+    // 不带日期的 claude-haiku-4-5（没有 haiku-5-5）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://open.ospreyai.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -1595,6 +1613,33 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#2932E1",
   },
   {
+    // 讯飞官方 Claude Code 配置：www.xfyun.cn/doc/spark/CodingPlan.html。
+    // 请求一律用别名 astron-code-latest，底层模型（Spark X2 等）在控制台套餐
+    // 页切换；/anthropic 之外的 /v1、/v2 是 Responses / Chat，不能混用。
+    // 非 claude-* 模型 id 按 200K 默认窗口处理，钉成与 Codex 预设相同的官方
+    // 保守值 92160（官方建议 <96k）
+    name: "Astron Coding Plan",
+    websiteUrl: "https://maas.xfyun.cn/packageSubscription",
+    apiKeyUrl: "https://maas.xfyun.cn/packageSubscription",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "astron-code-latest",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "astron-code-latest",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "astron-code-latest",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "astron-code-latest",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "92160",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: [
+      "https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic",
+    ],
+    icon: "astron",
+  },
+  {
     name: "千问AI平台",
     family: "qianwen",
     planKey: "payg",
@@ -1796,7 +1841,8 @@ export const providerPresets: ProviderPreset[] = [
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
@@ -1816,7 +1862,7 @@ export const providerPresets: ProviderPreset[] = [
     family: "streamlake",
     regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key?channel=ccswitch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
@@ -3063,15 +3109,16 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://tokenflux.dev",
+        ANTHROPIC_BASE_URL: "https://tokenflux.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "aggregator",
+    endpointCandidates: ["https://tokenflux.com", "https://tokenflux.dev"],
     icon: "tokenflux",
   },
   {
