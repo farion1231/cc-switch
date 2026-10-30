@@ -1194,6 +1194,34 @@ describe("ProviderList Component", () => {
     });
   });
 
+  it("warns when an additive app's live config cannot be read", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
+        HttpResponse.json("Failed to parse Hermes config as YAML", {
+          status: 500,
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("无法读取 apps.hermes 配置文件");
+    expect(
+      screen.getByText(/Failed to parse Hermes config as YAML/),
+    ).toBeInTheDocument();
+  });
+
   it("keeps Pi provider creation on the page-level add action", async () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
