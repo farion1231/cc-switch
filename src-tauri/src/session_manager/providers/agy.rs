@@ -368,13 +368,12 @@ mod tests {
         ];
         let sessions = scan_roots(&roots);
         assert_eq!(sessions.len(), 1);
+        // Windows accepts both separators; compare the resolved transcript paths.
         assert_eq!(
-            sessions[0].source_path.as_deref(),
-            Some(
-                logs.join("transcript_full.jsonl")
-                    .to_string_lossy()
-                    .as_ref()
-            )
+            Path::new(sessions[0].source_path.as_deref().unwrap())
+                .canonicalize()
+                .unwrap(),
+            logs.join("transcript_full.jsonl").canonicalize().unwrap()
         );
     }
 
