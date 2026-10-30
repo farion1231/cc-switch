@@ -797,18 +797,19 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://tokenflux.dev",
+        GOOGLE_GEMINI_BASE_URL: "https://tokenflux.com",
         GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
-    baseURL: "https://tokenflux.dev",
+    baseURL: "https://tokenflux.com",
     model: "gemini-3.8-flash",
     description: "TokenFlux",
     category: "aggregator",
+    endpointCandidates: ["https://tokenflux.com", "https://tokenflux.dev"],
     icon: "tokenflux",
   },
   {
