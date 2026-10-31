@@ -10,19 +10,33 @@ use crate::provider::Provider;
 use crate::services::model_pricing::ModelPricingInfo;
 use crate::store::AppState;
 
-struct TestHome {
+pub(super) struct TestHome {
     previous: Option<std::ffi::OsString>,
+    native_overrides: Vec<(&'static str, Option<std::ffi::OsString>)>,
     _directory: tempfile::TempDir,
 }
 
 impl TestHome {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", directory.path());
+        let native_overrides = [
+            ("KIMI_CODE_HOME", ".kimi-code"),
+            ("MINIMAX_DATA_DIR", ".minimax"),
+            ("DSH_HOME", ".dsh"),
+        ]
+        .into_iter()
+        .map(|(key, dir)| {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, directory.path().join(dir));
+            (key, previous)
+        })
+        .collect();
         crate::settings::reload_settings().unwrap();
         Self {
             previous,
+            native_overrides,
             _directory: directory,
         }
     }
@@ -30,6 +44,12 @@ impl TestHome {
 
 impl Drop for TestHome {
     fn drop(&mut self) {
+        for (key, previous) in &self.native_overrides {
+            match previous {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
         match &self.previous {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
@@ -158,4 +178,33 @@ fn startup_database_commands_yield_during_session_sync_contention() {
             ..
         }
     ));
+
+    // Native mutation commands can also wait behind a list refresh's app lock.
+    // Their database work must not move that wait back onto the calling thread.
+    // Keep another model selected so Kimi permits removing the test provider.
+    let kimi_path = crate::kimi_config::config_path();
+    std::fs::create_dir_all(kimi_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        kimi_path,
+        "default_model = 'kept'\n[providers.kept]\ntype = 'openai'\nbase_url = 'https://example.invalid/v1'\napi_key = 'test'\n[models.kept]\nprovider = 'kept'\nmodel = 'kept'\nmax_context_size = 32000\n",
+    )
+    .unwrap();
+    let kimi = Provider::with_id(
+        "test-kimi".into(),
+        "Test Kimi".into(),
+        serde_json::json!({
+            "provider": {"type": "openai", "base_url": "https://example.invalid/v1", "api_key": "test"},
+            "models": {"test-model": {"model": "test-model", "max_context_size": 32000}}
+        }),
+        None,
+    );
+    db.save_provider("kimi", &kimi).unwrap();
+    query!(add_provider_to_live_config, "kimi".into(), kimi.id.clone());
+    query!(
+        remove_provider_from_live_config,
+        "kimi".into(),
+        kimi.id.clone()
+    );
+    query!(delete_provider, "kimi".into(), kimi.id.clone());
+    assert!(db.get_provider_by_id(&kimi.id, "kimi").unwrap().is_none());
 }
