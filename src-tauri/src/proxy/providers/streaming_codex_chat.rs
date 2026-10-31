@@ -435,16 +435,23 @@ impl ChatToResponsesState {
 
     fn has_substantive_output(&self) -> bool {
         !self.text.text.trim().is_empty()
-            || !self.reasoning.text.trim().is_empty()
             || self.inline_think.has_pending_content()
-            || !self.output_items.is_empty()
-            || self.tools.values().any(|state| {
-                state.added
-                    || !state.call_id.trim().is_empty()
-                    || !state.name.trim().is_empty()
-                    || !state.arguments.trim().is_empty()
-                    || !state.reasoning_content.trim().is_empty()
-            })
+            || self.has_actionable_output()
+            || self
+                .tools
+                .values()
+                .any(|state| !state.name.trim().is_empty())
+    }
+
+    /// Whether finalized output contains at least one user-visible assistant
+    /// message or usable tool call (as opposed to reasoning-only output).
+    fn has_actionable_output(&self) -> bool {
+        self.output_items.iter().any(|(_, item)| {
+            matches!(
+                item.get("type").and_then(Value::as_str),
+                Some("message" | "function_call" | "custom_tool_call" | "tool_search_call")
+            )
+        })
     }
 
     /// 本回合最终产出里是否至少有一个可被 Codex 识别的工具调用 item。
@@ -494,9 +501,27 @@ impl ChatToResponsesState {
             return events;
         }
 
-        let mut response = self.base_response(status, self.completed_output_items());
+        let has_actionable_output = self.has_actionable_output();
+        let output = self.completed_output_items();
+        if status == "completed" && !output.is_empty() && !has_actionable_output {
+            events.push(
+                self.failed_event(
+                    "Upstream returned reasoning without any assistant message or tool call"
+                        .to_string(),
+                    Some("upstream_reasoning_only_turn".to_string()),
+                ),
+            );
+            return events;
+        }
+
+        let mut response = self.base_response(status, output);
         if status == "incomplete" {
             response["incomplete_details"] = json!({ "reason": "max_output_tokens" });
+            if !has_actionable_output {
+                events.push(sse::response_incomplete(&response));
+                self.completed = true;
+                return events;
+            }
         }
 
         events.push(sse::response_completed(&response));
@@ -1189,6 +1214,54 @@ mod tests {
         assert!(output.contains("event: response.completed"));
         assert!(output.contains("\"status\":\"incomplete\""));
         assert!(!output.contains("event: response.failed"));
+    }
+
+    #[tokio::test]
+    async fn reasoning_only_length_truncated_turn_emits_response_incomplete() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_think_cap\",\"model\":\"gemini-4-argon\",\"choices\":[{\"delta\":{\"reasoning_content\":\"looping thought\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_think_cap\",\"model\":\"gemini-4-argon\",\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":65536,\"total_tokens\":65636,\"completion_tokens_details\":{\"reasoning_tokens\":65533}}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let last = events.last().unwrap();
+
+        assert!(output.contains("event: response.incomplete"));
+        assert!(!output.contains("event: response.completed"));
+        assert!(!output.contains("event: response.failed"));
+        assert_eq!(last["type"], "response.incomplete");
+        assert_eq!(last["response"]["status"], "incomplete");
+        assert_eq!(
+            last["response"]["incomplete_details"]["reason"],
+            "max_output_tokens"
+        );
+        assert_eq!(last["response"]["usage"]["output_tokens"], 65536);
+    }
+
+    #[tokio::test]
+    async fn reasoning_only_completed_turn_emits_failed_instead_of_silent_complete() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_think_stop\",\"model\":\"gemini-4-argon\",\"choices\":[{\"delta\":{\"reasoning_content\":\"only thinking\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("upstream_reasoning_only_turn"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn stream_end_with_reasoning_only_without_finish_reason_emits_failed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_think_eof\",\"model\":\"gemini-4-argon\",\"choices\":[{\"delta\":{\"reasoning_content\":\"partial thought\"}}]}\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("stream_truncated"));
+        assert!(!output.contains("event: response.completed"));
     }
 
     /// 纯空白函数名对应不到任何已发布工具，必须与空名同等对待，

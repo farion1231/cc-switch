@@ -208,9 +208,9 @@ impl InlineThinkSplitter {
         }
     }
 
-    /// 是否还扣着未下发的非空白内容。
+    /// 是否还扣着未下发的非空白正文（Detecting/Text 缓冲，不含未闭合的思考块）。
     pub(crate) fn has_pending_content(&self) -> bool {
-        !self.buffer.trim().is_empty()
+        self.mode != InlineThinkMode::Reasoning && !self.buffer.trim().is_empty()
     }
 }
 

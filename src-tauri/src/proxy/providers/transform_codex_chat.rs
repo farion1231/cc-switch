@@ -1980,6 +1980,18 @@ pub(crate) fn chat_completion_to_response_with_context(
     }
     output.extend(tool_calls.items);
 
+    let has_actionable_output = output
+        .iter()
+        .any(|item| item.get("type").and_then(Value::as_str) != Some("reasoning"));
+    if response_status_from_finish_reason(finish_reason) == "completed"
+        && !output.is_empty()
+        && !has_actionable_output
+    {
+        return Err(ProxyError::TransformError(
+            "Upstream returned reasoning without any assistant message or tool call".to_string(),
+        ));
+    }
+
     let mut response = json!({
         "id": response_id,
         "object": "response",
@@ -6266,6 +6278,31 @@ mod tests {
 
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
+    }
+
+    #[test]
+    fn chat_response_reasoning_only_completed_turn_is_an_error() {
+        let chat = json!({
+            "id": "chatcmpl_reason_only",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gemini-4-argon",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "reasoning_content": "only thinking",
+                    "content": ""
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+        assert!(err
+            .to_string()
+            .contains("reasoning without any assistant message"));
     }
 
     #[test]
