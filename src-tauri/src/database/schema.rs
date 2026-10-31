@@ -2803,12 +2803,13 @@ impl Database {
             // 必须单独 seed，否则会话导入只能用 CLI 自报 total、分项成本为 0
             ("grok-4.6-build", "Grok 4.6 Build", "2", "6", "0.50", "0"),
             ("grok-4.7-build", "Grok 4.7 Build", "2", "6", "0.50", "0"),
+            // docs.x.ai：Grok 4.7 Fast（仅 Cursor / Grok Build）<200k 档 $4 / $12，cached $1
             (
                 "grok-4.7-build-fast",
                 "Grok 4.7 Build Fast",
-                "0.20",
-                "0.50",
-                "0.05",
+                "4",
+                "12",
+                "1",
                 "0",
             ),
             ("grok-4.3", "Grok 4.3", "1.25", "2.50", "0.20", "0"),

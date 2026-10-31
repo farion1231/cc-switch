@@ -1020,16 +1020,40 @@ mod tests {
         let (last_modified, _) = get_sync_state(&db, &path.to_string_lossy())?;
         assert_eq!(last_modified, 0, "延后时不得记录同步状态");
 
-        // 下一轮重读：旧事件 UPSERT 无变化，新事件仍未沉降继续延后
+        // 下一轮：字节游标停在 p2 行首，p1 不再经过；p2 仍未沉降继续延后
         let rerun = sync_single_grok_file(
             &db,
             &path,
             &crate::services::session_usage::load_sync_cursors(&db).unwrap(),
         )?;
         assert_eq!(rerun.imported, 0);
-        assert_eq!(rerun.skipped, 1);
+        assert_eq!(rerun.skipped, 0);
         assert_eq!(rerun.deferred_files, 1);
         assert_eq!(query_rows(&db)?.len(), 1);
+
+        // 模拟 p2 沉降：换成等长的旧时间戳（同为 10 位秒数），p1 那一行不动。
+        // 从游标续读应只补入 p2，且不再重扫 p1。
+        let settled = vec![
+            lines[0].clone(),
+            usage_event_line(
+                OLD_EPOCH + 120,
+                "p2",
+                &model_counters("grok-4.5-build", 250, 30, 0, 1),
+            ),
+        ];
+        assert_eq!(settled[1].len(), lines[1].len());
+        write_session_file(temp.path(), "sess-settle", &settled);
+        let settled_run = sync_single_grok_file(
+            &db,
+            &path,
+            &crate::services::session_usage::load_sync_cursors(&db).unwrap(),
+        )?;
+        assert_eq!(settled_run.imported, 1);
+        assert_eq!(settled_run.skipped, 0);
+        assert_eq!(settled_run.deferred_files, 0);
+        let rows = query_rows(&db)?;
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.0.contains(":p2:")));
         Ok(())
     }
 
