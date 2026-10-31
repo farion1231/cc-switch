@@ -354,6 +354,8 @@ export interface S3SyncSettings {
   endpoint?: string;
   remoteRoot?: string;
   profile?: string;
+  /** Selected S3 provider preset id; presentational, persisted so it survives reopening. */
+  preset?: string;
   status?: WebDavSyncStatus;
 }
 
