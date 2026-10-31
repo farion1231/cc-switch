@@ -326,6 +326,8 @@
     "addRoute": "Add model",
     "routeInvalid": "Choose a model role and enter the requested model",
     "routesRequired": "At least one model mapping is required",
+    "requestHeadersHelp": "Attached by the local proxy to upstream requests in model mapping (routing) mode. Standard headers such as authorization, x-api-key and content-type are managed by the proxy and cannot be overridden; other custom header names are allowed.",
+    "requestHeadersDirectModeWarning": "Custom request headers only apply in model mapping (routing) mode; the current direct mode will not send the saved headers.",
     "statusTitle": "Claude Desktop configuration needs attention",
     "statusUnsupported": "This platform does not support writing Claude Desktop 3P configuration yet.",
     "statusStaleRawModels": "The Claude Desktop profile contains model IDs outside the Sonnet / Opus / Haiku role families. Newer Claude Desktop versions may reject it; switch to the current provider again to repair it.",
