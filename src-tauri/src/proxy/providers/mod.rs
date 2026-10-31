@@ -12,6 +12,7 @@
 //! - `transform`: 格式转换
 
 mod adapter;
+mod anthropic_tool_schema;
 mod auth;
 mod claude;
 mod codex;
