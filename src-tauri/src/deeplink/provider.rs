@@ -133,6 +133,26 @@ pub fn import_provider_from_deeplink(
         merged_request.enabled.unwrap_or(false)
     };
 
+    // Bind the initially confirmed endpoint set in the same insert as the protected row.
+    let protected = crate::credential_edit_guard::is_protected(&provider);
+    if protected {
+        for endpoint in all_endpoints.iter().skip(1) {
+            let url = endpoint.trim().trim_end_matches('/').to_string();
+            provider
+                .meta
+                .get_or_insert_with(ProviderMeta::default)
+                .custom_endpoints
+                .insert(
+                    url.clone(),
+                    crate::settings::CustomEndpoint {
+                        url,
+                        added_at: chrono::Utc::now().timestamp_millis(),
+                        last_used: None,
+                    },
+                );
+        }
+    }
+
     if activate || additive {
         ProviderService::add(state, app_type.clone(), provider, activate)?;
     } else {
@@ -140,7 +160,7 @@ pub fn import_provider_from_deeplink(
     }
 
     // Add extra endpoints as custom endpoints (skip first one as it's the primary)
-    for ep in all_endpoints.iter().skip(1) {
+    for ep in all_endpoints.iter().skip(1).filter(|_| !protected) {
         let normalized = ep.trim().trim_end_matches('/').to_string();
         if !normalized.is_empty() {
             if let Err(e) = ProviderService::add_custom_endpoint(
@@ -375,6 +395,10 @@ pub(crate) fn build_provider_from_request(
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(app_type, request)?;
+    if request.credential_edit_protected == Some(true) {
+        meta.get_or_insert_with(ProviderMeta::default)
+            .credential_edit_protected = Some(true);
+    }
     if matches!(app_type, AppType::ClaudeDesktop) {
         meta.get_or_insert_with(ProviderMeta::default)
             .claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
@@ -405,6 +429,7 @@ pub(crate) fn build_provider_from_request(
         in_failover_queue: false,
     };
 
+    crate::credential_edit_guard::validate_supported(app_type, &provider)?;
     Ok(provider)
 }
 

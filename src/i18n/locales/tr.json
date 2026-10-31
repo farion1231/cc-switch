@@ -3492,6 +3492,17 @@
     },
     "updatesIncomplete": "Güncelleme bulunamadı ancak {{count}} depoları okunamadı"
   },
+  "credentialProtection": {
+    "unsupportedApp": "Bu uygulamada kimlik bilgisi düzenleme koruması kullanılamıyor.",
+    "importLabel": "Bu kimlik bilgisini yanlışlıkla yapılan düzenlemelere karşı koru",
+    "importHint": "Bu bağlantı düzenleme koruması istiyor. Normal düzenlemelerde anahtarı ve hedef adresini korumak için bu seçeneği işaretleyin. Korumayı daha sonra açıkça kaldırabilirsiniz.",
+    "title": "Kimlik bilgisi düzenleme koruması etkin",
+    "description": "Modelleri ve diğer ayarları düzenleyebilirsiniz. Anahtarı, kaynağını veya hedef adresini elle değiştirmek için önce korumayı kaldırın.",
+    "remove": "Korumayı kaldır",
+    "confirmTitle": "Kimlik bilgisi düzenleme koruması kaldırılsın mı?",
+    "confirmMessage": "Mevcut anahtar ve istemci yapılandırması değişmeyecek. Editör, kaydedilmemiş değişiklikler uygulanmadan kapanacak. Kimlik bilgisini elle düzenlemek için yeniden açın.",
+    "removeFailed": "Kimlik bilgisi düzenleme koruması kaldırılamadı. Değişiklikleriniz uygulanmadı."
+  },
   "deeplink": {
     "confirmImport": "İçe Aktarma Sağlayıcısını Onayla",
     "confirmImportDescription": "Aşağıdaki yapılandırma derin bağlantıdan CC Switch uygulamasını aktarılacak",

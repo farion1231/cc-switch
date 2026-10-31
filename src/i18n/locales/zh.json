@@ -3508,6 +3508,17 @@
     },
     "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到"
   },
+  "credentialProtection": {
+    "unsupportedApp": "此应用暂不支持凭据编辑保护。",
+    "importLabel": "保护此凭据，避免误修改",
+    "importHint": "此链接建议启用编辑保护。选中后，普通编辑将保留 Key 及其发送地址。你可以稍后明确解除保护。",
+    "title": "已启用凭据编辑保护",
+    "description": "模型及其他设置可以编辑。要手动修改 Key、凭据来源或发送地址，请先解除保护。",
+    "remove": "解除保护",
+    "confirmTitle": "解除凭据编辑保护？",
+    "confirmMessage": "现有 Key 和客户端配置保持不变。编辑器将关闭，未保存的修改不会应用。重新打开后即可手动编辑凭据。",
+    "removeFailed": "无法解除凭据编辑保护，尚未应用你的修改。"
+  },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",
     "confirmImportDescription": "以下配置将导入到 CC Switch",
