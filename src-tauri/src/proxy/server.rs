@@ -29,6 +29,8 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
 
+pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 200 * 1024 * 1024;
+
 /// 代理服务器状态（共享）
 #[derive(Clone)]
 pub struct ProxyState {
@@ -420,7 +422,7 @@ impl ProxyServer {
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
-            .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
             .with_state(self.state.clone())
     }
 
@@ -494,6 +496,102 @@ mod tests {
             flags & HANDLE_FLAG_INHERIT,
             0,
             "listener socket is inheritable"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_raw_request_handler_enforces_the_body_limit() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let gateway_token = crate::claude_desktop_config::get_or_create_gateway_token(db.as_ref())
+            .expect("gateway token");
+        let proxy = ProxyServer::new(ProxyConfig::default(), db, None);
+        let app = Router::new()
+            .route("/v1/messages", post(handlers::handle_messages))
+            .route(
+                "/claude-desktop/v1/messages",
+                post(handlers::handle_claude_desktop_messages),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(handlers::handle_chat_completions),
+            )
+            .route("/v1/responses", post(handlers::handle_responses))
+            .route(
+                "/grokbuild/v1/responses",
+                post(handlers::handle_grokbuild_responses),
+            )
+            .route(
+                "/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/grokbuild/v1/responses/compact",
+                post(handlers::handle_grokbuild_responses_compact),
+            )
+            .route("/v1/alpha/search", post(handlers::handle_alpha_search))
+            .route("/v1/images/edits", post(handlers::handle_images_edits))
+            .route("/v1beta/*path", any(handlers::handle_gemini))
+            .layer(DefaultBodyLimit::max(32))
+            .with_state(proxy.state.clone());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind proxy handlers");
+        let addr = listener.local_addr().expect("local address");
+        let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("test client");
+        let paths = [
+            "/v1/messages",
+            "/claude-desktop/v1/messages",
+            "/v1/chat/completions",
+            "/v1/responses",
+            "/grokbuild/v1/responses",
+            "/v1/responses/compact",
+            "/grokbuild/v1/responses/compact",
+            "/v1/alpha/search",
+            "/v1/images/edits",
+            "/v1beta/models/gemini:generateContent",
+        ];
+        let mut statuses = Vec::new();
+        for path in paths {
+            for chunked in [false, true] {
+                let mut request = client.post(format!("http://{addr}{path}"));
+                if path == "/claude-desktop/v1/messages" {
+                    request = request.bearer_auth(&gateway_token);
+                }
+                let body = if chunked {
+                    reqwest::Body::wrap_stream(futures::stream::iter([
+                        Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"{}")),
+                        Ok(bytes::Bytes::from(vec![b' '; 31])),
+                    ]))
+                } else {
+                    reqwest::Body::from(format!("{{}}{}", " ".repeat(31)))
+                };
+                let response = request
+                    .body(body)
+                    .send()
+                    .await
+                    .expect("send oversized body");
+                statuses.push((path, chunked, response.status()));
+            }
+        }
+        // A valid request exactly at the limit must continue to the handler.
+        let at_limit = client
+            .post(format!("http://{addr}/v1/messages"))
+            .body(format!("{{}}{}", " ".repeat(30)))
+            .send()
+            .await
+            .expect("send body at limit");
+        handle.abort();
+        assert_ne!(at_limit.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(
+            statuses
+                .iter()
+                .all(|(_, _, status)| *status == StatusCode::PAYLOAD_TOO_LARGE),
+            "all raw-body handlers must return 413 before processing the body: {statuses:?}"
         );
     }
 
