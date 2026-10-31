@@ -2507,13 +2507,82 @@ fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalo
         .unwrap_or_default()
 }
 
-/// Stack 模型用：一家第三方供应商发布的模型名（按目录顺序）。`config_text` 是行里的
-/// `config`（只读顶层 `model`）。
-pub(crate) fn codex_published_models(settings: &Value, config_text: &str) -> Vec<String> {
-    codex_published_specs(settings, config_text)
+// 保留在字符串错误中，便于前端在聚合操作附加上下文后仍能按界面语言显示。
+fn custom_catalog_error(code: &str, context: Value) -> AppError {
+    AppError::Message(format!(
+        "CC_SWITCH_CODEX_CATALOG_ERROR:{}",
+        json!({ "code": code, "context": context })
+    ))
+}
+
+/// 用户自管的目录只做拼接所需的结构校验，不补全或过滤模型能力字段。
+/// 和 Codex 一样先展开主目录，再以 Codex 配置目录为基准解析相对路径。
+pub(crate) fn read_codex_custom_catalog_models(
+    config_text: &str,
+) -> Result<Option<Vec<Value>>, AppError> {
+    let doc = config_text.parse::<DocumentMut>().map_err(|error| {
+        custom_catalog_error("invalidConfig", json!({ "detail": error.to_string() }))
+    })?;
+    let Some(pointer) = crate::live::project::codex::foreign_catalog(&doc) else {
+        return Ok(None);
+    };
+    let raw = pointer.as_str().expect("catalog path is a string");
+    let home_relative = raw
+        .strip_prefix("~/")
+        .map(|rest| rest.trim_start_matches('/'))
+        .or_else(|| (raw == "~").then_some(""))
+        .or_else(|| {
+            if cfg!(windows) {
+                raw.strip_prefix("~\\")
+                    .map(|rest| rest.trim_start_matches('\\'))
+            } else {
+                None
+            }
+        });
+    let path = match home_relative {
+        Some(rest) => get_home_dir().join(rest),
+        None => get_codex_config_dir().join(raw),
+    };
+    let invalid = |code: &str, mut context: Value| {
+        context["path"] = json!(path.display().to_string());
+        custom_catalog_error(code, context)
+    };
+    let bytes = fs::read(&path)
+        .map_err(|error| invalid("readFailed", json!({ "detail": error.to_string() })))?;
+    let catalog: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| invalid("invalidJson", json!({ "detail": error.to_string() })))?;
+    let models = catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("invalidModels", json!({})))?;
+    for (index, model) in models.iter().enumerate() {
+        if !model.is_object()
+            || model
+                .get("slug")
+                .and_then(Value::as_str)
+                .is_none_or(|slug| slug.trim().is_empty())
+        {
+            return Err(invalid("invalidSlug", json!({ "index": index })));
+        }
+    }
+    Ok(Some(models.clone()))
+}
+
+/// Stack 模型名和实际生成的目录使用同一来源；自定义文件优先于卡上的模型列表。
+pub(crate) fn codex_published_models(
+    settings: &Value,
+    config_text: &str,
+) -> Result<Vec<String>, AppError> {
+    if let Some(models) = read_codex_custom_catalog_models(config_text)? {
+        return Ok(models
+            .iter()
+            .map(|model| model["slug"].as_str().unwrap().to_string())
+            .collect());
+    }
+    Ok(codex_published_specs(settings, config_text)
         .into_iter()
         .map(|spec| spec.model)
-        .collect()
+        .collect())
 }
 
 /// 合并目录里的一家第三方供应商。
@@ -2613,7 +2682,19 @@ pub(crate) fn plan_codex_stack_catalog(
         }
     };
     for member in stack {
-        for mut entry in codex_stack_third_party_rows(&member.row)? {
+        let custom_catalog = member
+            .row
+            .config_text
+            .parse::<DocumentMut>()
+            .ok()
+            .is_some_and(|doc| crate::live::project::codex::foreign_catalog(&doc).is_some());
+        let rows = codex_stack_third_party_rows(&member.row).map_err(|error| {
+            AppError::Message(format!(
+                "供应商「{}」模型目录读取失败 (Provider model catalog failed): {error}",
+                member.provider_name
+            ))
+        })?;
+        for mut entry in rows {
             let Some(obj) = entry.as_object_mut() else {
                 continue;
             };
@@ -2646,13 +2727,32 @@ pub(crate) fn plan_codex_stack_catalog(
                 .get("context_window")
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
-            obj.insert(
-                "description".to_string(),
-                json!(crate::mode::stack::model_description(&model, window)),
-            );
+            if !custom_catalog {
+                obj.insert(
+                    "description".to_string(),
+                    json!(crate::mode::stack::model_description(&model, window)),
+                );
+            }
             // 第三方不支持 Responses Lite 协议。
-            if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
+            if !custom_catalog && obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
                 obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+            }
+            // 审批和升级目标不一定在选择器里发布，仍需发往同一家供应商。
+            // 显式指定聚合 ID 的跨供应商引用保持原样。
+            for pointer in ["/auto_review_model_override", "/upgrade/model"] {
+                if let Some(value) = entry.pointer_mut(pointer) {
+                    if let Some(model) = value
+                        .as_str()
+                        .filter(|model| !model.trim().is_empty() && !model.starts_with("ccs-"))
+                    {
+                        *value = json!(crate::mode::stack::encode(
+                            &crate::app_config::AppType::Codex,
+                            member.key,
+                            model,
+                            false,
+                        ));
+                    }
+                }
             }
             entries.push(entry);
         }
@@ -2683,6 +2783,16 @@ const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
 pub(crate) fn codex_stack_third_party_rows(
     row: &CodexCatalogRow<'_>,
 ) -> Result<Vec<Value>, AppError> {
+    match read_codex_custom_catalog_models(row.config_text) {
+        Ok(Some(models)) => return Ok(models),
+        Ok(None) => {}
+        Err(error) => {
+            // 外部文件可能在加入聚合后被删除、损坏，或来自其他设备。
+            // 只跳过这家，避免启动接上、切换路由或保存卡片时整个写入失败。
+            log::warn!("Codex 自管模型目录不可用，这次不发布它: {error}");
+            return Ok(Vec::new());
+        }
+    }
     let specs = codex_published_specs(row.settings, row.config_text);
     if specs.is_empty() {
         return Ok(Vec::new());
@@ -3301,6 +3411,48 @@ mod tests {
             }
             let _ = crate::settings::reload_settings();
         }
+    }
+
+    #[test]
+    #[serial]
+    fn custom_catalog_paths_match_codex_home_expansion() {
+        let _home = CodexLiveTestHome::new();
+        let config_dir = get_codex_config_dir();
+        fs::create_dir_all(&config_dir).unwrap();
+        let home_catalog = get_home_dir().join("models.json");
+        fs::write(&home_catalog, r#"{"models":[{"slug":"home-model"}]}"#).unwrap();
+        fs::write(
+            config_dir.join("models.json"),
+            r#"{"models":[{"slug":"config-model"}]}"#,
+        )
+        .unwrap();
+        let mut cases = vec![
+            ("models.json".to_string(), "config-model"),
+            (home_catalog.to_str().unwrap().to_string(), "home-model"),
+            ("~/models.json".to_string(), "home-model"),
+            ("~//models.json".to_string(), "home-model"),
+        ];
+        if cfg!(windows) {
+            cases.push((r"~\models.json".to_string(), "home-model"));
+            cases.push((r"~\\models.json".to_string(), "home-model"));
+        }
+        for (raw, expected) in cases {
+            let config = format!("model_catalog_json = '{}'\n", raw);
+            let models = read_codex_custom_catalog_models(&config)
+                .unwrap_or_else(|error| panic!("{raw}: {error}"))
+                .unwrap();
+            assert_eq!(models[0]["slug"], expected, "{raw}");
+        }
+        // 单独的 ~ 指向主目录本身（不是 JSON 文件），错误中应保留展开后的路径。
+        let error = read_codex_custom_catalog_models("model_catalog_json = '~'\n")
+            .unwrap_err()
+            .to_string();
+        let (_, payload) = error.split_once("CC_SWITCH_CODEX_CATALOG_ERROR:").unwrap();
+        let payload: Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(
+            PathBuf::from(payload["context"]["path"].as_str().unwrap()),
+            get_home_dir()
+        );
     }
 
     #[derive(Debug, PartialEq)]

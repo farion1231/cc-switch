@@ -122,6 +122,13 @@
     "stackReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で集約したモデルを選び直してください",
     "stackPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
     "stackFailed": "集約したモデルの保存に失敗しました：{{error}}",
+    "customCatalogError": {
+      "invalidConfig": "カスタムモデルカタログの設定を読み取れません：Codex config.toml の形式が無効です。{{detail}}",
+      "readFailed": "Codex のカスタムモデルカタログを読み取れません：{{path}}。{{detail}}",
+      "invalidJson": "Codex のカスタムモデルカタログの JSON が無効です：{{path}}。{{detail}}",
+      "invalidModels": "Codex のカスタムモデルカタログには models 配列が必要です：{{path}}",
+      "invalidSlug": "models[{{index}}] は空でない文字列の slug を持つオブジェクトである必要があります：{{path}}"
+    },
     "stackDefaultCannotRemove": "デフォルトのプロバイダーは削除できません。先に別のプロバイダーをデフォルトに設定してください",
     "stackDefaultHint": "デフォルトのプロバイダーです：一覧の先頭のモデルが Claude Code の起動時とバックグラウンドタスクを担当します",
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
