@@ -1002,11 +1002,11 @@
     "viewCurrentReleaseNotes": "현재 버전 릴리스 노트 보기",
     "officialWebsite": "공식 홈페이지",
     "github": "GitHub",
-    "starPrompt": "CC Switch가 도움이 되었다면 GitHub에 별표를 표시해 주세요. 이는 우리에게 큰 의미가 있습니다.",
-    "starOnGithub": "GitHub에 별표 표시",
+    "starPrompt": "CC Switch가 도움이 되었다면 GitHub에서 Star를 눌러 주세요. 개발에 큰 힘이 됩니다.",
+    "starOnGithub": "GitHub에서 Star 누르기",
     "manualInstallCommands": "수동 설치 명령",
     "manualUninstallCommands": "수동 제거 명령",
-    "manualUninstallHint": "각 앱의 환경은 기본적으로 자동으로 감지되며, 다른 환경을 수동으로 선택할 수 있습니다. 원래 설치 방법을 선택한 다음, 제거하려는 앱에 대한 명령을 복사하여 터미널에서 실행하세요. 상태를 새로 고치려면 나중에 “업데이트 확인”을 클릭하세요.",
+    "manualUninstallHint": "각 앱의 환경은 기본적으로 자동으로 감지되며, 다른 환경을 수동으로 선택할 수 있습니다. 원래 설치 방법을 선택한 다음, 제거하려는 앱에 대한 명령을 복사하여 터미널에서 실행하세요. 완료 후 “업데이트 확인”을 눌러 설치 상태를 새로 고치세요.",
     "manualUninstallMethod": "설치 방법",
     "manualUninstallBunLauncherHint": "Bun으로 제거한 뒤에도 OpenClaw 실행 파일이 남아 있을 수 있습니다. 파일 안의 \"OpenClaw Bun launcher\" 표시와 패키지 경로를 확인한 뒤 해당 파일만 삭제하세요. 공유 bin 디렉터리는 삭제하지 마세요.",
     "manualUninstallOpenClawHint": "먼저 openclaw uninstall --service --yes --non-interactive를 실행하여 설정과 작업 공간은 유지하고 게이트웨이 서비스만 제거하세요. 명령이 정상적으로 완료되면 아래 명령으로 CLI를 제거하세요.",
@@ -1062,7 +1062,7 @@
     "toolUpgradeConfirmHint": "여러 위치에 설치된 항목이 감지되었습니다. 이번 업그레이드에서는 모든 설치 항목을 업데이트하지 않습니다. 실제로 업데이트할 위치는 아래 항목에서 확인하세요.",
     "toolUpgradeWillRun": "실행 예정:",
     "toolUpgradeConfirmBtn": "업그레이드 확인",
-    "toolUpgradeUnanchoredHint": "명령줄에서 어떤 설치를 사용하는지 확인할 수 없습니다. 기본 업그레이드 명령을 실행합니다(PATH의 첫 번째 npm에 설치할 수 있음).",
+    "toolUpgradeUnanchoredHint": "명령줄에서 어떤 설치를 사용하는지 확인할 수 없어 기본 업그레이드 명령을 실행합니다. PATH에서 가장 먼저 찾은 npm을 통해 설치될 수 있습니다.",
     "toolUpgradeUnmanagedTitle": "이 도구 업그레이드를 건너뛰었습니다.",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) 항목은 npm이나 인식 가능한 설치 프로그램으로 설치되지 않아 CC Switch에서 업그레이드 방법을 판단할 수 없습니다. 처음 설치할 때 사용한 방식으로 업그레이드하세요(예: winget, Scoop 또는 공식 설치 스크립트 다시 실행).",
     "envBadge": {
@@ -1612,6 +1612,13 @@
     "openReleaseNotesFailed": "릴리스 노트를 열지 못했습니다:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "설정 파일 {{path}} (이 공급자만 해당)",
+      "hint": "앱에서 사용하는 설정 형식으로 파일 내 이 공급자에 해당하는 부분을 표시하며, 저장 시 해당 파일에 반영합니다. 기본 모델 등의 전역 설정은 포함되지 않습니다. 여기에 입력한 주석은 저장되지 않습니다.",
+      "invalid": "잘못된 {{format}} 형식: {{error}}",
+      "scope": "여기에는 {{section}} 노드만 포함할 수 있습니다. 공급자 키는 위의 입력란에서 변경하세요.",
+      "schema": "일부 필드의 자료형이 올바르지 않습니다. 위의 입력 양식과 비교하여 확인하세요."
+    },
     "supplierName": "공급자 이름",
     "supplierNameRequired": "공급자 이름 *",
     "supplierNamePlaceholder": "예: Anthropic 공식",
@@ -1632,7 +1639,7 @@
     "customApiKeyHint": "💡 사용자 지정 설정을 위해서는 모든 필수 필드를 수동으로 입력해야 합니다.",
     "omoHint": "💡 OMO 설정은 에이전트 모델 할당을 관리하고 oh-my-openagent.jsonc 및 oh-my-opencode.jsonc를 모두 지원합니다.",
     "officialHint": "💡 공식 공급자는 브라우저 로그인을 사용하므로 API 키가 필요하지 않습니다.",
-    "providerKeyStatusLoading": "공급자 식별자 상태가 아직 로드 중입니다. 잠시 후 다시 시도해 주세요.",
+    "providerKeyStatusLoading": "공급자 식별자 상태를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.",
     "getApiKey": "API 키 가져오기",
     "partnerPromotion": {
       "kimi": "신규 Kimi 사용자는 첫 충전 성공 금액의 10%를 보너스 API 크레딧으로 최대 1,000위안까지 돌려받습니다.",
@@ -1830,6 +1837,11 @@
     "customUserAgentHelp": "공급자로 전달하는 요청의 User-Agent를 바꿉니다.",
     "localProxyRequestOverridesHelp": "형식 변환 후 업스트림 요청에 적용됩니다.",
     "apiFormatHelp": "공급자가 지원하는 API 형식을 선택하세요. Anthropic Messages는 변환 없이 전달합니다. 다른 형식을 선택하면 요청은 공급자의 형식으로, 응답은 Anthropic Messages 형식으로 변환합니다.",
+    "reasoningEffort": "추론 수준",
+    "reasoningEffortHelp": "라우팅을 통해 요청을 OpenAI 형식으로 변환할 때, 클라이언트에서 선택한 추론 수준을 업스트림에 어떻게 전송할지 설정합니다. 자동: 업스트림이 지원하는 수준으로 전송합니다. 업스트림을 식별할 수 없으면 최대 high까지만 전송하며, 추론이 꺼져 있으면 이 매개변수를 전송하지 않습니다. 그대로 전송: 클라이언트에서 선택한 수준을 그대로 전송하므로, 업스트림이 xhigh 또는 max를 지원하지 않으면 오류가 발생합니다. 전송하지 않음: 업스트림에서 이 매개변수로 인해 오류가 발생할 때 사용하세요.",
+    "reasoningEffortAuto": "자동 (권장)",
+    "reasoningEffortOff": "전송하지 않음",
+    "reasoningEffortPassthrough": "그대로 전송",
     "directModeFormatInUse": "이 카드는 현재 직접 연결로 사용 중입니다. 이 형식으로 저장하면 요청이 실패합니다. 먼저 라우팅 또는 통합 모드로 전환하세요.",
     "directModeFormatSwitch": "이 형식은 직접 연결 모드에서 사용할 수 없습니다. 이 카드를 사용하려면 라우팅 또는 통합 모드로 전환하세요."
   },
@@ -2297,7 +2309,7 @@
       "actionEllipsis": "Codex 사용량 재구성"
     },
     "totalRecords": "총 기록 {{total}}개",
-    "pageSize": "페이지당 {{count}}",
+    "pageSize": "페이지당 {{count}}행",
     "pageSizeLabel": "페이지당 행 수",
     "goToPage": "이동",
     "pageInputPlaceholder": "페이지",
@@ -2655,15 +2667,15 @@
     "defaultPlan": "기본 요금제",
     "queryFailedMessage": "조회 실패",
     "queryScript": "조회 스크립트(JavaScript)",
-    "timeoutSeconds": "시간 초과(초)",
+    "timeoutSeconds": "제한 시간(초)",
     "headers": "헤더",
     "body": "본문",
     "timeoutHint": "범위: 2~30초",
-    "timeoutMustBeInteger": "시간 초과는 정수여야 하며 소수 부분은 무시됩니다.",
-    "timeoutCannotBeNegative": "시간 초과는 음수일 수 없습니다.",
-    "autoIntervalMinutes": "자동 조회 간격 (분, 0이면 사용 안 함)",
-    "autoQueryInterval": "자동 조회 간격 (분)",
-    "autoQueryIntervalHint": "0은 비활성화합니다. 5~60분 권장",
+    "timeoutMustBeInteger": "제한 시간은 정수여야 하며 소수 부분은 무시됩니다.",
+    "timeoutCannotBeNegative": "제한 시간은 음수일 수 없습니다.",
+    "autoIntervalMinutes": "자동 조회 간격(분, 0이면 사용 안 함)",
+    "autoQueryInterval": "자동 조회 간격(분)",
+    "autoQueryIntervalHint": "0으로 설정하면 자동으로 조회하지 않습니다. 5~60분을 권장합니다.",
     "intervalMustBeInteger": "간격은 정수여야 하며 소수 부분은 무시됩니다.",
     "intervalCannotBeNegative": "간격은 음수일 수 없습니다.",
     "intervalAdjusted": "간격이 {{value}}분으로 조정되었습니다.",
@@ -2728,9 +2740,9 @@
   "presetSelector": {
     "title": "설정 유형 선택",
     "custom": "사용자 지정",
-    "customDescription": "공급자를 수동으로 설정하고 전체 설정이 필요함",
-    "officialDescription": "공식 로그인, API 키 필요 없음",
-    "presetDescription": "프리셋 설정 사용, API 키만 필요"
+    "customDescription": "공급자를 수동으로 설정합니다. 필요한 설정 정보를 모두 입력하세요.",
+    "officialDescription": "공식 로그인을 사용하므로 API 키를 입력할 필요가 없습니다.",
+    "presetDescription": "프리셋 설정을 사용하므로 API 키만 입력하면 됩니다."
   },
   "mcp": {
     "title": "MCP 관리",
@@ -2749,7 +2761,7 @@
       "noServers": "아직 서버가 없습니다",
       "enabledApps": "활성화된 앱",
       "noImportFound": "가져올 MCP 서버를 찾을 수 없습니다. 모든 서버는 이미 CC Switch에 의해 관리됩니다.",
-      "importSuccess": "{{count}} MCP 서버를 성공적으로 가져왔습니다.",
+      "importSuccess": "MCP 서버 {{count}}개를 성공적으로 가져왔습니다.",
       "searchPlaceholder": "MCP 이름, 설명, 태그 또는 명령 검색...",
       "searchAriaLabel": "관리형 MCP 서버 검색",
       "noSearchResults": "검색어와 일치하는 MCP 서버가 없습니다.",
@@ -2777,8 +2789,8 @@
     "addCodexServer": "Codex MCP 추가",
     "editCodexServer": "Codex MCP 편집",
     "configPath": "설정 경로",
-    "serverCount": "{{count}} MCP 서버 설정됨",
-    "enabledCount": "{{count}} 활성화됨",
+    "serverCount": "MCP 서버 {{count}}개 설정됨",
+    "enabledCount": "{{count}}개 활성화됨",
     "template": {
       "fetch": "빠른 템플릿: mcp-fetch"
     },
@@ -3164,7 +3176,7 @@
       "description": "openclaw.json의 agents.defaults 설정(기본 모델, 실행 매개변수 등)을 관리합니다",
       "modelSection": "모델 설정",
       "primaryModel": "기본 모델",
-      "primaryModelHint": "설정된 공급자의 모델 중에서 기본 모델 선택",
+      "primaryModelHint": "설정된 공급자의 모델 중에서 기본 모델을 선택하세요.",
       "notSet": "설정되지 않음",
       "fallbackModels": "대체 모델",
       "fallbackModelsHint": "기본 모델을 사용할 수 없는 경우 대체 모델을 우선순위 순서대로 시도합니다.",
@@ -3173,10 +3185,10 @@
       "notInList": "{{value}}(공급자 미설정)",
       "runtimeSection": "런타임 매개변수",
       "workspace": "작업 공간 경로",
-      "timeout": "시간 초과(초)",
+      "timeout": "제한 시간(초)",
       "contextTokens": "컨텍스트 토큰",
       "maxConcurrent": "최대 동시 실행 수",
-      "legacyTimeoutTitle": "이전 버전의 시간 제한 필드가 감지되었습니다.",
+      "legacyTimeoutTitle": "이전 버전의 제한 시간 필드가 감지되었습니다.",
       "legacyTimeoutDescription": "현재 설정은 여전히 agents.defaults.timeout을 사용합니다. 이 페이지에서 저장하면 timeoutSeconds로 이전합니다.",
       "saveSuccess": "에이전트 설정이 저장되었습니다.",
       "saveFailed": "에이전트 설정을 저장하지 못했습니다.",
@@ -3352,7 +3364,7 @@
       "invalidRepoRef": "잘못된 저장소 참조: {{owner}}/{{name}}",
       "archiveTooLarge": "아카이브가 {{limit_mb}} MB 추출 제한을 초과합니다. 중단됨",
       "archiveDownloadTooLarge": "저장소 아카이브 다운로드가 {{limit_mb}} MB 제한을 초과했습니다. 중단됨",
-      "archiveTooManyEntries": "아카이브에 항목이 너무 많습니다({{count}}). 한계는 {{limit}}입니다",
+      "archiveTooManyEntries": "압축 파일의 항목 수({{count}}개)가 최대 허용 개수({{limit}}개)를 초과했습니다.",
       "downloadFailed": "다운로드 실패: HTTP {{status}}",
       "allBranchesFailed": "모든 브랜치 다운로드에 실패했습니다. 시도한 브랜치: {{branches}}",
       "httpError": "HTTP 오류 {{status}}",
@@ -3712,8 +3724,8 @@
         "description": "요청 안정성 및 로깅을 제어합니다."
       },
       "timeout": {
-        "title": "시간 초과 설정",
-        "description": "스트리밍 및 비스트리밍 요청에 대한 시간 제한을 설정합니다."
+        "title": "제한 시간 설정",
+        "description": "스트리밍 및 비스트리밍 요청에 대한 제한 시간을 설정합니다."
       },
       "fields": {
         "listenAddress": {
@@ -3724,15 +3736,15 @@
         "listenPort": {
           "label": "수신 포트",
           "placeholder": "15721",
-          "description": "라우팅 서버가 수신하는 포트 번호 (1024 ~ 65535)"
+          "description": "라우팅 서버가 수신하는 포트 번호(1024~65535)"
         },
         "maxRetries": {
           "label": "최대 재시도 횟수",
           "placeholder": "3",
-          "description": "요청 실패 시 재시도 횟수 (0 ~ 10)"
+          "description": "요청 실패 시 재시도 횟수(0~10)"
         },
         "requestTimeout": {
-          "label": "요청 시간 초과(초)",
+          "label": "요청 제한 시간(초)",
           "placeholder": "0(무제한) 또는 300",
           "description": "단일 요청에 대한 최대 대기 시간(0 = 무제한 또는 10~600초)"
         },
@@ -3741,15 +3753,15 @@
           "description": "라우팅 요청 사용 및 상태를 로컬 통계 데이터베이스에 기록합니다."
         },
         "streamingFirstByteTimeout": {
-          "label": "스트리밍 첫 번째 바이트 시간 초과(초)",
+          "label": "스트리밍 첫 바이트 대기 제한 시간(초)",
           "description": "첫 번째 데이터 청크를 기다리는 최대 시간"
         },
         "streamingIdleTimeout": {
-          "label": "스트리밍 유휴 시간 초과(초)",
+          "label": "스트리밍 유휴 제한 시간(초)",
           "description": "데이터 청크 사이의 최대 간격"
         },
         "nonStreamingTimeout": {
-          "label": "비스트리밍 시간 초과(초)",
+          "label": "비스트리밍 제한 시간(초)",
           "description": "스트리밍되지 않는 요청의 총 제한 시간"
         }
       },
@@ -3759,11 +3771,11 @@
         "portMax": "포트는 65535 이하여야 합니다.",
         "retryMin": "재시도 횟수는 음수일 수 없습니다.",
         "retryMax": "재시도 횟수는 10을 초과할 수 없습니다.",
-        "timeoutNonNegative": "시간 초과는 음수일 수 없습니다.",
-        "timeoutMax": "시간 초과는 600초를 초과할 수 없습니다.",
+        "timeoutNonNegative": "제한 시간은 음수일 수 없습니다.",
+        "timeoutMax": "제한 시간은 600초를 초과할 수 없습니다.",
         "timeoutRange": "0 또는 10~600 사이의 값을 입력하세요.",
-        "streamingTimeoutMin": "시간 초과는 5초 이상이어야 합니다.",
-        "streamingTimeoutMax": "시간 초과는 300초를 초과할 수 없습니다."
+        "streamingTimeoutMin": "제한 시간은 5초 이상이어야 합니다.",
+        "streamingTimeoutMax": "제한 시간은 300초를 초과할 수 없습니다."
       },
       "actions": {
         "save": "설정 저장"
@@ -3781,7 +3793,7 @@
     "switchFailed": "전환 실패: {{error}}",
     "takeover": {
       "ariaLabel": "{{appLabel}} 로컬 라우팅",
-      "hint": "라우팅할 앱 선택 - 활성화되면 해당 앱의 요청이 로컬 라우팅을 통해 전달됩니다.",
+      "hint": "라우팅할 앱을 선택하세요. 활성화하면 해당 앱의 요청이 로컬 라우팅을 통해 전달됩니다.",
       "enabled": "{{app}} 라우팅 활성화됨",
       "disabled": "{{app}} 라우팅이 비활성화되었습니다.",
       "failed": "라우팅 전환 실패: {{detail}}",
@@ -3800,9 +3812,9 @@
         "authTitle": "Codex는 여전히 이전 계정을 캐시할 수 있습니다. 새 로그인을 로드하려면 백그라운드 서버를 다시 시작하세요.",
         "title": "Codex가 이전 모델 목록을 사용하고 있어 전환 후의 모델이 표시되지 않습니다.",
         "unverifiedTitle": "전환 전에 열려 있던 Codex 앱은 이전 계정 또는 모델 목록을 계속 사용할 수 있습니다.",
-        "unverifiedHint": "CC Switch는 데스크톱 앱이나 편집기 확장이 실행 중인지 알 수 없습니다. 열려 있지 않으면 이 공지를 닫으시면 됩니다.",
+        "unverifiedHint": "CC Switch는 데스크톱 앱이나 편집기 확장 프로그램이 실행 중인지 확인할 수 없습니다. 실행 중이 아니라면 이 알림을 닫아도 됩니다.",
         "daemon": "CLI: codex를 다시 여는 것만으로는 부족합니다. 백그라운드 데몬을 다시 시작해야 합니다.",
-        "others": "데스크톱 앱: 완전히 종료하고 다시 엽니다(macOS에서는 ⌘Q, 창을 닫는 것만으로는 충분하지 않음). 편집기 확장: 편집기 창을 다시 엽니다.",
+        "others": "데스크톱 앱은 완전히 종료한 후 다시 여세요(macOS에서는 ⌘Q를 누르세요. 창만 닫아서는 앱이 완전히 종료되지 않습니다). 편집기 확장 프로그램을 사용하는 경우에는 편집기 창을 닫았다가 다시 여세요.",
         "restart": "Codex 데몬 다시 시작",
         "confirmTitle": "Codex 데몬을 다시 시작하시겠습니까?",
         "confirmMessage": "모든 터미널의 codex 세션이 이 데몬을 공유하므로 실행 중인 작업이 중단됩니다. 이후 codex를 다시 열어 현재 계정과 모델 목록을 불러오세요.",
@@ -3840,35 +3852,35 @@
       "configSaved": "자동 장애 조치 설정이 저장되었습니다.",
       "configSaveFailed": "저장하지 못했습니다.",
       "validationFailed": "다음 필드는 유효한 범위를 벗어났습니다: {{fields}}",
-      "retrySettings": "재시도 및 시간 초과 설정",
+      "retrySettings": "재시도 및 제한 시간 설정",
       "failureThreshold": "실패 임계값",
-      "failureThresholdHint": "연속 실패 횟수가 이 값에 도달하면 서킷 브레이커를 엽니다 (권장: 3~10)",
+      "failureThresholdHint": "연속 실패 횟수가 이 값에 도달하면 서킷 브레이커를 엽니다(권장: 3~10).",
       "timeout": "복구 대기 시간(초)",
-      "timeoutHint": "서킷 브레이커가 열린 후 복구를 시도하기까지 기다릴 시간입니다 (권장: 30~120초)",
+      "timeoutHint": "서킷 브레이커가 열린 후 복구를 시도하기까지 기다릴 시간입니다(권장: 30~120초).",
       "circuitBreakerSettings": "서킷 브레이커 설정",
       "successThreshold": "복구 성공 임계값",
-      "successThresholdHint": "반열림 상태에서 성공 횟수가 이 값에 도달하면 서킷 브레이커를 닫습니다",
+      "successThresholdHint": "반열림 상태에서 성공 횟수가 이 값에 도달하면 서킷 브레이커를 닫습니다.",
       "errorRate": "오류율 임계값(%)",
-      "errorRateHint": "오류율이 이 값을 초과하면 서킷 브레이커를 엽니다",
+      "errorRateHint": "오류율이 이 값을 초과하면 서킷 브레이커를 엽니다.",
       "minRequests": "최소 요청 수",
       "minRequestsHint": "오류율을 계산하는 데 필요한 최소 요청 수",
       "explanationTitle": "작동 방식",
       "failureThresholdLabel": "실패 임계값",
-      "failureThresholdExplain": "연속 실패 횟수가 이 값에 도달하면 서킷 브레이커가 열리고 해당 공급자를 일시적으로 사용할 수 없게 됩니다",
+      "failureThresholdExplain": "연속 실패 횟수가 이 값에 도달하면 서킷 브레이커가 열리고 해당 공급자를 일시적으로 사용할 수 없게 됩니다.",
       "timeoutLabel": "복구 대기 시간",
-      "timeoutExplain": "서킷 브레이커가 열린 후 설정한 시간만큼 기다렸다가 반열림 상태로 전환을 시도합니다",
+      "timeoutExplain": "서킷 브레이커가 열린 후 설정한 시간만큼 기다렸다가 반열림 상태로 전환을 시도합니다.",
       "successThresholdLabel": "복구 성공 임계값",
-      "successThresholdExplain": "반열림 상태에서 성공 횟수가 이 값에 도달하면 서킷 브레이커를 닫고 해당 공급자를 다시 사용할 수 있게 합니다",
+      "successThresholdExplain": "반열림 상태에서 성공 횟수가 이 값에 도달하면 서킷 브레이커를 닫고 해당 공급자를 다시 사용할 수 있게 합니다.",
       "errorRateLabel": "오류율 임계값",
-      "errorRateExplain": "연속 실패 임계값에 도달하지 않았더라도 오류율이 이 값을 초과하면 서킷 브레이커를 엽니다",
+      "errorRateExplain": "연속 실패 임계값에 도달하지 않았더라도 오류율이 이 값을 초과하면 서킷 브레이커를 엽니다.",
       "maxRetries": "최대 재시도 횟수",
-      "timeoutSettings": "시간 초과 설정",
-      "streamingFirstByte": "스트리밍 첫 번째 바이트 시간 초과",
-      "streamingIdle": "스트리밍 유휴 시간 초과",
-      "nonStreaming": "비스트리밍 시간 초과",
-      "maxRetriesHint": "요청 실패 시 재시도 횟수(0-10)",
-      "streamingFirstByteHint": "첫 번째 데이터 청크를 기다리는 최대 시간, 범위 1-120초, 기본값 60초",
-      "streamingIdleHint": "데이터 청크 사이의 최대 간격입니다. 범위는 60~600초이며 0이면 사용하지 않습니다 (스트리밍 중 멈춤 방지)",
+      "timeoutSettings": "제한 시간 설정",
+      "streamingFirstByte": "스트리밍 첫 바이트 대기 제한 시간",
+      "streamingIdle": "스트리밍 유휴 제한 시간",
+      "nonStreaming": "비스트리밍 제한 시간",
+      "maxRetriesHint": "요청 실패 시 재시도 횟수(0~10)",
+      "streamingFirstByteHint": "첫 번째 데이터 청크를 기다리는 최대 시간, 범위 1~120초, 기본값 60초",
+      "streamingIdleHint": "데이터 청크 사이의 최대 간격입니다. 범위는 60~600초이며 0이면 사용하지 않습니다(스트리밍 중 멈춤 방지).",
       "nonStreamingHint": "비스트리밍 요청에 대한 총 제한 시간, 범위 60~1,200초, 기본값 600초(10분)"
     },
     "logging": {
@@ -3903,10 +3915,10 @@
     "recoveryTimeout": "복구 대기 시간",
     "errorRateThreshold": "오류율 임계값",
     "minRequests": "최소 요청 수",
-    "timeoutConfig": "시간 초과 설정",
-    "streamingFirstByte": "스트리밍 첫 번째 바이트 시간 초과",
-    "streamingIdle": "스트리밍 유휴 시간 초과",
-    "nonStreaming": "비스트리밍 시간 초과"
+    "timeoutConfig": "제한 시간 설정",
+    "streamingFirstByte": "스트리밍 첫 바이트 대기 제한 시간",
+    "streamingIdle": "스트리밍 유휴 제한 시간",
+    "nonStreaming": "비스트리밍 제한 시간"
   },
   "universalProvider": {
     "duplicate": "복제",
@@ -4486,7 +4498,7 @@
     "exitAllTitle": "모든 앱을 직접 연결로 되돌리시겠습니까?",
     "exitAllMessage": "라우팅 또는 통합 모드인 모든 앱에 직접 연결 설정을 복원한 후 라우팅 서비스를 중지합니다. 라우팅 대상, 대기열 및 통합 목록은 유지됩니다.",
     "exitAllConfirm": "모두 직접 연결로 되돌리기",
-    "failoverHelp": "각 앱의 시간 초과, 재시도 및 서킷 브레이커를 설정합니다. 대기열은 각 앱의 라우팅 탭에서 관리합니다."
+    "failoverHelp": "각 앱의 제한 시간, 재시도 및 서킷 브레이커를 설정합니다. 대기열은 각 앱의 라우팅 탭에서 관리합니다."
   },
   "quota": {
     "tierShort": "{{label}} {{value}}%",
@@ -4677,7 +4689,7 @@
       "transport": "전송 방식",
       "transportStdio": "로컬 명령(stdio)",
       "command": "명령",
-      "commandPlaceholder": "프로그램 이름만 입력하세요 (예: npx 또는 uvx). 인수는 아래에 입력합니다",
+      "commandPlaceholder": "프로그램 이름만 입력하세요(예: npx 또는 uvx). 인수는 아래에 입력하세요.",
       "args": "인수",
       "argAria": "인수 {{index}}",
       "removeArg": "인수 {{index}} 제거",
@@ -4839,7 +4851,7 @@
       "sourceRepos": "저장소 · {{count}}개",
       "reload": "저장소 다시 불러오기",
       "listLabel": "설치 가능한 스킬",
-      "installed": "설치됨 · 앱 {{count}}개",
+      "installed": "설치됨",
       "installedAria": "{{name}}이(가) 앱 {{count}}개에 설치되어 있습니다. 설치됨 화면에서 확인하세요",
       "dirTaken": "{{name}}({{source}})에서 이 폴더 이름을 사용 중입니다",
       "installing": "설치 중",
@@ -5030,6 +5042,8 @@
     },
     "modelSelectionHint": "공급자 카드의 전환 버튼을 눌러 기본 공급자를 선택하세요. 다른 모델을 지정하려면 Kimi Code에서 /model을 사용하세요.",
     "contextSize": "컨텍스트 창",
+    "configTomlScope": "여기에는 [providers.{{key}}] 및 이 공급자에 속한 [models.*] 테이블만 포함할 수 있습니다. 공급자 키는 위의 입력란에서 변경하세요.",
+    "configTomlSchema": "설정이 불완전합니다. 공급자의 type과 각 모델의 model 및 max_context_size를 확인하세요. max_context_size는 양의 정수여야 합니다.",
     "capabilities": {
       "image_in": "이미지 입력",
       "thinking": "추론",
