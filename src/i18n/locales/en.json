@@ -2015,6 +2015,8 @@
     "maxOutputTokensLabel": "Max output tokens",
     "maxOutputTokensPlaceholder": "Leave empty to use the default 8192",
     "maxOutputTokensHint": "Codex sends no output limit, so the default 8192 can cut off long answers or deep thinking. This value is sent as Anthropic's max_tokens.",
+    "maxOutputTokensChatPlaceholder": "Leave empty to use the upstream default",
+    "maxOutputTokensChatHint": "Used only when the Codex request has no output limit. Regular models receive max_tokens; o-series models receive max_completion_tokens.",
     "promptCacheRoutingLabel": "Prompt cache routing",
     "promptCacheRoutingAuto": "Auto (recommended)",
     "promptCacheRoutingEnabled": "Enabled",

@@ -580,16 +580,16 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub impersonate_claude_code: Option<bool>,
-    /// Codex → Anthropic path: override the Anthropic `max_tokens` (output ceiling).
+    /// Codex conversion paths: provider-specific output ceiling.
     ///
     /// Codex does not forward its `model_max_output_tokens` in the Responses
-    /// request body, so without this the path falls back to a conservative
-    /// default (8192), which truncates long or thinking-heavy responses
-    /// (`stop_reason=max_tokens`). When set (>0), this value is injected as the
-    /// request's `max_output_tokens` before conversion, taking precedence over
-    /// both any request-supplied value and the default. Kept per-provider on
-    /// purpose: a global large default would hard-400 on low-output-ceiling
-    /// models/gateways (and that error is non-retryable).
+    /// request body, so conversion paths otherwise inherit a conservative
+    /// default or the upstream's own default, which can truncate long or
+    /// thinking-heavy responses. On the Anthropic path this remains an explicit
+    /// override; on the Chat path it is a fallback used only when the request has
+    /// no output-limit field. Kept per-provider on purpose: a global large default
+    /// would hard-400 on low-output-ceiling models or gateways (and that error is
+    /// non-retryable).
     #[serde(rename = "maxOutputTokens", skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u64>,
     /// Custom User-Agent for local proxy routing.
