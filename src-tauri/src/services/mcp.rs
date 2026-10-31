@@ -71,15 +71,26 @@ impl McpService {
                 save_with_omp()
             }
         };
+        let save_with_cline = || {
+            if server.apps.cline || prev_apps.cline {
+                mcp::cline::sync_and_commit(
+                    &server.id,
+                    server.apps.cline.then_some(&server.server),
+                    save_with_dsh,
+                )
+            } else {
+                save_with_dsh()
+            }
+        };
         let save_with_kimi = || {
             if server.apps.kimi || prev_apps.kimi {
                 mcp::kimi::sync_and_commit(
                     &server.id,
                     server.apps.kimi.then_some(&server.server),
-                    save_with_dsh,
+                    save_with_cline,
                 )
             } else {
-                save_with_dsh()
+                save_with_cline()
             }
         };
         let save_with_agy = || {
@@ -152,11 +163,18 @@ impl McpService {
                     state.db.delete_mcp_server(id)
                 }
             };
-            let delete_with_kimi = || {
-                if server.apps.kimi {
-                    mcp::kimi::sync_and_commit(id, None, delete_with_dsh)
+            let delete_with_cline = || {
+                if server.apps.cline {
+                    mcp::cline::sync_and_commit(id, None, delete_with_dsh)
                 } else {
                     delete_with_dsh()
+                }
+            };
+            let delete_with_kimi = || {
+                if server.apps.kimi {
+                    mcp::kimi::sync_and_commit(id, None, delete_with_cline)
+                } else {
+                    delete_with_cline()
                 }
             };
             let delete_with_omp = || {
@@ -237,6 +255,7 @@ impl McpService {
             app,
             AppType::Mcode
                 | AppType::Kimi
+                | AppType::Cline
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Pi
@@ -259,6 +278,8 @@ impl McpService {
                     mcp::dsh::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Kimi {
                     mcp::kimi::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::Cline {
+                    mcp::cline::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Omp {
@@ -299,6 +320,7 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Cline
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Pi
@@ -364,6 +386,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
+            AppType::Cline => mcp::cline::sync(&server.id, Some(&server.server))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
@@ -384,6 +407,7 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Cline
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Pi
@@ -422,6 +446,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
+            AppType::Cline => mcp::cline::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
@@ -535,6 +560,7 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Cline
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Pi
@@ -848,7 +874,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 12] = [
+        let results: [(&str, Result<usize, AppError>); 13] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -857,6 +883,7 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("kimi", mcp::kimi::import(state)),
+            ("cline", mcp::cline::import(state)),
             ("dsh", mcp::dsh::import(state)),
             ("agy", mcp::agy::import(state)),
             ("pi", mcp::pi::import(state)),

@@ -29,6 +29,7 @@ export const APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "cline",
   "dsh",
   "agy",
   "omp",
@@ -46,6 +47,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   pi: true,
   mcode: true,
   kimi: true,
+  cline: true,
   dsh: true,
   agy: true,
   omp: true,
@@ -85,6 +87,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "cline",
   "dsh",
   "agy",
   "omp",
@@ -137,12 +140,21 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "cline"
+  | "dsh"
+  | "omp"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
+  "cline",
   "dsh",
   "opencode",
   "openclaw",
@@ -189,6 +201,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "cline",
   "dsh",
   "agy",
   "omp",
@@ -301,6 +314,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
+  cline: {
+    label: "Cline",
+    icon: <ProviderIcon icon="cline" name="Cline" size={14} />,
+    activeClass: "bg-slate-500/10 text-slate-700 dark:text-slate-300",
+    badgeClass:
+      "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-0 gap-1.5",
   },
   mcode: {
     label: "MiniMax Code",

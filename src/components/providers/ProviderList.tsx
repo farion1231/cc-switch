@@ -186,6 +186,7 @@ export function ProviderList({
     (provider: Provider): boolean => {
       switch (appId) {
         case "kimi":
+        case "cline":
         case "dsh":
         case "mcode":
           return provider.meta?.liveConfigManaged === true;
@@ -409,7 +410,7 @@ export function ProviderList({
       isHermesManaged: (provider) =>
         isHermesReadOnlyProvider(provider.settingsConfig),
       piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
-      kimiCurrentId: currentProviderId,
+      nativeCurrentId: currentProviderId,
       extraAdded: showDshAccountCard ? 1 : 0,
       actions: {
         add: onSwitch,
@@ -520,6 +521,7 @@ export function ProviderList({
             isPiFamilyApp(appId) ||
             appId === "mcode" ||
             appId === "kimi" ||
+            appId === "cline" ||
             appId === "dsh"
               ? undefined
               : () => importMutation.mutate()

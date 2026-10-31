@@ -60,6 +60,7 @@ pub use usage_stats::{
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 
+pub mod session_usage_cline;
 pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 
