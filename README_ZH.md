@@ -545,6 +545,8 @@ Codex 还可以在 CC Switch 里用“使用 ChatGPT 登录”登录多个 ChatG
 
 在「设置 → 数据 → 存储位置」里修改“CC Switch 配置目录”后，除 `settings.json`、本机状态和配置文件原件以外的上述文件都改为存放在新目录。CC Switch 不会自动搬运已有文件，需要先手动复制过去。`settings.json`、本机状态和配置文件原件只属于这台电脑，始终在默认目录，也不参与云同步。
 
+Linux 上还可以用环境变量整体搬迁：设置 `CC_SWITCH_HOME` 可以把整个 `.cc-switch` 文件夹（含本机状态等设备本地文件）搬到任意路径；设置 `XDG_CONFIG_HOME` 后，全新安装会遵循 XDG Base Directory Specification 落在 `$XDG_CONFIG_HOME/cc-switch`。默认位置已有数据的旧安装会继续沿用原目录，CC Switch 不会自动迁移文件。
+
 </details>
 
 <details>
