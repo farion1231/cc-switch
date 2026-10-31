@@ -730,6 +730,7 @@ async fn handle_claude_transform(
             usage_collector,
             timeout_config,
             connection_guard,
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1282,6 +1283,7 @@ async fn handle_codex_native_compaction_response(
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        None,
     );
 
     builder
@@ -1582,6 +1584,7 @@ async fn handle_codex_late_arguments_repair(
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        None,
     );
     builder
         .body(axum::body::Body::from_stream(logged_stream))
@@ -1638,6 +1641,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            None,
         );
 
         let body = axum::body::Body::from_stream(logged_stream);
@@ -1835,6 +1839,7 @@ async fn handle_codex_chat_to_responses_transform(
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -2208,6 +2213,7 @@ fn build_codex_anthropic_sse_response(
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        None,
     );
 
     let mut headers = axum::http::HeaderMap::new();
