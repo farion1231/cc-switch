@@ -420,6 +420,11 @@
       "restoreBackup": "把开启时迁入的官方会话还原回官方历史（按备份精确还原）",
       "confirm": "关闭"
     },
+    "codexUnifyHistoryRetag": {
+      "title": "重新统一历史",
+      "message": "即将把 {{threads}} 条会话索引、{{files}} 个会话文件并入统一历史。补标前会自动备份，重复执行不会重复改写，关闭统一会话开关时仍可按备份还原。",
+      "confirm": "开始补标"
+    },
     "usage": {
       "title": "配置用量查询",
       "message": "用量查询需要配置专用的查询脚本或 API 参数，请确保您已从供应商处获取相关信息。\n\n如不确定如何配置，请先查阅供应商文档。",
@@ -895,7 +900,7 @@
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
-    "unifyCodexSessionHistoryDescription": "只影响 Codex CLI：CLI 的 resume 列表只显示当前供应商的会话，开启后官方订阅改以共享的 custom 供应商标识运行，官方与第三方会话出现在同一列表中。Codex 桌面版更新后已经可以显示全部会话，只用桌面版无需开启。可选择把现有官方会话一并迁入（迁移前自动备份），关闭时可按备份恢复。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "unifyCodexSessionHistoryDescription": "只影响 Codex CLI：CLI 的 resume 列表只显示当前供应商的会话，开启后官方订阅改以共享的 custom 供应商标识运行，官方与第三方会话出现在同一列表中。Codex 桌面版更新后已经可以显示全部会话，只用桌面版无需开启。可选择把现有官方会话一并迁入（迁移前自动备份），关闭时可按备份恢复。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败。开启后 Codex 客户端新建的会话可能仍落在官方桶，需要时可在下面点「重新统一历史」补标；手机端 Remote 的会话列表按当前 provider 过滤，未补标的会话不会出现",
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供应商时必须打开，否则子 agent 收不到任务。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",
@@ -907,6 +912,14 @@
     "unifyCodexHistoryRestoreFailed": "还原官方会话历史失败，请重试",
     "unifyCodexHistoryRestoreNothing": "当前 Codex 目录没有可恢复的迁移备份",
     "unifyCodexHistoryRestoreSkippedToggleOn": "统一会话历史开关已重新开启，已跳过还原",
+    "codexUnifyHistoryRetag": "重新统一历史",
+    "codexUnifyHistoryRetagDescription": "开启期间 Codex 客户端新建的会话可能仍落在官方桶，手机端 Remote 的会话列表按当前 provider 过滤，因此看不到这些会话。补标会把它们并入统一历史：先自动备份，可重复执行，关闭开关时仍可按备份还原。",
+    "codexUnifyHistoryRetagAction": "立即补标",
+    "codexUnifyHistoryRetagCompleted": "已补标 {{threads}} 条会话索引、{{files}} 个会话文件",
+    "codexUnifyHistoryRetagNothing": "没有需要补标的会话",
+    "codexUnifyHistoryRetagLiveNotUnified": "当前 Codex 配置未路由到统一供应商标识，请先切换一次官方 Codex 供应商后再试",
+    "codexUnifyHistoryRetagToggleOff": "统一 Codex 会话历史开关未开启",
+    "codexUnifyHistoryRetagFailed": "补标官方会话历史失败，请重试",
     "appVisibility": {
       "title": "主页面显示",
       "description": "选择在主页面显示的应用",

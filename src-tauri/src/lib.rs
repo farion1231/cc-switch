@@ -1552,6 +1552,8 @@ pub fn run() {
             commands::set_codex_session_compression,
             commands::get_codex_sessions_disk_usage,
             commands::restore_codex_unified_history,
+            commands::preview_codex_unify_history_retag,
+            commands::retag_codex_unify_history,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,
