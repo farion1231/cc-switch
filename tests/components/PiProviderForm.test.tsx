@@ -6,7 +6,6 @@ import { PiProviderForm } from "@/components/providers/forms/PiProviderForm";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
 import { piProviderPresets } from "@/config/piProviderPresets";
 
@@ -1511,25 +1510,27 @@ describe("PiProviderForm", () => {
       http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
         HttpResponse.json([{ id: "gpt-5.6-sol", ownedBy: "proxy" }]),
       ),
-      http.get(MODELS_DEV_API_URL, () =>
-        HttpResponse.json({
-          example: {
-            api: "https://api.example.com/v1",
-            models: {
-              "gpt-5.6-sol": {
-                reasoning: true,
-                reasoning_options: [
-                  {
-                    type: "effort",
-                    values: ["low", "medium", "high", "xhigh"],
-                  },
-                ],
-                modalities: { input: ["text", "image"], output: ["text"] },
-                limit: { context: 400000, output: 128000 },
+      http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+        HttpResponse.json(
+          JSON.stringify({
+            example: {
+              api: "https://api.example.com/v1",
+              models: {
+                "gpt-5.6-sol": {
+                  reasoning: true,
+                  reasoning_options: [
+                    {
+                      type: "effort",
+                      values: ["low", "medium", "high", "xhigh"],
+                    },
+                  ],
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                  limit: { context: 400000, output: 128000 },
+                },
               },
             },
-          },
-        }),
+          }),
+        ),
       ),
     );
 
@@ -1606,7 +1607,9 @@ describe("PiProviderForm", () => {
       http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
         HttpResponse.json([{ id: "kimi-k3", ownedBy: "moonshot" }]),
       ),
-      http.get(MODELS_DEV_API_URL, () => HttpResponse.error()),
+      http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+        HttpResponse.error(),
+      ),
     );
 
     render(
@@ -2633,22 +2636,24 @@ describe("PiProviderForm", () => {
         http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
           HttpResponse.json(ids.map((id) => ({ id, ownedBy: "example" }))),
         ),
-        http.get(MODELS_DEV_API_URL, () =>
-          HttpResponse.json({
-            example: {
-              api: "https://api.example.com/v1",
-              models: {
-                "model-x": {
-                  reasoning: true,
-                  reasoning_options: [
-                    { type: "effort", values: ["low", "medium", "high"] },
-                  ],
-                  modalities: { input: ["text", "image"], output: ["text"] },
-                  limit: { context: 123456, output: 32000 },
+        http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+          HttpResponse.json(
+            JSON.stringify({
+              example: {
+                api: "https://api.example.com/v1",
+                models: {
+                  "model-x": {
+                    reasoning: true,
+                    reasoning_options: [
+                      { type: "effort", values: ["low", "medium", "high"] },
+                    ],
+                    modalities: { input: ["text", "image"], output: ["text"] },
+                    limit: { context: 123456, output: 32000 },
+                  },
                 },
               },
-            },
-          }),
+            }),
+          ),
         ),
       );
     }
