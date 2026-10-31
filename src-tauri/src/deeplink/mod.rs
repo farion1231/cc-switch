@@ -30,6 +30,7 @@ pub use icon_fetch::fetch_deeplink_icon;
 pub use mcp::import_mcp_from_deeplink;
 pub use parser::parse_deeplink_url;
 pub use prompt::import_prompt_from_deeplink;
+pub(crate) use provider::build_provider_from_request;
 pub use provider::{import_provider_from_deeplink, parse_and_merge_config};
 pub use skill::import_skill_from_deeplink;
 

@@ -115,6 +115,25 @@ vi.mock("@/components/providers/AddProviderDialog", () => ({
     ) : null,
 }));
 
+vi.mock("@/components/providers/BulkProviderImportDialog", async () => {
+  const { useUnsavedChangesTracker } = await vi.importActual<
+    typeof import("@/lib/unsavedChanges")
+  >("@/lib/unsavedChanges");
+  const Body = ({ appId, onNavigationBlockedChange }: any) => (
+    <div data-testid="bulk-import-dialog" {...useUnsavedChangesTracker()}>
+      <span>{appId}</span>
+      <input aria-label="bulk-source" />
+      <button onClick={() => onNavigationBlockedChange(true)}>
+        start-import
+      </button>
+      <button onClick={() => onNavigationBlockedChange(false)}>
+        finish-import
+      </button>
+    </div>
+  );
+  return { BulkProviderImportDialog: Body };
+});
+
 vi.mock("@/components/providers/EditProviderDialog", async () => {
   const { useUnsavedChangesTracker } = await vi.importActual<
     typeof import("@/lib/unsavedChanges")
@@ -420,6 +439,94 @@ describe("App integration with MSW", () => {
     expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
     expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
   }, 10_000);
+
+  it("binds bulk import to supported apps and guards navigation while editing or saving", async () => {
+    setSettings({
+      firstRunNoticeConfirmed: true,
+      newLayoutNoticeConfirmed: true,
+    });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await screen.findByTestId("provider-list");
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.bulkImport.title" }),
+    );
+    expect(screen.getByTestId("bulk-import-dialog")).toHaveTextContent(
+      "claude",
+    );
+    fireEvent.click(sidebarApp("Codex"));
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("bulk-import-dialog"),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.bulkImport.title" }),
+    );
+    expect(screen.getByTestId("bulk-import-dialog")).toHaveTextContent("codex");
+    fireEvent.click(screen.getByText("start-import"));
+    fireEvent.click(sidebarApp("Claude Code"));
+    expect(screen.getByTestId("bulk-import-dialog")).toHaveTextContent("codex");
+    fireEvent.click(screen.getByText("finish-import"));
+    fireEvent.input(screen.getByLabelText("bulk-source"), {
+      target: { value: "draft" },
+    });
+    fireEvent.click(sidebarApp("Claude Code"));
+    expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
+      "common.unsavedLeaveMessage",
+    );
+    fireEvent.click(screen.getByText("confirm-delete"));
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("bulk-import-dialog"),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.click(sidebarApp("Gemini CLI"));
+    expect(
+      screen.queryByRole("button", { name: "provider.bulkImport.title" }),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["add", "needsRoute"])(
+    "blocks the complete tray %s intent while bulk import is busy",
+    async (intent) => {
+      setSettings({
+        firstRunNoticeConfirmed: true,
+        newLayoutNoticeConfirmed: true,
+      });
+      let navigation: object | null = null;
+      let takes = 0;
+      server.use(
+        http.post("http://tauri.local/take_tray_navigation", () => {
+          takes += 1;
+          const value = navigation;
+          navigation = null;
+          return HttpResponse.json(value);
+        }),
+      );
+      const { default: App } = await import("@/App");
+      renderApp(App);
+      await screen.findByTestId("provider-list");
+      await waitFor(() => expect(takes).toBeGreaterThan(0));
+      fireEvent.click(
+        screen.getByRole("button", { name: "provider.bulkImport.title" }),
+      );
+      fireEvent.click(screen.getByText("start-import"));
+      navigation = { app: "codex", intent, providerId: "codex-1" };
+      await act(async () => emitTauriEvent("tray-navigate", null));
+      await waitFor(() => expect(takes).toBeGreaterThan(1));
+      expect(
+        screen.queryByTestId("add-provider-dialog"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("bulk-import-dialog")).toHaveTextContent(
+        "claude",
+      );
+      fireEvent.click(screen.getByText("finish-import"));
+      expect(
+        screen.queryByTestId("add-provider-dialog"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("asks before leaving an editor page with unsaved changes", async () => {
     const { default: App } = await import("@/App");
@@ -882,7 +989,9 @@ describe("App integration with MSW", () => {
     await waitFor(() =>
       expect(toastErrorMock).toHaveBeenCalledWith(
         "notifications.removeFromConfigFailed",
-        expect.objectContaining({ description: "kimi.error.defaultModelInUse" }),
+        expect.objectContaining({
+          description: "kimi.error.defaultModelInUse",
+        }),
       ),
     );
     await waitFor(() =>

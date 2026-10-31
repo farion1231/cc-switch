@@ -34,7 +34,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
 
       const timeA = a.createdAt ?? 0;
       const timeB = b.createdAt ?? 0;
-      if (timeA && timeB && timeA !== timeB) {
+      if (timeA !== timeB) {
         return timeA - timeB;
       }
 
