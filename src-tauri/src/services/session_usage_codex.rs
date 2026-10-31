@@ -3111,6 +3111,18 @@ mod tests {
             }
             clear_codex_replay_caches();
             assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            // Only the child's two requests and one compaction are billable.
+            // Replaying the file must neither import the parent baseline nor rebill the child.
+            let totals: (i64, i64, i64, i64) = {
+                let conn = lock_conn!(db.conn);
+                conn.query_row(
+                    "SELECT count(*), sum(input_tokens), sum(cache_read_tokens), sum(output_tokens)
+                     FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )?
+            };
+            assert_eq!(totals, (3, 700, 300, 60));
             let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
             parsed.usage_record_events[0].timestamp = Some("2026-07-10T03:00:01Z".into());
             assert!(verified_bounded_fork(&parsed, &index).is_none());
