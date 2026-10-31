@@ -4562,6 +4562,16 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "{{count}} local MCP servers are not managed by CC Switch.",
+      "available_one": "{{count}} local MCP server is not managed by CC Switch.",
+      "available_other": "{{count}} local MCP servers are not managed by CC Switch.",
+      "import": "Import local MCPs",
+      "readOnly": "Discovery only reads user-level app configurations. Nothing is imported until you choose to import.",
+      "partial": "Could not read MCP configurations for: {{apps}}. Other sources were checked.",
+      "failed": "Could not check local MCP configurations.",
+      "retry": "Check again"
+    },
     "noun": "MCP servers",
     "listSeparator": ", ",
     "helpTitle": "How MCP syncs",
