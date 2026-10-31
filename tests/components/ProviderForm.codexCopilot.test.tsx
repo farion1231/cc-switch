@@ -133,6 +133,8 @@ function captureDraftProjections(liveToml = "") {
 function renderForm(
   meta?: ProviderMeta,
   onEditorBaseChange?: ProviderFormProps["onEditorBaseChange"],
+  config?: string,
+  modeView?: ProviderFormProps["modeView"],
 ) {
   const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
   const preset = getCopilotPreset();
@@ -140,6 +142,7 @@ function renderForm(
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderForm
         appId="codex"
+        modeView={modeView}
         submitLabel="save"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
@@ -149,7 +152,7 @@ function renderForm(
             ? {
                 name: "GitHub Copilot",
                 category: "third_party",
-                settingsConfig: { auth: {}, config: preset.config },
+                settingsConfig: { auth: {}, config: config ?? preset.config },
                 meta,
               }
             : undefined
@@ -249,6 +252,140 @@ describe("Codex Copilot provider form", () => {
       );
     },
   );
+
+  it.each([
+    ["默认模型", " Copilot-Auto "],
+    ["子代理模型", "copilot-auto"],
+    ["默认模型", "copilot-auto[1M]"],
+    ["子代理模型", "COPILOT-AUTO[1m]"],
+  ])(
+    "rejects a manually entered Auto %s (%s) with Responses and saves after selecting Chat",
+    async (field, model) => {
+      const onSubmit = renderForm({
+        providerType: "github_copilot",
+        codexCopilotApiFormat: "openai_responses",
+      });
+      fireEvent.change(screen.getByRole("textbox", { name: field }), {
+        target: { value: model },
+      });
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "copilot.autoModelFormatError",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "save" }));
+      await waitFor(() =>
+        expect(toastError).toHaveBeenCalledWith("copilot.autoModelFormatError"),
+      );
+      expect(onSubmit).not.toHaveBeenCalled();
+
+      await selectFormat("openai_chat");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "save" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0].meta?.codexCopilotApiFormat).toBe(
+        "openai_chat",
+      );
+      expect(
+        JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).config,
+      ).toContain('wire_api = "responses"');
+    },
+  );
+
+  it.each(["route", "stack"] as const)(
+    "%s mode rejects Auto catalog conflicts and permits named Responses after removal",
+    async (mode) => {
+      const onSubmit = renderForm(undefined, undefined, undefined, mode);
+      await selectFormat("openai_responses");
+      fireEvent.change(screen.getByDisplayValue("gpt-5.6-sol"), {
+        target: { value: "copilot-auto[1M]" },
+      });
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "copilot.autoModelFormatError",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "save" }));
+      await waitFor(() => expect(toastError).toHaveBeenCalled());
+      expect(onSubmit).not.toHaveBeenCalled();
+      fireEvent.change(screen.getByDisplayValue("copilot-auto[1M]"), {
+        target: { value: "gpt-5.6-sol" },
+      });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "save" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    },
+  );
+
+  it.each([
+    ["route", "auto"],
+    ["route", "openai_chat"],
+    ["stack", "auto"],
+    ["stack", "openai_chat"],
+  ] as const)("%s mode saves Auto with %s", async (mode, format) => {
+    const onSubmit = renderForm(undefined, undefined, undefined, mode);
+    await selectFormat(format);
+    fireEvent.change(screen.getByDisplayValue("gpt-5.6-sol"), {
+      target: { value: "copilot-auto" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).modelCatalog.models,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ model: "copilot-auto" }),
+      ]),
+    );
+  });
+
+  it("blocks saving an existing Responses configuration with an Auto model", async () => {
+    const onSubmit = renderForm(
+      {
+        providerType: "github_copilot",
+        codexCopilotApiFormat: "openai_responses",
+      },
+      undefined,
+      getCopilotPreset().config.replace(
+        'model = "gpt-6-astra"',
+        'model = "copilot-auto"',
+      ),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "copilot.autoModelFormatError",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("copilot.autoModelFormatError"),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("disables Responses for an Auto catalog row and enables it when Auto is removed", async () => {
+    const onSubmit = renderForm();
+    await selectFormat("openai_responses");
+    fireEvent.change(screen.getByDisplayValue("gpt-5.6-sol"), {
+      target: { value: "copilot-auto" },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "copilot.autoModelFormatError",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("copilot.autoModelFormatError"),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+    await selectFormat("auto");
+    fireEvent.keyDown(formatControl(), { key: "ArrowDown" });
+    expect(
+      await screen.findByRole("option", {
+        name: formatLabels.openai_responses,
+      }),
+    ).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+    fireEvent.change(screen.getByDisplayValue("copilot-auto"), {
+      target: { value: "gpt-5.6-sol" },
+    });
+    await selectFormat("openai_responses");
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+  });
 
   it("preserves account, protocol and model edits when saving a live-projected Copilot draft", async () => {
     const liveToml = '\n[ui]\ntheme = "dark"\n';

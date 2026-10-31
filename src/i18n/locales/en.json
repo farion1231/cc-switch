@@ -1833,8 +1833,11 @@
     "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card."
   },
   "copilot": {
+    "autoModelHint": "Copilot Auto is experimental. Copilot chooses the actual model, and only Chat Completions is supported.",
+    "autoModelCodexHint": "For copilot-auto, set the upstream format to Auto or Chat Completions.",
     "automaticFormat": "Selected automatically by routing",
     "automaticFormatHint": "Routing selects the Copilot upstream format per model; manual format settings are ignored.",
+    "autoModelFormatError": "copilot-auto does not support Responses. Select Auto or Chat Completions, or remove Auto from the default model, subagent model, and model list.",
     "authSection": "GitHub Copilot Authentication",
     "authStatus": "Authentication Status",
     "authenticated": "Authenticated as {{username}}",
