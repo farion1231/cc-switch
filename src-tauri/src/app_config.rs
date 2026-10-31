@@ -337,12 +337,90 @@ pub struct UnmanagedSkill {
     pub path: String,
 }
 
+/// Complete connection specs; absent entries follow the shared default.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpAppOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsh: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grokbuild: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcode: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kimi: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agy: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omp: Option<serde_json::Value>,
+}
+
+impl McpAppOverrides {
+    fn is_empty(&self) -> bool {
+        AppType::all().all(|app| self.get(&app).is_none())
+    }
+
+    pub fn get(&self, app: &AppType) -> Option<&serde_json::Value> {
+        match app {
+            AppType::Claude => self.claude.as_ref(),
+            AppType::Codex => self.codex.as_ref(),
+            AppType::Gemini => self.gemini.as_ref(),
+            AppType::GrokBuild => self.grokbuild.as_ref(),
+            AppType::OpenCode => self.opencode.as_ref(),
+            AppType::Hermes => self.hermes.as_ref(),
+            AppType::Pi => self.pi.as_ref(),
+            AppType::Mcode => self.mcode.as_ref(),
+            AppType::Kimi => self.kimi.as_ref(),
+            AppType::Dsh => self.dsh.as_ref(),
+            AppType::Agy => self.agy.as_ref(),
+            AppType::Omp => self.omp.as_ref(),
+            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+        }
+    }
+
+    fn set(&mut self, app: &AppType, spec: Option<serde_json::Value>) {
+        match app {
+            AppType::Claude => self.claude = spec,
+            AppType::Codex => self.codex = spec,
+            AppType::Gemini => self.gemini = spec,
+            AppType::GrokBuild => self.grokbuild = spec,
+            AppType::OpenCode => self.opencode = spec,
+            AppType::Hermes => self.hermes = spec,
+            AppType::Pi => self.pi = spec,
+            AppType::Mcode => self.mcode = spec,
+            AppType::Kimi => self.kimi = spec,
+            AppType::Dsh => self.dsh = spec,
+            AppType::Agy => self.agy = spec,
+            AppType::Omp => self.omp = spec,
+            AppType::ClaudeDesktop | AppType::OpenClaw => {}
+        }
+    }
+}
+
 /// MCP 服务器定义（v3.7.0 统一结构）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServer {
     pub id: String,
     pub name: String,
     pub server: serde_json::Value,
+    #[serde(
+        default,
+        rename = "appOverrides",
+        skip_serializing_if = "McpAppOverrides::is_empty"
+    )]
+    pub app_overrides: McpAppOverrides,
     pub apps: McpApps,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -352,6 +430,22 @@ pub struct McpServer {
     pub docs: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+}
+
+impl McpServer {
+    pub fn server_for_app(&self, app: &AppType) -> &serde_json::Value {
+        self.app_overrides.get(app).unwrap_or(&self.server)
+    }
+
+    /// Importing one app must never replace another app's connection settings.
+    pub fn import_app_server(&mut self, app: &AppType, spec: serde_json::Value) {
+        // A round-trip through a client's native format must not silently
+        // detach a shared default or rewrite an explicit independent choice.
+        if crate::mcp::comparison::same_connection(app, self.server_for_app(app), &spec) {
+            return;
+        }
+        self.app_overrides.set(app, Some(spec));
+    }
 }
 
 /// MCP 配置：单客户端维度（v3.6.x 及以前，保留用于向后兼容）
@@ -1043,7 +1137,17 @@ impl MultiAppConfig {
                     existing.apps.set_enabled_for(&app, enabled);
 
                     // 检测配置冲突（同 ID 但配置不同）
-                    if existing.server != *entry.get("server").unwrap_or(&serde_json::json!({})) {
+                    if !matches!(app, AppType::ClaudeDesktop | AppType::OpenClaw) {
+                        existing.import_app_server(
+                            &app,
+                            entry
+                                .get("server")
+                                .cloned()
+                                .unwrap_or(serde_json::json!({})),
+                        );
+                    } else if existing.server
+                        != *entry.get("server").unwrap_or(&serde_json::json!({}))
+                    {
                         conflicts.push(format!(
                             "MCP '{id}' 在 {} 和之前的应用中配置不同，将使用首次遇到的配置",
                             app.as_str()
@@ -1093,6 +1197,7 @@ impl MultiAppConfig {
                     unified_servers.insert(
                         id.clone(),
                         McpServer {
+                            app_overrides: Default::default(),
                             id: id.clone(),
                             name,
                             server,

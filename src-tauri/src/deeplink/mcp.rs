@@ -104,6 +104,7 @@ pub fn import_mcp_from_deeplink(
             let merged_apps = merge_mcp_apps(&existing.apps, &target_apps);
 
             McpServer {
+                app_overrides: existing.app_overrides.clone(),
                 id: existing.id.clone(),
                 name: existing.name.clone(),
                 server: existing.server.clone(), // Keep existing server config
@@ -117,6 +118,7 @@ pub fn import_mcp_from_deeplink(
             // New server - create with provided config
             log::info!("Creating new MCP server: {id}");
             McpServer {
+                app_overrides: Default::default(),
                 id: id.clone(),
                 name: id.clone(),
                 server: server_spec.clone(),

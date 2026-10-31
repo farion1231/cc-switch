@@ -124,25 +124,10 @@ impl Database {
     ) -> Result<(), AppError> {
         if let Some(servers) = &config.mcp.servers {
             for (id, server) in servers {
-                tx.execute(
-                    "INSERT OR REPLACE INTO mcp_servers (
-                        id, name, server_config, description, homepage, docs, tags,
-                        enabled_claude, enabled_codex, enabled_gemini
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![
-                        id,
-                        server.name,
-                        to_json_string(&server.server)?,
-                        server.description,
-                        server.homepage,
-                        server.docs,
-                        to_json_string(&server.tags)?,
-                        server.apps.claude,
-                        server.apps.codex,
-                        server.apps.gemini,
-                    ],
-                )
-                .map_err(|e| AppError::Database(format!("Migrate mcp server failed: {e}")))?;
+                // Reuse the normal writer so every app flag and future field survives.
+                let mut normalized = server.clone();
+                normalized.id = id.clone();
+                Self::save_mcp_server_on_conn(tx, &normalized)?;
             }
         }
         Ok(())

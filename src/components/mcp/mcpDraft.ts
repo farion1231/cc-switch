@@ -99,19 +99,28 @@ export function connectionOf(
 }
 
 /** 草稿 → McpServerSpec。mask=true 时把 env / headers 的值换成占位符（只用于 JSON 显示）。 */
-export function specOf(conn: McpDraftConnection, mask = false): McpServerSpec {
+export function specOf(
+  conn: McpDraftConnection,
+  mask = false,
+  options: { preserveLiteralValues?: boolean } = {},
+): McpServerSpec {
   const spec: McpServerSpec = {};
   if (conn.transport === "stdio") {
     spec.type = "stdio";
-    spec.command = conn.command.trim();
-    const args = conn.args.filter((arg) => arg !== "");
+    spec.command = options.preserveLiteralValues
+      ? conn.command
+      : conn.command.trim();
+    const args = options.preserveLiteralValues
+      ? [...conn.args]
+      : conn.args.filter((arg) => arg !== "");
     if (args.length) spec.args = args;
     const env = objectOf(conn.env);
     if (Object.keys(env).length) spec.env = env;
-    if (conn.cwd.trim()) spec.cwd = conn.cwd.trim();
+    const cwd = options.preserveLiteralValues ? conn.cwd : conn.cwd.trim();
+    if (cwd) spec.cwd = cwd;
   } else {
     spec.type = conn.transport;
-    spec.url = conn.url.trim();
+    spec.url = options.preserveLiteralValues ? conn.url : conn.url.trim();
     const headers = objectOf(conn.headers);
     if (Object.keys(headers).length) spec.headers = headers;
   }
@@ -131,8 +140,12 @@ export function specOf(conn: McpDraftConnection, mask = false): McpServerSpec {
   return spec;
 }
 
-export function jsonTextOf(conn: McpDraftConnection, reveal: boolean): string {
-  return JSON.stringify(specOf(conn, !reveal), null, 2);
+export function jsonTextOf(
+  conn: McpDraftConnection,
+  reveal: boolean,
+  options: { preserveLiteralValues?: boolean } = {},
+): string {
+  return JSON.stringify(specOf(conn, !reveal, options), null, 2);
 }
 
 export function secretCountOf(conn: McpDraftConnection): number {

@@ -2853,7 +2853,19 @@
       "commandRequired": "Please enter command",
       "singleServerObjectRequired": "Please paste a single MCP server object (do not include top-level mcpServers)",
       "saveFailed": "Save failed",
-      "deleteFailed": "Delete failed"
+      "deleteFailed": "Delete failed",
+      "invalidOverrideClaude": "The separate MCP configuration for Claude Code is invalid. Provide a complete connection configuration.",
+      "invalidOverrideCodex": "The separate MCP configuration for Codex is invalid. Provide a complete connection configuration.",
+      "invalidOverrideGemini": "The separate MCP configuration for Gemini CLI is invalid. Provide a complete connection configuration.",
+      "invalidOverrideGrokbuild": "The separate MCP configuration for Grok Build is invalid. Provide a complete connection configuration.",
+      "invalidOverrideOpencode": "The separate MCP configuration for OpenCode is invalid. Provide a complete connection configuration.",
+      "invalidOverrideHermes": "The separate MCP configuration for Hermes is invalid. Provide a complete connection configuration.",
+      "invalidOverridePi": "The separate MCP configuration for Pi is invalid. Provide a complete connection configuration.",
+      "invalidOverrideMcode": "The separate MCP configuration for MiniMax Code is invalid. Provide a complete connection configuration.",
+      "invalidOverrideKimi": "The separate MCP configuration for Kimi Code is invalid. Provide a complete connection configuration.",
+      "invalidOverrideDsh": "The separate MCP configuration for DeepSeek Harness is invalid. Provide a complete connection configuration.",
+      "invalidOverrideAgy": "The separate MCP configuration for Antigravity is invalid. Provide a complete connection configuration.",
+      "invalidOverrideOmp": "The separate MCP configuration for Oh My Pi is invalid. Provide a complete connection configuration."
     },
     "validation": {
       "ok": "Command available",
@@ -4723,7 +4735,13 @@
       "tags": "Tags",
       "tagsPlaceholder": "Comma-separated, e.g. docs, web",
       "homepage": "Homepage",
-      "docs": "Docs"
+      "docs": "Docs",
+      "configScope": "Configuration for",
+      "sharedConfig": "Default configuration",
+      "useAppConfig": "Use a separate configuration for {{app}}",
+      "sharedConfigHint": "Apps without a separate configuration use this connection.",
+      "appConfigHint": "This complete connection configuration applies only to this app. Turn it off to use the default again.",
+      "followsSharedConfig": "This app uses the default configuration. Enable a separate configuration to change its connection settings."
     },
     "resync": "Rewrite every app's config from these switches"
   },

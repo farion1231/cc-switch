@@ -73,7 +73,8 @@ impl Database {
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
-            enabled_omp BOOLEAN NOT NULL DEFAULT 0
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
+            app_overrides TEXT NOT NULL DEFAULT '{}'
         )",
             [],
         )
@@ -647,6 +648,29 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 24)?;
+                    }
+                    24 => {
+                        // Also support databases created by the earlier PR build,
+                        // which used version 24 for app_overrides before DSH landed.
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_dsh",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "app_overrides",
+                                "TEXT NOT NULL DEFAULT '{}'",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 25)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -4117,6 +4141,73 @@ mod tests {
         let saved = db.get_installed_skill("s")?.unwrap();
         assert!(saved.apps.kimi && saved.apps.claude);
         assert!(db.get_all_installed_skills()?["s"].apps.kimi);
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_migration_handles_both_version_24_layouts_without_data_loss() -> Result<(), AppError> {
+        for prior_pr in [false, true] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, server_config TEXT NOT NULL); CREATE TABLE skills(id TEXT PRIMARY KEY); INSERT INTO mcp_servers VALUES ('shared', '{\"command\":\"original\"}'); INSERT INTO skills VALUES ('skill');")?;
+            if prior_pr {
+                conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN app_overrides TEXT NOT NULL DEFAULT '{}'; UPDATE mcp_servers SET app_overrides = '{\"codex\":{\"command\":\"custom\"}}';")?;
+            } else {
+                conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN enabled_dsh BOOLEAN NOT NULL DEFAULT 0; ALTER TABLE skills ADD COLUMN enabled_dsh BOOLEAN NOT NULL DEFAULT 0; UPDATE mcp_servers SET enabled_dsh = 1; UPDATE skills SET enabled_dsh = 1;")?;
+            }
+            Database::set_user_version(&conn, 24)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            let (config, overrides, enabled): (String, String, bool) = conn.query_row(
+                "SELECT server_config, app_overrides, enabled_dsh FROM mcp_servers",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            assert_eq!(config, "{\"command\":\"original\"}");
+            assert_eq!(
+                overrides,
+                if prior_pr {
+                    "{\"codex\":{\"command\":\"custom\"}}"
+                } else {
+                    "{}"
+                }
+            );
+            assert_eq!(enabled, !prior_pr);
+            assert_eq!(
+                conn.query_row("SELECT enabled_dsh FROM skills", [], |r| r
+                    .get::<_, bool>(0))?,
+                !prior_pr
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_app_overrides_migrate_existing_rows_without_changing_configs() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, server_config TEXT NOT NULL, enabled_claude BOOLEAN, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('serena', '{\"command\":\"original\"}', 1, 0);")?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let row: (String, String, i64, i64) = conn.query_row(
+            "SELECT server_config, app_overrides, enabled_claude, enabled_codex FROM mcp_servers",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(
+            row,
+            ("{\"command\":\"original\"}".into(), "{}".into(), 1, 0)
+        );
+        conn.execute(
+            "UPDATE mcp_servers SET app_overrides = ?1",
+            ["{\"codex\":{\"command\":\"custom\"}}"],
+        )?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert_eq!(
+            conn.query_row("SELECT app_overrides FROM mcp_servers", [], |row| row
+                .get::<_, String>(0))?,
+            "{\"codex\":{\"command\":\"custom\"}}"
+        );
         Ok(())
     }
 

@@ -2853,7 +2853,19 @@
       "commandRequired": "请填写命令",
       "singleServerObjectRequired": "此处只需单个服务器对象，请不要粘贴包含 mcpServers 的整份配置",
       "saveFailed": "保存失败",
-      "deleteFailed": "删除失败"
+      "deleteFailed": "删除失败",
+      "invalidOverrideClaude": "Claude Code 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideCodex": "Codex 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideGemini": "Gemini CLI 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideGrokbuild": "Grok Build 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideOpencode": "OpenCode 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideHermes": "Hermes 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverridePi": "Pi 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideMcode": "MiniMax Code 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideKimi": "Kimi Code 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideDsh": "DeepSeek Harness 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideAgy": "Antigravity 的独立 MCP 配置无效，请填写完整的连接参数。",
+      "invalidOverrideOmp": "Oh My Pi 的独立 MCP 配置无效，请填写完整的连接参数。"
     },
     "validation": {
       "ok": "命令可用",
@@ -4723,7 +4735,13 @@
       "tags": "标签",
       "tagsPlaceholder": "用逗号分隔，例如 docs, web",
       "homepage": "主页",
-      "docs": "文档"
+      "docs": "文档",
+      "configScope": "配置范围",
+      "sharedConfig": "默认配置",
+      "useAppConfig": "为 {{app}} 使用独立配置",
+      "sharedConfigHint": "未设置独立配置的应用使用此连接配置。",
+      "appConfigHint": "独立配置完整替代该应用的默认连接配置；取消勾选后恢复使用默认配置。",
+      "followsSharedConfig": "当前应用使用默认配置。启用独立配置后，可以单独修改连接参数。"
     },
     "resync": "按这里的开关重写各应用配置"
   },
