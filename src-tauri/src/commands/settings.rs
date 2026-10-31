@@ -109,7 +109,7 @@ pub async fn save_settings(
         }
     }
 
-    // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
+    // 统一会话开关变更时立即重写官方登录或当前 API 代理契约，
     // 不必等下一次切换才生效。
     if unify_codex_changed {
         // live 重写失败时回滚设置并把保存整体报失败：若设置保持已切换状态，
@@ -130,7 +130,7 @@ pub async fn save_settings(
         }
 
         if unify_codex_enabled {
-            // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
+            // 后台执行存量迁移（旧 custom 桶 → 内置 openai 桶；仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
             // 失败时不写完成标记，下次启动自动重试。
             tauri::async_runtime::spawn_blocking(|| {

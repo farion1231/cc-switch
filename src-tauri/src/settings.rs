@@ -1128,12 +1128,18 @@ pub fn mark_codex_provider_template_migrated(
 
 /// 统一会话迁移标记是否覆盖指定目录。标记里没记目录（不应出现的旧格式）
 /// 视为不匹配——重跑迁移是幂等的，宁可重迁也不漏迁。
-pub fn is_codex_official_history_unify_migrated_for_dir(codex_dir: &str) -> bool {
+pub fn is_codex_official_history_unify_migrated_for_dir(
+    codex_dir: &str,
+    target_provider_id: &str,
+) -> bool {
     get_settings()
         .local_migrations
         .as_ref()
         .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
+        .is_some_and(|migration| {
+            migration.codex_config_dir.as_deref() == Some(codex_dir)
+                && migration.target_provider_id == target_provider_id
+        })
 }
 
 /// 条件写入迁移完成标记：仅当此刻开关仍开启且迁移意愿仍在时才写。
