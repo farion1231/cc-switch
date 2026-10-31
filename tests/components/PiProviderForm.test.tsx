@@ -2880,6 +2880,42 @@ describe("PiProviderForm", () => {
       );
     }
 
+    it.each([
+      ["model-x", 1000000, "1M", 1000000],
+      ["model-x", undefined, "123K", 123456],
+      ["model-x", 0, "123K", 123456],
+      ["opaque-model", 1000000, "1M", 1000000],
+    ])(
+      "previews the context window saved for %s with fetched limit %s",
+      async (id, maxInputTokens, preview, saved) => {
+        const user = userEvent.setup();
+        serveModels([id]);
+        server.use(
+          http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+            HttpResponse.json([{ id, maxInputTokens }]),
+          ),
+        );
+        const editor = await fillCustomProvider(user, "pi");
+        await user.click(
+          screen.getByRole("button", { name: "providerForm.fetchModels" }),
+        );
+        const checkbox = await screen.findByRole("checkbox", { name: id });
+        const dialog = checkbox.closest('[role="dialog"]') as HTMLElement;
+        await waitFor(() =>
+          expect(checkbox.closest("label")).toHaveTextContent(preview),
+        );
+        await user.click(checkbox);
+        await user.click(
+          within(dialog).getByRole("button", {
+            name: "providerForm.modelPicker.apply",
+          }),
+        );
+        await waitFor(() =>
+          expect(JSON.parse(editor.value).models[0].contextWindow).toBe(saved),
+        );
+      },
+    );
+
     it("adds checked models with models.dev metadata and removes unchecked ones", async () => {
       const user = userEvent.setup();
       serveModels(["model-x", "model-y", "model-z"]);

@@ -1870,7 +1870,11 @@ export function PiProviderForm({
                     onApply={handleApplyFetchedModels}
                     onFetch={handleFetchModels}
                     isFetching={isFetchingModels}
-                    metadataSource={{ baseUrl, presets: piPresetModelSources }}
+                    metadataSource={{
+                      baseUrl,
+                      presets: piPresetModelSources,
+                      preferFetchedContextWindow: true,
+                    }}
                   />
                   <Button
                     id="pi-add-model"
