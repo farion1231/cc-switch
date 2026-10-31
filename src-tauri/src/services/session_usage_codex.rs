@@ -952,6 +952,35 @@ struct PendingUsageRecord {
     usage: CumulativeTokens,
     timestamp: Option<String>,
     model: String,
+    thread_id: Option<String>,
+    turn_id: Option<String>,
+}
+
+// Compaction reports its operation interval only after the compensating zero
+// snapshot. It has no first-output timestamp, so never infer TTFT from its start.
+fn compaction_usage_timing(
+    payload: &serde_json::Value,
+    event: &ParsedTokenEvent,
+    thread_id: &str,
+    turn_id: &str,
+) -> Option<EstimatedTiming> {
+    if payload.get("thread_id")?.as_str()? != thread_id
+        || payload.get("turn_id")?.as_str()? != turn_id
+    {
+        return None;
+    }
+    let start = payload.get("started_at_ms")?.as_i64()?;
+    let completed = payload.get("completed_at_ms")?.as_i64()?;
+    let usage_end = parse_timestamp_millis(event.timestamp.as_deref()?)?;
+    if start <= 0 || usage_end > completed {
+        return None;
+    }
+    // Include setup/waiting, like other session-log estimates, and stop at the
+    // usage record rather than counting post-response compaction bookkeeping.
+    Some(EstimatedTiming {
+        latency_ms: estimated_latency_ms(start, usage_end)?,
+        first_token_ms: None,
+    })
 }
 
 fn push_unmatched_usage(
@@ -1272,6 +1301,7 @@ fn parse_codex_file_with_index(
     let mut token_events = Vec::new();
     let mut usage_record_events = Vec::new();
     let mut pending_usage: Option<PendingUsageRecord> = None;
+    let mut pending_compaction: Option<(usize, String, String)> = None;
     let mut line_offset = 0i64;
     let mut observed_bytes = 0i64;
     let mut has_billable_tokens = false;
@@ -1315,6 +1345,7 @@ fn parse_codex_file_with_index(
         if is_event_msg
             && !line.contains("\"token_count\"")
             && !line.contains("\"thread_settings_applied\"")
+            && !line.contains("\"ContextCompaction\"")
         {
             continue;
         }
@@ -1435,6 +1466,27 @@ fn parse_codex_file_with_index(
                 let Some(payload) = value.get("payload") else {
                     continue;
                 };
+                if payload.get("type").and_then(serde_json::Value::as_str) == Some("item_completed")
+                    && payload
+                        .pointer("/item/type")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("ContextCompaction")
+                {
+                    if let Some((index, thread_id, turn_id)) = pending_compaction.take() {
+                        let Some(event) = usage_record_events.get_mut(index) else {
+                            continue;
+                        };
+                        if let Some(timing) =
+                            compaction_usage_timing(payload, event, &thread_id, &turn_id)
+                        {
+                            event.timing = Some(timing);
+                            // A prior scan may already have imported usage. Make
+                            // the late timing eligible on the next scan as well.
+                            event.line_offset = line_offset;
+                        }
+                    }
+                    continue;
+                }
                 if payload.get("type").and_then(serde_json::Value::as_str)
                     == Some("thread_settings_applied")
                 {
@@ -1486,6 +1538,14 @@ fn parse_codex_file_with_index(
                         .as_ref()
                         .is_some_and(|last| usage_matches(last, &pending.usage));
                     if !covered && last.as_ref().is_some_and(usage_is_zero) {
+                        pending_compaction = pending
+                            .thread_id
+                            .as_ref()
+                            .zip(pending.turn_id.as_ref())
+                            .filter(|(thread, turn)| !thread.is_empty() && !turn.is_empty())
+                            .map(|(thread, turn)| {
+                                (usage_record_events.len(), thread.clone(), turn.clone())
+                            });
                         push_unmatched_usage(
                             &mut usage_record_events,
                             pending,
@@ -1606,6 +1666,8 @@ fn parse_codex_file_with_index(
             }
             "token_usage_record" => {
                 pending_usage = None;
+                // A later response makes an older completion ambiguous.
+                pending_compaction = None;
                 let Some(payload) = value.get("payload") else {
                     continue;
                 };
@@ -1632,6 +1694,14 @@ fn parse_codex_file_with_index(
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
                     model: current_model.clone(),
+                    thread_id: payload
+                        .get("thread_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                    turn_id: payload
+                        .get("turn_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
                 });
             }
             _ => {}
@@ -2353,7 +2423,32 @@ fn sync_single_codex_file(
                 &mut pass.pricing,
             ) {
                 Ok(true) => batch_imported += 1,
-                Ok(false) => batch_skipped += 1,
+                Ok(false) => {
+                    if let Some(timing) = event.timing.filter(|_| event.request_suffix.is_some()) {
+                        // Enrich only missing timing for the same recorded usage.
+                        // Never rewrite billing, a known duration, or TTFT.
+                        tx.execute(
+                            "UPDATE proxy_request_logs SET latency_ms = ?1
+                             WHERE request_id = ?2 AND data_source = 'codex_session'
+                               AND latency_ms = 0 AND first_token_ms IS NULL
+                               AND input_tokens = ?3 AND output_tokens = ?4
+                               AND cache_read_tokens = ?5 AND cache_creation_tokens = ?6
+                               AND session_id = ?7 AND model = ?8",
+                            rusqlite::params![
+                                timing.latency_ms,
+                                request_id,
+                                event.delta.input,
+                                event.delta.output,
+                                event.delta.cached_input,
+                                event.delta.cache_write_input,
+                                session_thread_id,
+                                event.model
+                            ],
+                        )
+                        .map_err(|e| AppError::Database(format!("补全 Codex 压缩计时失败: {e}")))?;
+                    }
+                    batch_skipped += 1;
+                }
                 Err(e) => {
                     log::warn!("[CODEX-SYNC] 插入失败 ({request_id}): {e}");
                     batch_skipped += 1;
@@ -2815,6 +2910,147 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| AppError::Database(error.to_string()))?;
         Ok(rows)
+    }
+
+    #[test]
+    fn compaction_timing_arriving_after_usage_enriches_without_rebilling() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        let mut usage =
+            token_usage_record_at("resp_timing", 1200, 400, 400, "2026-07-10T03:00:12Z");
+        usage["payload"]["thread_id"] = PARENT_ID.into();
+        usage["payload"]["turn_id"] = "turn-timing".into();
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                usage,
+                token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:00:12Z"),
+            ],
+        );
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 1);
+        let before = codex_usage_rows(&db)?;
+        let completion = serde_json::json!({
+            "type": "event_msg", "timestamp": "2026-07-10T03:00:12.050Z",
+            "payload": {"type": "item_completed", "thread_id": PARENT_ID,
+                "turn_id": "turn-timing", "item": {"type": "ContextCompaction"},
+                "started_at_ms": parse_timestamp_millis("2026-07-10T03:00:01Z").unwrap(),
+                "completed_at_ms": parse_timestamp_millis("2026-07-10T03:00:12.050Z").unwrap()}
+        });
+        append_jsonl(&path, completion);
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 0);
+        assert_eq!(codex_usage_rows(&db)?, before);
+        {
+            let conn = lock_conn!(db.conn);
+            let timing: (i64, Option<i64>) = conn
+                .query_row(
+                    "SELECT latency_ms, first_token_ms FROM proxy_request_logs",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(timing, (11_000, None));
+            conn.execute("DELETE FROM session_log_sync", []).unwrap();
+        }
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 0);
+        assert_eq!(codex_usage_rows(&db)?, before);
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_request_logs SET latency_ms=9000, first_token_ms=100",
+                [],
+            )
+            .unwrap();
+            conn.execute("DELETE FROM session_log_sync", []).unwrap();
+        }
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            let timing: (i64, Option<i64>) = conn
+                .query_row(
+                    "SELECT latency_ms, first_token_ms FROM proxy_request_logs",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(timing, (9000, Some(100)), "preserve existing timing");
+            conn.execute("UPDATE proxy_request_logs SET latency_ms=0, first_token_ms=NULL, output_tokens=401", []).unwrap();
+            conn.execute("DELETE FROM session_log_sync", []).unwrap();
+        }
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            let latency: i64 = conn
+                .query_row("SELECT latency_ms FROM proxy_request_logs", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(latency, 0, "do not enrich a mismatched stored usage record");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compaction_timing_rejects_unmatched_or_invalid_intervals() {
+        for case in 0..9 {
+            let temp = tempdir().unwrap();
+            let path = rollout_path(temp.path(), PARENT_ID);
+            let mut usage =
+                token_usage_record_at("resp_timing", 1200, 400, 400, "2026-07-10T03:00:12Z");
+            usage["payload"]["thread_id"] = PARENT_ID.into();
+            usage["payload"]["turn_id"] = "turn-timing".into();
+            let mut completion = serde_json::json!({
+                "type":"event_msg", "timestamp":"2026-07-10T03:00:12.050Z",
+                "payload":{"type":"item_completed", "thread_id":PARENT_ID,
+                    "turn_id":"turn-timing", "item":{"type":"ContextCompaction"},
+                    "started_at_ms":parse_timestamp_millis("2026-07-10T03:00:01Z").unwrap(),
+                    "completed_at_ms":parse_timestamp_millis("2026-07-10T03:00:12.050Z").unwrap()}
+            });
+            match case {
+                0 => completion["payload"]["turn_id"] = "another-turn".into(),
+                1 => completion["payload"]["thread_id"] = CHILD_A_ID.into(),
+                2 => completion["payload"]["started_at_ms"] = serde_json::Value::Null,
+                3 => {
+                    completion["payload"]["started_at_ms"] =
+                        parse_timestamp_millis("2026-07-10T03:00:13Z")
+                            .unwrap()
+                            .into()
+                }
+                4 => {
+                    completion["payload"]["completed_at_ms"] =
+                        parse_timestamp_millis("2026-07-10T03:00:11Z")
+                            .unwrap()
+                            .into()
+                }
+                5 => usage["payload"]["turn_id"] = serde_json::Value::Null,
+                6 => completion["payload"]["item"]["type"] = "AgentMessage".into(),
+                7 => usage["timestamp"] = serde_json::Value::Null,
+                _ => {}
+            }
+            let mut lines = vec![
+                session_meta(PARENT_ID),
+                turn_context(),
+                usage,
+                token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:00:12Z"),
+            ];
+            if case == 8 {
+                lines.push(token_usage_record_at(
+                    "another-response",
+                    1300,
+                    400,
+                    300,
+                    "2026-07-10T03:00:12.010Z",
+                ));
+            }
+            lines.push(completion);
+            write_jsonl(&path, &lines);
+            let parsed = parse_codex_file(&path, Some(PARENT_ID.to_string())).unwrap();
+            assert_eq!(parsed.usage_record_events.len(), 1, "case {case}");
+            assert_eq!(parsed.usage_record_events[0].timing, None, "case {case}");
+        }
     }
 
     #[test]
