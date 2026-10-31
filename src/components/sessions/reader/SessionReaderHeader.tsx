@@ -48,6 +48,7 @@ import { sessionMenuItemClass } from "../SessionItem";
 import {
   buildCdResumeCommand,
   canDeleteSession,
+  nativeDeleteHintKey,
   formatClock,
   formatShortDateTime,
   isSessionAppId,
@@ -351,14 +352,13 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
           {t("sessionManager.deleteEllipsis", { defaultValue: "删除…" })}
         </DropdownMenuItem>
         {!deletable &&
-          ["mcode", "kimi", "dsh"].includes(session.providerId) && (
+          ["mcode", "kimi", "dsh", "workbuddy"].includes(
+            session.providerId,
+          ) && (
             <p className="px-2.5 pb-1.5 text-caption text-fg-2">
               {t(
-                session.providerId === "dsh"
-                  ? "dsh.deleteSessionHint"
-                  : session.providerId === "kimi"
-                    ? "kimi.deleteSessionHint"
-                    : "sessionManager.mcodeDeleteHint",
+                nativeDeleteHintKey(session.providerId) ??
+                  "sessionManager.mcodeDeleteHint",
                 {
                   defaultValue: "请在 MiniMax Code 中删除",
                 },

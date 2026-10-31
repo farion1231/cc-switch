@@ -53,6 +53,7 @@ mod tray_compat;
 mod tray_panel;
 mod usage_events;
 mod usage_script;
+mod workbuddy_config;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
@@ -1105,6 +1106,7 @@ pub fn run() {
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
+                    crate::app_config::AppType::WorkBuddy,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1286,6 +1288,13 @@ pub fn run() {
                 use crate::services::agy_account::AgyAccountManager;
                 let manager = AgyAccountManager::new(crate::config::get_app_config_dir());
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
+            }
+
+            // WorkBuddy 官方账号（授权中心收录、切换桌面端登录的快照）
+            {
+                use crate::services::workbuddy_account::WorkBuddyAccountManager;
+                let manager = WorkBuddyAccountManager::new(crate::config::get_app_config_dir());
+                app.manage(commands::WorkBuddyAccountState(Arc::new(manager)));
             }
 
             // Claude Code 官方订阅账号（授权中心加号；每个账号一个 CLAUDE_CONFIG_DIR）
@@ -1873,6 +1882,11 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::workbuddy_account_live_state,
+            commands::workbuddy_account_import_current,
+            commands::workbuddy_account_prepare_new_login,
+            commands::workbuddy_account_open_app,
+            commands::workbuddy_account_quota,
             commands::claude_account_submit_paste,
             commands::get_claude_account_quota,
             commands::get_claude_default_plan,

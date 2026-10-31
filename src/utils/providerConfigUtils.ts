@@ -1179,6 +1179,8 @@ export const extractProviderBaseUrl = (
     object.baseUrl ||
     object.base_url ||
     object.options?.baseURL ||
+    // WorkBuddy models.json: full endpoint URL shared by the provider's models
+    object.url ||
     (Array.isArray(object.models)
       ? object.models.find(
           (model: unknown) =>

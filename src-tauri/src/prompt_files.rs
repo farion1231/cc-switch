@@ -44,6 +44,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Agy => crate::agy_config::customizations_dir(),
         // omp 只读按 profile 切换的 agent 目录里的 AGENTS.md（上游 discovery/builtin.ts）
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
+        // WorkBuddy 的引擎（CodeBuddy Code）把 `CODEBUDDY_CONFIG_DIR/CODEBUDDY.md` 当作用户级记忆。
+        AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -59,6 +61,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp => "AGENTS.md",
+        AppType::WorkBuddy => "CODEBUDDY.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

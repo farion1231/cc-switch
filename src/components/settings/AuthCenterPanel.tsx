@@ -7,6 +7,7 @@ import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOfficialSection";
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { DshAccountLogin } from "@/components/providers/DshAccount";
+import { WorkBuddyAccountSection } from "@/components/settings/auth/WorkBuddyAccountSection";
 import { isMac } from "@/lib/platform";
 import type { AuthCenterTarget } from "@/lib/api";
 
@@ -36,8 +37,9 @@ function findScrollContainer(element: HTMLElement): HTMLElement | null {
 }
 
 /**
- * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness，一组一张卡片；
+ * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、WorkBuddy，一组一张卡片；
  * macOS 上另有 Antigravity 一组（切 agy 的官方登录，目前只实现了 macOS 钥匙串）。
+ * WorkBuddy 收录桌面端登录的快照再切换（macOS 已确认路径，Windows / Linux 按推断路径）。
  * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
  */
 export function AuthCenterPanel({
@@ -52,6 +54,7 @@ export function AuthCenterPanel({
   const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const agyOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const kimiOauthSectionRef = useRef<HTMLDivElement | null>(null);
+  const workbuddySectionRef = useRef<HTMLDivElement | null>(null);
   const dshAccountSectionRef = useRef<HTMLDivElement | null>(null);
   const showAgy = isMac();
 
@@ -73,7 +76,9 @@ export function AuthCenterPanel({
                 ? codexOauthSectionRef
                 : authScrollTarget === "agy_oauth"
                   ? agyOauthSectionRef
-                  : xaiOauthSectionRef;
+                  : authScrollTarget === "workbuddy_account"
+                    ? workbuddySectionRef
+                    : xaiOauthSectionRef;
 
     const target = sectionRef.current;
     const container = findScrollContainer(root);
@@ -169,13 +174,16 @@ export function AuthCenterPanel({
         <KimiAccountLogin helpSide="bottom" />
       </div>
       <div ref={dshAccountSectionRef}>
-        <DshAccountLogin helpSide={showAgy ? "bottom" : "top"} />
+        <DshAccountLogin helpSide="bottom" />
       </div>
       {showAgy && (
         <div ref={agyOauthSectionRef}>
-          <AgyOAuthSection helpSide="top" />
+          <AgyOAuthSection helpSide="bottom" />
         </div>
       )}
+      <div ref={workbuddySectionRef}>
+        <WorkBuddyAccountSection helpSide="top" />
+      </div>
     </div>
   );
 }

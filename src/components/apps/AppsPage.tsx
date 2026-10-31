@@ -42,7 +42,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import type { AppId } from "@/lib/api";
+import { settingsApi, type AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
@@ -107,17 +107,26 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+// WorkBuddy 是桌面应用、自己负责更新，这里和 Claude Desktop 一样只管侧栏显示
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop" }
+  | { kind: "workbuddy" };
 
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
+  ["workbuddy", { kind: "workbuddy" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
 const rowKey = (row: Row): AppId =>
-  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
+  row.kind === "desktop"
+    ? "claude-desktop"
+    : row.kind === "workbuddy"
+      ? "workbuddy"
+      : TOOL_APP_IDS[row.tool];
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -182,12 +191,22 @@ export function AppsPage() {
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });
+  const { data: workbuddyStatus, isPending: isWorkbuddyStatusPending } =
+    useQuery({
+      queryKey: ["config-status", "workbuddy"],
+      queryFn: () => settingsApi.getConfigStatus("workbuddy"),
+      staleTime: 30_000,
+    });
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
   const rowInstalled = (row: Row): boolean | null => {
     if (row.kind === "desktop") {
       return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
+    }
+    // WorkBuddy 同样没有命令可探，按配置目录（~/.workbuddy）在不在判断
+    if (row.kind === "workbuddy") {
+      return isWorkbuddyStatusPending ? null : Boolean(workbuddyStatus?.exists);
     }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
@@ -336,7 +355,24 @@ export function AppsPage() {
   };
 
   const renderRow = (row: Row) =>
-    row.kind === "desktop" ? (
+    row.kind === "workbuddy" ? (
+      <AppRow
+        key="workbuddy"
+        app="workbuddy"
+        name={<span className="truncate">{APP_DISPLAY_NAME.workbuddy}</span>}
+        version={
+          <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+            {workbuddyStatus?.exists
+              ? t("appsPage.desktopConnected")
+              : t("appsPage.desktopNotConnected")}
+            <HelpTip title={APP_DISPLAY_NAME.workbuddy} align="end">
+              {t("appsPage.workbuddyHelp")}
+            </HelpTip>
+          </span>
+        }
+        visibility={visibilitySwitch("workbuddy")}
+      />
+    ) : row.kind === "desktop" ? (
       <AppRow
         key="claude-desktop"
         app="claude-desktop"

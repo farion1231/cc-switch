@@ -44,6 +44,9 @@ import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isProxyAppId } from "@/config/appConfig";
+import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
+import { WorkBuddyOfficialAccountLine } from "@/components/providers/WorkBuddyOfficialAccountLine";
+import { WorkBuddyQuotaFooter } from "@/components/providers/WorkBuddyQuotaFooter";
 import { ProviderCardActions } from "./ProviderCardActions";
 import { terminalAvailable, terminalIsIsolated } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
@@ -406,7 +409,9 @@ export function ProviderCard({
             )}
           </div>
 
-          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+          {appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+            <WorkBuddyOfficialAccountLine provider={provider} onEdit={onEdit} />
+          ) : codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               {codexOfficialIdentity === "native_login" ? (
                 <span className="min-w-0 truncate" title={manualNote}>
@@ -550,6 +555,9 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+                // 官方登录卡的额度按卡上绑定的账号查（只有 WorkBuddy 运行时当前账号能刷新）
+                <WorkBuddyQuotaFooter provider={provider} />
               ) : appId === "kimi" && isOfficial ? (
                 // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
                 <KimiAccountQuotaFooter

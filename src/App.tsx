@@ -785,7 +785,8 @@ function App() {
           activeApp === "mcode" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
-          activeApp === "agy"
+          activeApp === "agy" ||
+          activeApp === "workbuddy"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -1014,7 +1015,12 @@ function App() {
         queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
         queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
       ]);
-    } else if (app === "mcode" || app === "dsh" || app === "kimi") {
+    } else if (
+      app === "mcode" ||
+      app === "dsh" ||
+      app === "kimi" ||
+      app === "workbuddy"
+    ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
   };
@@ -1207,6 +1213,14 @@ function App() {
         );
         duplicatedProvider.addToLive = false;
       }
+    } else if (activeApp === "workbuddy") {
+      // WorkBuddy model IDs are unique across models.json, so a copy that kept
+      // the same models would collide; keep it out of the file until edited.
+      duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
+        provider.id,
+        Object.keys(providers),
+      );
+      duplicatedProvider.addToLive = false;
     }
 
     if (provider.sortIndex !== undefined) {
@@ -1393,6 +1407,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            activeApp !== "workbuddy" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1560,7 +1575,8 @@ function App() {
               activeApp === "mcode" ||
               activeApp === "kimi" ||
               activeApp === "dsh" ||
-              activeApp === "omp"
+              activeApp === "omp" ||
+              activeApp === "workbuddy"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }
