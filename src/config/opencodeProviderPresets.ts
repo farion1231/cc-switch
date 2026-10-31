@@ -1959,6 +1959,35 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    // OpenAI 平台 API Key 直连 Responses（按量计费）
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "OpenAI API",
+      options: {
+        baseURL: "https://api.openai.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-luna": { name: "GPT-6 Luna", reasoning: true },
+      },
+    },
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "RightCode",
     websiteUrl: "https://www.rightapi.ai",
     apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",

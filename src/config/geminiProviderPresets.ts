@@ -118,6 +118,90 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "PatewayAI",
+    websiteUrl: "https://pateway.ai",
+    apiKeyUrl: "https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/",
+    // /v1beta 用假 Key 探测为 401、乱写路径 404（2026-10-31）；模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.pateway.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.pateway.ai",
+    model: "gemini-3.8-flash",
+    description: "PatewayAI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "patewayai",
+    icon: "pateway",
+  },
+  {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    // Gemini 原生接口在 /gemini 前缀下（2026-10-31 假 Key 探测：/gemini/v1beta 401、
+    // 乱写路径 404）。目录里的 ID 带 provider/ 前缀，原生路由用不带前缀的 ID，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.hao.ai/gemini",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.hao.ai/gemini",
+    model: "gemini-3.8-flash",
+    description: "hao.ai",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
+    name: "FennoAI",
+    websiteUrl: "https://api.fenno.ai",
+    apiKeyUrl:
+      "https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL",
+    // /v1beta 回 Google 格式的 401（2026-10-31）；当天定价接口里最新的 Flash 是
+    // gemini-3-flash-preview，没有 3.8，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.fenno.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3-flash-preview",
+      },
+    },
+    baseURL: "https://api.fenno.ai",
+    model: "gemini-3-flash-preview",
+    description: "FennoAI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fenno",
+    icon: "fenno",
+  },
+  {
+    name: "RunAPI",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
+    // runapi.host/api/pricing（2026-10-31）：Gemini 模型带 gemini 端点类型，原生 /v1beta 在站点根
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://runapi.host",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://runapi.host",
+    model: "gemini-3.8-flash",
+    description: "RunAPI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "runapi",
+    endpointCandidates: ["https://runapi.host", "https://runapi.co"],
+    icon: "runapi",
+  },
+  {
     name: "OpenModel",
     websiteUrl: "https://www.openmodel.ai",
     apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
@@ -134,6 +218,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "openmodel",
     icon: "openmodel",
+  },
+  {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
+    // grooroute.pro/api/pricing（2026-10-31）：gemini-3.8-flash / gemini-4-argon 带 gemini 端点类型
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://grooroute.pro",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://grooroute.pro",
+    model: "gemini-3.8-flash",
+    description: "GrooRoute Pro",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "grooroute",
+    endpointCandidates: ["https://grooroute.pro", "https://grooroute.xyz"],
+    icon: "grooroute",
   },
   {
     name: "DIT.ai",
@@ -155,6 +260,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "dit",
     icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    // 官网定价页列出 gemini-3.8-flash / gemini-4-argon；/v1beta 用假 Key 探测为 401、乱写路径 404
+    // （2026-10-31）。Key 按分组发，要用 Gemini 分组的 Key
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.buytoken.work",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.buytoken.work",
+    model: "gemini-3.8-flash",
+    description: "BuyToken",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
   },
   {
     name: "V-API",
@@ -290,6 +416,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    name: "OspreyAI",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    // open.ospreyai.cn/api/pricing（2026-10-31）：只有 gemini-4-argon 带 gemini 端点类型，
+    // gemini-3.5-flash / 3.1-pro-preview 只标 openai，走不了原生 /v1beta
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://open.ospreyai.cn",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-4-argon",
+      },
+    },
+    baseURL: "https://open.ospreyai.cn",
+    model: "gemini-4-argon",
+    description: "OspreyAI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
+  },
+  {
     name: "88API",
     websiteUrl: "https://88api.ai",
     apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
@@ -358,6 +505,32 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "9527code",
   },
   {
+    name: "TeamoRouter",
+    websiteUrl: "https://teamorouter.cn",
+    apiKeyUrl:
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    // 接入文档 teamorouter.cn/zh/docs/install-gemini-cli（2026-10-31）：Key 以 Bearer 发送
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.teamorouter.cn",
+        GEMINI_API_KEY: "",
+        GEMINI_API_KEY_AUTH_MECHANISM: "bearer",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.teamorouter.cn",
+    model: "gemini-3.8-flash",
+    description: "TeamoRouter",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    endpointCandidates: [
+      "https://api.teamorouter.cn",
+      "https://api.teamorouter.com",
+    ],
+    icon: "teamorouter",
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
@@ -390,6 +563,51 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "a6api",
     icon: "a6api",
+  },
+  {
+    name: "Compshare",
+    nameKey: "providerForm.presets.ucloud",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    // api.modelverse.cn/v1beta/models（2026-10-31）公开列出 gemini-3.8-flash 等原生模型；
+    // 编程套餐地址 cp.compshare.cn 没有 /v1beta，所以只收按量版
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.modelverse.cn",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.modelverse.cn",
+    model: "gemini-3.8-flash",
+    description: "Compshare",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ucloud",
+    endpointCandidates: ["https://api.modelverse.cn"],
+    icon: "ucloud",
+    iconColor: "#000000",
+  },
+  {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    // www.ccsub.net/v1/models（2026-10-31）：Gemini 最新只有 gemini-3.5-flash；/v1beta 回 Google 格式的 401
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.ccsub.net",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.5-flash",
+      },
+    },
+    baseURL: "https://www.ccsub.net",
+    model: "gemini-3.5-flash",
+    description: "CCSub",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
   },
   {
     name: "SSSAiCode",
@@ -436,6 +654,28 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "soleapi",
   },
   {
+    name: "Micu",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
+    // /v1beta 用假 Key 探测为 401、乱写路径 404（2026-10-31）；模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.micuapi.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://www.micuapi.ai",
+    model: "gemini-3.8-flash",
+    description: "Micu",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "micu",
+    endpointCandidates: ["https://www.micuapi.ai"],
+    icon: "micu",
+    iconColor: "#000000",
+  },
+  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
@@ -479,6 +719,52 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://cn.crazyrouter.com"],
     icon: "crazyrouter",
     iconColor: "#000000",
+  },
+  {
+    name: "DMXAPI",
+    websiteUrl: "https://www.dmxapi.cn",
+    apiKeyUrl: "https://www.dmxapi.cn",
+    // /v1beta 用假 Key 探测为 401、乱写路径 404（2026-10-31）；模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.dmxapi.cn",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://www.dmxapi.cn",
+    model: "gemini-3.8-flash",
+    description: "DMXAPI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dmxapi",
+    endpointCandidates: ["https://www.dmxapi.cn", "https://api.dmxapi.cn"],
+    icon: "dmxapi",
+  },
+  {
+    name: "SudoCode.chat",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    // /v1beta 用假 Key 探测为 401、乱写路径 404（2026-10-31）；模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.sudocode.chat",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.sudocode.chat",
+    model: "gemini-3.8-flash",
+    description: "SudoCode.chat",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
+    icon: "sudocode",
   },
   {
     name: "SudoCode.us",
