@@ -29,9 +29,9 @@
 <details open>
 <summary>Zum Einklappen klicken</summary>
 
-[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)
+[![Kimi K3.1 Pro](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)
 
-Kimi K3 ist das bislang leistungsstärkste Modell von Moonshot AI und das weltweit erste offene Modell der 3T-Klasse. Mit 2,8 Billionen Parametern, nativen visuellen Fähigkeiten und einem Kontextfenster von 1 Million Token liefert K3 Spitzenleistung bei langfristigen Programmieraufgaben, Wissensarbeit und Reasoning. Mit CC Switch lässt sich Kimi in den verschiedensten Agenten-Tools bequem konfigurieren und umschalten.
+Kimi K3.1 Pro ist das bislang leistungsstärkste Open-Weight-Modell der 3T-Klasse von Moonshot AI und bietet ein Kontextfenster von 1 Million Token. Aufbauend auf Kimi K3 und mit deutlich mehr Rechenleistung im Post-Training erzielt es durchgängige Verbesserungen beim Programmieren, bei agentischen Workflows, in der 3D-Erstellung und beim Reasoning. Mit CC Switch lässt sich Kimi K3.1 Pro in den verschiedensten Agenten-Tools bequem konfigurieren und umschalten.
 
 Arbeiten Sie hauptsächlich mit Programmierung? Probieren Sie einen **Kimi Code Tarif** ([中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)) aus, oder nutzen Sie die **API** über die Kimi Open Platform ([中文站](https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)).
 
