@@ -120,6 +120,8 @@ objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 objc2-06 = { package = "objc2", version = "0.6" }
 objc2-foundation-03 = { package = "objc2-foundation", version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSString"] }
 objc2-app-kit-03 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["std", "NSAppearance", "NSGlassEffectView", "NSGraphics", "NSResponder", "NSScreen", "NSView", "NSVisualEffectView", "NSWindow"] }
+# 读取 macOS 系统代理（SCDynamicStore），用于全局 HTTP 客户端跟随系统代理变化
+system-configuration = "0.7"
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]
