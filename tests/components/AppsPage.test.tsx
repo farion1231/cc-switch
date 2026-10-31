@@ -1987,6 +1987,52 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeEnabled();
   });
 
+  it("does not offer a separate upgrade for OpenCode Desktop's bundled CLI", async () => {
+    outdated.add("opencode");
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) =>
+        tool === "opencode"
+          ? report(tool, {
+              unmanaged: true,
+              command: "",
+              anchored: false,
+              installs: [
+                {
+                  path: "C:\\Users\\me\\AppData\\Local\\OpenCode\\resources\\opencode-cli.exe",
+                  version: "1.0.0",
+                  runnable: true,
+                  error: null,
+                  source: "desktop",
+                  is_path_default: true,
+                },
+              ],
+            })
+          : report(tool),
+      ),
+    );
+
+    await renderApps();
+    await waitFor(() =>
+      expect(
+        card("OpenCode").getByText("OpenCode Desktop"),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      card("OpenCode").queryByRole("button", { name: "settings.toolUpdate" }),
+    ).toBeNull();
+
+    fireEvent.click(updateAllButton());
+    await waitFor(() => expect(isReady("Claude Code")).toBe(true));
+    expect(isReady("Codex")).toBe(true);
+    expect(isReady("Gemini CLI")).toBe(true);
+    expect(
+      mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
+    ).toEqual([["claude"], ["codex"], ["gemini"]]);
+    expect(
+      mocks.runToolLifecycleAction.mock.calls.flatMap(([tools]) => tools),
+    ).not.toContain("opencode");
+  });
+
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
     const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>

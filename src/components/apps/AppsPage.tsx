@@ -105,6 +105,7 @@ const SOURCE_LABEL: Record<string, string> = {
   pnpm: "pnpm",
   scoop: "Scoop",
   pip: "pip",
+  desktop: "OpenCode Desktop",
 };
 
 type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
@@ -738,7 +739,7 @@ function ToolRow({
       ? null
       : !info?.version
         ? "install"
-        : isOutdated && !nodeGap
+        : isOutdated && !nodeGap && !report?.unmanaged
           ? "update"
           : null);
   const sourceLabel = defaultInstall

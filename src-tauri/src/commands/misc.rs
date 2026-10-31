@@ -3149,6 +3149,23 @@ fn infer_install_source_for_install(launcher: &Path, real: &Path) -> &'static st
     }
 }
 
+/// OpenCode Desktop ships its own `opencode-cli.exe`. That sidecar is owned and updated by
+/// the Desktop app, not by npm or the standalone OpenCode installer. #7027 makes this exact
+/// executable the launcher whenever a Desktop install is detected, so it is a stable source
+/// signal without depending on a vendor-specific absolute install directory.
+fn infer_install_source_for_tool(tool: &str, launcher: &Path, real: &Path) -> &'static str {
+    if tool == "opencode"
+        && launcher.file_name().is_some_and(|name| {
+            name.to_string_lossy()
+                .eq_ignore_ascii_case("opencode-cli.exe")
+        })
+    {
+        "desktop"
+    } else {
+        infer_install_source_for_install(launcher, real)
+    }
+}
+
 /// 从 shell 输出里挑出第一个绝对路径行（trim 后以 `/` 开头），跳过交互式登录 shell
 /// （`-lic`）里 .zshrc 打印的欢迎语/提示符等噪音。canonicalize 由调用方做（碰 FS）。
 #[cfg(not(target_os = "windows"))]
@@ -3453,7 +3470,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
             let is_path_default = path_default.as_ref() == Some(&real);
             let path_str = tool_path.display().to_string();
-            let source = infer_install_source_for_install(&tool_path, &real);
+            let source = infer_install_source_for_tool(tool, &tool_path, &real);
 
             installs.push(ToolInstallation {
                 path: path_str,
@@ -4897,6 +4914,11 @@ enum UpdateCommand {
 }
 
 fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
+    // OpenCode Desktop owns its bundled CLI. Running the normal OpenCode fallback here would
+    // install or update a separate global copy while leaving the Desktop sidecar unchanged.
+    if default_install(installs).is_some_and(|inst| inst.source == "desktop") {
+        return UpdateCommand::Unmanaged;
+    }
     if let Some(command) = installs_anchored_command(tool, installs) {
         return UpdateCommand::Anchored(command);
     }
@@ -4942,9 +4964,14 @@ fn is_native_executable(path: &Path) -> bool {
 /// 执行路径的兜底报错。正常流程里前端已按 probe 的 `unmanaged` 跳过该工具并给出
 /// 本地化提示；只有 probe 失败、前端直接执行时才会走到这里。
 fn unmanaged_update_error(tool: &str, installs: &[ToolInstallation]) -> String {
-    let path = default_install(installs)
-        .map(|inst| inst.path.as_str())
-        .unwrap_or_default();
+    let default = default_install(installs);
+    let path = default.map(|inst| inst.path.as_str()).unwrap_or_default();
+    if default.is_some_and(|inst| inst.source == "desktop") {
+        return format!(
+            "{} at {path} is bundled with OpenCode Desktop; update it with the Desktop app",
+            tool_display_name(tool)
+        );
+    }
     format!(
         "{} at {path} was not installed by npm or a recognized installer; update it the way it was installed",
         tool_display_name(tool)
@@ -9326,6 +9353,41 @@ mod tests {
                     ),
                 ),
                 "nvm"
+            );
+        }
+
+        #[test]
+        fn opencode_desktop_sidecar_is_desktop_managed() {
+            let desktop =
+                Path::new(r"C:\Users\me\AppData\Local\OpenCode\resources\opencode-cli.exe");
+            assert_eq!(
+                infer_install_source_for_tool("opencode", desktop, desktop),
+                "desktop"
+            );
+
+            let standalone = Path::new(r"C:\tools\opencode.exe");
+            assert_eq!(
+                infer_install_source_for_tool("opencode", standalone, standalone),
+                "system"
+            );
+        }
+
+        #[test]
+        fn opencode_desktop_sidecar_is_not_upgraded_separately() {
+            let path = r"C:\Users\me\AppData\Local\OpenCode\resources\opencode-cli.exe";
+            let install = ToolInstallation {
+                path: path.to_string(),
+                version: Some("1.0.0".to_string()),
+                runnable: true,
+                error: None,
+                exited_with_error: false,
+                source: "desktop".to_string(),
+                is_path_default: true,
+                real: Path::new(path).to_path_buf(),
+            };
+            assert_eq!(
+                resolve_update_command("opencode", &[install]),
+                UpdateCommand::Unmanaged
             );
         }
 
