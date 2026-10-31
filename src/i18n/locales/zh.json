@@ -1611,6 +1611,13 @@
     "openReleaseNotesFailed": "打开更新日志失败:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "配置文件 {{path}}（只显示这一家）",
+      "hint": "按应用自己的格式显示这一家在文件里的部分，保存后写进这个文件；默认模型等全局设置不在这里。在这里写的注释不会保存。",
+      "invalid": "{{format}} 格式错误：{{error}}",
+      "scope": "这里只能写 {{section}} 这一个节点；供应商标识请在上方修改。",
+      "schema": "有字段的类型不对，请对照上方表单检查。"
+    },
     "supplierName": "供应商名称",
     "supplierNameRequired": "供应商名称 *",
     "supplierNamePlaceholder": "例如：Anthropic 官方",
@@ -1829,6 +1836,11 @@
     "customUserAgentHelp": "替换转发到供应商的请求里的 User-Agent。",
     "localProxyRequestOverridesHelp": "作用于格式转换后发给上游的请求。",
     "apiFormatHelp": "看供应商原生支持哪种协议：Anthropic Messages 原样转发、不转换格式；其余三种由路由转成 Anthropic Messages。",
+    "reasoningEffort": "思考档位",
+    "reasoningEffortHelp": "经路由转成 OpenAI 格式时，客户端选的思考档位怎么发给上游。自动：按上游支持的档位发，认不出的上游最多发 high，关掉思考时不发。原样发送：客户端选哪档发哪档，上游不支持 xhigh 或 max 时会报错。不发送：上游因这个参数报错时用。",
+    "reasoningEffortAuto": "自动（推荐）",
+    "reasoningEffortOff": "不发送",
+    "reasoningEffortPassthrough": "原样发送",
     "directModeFormatInUse": "这张卡正在直连使用：改成这种格式后保存，请求会失败。请先切到路由或聚合。",
     "directModeFormatSwitch": "直连模式下用不了这种格式，切到路由或聚合后才能用这张卡。"
   },
@@ -4838,7 +4850,7 @@
       "sourceRepos": "仓库 · {{count}}",
       "reload": "重新读取仓库",
       "listLabel": "可安装的 Skill",
-      "installed": "已安装 · {{count}} 个应用",
+      "installed": "已安装",
       "installedAria": "{{name}} 已安装在 {{count}} 个应用，在「已安装」里查看",
       "dirTaken": "目录名已被 {{name}}（{{source}}）使用",
       "installing": "安装中",
@@ -5029,6 +5041,8 @@
     },
     "modelSelectionHint": "点击供应商卡片的切换按钮选择默认供应商；需要指定其他模型时，在 Kimi Code 中使用 /model。",
     "contextSize": "上下文长度",
+    "configTomlScope": "这里只能写 [providers.{{key}}] 和属于它的 [models.*] 表；供应商标识请在上方修改。",
+    "configTomlSchema": "配置不完整：请检查供应商的 type，以及每个模型的 model 和 max_context_size（正整数）。",
     "capabilities": {
       "image_in": "图片输入",
       "thinking": "思考",
