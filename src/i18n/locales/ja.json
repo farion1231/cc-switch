@@ -311,6 +311,7 @@
     "routeMapHint": "Sonnet・Opus・Haiku の各区分に実際のリクエストモデルを入力してください。DeepSeek や Kimi などのブランド名はメニュー表示名に入れられます。空欄の区分は Sonnet（または最初に入力した区分）のモデルを引き継ぐため、サブ agent が呼び出す Haiku が常に利用可能になります。",
     "routeModelLabel": "モデル役割",
     "routeRoleSonnet": "Sonnet",
+    "routeRoleCompat": "{{role}} · 互換",
     "routeRoleOpus": "Opus",
     "routeRoleFable": "Fable",
     "routeRoleHaiku": "Haiku",
@@ -887,6 +888,8 @@
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
     "useAppWindowControls": "アプリ内ウィンドウボタンを有効化",
     "useAppWindowControlsDescription": "有効にすると、アプリヘッダーに最小化・最大化/復元・閉じるボタンを表示します。",
+    "useGtkWindowControls": "ローカルの GTK ボタンスタイルを使用",
+    "useGtkWindowControlsDescription": "このマシンの GTK テーマのウィンドウボタンをアプリ内に表示します。オフにすると内蔵アイコンを使用します。GTK テーマの変更後はアプリを再起動してください。",
     "enableClaudePluginIntegration": "Claude Code 拡張に適用",
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
@@ -2211,6 +2214,8 @@
     "regionLabel": "地域"
   },
   "usage": {
+    "hour": "時",
+    "minute": "分",
     "title": "利用統計",
     "subtitle": "AI モデルの利用状況とコスト統計を表示",
     "today": "24時間",

@@ -119,6 +119,7 @@ const ANTHROPIC_CLAUDE_ROUTE_PREFIX = "anthropic/claude-";
 const LEGACY_ONE_M_MARKER = "[1m]";
 const ROLE_ROUTE_IDS = CLAUDE_DESKTOP_ROLE_ROUTE_IDS;
 const ROLE_ORDER: RouteRole[] = ["sonnet", "opus", "fable", "haiku"];
+const CANONICAL_ROUTE_IDS = new Set<string>(Object.values(ROLE_ROUTE_IDS));
 
 function envString(
   settingsConfig: Record<string, unknown> | undefined,
@@ -201,17 +202,46 @@ function initialRouteRows(
 // 用户不会漏配某档导致子 agent 找不到模型。
 // （fable 自 Desktop 1.12603.1+ 起被 fail-all 校验放行，可作为独立档位。）
 function normalizeProxyRows(rows: RouteRow[]): RouteRow[] {
-  return ROLE_ORDER.map((role) => {
-    const match = rows.find(
-      (row) => row.route.trim() && routeRoleFromId(row.route) === role,
+  // 四档之外的兼容路由（例如 claude-sonnet-4-6 → claude-sonnet-5-5）只在
+  // 对应角色已有标准档时保留，避免把用户随手填的旧 ID 误判成额外模型。
+  const canonicalRoles = new Set(
+    rows
+      .map((row) => row.route.trim())
+      .filter((route) => CANONICAL_ROUTE_IDS.has(route))
+      .map(routeRoleFromId),
+  );
+  const extras = rows.filter((row) => {
+    const route = row.route.trim();
+    return (
+      route.length > 0 &&
+      !CANONICAL_ROUTE_IDS.has(route) &&
+      canonicalRoles.has(routeRoleFromId(route))
     );
-    return createRouteRow({
-      route: ROLE_ROUTE_IDS[role],
-      model: match?.model ?? "",
-      labelOverride: match?.labelOverride ?? "",
-      supports1m: match?.supports1m ?? false,
-    });
   });
+
+  return [
+    ...ROLE_ORDER.map((role) => {
+      const match =
+        rows.find((row) => row.route.trim() === ROLE_ROUTE_IDS[role]) ??
+        rows.find(
+          (row) => row.route.trim() && routeRoleFromId(row.route) === role,
+        );
+      return createRouteRow({
+        route: ROLE_ROUTE_IDS[role],
+        model: match?.model ?? "",
+        labelOverride: match?.labelOverride ?? "",
+        supports1m: match?.supports1m ?? false,
+      });
+    }),
+    ...extras.map((row) =>
+      createRouteRow({
+        route: row.route.trim(),
+        model: row.model,
+        labelOverride: row.labelOverride,
+        supports1m: row.supports1m,
+      }),
+    ),
+  ];
 }
 
 function isClaudeSafeRoute(route: string) {
@@ -1256,6 +1286,14 @@ export function ClaudeDesktopProviderForm({
                               : t("claudeDesktop.routeRoleSonnet", {
                                   defaultValue: "Sonnet",
                                 });
+                      const displayRoleLabel = CANONICAL_ROUTE_IDS.has(
+                        route.route.trim(),
+                      )
+                        ? roleLabel
+                        : t("claudeDesktop.routeRoleCompat", {
+                            defaultValue: "{{role}}（兼容）",
+                            role: roleLabel,
+                          });
                       // Haiku 档示范映射到轻量模型（flash），其余档映射到 pro；
                       // 两列占位联动，保持每行「菜单显示名 ↔ 实际请求模型」品牌一致。
                       const isHaikuRole = role === "haiku";
@@ -1271,7 +1309,7 @@ export function ClaudeDesktopProviderForm({
                           className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px]"
                         >
                           <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
-                            {roleLabel}
+                            {displayRoleLabel}
                           </div>
                           <Input
                             value={route.labelOverride}

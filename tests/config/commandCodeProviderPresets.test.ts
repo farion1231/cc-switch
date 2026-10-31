@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
+import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import type { Provider } from "@/types";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
@@ -81,6 +82,27 @@ describe("Command Code provider presets", () => {
       "https://api.commandcode.ai/provider/v1/models",
     );
     expect(preset?.apiKeyField).toBeUndefined();
+  });
+
+  it("adds the Claude Desktop proxy preset with the compatible Sonnet route", () => {
+    const preset = claudeDesktopProviderPresets.find(
+      (item) => item.name === "Command Code",
+    );
+
+    expect(preset).toBeDefined();
+    expect(preset?.baseUrl).toBe(CLAUDE_BASE_URL);
+    expect(preset?.mode).toBe("proxy");
+    expect(preset?.apiFormat).toBe("anthropic");
+    expect(preset?.modelRoutes).toContainEqual({
+      routeId: "claude-sonnet-4-6",
+      upstreamModel: "claude-sonnet-5-5",
+      labelOverride: "Sonnet 5.5 · 兼容模式",
+      supports1m: true,
+    });
+    expect(
+      preset?.modelRoutes?.find((route) => route.routeId === "claude-haiku-4-5")
+        ?.upstreamModel,
+    ).toBe("claude-haiku-5-5");
   });
 
   it("routes Claude Code through Chat Completions for open models", () => {

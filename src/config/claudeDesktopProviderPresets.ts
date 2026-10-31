@@ -2566,4 +2566,51 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ),
     icon: "aicoming",
   },
+  {
+    name: "Command Code",
+    websiteUrl: "https://commandcode.ai",
+    apiKeyUrl: "https://commandcode.ai/settings/keys",
+    category: "third_party",
+    baseUrl: "https://api.commandcode.ai/provider",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    // 必须走本地路由：Desktop 的模型菜单按 routeId 决定请求格式。
+    // claude-sonnet-4-6 是老模型 ID，Desktop 仍按旧格式发送 messages（只有
+    // user / assistant）；代理再把它改写成 claude-sonnet-5-5。上游不支持
+    // 会话中途的 system 消息，用 5-5 的 ID 当 route 会被拒。
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        upstreamModel: "claude-sonnet-5-5",
+        labelOverride: "claude-sonnet-5-5",
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        upstreamModel: "claude-sonnet-5-5",
+        labelOverride: "claude-sonnet-5-5",
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "claude-sonnet-5-5",
+        labelOverride: "claude-sonnet-5-5",
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+        upstreamModel: "claude-haiku-5-5",
+        labelOverride: "claude-haiku-5-5",
+        supports1m: true,
+      },
+      {
+        routeId: "claude-sonnet-4-6",
+        upstreamModel: "claude-sonnet-5-5",
+        labelOverride: "Sonnet 5.5 · 兼容模式",
+        supports1m: true,
+      },
+    ],
+    endpointCandidates: ["https://api.commandcode.ai/provider"],
+    icon: "commandcode",
+  },
 ];

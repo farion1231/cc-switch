@@ -1,9 +1,22 @@
 import { createContext, useContext, type ReactNode } from "react";
+import type { WindowControlKind, WindowControlsImages } from "@/lib/api";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import { WindowControls } from "./WindowControls";
 
-/** 由外壳提供：Linux 自绘窗口按钮要接在每一屏页头的最右端。 */
-export const WindowControlsContext = createContext<ReactNode>(null);
+/**
+ * 由外壳提供：窗口按钮接在窗口左侧或右侧，方向跟随系统标题栏设置。
+ * 左侧按钮由侧栏顶条渲染（贴合窗口左边缘），右侧按钮由页头渲染。
+ */
+export interface WindowControlsSlot {
+  side: "left" | "right";
+  order?: WindowControlKind[];
+  images?: WindowControlsImages;
+}
+
+export const WindowControlsContext = createContext<WindowControlsSlot | null>(
+  null,
+);
 
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 
@@ -104,9 +117,12 @@ export function AppPageHeader({
           {actions}
         </div>
       )}
-      {windowControls && (
+      {windowControls?.side === "right" && (
         <div className="flex shrink-0 items-center gap-1" style={NO_DRAG}>
-          {windowControls}
+          <WindowControls
+            order={windowControls.order}
+            images={windowControls.images}
+          />
         </div>
       )}
     </header>
