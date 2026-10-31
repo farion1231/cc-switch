@@ -1991,114 +1991,119 @@ fn update_codex_sync_state(
 // A bounded-reference fork stores only its own requests. Accept this narrow case
 // only with a complete physical prefix and an exact inherited counter baseline.
 // Otherwise retain the existing replay/deferred path. Never rewrite rollout data.
-fn verified_bounded_fork(parsed: &ParsedCodexFile, index: &RolloutIndex) -> Option<()> {
-    let ParentResolution::Parent(parent_id) = &parsed.parent else {
-        return None;
-    };
-    let hb = parsed.bounded_history.as_ref()?;
-    if hb.get("thread_id")?.as_str()? != parent_id {
-        return None;
-    }
-    let end = hb.get("end_byte_offset")?.as_u64()?;
-    let count = hb.get("end_ordinal_exclusive")?.as_u64()?;
-    if end == 0 || end > 64 * 1024 * 1024 || count == 0 {
-        return None;
-    }
-    let cutoff = parsed.root_timestamp?;
-    let first = parsed.token_events.first()?;
-    // Reject copied/replayed history, cumulative-only accounting and invalid timestamps.
-    // Fallback usage records also belong to this child only when their own
-    // timestamps are after the fork. Keep their native response-based IDs.
-    for event in parsed
-        .token_events
-        .iter()
-        .chain(&parsed.usage_record_events)
-    {
-        if event.signature.last.as_ref()?.input.is_none()
-            || event.signature.last.as_ref()?.output.is_none()
-            || DateTime::parse_from_rfc3339(event.timestamp.as_deref()?)
-                .ok()?
-                .with_timezone(&Utc)
-                <= cutoff
-        {
+fn verified_bounded_fork(parsed: &ParsedCodexFile, index: &RolloutIndex) -> bool {
+    use std::io::Read;
+
+    (|| {
+        let ParentResolution::Parent(parent_id) = &parsed.parent else {
+            return None;
+        };
+        let hb = parsed.bounded_history.as_ref()?;
+        if hb.get("thread_id")?.as_str()? != parent_id {
             return None;
         }
-    }
-    let total = first.signature.total.as_ref()?;
-    let last = first.signature.last.as_ref()?;
-    let baseline = TokenCountersSignature {
-        input: Some(total.input?.checked_sub(last.input?)?),
-        cached_input: Some(total.cached_input?.checked_sub(last.cached_input?)?),
-        output: Some(total.output?.checked_sub(last.output?)?),
-        reasoning_output: Some(
-            total
-                .reasoning_output?
-                .checked_sub(last.reasoning_output?)?,
-        ),
-        total: Some(total.total?.checked_sub(last.total?)?),
-    };
-    let mut found = false;
-    for path in index.get(parent_id)? {
-        // The reference identifies one physical rollout, not all logical pages.
-        if thread_id_from_filename(path).as_deref() != Some(parent_id) {
-            continue;
+        let end = hb.get("end_byte_offset")?.as_u64()?;
+        let count = hb.get("end_ordinal_exclusive")?.as_u64()?;
+        if end == 0 || end > 64 * 1024 * 1024 || count == 0 {
+            return None;
         }
-        let file = fs::File::open(path).ok()?;
-        let stamp = ParentFileStamp::from_file(&file)?;
-        let mut reader = codex_rollout_file::reader_from_file(path, file).ok()?;
-        let mut used = 0u64;
-        let mut ordinal = 0u64;
-        let mut first_record = true;
-        let mut parent_total = None;
-        while used < end {
-            let mut bytes = Vec::new();
-            use std::io::Read;
-            let n = reader
-                .by_ref()
-                .take(end - used)
-                .read_until(b'\n', &mut bytes)
-                .ok()?;
-            if n == 0 || bytes.last() != Some(&b'\n') {
+        let cutoff = parsed.root_timestamp?;
+        let first = parsed.token_events.first()?;
+        // Reject copied/replayed history, cumulative-only accounting and invalid timestamps.
+        // Fallback usage records also belong to this child only when their own
+        // timestamps are after the fork. Keep their native response-based IDs.
+        for event in parsed
+            .token_events
+            .iter()
+            .chain(&parsed.usage_record_events)
+        {
+            if event.signature.last.as_ref()?.input.is_none()
+                || event.signature.last.as_ref()?.output.is_none()
+                || DateTime::parse_from_rfc3339(event.timestamp.as_deref()?)
+                    .ok()?
+                    .with_timezone(&Utc)
+                    <= cutoff
+            {
                 return None;
             }
-            used += n as u64;
-            let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-            if first_record {
-                ordinal = value.get("ordinal")?.as_u64()?;
-                let inherited = value
-                    .pointer("/payload/history_base/end_ordinal_exclusive")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                if ordinal != inherited
-                    || value.get("type")?.as_str()? != "session_meta"
-                    || value.pointer("/payload/id")?.as_str()? != parent_id
-                {
+        }
+        let total = first.signature.total.as_ref()?;
+        let last = first.signature.last.as_ref()?;
+        let baseline = TokenCountersSignature {
+            input: Some(total.input?.checked_sub(last.input?)?),
+            cached_input: Some(total.cached_input?.checked_sub(last.cached_input?)?),
+            output: Some(total.output?.checked_sub(last.output?)?),
+            reasoning_output: Some(
+                total
+                    .reasoning_output?
+                    .checked_sub(last.reasoning_output?)?,
+            ),
+            total: Some(total.total?.checked_sub(last.total?)?),
+        };
+        let mut found = false;
+        for path in index.get(parent_id)? {
+            // The reference identifies one physical rollout, not all logical pages.
+            if thread_id_from_filename(path).as_deref() != Some(parent_id) {
+                continue;
+            }
+            let file = fs::File::open(path).ok()?;
+            let stamp = ParentFileStamp::from_file(&file)?;
+            let mut reader = codex_rollout_file::reader_from_file(path, file).ok()?;
+            let mut used = 0u64;
+            let mut ordinal = 0u64;
+            let mut first_record = true;
+            let mut parent_total = None;
+            while used < end {
+                let mut bytes = Vec::new();
+                let n = reader
+                    .by_ref()
+                    .take(end - used)
+                    .read_until(b'\n', &mut bytes)
+                    .ok()?;
+                if n == 0 || bytes.last() != Some(&b'\n') {
                     return None;
                 }
-                first_record = false;
-            }
-            if value.get("ordinal")?.as_u64()? != ordinal {
-                return None;
-            }
-            ordinal = ordinal.checked_add(1)?;
-            if value.get("type").and_then(|v| v.as_str()) == Some("event_msg")
-                && value.pointer("/payload/type").and_then(|v| v.as_str()) == Some("token_count")
-            {
-                if let Some(v) = value.pointer("/payload/info/total_token_usage") {
-                    parent_total = parse_signature_counters(Some(v));
+                used += n as u64;
+                let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+                if first_record {
+                    ordinal = value.get("ordinal")?.as_u64()?;
+                    let inherited = value
+                        .pointer("/payload/history_base/end_ordinal_exclusive")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    if ordinal != inherited
+                        || value.get("type")?.as_str()? != "session_meta"
+                        || value.pointer("/payload/id")?.as_str()? != parent_id
+                    {
+                        return None;
+                    }
+                    first_record = false;
+                }
+                if value.get("ordinal")?.as_u64()? != ordinal {
+                    return None;
+                }
+                ordinal = ordinal.checked_add(1)?;
+                if value.get("type").and_then(|v| v.as_str()) == Some("event_msg")
+                    && value.pointer("/payload/type").and_then(|v| v.as_str())
+                        == Some("token_count")
+                {
+                    if let Some(v) = value.pointer("/payload/info/total_token_usage") {
+                        parent_total = parse_signature_counters(Some(v));
+                    }
                 }
             }
+            let after = fs::File::open(path).ok()?;
+            if ParentFileStamp::from_file(&after)? != stamp {
+                return None;
+            }
+            if used != end || ordinal != count || parent_total.as_ref() != Some(&baseline) {
+                return None;
+            }
+            found = true;
         }
-        let after = fs::File::open(path).ok()?;
-        if ParentFileStamp::from_file(&after)? != stamp {
-            return None;
-        }
-        if used != end || ordinal != count || parent_total.as_ref() != Some(&baseline) {
-            return None;
-        }
-        found = true;
-    }
-    found.then_some(())
+        found.then_some(())
+    })()
+    .is_some()
 }
 
 /// 同步单个 Codex JSONL 文件。
@@ -2212,7 +2217,7 @@ fn sync_single_codex_file(
                 pending_reason,
             ));
         }
-        ParentResolution::Parent(_) if verified_bounded_fork(&parsed, rollout_index).is_some() => 0,
+        ParentResolution::Parent(_) if verified_bounded_fork(&parsed, rollout_index) => 0,
         ParentResolution::Parent(parent_id) => {
             let Some(cutoff) = parsed.root_timestamp else {
                 return Ok(mark_deferred(
@@ -3064,11 +3069,10 @@ mod tests {
                 broken["payload"]["history_base"][key] = serde_json::json!(1);
                 let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
                 parsed.bounded_history = broken["payload"].get("history_base").cloned();
-                assert!(verified_bounded_fork(
+                assert!(!verified_bounded_fork(
                     &parsed,
                     &build_rollout_index(&[parent.clone(), child.clone()])
-                )
-                .is_none());
+                ));
             }
             let index = build_rollout_index(&[parent.clone(), child.clone()]);
             let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
@@ -3078,13 +3082,13 @@ mod tests {
                 .as_mut()
                 .unwrap()
                 .input = Some(999);
-            assert!(verified_bounded_fork(&parsed, &index).is_none());
+            assert!(!verified_bounded_fork(&parsed, &index));
             let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
             parsed.token_events[0].timestamp = Some("2026-07-10T03:00:01Z".into());
-            assert!(verified_bounded_fork(&parsed, &index).is_none());
+            assert!(!verified_bounded_fork(&parsed, &index));
             let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
             parsed.token_events[0].signature.last = None;
-            assert!(verified_bounded_fork(&parsed, &index).is_none());
+            assert!(!verified_bounded_fork(&parsed, &index));
             // Remote compaction uses a standalone record followed by a zero-last
             // snapshot. It must not block the entire bounded fork or be counted twice.
             let usage =
@@ -3113,9 +3117,9 @@ mod tests {
             assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
             let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
             parsed.usage_record_events[0].timestamp = Some("2026-07-10T03:00:01Z".into());
-            assert!(verified_bounded_fork(&parsed, &index).is_none());
+            assert!(!verified_bounded_fork(&parsed, &index));
             parsed.usage_record_events[0].timestamp = None;
-            assert!(verified_bounded_fork(&parsed, &index).is_none());
+            assert!(!verified_bounded_fork(&parsed, &index));
         }
         Ok(())
     }
