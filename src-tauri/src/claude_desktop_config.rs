@@ -43,6 +43,10 @@ pub const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
 const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-5";
 const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
+/// 映射表 Haiku 档的键（前端 `CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku`），目标不是旧 Haiku 时
+/// 发布成 [`CURRENT_HAIKU_ROUTE_ID`]。
+const LEGACY_HAIKU_ROUTE_ID: &str = "claude-haiku-4-5";
+const CURRENT_HAIKU_ROUTE_ID: &str = "claude-haiku-5-5";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,7 +69,7 @@ pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
         supports_1m: true,
     },
     ClaudeDesktopDefaultRoute {
-        route_id: "claude-haiku-4-5",
+        route_id: LEGACY_HAIKU_ROUTE_ID,
         env_key: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
         supports_1m: true,
     },
@@ -781,14 +785,34 @@ pub(crate) fn configured_proxy_model_routes(
 /// 和 Claude Code 的路由契约一样换成目录里的 5.5 名字；映射表里的键不变，旧 profile 发来的
 /// 原键仍按键查到目标（见 [`legacy_raw_route_upstream_model`]）。用户自己配了这个名字的路由
 /// 时不换，免得两条撞名。
+///
+/// Haiku 档的键是 `claude-haiku-4-5`，Desktop 把它当旧模型：只有 extended 思考、没有 effort
+/// 档位，和 Claude Code 路由契约早已改用的 `claude-haiku-5-5` 不一致（#8118、#9096）。目标
+/// 不是旧 Haiku（4.x / 3.x）时同样发布 `claude-haiku-5-5`；目标就是旧 Haiku 时照旧，免得
+/// Desktop 按新模型组请求。只换用户自己的键：修复非法 route 时借来的 `claude-haiku-4-5`
+/// 不在 `reserved` 里，换名后下一条还能再借到它，两条会撞名。
 fn published_route_id(
     route_id: String,
     upstream_model: &str,
     reserved: &std::collections::HashSet<String>,
 ) -> String {
     crate::live::project::claude::point_release_client_id(&route_id, upstream_model)
+        .or_else(|| {
+            (route_id == LEGACY_HAIKU_ROUTE_ID
+                && reserved.contains(LEGACY_HAIKU_ROUTE_ID)
+                && !is_pre_5_claude_haiku(upstream_model))
+            .then_some(CURRENT_HAIKU_ROUTE_ID)
+        })
         .filter(|catalog_id| !reserved.contains(*catalog_id))
         .map_or(route_id, str::to_string)
+}
+
+/// 上游是 Haiku 5 之前的 Claude Haiku（`claude-haiku-4-5-20251001`、`claude-3-5-haiku` 等）。
+fn is_pre_5_claude_haiku(upstream_model: &str) -> bool {
+    let id = upstream_model.to_ascii_lowercase();
+    ["haiku-4", "haiku-3", "-3-haiku", "-3-5-haiku", "-3.5-haiku"]
+        .iter()
+        .any(|old| id.contains(old))
 }
 
 fn next_catalog_safe_route_id(
@@ -2289,7 +2313,7 @@ mod tests {
         };
         assert_eq!(
             names(&provider),
-            ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5"]
+            ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"]
         );
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
@@ -2301,6 +2325,7 @@ mod tests {
             ("claude-opus-5-5-20261001[1m]", "claude-opus-5.5"),
             ("claude-sonnet-5-5", "anthropic/claude-sonnet-5-5-20261001"),
             ("claude-sonnet-5", "anthropic/claude-sonnet-5-5-20261001"),
+            ("claude-haiku-5-5", "glm-5"),
             ("claude-haiku-4-5", "glm-5"),
         ] {
             let mapped =
@@ -2324,12 +2349,87 @@ mod tests {
                 "claude-sonnet-5-5",
                 "claude-opus-5",
                 "claude-opus-5-5",
-                "claude-haiku-4-5"
+                "claude-haiku-5-5"
             ]
         );
         let mapped = map_proxy_request_model(json!({ "model": "claude-opus-5" }), &provider)
             .expect("original key");
         assert_eq!(mapped["model"], json!("claude-opus-5.5"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_publishes_current_haiku_unless_target_is_old_haiku() {
+        let route = |model: &str| ClaudeDesktopModelRoute {
+            model: model.to_string(),
+            label_override: None,
+            supports_1m: None,
+        };
+        let mut provider = proxy_provider("proxy-haiku");
+        let set_haiku = |provider: &mut Provider, upstream: &str| {
+            provider
+                .meta
+                .as_mut()
+                .expect("meta")
+                .claude_desktop_model_routes = std::collections::HashMap::from([
+                ("claude-sonnet-5".to_string(), route("glm-5")),
+                ("claude-haiku-4-5".to_string(), route(upstream)),
+            ]);
+        };
+        let haiku_id = |provider: &Provider| -> String {
+            proxy_model_routes(provider)
+                .expect("routes")
+                .into_iter()
+                .find(|route| route.route_id.contains("haiku"))
+                .expect("haiku route")
+                .route_id
+        };
+
+        for upstream in ["glm-5", "claude-haiku-5-5", "anthropic/claude-haiku-5.5"] {
+            set_haiku(&mut provider, upstream);
+            assert_eq!(haiku_id(&provider), "claude-haiku-5-5", "{upstream}");
+            for requested in [
+                "claude-haiku-5-5",
+                "claude-haiku-4-5",
+                "claude-haiku-4-5-20251001",
+            ] {
+                let mapped = map_proxy_request_model(json!({ "model": requested }), &provider)
+                    .expect(requested);
+                assert_eq!(
+                    mapped["model"],
+                    json!(upstream),
+                    "{upstream} <- {requested}"
+                );
+            }
+        }
+
+        // 目标本身是旧 Haiku：Desktop 按旧模型组请求才对得上。
+        for upstream in [
+            "claude-haiku-4-5",
+            "claude-haiku-4-5-20251001",
+            "anthropic/claude-haiku-4.5",
+            "claude-3-5-haiku-20241022",
+        ] {
+            set_haiku(&mut provider, upstream);
+            assert_eq!(haiku_id(&provider), "claude-haiku-4-5", "{upstream}");
+        }
+
+        // 用户自己配了 claude-haiku-5-5 这条路由时，原键不换名。
+        set_haiku(&mut provider, "glm-5");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .insert("claude-haiku-5-5".to_string(), route("minimax-m3"));
+        let names: Vec<String> = proxy_model_routes(&provider)
+            .expect("routes")
+            .into_iter()
+            .map(|route| route.route_id)
+            .collect();
+        assert_eq!(
+            names,
+            ["claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5"]
+        );
     }
 
     #[test]

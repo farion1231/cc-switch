@@ -86,6 +86,10 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
+import {
+  toClaudeReasoningEffortChoice,
+  type ClaudeReasoningEffortChoice,
+} from "./ClaudeReasoningEffortField";
 import type { DirectModeFormatNotice } from "./shared";
 import {
   claudeStackModelsFromEnv,
@@ -447,6 +451,9 @@ function ProviderFormFull({
     setHasValidCodexOfficialSelection(true);
     setCodexFastMode(initialData?.meta?.codexFastMode ?? false);
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setClaudeReasoningEffort(
+      toClaudeReasoningEffortChoice(initialData?.meta?.claudeReasoningEffort),
+    );
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
@@ -694,6 +701,10 @@ function ProviderFormFull({
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
+    );
+  const [claudeReasoningEffort, setClaudeReasoningEffort] =
+    useState<ClaudeReasoningEffortChoice>(() =>
+      toClaudeReasoningEffortChoice(initialData?.meta?.claudeReasoningEffort),
     );
   const [promptCacheRouting, setPromptCacheRouting] =
     useState<PromptCacheRoutingMode>(
@@ -2067,6 +2078,14 @@ function ProviderFormFull({
         promptCacheRouting !== "auto"
           ? promptCacheRouting
           : undefined,
+      claudeReasoningEffort:
+        appId === "claude" &&
+        category !== "official" &&
+        (localApiFormat === "openai_chat" ||
+          localApiFormat === "openai_responses") &&
+        claudeReasoningEffort !== "auto"
+          ? claudeReasoningEffort
+          : undefined,
       customUserAgent:
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
@@ -2446,6 +2465,7 @@ function ProviderFormFull({
     } else {
       setLocalApiFormat("anthropic");
     }
+    setClaudeReasoningEffort("auto");
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
@@ -2765,6 +2785,8 @@ function ProviderFormFull({
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}
+              reasoningEffort={claudeReasoningEffort}
+              onReasoningEffortChange={setClaudeReasoningEffort}
               apiKeyField={localApiKeyField}
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}

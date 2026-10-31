@@ -1263,6 +1263,56 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    // OpenAI 平台 API Key 直连 Responses（按量计费）。前缀不用 openai：那是 OpenClaw 内置供应商的键
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    settingsConfig: {
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "gpt-6-luna",
+          name: "GPT-6 Luna",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "openai-api/gpt-6.1-sol",
+      },
+      modelCatalog: {
+        "openai-api/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
+        "openai-api/gpt-6-luna": { alias: "GPT-6 Luna" },
+      },
+    },
+  },
+  {
     name: "SubRouter",
     websiteUrl: "https://subrouter.ai",
     apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",

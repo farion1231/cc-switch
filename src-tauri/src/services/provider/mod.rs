@@ -150,6 +150,18 @@ impl EditorSaveKind {
 /// Provider business logic service
 pub struct ProviderService;
 
+/// Native provider lists refresh saved rows as well as reading them. Keep the
+/// entire snapshot/readback under the same per-app lock as provider mutations,
+/// so an in-flight list cannot restore a deleted row or overwrite a newer edit.
+fn lock_native_provider_operations(
+    state: &AppState,
+    app_type: &AppType,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh).then(|| {
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
+    })
+}
+
 /// Result of a provider switch operation, including any non-fatal warnings
 #[derive(Debug, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -5462,6 +5474,7 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Dsh {
             // A profile can appear while CC Switch is running. Keep the provider list usable
             // when a native lock or an invalid profile prevents the initial sync; retry later.
@@ -5641,6 +5654,7 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Kimi
             && crate::kimi_config::is_official_provider(&provider.settings_config)
         {
@@ -5668,10 +5682,8 @@ impl ProviderService {
 
         if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
-            // Adds are serialized here; the live write repeats the check under MCode's file lock.
-            let _guard = futures::executor::block_on(
-                state.proxy_service.lock_switch_for_app(app_type.as_str()),
-            );
+            // The per-app lock also serializes native list refreshes and other mutations;
+            // the live write repeats the check under MCode's file lock.
             if state
                 .db
                 .get_provider_by_id(&provider.id, app_type.as_str())?
@@ -6232,6 +6244,7 @@ impl ProviderService {
         original_id: Option<&str>,
         provider: Provider,
     ) -> Result<bool, AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         let mut provider = provider;
         if app_type == AppType::Kimi {
             // Official cards come from signing in. Their models, name and notes are
@@ -6543,6 +6556,7 @@ impl ProviderService {
     /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
@@ -6654,6 +6668,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type != AppType::Kimi {
             return Err(AppError::InvalidInput(format!(
                 "{} adds providers through switch",
@@ -6681,6 +6696,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Pi {
             return pi::remove(state, id);
         }
@@ -6831,6 +6847,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<SwitchResult, AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Pi {
             return pi::enable(state, id);
         }

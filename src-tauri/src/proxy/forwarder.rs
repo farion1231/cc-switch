@@ -1938,7 +1938,10 @@ impl RequestForwarder {
                 // 映射后的模型名不再带「省略 thinking 仍默认开思考」的语义（5.x 的
                 // Fable / Mythos / Opus / Sonnet），按客户端原模型补成显式 adaptive，
                 // effort 换算才不会当成关闭。
-                if matches!(api_format, "openai_chat" | "openai_responses") {
+                if matches!(
+                    api_format,
+                    "openai_chat" | "openai_responses" | "gemini_native"
+                ) {
                     super::providers::transform::make_default_adaptive_thinking_explicit(
                         &mut mapped_body,
                         body.get("model").and_then(|m| m.as_str()),
