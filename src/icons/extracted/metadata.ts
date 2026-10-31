@@ -634,6 +634,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openclaw", "lobster", "claw"],
     defaultColor: "#ff4f40",
   },
+  trae: {
+    name: "trae",
+    displayName: "TRAE",
+    category: "ai-provider",
+    keywords: ["trae", "traecli", "bytedance"],
+    defaultColor: "currentColor",
+  },
   antigravity: {
     name: "antigravity",
     displayName: "Antigravity",

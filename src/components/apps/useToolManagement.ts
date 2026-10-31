@@ -49,6 +49,7 @@ export const TOOL_NAMES = [
   "pi",
   "mcode",
   "kimi",
+  "traecli",
   "dsh",
   "agy",
   "omp",
@@ -129,6 +130,14 @@ const KIMI_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -NonInteractive -Exe
   "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
 )}`;
 
+const TRAE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://trae.cn/trae-cli/install_v2.ps1 | iex",
+)}`;
+
+// 与后端 TRAE_INSTALL_UNIX 一致：官方脚本是 POSIX sh。
+const TRAE_POSIX_INSTALL_COMMAND =
+  "bash -c 'tmp=$(mktemp) && curl -fsSL https://trae.cn/trae-cli/install_v2.sh -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
+
 const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
   "irm https://antigravity.google/cli/install.ps1 | iex",
 )}`;
@@ -175,6 +184,8 @@ ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} |
 npm i -g @deepseek-ai/dsh@latest --engine-strict
 # Kimi Code
 ${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
+# TRAE CLI
+${TRAE_POSIX_INSTALL_COMMAND}
 # Antigravity CLI
 ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Oh My Pi
@@ -202,6 +213,8 @@ ${MCODE_WINDOWS_INSTALL_COMMAND}
 npm i -g @deepseek-ai/dsh@latest --engine-strict
 # Kimi Code
 ${KIMI_WINDOWS_INSTALL_COMMAND}
+# TRAE CLI
+${TRAE_WINDOWS_INSTALL_COMMAND}
 # Antigravity CLI
 ${AGY_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
@@ -222,6 +235,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   pi: "Pi",
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
+  traecli: "TRAE CLI",
   dsh: "DeepSeek Harness",
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
@@ -244,6 +258,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   pi: "pi",
   mcode: "mcode",
   kimi: "kimi",
+  traecli: "trae",
   dsh: "dsh",
   agy: "agy",
   omp: "omp",
