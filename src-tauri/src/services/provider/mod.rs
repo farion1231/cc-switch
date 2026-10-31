@@ -6418,7 +6418,15 @@ impl ProviderService {
             if !live_config_managed {
                 return Ok(true);
             }
-            write_live_for_state(state, &app_type, &provider)?;
+            if let Err(error) = write_live_for_state(state, &app_type, &provider) {
+                // live 写失败要把行恢复原样：否则卡片显示新配置、客户端配置还是旧的，
+                // 下次同步又会按新行再写一遍。和 save_mcode_provider、update_codex 同一约定。
+                match existing_provider {
+                    Some(previous) => state.db.save_provider(app_type.as_str(), &previous)?,
+                    None => state.db.delete_provider(app_type.as_str(), &provider.id)?,
+                }
+                return Err(error);
+            }
             return Ok(true);
         }
 
