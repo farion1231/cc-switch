@@ -312,7 +312,8 @@ pub fn responses_to_chat_completions_with_reasoning(
         coalesce_replayed_tool_turn_messages(&mut messages);
     }
     backfill_tool_call_reasoning_placeholders(&mut messages);
-    let messages = collapse_system_messages_to_head(messages);
+    let mut messages = collapse_system_messages_to_head(messages);
+    escape_null_bytes_in_chat_message_text(&mut messages);
     result["messages"] = json!(messages);
 
     if let Some(max_tokens) = body.get("max_output_tokens") {
@@ -378,6 +379,39 @@ pub fn responses_to_chat_completions_with_reasoning(
     super::transform::inject_openai_stream_include_usage(&mut result);
 
     Ok(result)
+}
+
+/// Binary tool output can contain NUL characters. Some Chat upstreams reject
+/// them even when correctly JSON-encoded. Keep their positions
+/// visible instead of dropping bytes, and leave tool arguments and media alone.
+fn escape_null_bytes_in_chat_message_text(messages: &mut [Value]) {
+    for message in messages {
+        if let Some(content) = message.get_mut("content") {
+            match content {
+                Value::Array(parts) => {
+                    for part in parts {
+                        if part.get("type").and_then(Value::as_str) == Some("text") {
+                            if let Some(text) = part.get_mut("text") {
+                                escape_null_bytes_in_text(text);
+                            }
+                        }
+                    }
+                }
+                _ => escape_null_bytes_in_text(content),
+            }
+        }
+        if let Some(reasoning) = message.get_mut("reasoning_content") {
+            escape_null_bytes_in_text(reasoning);
+        }
+    }
+}
+
+fn escape_null_bytes_in_text(value: &mut Value) {
+    if let Value::String(text) = value {
+        if text.contains('\0') {
+            *text = text.replace('\0', "\\u0000");
+        }
+    }
 }
 
 fn apply_reasoning_options(
@@ -2523,6 +2557,91 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
 mod tests {
     use super::*;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    #[test]
+    fn responses_request_to_chat_escapes_null_bytes_in_message_text() {
+        let result = responses_to_chat_completions(json!({
+            "model": "test-model",
+            "instructions": "system\u{0}instructions",
+            "input": [
+                {"role": "user", "content": "用户\u{0}text\n\t\\u0000"},
+                {
+                    "role": "assistant",
+                    "content": "answer\u{0}text",
+                    "reasoning_content": "thought\u{0}text"
+                }
+            ]
+        }))
+        .unwrap();
+
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["content"], "system\\u0000instructions");
+        assert_eq!(messages[1]["content"], "用户\\u0000text\n\t\\u0000");
+        assert_eq!(messages[2]["content"], "answer\\u0000text");
+        assert_eq!(messages[2]["reasoning_content"], "thought\\u0000text");
+    }
+
+    #[test]
+    fn responses_request_to_chat_escapes_null_bytes_in_tool_output() {
+        let mut call = test_function_call("call_nul");
+        call["arguments"] = json!(r#"{"path":"a\u0000b"}"#);
+        let result = responses_to_chat_completions(json!({
+            "model": "test-model",
+            "input": [
+                call,
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_nul",
+                    "output": "kernel\u{0}boot\u{0}"
+                }
+            ]
+        }))
+        .unwrap();
+
+        let messages = result["messages"].as_array().unwrap();
+        assert!(messages[0]["content"].is_null());
+        assert_eq!(
+            messages[0]["tool_calls"][0]["function"]["arguments"],
+            r#"{"path":"a\u0000b"}"#
+        );
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_nul");
+        assert_eq!(messages[1]["content"], "kernel\\u0000boot\\u0000");
+    }
+
+    #[test]
+    fn responses_request_to_chat_escapes_null_bytes_without_changing_media() {
+        let image_url = "data:image/png;base64,AAECAwQ=";
+        let result = responses_to_chat_completions(json!({
+            "model": "test-model",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "before\u{0}after"},
+                    {"type": "input_image", "image_url": image_url}
+                ]
+            }]
+        }))
+        .unwrap();
+
+        let content = &result["messages"][0]["content"];
+        assert_eq!(content[0]["text"], "before\\u0000after");
+        assert_eq!(content[1]["image_url"]["url"], image_url);
+    }
+
+    #[test]
+    fn responses_request_to_chat_escapes_null_bytes_independently_of_model() {
+        for model in ["test-model", "other-model", "provider/test-model"] {
+            let result = responses_to_chat_completions(json!({
+                "model": model,
+                "input": "before\u{0}after"
+            }))
+            .unwrap();
+
+            assert_eq!(result["model"], model);
+            assert_eq!(result["messages"][0]["content"], "before\\u0000after");
+        }
+    }
 
     fn large_test_image_data_url() -> String {
         let bytes = b"CC_SWITCH_TOOL_MEDIA_SENTINEL".repeat(400);
