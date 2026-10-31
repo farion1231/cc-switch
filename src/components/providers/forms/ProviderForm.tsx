@@ -413,6 +413,9 @@ function ProviderFormFull({
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
   });
+  const [localGeminiApiVersion, setLocalGeminiApiVersion] = useState<
+    "v1beta" | "v1"
+  >(() => initialData?.meta?.geminiApiVersion ?? "v1beta");
 
   const { category } = useProviderCategory({
     appId,
@@ -2101,6 +2104,14 @@ function ProviderFormFull({
         localIsFullUrl
           ? true
           : undefined,
+      // 仅 Gemini Native 格式有意义；其它格式写 undefined 以清除旧值
+      geminiApiVersion:
+        appId === "claude" &&
+        category !== "official" &&
+        !isXaiOauthProvider &&
+        localApiFormat === "gemini_native"
+          ? localGeminiApiVersion
+          : undefined,
       stackModels,
     };
 
@@ -2744,6 +2755,8 @@ function ProviderFormFull({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              geminiApiVersion={localGeminiApiVersion}
+              onGeminiApiVersionChange={setLocalGeminiApiVersion}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
               localProxyHeadersOverride={localProxyHeadersOverride}
