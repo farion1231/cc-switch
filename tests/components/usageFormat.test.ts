@@ -19,11 +19,56 @@ import {
   getEstimatedTokensPerSecond,
   getOutputTokensPerSecond,
   getLocaleFromLanguage,
+  joinNames,
+  joinClauses,
   sumSpeedTotals,
   USD_DISPLAY,
 } from "@/components/usage/format";
 
 describe("usage format helpers", () => {
+  it.each(["zha", "zhb-CN", "jam", "trv-TW"])(
+    "does not apply another language's formatting to %s",
+    (language) => {
+      expect(getLocaleFromLanguage(language)).toBe("en-US");
+      expect(formatTokensShort(10_000, language)).toBe("10.0K");
+      expect(joinNames(["A", "B"], language)).toBe("A, B");
+      expect(joinClauses(["A", "B"], language)).toBe("A; B");
+    },
+  );
+
+  it.each([
+    ["zh-TW-u-nu-hanidec", "zh-TW"],
+    ["zh-Hant-TW", "zh-TW"],
+    ["zh-HK", "zh-TW"],
+    ["zh-hantx", "zh-CN"],
+    ["zh-hkx", "zh-CN"],
+  ])(
+    "respects Chinese script and region boundaries for %s",
+    (language, expected) => {
+      expect(getLocaleFromLanguage(language)).toBe(expected);
+    },
+  );
+
+  it("formats Korean token counts with Korean units and separators", () => {
+    expect(formatTokensShort(9_999, "ko")).toBe("9,999");
+    expect(formatTokensShort(10_000, "ko")).toBe("1.0만");
+    expect(formatTokensShort(12_345, "ko-KR", 2)).toBe("1.23만");
+    expect(formatTokensShort(100_000_000, "ko")).toBe("1.00억");
+    expect(formatTokensShort(123_456_789, "ko_KR")).toBe("1.23억");
+  });
+
+  it("resolves Korean date locales", () => {
+    expect(getLocaleFromLanguage("ko")).toBe("ko-KR");
+    expect(getLocaleFromLanguage("ko-KR")).toBe("ko-KR");
+  });
+  it.each(["kok", "kok-IN", "kos"])(
+    "does not apply Korean date or token formats to %s",
+    (language) => {
+      expect(getLocaleFromLanguage(language)).toBe("en-US");
+      expect(formatTokensShort(10_000, language)).toBe("10.0K");
+      expect(formatTokensShort(100_000_000, language)).toBe("100.00M");
+    },
+  );
   it("formats Traditional Chinese token units with Traditional characters", () => {
     expect(formatTokensShort(12_345, "zh-TW")).toBe("1.2 萬");
     expect(formatTokensShort(123_456_789, "zh-Hant", 2)).toBe("1.23 億");
@@ -267,6 +312,27 @@ describe("usage money formatting", () => {
 });
 
 describe("display currency", () => {
+  it("converts won with preset or saved rates and preserves small costs", () => {
+    expect(resolveMoneyDisplay({ currency: "KRW" })).toEqual({
+      currency: "KRW",
+      rate: 1325,
+    });
+    const krw = resolveMoneyDisplay({
+      currency: "KRW",
+      exchangeRates: { KRW: 1400 },
+    });
+    expect(krw).toEqual({ currency: "KRW", rate: 1400 });
+    expect(formatMoney(2, 2, krw)).toBe("₩2,800");
+    expect(formatMoney(0.0012, 4, krw)).toBe("₩1.68");
+    expect(formatMoney(0.000001, 4, krw)).toBe("₩0.0014");
+    expect(formatMoneyShort(0.5, krw)).toBe("₩700");
+    expect(formatMoneyCompact(0.001, krw)).toBe("₩1.40");
+    expect(formatMoneyTick(20000, krw)).toBe("₩20,000");
+    expect(
+      resolveMoneyDisplay({ currency: "KRW", exchangeRates: { KRW: 0 } }),
+    ).toEqual({ currency: "KRW", rate: 1325 });
+  });
+
   it("falls back to USD and the preset rate for unusable settings", () => {
     expect(resolveMoneyDisplay(undefined)).toEqual(USD_DISPLAY);
     expect(resolveMoneyDisplay({ currency: "GBP" })).toEqual(USD_DISPLAY);
