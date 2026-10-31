@@ -2680,7 +2680,7 @@ async fn responses_sse_stream_to_anthropic_message(
 }
 
 /// 把 OpenAI Responses SSE 流聚合成一个完整的 Responses JSON 对象，供下游转成 Anthropic
-/// 非流响应。仅在 Codex OAuth 把 `stream:false` 强制升级为 SSE 的场景下调用。
+/// 非流响应。用于上游把 `stream:false` 强制升级为 SSE 的场景。
 ///
 /// 复用 `proxy::sse` 的 `take_sse_block`/`strip_sse_field`：`take_sse_block` 同时支持
 /// `\n\n` 与 `\r\n\r\n` 两种分隔符，`strip_sse_field` 兼容带/不带空格的字段写法。
@@ -2729,13 +2729,20 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             }
         };
 
+        // Compatible gateways may identify events only through the JSON payload.
+        let event_name = if event_name.is_empty() {
+            data.get("type").and_then(Value::as_str).unwrap_or("")
+        } else {
+            event_name
+        };
+
         match event_name {
             "response.output_item.done" => {
                 if let Some(item) = data.get("item") {
                     output_items.push(item.clone());
                 }
             }
-            "response.completed" => {
+            "response.completed" | "response.incomplete" => {
                 completed_response = Some(data.get("response").cloned().unwrap_or(data));
             }
             "response.failed" => {
@@ -2759,7 +2766,9 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     process_block(&buffer, false)?;
 
     let mut response = completed_response.ok_or_else(|| {
-        ProxyError::TransformError("No response.completed event in upstream SSE".to_string())
+        ProxyError::TransformError(
+            "No response.completed or response.incomplete event in upstream SSE".to_string(),
+        )
     })?;
 
     if !output_items.is_empty() {
@@ -2767,7 +2776,7 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             obj.insert("output".to_string(), Value::Array(output_items));
         } else {
             return Err(ProxyError::TransformError(
-                "response.completed payload is not an object".to_string(),
+                "Terminal Responses SSE payload is not an object".to_string(),
             ));
         }
     }
@@ -4124,9 +4133,33 @@ data: [DONE]\n\n";
                 "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-validation\",\"model\":\"test-model\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hi\"}]}],\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}\n\n"
             );
 
-        for (api_format, sse) in [
-            ("openai_chat", chat_sse),
-            ("openai_responses", responses_sse),
+        let incomplete_sse = concat!(
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp-validation\",\"model\":\"test-model\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":16}}}\n\n"
+        );
+
+        for (api_format, sse, expected_text, output_tokens, stop_reason) in [
+            ("openai_chat", chat_sse, Some("Hi"), 1, "max_tokens"),
+            ("openai_responses", responses_sse, Some("Hi"), 1, "end_turn"),
+            (
+                "openai_responses",
+                responses_sse
+                    .strip_prefix("event: response.completed\n")
+                    .unwrap(),
+                Some("Hi"),
+                1,
+                "end_turn",
+            ),
+            ("openai_responses", incomplete_sse, None, 16, "max_tokens"),
+            (
+                "openai_responses",
+                incomplete_sse
+                    .strip_prefix("event: response.incomplete\n")
+                    .unwrap(),
+                None,
+                16,
+                "max_tokens",
+            ),
         ] {
             for content_type in ["text/event-stream", "application/json"] {
                 let mut headers = HeaderMap::new();
@@ -4159,9 +4192,14 @@ data: [DONE]\n\n";
                 let body: Value = serde_json::from_slice(&bytes).unwrap();
                 assert_eq!(body["type"], "message");
                 assert_eq!(body["model"], model);
-                assert_eq!(body["content"][0]["text"], "Hi");
+                if let Some(text) = expected_text {
+                    assert_eq!(body["content"][0]["text"], text);
+                } else {
+                    assert_eq!(body["content"], json!([]));
+                }
+                assert_eq!(body["stop_reason"], stop_reason);
                 assert_eq!(body["usage"]["input_tokens"], 7);
-                assert_eq!(body["usage"]["output_tokens"], 1);
+                assert_eq!(body["usage"]["output_tokens"], output_tokens);
             }
         }
     }
@@ -4318,11 +4356,60 @@ data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstr
     }
 
     #[test]
-    fn responses_sse_to_response_value_errors_when_no_completed_event() {
+    fn responses_sse_to_response_value_errors_when_no_terminal_event() {
         let sse = "event: response.output_item.done\n\
 data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n\n";
 
         assert!(responses_sse_to_response_value(sse).is_err());
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_accepts_incomplete_terminal_event() {
+        let sse = concat!(
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_incomplete\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":16}}}\n"
+        );
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+        assert_eq!(response["id"], "resp_incomplete");
+        assert_eq!(response["status"], "incomplete");
+        assert_eq!(
+            response["incomplete_details"]["reason"],
+            "max_output_tokens"
+        );
+        assert_eq!(response["usage"]["input_tokens"], 7);
+        assert_eq!(response["usage"]["output_tokens"], 16);
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_uses_payload_type_without_event_names() {
+        let sse = concat!(
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hi\"}]}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_data_only\",\"status\":\"completed\",\"output\":[]}}\n\n"
+        );
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+        assert_eq!(response["id"], "resp_data_only");
+        assert_eq!(response["output"][0]["content"][0]["text"], "Hi");
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_preserves_data_only_failure() {
+        let sse = "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstream failed\"}}}\n\n";
+
+        let err = responses_sse_to_response_value(sse).unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(message) if message == "upstream failed"));
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_prefers_explicit_event_name() {
+        let sse = concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"error\":{\"message\":\"upstream failed\"}}}\n\n"
+        );
+
+        let err = responses_sse_to_response_value(sse).unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(message) if message == "upstream failed"));
     }
 
     #[test]
