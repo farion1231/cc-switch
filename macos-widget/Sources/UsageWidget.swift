@@ -275,11 +275,15 @@ struct UsageWidgetView: View {
                     header(snapshot)
                     bigCost(data.totals.cost, size: 30)
                     Spacer(minLength: 0)
-                    HStack(spacing: 12) {
-                        ForEach(Array(metrics(data.totals).dropFirst().enumerated()), id: \.offset) { $0.element }
+                    // 三个数字（英文「Cache hits」等较长）：给足宽度、可缩小，别和右边图表的坐标轴挤在一起
+                    HStack(spacing: 10) {
+                        ForEach(Array(metrics(data.totals, size: 12).dropFirst().enumerated()), id: \.offset) {
+                            $0.element.fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                    .minimumScaleFactor(0.8)
                 }
-                .frame(width: 150, alignment: .leading)
+                .frame(width: 168, alignment: .leading)
                 UsageChart(points: data.series, granularity: data.granularity, showAxis: true)
             }
         }

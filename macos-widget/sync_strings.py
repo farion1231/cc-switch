@@ -39,6 +39,9 @@ KEYS = [
         "pro", "max", "max5x", "max20x", "team", "teamPremium", "enterprise",
     )],
     "managedAuth.usedBy",
+    # DeepSeek Harness 账号（DshAccount.tsx）
+    "dsh.account.balance", "dsh.account.bonus", "dsh.account.balanceFailed",
+    "dsh.account.expired", "dsh.account.shared", "dsh.account.unnamed",
 ]
 
 

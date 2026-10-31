@@ -27,12 +27,12 @@ enum UsageRangeOption: String, AppEnum {
     /// 小组件标题里写的范围名。
     var title: String {
         switch self {
-        case .today: return String(localized: "usage.range.today", defaultValue: "Today")
-        case .last24h: return String(localized: "usage.range.1d", defaultValue: "Last 24 hours")
-        case .last7d: return String(localized: "usage.range.7d", defaultValue: "Last 7 days")
-        case .last14d: return String(localized: "usage.range.14d", defaultValue: "Last 14 days")
-        case .last30d: return String(localized: "usage.range.30d", defaultValue: "Last 30 days")
-        case .all: return String(localized: "usage.range.all", defaultValue: "All")
+        case .today: return widgetString("usage.range.today", "Today")
+        case .last24h: return widgetString("usage.range.1d", "Last 24 hours")
+        case .last7d: return widgetString("usage.range.7d", "Last 7 days")
+        case .last14d: return widgetString("usage.range.14d", "Last 14 days")
+        case .last30d: return widgetString("usage.range.30d", "Last 30 days")
+        case .all: return widgetString("usage.range.all", "All")
         }
     }
 }

@@ -17,6 +17,11 @@ func T(_ key: String, _ args: [String: String] = [:]) -> String {
     return text
 }
 
+/// 小组件自己的文案（Localizable.strings：「用量」的范围名、样式名），取法同 `T`。
+func widgetString(_ key: String, _ fallback: String) -> String {
+    appStringsBundle.localizedString(forKey: key, value: fallback, table: "Localizable")
+}
+
 /// 扩展里就是自己的 bundle；预览程序没有 lproj，从 CCSW_RESOURCES 指的目录按系统语言挑一份。
 private let appStringsBundle: Bundle = {
     #if CC_SWITCH_WIDGET_PREVIEW
@@ -282,6 +287,14 @@ func accountDetailsLine(_ account: WidgetAccount, now: Date) -> String {
             parts.append(T("authCenter.agy.reauthNote"))
         } else if let date {
             parts.append(T("authCenter.agy.addedOn", ["date": date]))
+        }
+    case "dsh":
+        // DshAccount.tsx：登录失效写原因；否则有名字时写联系方式，再写「Web 与 Desktop 共用」
+        if d.reauthReason == "dshExpired" {
+            parts.append(T("dsh.account.expired"))
+        } else {
+            if let contact = d.contact { parts.append(contact) }
+            parts.append(T("dsh.account.shared"))
         }
     case "kimi":
         if d.reauthReason == "kimiSignedOut" {

@@ -53,6 +53,8 @@ extension WidgetSnapshot {
         account("agy", "Antigravity", "dev@gmail.com", inUse: true, isDefault: true,
                 rows([t("agy_gemini_five_hour", used: 0), t("agy_gemini_weekly", used: 12, resetIn: 40),
                       t("agy_third_party_five_hour", used: 85, resetIn: 1.5), t("agy_third_party_weekly", used: 30, resetIn: 40)])),
+        account("dsh", "DeepSeek", "Owlbay", details: AccountDetails(contact: "138****0000"),
+                .balance(wallets: ["¥128.50"], bonus: ["¥10.00"])),
         account("agy", "Antigravity", "side@gmail.com", needsReauth: true,
                 details: AccountDetails(signedInAt: signedIn, reauthReason: "agyExpired")),
         account("copilot", "Copilot", "work-gh", details: AccountDetails(signedInAt: signedIn, domain: "corp.ghe.com"),
@@ -107,7 +109,7 @@ extension WidgetSnapshot {
     }()
 
     static let sample = WidgetSnapshot(
-        version: 1,
+        version: 2,
         generatedAt: Date.now.timeIntervalSince1970 - 120,
         apps: [
             WidgetApp(
@@ -119,8 +121,22 @@ extension WidgetSnapshot {
                 attention: nil, quotaLines: [q("5h 90%", 90), q("7d 71%", 71)], quotaNote: nil
             ),
             WidgetApp(
+                app: "claude-desktop", name: "Claude Desktop", current: "Claude Official", modeKind: "direct",
+                attention: nil, quotaLines: [q("5h 62%", 62), q("7d 18%", 18, warn: true)], quotaNote: nil
+            ),
+            WidgetApp(
                 app: "gemini", name: "Gemini CLI", current: "Google OAuth", modeKind: "direct",
                 attention: nil, quotaLines: [], quotaNote: nil
+            ),
+            WidgetApp(
+                app: "grokbuild", name: "Grok Build", current: "xAI", modeKind: "direct",
+                attention: nil, quotaLines: [q("7d 96%", 96)], quotaNote: nil
+            ),
+            WidgetApp(
+                app: "agy", name: "Antigravity", current: "Google Official", modeKind: "direct",
+                attention: nil, quotaLines: [], quotaNote: nil,
+                tiers: [t("agy_gemini_five_hour", used: 20, resetIn: 3), t("agy_gemini_weekly", used: 35, resetIn: 60),
+                        t("agy_third_party_five_hour", used: 88, resetIn: 1.2), t("agy_third_party_weekly", used: 40, resetIn: 60)]
             ),
         ],
         accounts: sampleAccountsFew,

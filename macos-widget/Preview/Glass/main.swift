@@ -112,6 +112,8 @@ struct GalleryView: View {
         let entry = SnapshotEntry(date: .now, snapshot: snapshot)
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
+                // 截图模式（CCSW_CAPTURE）不画切换栏，只留小组件
+                if ProcessInfo.processInfo.environment["CCSW_CAPTURE"] == nil {
                 HStack(spacing: 16) {
                     Picker("", selection: $look) {
                         ForEach(PreviewLook.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -129,6 +131,7 @@ struct GalleryView: View {
                 }
                 .padding(10)
                 .background(.regularMaterial, in: .capsule)
+                }
 
                 section("授权中心 · Auth Center") {
                     HStack(alignment: .top, spacing: 24) {
@@ -157,8 +160,13 @@ struct GalleryView: View {
                     }
                 }
                 section("额度 · In-use quota") {
-                    PreviewTile(family: .systemMedium, label: "Medium", look: look) {
-                        QuotaWidgetView(entry: entry)
+                    HStack(alignment: .top, spacing: 24) {
+                        PreviewTile(family: .systemMedium, label: "Medium", look: look) {
+                            QuotaWidgetView(entry: entry, familyOverride: .systemMedium)
+                        }
+                        PreviewTile(family: .systemLarge, label: "Large", look: look) {
+                            QuotaWidgetView(entry: entry, familyOverride: .systemLarge)
+                        }
                     }
                 }
             }
@@ -235,7 +243,7 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
         // CCSW_CAPTURE=<png>：等玻璃合成完，截自己的窗口存下来就退出（截自己的窗口不需要录屏权限）。
         if let out = ProcessInfo.processInfo.environment["CCSW_CAPTURE"] {
             // 截图时拉高窗口，一张图把三个小组件都装下
-            window.setContentSize(NSSize(width: 1220, height: 1680))
+            window.setContentSize(NSSize(width: 1220, height: 1960))
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                 captureOwnWindow(window, to: URL(fileURLWithPath: out))
                 NSApp.terminate(nil)

@@ -1,0 +1,15 @@
+/* 「用量」小组件的配置项和范围名（UsageIntent.swift）。时间范围和 CC Switch 用量页同名。 */
+"usage.range" = "Zaman aralığı";
+"usage.range.today" = "Bugün";
+"usage.range.1d" = "Son 24 saat";
+"usage.range.7d" = "Son 7 gün";
+"usage.range.14d" = "Son 14 gün";
+"usage.range.30d" = "Son 30 gün";
+"usage.range.all" = "Tümü";
+"usage.style" = "Stil";
+"usage.style.overview" = "Genel bakış";
+"usage.style.trend" = "Eğilim";
+"usage.style.apps" = "Uygulamaya göre";
+"usage.style.metrics" = "Metrikler";
+"usage.intent.title" = "Kullanım";
+"usage.intent.description" = "Zaman aralığını ve stili seçin.";

@@ -47,6 +47,7 @@ func render(_ name: String, _ family: WidgetFamily, _ scheme: ColorScheme, @View
 try MainActor.assumeIsolated {
     for scheme in [ColorScheme.light, .dark] {
         try render("quota-medium", .systemMedium, scheme) { QuotaWidgetView(entry: entry) }
+        try render("quota-large", .systemLarge, scheme) { QuotaWidgetView(entry: entry, familyOverride: .systemLarge) }
         try render("accounts-medium", .systemMedium, scheme) { AccountsWidgetView(entry: many, familyOverride: .systemMedium) }
         try render("accounts-large", .systemLarge, scheme) { AccountsWidgetView(entry: many, familyOverride: .systemLarge) }
         try render("accounts-xl", .systemExtraLarge, scheme) { AccountsWidgetView(entry: many, familyOverride: .systemExtraLarge) }

@@ -73,6 +73,9 @@ pub struct WidgetApp {
     pub quota_lines: Vec<WidgetQuotaLine>,
     /// 额度没查到时的原因（已按界面语言写好）。
     pub quota_note: Option<String>,
+    /// 托盘不管的应用（Antigravity）：额度按档位原样给，小组件照授权中心的规则写
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tiers: Option<Vec<accounts::TierRow>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -116,6 +119,7 @@ pub fn snapshot_from_panel(model: &PanelModel, generated_at: i64) -> WidgetSnaps
                 attention: app.attention.map(str::to_string),
                 quota_lines,
                 quota_note,
+                tiers: None,
             }
         })
         .collect();
@@ -127,6 +131,49 @@ pub fn snapshot_from_panel(model: &PanelModel, generated_at: i64) -> WidgetSnaps
         usage: None,
         quota_display: "left",
     }
+}
+
+/// Antigravity 在用的那家：官方登录时额度取它绑的 agy 账号（没绑就是 agy 现在登着的号）
+/// 在授权中心那边查到的档位；第三方供应商没有额度，只写名字。
+/// OpenCode、Pi、Kimi 等是多家并存的应用，没有「在用的那家」，只在用量里按应用出现。
+fn agy_app_row(state: &AppState) -> Option<WidgetApp> {
+    use crate::app_config::AppType;
+    let visible = crate::settings::get_settings()
+        .visible_apps
+        .unwrap_or_default()
+        .is_visible(&AppType::Agy);
+    if !visible || !cfg!(target_os = "macos") {
+        return None;
+    }
+    let id = crate::mode::current::provider_for(
+        &state.db,
+        &AppType::Agy,
+        crate::mode::current::Purpose::InUse,
+    )
+    .ok()??;
+    let provider = state
+        .db
+        .get_provider_by_id(&id, AppType::Agy.as_str())
+        .ok()??;
+    let tiers = crate::services::provider::agy_direct::is_official(&provider)
+        .then(|| {
+            let bound = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("agy_oauth"));
+            accounts::agy_tiers(bound.as_deref())
+        })
+        .flatten();
+    Some(WidgetApp {
+        app: AppType::Agy.as_str().to_string(),
+        name: crate::tray::app_display_name(&AppType::Agy).to_string(),
+        current: Some(provider.name),
+        mode_kind: "direct".to_string(),
+        attention: None,
+        quota_lines: Vec::new(),
+        quota_note: None,
+        tiers,
+    })
 }
 
 /// 从扩展 Info.plist（XML）里取 `CCSwitchAppGroup` 的值。
@@ -203,6 +250,8 @@ pub fn export_now(app: &AppHandle) {
         }
     };
     let mut snapshot = snapshot_from_panel(&model, chrono::Utc::now().timestamp());
+    // 托盘只管 5 个应用；Antigravity 也是「切换在用的那家」，小组件补上
+    snapshot.apps.extend(agy_app_row(state.inner()));
     snapshot.accounts = accounts::snapshot();
     let settings = crate::settings::get_settings();
     if settings.quota_display.as_deref() == Some("used") {

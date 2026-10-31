@@ -70,6 +70,8 @@ pub struct WidgetAccount {
 pub struct AccountDetails {
     /// 登录 / 添加时间（Unix 秒）
     pub signed_in_at: Option<i64>,
+    /// DeepSeek：账号有名字时第二行写手机号 / 邮箱（已脱敏）
+    pub contact: Option<String>,
     /// Copilot：github.com 或 GHES 域名
     pub domain: Option<String>,
     /// Claude：`pro` / `max` / `team` / `enterprise`
@@ -83,7 +85,7 @@ pub struct AccountDetails {
     /// Kimi：是不是 Kimi Code 自己的那个登录
     pub primary: bool,
     /// 需要重新登录的原因：`codexIdToken` / `xaiExpired` / `agyExpired` / `claudeExpired` /
-    /// `claudeMaybeExpired` / `kimiSignedOut`
+    /// `claudeMaybeExpired` / `kimiSignedOut` / `dshExpired`
     pub reauth_reason: Option<&'static str>,
     /// Kimi 没登录时 Kimi 给的错误（没有时写「未登录」）
     pub error: Option<String>,
@@ -113,6 +115,11 @@ pub enum AccountQuota {
     },
     /// 查成功但没有额度档：目前只有 Kimi 没订阅时（`noSubscription`）
     Note { note: &'static str },
+    /// DeepSeek 账号的余额和赠金（已带币种符号，如 "¥12.34"），授权中心分两行写
+    Balance {
+        wallets: Vec<String>,
+        bonus: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -165,6 +172,95 @@ struct CachedQuota {
 
 static LISTED: Lazy<Mutex<Option<Vec<ListedAccount>>>> = Lazy::new(|| Mutex::new(None));
 static QUOTAS: Lazy<Mutex<HashMap<String, CachedQuota>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+/// DeepSeek Harness 的账号（授权中心「DeepSeek Harness」）：只有一个号、状态和余额一次查回来，
+/// 不走上面的账号列表；30 分钟查一次。
+static DSH: Lazy<Mutex<Option<(Instant, crate::services::dsh_account::DshAccountStatus)>>> =
+    Lazy::new(|| Mutex::new(None));
+static DSH_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 余额照授权中心 `DshAccount.tsx` 的 formatWallet：两位小数，人民币 ¥、美元 $，别的币种写在后面。
+fn format_wallet(wallet: &crate::services::dsh_account::DshWallet) -> String {
+    let text = wallet
+        .balance
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .map(|v| format!("{v:.2}"))
+        .unwrap_or_else(|| wallet.balance.clone());
+    match wallet.currency.as_str() {
+        "CNY" => format!("¥{text}"),
+        "USD" => format!("${text}"),
+        other => format!("{text} {other}"),
+    }
+}
+
+/// DeepSeek 账号 → 授权中心那一行（没登录时没有这一行）
+fn dsh_account(status: &crate::services::dsh_account::DshAccountStatus) -> Option<WidgetAccount> {
+    if !status.signed_in {
+        return None;
+    }
+    let profile = status.profile.as_ref();
+    let name = profile.and_then(|p| p.name.clone());
+    let contact = profile.and_then(|p| p.contact.clone());
+    let login = name.clone().or_else(|| contact.clone()).unwrap_or_default();
+    let quota = if status.expired {
+        AccountQuota::None
+    } else if let Some(error) = status.error.clone() {
+        AccountQuota::Failed {
+            kind: "other",
+            message: Some(truncate_message(error)),
+        }
+    } else {
+        AccountQuota::Balance {
+            wallets: status.wallets.iter().map(format_wallet).collect(),
+            bonus: status.bonus_wallets.iter().map(format_wallet).collect(),
+        }
+    };
+    Some(WidgetAccount {
+        service: "dsh".to_string(),
+        service_name: "DeepSeek".to_string(),
+        id: "default".to_string(),
+        login,
+        in_use: false,
+        is_default: false,
+        needs_reauth: status.expired,
+        details: AccountDetails {
+            // 有名字时第二行写联系方式；只有联系方式时它已经当名字用了
+            contact: name.and(contact),
+            reauth_reason: status.expired.then_some("dshExpired"),
+            ..Default::default()
+        },
+        users: 0,
+        quota,
+    })
+}
+
+/// 到期就后台查一次 DeepSeek 账号（任务自己跑完，不被调用方超时打断）
+fn spawn_dsh_query_if_due() -> Option<tauri::async_runtime::JoinHandle<()>> {
+    let due = lock(&DSH)
+        .as_ref()
+        .is_none_or(|(at, _)| at.elapsed() + AGE_SLACK >= IDLE_MAX_AGE);
+    if !due || DSH_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return None;
+    }
+    Some(tauri::async_runtime::spawn(async move {
+        let _permit = QUERY_SLOTS.clone().acquire_owned().await;
+        let started = Instant::now();
+        match tokio::time::timeout(QUERY_HARD_LIMIT, crate::services::dsh_account::status()).await {
+            Ok(Ok(status)) => {
+                log::info!(
+                    "[Widget] DeepSeek 账号查询完成（{} ms）",
+                    started.elapsed().as_millis()
+                );
+                *lock(&DSH) = Some((Instant::now(), status));
+            }
+            Ok(Err(e)) => log::info!("[Widget] DeepSeek 账号查询失败: {e}"),
+            Err(_) => log::info!("[Widget] DeepSeek 账号查询超时"),
+        }
+        DSH_IN_FLIGHT.store(false, std::sync::atomic::Ordering::Release);
+    }))
+}
+
 /// 正在查的账号（同一个号同时只查一份）
 static IN_FLIGHT: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 static QUERY_SLOTS: Lazy<std::sync::Arc<tokio::sync::Semaphore>> =
@@ -612,6 +708,8 @@ pub async fn query_due(app: &AppHandle) {
             })
         })
         .collect();
+    let mut handles = handles;
+    handles.extend(spawn_dsh_query_if_due());
     futures::future::join_all(handles).await;
 }
 
@@ -645,14 +743,36 @@ pub fn snapshot() -> Option<Vec<WidgetAccount>> {
                     quota,
                 }
             })
+            .chain(
+                lock(&DSH)
+                    .as_ref()
+                    .and_then(|(_, status)| dsh_account(status)),
+            )
             .collect(),
     )
+}
+
+/// Antigravity 官方登录的额度档位：卡片绑了账号就用它，没绑用 agy 现在登着的号；还没查到时为 None。
+pub fn agy_tiers(bound: Option<&str>) -> Option<Vec<TierRow>> {
+    let listed = lock(&LISTED).clone()?;
+    let account = listed.iter().find(|a| {
+        a.auth_provider == "agy_oauth"
+            && match bound {
+                Some(id) => a.id == id,
+                None => a.is_default,
+            }
+    })?;
+    match &lock(&QUOTAS).get(&account.key())?.quota {
+        AccountQuota::Rows { tiers, .. } => Some(tiers.clone()),
+        _ => None,
+    }
 }
 
 /// 关掉小组件时清空，下次打开重新查。
 pub fn clear() {
     *lock(&LISTED) = None;
     lock(&QUOTAS).clear();
+    *lock(&DSH) = None;
 }
 
 #[cfg(test)]
@@ -843,5 +963,56 @@ mod tests {
         let cut = truncate_message(long);
         assert_eq!(cut.chars().count(), MAX_MESSAGE_CHARS + 1);
         assert!(cut.ends_with('…'));
+    }
+
+    #[test]
+    fn dsh_account_mirrors_the_auth_center_row() {
+        use crate::services::dsh_account::{DshAccountProfile, DshAccountStatus, DshWallet};
+        let wallet = |currency: &str, balance: &str| DshWallet {
+            currency: currency.to_string(),
+            balance: balance.to_string(),
+        };
+        assert!(dsh_account(&DshAccountStatus::default()).is_none());
+
+        let status = DshAccountStatus {
+            signed_in: true,
+            profile: Some(DshAccountProfile {
+                id: None,
+                name: Some("Owl".into()),
+                contact: Some("138****0000".into()),
+                avatar_url: None,
+            }),
+            wallets: vec![wallet("CNY", "12.3"), wallet("USD", "abc")],
+            bonus_wallets: vec![wallet("EUR", "1")],
+            ..Default::default()
+        };
+        let account = dsh_account(&status).unwrap();
+        assert_eq!(account.login, "Owl");
+        assert_eq!(account.details.contact.as_deref(), Some("138****0000"));
+        assert_eq!(
+            account.quota,
+            AccountQuota::Balance {
+                wallets: vec!["¥12.30".into(), "$abc".into()],
+                bonus: vec!["1.00 EUR".into()],
+            }
+        );
+
+        let expired = DshAccountStatus {
+            expired: true,
+            ..status.clone()
+        };
+        let account = dsh_account(&expired).unwrap();
+        assert!(account.needs_reauth);
+        assert_eq!(account.details.reauth_reason, Some("dshExpired"));
+        assert_eq!(account.quota, AccountQuota::None);
+
+        let failed = DshAccountStatus {
+            error: Some("boom".into()),
+            ..status
+        };
+        assert!(matches!(
+            dsh_account(&failed).unwrap().quota,
+            AccountQuota::Failed { .. }
+        ));
     }
 }

@@ -65,6 +65,8 @@ struct WidgetApp: Decodable, Identifiable {
     let attention: String?
     let quotaLines: [QuotaLine]
     let quotaNote: String?
+    /// 托盘不管的应用（Antigravity）：额度按档位原样给，照授权中心的规则写
+    var tiers: [TierRow]? = nil
 
     var id: String { app }
 }
@@ -82,6 +84,12 @@ struct QuotaLine: Decodable, Identifiable, Hashable {
 struct WidgetAccount: Decodable, Identifiable {
     /// 列表用的唯一键：不同渠道的账号 id 可能相同
     var uid: String { "\(service):\(id)" }
+
+    /// 显示的账号名：DeepSeek 账号没有名字也没有联系方式时写「DeepSeek 账号」
+    var displayLogin: String {
+        if login.isEmpty, service == "dsh" { return T("dsh.account.unnamed") }
+        return login
+    }
 
     /// claude / copilot / chatgpt / xai / kimi / agy
     let service: String
@@ -115,6 +123,8 @@ struct WidgetAccount: Decodable, Identifiable {
 
 struct AccountDetails: Decodable {
     var signedInAt: TimeInterval? = nil
+    /// DeepSeek：账号有名字时第二行写的手机号 / 邮箱
+    var contact: String? = nil
     var domain: String? = nil
     var plan: String? = nil
     var rateLimitTier: String? = nil
@@ -159,9 +169,11 @@ enum AccountQuota: Decodable {
     case rows(tiers: [TierRow], resetCredits: ResetCreditsRow?, creditsBalance: Double?, queriedAt: Double?)
     case failed(kind: String, message: String?)
     case note(String)
+    /// DeepSeek 账号：余额、赠金（已带币种符号）
+    case balance(wallets: [String], bonus: [String])
 
     private enum CodingKeys: String, CodingKey {
-        case state, tiers, resetCredits, creditsBalance, queriedAt, kind, message, note
+        case state, tiers, resetCredits, creditsBalance, queriedAt, kind, message, note, wallets, bonus
     }
 
     init(from decoder: Decoder) throws {
@@ -181,6 +193,11 @@ enum AccountQuota: Decodable {
             )
         case "note":
             self = .note(try c.decode(String.self, forKey: .note))
+        case "balance":
+            self = .balance(
+                wallets: (try? c.decode([String].self, forKey: .wallets)) ?? [],
+                bonus: (try? c.decode([String].self, forKey: .bonus)) ?? []
+            )
         default:
             self = .none
         }

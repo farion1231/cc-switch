@@ -14,6 +14,7 @@ func serviceIcon(_ service: String) -> String? {
     case "xai": return "xai"
     case "kimi": return "kimi"
     case "agy": return "antigravity"
+    case "dsh": return "deepseek"
     default: return nil
     }
 }

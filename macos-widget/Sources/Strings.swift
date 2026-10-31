@@ -72,6 +72,21 @@ struct Strings {
                 stale: "数据已过时", cost: "花费", noUsage: "这段时间没有用量", moreTiers: "还有 %d 档", loadingAccounts: "正在读取账号…"
             )
         }
+        if lang.hasPrefix("tr") {
+            return Strings(
+                quotaTitle: "Kota", quotaGallery: "Her uygulamanın etkin sağlayıcısı ve kotası.",
+                accountsTitle: "Hesaplar", accountsGallery: "Tüm hesapların kotası; azalanlar ve yeniden giriş gerekenler önce gösterilir.",
+                usageTitle: "Kullanım", usageGallery: "Maliyet, token ve istekler. Zaman aralığını ve stili Widget'ı Düzenle'den seçin.",
+                off: "CC Switch ayarlarından Masaüstü widget'ını açın", outdated: "CC Switch'i güncelleyin",
+                noQuota: "Kota bilgisi yok", noAccounts: "Henüz hesap yok",
+                inUse: "Kullanımda", reauth: "Yeniden giriş yapın",
+                today: "Bugün", last7Days: "Son 7 gün", last30Days: "Son 30 gün",
+                tokens: "Token", requests: "İstek", cacheHit: "Önbellek isabeti",
+                accountCount: "%d hesap", more: "%d tane daha", needAction: "%d tanesi ilgi bekliyor",
+                stale: "Veriler eski", cost: "Maliyet", noUsage: "Bu aralıkta kullanım yok", moreTiers: "%d tane daha",
+                loadingAccounts: "Hesaplar yükleniyor…"
+            )
+        }
         if lang.hasPrefix("ja") {
             return Strings(
                 quotaTitle: "クォータ", quotaGallery: "各アプリで使用中のプロバイダーとクォータ。",

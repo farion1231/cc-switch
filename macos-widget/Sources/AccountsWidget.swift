@@ -133,7 +133,7 @@ struct AccountBlock: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 ServiceMark(service: account.service, size: 18)
-                Text(account.login)
+                Text(account.displayLogin)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -170,6 +170,7 @@ struct AccountBlock: View {
             let rows = quotaRows
             return rows.shown.count + (rows.hidden > 0 ? 1 : 0)
         case .failed, .note: return 1
+        case let .balance(_, bonus): return bonus.isEmpty ? 1 : 2
         case .none: return 0
         }
     }
@@ -188,6 +189,13 @@ struct AccountBlock: View {
                         .frame(height: AuthLayout.rowHeight)
                 }
             }
+        case let .failed(kind, message) where account.service == "dsh":
+            // DshAccount.tsx：余额查不到时只写一句
+            Text(T("dsh.account.balanceFailed"))
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .frame(height: AuthLayout.rowHeight)
+                .help(quotaFailureText(kind: kind, message: message))
         case let .failed(kind, message):
             HStack(spacing: 4) {
                 Text(T("quota.failed")).foregroundStyle(.red).fontWeight(.medium)
@@ -202,6 +210,15 @@ struct AccountBlock: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
                 .frame(height: AuthLayout.rowHeight)
+        case let .balance(wallets, bonus):
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(dshBalanceLines(wallets: wallets, bonus: bonus).enumerated()), id: \.offset) { index, line in
+                    Text(line)
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(index == 0 ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                        .frame(height: AuthLayout.rowHeight)
+                }
+            }
         case .none:
             EmptyView()
         }
@@ -228,7 +245,7 @@ struct CompactAccountRow: View {
         HStack(alignment: .center, spacing: 10) {
             ServiceMark(service: account.service, size: 18)
             VStack(alignment: .leading, spacing: 2) {
-                Text(account.login)
+                Text(account.displayLogin)
                     .font(.system(size: 11.5, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -255,27 +272,11 @@ struct CompactAccountRow: View {
             let bars = tightestRows(
                 rows.filter { $0.bar != nil && $0.id != "seven_day_sonnet" }, limit: 2
             )
-            HStack(alignment: .top, spacing: 8) {
-                ForEach(bars) { row in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(row.short)
-                            .font(.system(size: 9.5, weight: .medium).monospacedDigit())
-                            .minimumScaleFactor(0.8)
-                            .foregroundStyle(row.tone == .normal ? AnyShapeStyle(.secondary) : AnyShapeStyle(row.tone.color))
-                            .lineLimit(1)
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(.primary.opacity(0.12))
-                                Capsule()
-                                    .fill(renderingMode == .fullColor ? AnyShapeStyle(row.tone.color.gradient) : AnyShapeStyle(.primary))
-                                    .frame(width: max(3, geo.size.width * (row.bar ?? 0) / 100))
-                                    .widgetAccentable()
-                            }
-                        }
-                        .frame(height: 5)
-                    }
-                }
-            }
+            CompactQuotaBars(rows: bars)
+        case let .balance(wallets, bonus):
+            Text(dshBalanceLines(wallets: wallets, bonus: bonus).joined(separator: " · "))
+                .font(.system(size: 10).monospacedDigit())
+                .lineLimit(1)
         case let .failed(kind, message):
             Text("\(T("quota.failed")) · \(quotaFailureText(kind: kind, message: message))")
                 .font(.system(size: 10))
@@ -298,6 +299,45 @@ struct CompactAccountRow: View {
             }
         }
     }
+}
+
+/// 中尺寸放的两根短额度条：「5 小时 62%」+ 条。额度小组件的应用行也用它。
+struct CompactQuotaBars: View {
+    let rows: [AuthQuotaRow]
+    @Environment(\.widgetRenderingMode) private var renderingMode
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            ForEach(rows) { row in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(row.short)
+                        .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                        .minimumScaleFactor(0.8)
+                        .foregroundStyle(row.tone == .normal ? AnyShapeStyle(.secondary) : AnyShapeStyle(row.tone.color))
+                        .lineLimit(1)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(.primary.opacity(0.12))
+                            Capsule()
+                                .fill(renderingMode == .fullColor ? AnyShapeStyle(row.tone.color.gradient) : AnyShapeStyle(.primary))
+                                .frame(width: max(3, geo.size.width * (row.bar ?? 0) / 100))
+                                .widgetAccentable()
+                        }
+                    }
+                    .frame(height: 5)
+                }
+            }
+        }
+    }
+}
+
+/// DeepSeek 账号的余额、赠金两行（DshAccount.tsx 的 DshBalance）
+func dshBalanceLines(wallets: [String], bonus: [String]) -> [String] {
+    var lines = [T("dsh.account.balance", ["amount": wallets.isEmpty ? "—" : wallets.joined(separator: " · ")])]
+    if !bonus.isEmpty {
+        lines.append(T("dsh.account.bonus", ["amount": bonus.joined(separator: " · ")]))
+    }
+    return lines
 }
 
 extension QuotaTone {

@@ -5,6 +5,8 @@ import WidgetKit
 
 struct AppRow: View {
     let app: WidgetApp
+    var displayUsed = false
+    var now: Date = .now
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -22,7 +24,15 @@ struct AppRow: View {
             }
             .frame(width: 112, alignment: .leading)
 
-            if app.quotaLines.isEmpty {
+            if let tiers = app.tiers, !tiers.isEmpty {
+                // Antigravity：按档位照授权中心写，挑最紧的两档
+                let rows = authQuotaRows(
+                    tiers: tiers, resetCredits: nil, creditsBalance: nil,
+                    displayUsed: displayUsed, now: now
+                )
+                CompactQuotaBars(rows: tightestRows(rows, limit: 2))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if app.quotaLines.isEmpty {
                 Text(app.quotaNote ?? app.attention ?? Strings.current.noQuota)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
@@ -42,16 +52,20 @@ struct AppRow: View {
 
 struct QuotaWidgetView: View {
     let entry: SnapshotEntry
+    /// 预览程序用：环境里的 widgetFamily 只读，没法从外面设。
+    var familyOverride: WidgetFamily? = nil
+    @Environment(\.widgetFamily) private var environmentFamily
+    private var family: WidgetFamily { familyOverride ?? environmentFamily }
 
-    /// 中尺寸最多放三个应用：有额度的排前面，其余照托盘顺序。
+    /// 中尺寸放三个应用、大尺寸放全部：有额度的排前面，其余照托盘顺序（Antigravity 排最后）。
     private func visibleApps(_ snapshot: WidgetSnapshot) -> [WidgetApp] {
-        let withQuota = snapshot.apps.filter { !$0.quotaLines.isEmpty }
-        let rest = snapshot.apps.filter { $0.quotaLines.isEmpty && $0.current != nil }
-        return Array((withQuota + rest).prefix(3))
+        let withQuota = snapshot.apps.filter { !$0.quotaLines.isEmpty || !($0.tiers ?? []).isEmpty }
+        let rest = snapshot.apps.filter { $0.quotaLines.isEmpty && ($0.tiers ?? []).isEmpty && $0.current != nil }
+        return Array((withQuota + rest).prefix(family == .systemLarge ? 8 : 3))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: family == .systemLarge ? 14 : 9) {
             WidgetHeader(title: "CC Switch · \(Strings.current.quotaTitle)") {
                 if let snapshot = entry.snapshot {
                     UpdatedTime(snapshot: snapshot, now: entry.date)
@@ -62,7 +76,7 @@ struct QuotaWidgetView: View {
                 if apps.isEmpty {
                     WidgetMessage(text: Strings.current.noQuota)
                 } else {
-                    ForEach(apps) { AppRow(app: $0) }
+                    ForEach(apps) { AppRow(app: $0, displayUsed: snapshot.quotaDisplay == "used", now: entry.date) }
                     Spacer(minLength: 0)
                 }
             } else {
@@ -84,6 +98,6 @@ struct QuotaWidget: Widget {
         }
         .configurationDisplayName(widgetDisplayName(Strings.current.quotaTitle))
         .description(Strings.current.quotaGallery)
-        .supportedFamilies([.systemMedium])
+        .supportedFamilies([.systemMedium, .systemLarge])
     }
 }
