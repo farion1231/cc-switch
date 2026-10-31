@@ -481,22 +481,35 @@ pub fn codex_provider_upstream_model(provider: &Provider) -> Option<String> {
         })
 }
 
-fn codex_provider_catalog_model_ids(provider: &Provider) -> HashSet<String> {
-    provider
-        .settings_config
+/// Collect upstream model identifiers from a Codex provider's explicit catalog.
+/// Catalog entries may store the identifier under `model`, `slug`, or `id`.
+pub(crate) fn collect_codex_catalog_model_ids(settings: &JsonValue) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let Some(models) = settings
         .get("modelCatalog")
         .and_then(|catalog| catalog.get("models"))
         .and_then(|models| models.as_array())
-        .map(|models| {
-            models
-                .iter()
-                .filter_map(|model| model.get("model").and_then(|value| value.as_str()))
+    else {
+        return ids;
+    };
+
+    for entry in models {
+        for key in ["model", "slug", "id"] {
+            if let Some(id) = entry
+                .get(key)
+                .and_then(JsonValue::as_str)
                 .map(str::trim)
-                .filter(|model| !model.is_empty())
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+                .filter(|id| !id.is_empty())
+            {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+fn codex_provider_catalog_model_ids(provider: &Provider) -> HashSet<String> {
+    collect_codex_catalog_model_ids(&provider.settings_config)
 }
 
 /// For Codex Chat providers, ensure the request uses the configured upstream
@@ -530,6 +543,34 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     let upstream_model = codex_provider_upstream_model(provider)?;
     body["model"] = JsonValue::String(upstream_model.clone());
     Some(upstream_model)
+}
+
+/// For a recognized Codex PreTurn compaction request only, apply the normal
+/// Codex upstream-model substitution policy. Models in the provider catalog
+/// remain selected; unknown request models fall back to the resolved provider
+/// route target.
+pub(crate) fn apply_codex_compaction_upstream_model(
+    provider: &Provider,
+    body: &mut JsonValue,
+) -> Option<(String, String)> {
+    if provider_needs_responses_namespace_flatten(provider) {
+        // The later xAI sanitizer knows both catalogued IDs and valid Grok
+        // SKUs absent from the catalog; let it preserve or remap this model.
+        return None;
+    }
+
+    let request_model = body
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(ToString::to_string)?;
+    let route_target_model = apply_codex_upstream_model(provider, body)?;
+    if route_target_model == request_model {
+        return None;
+    }
+
+    Some((request_model, route_target_model))
 }
 
 /// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
@@ -1945,6 +1986,156 @@ wire_api = "anthropic"
             body.get("model").and_then(|v| v.as_str()),
             Some("claude-opus-4-1[1m]")
         );
+    }
+
+    #[test]
+    fn preturn_compaction_preserves_catalogued_old_model_when_route_target_differs() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "deepseek-flash"
+
+[model_providers.custom]
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-flash", "displayName": "Flash route label" },
+                    { "model": "deepseek-v4-pro", "displayName": "Previous model label" }
+                ]
+            }
+        }));
+        assert_eq!(
+            codex_provider_upstream_model(&provider).as_deref(),
+            Some("deepseek-flash")
+        );
+
+        let mut stale = json!({ "model": "deepseek-v4-pro" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut stale),
+            None
+        );
+        assert_eq!(stale["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn preturn_compaction_preserves_model_listed_by_catalog_slug() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "grok-4.6"
+
+[model_providers.custom]
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "slug": "grok-4.5" },
+                    { "id": "grok-4.4" }
+                ]
+            }
+        }));
+
+        for model in ["grok-4.5", "grok-4.4"] {
+            let mut stale = json!({ "model": model });
+            assert_eq!(
+                apply_codex_compaction_upstream_model(&provider, &mut stale),
+                None
+            );
+            assert_eq!(stale["model"], model);
+        }
+    }
+
+    #[test]
+    fn preturn_compaction_defers_xai_model_choice_to_native_sanitizer() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "grok-4.6"
+
+[model_providers.custom]
+base_url = "https://api.x.ai/v1"
+wire_api = "responses"
+"#,
+            "modelCatalog": { "models": [{ "slug": "grok-4.6" }] }
+        }));
+        assert!(provider_needs_responses_namespace_flatten(&provider));
+
+        let mut compaction = json!({ "model": "grok-4.7-fast", "input": [] });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut compaction),
+            None
+        );
+        assert_eq!(compaction["model"], "grok-4.7-fast");
+
+        let upstream_model = codex_provider_upstream_model(&provider).unwrap();
+        crate::proxy::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+            &mut compaction,
+            &provider.id,
+            Some(&upstream_model),
+            &provider.settings_config,
+        );
+        assert_eq!(compaction["model"], "grok-4.7-fast");
+    }
+
+    #[test]
+    fn preturn_compaction_rewrites_uncatalogued_model_to_resolved_route_target() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "deepseek-flash"
+
+[model_providers.custom]
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-flash", "displayName": "Flash route label" }
+                ]
+            }
+        }));
+
+        let mut stale = json!({ "model": "gpt-6.1-sol" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut stale),
+            Some(("gpt-6.1-sol".to_string(), "deepseek-flash".to_string()))
+        );
+        assert_eq!(stale["model"], "deepseek-flash");
+    }
+
+    #[test]
+    fn preturn_compaction_keeps_model_when_it_matches_resolved_route_target() {
+        let provider = create_provider(json!({
+            "config": r#"model = "deepseek-flash""#
+        }));
+        let mut body = json!({ "model": "deepseek-flash" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut body),
+            None
+        );
+        assert_eq!(body["model"], "deepseek-flash");
+    }
+
+    #[test]
+    fn preturn_compaction_does_not_require_a_model_catalog() {
+        let provider = create_provider(json!({
+            "config": r#"model = "deepseek-flash""#
+        }));
+        let mut body = json!({ "model": "deepseek-v4-pro" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut body),
+            Some(("deepseek-v4-pro".to_string(), "deepseek-flash".to_string()))
+        );
+        assert_eq!(body["model"], "deepseek-flash");
+    }
+
+    #[test]
+    fn preturn_compaction_stays_unchanged_without_a_resolved_route_target() {
+        let provider = create_provider(json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-flash" }] }
+        }));
+        let mut body = json!({ "model": "deepseek-v4-pro" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut body),
+            None
+        );
+        assert_eq!(body["model"], "deepseek-v4-pro");
     }
 
     #[test]

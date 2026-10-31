@@ -60,6 +60,7 @@ pub use claude::{
     normalize_anthropic_messages_for_provider, transform_claude_request_for_api_format,
     ClaudeAdapter,
 };
+pub(crate) use codex::apply_codex_compaction_upstream_model;
 pub use codex::CodexAdapter;
 pub use codex::{
     apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
