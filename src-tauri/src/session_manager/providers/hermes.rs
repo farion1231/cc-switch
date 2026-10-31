@@ -12,7 +12,8 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 use super::blocks::{assign_turn_ids, openai_tool_calls, thinking_block, tool_result_block};
 use super::utils::for_each_jsonl_value;
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, ScanStatus,
+    TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "hermes";
@@ -28,8 +29,12 @@ fn get_hermes_sessions_dir() -> PathBuf {
 /// Scan sessions from both SQLite database and JSONL transcript files,
 /// with SQLite taking precedence on ID conflicts.
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let sqlite_sessions = scan_sessions_sqlite();
-    let jsonl_sessions = scan_sessions_jsonl();
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let sqlite_sessions = scan_sessions_sqlite_at_with_status(&get_hermes_db_path(), status);
+    let jsonl_sessions = scan_sessions_jsonl(status);
 
     if sqlite_sessions.is_empty() {
         return jsonl_sessions;
@@ -62,19 +67,24 @@ const SQLITE_SCAN_LIMIT: usize = 500;
 /// prefix followed by JSON (`SessionDB._encode_content`).
 const CONTENT_JSON_PREFIX: &str = "\u{0}json:";
 
-fn scan_sessions_sqlite() -> Vec<SessionMeta> {
-    scan_sessions_sqlite_at(&get_hermes_db_path())
+#[cfg(test)]
+fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
+    scan_sessions_sqlite_at_with_status(db_path, &mut ScanStatus::default())
 }
 
-fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
+fn scan_sessions_sqlite_at_with_status(
+    db_path: &Path,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     #[cfg(windows)]
     if crate::session_manager::hermes_wsl::is_wsl(db_path) {
         return scan_sessions_wsl(db_path).unwrap_or_else(|error| {
             log::warn!("Failed to scan Hermes WSL database: {error}");
+            status.incomplete = true;
             Vec::new()
         });
     }
-    if !db_path.exists() {
+    if status.metadata(db_path).is_none() {
         return Vec::new();
     }
 
@@ -83,16 +93,19 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     // Check if sessions table exists
-    let has_sessions: bool = conn
-        .query_row(
+    let has_sessions: bool = status
+        .record(conn.query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='sessions'",
             [],
             |row| row.get(0),
-        )
+        ))
         .unwrap_or(false);
 
     if !has_sessions {
@@ -100,25 +113,35 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
     }
 
     // Query sessions — use flexible column access via pragma
-    let columns = get_table_columns(&conn, "sessions");
+    let columns = get_table_columns_with_status(&conn, "sessions", status);
+    if columns.is_empty() {
+        status.incomplete = true;
+        return Vec::new();
+    }
 
     let query = format!("SELECT * FROM sessions ORDER BY rowid DESC LIMIT {SQLITE_SCAN_LIMIT}");
     let mut stmt = match conn.prepare(&query) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     let mut sessions = Vec::new();
     let rows = match stmt.query_map([], |row| Ok(row_to_json(row, &columns))) {
         Ok(r) => r,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     let db_source = format!("sqlite:{}", db_path.display());
     let first_user_messages = first_user_messages(&conn);
     let last_messages = last_messages(&conn);
 
-    for row_result in rows.flatten() {
+    for row_result in rows.filter_map(|row| status.record(row)) {
         if let Some(mut meta) = sqlite_row_to_session_meta(&row_result, &db_source) {
             let first = first_user_messages.get(&meta.session_id);
             if meta.title.is_none() {
@@ -300,19 +323,33 @@ fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMet
 
 /// Get column names for a table.
 fn get_table_columns(conn: &Connection, table: &str) -> Vec<String> {
+    get_table_columns_with_status(conn, table, &mut ScanStatus::default())
+}
+
+fn get_table_columns_with_status(
+    conn: &Connection,
+    table: &str,
+    status: &mut ScanStatus,
+) -> Vec<String> {
     let query = format!("PRAGMA table_info({table})");
     let mut stmt = match conn.prepare(&query) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
     let rows = match stmt.query_map([], |row| {
         let name: String = row.get(1)?;
         Ok(name)
     }) {
         Ok(r) => r,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
-    rows.flatten().collect()
+    rows.filter_map(|row| status.record(row)).collect()
 }
 
 /// Convert a SQLite row to a JSON Value using known column names.
@@ -637,25 +674,18 @@ pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
 
 // ── JSONL scanning ──────────────────────────────────────────────────
 
-fn scan_sessions_jsonl() -> Vec<SessionMeta> {
+fn scan_sessions_jsonl(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let sessions_dir = get_hermes_sessions_dir();
-    if !sessions_dir.exists() {
-        return Vec::new();
-    }
-
-    let entries = match std::fs::read_dir(&sessions_dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
+    let entries = status.entries(&sessions_dir);
 
     let mut sessions = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
         let path = entry.path();
         let ext = path.extension().and_then(|e| e.to_str());
         if ext != Some("jsonl") && ext != Some("json") {
             continue;
         }
-        if let Some(meta) = parse_jsonl_session(&path) {
+        if let Some(meta) = parse_jsonl_session_with_status(&path, status) {
             sessions.push(meta);
         }
     }
@@ -678,9 +708,14 @@ fn jsonl_message(value: &Value) -> Option<(&str, String)> {
     Some((role, text))
 }
 
+#[cfg(test)]
 fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
+    parse_jsonl_session_with_status(path, &mut ScanStatus::default())
+}
+
+fn parse_jsonl_session_with_status(path: &Path, status: &mut ScanStatus) -> Option<SessionMeta> {
     // Read head (metadata + first user message) and tail (last timestamp + last message)
-    let (head, tail) = read_head_tail_lines(path, 30, 10).ok()?;
+    let (head, tail) = status.record(read_head_tail_lines(path, 30, 10))?;
 
     let mut first_user_msg: Option<String> = None;
     let mut first_ts: Option<i64> = None;
@@ -1024,6 +1059,25 @@ mod tests {
         )
         .expect("create schema");
         (path, conn)
+    }
+
+    #[test]
+    fn sqlite_scan_distinguishes_failure_missing_and_empty_database() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let mut missing = ScanStatus::default();
+        assert!(scan_sessions_sqlite_at_with_status(&path, &mut missing).is_empty());
+        assert!(!missing.incomplete);
+        std::fs::write(&path, "not a SQLite database").unwrap();
+        let mut failed = ScanStatus::default();
+        assert!(scan_sessions_sqlite_at_with_status(&path, &mut failed).is_empty());
+        assert!(failed.incomplete);
+        std::fs::remove_file(&path).unwrap();
+        let (_, conn) = hermes_db(dir.path());
+        drop(conn);
+        let mut recovered = ScanStatus::default();
+        assert!(scan_sessions_sqlite_at_with_status(&path, &mut recovered).is_empty());
+        assert!(!recovered.incomplete);
     }
 
     fn insert_message(conn: &Connection, session: &str, role: &str, content: &str, ts: f64) {

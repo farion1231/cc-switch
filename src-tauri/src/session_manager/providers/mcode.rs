@@ -1,5 +1,6 @@
 //! MCode TUI and desktop share the local runtime database.
 use super::blocks::assign_turn_ids;
+use super::utils::ScanStatus;
 use crate::session_manager::model::SessionBlock;
 use crate::session_manager::{SessionMessage, SessionMeta};
 use rusqlite::{Connection, OpenFlags};
@@ -15,11 +16,15 @@ pub(crate) fn open_database() -> rusqlite::Result<Connection> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let Ok(data_dir) = std::path::absolute(crate::mcode_config::data_dir()) else {
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let Some(data_dir) = status.record(std::path::absolute(crate::mcode_config::data_dir())) else {
         return vec![];
     };
     let database = data_dir.join("v2/sqlite/runtime-state.sqlite");
-    if !database.exists() {
+    if status.metadata(&database).is_none() {
         return vec![];
     }
     match Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -27,6 +32,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     {
         Ok(sessions) => sessions,
         Err(error) => {
+            status.incomplete = true;
             log::warn!("Cannot read MCode sessions: {error}");
             vec![]
         }
