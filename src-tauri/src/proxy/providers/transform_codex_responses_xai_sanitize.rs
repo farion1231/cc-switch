@@ -513,7 +513,19 @@ fn simplify_xai_function_parameters(params: Option<&Value>) -> Value {
                         .iter()
                         .any(|branch| branch.get("type").and_then(Value::as_str) != Some("object"))
                     {
-                        return flatten_union_branches_to_object(branches);
+                        let mut result = flatten_union_branches_to_object(branches);
+                        // The branches may `$ref` into root definitions; carry
+                        // them over so those refs stay resolvable.
+                        if let Some(result_obj) = result.as_object_mut() {
+                            for defs_key in ["$defs", "definitions"] {
+                                if let Some(defs) = obj.get(defs_key) {
+                                    result_obj
+                                        .entry(defs_key.to_string())
+                                        .or_insert_with(|| defs.clone());
+                                }
+                            }
+                        }
+                        return result;
                     }
                 }
             }
@@ -1526,6 +1538,78 @@ mod tests {
         assert!(params["properties"].get("b").is_some());
         // …but only a field required by every branch stays required.
         assert_eq!(params["required"], json!(["shared"]));
+    }
+
+    #[test]
+    fn union_flatten_keeps_root_defs_for_nested_refs() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [{
+                "type": "function",
+                "name": "mcp__custom__nullable_with_defs",
+                "parameters": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "options": {
+                                    "type": "object",
+                                    "properties": {
+                                        "sort_by": {"$ref": "#/$defs/SortOrder"}
+                                    }
+                                }
+                            }
+                        },
+                        {"type": "null"}
+                    ],
+                    "$defs": {
+                        "SortOrder": {"type": "string", "enum": ["asc", "desc"]}
+                    }
+                }
+            }]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+        let params = &body["tools"][0]["parameters"];
+        assert_eq!(params["type"], "object");
+        assert_eq!(
+            params["properties"]["options"]["properties"]["sort_by"]["$ref"],
+            "#/$defs/SortOrder"
+        );
+        assert!(params["$defs"].get("SortOrder").is_some());
+    }
+
+    #[test]
+    fn union_flatten_keeps_root_definitions_across_object_branches() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [{
+                "type": "function",
+                "name": "mcp__custom__multi_shape_refs",
+                "parameters": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"a": {"$ref": "#/definitions/Shared"}}
+                        },
+                        {
+                            "type": "object",
+                            "properties": {"b": {"$ref": "#/definitions/Shared"}}
+                        },
+                        {"type": "null"}
+                    ],
+                    "definitions": {
+                        "Shared": {"type": "string"}
+                    }
+                }
+            }]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+        let params = &body["tools"][0]["parameters"];
+        assert_eq!(params["properties"]["a"]["$ref"], "#/definitions/Shared");
+        assert_eq!(params["properties"]["b"]["$ref"], "#/definitions/Shared");
+        assert_eq!(params["definitions"], json!({"Shared": {"type": "string"}}));
     }
 
     #[test]
