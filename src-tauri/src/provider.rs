@@ -628,6 +628,50 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub stack_models: Option<Vec<ClaudeStackModel>>,
+    /// 订阅配额接力（issue #7493）：周期额度配置。`None` 表示不参与配额接力。
+    #[serde(rename = "quotaCycle", skip_serializing_if = "Option::is_none")]
+    pub quota_cycle: Option<QuotaCycleConfig>,
+}
+
+/// 订阅配额接力（issue #7493）：供应商的周期额度配置。
+///
+/// 编程订阅按「滚动时间窗口 + 周期内 token 上限」计量（Claude Code 的 5 小时窗口、
+/// Kimi / GLM / OpenCode Go 的周期额度等）。第三方订阅没有远程额度端点，本地代理
+/// 按用量日志记账：当前周期真实消耗达到 `token_cap` 后，故障转移会跳过该供应商。
+///
+/// 存放在 provider meta 的 `quotaCycle` 字段（JSON），不涉及 schema 迁移。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaCycleConfig {
+    /// 周期 token 上限。口径为「真实消耗」：fresh input + output + cache 写 + cache 读，
+    /// 与 Usage 页 total（`real_total_tokens_sql`）一致。
+    pub token_cap: i64,
+    /// 周期时长（小时）
+    pub duration_hours: i64,
+    /// 可选周期锚点（Unix 秒）。缺省从「现在」向回看 `duration_hours` 滚动计量；
+    /// 提供时窗口对齐 `[start + k*duration, start + (k+1)*duration)` 网格。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<i64>,
+}
+
+impl QuotaCycleConfig {
+    /// 周期时长（秒）
+    pub fn duration_secs(&self) -> i64 {
+        self.duration_hours.saturating_mul(3600)
+    }
+
+    /// `now` 时刻所在周期的窗口起点（Unix 秒）。
+    ///
+    /// - 滚动窗口（缺省）：`now - duration`；
+    /// - 锚点网格：`start + k*duration`，其中 k 是包含 `now` 的格子。
+    pub fn window_start_at(&self, now: i64) -> i64 {
+        let duration = self.duration_secs();
+        match self.start {
+            None => now - duration,
+            Some(anchor) if now < anchor => anchor,
+            Some(anchor) => anchor + (now - anchor) / duration.max(1) * duration.max(1),
+        }
+    }
 }
 
 /// Stack 模式下 Claude Code 供应商发布的一个模型。

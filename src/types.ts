@@ -240,6 +240,11 @@ export interface ProviderMeta {
   githubAccountId?: string;
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
+  // 订阅配额接力（issue #7493）：周期额度配置。第三方订阅没有远程额度端点，
+  // 由本地代理按用量日志记账（与 Usage 页 total 同口径），当前周期真实消耗达到
+  // tokenCap 后故障转移会跳过该供应商。缺省从现在向回看 durationHours 滚动计量，
+  // start（Unix 秒）可选地对齐周期网格。UI 暂未提供，先由配置驱动。
+  quotaCycle?: { tokenCap: number; durationHours: number; start?: number };
 }
 
 // Stack 模式下 Claude Code 供应商发布的一个模型
