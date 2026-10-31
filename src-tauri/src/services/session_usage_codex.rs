@@ -1995,10 +1995,6 @@ fn verified_bounded_fork(parsed: &ParsedCodexFile, index: &RolloutIndex) -> Opti
     let ParentResolution::Parent(parent_id) = &parsed.parent else {
         return None;
     };
-    // Usage-record fallback requires separate replay accounting; retain the existing path.
-    if !parsed.usage_record_events.is_empty() {
-        return None;
-    }
     let hb = parsed.bounded_history.as_ref()?;
     if hb.get("thread_id")?.as_str()? != parent_id {
         return None;
@@ -2011,7 +2007,13 @@ fn verified_bounded_fork(parsed: &ParsedCodexFile, index: &RolloutIndex) -> Opti
     let cutoff = parsed.root_timestamp?;
     let first = parsed.token_events.first()?;
     // Reject copied/replayed history, cumulative-only accounting and invalid timestamps.
-    for event in &parsed.token_events {
+    // Fallback usage records also belong to this child only when their own
+    // timestamps are after the fork. Keep their native response-based IDs.
+    for event in parsed
+        .token_events
+        .iter()
+        .chain(&parsed.usage_record_events)
+    {
         if event.signature.last.as_ref()?.input.is_none()
             || event.signature.last.as_ref()?.output.is_none()
             || DateTime::parse_from_rfc3339(event.timestamp.as_deref()?)
@@ -3082,6 +3084,37 @@ mod tests {
             assert!(verified_bounded_fork(&parsed, &index).is_none());
             let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
             parsed.token_events[0].signature.last = None;
+            assert!(verified_bounded_fork(&parsed, &index).is_none());
+            // Remote compaction uses a standalone record followed by a zero-last
+            // snapshot. It must not block the entire bounded fork or be counted twice.
+            let usage =
+                token_usage_record_at("bounded_compaction", 300, 100, 20, "2026-07-10T03:00:35Z");
+            let zero = token_count_with_last_at(
+                1400,
+                1000,
+                120,
+                0,
+                0,
+                0,
+                "default",
+                "2026-07-10T03:00:36Z",
+            );
+            append_jsonl(&child, usage.clone());
+            append_jsonl(&child, zero.clone());
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            append_jsonl(&child, usage);
+            append_jsonl(&child, zero);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute("DELETE FROM session_log_sync", [])?;
+            }
+            clear_codex_replay_caches();
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.usage_record_events[0].timestamp = Some("2026-07-10T03:00:01Z".into());
+            assert!(verified_bounded_fork(&parsed, &index).is_none());
+            parsed.usage_record_events[0].timestamp = None;
             assert!(verified_bounded_fork(&parsed, &index).is_none());
         }
         Ok(())
