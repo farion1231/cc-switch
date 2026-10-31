@@ -4221,6 +4221,9 @@
     "back": "返回"
   },
   "appsPage": {
+    "displayDensity": "顯示密度",
+    "densityCompact": "緊湊",
+    "densityCards": "大卡片",
     "showInSidebar": "在側欄顯示 {{name}}",
     "lastChecked": "上次檢查 {{time}}",
     "neverChecked": "還沒檢查過更新",

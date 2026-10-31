@@ -4220,6 +4220,9 @@
     "back": "戻る"
   },
   "appsPage": {
+    "displayDensity": "表示密度",
+    "densityCompact": "コンパクト",
+    "densityCards": "大きなカード",
     "showInSidebar": "{{name}} をサイドバーに表示",
     "lastChecked": "最終確認 {{time}}",
     "neverChecked": "まだ更新を確認していません",

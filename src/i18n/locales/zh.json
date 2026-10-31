@@ -4220,6 +4220,9 @@
     "back": "返回"
   },
   "appsPage": {
+    "displayDensity": "显示密度",
+    "densityCompact": "紧凑",
+    "densityCards": "大卡片",
     "showInSidebar": "在侧栏显示 {{name}}",
     "lastChecked": "上次检查 {{time}}",
     "neverChecked": "还没检查过更新",

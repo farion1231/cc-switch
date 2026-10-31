@@ -230,6 +230,7 @@ afterAll(() => {
 describe("AppsPage concurrent CLI upgrades", () => {
   beforeEach(() => {
     vi.resetModules();
+    localStorage.removeItem("cc-switch-apps-density");
     upgraded.clear();
     outdated.clear();
     missing.clear();
@@ -282,6 +283,41 @@ describe("AppsPage concurrent CLI upgrades", () => {
         upgraded.add(tool);
         missing.delete(tool);
       });
+  });
+
+  it("switches display density without hiding apps and restores it after remount", async () => {
+    const view = await renderApps();
+    const compact = () =>
+      screen.getByRole("button", { name: "appsPage.densityCompact" });
+    const cards = () =>
+      screen.getByRole("button", { name: "appsPage.densityCards" });
+    const appCount = view.container.querySelectorAll("[data-tool-row]").length;
+    expect(compact()).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("cc-switch-apps-density")).toBeNull();
+
+    fireEvent.click(cards());
+    expect(cards()).toHaveAttribute("aria-pressed", "true");
+    expect(view.container.querySelector("[data-app-density]")).toHaveAttribute(
+      "data-app-density",
+      "cards",
+    );
+    expect(view.container.querySelectorAll("[data-tool-row]")).toHaveLength(
+      appCount,
+    );
+    expect(localStorage.getItem("cc-switch-apps-density")).toBe("cards");
+    // Existing lifecycle actions remain available in the large-card view.
+    expect(updateButton("Codex")).toBeEnabled();
+    expect(rowMenu("Codex")).toBeEnabled();
+    view.unmount();
+
+    const remounted = await renderApps();
+    expect(cards()).toHaveAttribute("aria-pressed", "true");
+    expect(
+      remounted.container.querySelectorAll("[data-tool-row]"),
+    ).toHaveLength(appCount);
+    fireEvent.click(compact());
+    expect(compact()).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("cc-switch-apps-density")).toBe("compact");
   });
 
   it("copies only the selected application's manual command and switches installation methods", async () => {
