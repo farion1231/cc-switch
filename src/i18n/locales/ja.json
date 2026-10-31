@@ -3851,6 +3851,8 @@
       "errorRateHint": "この値を超えるとサーキットブレーカーが開きます",
       "minRequests": "最小リクエスト数",
       "minRequestsHint": "エラー率を計算する前の最小リクエスト数",
+      "modelMismatchBreaker": "モデル不一致でブレーカー作動",
+      "modelMismatchBreakerHint": "上流が要求と異なるモデルで応答した場合（例：gpt-6 を要求したのに luna が応答）、ブレーカーに失敗を 1 回記録し、しきい値に達するとそのプロバイダーをスキップします。デフォルトはオフ：警告のみ。",
       "explanationTitle": "仕組み",
       "failureThresholdLabel": "失敗しきい値",
       "failureThresholdExplain": "この回数連続で失敗すると、サーキットブレーカーが開き、プロバイダーは一時的に利用不可になります",
@@ -3882,7 +3884,10 @@
       "stopFailed": "ルーティングサービスの停止に失敗しました: {{detail}}"
     },
     "stoppedWithRestore": "ルーティングサービスを停止し、すべてのアプリを直接接続に戻しました",
-    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
+    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}",
+    "modelMismatch": {
+      "detected": "モデル不一致：プロバイダー「{{provider}}」は {{requestModel}} を要求しましたが、{{responseModel}} が応答しました"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} は接続可能 ({{responseTimeMs}}ms)",
