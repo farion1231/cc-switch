@@ -1214,6 +1214,191 @@ describe("PiProviderForm", () => {
     expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(null);
   });
 
+  it("fills Pi model token limits from fetched model metadata", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "zhipu/glm-5.3",
+            ownedBy: "openai",
+            maxInputTokens: 1_000_000,
+            maxOutputTokens: 128_000,
+          },
+          {
+            id: "plain-model",
+            ownedBy: "openai",
+          },
+        ]),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save fetched limits"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      {
+        target: { value: "https://models.example/v1" },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await fetchModelsAndClosePicker(user);
+
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    const modelIdGroup = within(modelIdInput.parentElement as HTMLElement);
+    await waitFor(() =>
+      expect(modelIdGroup.getByRole("button")).toBeInTheDocument(),
+    );
+    await user.click(modelIdGroup.getByRole("button"));
+    await user.click(
+      await screen.findByRole("option", { name: "zhipu/glm-5.3" }),
+    );
+
+    expect(modelIdInput).toHaveValue("zhipu/glm-5.3");
+    expect(screen.getByLabelText("pi.form.modelName")).toHaveValue(
+      "zhipu/glm-5.3",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "展开或收起模型详情" }),
+    );
+    expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
+      1_000_000,
+    );
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128_000);
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    expect(JSON.parse(configEditor.value).models[0]).toMatchObject({
+      id: "zhipu/glm-5.3",
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+    });
+
+    const editedConfig = JSON.parse(configEditor.value);
+    editedConfig.models[0].reasoning = true;
+    fireEvent.change(configEditor, {
+      target: { value: JSON.stringify(editedConfig) },
+    });
+    await user.click(modelIdGroup.getByRole("button"));
+    await user.click(
+      await screen.findByRole("option", { name: "plain-model" }),
+    );
+    expect(modelIdInput).toHaveValue("plain-model");
+    expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(null);
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(null);
+    const plainModel = JSON.parse(configEditor.value).models[0];
+    expect(plainModel).toMatchObject({
+      id: "plain-model",
+      name: "plain-model",
+    });
+    expect(plainModel).not.toHaveProperty("contextWindow");
+    expect(plainModel).not.toHaveProperty("maxTokens");
+  });
+
+  it("fills OpenRouter token pricing without overwriting manual Pi costs", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "priced-a",
+            ownedBy: "openrouter",
+            pricing: {
+              prompt: "0.000001",
+              completion: "0.000002",
+              inputCacheRead: "0.0000005",
+              inputCacheWrite: "0",
+              request: "0.01",
+            },
+          },
+          {
+            id: "priced-b",
+            ownedBy: "openrouter",
+            pricing: {
+              prompt: "not-a-number",
+              completion: "0.000004",
+              inputCacheRead: "0.0000008",
+              inputCacheWrite: "0",
+            },
+          },
+        ]),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        providerId="openrouter"
+        submitLabel="Save priced provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+        initialData={{
+          name: "OpenRouter",
+          settingsConfig: {
+            name: "OpenRouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-completions",
+            apiKey: "literal-key",
+            models: [
+              {
+                id: "existing",
+                name: "Existing",
+                cost: { input: 0, other: 7 },
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    await fetchModelsAndClosePicker(user);
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    const modelIdGroup = within(modelIdInput.parentElement as HTMLElement);
+    await waitFor(() => expect(modelIdGroup.getByRole("button")).toBeEnabled());
+
+    await user.click(modelIdGroup.getByRole("button"));
+    await user.click(await screen.findByRole("option", { name: "priced-a" }));
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    expect(JSON.parse(configEditor.value).models[0].cost).toEqual({
+      input: 0,
+      output: 2,
+      cacheRead: 0.5,
+      cacheWrite: 0,
+      other: 7,
+    });
+
+    const manuallyEdited = JSON.parse(configEditor.value);
+    manuallyEdited.models[0].cost.output = 9;
+    fireEvent.change(configEditor, {
+      target: { value: JSON.stringify(manuallyEdited, null, 2) },
+    });
+
+    await user.click(modelIdGroup.getByRole("button"));
+    await user.click(await screen.findByRole("option", { name: "priced-b" }));
+    expect(JSON.parse(configEditor.value).models[0].cost).toEqual({
+      input: 0,
+      output: 9,
+      cacheRead: 0.0000008 * 1_000_000,
+      cacheWrite: 0,
+      other: 7,
+    });
+  });
+
   it("ignores a stale model-list response after the request config changes", async () => {
     const user = userEvent.setup();
     let slowRequestStarted = false;
@@ -2695,6 +2880,42 @@ describe("PiProviderForm", () => {
       );
     }
 
+    it.each([
+      ["model-x", 1000000, "1M", 1000000],
+      ["model-x", undefined, "123K", 123456],
+      ["model-x", 0, "123K", 123456],
+      ["opaque-model", 1000000, "1M", 1000000],
+    ])(
+      "previews the context window saved for %s with fetched limit %s",
+      async (id, maxInputTokens, preview, saved) => {
+        const user = userEvent.setup();
+        serveModels([id]);
+        server.use(
+          http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+            HttpResponse.json([{ id, maxInputTokens }]),
+          ),
+        );
+        const editor = await fillCustomProvider(user, "pi");
+        await user.click(
+          screen.getByRole("button", { name: "providerForm.fetchModels" }),
+        );
+        const checkbox = await screen.findByRole("checkbox", { name: id });
+        const dialog = checkbox.closest('[role="dialog"]') as HTMLElement;
+        await waitFor(() =>
+          expect(checkbox.closest("label")).toHaveTextContent(preview),
+        );
+        await user.click(checkbox);
+        await user.click(
+          within(dialog).getByRole("button", {
+            name: "providerForm.modelPicker.apply",
+          }),
+        );
+        await waitFor(() =>
+          expect(JSON.parse(editor.value).models[0].contextWindow).toBe(saved),
+        );
+      },
+    );
+
     it("adds checked models with models.dev metadata and removes unchecked ones", async () => {
       const user = userEvent.setup();
       serveModels(["model-x", "model-y", "model-z"]);
@@ -2762,6 +2983,246 @@ describe("PiProviderForm", () => {
       expect(JSON.parse(configEditor.value).models[0]).not.toHaveProperty(
         "thinkingLevelMap",
       );
+    });
+  });
+  it.each([
+    [
+      "complete",
+      {
+        prompt: "0.000003",
+        completion: "0.000015",
+        inputCacheRead: "0",
+        inputCacheWrite: "0",
+      },
+      true,
+    ],
+    ["missing caches", { prompt: "0.000003", completion: "0.000015" }, false],
+    [
+      "negative cache",
+      {
+        prompt: "0.000003",
+        completion: "0.000015",
+        inputCacheRead: "-1",
+        inputCacheWrite: "0",
+      },
+      false,
+    ],
+    [
+      "invalid cache",
+      {
+        prompt: "0.000003",
+        completion: "0.000015",
+        inputCacheRead: "NaN",
+        inputCacheWrite: "0",
+      },
+      false,
+    ],
+    [
+      "overflow",
+      {
+        prompt: "1e309",
+        completion: "0.000015",
+        inputCacheRead: "0",
+        inputCacheWrite: "0",
+      },
+      false,
+    ],
+    [
+      "non-string",
+      {
+        prompt: 3,
+        completion: "0.000015",
+        inputCacheRead: "0",
+        inputCacheWrite: "0",
+      },
+      false,
+    ],
+  ])(
+    "emits only schema-complete fetched costs: %s",
+    async (_name, pricing, complete) => {
+      const user = userEvent.setup();
+      const onSubmit = vi.fn();
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+          HttpResponse.json([
+            { id: "opaque-priced", pricing },
+            { id: "opaque-plain" },
+          ]),
+        ),
+      );
+      render(
+        <PiProviderForm
+          appId="pi"
+          providerId="testprov"
+          submitLabel="Save pricing"
+          onSubmit={onSubmit}
+          onCancel={() => {}}
+          initialData={{
+            name: "Pricing",
+            settingsConfig: {
+              name: "Pricing",
+              baseUrl: "https://models.example/v1",
+              api: "openai-completions",
+              apiKey: "key",
+              models: [completeModel("opaque-existing")],
+            },
+          }}
+        />,
+      );
+      await fetchModelsAndClosePicker(user);
+      const group = within(
+        screen.getByLabelText("pi.form.modelId").parentElement as HTMLElement,
+      );
+      await user.click(group.getByRole("button"));
+      await user.click(
+        await screen.findByRole("option", { name: "opaque-priced" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Save pricing" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      const model = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)
+        .models[0];
+      if (complete) {
+        expect(model.cost).toEqual({
+          input: 3,
+          output: 15,
+          cacheRead: 0,
+          cacheWrite: 0,
+        });
+      } else {
+        expect(model).not.toHaveProperty("cost");
+      }
+      await user.click(group.getByRole("button"));
+      await user.click(
+        await screen.findByRole("option", { name: "opaque-plain" }),
+      );
+      const editor = screen.getByLabelText(
+        "provider.configJson",
+      ) as HTMLTextAreaElement;
+      expect(JSON.parse(editor.value).models[0]).not.toHaveProperty("cost");
+    },
+  );
+
+  it("preserves manual limits when selecting and reselecting a fetched model", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "opaque-limited",
+            maxInputTokens: 1000000,
+            maxOutputTokens: 128000,
+          },
+          { id: "opaque-plain" },
+        ]),
+      ),
+    );
+    render(
+      <PiProviderForm
+        appId="pi"
+        providerId="testprov"
+        submitLabel="Save provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+        initialData={{
+          name: "Limits",
+          settingsConfig: {
+            name: "Limits",
+            baseUrl: "https://models.example/v1",
+            api: "openai-completions",
+            apiKey: "key",
+            models: [completeModel("opaque-existing")],
+          },
+        }}
+      />,
+    );
+    await fetchModelsAndClosePicker(user);
+    const group = within(
+      screen.getByLabelText("pi.form.modelId").parentElement as HTMLElement,
+    );
+    for (const id of ["opaque-limited", "opaque-limited", "opaque-plain"]) {
+      await user.click(group.getByRole("button"));
+      await user.click(await screen.findByRole("option", { name: id }));
+      const editor = screen.getByLabelText(
+        "provider.configJson",
+      ) as HTMLTextAreaElement;
+      expect(JSON.parse(editor.value).models[0]).toMatchObject({
+        contextWindow: 128000,
+        maxTokens: 16384,
+      });
+    }
+  });
+
+  it("keeps manual prices across an incomplete fetched model without emitting partial cost", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "opaque-full",
+            pricing: {
+              prompt: "0.000003",
+              completion: "0.000015",
+              inputCacheRead: "0.000001",
+              inputCacheWrite: "0",
+            },
+          },
+          {
+            id: "opaque-partial",
+            pricing: { prompt: "0.000004", completion: "0.000016" },
+          },
+        ]),
+      ),
+    );
+    render(
+      <PiProviderForm
+        appId="pi"
+        providerId="testprov"
+        submitLabel="Save provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+        initialData={{
+          name: "Manual",
+          settingsConfig: {
+            name: "Manual",
+            baseUrl: "https://models.example/v1",
+            api: "openai-completions",
+            apiKey: "key",
+            models: [completeModel("opaque-existing")],
+          },
+        }}
+      />,
+    );
+    await fetchModelsAndClosePicker(user);
+    const group = within(
+      screen.getByLabelText("pi.form.modelId").parentElement as HTMLElement,
+    );
+    await user.click(group.getByRole("button"));
+    await user.click(
+      await screen.findByRole("option", { name: "opaque-full" }),
+    );
+    const editor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    const edited = JSON.parse(editor.value);
+    edited.models[0].cost.input = 0;
+    fireEvent.change(editor, { target: { value: JSON.stringify(edited) } });
+    await user.click(group.getByRole("button"));
+    await user.click(
+      await screen.findByRole("option", { name: "opaque-partial" }),
+    );
+    expect(JSON.parse(editor.value).models[0]).not.toHaveProperty("cost");
+    const unrelated = JSON.parse(editor.value);
+    unrelated.models[0].reasoning = true;
+    fireEvent.change(editor, { target: { value: JSON.stringify(unrelated) } });
+    await user.click(group.getByRole("button"));
+    await user.click(
+      await screen.findByRole("option", { name: "opaque-full" }),
+    );
+    expect(JSON.parse(editor.value).models[0].cost).toEqual({
+      input: 0,
+      output: 15,
+      cacheRead: 1,
+      cacheWrite: 0,
     });
   });
 });
