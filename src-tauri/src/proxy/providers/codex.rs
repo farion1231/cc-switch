@@ -1038,6 +1038,14 @@ impl ProviderAdapter for CodexAdapter {
         }
 
         if provider.is_github_copilot() {
+            #[cfg(test)]
+            if let Some(url) = provider
+                .settings_config
+                .get("base_url")
+                .and_then(|v| v.as_str())
+            {
+                return Ok(url.trim_end_matches('/').to_string());
+            }
             return Ok("https://api.githubcopilot.com".to_string());
         }
 

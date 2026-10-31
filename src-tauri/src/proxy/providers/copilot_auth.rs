@@ -292,6 +292,19 @@ pub enum CopilotReasoningEffort {
     Ultra,
 }
 
+pub fn copilot_auto_model() -> CopilotModel {
+    CopilotModel {
+        id: super::copilot_model_map::COPILOT_AUTO_MODEL_ID.to_string(),
+        name: "Copilot Auto（实验功能）".to_string(),
+        vendor: "copilot".to_string(),
+        model_picker_enabled: true,
+        context_window: None,
+        supported_endpoints: vec!["/chat/completions".to_string()],
+        supports_parallel_tool_calls: None,
+        reasoning_effort: None,
+    }
+}
+
 /// Copilot Models API 响应
 #[derive(Debug, Deserialize)]
 struct CopilotModelsResponse {
@@ -938,12 +951,19 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
-        Ok(self
+        let mut models: Vec<CopilotModel> = self
             .fetch_all_models_for_account(account_id)
             .await?
             .into_iter()
             .filter(|model| model.model_picker_enabled)
-            .collect())
+            .collect();
+        if !models
+            .iter()
+            .any(|model| super::copilot_model_map::is_copilot_auto(&model.id))
+        {
+            models.push(copilot_auto_model());
+        }
+        Ok(models)
     }
 
     async fn fetch_all_models_for_account(
@@ -1035,6 +1055,9 @@ impl CopilotAuthManager {
         account_id: &str,
         model_id: &str,
     ) -> Result<Option<String>, CopilotAuthError> {
+        if super::copilot_model_map::is_copilot_auto(model_id) {
+            return Ok(Some("copilot".to_string()));
+        }
         let models = self.fetch_all_models_for_account(account_id).await?;
         Ok(super::copilot_model_map::resolve_model(model_id, &models).map(|model| model.vendor))
     }
@@ -1065,6 +1088,14 @@ impl CopilotAuthManager {
         model_id: &str,
         api_format: crate::provider::CodexCopilotApiFormat,
     ) -> Result<Option<super::copilot_model_map::ResolvedCopilotModel>, CopilotAuthError> {
+        if super::copilot_model_map::is_copilot_auto(model_id) {
+            return Ok(Some(super::copilot_model_map::ResolvedCopilotModel {
+                id: super::copilot_model_map::COPILOT_AUTO_MODEL_ID.to_string(),
+                vendor: "copilot".to_string(),
+                transport: super::copilot_model_map::resolve_copilot_auto_transport(api_format)
+                    .ok(),
+            }));
+        }
         let models = self.fetch_all_models_for_account(account_id).await?;
         Ok(super::copilot_model_map::resolve_model_with_format(
             model_id, &models, api_format,
@@ -2146,12 +2177,30 @@ mod tests {
                 Some(account_model)
             );
         }
-        assert!(manager
-            .fetch_models_for_account("12345")
+        let models = manager.fetch_models_for_account("12345").await.unwrap();
+        assert!(models.iter().all(|model| model.id != "gpt-hidden"));
+        assert!(models.iter().any(|model| model.id == "copilot-auto"));
+
+        let auto_vendor = manager
+            .get_model_vendor_for_account("12345", "copilot-auto")
+            .await
+            .unwrap();
+        assert_eq!(auto_vendor.as_deref(), Some("copilot"));
+
+        let auto_resolved = manager
+            .resolve_model_for_account("12345", "copilot-auto", CodexCopilotApiFormat::Auto)
             .await
             .unwrap()
-            .iter()
-            .all(|model| model.id != "gpt-hidden"));
+            .unwrap();
+        assert_eq!(auto_resolved.id, "copilot-auto");
+        assert_eq!(auto_resolved.vendor, "copilot");
+        assert_eq!(
+            auto_resolved.transport,
+            Some(super::super::copilot_model_map::CopilotTransport {
+                protocol: super::super::copilot_model_map::CopilotProtocol::Chat,
+                endpoint: "/chat/completions".to_string(),
+            })
+        );
     }
 
     #[tokio::test]
@@ -2181,11 +2230,9 @@ mod tests {
         ]);
 
         for account in ["messages-only", "no-metadata"] {
-            assert!(manager
-                .fetch_models_for_account(account)
-                .await
-                .unwrap()
-                .is_empty());
+            let models = manager.fetch_models_for_account(account).await.unwrap();
+            assert!(models.iter().all(|model| model.id != "claude-opus-4.7"));
+            assert!(models.iter().any(|model| model.id == "copilot-auto"));
             assert_eq!(
                 manager
                     .get_model_vendor_for_account(account, "claude-opus-4-8")

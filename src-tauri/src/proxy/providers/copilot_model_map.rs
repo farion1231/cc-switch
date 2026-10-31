@@ -31,6 +31,29 @@ pub struct ResolvedCopilotModel {
     pub transport: Option<CopilotTransport>,
 }
 
+pub const COPILOT_AUTO_MODEL_ID: &str = "copilot-auto";
+
+pub fn is_copilot_auto(model_id: &str) -> bool {
+    super::super::model_mapper::strip_one_m_suffix_for_upstream(model_id.trim())
+        .eq_ignore_ascii_case(COPILOT_AUTO_MODEL_ID)
+}
+
+pub fn resolve_copilot_auto_transport(
+    api_format: CodexCopilotApiFormat,
+) -> Result<CopilotTransport, crate::proxy::error::ProxyError> {
+    match api_format {
+        CodexCopilotApiFormat::OpenaiResponses => {
+            Err(crate::proxy::error::ProxyError::ConfigError(
+                "Copilot Auto 需要 Chat Completions。请将 API 格式设为 Auto 或 Chat。".into(),
+            ))
+        }
+        CodexCopilotApiFormat::Auto | CodexCopilotApiFormat::OpenaiChat => Ok(CopilotTransport {
+            protocol: CopilotProtocol::Chat,
+            endpoint: "/chat/completions".into(),
+        }),
+    }
+}
+
 /// 归一化客户端 model ID 为 Copilot upstream 接受的形式。
 /// 返回 `None` 表示无需变换（已归一化、非 Claude 4.x 系列、或空输入）。
 pub(super) fn normalize_to_copilot_id(client_id: &str) -> Option<String> {
@@ -131,6 +154,9 @@ fn dashes_to_dot_in_last_version(id: &str) -> Option<String> {
 /// 返回 `None` 表示无需变换或无可降级的 family 候选（保留原 ID 让上游决定，
 /// 让用户拿到明确的 `model_not_supported` 而非被静默替换）。
 pub fn resolve_against_models(client_id: &str, models: &[CopilotModel]) -> Option<String> {
+    if is_copilot_auto(client_id) {
+        return None;
+    }
     match_copilot_model(client_id, models, None).and_then(|matched| matched.replacement_id)
 }
 
@@ -143,6 +169,13 @@ pub fn resolve_model_record<'a>(
 }
 
 pub fn resolve_model(client_id: &str, models: &[CopilotModel]) -> Option<ResolvedCopilotModel> {
+    if is_copilot_auto(client_id) {
+        return Some(ResolvedCopilotModel {
+            id: COPILOT_AUTO_MODEL_ID.to_string(),
+            vendor: "copilot".to_string(),
+            transport: resolve_copilot_auto_transport(CodexCopilotApiFormat::Auto).ok(),
+        });
+    }
     // Legacy/vendor lookups must not filter out models without Codex transports.
     let model = match_copilot_model(client_id, models, None)?.model;
     Some(ResolvedCopilotModel {
@@ -159,6 +192,13 @@ pub fn resolve_model_with_format(
     models: &[CopilotModel],
     api_format: CodexCopilotApiFormat,
 ) -> Option<ResolvedCopilotModel> {
+    if is_copilot_auto(client_id) {
+        return Some(ResolvedCopilotModel {
+            id: COPILOT_AUTO_MODEL_ID.to_string(),
+            vendor: "copilot".to_string(),
+            transport: resolve_copilot_auto_transport(api_format).ok(),
+        });
+    }
     let model = match_copilot_model(client_id, models, Some(api_format))?.model;
     Some(ResolvedCopilotModel {
         id: model.id.clone(),
@@ -980,5 +1020,57 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn copilot_auto_helpers_and_transport() {
+        assert!(is_copilot_auto("copilot-auto"));
+        assert!(is_copilot_auto("COPILOT-AUTO"));
+        assert!(is_copilot_auto(" copilot-auto "));
+        assert!(is_copilot_auto(" COPILOT-AUTO[1M] "));
+        assert!(is_copilot_auto("copilot-auto[1m]"));
+        assert!(!is_copilot_auto("copilot-auto-preview"));
+        assert!(!is_copilot_auto("gpt-4o"));
+
+        let auto_transport = resolve_copilot_auto_transport(CodexCopilotApiFormat::Auto).unwrap();
+        assert_eq!(auto_transport.protocol, CopilotProtocol::Chat);
+        assert_eq!(auto_transport.endpoint, "/chat/completions");
+
+        let chat_transport =
+            resolve_copilot_auto_transport(CodexCopilotApiFormat::OpenaiChat).unwrap();
+        assert_eq!(chat_transport.protocol, CopilotProtocol::Chat);
+        assert_eq!(chat_transport.endpoint, "/chat/completions");
+
+        assert!(resolve_copilot_auto_transport(CodexCopilotApiFormat::OpenaiResponses).is_err());
+    }
+
+    #[test]
+    fn copilot_auto_resolution_matches_and_does_not_modify_client_id() {
+        let models = vec![model("gpt-4o"), model("claude-sonnet-4.6")];
+        assert_eq!(resolve_against_models("copilot-auto", &models), None);
+
+        let resolved = resolve_model("copilot-auto", &models).unwrap();
+        assert_eq!(resolved.id, "copilot-auto");
+        assert_eq!(resolved.vendor, "copilot");
+        assert_eq!(
+            resolved.transport,
+            Some(CopilotTransport {
+                protocol: CopilotProtocol::Chat,
+                endpoint: "/chat/completions".to_string(),
+            })
+        );
+
+        let resolved_chat =
+            resolve_model_with_format("copilot-auto", &models, CodexCopilotApiFormat::OpenaiChat)
+                .unwrap();
+        assert!(resolved_chat.transport.is_some());
+
+        let resolved_responses = resolve_model_with_format(
+            "copilot-auto",
+            &models,
+            CodexCopilotApiFormat::OpenaiResponses,
+        )
+        .unwrap();
+        assert!(resolved_responses.transport.is_none());
     }
 }
