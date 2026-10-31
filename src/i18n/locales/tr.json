@@ -4222,6 +4222,7 @@
     "desktopNotConnected": "Bağlı değil",
     "newVersion": "{{version}} mevcut",
     "notRunnable": "Çalıştırılamıyor",
+    "versionUnknown": "Kurulum tespit edildi ancak sürüm okunamadı",
     "updateNeedsNode": "{{version}} sürümü Node {{required}} gerektiriyor; bu kurulumda Node {{current}} çalışıyor. Önce Node'u yükseltin.",
     "otherInstalls": "{{count}} daha fazla yükleme",
     "installsFound": "{{count}} kurulum bulundu",

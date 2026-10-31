@@ -4242,6 +4242,7 @@
     "desktopNotConnected": "未接入",
     "newVersion": "有新版本 {{version}}",
     "notRunnable": "无法运行",
+    "versionUnknown": "已检测到安装，但未能读取版本",
     "updateNeedsNode": "新版本 {{version}} 要求 Node {{required}}，这处安装用的是 Node {{current}}，需要先升级 Node。",
     "otherInstalls": "另有 {{count}} 处安装",
     "installsFound": "检测到 {{count}} 处安装",

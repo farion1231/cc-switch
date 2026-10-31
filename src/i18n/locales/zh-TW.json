@@ -4243,6 +4243,7 @@
     "desktopNotConnected": "未接入",
     "newVersion": "有新版本 {{version}}",
     "notRunnable": "無法執行",
+    "versionUnknown": "已偵測到安裝，但未能讀取版本",
     "updateNeedsNode": "新版本 {{version}} 需要 Node {{required}}，這處安裝用的是 Node {{current}}，需要先升級 Node。",
     "otherInstalls": "另有 {{count}} 處安裝",
     "installsFound": "偵測到 {{count}} 處安裝",

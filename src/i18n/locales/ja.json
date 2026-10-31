@@ -4242,6 +4242,7 @@
     "desktopNotConnected": "未接続",
     "newVersion": "新しいバージョン {{version}}",
     "notRunnable": "実行できません",
+    "versionUnknown": "インストールを検出しましたが、バージョンを読み取れませんでした",
     "updateNeedsNode": "{{version}} には Node {{required}} が必要ですが、このインストールは Node {{current}} で動いています。先に Node を更新してください。",
     "otherInstalls": "ほかに {{count}} 件のインストール",
     "installsFound": "{{count}} 件のインストールを検出",
