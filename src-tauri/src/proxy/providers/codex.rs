@@ -590,6 +590,39 @@ pub fn strip_codex_hosted_web_search(body: &mut JsonValue) -> bool {
     changed
 }
 
+/// Codex 客户端私有、第三方原生 Responses 网关普遍不认识的 `include` 标记。Codex 0.163+
+/// 起随请求下发（#8996 / #9042），ChatGPT 后端之外的网关会拿它整条 400。只删这一项，
+/// 其余标记原样保留。
+const CODEX_PRIVATE_INCLUDE_MARKERS: &[&str] = &["output.encrypted_content"];
+
+/// 去掉 `include` 里的 Codex 私有标记：去完为空时整个键删掉；缺键、非数组、非对象
+/// 请求一律不动；数组里的非字符串项原样留着。返回是否改了请求。和 xAI 侧的白名单各管
+/// 一段，重复删无副作用。
+pub fn strip_codex_private_include_markers(body: &mut JsonValue) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let mut include_gone = false;
+    let changed = match obj.get_mut("include").and_then(JsonValue::as_array_mut) {
+        Some(include) => {
+            let before = include.len();
+            include.retain(|marker| {
+                !marker
+                    .as_str()
+                    .is_some_and(|marker| CODEX_PRIVATE_INCLUDE_MARKERS.contains(&marker))
+            });
+            let changed = include.len() != before;
+            include_gone = changed && include.is_empty();
+            changed
+        }
+        None => false,
+    };
+    if include_gone {
+        obj.remove("include");
+    }
+    changed
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
@@ -2540,5 +2573,66 @@ wire_api = "responses"
 "#
         }));
         assert!(!provider_needs_responses_namespace_flatten(&other));
+    }
+
+    #[test]
+    fn strip_private_include_markers_keeps_other_markers() {
+        let mut body = json!({
+            "include": ["reasoning.encrypted_content", "output.encrypted_content"]
+        });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_removes_empty_include() {
+        let mut body = json!({ "include": ["output.encrypted_content"] });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn strip_private_include_markers_leaves_unrelated_markers_alone() {
+        let mut body = json!({ "include": ["web_search_call.action.sources"] });
+
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["web_search_call.action.sources"]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_ignores_shapes_it_does_not_own() {
+        // Missing key.
+        let mut body = json!({ "model": "m" });
+        assert!(!strip_codex_private_include_markers(&mut body));
+
+        // Not an array.
+        let mut body = json!({ "include": "output.encrypted_content" });
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!("output.encrypted_content"));
+
+        // Non-object body.
+        let mut body = json!(["output.encrypted_content"]);
+        assert!(!strip_codex_private_include_markers(&mut body));
+    }
+
+    #[test]
+    fn strip_private_include_markers_keeps_non_string_entries() {
+        // `include` should only ever hold strings; if something else shows up, the
+        // private marker still goes but the unknown entry is left where it was.
+        let mut body = json!({ "include": ["output.encrypted_content", 42] });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!([42]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_is_idempotent() {
+        let mut body = json!({ "include": ["reasoning.encrypted_content"] });
+
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
     }
 }
