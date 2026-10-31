@@ -61,6 +61,45 @@ describe("detectCodingPlanProvider (MiniMax)", () => {
   });
 });
 
+describe("detectCodingPlanProvider (Bailian)", () => {
+  it.each([
+    "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+    "https://coding.dashscope.aliyuncs.com/v1",
+    "https://CODING.DASHSCOPE.ALIYUNCS.COM/apps/anthropic",
+  ])("recognizes the Bailian Coding Plan host %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBe("bailian");
+  });
+
+  it.each([
+    // 按量付费 / 千问 Token Plan / 国际站都不是百炼 Coding Plan
+    "https://dashscope.aliyuncs.com/apps/anthropic",
+    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+    "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+  ])("ignores non-Coding-Plan dashscope hosts such as %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).not.toBe("bailian");
+  });
+});
+
+describe("detectCodingPlanProvider (Qwen Token Plan)", () => {
+  it.each([
+    "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "https://token-plan.maas.qwenaiapi.com/apps/anthropic",
+    "https://TOKEN-PLAN.CN-BEIJING.MAAS.ALIYUNCS.COM/apps/anthropic",
+  ])("recognizes the Token Plan host %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBe("qwen_token_plan");
+  });
+
+  it.each([
+    // 国际站 / 百炼 Coding Plan / 小米 Token Plan 都不是千问AI平台 Token Plan
+    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+    "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+    "https://token-plan-cn.xiaomimimo.com/v1",
+  ])("ignores other token plan hosts such as %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).not.toBe("qwen_token_plan");
+  });
+});
+
 describe("extractBaseUrlForUsageDetection", () => {
   it("reads env.ANTHROPIC_BASE_URL for claude and claude-desktop", () => {
     const config = {
@@ -190,6 +229,40 @@ describe("injectCodingPlanUsageScript", () => {
       },
     });
     expect(injected.meta?.usage_script?.codingPlanProvider).toBe("kimi");
+  });
+
+  it("preselects Bailian for the claude preset without enabling (AK/SK query)", () => {
+    const injected = inject("claude", {
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL:
+            "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+        },
+      },
+    });
+    // 预选套餐模板但不自动启用：还要账号 AK/SK，开启前不能先报失败
+    expect(injected.meta?.usage_script).toMatchObject({
+      enabled: false,
+      templateType: "token_plan",
+      codingPlanProvider: "bailian",
+    });
+  });
+
+  it("preselects Qwen Token Plan for the claude preset without enabling (AK/SK query)", () => {
+    const injected = inject("claude", {
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL:
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        },
+      },
+    });
+    // 同上百炼：预选但不自动启用
+    expect(injected.meta?.usage_script).toMatchObject({
+      enabled: false,
+      templateType: "token_plan",
+      codingPlanProvider: "qwen_token_plan",
+    });
   });
 
   it("injects every coding plan for non-claude apps", () => {

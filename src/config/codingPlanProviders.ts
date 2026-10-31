@@ -22,7 +22,9 @@ export interface CodingPlanProviderEntry {
     | "zenmux"
     | "volcengine"
     | "opencode_go"
-    | "command_code";
+    | "command_code"
+    | "bailian"
+    | "qwen_token_plan";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -87,6 +89,29 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     label: "Command Code",
     pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
   },
+  {
+    // 阿里云百炼 Coding Plan（千问AI平台 Coding Plan，CN 站）：套餐 key 形如
+    // sk-sp-xxxxx，base 固定 https://coding.dashscope.aliyuncs.com/{v1,apps/anthropic}。
+    // 用量在百炼控制台网关后面（5 小时 / 每周 / 每月请求数），后端用账号 AK/SK
+    // 走 ACS3 换 console token 再查，所以除推理 Key 外还要另填 AccessKey ID / Secret。
+    // 按量付费 dashscope.aliyuncs.com、Token Plan 的 token-plan...maas.aliyuncs.com
+    // 与国际站 dashscope-intl 都不含 coding. 前缀，刻意不命中。
+    id: "bailian",
+    label: "百炼 Coding Plan (千问AI平台)",
+    pattern: /coding\.dashscope\.aliyuncs\.com/i,
+  },
+  {
+    // 千问AI平台 Token Plan（Credits 订阅）。base 有两种官方形态：
+    // 预设用 https://token-plan.cn-beijing.maas.aliyuncs.com/{compatible-mode/v1,apps/anthropic}，
+    // 官方文档写的是 https://token-plan.maas.qwenaiapi.com/...，两者都命中。
+    // 用量在百炼控制台网关后面：后端用账号 AK/SK 走 ACS3 换 console token 再查，
+    // 所以除推理 Key 外还要在用量配置里另填 AccessKey ID / Secret（火山方舟同款字段）。
+    // 国际站 token-plan.ap-southeast-1 刻意不命中（控制台与网关不同，未取证）。
+    id: "qwen_token_plan",
+    label: "千问AI平台 Token Plan",
+    pattern:
+      /token-plan\.(?:cn-beijing\.maas\.aliyuncs\.com|maas\.qwenaiapi\.com)/i,
+  },
 ] as const;
 
 /** 根据 Base URL 自动检测 Coding Plan 供应商；未命中返回 null */
@@ -101,15 +126,16 @@ export function detectCodingPlanProvider(
 }
 
 /**
- * 认出套餐地址后，额度查询是否默认启用。火山查额度要账号级 AccessKey ID +
- * Secret（不是推理 Key），新建或导入时还没有这两项，启用了只会在卡片上显示
- * 「额度查询失败」，被误读成供应商没生效（#8494）。所以火山只预选套餐、不启用，
- * 等用户在额度设置里填好凭据再打开。与后端深链接导入的默认值一致。
+ * 认出套餐地址后，额度查询是否默认启用。火山方舟、百炼 Coding Plan、千问
+ * Token Plan 查额度都要账号级 AccessKey ID + Secret（不是推理 Key），新建或
+ * 导入时还没有这两项，启用了只会在卡片上显示「额度查询失败」，被误读成供应商
+ * 没生效（#8494）。所以它们只预选套餐、不启用，等用户在额度设置里填好凭据再
+ * 打开。与后端深链接导入的默认值一致。
  */
 export function codingPlanEnabledByDefault(
   id: CodingPlanProviderEntry["id"],
 ): boolean {
-  return id !== "volcengine";
+  return id !== "volcengine" && id !== "bailian" && id !== "qwen_token_plan";
 }
 
 /**
@@ -174,6 +200,9 @@ export function extractBaseUrlForUsageDetection(
  *   客户端协议、base_url 路径无关；凭据提取与后端 `resolve_usage_credentials` 对齐
  * - ZenMux 例外，仍只在 Claude 注入：它的查询直接 GET 用户填的 base_url，
  *   其他 app 的推理地址未验证能返回额度
+ * - 火山方舟与阿里云两条套餐线（百炼 Coding Plan / 千问 Token Plan）注入但
+ *   `enabled: false`（见 `codingPlanEnabledByDefault`）：它们除推理 Key 外还要
+ *   账号 AK/SK，预开启会让新卡片先显示一条失败
  * - code 置空：Rust 端走专用 `coding_plan::get_coding_plan_quota`，不执行 JS 脚本
  */
 export function injectCodingPlanUsageScript<
@@ -192,6 +221,8 @@ export function injectCodingPlanUsageScript<
   if (!codingPlanProvider) return provider;
   if (codingPlanProvider === "zenmux" && appId !== "claude") return provider;
 
+  // 要账号 AK/SK 才查得到的套餐（火山、百炼、千问 Token Plan）只预选模板，
+  // 不自动启用：否则用户填凭据之前卡片就先报一条失败（#8494 / PR #8524 review）。
   return {
     ...provider,
     meta: {
