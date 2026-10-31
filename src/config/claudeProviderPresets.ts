@@ -3176,4 +3176,40 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "aicoming",
   },
+  {
+    name: "TokenRhythm",
+    websiteUrl: "https://tokenrhythm.studio",
+    apiKeyUrl: "https://tokenrhythm.studio/account/keys",
+    // 基元律动（tokenrhythm.studio）。官方 API 接入页
+    //（tokenrhythm.studio/docs/api-integration，2026-10-22 核对）说明外部调用
+    // 统一走 https://tokenrhythm.studio/v1，鉴权为 Authorization: Bearer sk_...
+    // 走原生 Anthropic 透传：base 取根地址、不带 /v1，客户端自拼 /v1/messages。
+    // 2026-10-22 用真 Key 实测：/v1/messages 接受 Claude Code 发的
+    // anthropic-beta 头（opensquilla#1102 的 400 未复现），tool_use、SSE 流式、
+    // prompt caching（cache_read_input_tokens 生效）、thinking: {type:"disabled"}
+    // 均正常，claude -p 直连返回「接入成功」。唯一缺口是
+    // /v1/messages/count_tokens 返回 404（接口不存在），Claude Code 会退回本地
+    // 估算。output_config.effort 不支持（400），不要把 effort 档位暴露给该预设。
+    // /v1/models 需要鉴权（无 Key 401），默认探测即可，不写 modelsUrl。
+    // 模型取公开目录 tokenrhythm.studio/api/models（同日，19 个 online chat 模型），
+    // 默认档贴 DeepSeek V4.1 Flash 1017：1M 窗口、支持 tools/stream/reasoning/
+    // vision，输入 1 元 / 输出 4 元每百万 token。目录未给该模型 maxOutputTokens，
+    // 不钉 max_tokens。模型 id 非 claude-*，Claude Code 默认按 200K 处理，必须显式
+    // 钉住 1M 窗口。
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenrhythm.studio",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash-1017",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash-1017",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash-1017",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash-1017",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://tokenrhythm.studio"],
+    icon: "tokenrhythm",
+  },
 ];
