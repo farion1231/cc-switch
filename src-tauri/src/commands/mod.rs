@@ -43,6 +43,11 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
+#[cfg(test)]
+mod provider_concurrency_tests;
+#[cfg(test)]
+mod startup_tests;
+
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;

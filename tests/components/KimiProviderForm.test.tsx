@@ -4,7 +4,12 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { KimiProviderForm } from "@/components/providers/forms/KimiProviderForm";
-import { kimiProviderPresets } from "@/config/kimiProviderPresets";
+import { parse as parseToml } from "smol-toml";
+import {
+  kimiProviderPresets,
+  type KimiProviderConfig,
+} from "@/config/kimiProviderPresets";
+import { kimiConfigToToml } from "@/components/providers/forms/helpers/kimiToml";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import type { ProviderCategory } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
@@ -80,7 +85,7 @@ function setup(
 }
 
 describe("KimiProviderForm", () => {
-  it.each(["import", "json"] as const)(
+  it.each(["import", "toml"] as const)(
     "preserves native capabilities from %s without exposing audio or video controls",
     async (source) => {
       const nativeConfig = structuredClone(config);
@@ -118,9 +123,14 @@ describe("KimiProviderForm", () => {
         undefined,
         source === "import" ? native : config,
       );
-      if (source === "json") {
-        fireEvent.change(screen.getByLabelText("provider.configJson"), {
-          target: { value: JSON.stringify(native) },
+      if (source === "toml") {
+        fireEvent.change(screen.getByLabelText("providerForm.nativeConfig.title"), {
+          target: {
+            value: kimiConfigToToml(
+              native as KimiProviderConfig,
+              "managed:kimi-code",
+            ),
+          },
         });
       }
       expandModels();
@@ -396,13 +406,52 @@ describe("KimiProviderForm", () => {
     );
   });
 
-  it("blocks invalid JSON until the editor is corrected", () => {
+  it("shows this provider's tables in config.toml layout", () => {
+    setup();
+    const text = (
+      screen.getByLabelText("providerForm.nativeConfig.title") as HTMLTextAreaElement
+    ).value;
+    expect(text).toContain('[providers."managed:kimi-code"]');
+    expect(text).toContain('[models."kimi-code/k3"]');
+    expect(parseToml(text)).toEqual({
+      providers: { "managed:kimi-code": config.provider },
+      models: config.models,
+    });
+  });
+
+  it.each([
+    ["broken syntax", "[providers", "providerForm.nativeConfig.invalid"],
+    [
+      "another provider's table",
+      '[providers.other]\ntype = "openai"\n',
+      "kimi.configTomlScope",
+    ],
+    [
+      "a global setting",
+      `default_model = "kimi-code/k3"\n${kimiConfigToToml(config as KimiProviderConfig, "managed:kimi-code")}`,
+      "kimi.configTomlScope",
+    ],
+    [
+      "a model without context size",
+      '[providers."managed:kimi-code"]\ntype = "kimi"\n\n[models.x]\nmodel = "k3"\n',
+      "kimi.configTomlSchema",
+    ],
+  ])("blocks %s until the TOML is corrected", (_, value, message) => {
     const submit = setup();
-    const editor = screen.getByLabelText("provider.configJson");
-    fireEvent.change(editor, { target: { value: "{" } });
+    const editor = screen.getByLabelText("providerForm.nativeConfig.title");
+    fireEvent.change(editor, { target: { value } });
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    fireEvent.change(editor, { target: { value: JSON.stringify(config) } });
+    expect(screen.getByText(message)).toBeInTheDocument();
+    fireEvent.change(editor, {
+      target: {
+        value: kimiConfigToToml(
+          config as KimiProviderConfig,
+          "managed:kimi-code",
+        ),
+      },
+    });
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
   });
 
@@ -489,9 +538,11 @@ describe("KimiProviderForm", () => {
     });
     await waitFor(() =>
       expect(
-        JSON.parse(
-          (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
-            .value,
+        (
+          parseToml(
+            (screen.getByLabelText("providerForm.nativeConfig.title") as HTMLTextAreaElement)
+              .value,
+          ) as { models: Record<string, { max_context_size: number }> }
         ).models["acme/model-x"].max_context_size,
       ).toBe(123456),
     );
