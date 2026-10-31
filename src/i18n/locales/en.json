@@ -4838,7 +4838,7 @@
       "sourceRepos": "Repos · {{count}}",
       "reload": "Reload repositories",
       "listLabel": "Skills you can install",
-      "installed": "Installed · {{count}} apps",
+      "installed": "Installed",
       "installedAria": "{{name}} is installed in {{count}} apps; view it under Installed",
       "dirTaken": "Folder name is used by {{name}} ({{source}})",
       "installing": "Installing",
