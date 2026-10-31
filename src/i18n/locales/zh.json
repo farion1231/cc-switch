@@ -1836,6 +1836,11 @@
     "customUserAgentHelp": "替换转发到供应商的请求里的 User-Agent。",
     "localProxyRequestOverridesHelp": "作用于格式转换后发给上游的请求。",
     "apiFormatHelp": "看供应商原生支持哪种协议：Anthropic Messages 原样转发、不转换格式；其余三种由路由转成 Anthropic Messages。",
+    "reasoningEffort": "思考档位",
+    "reasoningEffortHelp": "经路由转成 OpenAI 格式时，客户端选的思考档位怎么发给上游。自动：按上游支持的档位发，认不出的上游最多发 high，关掉思考时不发。原样发送：客户端选哪档发哪档，上游不支持 xhigh 或 max 时会报错。不发送：上游因这个参数报错时用。",
+    "reasoningEffortAuto": "自动（推荐）",
+    "reasoningEffortOff": "不发送",
+    "reasoningEffortPassthrough": "原样发送",
     "directModeFormatInUse": "这张卡正在直连使用：改成这种格式后保存，请求会失败。请先切到路由或聚合。",
     "directModeFormatSwitch": "直连模式下用不了这种格式，切到路由或聚合后才能用这张卡。"
   },

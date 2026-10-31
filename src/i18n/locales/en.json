@@ -1836,6 +1836,11 @@
     "customUserAgentHelp": "Replaces the User-Agent of requests forwarded to the provider.",
     "localProxyRequestOverridesHelp": "Applies to the upstream request after format conversion.",
     "apiFormatHelp": "Pick the protocol the provider supports natively: Anthropic Messages is forwarded as is without conversion; routing converts the other three to Anthropic Messages.",
+    "reasoningEffort": "Reasoning effort",
+    "reasoningEffortHelp": "How the thinking level chosen in the client is sent upstream when routing converts requests to OpenAI format. Auto: sent at a level the upstream supports; unrecognized upstreams get at most high, and nothing is sent when thinking is off. Send as is: whatever level the client picks is sent, so upstreams that don't support xhigh or max will return an error. Don't send: use this if the upstream rejects the parameter.",
+    "reasoningEffortAuto": "Auto (recommended)",
+    "reasoningEffortOff": "Don't send",
+    "reasoningEffortPassthrough": "Send as is",
     "directModeFormatInUse": "This card is in use in direct mode: saving it with this format makes requests fail. Switch to routing or Aggregation first.",
     "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card."
   },
