@@ -28,7 +28,11 @@ import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import { useClaudeDefaultPlan } from "@/lib/query/subscription";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
-import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
+import {
+  isTokenPlanTemplate,
+  PROVIDER_TYPES,
+  TEMPLATE_TYPES,
+} from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
@@ -316,8 +320,9 @@ export function ProviderCard({
     autoQueryInterval,
   });
 
-  const isTokenPlan =
-    provider.meta?.usage_script?.templateType === "token_plan";
+  const isTokenPlan = isTokenPlanTemplate(
+    provider.meta?.usage_script?.templateType,
+  );
   // 官方订阅的额度窗口不能按普通多套餐展开；缓存残留的旧脚本结果同样不认。
   const hasMultiplePlans =
     scriptUsageActive &&

@@ -74,6 +74,37 @@ const generatePresetTemplates = (
   }
 })`,
 
+  [TEMPLATE_TYPES.CUSTOM_TOKEN_PLAN]: `({
+  request: {
+    url: "{{baseUrl}}/v1/usage",
+    method: "GET",
+    headers: {
+      "Authorization": "Bearer {{apiKey}}",
+      "User-Agent": "cc-switch/1.0"
+    }
+  },
+  extractor: function(response) {
+    var fiveHour = response.five_hour || {};
+    var weeklyLimit = response.weekly_limit || {};
+    return [
+      {
+        planName: "five_hour",
+        used: Number(fiveHour.used || 0),
+        total: 100,
+        unit: "%",
+        extra: fiveHour.reset_at || ""
+      },
+      {
+        planName: "weekly_limit",
+        used: Number(weeklyLimit.used || 0),
+        total: 100,
+        unit: "%",
+        extra: weeklyLimit.reset_at || ""
+      }
+    ];
+  }
+})`,
+
   [TEMPLATE_TYPES.GENERAL]: `({
   request: {
     url: "{{baseUrl}}/user/balance",
@@ -170,6 +201,7 @@ const generatePresetTemplates = (
 // 模板名称国际化键映射
 const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.CUSTOM]: "usageScript.templateCustom",
+  [TEMPLATE_TYPES.CUSTOM_TOKEN_PLAN]: "usageScript.templateCustomTokenPlan",
   [TEMPLATE_TYPES.GENERAL]: "usageScript.templateGeneral",
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
   [TEMPLATE_TYPES.SUB2API]: "usageScript.templateSub2API",
@@ -822,6 +854,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           accessToken: undefined,
           userId: undefined,
         });
+      } else if (presetName === TEMPLATE_TYPES.CUSTOM_TOKEN_PLAN) {
+        setScript({
+          ...script,
+          code: preset,
+          accessToken: undefined,
+          userId: undefined,
+        });
       } else if (presetName === TEMPLATE_TYPES.NEW_API) {
         setScript({
           ...script,
@@ -891,6 +930,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
     selectedTemplate === TEMPLATE_TYPES.SUB2API ||
+    selectedTemplate === TEMPLATE_TYPES.CUSTOM_TOKEN_PLAN ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
@@ -1005,7 +1045,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             </div>
 
             {/* 自定义模式：变量提示和具体值 */}
-            {selectedTemplate === TEMPLATE_TYPES.CUSTOM && (
+            {(selectedTemplate === TEMPLATE_TYPES.CUSTOM ||
+              selectedTemplate === TEMPLATE_TYPES.CUSTOM_TOKEN_PLAN) && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <h4 className="text-sm font-medium text-fg-1">
                   {t("usageScript.supportedVariables")}
@@ -1148,6 +1189,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               </div>
             )}
 
+            {selectedTemplate === TEMPLATE_TYPES.CUSTOM_TOKEN_PLAN && (
+              <div className="space-y-2 border-t border-white/10 pt-3">
+                <p className="text-sm text-fg-2">
+                  {t("usageScript.customTokenPlanHint")}
+                </p>
+              </div>
+            )}
+
             {/* 凭证配置 */}
             {shouldShowCredentialsConfig && (
               <div className="space-y-4">
@@ -1162,7 +1211,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                 <div className="grid gap-4 md:grid-cols-2">
                   {(selectedTemplate === TEMPLATE_TYPES.GENERAL ||
-                    selectedTemplate === TEMPLATE_TYPES.SUB2API) && (
+                    selectedTemplate === TEMPLATE_TYPES.SUB2API ||
+                    selectedTemplate === TEMPLATE_TYPES.CUSTOM_TOKEN_PLAN) && (
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="usage-api-key">
