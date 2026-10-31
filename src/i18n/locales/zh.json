@@ -4876,6 +4876,7 @@
       "selectAll": "全选",
       "selectNone": "全不选",
       "foundIn": "发现于：{{places}}",
+      "providedByPlugin": "由插件 {{plugin}} 提供，Claude Code 自行加载，不可导入",
       "foundCcSwitch": "CC Switch 目录",
       "appsTitle": "导入后在这些应用里启用",
       "appsHelpTitle": "默认勾选哪些应用",

@@ -4877,6 +4877,7 @@
       "selectAll": "全選",
       "selectNone": "全不選",
       "foundIn": "發現於：{{places}}",
+      "providedByPlugin": "由外掛 {{plugin}} 提供，Claude Code 自行載入，不可匯入",
       "foundCcSwitch": "CC Switch 目錄",
       "appsTitle": "匯入後在這些應用裡啟用",
       "appsHelpTitle": "預設勾選哪些應用",

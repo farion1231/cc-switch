@@ -4876,6 +4876,7 @@
       "selectAll": "すべて選択",
       "selectNone": "選択を解除",
       "foundIn": "見つかった場所：{{places}}",
+      "providedByPlugin": "プラグイン {{plugin}} が提供 — Claude Code が読み込むためインポートできません",
       "foundCcSwitch": "CC Switch のフォルダー",
       "appsTitle": "取り込み後に有効にするアプリ",
       "appsHelpTitle": "既定でチェックされるアプリ",
