@@ -709,6 +709,14 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
 pub(crate) fn configured_proxy_model_routes(
     provider: &Provider,
 ) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    configured_proxy_model_routes_with_backfill(provider, true)
+}
+
+/// 同上；`backfill=false` 时只返回显式配置的档位（聚合 profile 组装用，见 [`route_profile`]）。
+pub(crate) fn configured_proxy_model_routes_with_backfill(
+    provider: &Provider,
+    backfill: bool,
+) -> Result<Vec<ResolvedModelRoute>, AppError> {
     let routes = provider
         .meta
         .as_ref()
@@ -773,7 +781,70 @@ pub(crate) fn configured_proxy_model_routes(
         ));
     }
 
+    if backfill {
+        backfill_missing_role_tiers(&mut result, &reserved_route_ids);
+    }
+
     Ok(result)
+}
+
+/// 缺失角色档在发布层用 primary 档（Sonnet 优先）的 upstream 补位。
+///
+/// meta 只存用户显式配置（前端保存时留空档不再落库，issue #7456），但发布给 Desktop
+/// 的 profile 必须四档齐全：运行时 [`map_proxy_request_model`] 对缺档的 haiku/sonnet
+/// 请求是 route_unknown 硬错误。补位条目的显示名与 1M 声明沿用 primary，和旧版
+/// 「保存时继承 primary」的语义一致；只发生在发布层，不写回 meta。
+///
+/// 补位条目追加在显式路由之后、不重排：聚合模式 [`crate::mode::stack::desktop_models`]
+/// 按发布顺序对 upstream 去重（首个条目定显示名），显式档必须保持是该 upstream 的
+/// 首个条目，否则成员的发布模型会被补位档改名/改序。
+fn backfill_missing_role_tiers(
+    result: &mut Vec<ResolvedModelRoute>,
+    reserved: &std::collections::HashSet<String>,
+) {
+    const PUBLISH_ROLE_ORDER: [&str; 4] = ["sonnet", "opus", "fable", "haiku"];
+
+    let primary = PUBLISH_ROLE_ORDER
+        .iter()
+        .find_map(|role| {
+            result
+                .iter()
+                .find(|route| claude_role_keyword(&route.route_id) == Some(*role))
+        })
+        .or_else(|| result.first())
+        .cloned();
+    let Some(primary) = primary else {
+        return;
+    };
+
+    for role in PUBLISH_ROLE_ORDER {
+        if result
+            .iter()
+            .any(|route| claude_role_keyword(&route.route_id) == Some(role))
+        {
+            continue;
+        }
+        let Some(default_route) = DEFAULT_PROXY_ROUTES
+            .iter()
+            .find(|route| claude_role_keyword(route.route_id) == Some(role))
+        else {
+            continue;
+        };
+        let route_id = published_route_id(
+            default_route.route_id.to_string(),
+            &primary.upstream_model,
+            reserved,
+        );
+        if result.iter().any(|route| route.route_id == route_id) {
+            continue;
+        }
+        result.push(ResolvedModelRoute {
+            route_id,
+            upstream_model: primary.upstream_model.clone(),
+            label_override: primary.label_override.clone(),
+            supports_1m: primary.supports_1m,
+        });
+    }
 }
 
 /// 发布给 Desktop 的模型名。Desktop 按这个名字决定请求参数：映射表里的 Opus / Sonnet 键固定是
@@ -1172,7 +1243,22 @@ pub fn route_profile(
         ));
     }
     validate_proxy_provider(route)?;
-    let mut model_specs = proxy_model_routes(route)?
+    // 显式档在前，聚合成员紧跟其后（选择器里默认模型下面就是各家的模型），
+    // 补位档垫底——它们只是给运行时缺档兜底的重复 upstream，不该插在成员前面。
+    // 原生直连卡没有映射表，四档默认角色路由就是完整列表，无需补位。
+    let uses_default_routes = uses_default_proxy_routes(route);
+    let explicit_routes = if uses_default_routes {
+        proxy_model_routes(route)?
+    } else {
+        configured_proxy_model_routes_with_backfill(route, false)?
+    };
+    let explicit_len = explicit_routes.len();
+    let backfilled = if uses_default_routes {
+        Vec::new()
+    } else {
+        configured_proxy_model_routes_with_backfill(route, true)?
+    };
+    let mut model_specs = explicit_routes
         .into_iter()
         .map(|route| InferenceModelSpec {
             name: route.route_id,
@@ -1184,6 +1270,16 @@ pub fn route_profile(
             label_override: Some(model.label.clone()),
             supports_1m: model.supports_1m,
         }))
+        .chain(
+            backfilled
+                .into_iter()
+                .skip(explicit_len)
+                .map(|route| InferenceModelSpec {
+                    name: route.route_id,
+                    label_override: route.label_override,
+                    supports_1m: route.supports_1m,
+                }),
+        )
         .collect::<Vec<_>>();
     if model_specs.len() > MAX_INFERENCE_MODELS {
         log::warn!(
@@ -2207,7 +2303,12 @@ mod tests {
             .starts_with("ccs-"));
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true, "prefer1m": true }])
+            json!([
+                { "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true, "prefer1m": true },
+                { "name": "claude-opus-5", "labelOverride": "Kimi K2", "supports1m": true, "prefer1m": true },
+                { "name": "claude-fable-5", "labelOverride": "Kimi K2", "supports1m": true, "prefer1m": true },
+                { "name": "claude-haiku-4-5", "labelOverride": "Kimi K2", "supports1m": true, "prefer1m": true }
+            ])
         );
         assert!(!profile.to_string().contains("kimi-k2"));
     }
@@ -2234,7 +2335,12 @@ mod tests {
             );
             assert_eq!(
                 profile["inferenceModels"],
-                json!([{ "name": "claude-sonnet-4-6", "labelOverride": "GPT-5.4" }])
+                json!([
+                    { "name": "claude-sonnet-4-6", "labelOverride": "GPT-5.4" },
+                    { "name": "claude-opus-5", "labelOverride": "GPT-5.4" },
+                    { "name": "claude-fable-5", "labelOverride": "GPT-5.4" },
+                    { "name": "claude-haiku-4-5", "labelOverride": "GPT-5.4" }
+                ])
             );
         }
     }
@@ -2254,9 +2360,15 @@ mod tests {
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
 
-        let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
+        // 缺档在发布层由 primary 补位后，旧 Opus 别名也落到同一条 upstream；
+        // 真正未配置（不含角色关键词、不在映射表）的请求仍然报错。
+        let mapped = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
+            .expect("legacy Opus alias maps to the backfilled tier");
+        assert_eq!(mapped["model"], json!("kimi-k2"));
+
+        let err = map_proxy_request_model(json!({"model": "claude-3-5-unknown"}), &provider)
             .expect_err("unknown route should fail");
-        assert!(err.to_string().contains("claude-opus-4-8"));
+        assert!(err.to_string().contains("claude-3-5-unknown"));
     }
 
     #[test]
@@ -2289,7 +2401,13 @@ mod tests {
         };
         assert_eq!(
             names(&provider),
-            ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5"]
+            [
+                "claude-sonnet-5-5",
+                "claude-opus-5-5",
+                "claude-haiku-4-5",
+                // 缺失的 fable 档在发布层用 primary（Sonnet）档补位，追加在显式路由后
+                "claude-fable-5"
+            ]
         );
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
@@ -2324,7 +2442,8 @@ mod tests {
                 "claude-sonnet-5-5",
                 "claude-opus-5",
                 "claude-opus-5-5",
-                "claude-haiku-4-5"
+                "claude-haiku-4-5",
+                "claude-fable-5"
             ]
         );
         let mapped = map_proxy_request_model(json!({ "model": "claude-opus-5" }), &provider)
@@ -2390,9 +2509,10 @@ mod tests {
     }
 
     #[test]
-    fn claude_desktop_proxy_maps_fable_to_opus_tier() {
-        // issue #4026/#4049：老用户只配 Sonnet/Opus/Haiku 三档、未显式配置
-        // fable 档时，fable 请求按官方分类器降级方向回落到 opus 档兜底。
+    fn claude_desktop_proxy_backfills_missing_fable_tier_from_primary() {
+        // issue #7456：meta 只存显式配置（用户只配 Sonnet/Opus 两档时 fable 不落库），
+        // 发布层用 primary（Sonnet 优先）档补齐缺失角色档，fable 请求命中补位档，
+        // 落到 primary 的 upstream（不再依赖运行时 fable→opus 降级）。
         let mut provider = proxy_provider("proxy");
         provider
             .meta
@@ -2421,28 +2541,29 @@ mod tests {
             json!({"model": "claude-fable-5", "messages": []}),
             &provider,
         )
-        .expect("fable should fall back to the opus tier");
-        assert_eq!(mapped["model"], json!("upstream-opus"));
+        .expect("backfilled fable tier should serve fable requests");
+        assert_eq!(mapped["model"], json!("upstream-sonnet"));
 
-        // 带 [1m] 标记与日期后缀的形态也应命中同一回落。
+        // 带 [1m] 标记与日期后缀的形态也应命中同一补位档。
         let mapped_one_m = map_proxy_request_model(
             json!({"model": "claude-fable-5[1m]", "messages": []}),
             &provider,
         )
-        .expect("fable with [1m] marker should fall back to the opus tier");
-        assert_eq!(mapped_one_m["model"], json!("upstream-opus"));
+        .expect("fable with [1m] marker should hit the backfilled tier");
+        assert_eq!(mapped_one_m["model"], json!("upstream-sonnet"));
 
         let mapped_dated = map_proxy_request_model(
             json!({"model": "claude-fable-5-20260609", "messages": []}),
             &provider,
         )
-        .expect("dated fable alias should fall back to the opus tier");
-        assert_eq!(mapped_dated["model"], json!("upstream-opus"));
+        .expect("dated fable alias should hit the backfilled tier");
+        assert_eq!(mapped_dated["model"], json!("upstream-sonnet"));
     }
 
     #[test]
-    fn claude_desktop_proxy_fable_without_opus_route_still_errors() {
-        // 没有 opus 档可回落时保持精确报错语义，不静默落到其他档。
+    fn claude_desktop_proxy_backfills_every_missing_role_tier_from_primary() {
+        // 只配 Sonnet 一档时，发布层补齐 Opus / Fable / Haiku 三档（primary 的
+        // upstream、显示名与 1M 声明），保证子 agent 的 Haiku 请求不再 route_unknown。
         let mut provider = proxy_provider("proxy");
         provider
             .meta
@@ -2457,12 +2578,26 @@ mod tests {
             },
         )]);
 
-        let err = map_proxy_request_model(
-            json!({"model": "claude-fable-5", "messages": []}),
-            &provider,
-        )
-        .expect_err("fable without an opus route should fail");
-        assert!(err.to_string().contains("claude-fable-5"));
+        let routes = proxy_model_routes(&provider).expect("routes");
+        let tiers = routes
+            .iter()
+            .map(|route| (route.route_id.as_str(), route.upstream_model.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tiers,
+            [
+                ("claude-sonnet-4-6", "upstream-sonnet"),
+                ("claude-opus-5", "upstream-sonnet"),
+                ("claude-fable-5", "upstream-sonnet"),
+                ("claude-haiku-4-5", "upstream-sonnet"),
+            ]
+        );
+
+        for requested in ["claude-haiku-4-5", "claude-opus-5", "claude-fable-5"] {
+            let mapped =
+                map_proxy_request_model(json!({ "model": requested }), &provider).expect(requested);
+            assert_eq!(mapped["model"], json!("upstream-sonnet"), "{requested}");
+        }
     }
 
     #[test]
@@ -2686,7 +2821,8 @@ mod tests {
         });
 
         let routes = proxy_model_routes(&provider).expect("routes");
-        assert_eq!(routes.len(), 3);
+        // 显式 3 条 + 发布层补位的缺失 fable 档（primary 为显式 Sonnet 档）
+        assert_eq!(routes.len(), 4);
         let repaired = routes
             .iter()
             .find(|route| route.upstream_model == "deepseek-v4-pro")

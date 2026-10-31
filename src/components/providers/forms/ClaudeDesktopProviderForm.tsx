@@ -511,7 +511,22 @@ export function ClaudeDesktopProviderForm({
 
   const updateRoute = (index: number, patch: Partial<RouteRowValues>) => {
     setRoutes((current) =>
-      current.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+      current.map((row, i) => {
+        if (i !== index) return row;
+        const next = { ...row, ...patch };
+        // 改模型时，若显示名正是旧模型名（早前自动填的，判定依据：与旧模型一致），
+        // 同步清空，交给保存时的「显示名缺省 = 模型名」兜底，避免菜单显示名停留旧值。
+        if (
+          patch.model !== undefined &&
+          patch.model !== row.model &&
+          patch.labelOverride === undefined &&
+          row.labelOverride &&
+          row.labelOverride === row.model
+        ) {
+          next.labelOverride = "";
+        }
+        return next;
+      }),
     );
   };
 
@@ -813,29 +828,17 @@ export function ClaudeDesktopProviderForm({
 
     if (effectiveMode === "proxy") {
       // 固定四档（Sonnet / Opus / Fable / Haiku），route_id 由 UI 生成、恒合法，
-      // 因此只要求至少填一个实际请求模型；留空档继承第一个已填档（Sonnet 优先），
-      // 对齐 Claude Code 的兜底，保证落库四档齐全、子 agent 不会找不到模型。
-      const primary = routeEntries.find((route) => route.model);
-      if (!primary) {
+      // 只要求至少填一个实际请求模型。留空档不再在保存层继承第一个已填档：
+      // meta 只存用户显式配置（issue #7456），发布给 Desktop 的 profile 由后端
+      // （claude_desktop_config::configured_proxy_model_routes）在发布层用
+      // primary 档补位，保证四档齐全、子 agent 不会找不到模型。
+      if (!routeEntries.some((route) => route.model)) {
         toast.error(
           t("claudeDesktop.routesRequired", {
             defaultValue: "至少填写一个模型映射",
           }),
         );
         return;
-      }
-      for (const route of routeEntries) {
-        if (!route.model) {
-          route.model = primary.model;
-          if (!route.labelOverride) {
-            route.labelOverride = primary.labelOverride || primary.model;
-          }
-          // 回填的是同一个上游模型，1M 能力声明应与 primary 一致，
-          // 避免同模型在不同档声明不同 1M（除非该档用户已显式勾选）。
-          if (!route.supports1m) {
-            route.supports1m = primary.supports1m;
-          }
-        }
       }
     } else {
       const invalid = routeEntries.find(
@@ -870,9 +873,12 @@ export function ClaudeDesktopProviderForm({
     const routeMap = routeEntries.reduce<
       Record<string, ClaudeDesktopModelRoute>
     >((acc, route) => {
+      if (effectiveMode === "proxy" && !route.model) {
+        // 留空档不写进 meta：发布层会用 primary 档补位，落库只存显式配置。
+        return acc;
+      }
       acc[route.route] = {
-        model:
-          effectiveMode === "direct" ? route.route : route.model || route.route,
+        model: effectiveMode === "direct" ? route.route : route.model,
         labelOverride:
           route.labelOverride ||
           (effectiveMode === "proxy" ? route.model : undefined),
@@ -1299,7 +1305,13 @@ export function ClaudeDesktopProviderForm({
                                 onSelect={(id) =>
                                   updateRoute(index, {
                                     model: id,
-                                    labelOverride: route.labelOverride || id,
+                                    // 显示名为空或还是旧模型名（自动填的）时跟着换，
+                                    // 用户显式起过的名字不动。
+                                    labelOverride:
+                                      !route.labelOverride ||
+                                      route.labelOverride === route.model
+                                        ? id
+                                        : route.labelOverride,
                                   })
                                 }
                               />

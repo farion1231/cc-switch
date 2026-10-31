@@ -2401,7 +2401,12 @@ requires_openai_auth = true
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true, "prefer1m": true }]),
+            json!([
+                { "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true, "prefer1m": true },
+                { "name": "claude-opus-5", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true, "prefer1m": true },
+                { "name": "claude-fable-5", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true, "prefer1m": true },
+                { "name": "claude-haiku-4-5", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true, "prefer1m": true }
+            ]),
             "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
         state
@@ -8370,7 +8375,11 @@ impl ProviderService {
 
 /// Normalize Claude model keys in a JSON value
 ///
-/// Reads old key (ANTHROPIC_SMALL_FAST_MODEL), writes new keys (DEFAULT_*), and deletes old key.
+/// Legacy key migration only: reads ANTHROPIC_SMALL_FAST_MODEL, writes it to
+/// ANTHROPIC_DEFAULT_HAIKU_MODEL when that tier is missing, and deletes the old key.
+/// Missing tiers are no longer backfilled from ANTHROPIC_MODEL — unset tiers stay
+/// unset in the saved config (issue #7456); the proxy's model mapper applies the
+/// runtime fallback (fable → opus → default) instead of rewriting user config.
 pub(crate) fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
     let mut changed = false;
     let env = match settings.get_mut("env").and_then(|v| v.as_object_mut()) {
@@ -8378,59 +8387,17 @@ pub(crate) fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
         None => return changed,
     };
 
-    let model = env
-        .get("ANTHROPIC_MODEL")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
     let small_fast = env
         .get("ANTHROPIC_SMALL_FAST_MODEL")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let current_haiku = env
-        .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let current_sonnet = env
-        .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let current_opus = env
-        .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let target_haiku = current_haiku
-        .or_else(|| small_fast.clone())
-        .or_else(|| model.clone());
-    let target_sonnet = current_sonnet
-        .or_else(|| model.clone())
-        .or_else(|| small_fast.clone());
-    let target_opus = current_opus
-        .or_else(|| model.clone())
-        .or_else(|| small_fast.clone());
-
     if env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL").is_none() {
-        if let Some(v) = target_haiku {
+        if let Some(v) = small_fast {
             env.insert(
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
                 Value::String(v),
             );
-            changed = true;
-        }
-    }
-    if env.get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none() {
-        if let Some(v) = target_sonnet {
-            env.insert(
-                "ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(),
-                Value::String(v),
-            );
-            changed = true;
-        }
-    }
-    if env.get("ANTHROPIC_DEFAULT_OPUS_MODEL").is_none() {
-        if let Some(v) = target_opus {
-            env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), Value::String(v));
             changed = true;
         }
     }

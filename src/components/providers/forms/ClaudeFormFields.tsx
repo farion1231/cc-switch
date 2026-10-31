@@ -681,6 +681,13 @@ export function ClaudeFormFields({
     }
   };
 
+  // 留空档不再回填运行时回落值（issue #7456）：placeholder 说明实际回落目标，
+  // 与 proxy/model_mapper 的映射链一致（fable → opus，其余档 → 默认兜底模型）。
+  const tierFallbackPlaceholder = (role: ModelRoleRow["role"]) =>
+    role === "fable"
+      ? t("providerForm.modelTierFableFallbackPlaceholder")
+      : t("providerForm.modelTierFallbackPlaceholder");
+
   const handleRoleOneMChange = (row: ModelRoleRow, enabled: boolean) => {
     handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
@@ -1247,7 +1254,11 @@ export function ClaudeFormFields({
                       row.inputId,
                       modelBase,
                       row.modelField,
-                      t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                      row.role === "subagent"
+                        ? t("providerForm.modelPlaceholder", {
+                            defaultValue: "",
+                          })
+                        : tierFallbackPlaceholder(row.role),
                       (value) =>
                         handleRoleModelChange(
                           row,
