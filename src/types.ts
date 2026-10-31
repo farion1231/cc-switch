@@ -357,6 +357,13 @@ export interface S3SyncSettings {
   status?: WebDavSyncStatus;
 }
 
+// 云同步额外路径：随快照一起打包的 ~/.claude 下的自定义目录/文件（#7835）
+export interface SyncExtraPath {
+  // 相对 ~/.claude 的路径，如 "hooks" 或 "hooks/guard.sh"
+  source: string;
+  enabled: boolean;
+}
+
 export type RemoteSnapshotLayout = "current" | "legacy";
 
 // 远端快照信息（下载前预览）
@@ -508,6 +515,10 @@ export interface Settings {
 
   // ===== S3 同步设置 =====
   s3Sync?: S3SyncSettings;
+
+  // ===== 云同步额外路径 =====
+  // 随云同步打包的 ~/.claude 下的自定义目录/文件（hooks 脚本、output-styles 等）
+  syncExtraPaths?: SyncExtraPath[];
 
   // ===== 备份策略设置 =====
   // Auto-backup interval in hours (0=disabled, default 24)

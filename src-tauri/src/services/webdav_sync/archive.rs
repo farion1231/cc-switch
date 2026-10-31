@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use tempfile::{tempdir, TempDir};
@@ -9,6 +9,7 @@ use zip::DateTime;
 
 use crate::error::AppError;
 use crate::services::skill::SkillService;
+use crate::settings::SyncExtraPath;
 
 use crate::services::sync_protocol::{
     io_context_localized, localized, MAX_SYNC_ARTIFACT_BYTES, REMOTE_SKILLS_ZIP,
@@ -56,6 +57,7 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
             &mut writer,
             options,
             &mut visited,
+            "",
         )?;
     }
 
@@ -133,6 +135,7 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
             &mut out,
             &mut total_bytes,
             MAX_SYNC_ARTIFACT_BYTES,
+            REMOTE_SKILLS_ZIP,
             &out_path,
         )?;
     }
@@ -312,12 +315,45 @@ pub(crate) fn restore_skills_from_backup(backup: &SkillsBackup) -> Result<(), Ap
 
 impl SkillsBackup {
     pub(crate) fn rollback_after_import_error(self, db_error: AppError) -> AppError {
-        self.rollback_after_import_error_with(db_error, restore_skills_from_backup)
+        self.rollback_after_error_with(
+            db_error,
+            "导入数据库失败",
+            "Database import failed",
+            restore_skills_from_backup,
+        )
     }
 
+    /// Restore skills after the extra-paths restore step failed inside
+    /// apply_snapshot. Same transaction semantics as the database-import
+    /// rollback; the triggering error is returned unchanged on success.
+    pub(crate) fn rollback_after_extra_restore_error(self, error: AppError) -> AppError {
+        self.rollback_after_error_with(
+            error,
+            "恢复自定义同步路径失败",
+            "Extra sync paths restore failed",
+            restore_skills_from_backup,
+        )
+    }
+
+    #[cfg(test)]
     fn rollback_after_import_error_with(
-        mut self,
+        self,
         db_error: AppError,
+        rollback: impl FnOnce(&SkillsBackup) -> Result<(), AppError>,
+    ) -> AppError {
+        self.rollback_after_error_with(
+            db_error,
+            "导入数据库失败",
+            "Database import failed",
+            rollback,
+        )
+    }
+
+    fn rollback_after_error_with(
+        mut self,
+        trigger_error: AppError,
+        context_zh: &str,
+        context_en: &str,
         rollback: impl FnOnce(&SkillsBackup) -> Result<(), AppError>,
     ) -> AppError {
         // Retain the pre-import snapshot before rollback can move files or panic.
@@ -327,14 +363,502 @@ impl SkillsBackup {
             let recovery_path = self.backup_dir.clone();
             return localized(
                 "sync.db_import_and_rollback_failed",
-                format!("导入数据库失败: {db_error}; 同时回滚 Skills 失败: {rollback_error}; 导入前的 Skills 快照保留在 {}", recovery_path.display()),
-                format!("Database import failed: {db_error}; skills rollback also failed: {rollback_error}; pre-import skills snapshot retained at {}", recovery_path.display()),
+                format!("{context_zh}: {trigger_error}; 同时回滚 Skills 失败: {rollback_error}; 导入前的 Skills 快照保留在 {}", recovery_path.display()),
+                format!("{context_en}: {trigger_error}; skills rollback also failed: {rollback_error}; pre-import skills snapshot retained at {}", recovery_path.display()),
             );
         }
         if let Some(path) = recovery_container {
             cleanup_skills_transaction(&path, &RealSkillsFs);
         }
+        trigger_error
+    }
+}
+
+// ─── Extra sync paths (~/.claude custom paths, #7835) ────────
+
+/// One enabled extra path during restore.
+struct ExtraTarget {
+    /// Normalized relative source path, e.g. `hooks` or `hooks/guard.sh`.
+    source: String,
+    /// Live path `<claude_dir>/<source>`.
+    target: PathBuf,
+    /// Staged replacement `<transaction>/new/_extra/<source>`.
+    staged: PathBuf,
+    /// Backup of the live content `<transaction>/backup/<source>`.
+    backup: PathBuf,
+    /// Whether `target` existed before the restore (else nothing to restore).
+    existed: bool,
+}
+
+/// Handle over a finished extra-paths restore. Dropping it removes the
+/// transaction directory (best effort); if a later snapshot step fails,
+/// [`ExtraRestore::rollback_after_import_error`] puts the previous content
+/// back before the transaction directory is cleaned up.
+pub(crate) struct ExtraRestore {
+    /// Kept transaction directory once the first destructive step ran; its
+    /// `backup/` subtree then holds the only intact pre-restore content.
+    transaction: Option<PathBuf>,
+    targets: Vec<ExtraTarget>,
+    /// How many targets were successfully replaced, in install order.
+    installed: usize,
+}
+
+impl Drop for ExtraRestore {
+    fn drop(&mut self) {
+        if let Some(path) = self.transaction.take() {
+            cleanup_skills_transaction(&path, &RealSkillsFs);
+        }
+    }
+}
+
+impl ExtraRestore {
+    /// Roll back installed extra paths after the database import failed.
+    /// Returns the triggering error on success; when rollback itself fails,
+    /// returns a combined error and keeps the transaction directory (with the
+    /// pre-restore backups) on disk for manual recovery.
+    pub(crate) fn rollback_after_import_error(mut self, db_error: AppError) -> AppError {
+        let recovery_path = self
+            .transaction
+            .clone()
+            .map(|path| path.join("backup"))
+            .unwrap_or_default();
+        if let Err(rollback_error) = self.rollback_installed() {
+            // Keep the transaction directory: the backups are the only intact
+            // pre-restore content left.
+            self.transaction = None;
+            return localized(
+                "sync.extra_rollback_failed",
+                format!(
+                    "导入数据库失败: {db_error}; 同时回滚自定义同步路径失败: {rollback_error}; 恢复前的内容备份保留在 {}",
+                    recovery_path.display()
+                ),
+                format!(
+                    "Database import failed: {db_error}; rollback of extra sync paths also failed: {rollback_error}; pre-restore content retained at {}",
+                    recovery_path.display()
+                ),
+            );
+        }
         db_error
+    }
+
+    fn rollback_installed(&self) -> Result<(), AppError> {
+        for target in self.targets[..self.installed].iter().rev() {
+            remove_extra_path(&target.target).map_err(|e| {
+                io_context_localized(
+                    "sync.extra_rollback_remove_failed",
+                    format!("回滚「{}」失败", target.target.display()),
+                    format!("Failed to roll back \"{}\"", target.target.display()),
+                    e,
+                )
+            })?;
+            if target.existed {
+                fs::rename(&target.backup, &target.target).map_err(|e| {
+                    io_context_localized(
+                        "sync.extra_rollback_rename_failed",
+                        format!(
+                            "恢复「{}」的备份失败（{} → {}）",
+                            target.source,
+                            target.backup.display(),
+                            target.target.display()
+                        ),
+                        format!(
+                            "Failed to restore the backup of \"{}\" ({} -> {})",
+                            target.source,
+                            target.backup.display(),
+                            target.target.display()
+                        ),
+                        e,
+                    )
+                })?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Pack the enabled extra sync paths into `extra.zip` at `dest_path`.
+///
+/// Entries are namespaced by source path as `_extra/<source>/...`, so each
+/// source restores to exactly the position it was packed from. Sources are
+/// handled independently: a missing path is silently skipped (nothing to pack),
+/// while an invalid string, a symlink, or a path overlapping the Skills SSOT is
+/// skipped with a warning instead of failing the whole sync. Returns whether at
+/// least one entry was written — with no usable sources no artifact is produced
+/// at all, keeping snapshots identical to the pre-#7835 layout.
+pub(crate) fn zip_extra_paths(dest_path: &Path, paths: &[SyncExtraPath]) -> Result<bool, AppError> {
+    let mut sources = Vec::new();
+    for path in paths {
+        if !path.enabled {
+            continue;
+        }
+        match crate::settings::normalize_sync_extra_source(&path.source) {
+            Ok(source) if !sources.contains(&source) => sources.push(source),
+            Ok(_) => {}
+            Err(err) => log::warn!("[Sync] Skipping invalid extra sync path: {err}"),
+        }
+    }
+    if sources.is_empty() {
+        return Ok(false);
+    }
+    sources.sort();
+
+    let claude_dir = crate::config::get_claude_config_dir();
+    let ssot_canonical = SkillService::get_ssot_dir()
+        .ok()
+        .and_then(|dir| fs::canonicalize(dir).ok());
+
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    let file = fs::File::create(dest_path).map_err(|e| AppError::io(dest_path, e))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .last_modified_time(DateTime::default());
+
+    let mut visited = HashSet::new();
+    let mut had_entries = false;
+    for source in &sources {
+        let root = claude_dir.join(source);
+        let Ok(meta) = fs::symlink_metadata(&root) else {
+            // Nothing at this path on the current device: nothing to pack.
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            log::warn!(
+                "[Sync] Skipping extra sync path that is a symlink: {}",
+                root.display()
+            );
+            continue;
+        }
+        let canonical = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        // Overlap with the Skills SSOT (equal, ancestor, or descendant) would
+        // let the skills and extra restores clobber each other.
+        if ssot_canonical.as_ref().is_some_and(|ssot| {
+            canonical == *ssot || canonical.starts_with(ssot) || ssot.starts_with(&canonical)
+        }) {
+            log::warn!(
+                "[Sync] Skipping extra sync path overlapping the Skills SSOT: {}",
+                canonical.display()
+            );
+            continue;
+        }
+        if !mark_visited_dir(&canonical, &mut visited)? {
+            log::warn!(
+                "[Sync] Skipping already visited extra sync path: {}",
+                canonical.display()
+            );
+            continue;
+        }
+
+        let prefix = format!("_extra/{source}");
+        if meta.is_dir() {
+            zip_dir_recursive(
+                &canonical,
+                &canonical,
+                &mut writer,
+                options,
+                &mut visited,
+                &prefix,
+            )?;
+        } else {
+            // Single-file source: one entry named `_extra/<source>`.
+            writer.start_file(&prefix, options).map_err(|e| {
+                localized(
+                    "webdav.sync.zip_start_file_failed",
+                    format!("写入 ZIP 文件头失败: {e}"),
+                    format!("Failed to write ZIP file entry: {e}"),
+                )
+            })?;
+            let mut file = fs::File::open(&canonical).map_err(|e| AppError::io(&canonical, e))?;
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf)
+                .map_err(|e| AppError::io(&canonical, e))?;
+            writer.write_all(&buf).map_err(|e| {
+                localized(
+                    "webdav.sync.zip_write_file_failed",
+                    format!("写入 ZIP 文件内容失败: {e}"),
+                    format!("Failed to write ZIP file content: {e}"),
+                )
+            })?;
+        }
+        had_entries = true;
+    }
+
+    writer.finish().map_err(|e| {
+        localized(
+            "webdav.sync.extra_zip_write_failed",
+            format!("写入 extra.zip 失败: {e}"),
+            format!("Failed to write extra.zip: {e}"),
+        )
+    })?;
+    Ok(had_entries)
+}
+
+/// Restore `extra.zip` into the Claude config directory, transactionally.
+///
+/// Only paths that are enabled locally and present in the archive are touched:
+/// staged replacements are backed up, then swapped in per target, mirroring the
+/// skills backup → staging → rename → rollback semantics. Paths that were
+/// disabled or removed locally (or that the remote never packed) keep their
+/// local content untouched. Returns a handle used to roll the replacements back
+/// if the database import that follows fails.
+pub(crate) fn restore_extra_zip(
+    raw: &[u8],
+    paths: &[SyncExtraPath],
+) -> Result<ExtraRestore, AppError> {
+    let mut restore = ExtraRestore {
+        transaction: None,
+        targets: Vec::new(),
+        installed: 0,
+    };
+    let mut sources = Vec::new();
+    for path in paths {
+        if !path.enabled {
+            continue;
+        }
+        match crate::settings::normalize_sync_extra_source(&path.source) {
+            Ok(source) if !sources.contains(&source) => sources.push(source),
+            Ok(_) => {}
+            Err(err) => log::warn!("[Sync] Skipping invalid extra sync path: {err}"),
+        }
+    }
+    if sources.is_empty() {
+        return Ok(restore);
+    }
+    sources.sort();
+
+    let claude_dir = crate::config::get_claude_config_dir();
+    fs::create_dir_all(&claude_dir).map_err(|e| AppError::io(&claude_dir, e))?;
+
+    // The transaction lives inside the config directory so every later rename
+    // stays on one filesystem.
+    let transaction = tempfile::Builder::new()
+        .prefix(".extra-restore-")
+        .tempdir_in(&claude_dir)
+        .map_err(|e| AppError::io(&claude_dir, e))?;
+    let staged_root = transaction.path().join("new");
+    fs::create_dir_all(&staged_root).map_err(|e| AppError::io(&staged_root, e))?;
+    extract_extra_zip_entries(raw, &staged_root)?;
+
+    // Match staged content against the enabled sources. Entries for paths that
+    // are disabled or unknown locally stay in the transaction directory and are
+    // discarded with it.
+    for source in &sources {
+        let staged = staged_root.join("_extra").join(source);
+        if !staged.exists() {
+            continue;
+        }
+        let target = claude_dir.join(source);
+        if fs::symlink_metadata(&target)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            // cc-switch never packs symlinks; a local symlink here is
+            // user-owned state (e.g. a dotfiles junction) and is not replaced.
+            log::warn!(
+                "[Sync] Not restoring extra sync path onto a local symlink: {}",
+                target.display()
+            );
+            continue;
+        }
+        restore.targets.push(ExtraTarget {
+            source: source.clone(),
+            backup: transaction.path().join("backup").join(source),
+            staged,
+            existed: target.exists(),
+            target,
+        });
+    }
+    if restore.targets.is_empty() {
+        // The tempdir still auto-cleans here; nothing was touched on disk.
+        return Ok(restore);
+    }
+
+    // Disable automatic cleanup BEFORE the first destructive step: if a later
+    // rollback fails, the backups in here are the only intact originals.
+    let transaction = transaction.keep();
+    restore.transaction = Some(transaction.clone());
+
+    let mut install_error: Option<AppError> = None;
+    for target in &restore.targets {
+        if target.existed {
+            if let Err(error) = backup_extra_target(&target.target, &target.backup) {
+                // Nothing was changed for this target yet.
+                install_error = Some(localized(
+                    "sync.extra_backup_failed",
+                    format!("备份「{}」失败: {error}", target.target.display()),
+                    format!("Failed to back up \"{}\": {error}", target.target.display()),
+                ));
+                break;
+            }
+        }
+        if let Err(error) = remove_extra_path(&target.target) {
+            // The live content is intact; nothing to recover for this target.
+            install_error = Some(AppError::io(&target.target, error));
+            break;
+        }
+        if let Err(error) = fs::rename(&target.staged, &target.target) {
+            let apply_error = io_context_localized(
+                "sync.extra_install_failed",
+                format!(
+                    "应用「{}」的同步内容失败（{} → {}）",
+                    target.source,
+                    target.staged.display(),
+                    target.target.display()
+                ),
+                format!(
+                    "Failed to apply synced content for \"{}\" ({} -> {})",
+                    target.source,
+                    target.staged.display(),
+                    target.target.display()
+                ),
+                error,
+            );
+            // The live content of the failing target is already backed up and
+            // removed — put it back before the earlier targets are rolled back.
+            if target.existed {
+                if let Err(rollback_error) = fs::rename(&target.backup, &target.target) {
+                    // Keep the transaction directory: the backup of this target
+                    // is the only intact original left.
+                    restore.transaction = None;
+                    return Err(localized(
+                        "sync.extra_rollback_failed",
+                        format!(
+                            "{apply_error}; 回滚也失败: {rollback_error}; 恢复前的内容备份保留在 {}",
+                            target.backup.display()
+                        ),
+                        format!(
+                            "{apply_error}; rollback also failed: {rollback_error}; pre-restore content retained at {}",
+                            target.backup.display()
+                        ),
+                    ));
+                }
+            }
+            install_error = Some(apply_error);
+            break;
+        }
+        restore.installed += 1;
+    }
+
+    // Any install failure rolls the whole extra restore back so the snapshot
+    // application stays one transaction together with the skills restore.
+    if let Some(install_error) = install_error {
+        if let Err(rollback_error) = restore.rollback_installed() {
+            // Keep the transaction directory: the backups are the only intact
+            // pre-restore content left.
+            restore.transaction = None;
+            return Err(localized(
+                "sync.extra_rollback_failed",
+                format!(
+                    "{install_error}; 回滚也失败: {rollback_error}; 恢复前的内容备份保留在 {}",
+                    transaction.join("backup").display()
+                ),
+                format!(
+                    "{install_error}; rollback also failed: {rollback_error}; pre-restore content retained at {}",
+                    transaction.join("backup").display()
+                ),
+            ));
+        }
+        return Err(install_error);
+    }
+
+    Ok(restore)
+}
+
+/// Extract every archive entry below `dest` with the same guard rails as the
+/// skills restore: `enclosed_name` against path traversal, a bounded entry
+/// count, and a bounded total uncompressed size.
+fn extract_extra_zip_entries(raw: &[u8], dest: &Path) -> Result<(), AppError> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(raw)).map_err(|e| {
+        localized(
+            "sync.extra_zip_parse_failed",
+            format!("解析 extra.zip 失败: {e}"),
+            format!("Failed to parse extra.zip: {e}"),
+        )
+    })?;
+
+    if archive.len() > MAX_EXTRACT_ENTRIES {
+        return Err(localized(
+            "sync.extra_zip_too_many_entries",
+            format!(
+                "extra.zip 条目数过多（{}），上限 {MAX_EXTRACT_ENTRIES}",
+                archive.len()
+            ),
+            format!(
+                "extra.zip has too many entries ({}), limit is {MAX_EXTRACT_ENTRIES}",
+                archive.len()
+            ),
+        ));
+    }
+
+    let mut total_bytes: u64 = 0;
+    for idx in 0..archive.len() {
+        let mut entry = archive.by_index(idx).map_err(|e| {
+            localized(
+                "sync.extra_zip_entry_read_failed",
+                format!("读取 extra.zip 条目失败: {e}"),
+                format!("Failed to read extra.zip entry: {e}"),
+            )
+        })?;
+        let Some(safe_name) = entry.enclosed_name() else {
+            continue;
+        };
+        let out_path = dest.join(safe_name);
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path).map_err(|e| AppError::io(&out_path, e))?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        }
+        let mut out = fs::File::create(&out_path).map_err(|e| AppError::io(&out_path, e))?;
+        let _written = copy_entry_with_total_limit(
+            &mut entry,
+            &mut out,
+            &mut total_bytes,
+            MAX_SYNC_ARTIFACT_BYTES,
+            "extra.zip",
+            &out_path,
+        )?;
+    }
+    Ok(())
+}
+
+/// Copy the live content of a target into its backup slot before it is
+/// replaced. Symlinks never reach here (filtered during target collection).
+fn backup_extra_target(target: &Path, backup: &Path) -> Result<(), AppError> {
+    if let Some(parent) = backup.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    let meta = fs::symlink_metadata(target).map_err(|e| AppError::io(target, e))?;
+    if meta.is_dir() {
+        copy_dir_recursive(target, backup)
+    } else {
+        fs::copy(target, backup)
+            .map(|_| ())
+            .map_err(|e| AppError::io(backup, e))
+    }
+}
+
+/// Remove a live target of any shape (file, directory, or symlink), leaving
+/// nothing behind for the staged replacement to collide with. Missing targets
+/// are already gone.
+fn remove_extra_path(target: &Path) -> std::io::Result<()> {
+    let Ok(meta) = fs::symlink_metadata(target) else {
+        return Ok(());
+    };
+    if meta.file_type().is_symlink() {
+        if fs::remove_file(target).is_err() {
+            // Windows directory symlinks/junctions need remove_dir.
+            fs::remove_dir(target)?;
+        }
+        return Ok(());
+    }
+    if meta.is_dir() {
+        fs::remove_dir_all(target)
+    } else {
+        fs::remove_file(target)
     }
 }
 
@@ -344,6 +868,7 @@ fn zip_dir_recursive(
     writer: &mut zip::ZipWriter<fs::File>,
     options: SimpleFileOptions,
     visited: &mut HashSet<PathBuf>,
+    entry_prefix: &str,
 ) -> Result<(), AppError> {
     let mut entries: Vec<_> = fs::read_dir(current)
         .map_err(|e| AppError::io(current, e))?
@@ -383,6 +908,11 @@ fn zip_dir_recursive(
                 )
             })?;
         let rel_str = rel.to_string_lossy().replace('\\', "/");
+        let entry_name = if entry_prefix.is_empty() {
+            rel_str
+        } else {
+            format!("{entry_prefix}/{rel_str}")
+        };
 
         if real_path.is_dir() {
             if !mark_visited_dir(&real_path, visited)? {
@@ -393,7 +923,7 @@ fn zip_dir_recursive(
                 continue;
             }
             writer
-                .add_directory(format!("{rel_str}/"), options)
+                .add_directory(format!("{entry_name}/"), options)
                 .map_err(|e| {
                     localized(
                         "webdav.sync.zip_add_directory_failed",
@@ -401,9 +931,9 @@ fn zip_dir_recursive(
                         format!("Failed to write ZIP directory entry: {e}"),
                     )
                 })?;
-            zip_dir_recursive(root, &real_path, writer, options, visited)?;
+            zip_dir_recursive(root, &real_path, writer, options, visited, entry_prefix)?;
         } else {
-            writer.start_file(&rel_str, options).map_err(|e| {
+            writer.start_file(&entry_name, options).map_err(|e| {
                 localized(
                     "webdav.sync.zip_start_file_failed",
                     format!("写入 ZIP 文件头失败: {e}"),
@@ -470,6 +1000,7 @@ fn copy_entry_with_total_limit<R: Read, W: Write>(
     writer: &mut W,
     total_bytes: &mut u64,
     max_total_bytes: u64,
+    artifact_label: &str,
     out_path: &Path,
 ) -> Result<u64, AppError> {
     let mut buffer = [0u8; 16 * 1024];
@@ -486,8 +1017,8 @@ fn copy_entry_with_total_limit<R: Read, W: Write>(
             let max_mb = max_total_bytes / 1024 / 1024;
             return Err(localized(
                 "webdav.sync.skills_zip_too_large",
-                format!("skills.zip 解压后体积超过上限（{max_mb} MB）"),
-                format!("skills.zip extracted size exceeds limit ({max_mb} MB)"),
+                format!("{artifact_label} 解压后体积超过上限（{max_mb} MB）"),
+                format!("{artifact_label} extracted size exceeds limit ({max_mb} MB)"),
             ));
         }
 
@@ -530,6 +1061,7 @@ mod tests {
             &mut writer,
             &mut total_bytes,
             8,
+            "skills.zip",
             Path::new("skills-extracted/file.bin"),
         )
         .expect_err("stream larger than limit should be rejected");

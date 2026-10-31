@@ -760,6 +760,7 @@
         "content": "以下の内容を WebDAV サーバーに同期します：",
         "dbItem": "データベース（すべてのプロバイダー設定とデータ）",
         "skillsItem": "スキル（すべてのカスタムスキル）",
+        "extraItem": "カスタムパス（extra.zip）",
         "targetPath": "保存先パス",
         "existingData": "クラウドの既存データ",
         "deviceName": "アップロード元",
@@ -770,6 +771,23 @@
         "legacyNotice": "旧レイアウトのリモートデータを検出しました。今回のアップロードは新しい v2/db-v6 パスに書き込み、旧パスは上書きしません。",
         "confirm": "アップロードを実行"
       }
+    },
+    "syncExtraPaths": {
+      "title": "カスタム同期パス",
+      "description": "~/.claude 配下のこれらのディレクトリやファイルをクラウド同期スナップショットに含めます（hooks が参照するスクリプト、output-styles、agents など）。WebDAV と S3 同期の両方に適用されます。",
+      "empty": "カスタムパスは未登録です。同期内容は以前と同一です。",
+      "placeholder": "例: hooks または hooks/guard.sh",
+      "sourceLabel": "同期パス",
+      "enabled": "同期に含める",
+      "remove": "削除",
+      "add": "パスを追加",
+      "rulesHint": "~/.claude からの相対パスのみ指定できます。「..」、絶対パス、シンボリックリンクは対応外です。Skills の保存ディレクトリと重なるパスはスキップされます。",
+      "errorEmpty": "パスが空、または空の要素（連続・末尾の区切り文字）を含んでいます",
+      "errorAbsolute": "絶対パスは使用できません。~/.claude からの相対パスを入力してください",
+      "errorTraversal": "パスの要素に「.」や「..」は使用できません",
+      "errorInvalidChar": "無効な文字が含まれています（Windows の予約文字 < > : \" | ? *、または末尾のドット/空白）",
+      "errorDuplicate": "重複したパスがあります",
+      "errorNested": "互いにネストしたパスは使用できません。どちらか一方を残してください"
     },
     "syncType": {
       "label": "同期方式",
@@ -862,6 +880,7 @@
         "content": "以下の内容を S3 バケットに同期します：",
         "dbItem": "データベース（すべてのプロバイダー設定とデータ）",
         "skillsItem": "スキル（すべてのカスタムスキル）",
+        "extraItem": "カスタムパス（extra.zip）",
         "targetPath": "保存先オブジェクトパス",
         "existingData": "クラウドの既存データ",
         "deviceName": "アップロード元",
