@@ -247,6 +247,19 @@ pub struct SkillUpdateCheckResult {
     pub failures: Vec<SkillRepoFailure>,
 }
 
+/// [`SkillService::reuse_existing_install`] 的裁决结果。
+#[derive(Debug)]
+pub enum ReuseDecision {
+    /// 同仓库已安装：已就地启用当前应用，安装到此为止。
+    Reused(InstalledSkill),
+    /// 目录被 zip 本地安装（repo_owner 为空）占用，且 SKILL.md 元数据与发现
+    /// 结果认定为同一技能（#7624）：调用方下载仓库内容后执行
+    /// [`SkillService::adopt_local_install`] 完成接管，再按仓库内容重装。
+    Adopt(InstalledSkill),
+    /// 无既有安装，按全新安装继续。
+    Fresh,
+}
+
 /// ZIP 里因为目录名已被占用而跳过的 Skill（#3749）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -820,15 +833,16 @@ impl SkillService {
         Ok(skills.into_values().collect())
     }
 
-    /// Reuse an existing installation or reject a directory owned by another repo.
-    /// The caller must hold [`skill_state_write_guard`] because this can update the
-    /// database and materialized app directory.
+    /// Decide how `install` should proceed when a skill already occupies the
+    /// target directory. The caller must hold [`skill_state_write_guard`]
+    /// because the `Reused` branch updates the database and the materialized
+    /// app directory.
     fn reuse_existing_install(
         db: &Arc<Database>,
         skill: &DiscoverableSkill,
         install_name: &str,
         current_app: &AppType,
-    ) -> Result<Option<InstalledSkill>> {
+    ) -> Result<ReuseDecision> {
         let existing_skills = db.get_all_installed_skills()?;
         for existing in existing_skills.values() {
             if !existing.directory.eq_ignore_ascii_case(install_name) {
@@ -847,7 +861,19 @@ impl SkillService {
                     updated.name,
                     current_app
                 );
-                return Ok(Some(updated));
+                return Ok(ReuseDecision::Reused(updated));
+            }
+
+            // #7624：目录被 zip 本地安装（repo_owner 为空）占用时，若本地
+            // SKILL.md 元数据与发现结果认定为同一技能，则不再冲突，改为
+            // 「接管」——调用方下载仓库内容后在写守卫内备份旧目录、清理部署、
+            // 删除 local 行，再按仓库内容重装。元数据对不上仍维持冲突；
+            // repo 与 repo 之间的冲突完全不受影响。
+            if existing.repo_owner.is_none()
+                && existing.repo_name.is_none()
+                && Self::local_skill_adoptable(existing, skill)
+            {
+                return Ok(ReuseDecision::Adopt(existing.clone()));
             }
 
             return Err(anyhow!(format_skill_error(
@@ -871,7 +897,110 @@ impl SkillService {
             )));
         }
 
-        Ok(None)
+        Ok(ReuseDecision::Fresh)
+    }
+
+    /// #7624：判断本地（zip 安装）技能能否被发现的仓库技能「接管」。
+    ///
+    /// 认定标准是本地目录里 SKILL.md 的元数据与发现结果一致：
+    /// - `name` 必须一致；
+    /// - 发现结果的 `description` 非空时，`description` 也必须一致——skills.sh
+    ///   来源的结果不带描述（恒为空串），此时退化为仅按名称匹配。
+    ///
+    /// 本地目录缺失、SKILL.md 读不出来或字段对不上，一律视为不同技能。
+    fn local_skill_adoptable(existing: &InstalledSkill, skill: &DiscoverableSkill) -> bool {
+        let Ok(directory) = Self::require_valid_directory(&existing.directory) else {
+            return false;
+        };
+        let skill_md = match Self::get_ssot_dir() {
+            Ok(ssot_dir) => ssot_dir.join(&directory).join("SKILL.md"),
+            Err(err) => {
+                log::warn!("无法解析 Skill SSOT 目录，跳过本地技能接管: {err:#}");
+                return false;
+            }
+        };
+        let metadata = match Self::parse_skill_metadata_static(&skill_md) {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                log::info!(
+                    "Skill {} 的 SKILL.md 无法读取，跳过接管: {err:#}",
+                    existing.id
+                );
+                return false;
+            }
+        };
+        let Some(local_name) = metadata.name.as_deref() else {
+            return false;
+        };
+        if !local_name.trim().eq_ignore_ascii_case(skill.name.trim()) {
+            return false;
+        }
+        if skill.description.trim().is_empty() {
+            return true;
+        }
+        let Some(local_description) = metadata.description.as_deref() else {
+            return false;
+        };
+        local_description
+            .trim()
+            .eq_ignore_ascii_case(skill.description.trim())
+    }
+
+    /// #7624：执行「接管」——备份并移除本地安装，让调用方在同一写守卫内按
+    /// 仓库内容重装。必须持有 [`skill_state_write_guard`]。
+    ///
+    /// 步骤按可逆性递减排列，前面任何一步失败都只留下完整无损的本地安装：
+    /// 1. 备份旧目录（连同旧元数据，供备份面板恢复）；
+    /// 2. 校验并移除 Pi/Omp/Mcode/Agy/Kimi 里的既有部署（照 update_skill 的
+    ///    部署校验：副本与 SSOT 内容不一致即拒绝，绝不盲目覆盖）；
+    /// 3. 移除 SSOT 旧目录——install 主流程的 `if !dest.exists()` 因此不会
+    ///    跳过复制，仓库内容才能落到磁盘；
+    /// 4. 删除 `local:` 数据库行（最后执行），新行由 install 主流程以
+    ///    `owner/repo:directory` 落库，不会留下同目录双行。
+    fn adopt_local_install(
+        db: &Arc<Database>,
+        existing: &InstalledSkill,
+        skill: &DiscoverableSkill,
+    ) -> Result<()> {
+        let directory = Self::require_valid_directory(&existing.directory)?;
+        let ssot_dir = Self::get_ssot_dir()?;
+        let dest = ssot_dir.join(&directory);
+
+        let backup_path = Self::create_uninstall_backup(existing)?;
+
+        for app in [
+            AppType::Pi,
+            AppType::Omp,
+            AppType::Mcode,
+            AppType::Agy,
+            AppType::Kimi,
+        ] {
+            let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?;
+            let destination = app_dir.join(&directory);
+            if destination.exists() || Self::is_symlink(&destination) {
+                Self::remove_verified_pi_destination(&dest, &destination, &directory)?;
+            }
+        }
+
+        if dest.exists() || Self::is_symlink(&dest) {
+            Self::remove_path(&dest)?;
+        }
+
+        db.delete_skill(&existing.id)?;
+
+        let backup_note = backup_path
+            .as_ref()
+            .map(|path| format!("，备份到 {}", path.display()))
+            .unwrap_or_default();
+        log::info!(
+            "本地 Skill {}（{}）已由仓库 {}/{} 接管{}",
+            existing.name,
+            existing.id,
+            skill.repo_owner,
+            skill.repo_name,
+            backup_note
+        );
+        Ok(())
     }
 
     /// 安装 Skill
@@ -910,12 +1039,13 @@ impl SkillService {
 
         // Fast path for an existing installation. The write guard makes the DB
         // row and app projection indivisible from a concurrent cloud snapshot.
+        let mut adopt_pending = false;
         {
             let _state_guard = skill_state_write_guard();
-            if let Some(existing) =
-                Self::reuse_existing_install(db, skill, &install_name, current_app)?
-            {
-                return Ok(existing);
+            match Self::reuse_existing_install(db, skill, &install_name, current_app)? {
+                ReuseDecision::Reused(existing) => return Ok(existing),
+                ReuseDecision::Adopt(_) => adopt_pending = true,
+                ReuseDecision::Fresh => {}
             }
         }
 
@@ -926,8 +1056,10 @@ impl SkillService {
         let mut resolved_doc_path: Option<String> = None;
         let mut downloaded_source: Option<(tempfile::TempDir, PathBuf)> = None;
 
-        // 如果已存在则跳过下载
-        if !dest.exists() {
+        // 如果已存在则跳过下载；接管场景（#7624）例外——旧目录里是本地 zip
+        // 内容，必须下载仓库内容才能完成「接管为仓库技能」。此时尚未做任何
+        // 本地改动，下载失败时本地安装原样保留。
+        if !dest.exists() || adopt_pending {
             let repo = SkillRepo {
                 owner: skill.repo_owner.clone(),
                 name: skill.repo_name.clone(),
@@ -1014,9 +1146,17 @@ impl SkillService {
         // Re-check after the network download: another install/uninstall may have
         // completed while the lock was intentionally released around `.await`.
         let _state_guard = skill_state_write_guard();
-        if let Some(existing) = Self::reuse_existing_install(db, skill, &install_name, current_app)?
-        {
-            return Ok(existing);
+        let adopt_existing =
+            match Self::reuse_existing_install(db, skill, &install_name, current_app)? {
+                ReuseDecision::Reused(existing) => return Ok(existing),
+                ReuseDecision::Adopt(existing) => Some(existing),
+                ReuseDecision::Fresh => None,
+            };
+        // 接管动作放在下载之后（#7624）：备份 → 清理部署 → 移除旧目录 → 删
+        // local 行，全部在当前写守卫内完成；随后 `if !dest.exists()` 走复制，
+        // 同一守卫内把仓库内容装进 SSOT 并落库。
+        if let Some(existing) = adopt_existing {
+            Self::adopt_local_install(db, &existing, skill)?;
         }
 
         if !dest.exists() {

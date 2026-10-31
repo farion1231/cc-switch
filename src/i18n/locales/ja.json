@@ -4841,6 +4841,8 @@
       "installed": "インストール済み · {{count}} アプリ",
       "installedAria": "{{name}} は {{count}} アプリにインストール済み。「インストール済み」で表示",
       "dirTaken": "フォルダー名は {{name}}（{{source}}）が使用中",
+      "adopt": "引き継いで更新",
+      "adoptAria": "{{name}} をリポジトリから引き継ぎ、更新を管理",
       "installing": "インストール中",
       "installingAria": "{{name}} をインストール中",
       "installAria": "{{name}} をインストール",
