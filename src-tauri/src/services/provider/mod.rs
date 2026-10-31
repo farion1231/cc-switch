@@ -47,7 +47,11 @@ pub use live::{
 };
 
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
-    pi::import_from_live(state)
+    pi::import_from_live(state, &AppType::Pi)
+}
+
+pub fn import_rpi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    pi::import_from_live(state, &AppType::Rpi)
 }
 
 pub fn import_omp_providers_from_live(state: &AppState) -> Result<usize, AppError> {
@@ -5469,8 +5473,8 @@ impl ProviderService {
                 log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
             }
         }
-        if app_type == AppType::Pi {
-            return pi::list(state);
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
+            return pi::list(state, &app_type);
         }
         if app_type == AppType::Omp {
             return omp::list(state);
@@ -5648,8 +5652,8 @@ impl ProviderService {
                 "Manage Kimi official accounts in the Authorization Center".into(),
             ));
         }
-        if app_type == AppType::Pi {
-            return pi::add(state, provider, add_to_live);
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
+            return pi::add(state, &app_type, provider, add_to_live);
         }
 
         if app_type == AppType::Omp {
@@ -6253,8 +6257,8 @@ impl ProviderService {
                 None => {}
             }
         }
-        if app_type == AppType::Pi {
-            return pi::update(state, original_id, provider);
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
+            return pi::update(state, &app_type, original_id, provider);
         }
 
         if app_type == AppType::Omp {
@@ -6538,13 +6542,21 @@ impl ProviderService {
         pi::update_usage_script(state, app_type, id, script)
     }
 
+    pub(crate) fn update_rpi_usage_script(
+        state: &AppState,
+        id: &str,
+        script: crate::provider::UsageScript,
+    ) -> Result<bool, AppError> {
+        pi::update_usage_script(state, AppType::Rpi, id, script)
+    }
+
     /// Delete a provider
     ///
     /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
-        if app_type == AppType::Pi {
-            return pi::delete(state, id);
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
+            return pi::delete(state, &app_type, id);
         }
         if matches!(app_type, AppType::Dsh) {
             return crate::dsh_config::save_and_commit(id, None, false, || {
@@ -6681,8 +6693,8 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
-        if app_type == AppType::Pi {
-            return pi::remove(state, id);
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
+            return pi::remove(state, &app_type, id);
         }
         if matches!(app_type, AppType::Dsh) {
             return crate::dsh_config::save_and_commit(id, None, false, || {
@@ -6831,8 +6843,8 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<SwitchResult, AppError> {
-        if app_type == AppType::Pi {
-            return pi::enable(state, id);
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
+            return pi::enable(state, &app_type, id);
         }
         // Antigravity 的卡只作用于它打开的终端，没有「启用」（见 agy_config 模块说明）。
         if app_type == AppType::Agy {
@@ -7308,6 +7320,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi
+            | AppType::Rpi
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
@@ -7331,6 +7344,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi
+            | AppType::Rpi
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
@@ -8108,8 +8122,12 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
-            AppType::Pi => {
-                crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
+            AppType::Pi | AppType::Rpi => {
+                crate::pi_config::validate_provider_node(
+                    app_type,
+                    &provider.id,
+                    &provider.settings_config,
+                )?;
             }
             AppType::Omp => {
                 crate::omp_config::validate_provider(&provider.id, &provider.settings_config)?;
@@ -8340,7 +8358,13 @@ impl ProviderService {
                     .unwrap_or_default()
                     .into(),
             )),
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode | AppType::Omp => {
+
+            AppType::OpenClaw
+            | AppType::Hermes
+            | AppType::Pi
+            | AppType::Rpi
+            | AppType::Mcode
+            | AppType::Omp => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config

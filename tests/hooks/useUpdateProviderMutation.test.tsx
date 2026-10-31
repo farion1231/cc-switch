@@ -152,4 +152,25 @@ describe("useUpdateProviderMutation", () => {
       queryKey: ["providers", "pi"],
     });
   });
+  it("refreshes rpi provider caches even when an update fails", async () => {
+    apiMocks.update.mockRejectedValueOnce(new Error("conflict"));
+    const { wrapper, invalidateSpy } = createWrapper();
+    const provider = createProvider({ id: "rpi-provider" });
+    const { result } = renderHook(() => useUpdateProviderMutation("rpi"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await expect(result.current.mutateAsync({ provider })).rejects.toThrow(
+        "conflict",
+      );
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["rpi", "currentState"],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["providers", "rpi"],
+    });
+  });
 });

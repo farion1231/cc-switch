@@ -213,10 +213,18 @@ impl ApiFormat {
             (AppType::OpenCode, OpenAiChat) => Some("@ai-sdk/openai-compatible"),
             (AppType::OpenCode, OpenAiResponses) => Some("@ai-sdk/openai"),
             (AppType::OpenCode, GeminiNative) => Some("@ai-sdk/google"),
-            (AppType::OpenClaw | AppType::Pi, Anthropic) => Some("anthropic-messages"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiChat) => Some("openai-completions"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiResponses) => Some("openai-responses"),
-            (AppType::OpenClaw | AppType::Pi, GeminiNative) => Some("google-generative-ai"),
+            (AppType::OpenClaw | AppType::Pi | AppType::Rpi, Anthropic) => {
+                Some("anthropic-messages")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Rpi, OpenAiChat) => {
+                Some("openai-completions")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Rpi, OpenAiResponses) => {
+                Some("openai-responses")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Rpi, GeminiNative) => {
+                Some("google-generative-ai")
+            }
             (AppType::Hermes, Anthropic) => Some("anthropic_messages"),
             (AppType::Hermes, OpenAiChat) => Some("chat_completions"),
             (AppType::Hermes, OpenAiResponses) => Some("codex_responses"),
@@ -286,7 +294,7 @@ pub(super) fn check_link_values(
     if !app_type.is_additive_mode() {
         return Ok(());
     }
-    let is_pi = matches!(app_type, AppType::Pi);
+    let is_pi = matches!(app_type, AppType::Pi | AppType::Rpi);
     let fields = [
         ("name", request.name.as_deref()),
         ("endpoint", request.endpoint.as_deref()),
@@ -339,7 +347,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request, api_format),
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
-        AppType::Pi => build_pi_settings(request, api_format)?,
+        AppType::Pi | AppType::Rpi => build_pi_settings(request, api_format)?,
         AppType::Dsh => {
             return Err(AppError::InvalidInput(
                 "Add DeepSeek Harness providers from the DeepSeek Harness page".into(),
@@ -350,6 +358,7 @@ pub(crate) fn build_provider_from_request(
                 "Add Kimi Code providers from the Kimi Code page".into(),
             ))
         }
+
         AppType::Mcode => {
             return Err(AppError::InvalidInput(
                 "Add MCode providers from the MCode page".into(),
@@ -1005,7 +1014,7 @@ pub fn parse_and_merge_config(
         "agy" => merge_agy_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" => {
+        "openclaw" | "opencode" | "hermes" | "pi" | "rpi" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {

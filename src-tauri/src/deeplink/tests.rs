@@ -137,10 +137,22 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
-fn pi_provider_link_without_a_model_is_rejected_up_front() {
-    let url = "ccswitch://v1/import?resource=provider&app=pi&name=Pi&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test";
-    let err = parse_deeplink_url(url).expect_err("a Pi node without models is unusable");
-    assert!(err.to_string().contains("model"), "{err}");
+fn pi_family_provider_link_requires_a_model() {
+    for app in ["pi", "rpi"] {
+        let base = format!("ccswitch://v1/import?resource=provider&app={app}&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test");
+        for suffix in ["", "&model=", "&model=%20"] {
+            let err = parse_deeplink_url(&format!("{base}{suffix}"))
+                .expect_err("native providers need a model");
+            assert!(err.to_string().contains("model"), "{app}: {err}");
+        }
+        assert_eq!(
+            parse_deeplink_url(&format!("{base}&model=example-model"))
+                .unwrap()
+                .app
+                .as_deref(),
+            Some(app)
+        );
+    }
 }
 
 #[test]
@@ -217,6 +229,26 @@ fn test_parse_rejects_config_url_up_front() {
 
     let err = parse_deeplink_url(url).unwrap_err();
     assert!(err.to_string().contains("configUrl"), "{err}");
+}
+
+/// Pi-family / MiniMax Code are valid targets in both the parser and import service.
+#[test]
+fn test_parse_mcp_deeplink_accepts_pi_rpi_and_mcode() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    let url = format!("ccswitch://v1/import?resource=mcp&apps=claude,pi,rpi,mcode&config={config}");
+
+    let request = parse_deeplink_url(&url).expect("Pi-family and mcode are valid MCP targets");
+    let apps = parse_mcp_apps(request.apps.as_deref().unwrap()).unwrap();
+    assert!(apps.claude && apps.pi && apps.rpi && apps.mcode);
+}
+
+#[test]
+fn test_parse_rpi_prompt_deeplink() {
+    let request = parse_deeplink_url(
+        "ccswitch://v1/import?resource=prompt&app=rpi&name=Rules&content=IyBoaQ%3D%3D",
+    )
+    .unwrap();
+    assert_eq!(request.app.as_deref(), Some("rpi"));
 }
 
 /// 下游 parse_mcp_apps 与 McpService 都支持 Pi / MiniMax Code / Oh My Pi，解析层不能先把它们拦掉
@@ -1732,18 +1764,20 @@ fn test_api_format_rejects_unknown_values_and_unsupported_apps() {
 }
 
 #[test]
-fn test_pi_link_builds_a_models_json_node() {
-    let provider = build_from_link("pi", Some("anthropic"));
-    assert_eq!(
-        provider.settings_config,
-        serde_json::json!({
-            "name": "Example",
-            "baseUrl": "https://api.example.com/v1",
-            "apiKey": "sk-test",
-            "api": "anthropic-messages",
-            "models": [{ "id": "example-model", "name": "example-model" }],
-        })
-    );
+fn test_pi_family_link_builds_a_models_json_node() {
+    for app in ["pi", "rpi"] {
+        let provider = build_from_link(app, Some("anthropic"));
+        assert_eq!(
+            provider.settings_config,
+            serde_json::json!({
+                "name": "Example",
+                "baseUrl": "https://api.example.com/v1",
+                "apiKey": "sk-test",
+                "api": "anthropic-messages",
+                "models": [{ "id": "example-model", "name": "example-model" }],
+            })
+        );
+    }
 }
 
 // =============================================================================
@@ -1813,6 +1847,9 @@ fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rej
         ("pi", "apiKey", "$OPENAI_API_KEY"),
         ("pi", "apiKey", "${AWS_SECRET_ACCESS_KEY}"),
         ("pi", "model", "${HOME}"),
+        ("rpi", "apiKey", "!printf review-fixture"),
+        ("rpi", "apiKey", "$OPENAI_API_KEY"),
+        ("rpi", "model", "${HOME}"),
         ("opencode", "apiKey", "{file:~/.ssh/id_ed25519}"),
         ("opencode", "apiKey", "{env:ANTHROPIC_API_KEY}"),
         (
@@ -1864,6 +1901,14 @@ fn test_dynamic_syntax_guard_also_covers_values_from_config_and_direct_requests(
     );
     let request = parse_deeplink_url(&url).expect("URL params themselves are fine");
     assert!(parse_and_merge_config(&request).is_err());
+
+    // Config-file auto-fill must enforce the Pi-family command/variable guard too.
+    for key in ["!printf review-fixture", "$OPENAI_API_KEY"] {
+        let config = BASE64_STANDARD.encode(serde_json::json!({"apiKey":key}).to_string());
+        let url = format!("ccswitch://v1/import?resource=provider&app=rpi&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&model=m&config={config}");
+        let request = parse_deeplink_url(&url).unwrap();
+        assert!(parse_and_merge_config(&request).is_err());
+    }
 
     // 前端可以直接把请求发给导入命令，不经过解析器：构建时还要再查一次
     let request = DeepLinkImportRequest {

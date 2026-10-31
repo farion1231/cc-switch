@@ -8,7 +8,7 @@
 //!
 //! 项目级 `.pi/mcp.json` 不在这里管。
 
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::config::atomic_write_private;
 use crate::error::AppError;
 use crate::store::AppState;
@@ -50,18 +50,28 @@ impl<'a> PiChange<'a> {
     }
 }
 
-pub(crate) fn config_path() -> Result<PathBuf, AppError> {
-    Ok(crate::pi_config::get_pi_agent_dir()?.join("mcp.json"))
+pub(crate) fn config_path(app: &AppType) -> Result<PathBuf, AppError> {
+    Ok(crate::pi_config::agent_dir(app)?.join("mcp.json"))
+}
+
+fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::io(path, error)),
+    }
 }
 
 fn read(path: &Path) -> Result<Value, AppError> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({"mcpServers": {}})),
-        Err(e) => return Err(AppError::io(path, e)),
+    parse_document(read_bytes(path)?.as_deref())
+}
+
+fn parse_document(bytes: Option<&[u8]>) -> Result<Value, AppError> {
+    let Some(bytes) = bytes else {
+        return Ok(json!({"mcpServers": {}}));
     };
-    let value: Value =
-        serde_json::from_str(&text).map_err(|_| AppError::Config("Invalid Pi MCP JSON".into()))?;
+    let value: Value = serde_json::from_slice(bytes)
+        .map_err(|_| AppError::Config("Invalid Pi MCP JSON".into()))?;
     if !value.is_object() || value.get("mcpServers").is_some_and(|v| !v.is_object()) {
         return Err(AppError::Config("Invalid Pi mcpServers object".into()));
     }
@@ -103,20 +113,24 @@ fn native_transport(spec: &Value) -> Result<Value, AppError> {
     Ok(native)
 }
 
-pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
+pub fn sync(app: &AppType, id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    sync_file(&config_path()?, id, PiChange::from_enabled(spec))
+    sync_file(&config_path(app)?, id, PiChange::from_enabled(spec))
 }
 
 /// 删除服务器时清掉 Pi 里由 CC Switch 写入、后来被取消勾选的条目：
 /// 只删 `enabled: false` 且连接方式和这个服务器一致的同名条目，用户自己的同名条目不动
-pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
+pub(crate) fn remove_disabled_if_managed(
+    app: &AppType,
+    id: &str,
+    spec: &Value,
+) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = config_path()?;
+    let path = config_path(app)?;
     if !path.exists() {
         return Ok(());
     }
@@ -129,21 +143,97 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
     Ok(())
 }
 
-/// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样
+/// Write one app's file and commit the database under the Pi-family write lock.
 pub(crate) fn sync_and_commit<T>(
+    app: &AppType,
     id: &str,
     change: PiChange<'_>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    sync_many_and_commit(&[(app, change)], id, commit)
+}
+
+/// Lock once across all Pi-family files and the database commit. Each file transaction
+/// encloses the next, so failure restores earlier writes unless an external editor
+/// changed the file; in that case preserve its contents and report the rollback conflict.
+pub(crate) fn sync_many_and_commit<T>(
+    changes: &[(&AppType, PiChange<'_>)],
+    id: &str,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = config_path()?;
-    crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, change), commit)
+    let paths = changes
+        .iter()
+        .map(|(app, change)| Ok((config_path(app)?, *change)))
+        .collect::<Result<Vec<_>, AppError>>()?;
+    sync_files_and_commit(&paths, id, commit)
+}
+
+fn sync_files_and_commit<T>(
+    changes: &[(PathBuf, PiChange<'_>)],
+    id: &str,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let Some(((path, change), remaining)) = changes.split_first() else {
+        return commit();
+    };
+    let written = sync_file_with_snapshot(path, id, *change)?;
+    match sync_files_and_commit(remaining, id, commit) {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            if let Some(written) = written {
+                if let Err(rollback_error) = written.restore(path) {
+                    return Err(AppError::Message(format!(
+                        "MCP update failed ({error}); restoring {} also failed: {rollback_error}",
+                        path.display()
+                    )));
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
+struct PiFileWrite {
+    previous: Option<Vec<u8>>,
+    written: Vec<u8>,
+}
+
+impl PiFileWrite {
+    fn restore(self, path: &Path) -> Result<(), AppError> {
+        // The CC Switch lock cannot stop a native CLI or editor. Do not restore
+        // an old snapshot over external edits (including deletion or invalid JSON).
+        ensure_file_unchanged(path, Some(&self.written))?;
+        match self.previous {
+            Some(bytes) => atomic_write_private(path, &bytes),
+            None => fs::remove_file(path).map_err(|error| AppError::io(path, error)),
+        }
+    }
+}
+
+fn ensure_file_unchanged(path: &Path, expected: Option<&[u8]>) -> Result<(), AppError> {
+    if read_bytes(path)?.as_deref() != expected {
+        return Err(AppError::Conflict(format!(
+            "MCP configuration changed outside CC Switch; reload before retrying: {}",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError> {
-    let mut document = read(path)?;
+    sync_file_with_snapshot(path, id, change).map(|_| ())
+}
+
+fn sync_file_with_snapshot(
+    path: &Path,
+    id: &str,
+    change: PiChange<'_>,
+) -> Result<Option<PiFileWrite>, AppError> {
+    let previous = read_bytes(path)?;
+    let mut document = parse_document(previous.as_deref())?;
     if document.get("mcpServers").is_none() {
         document["mcpServers"] = json!({});
     }
@@ -178,26 +268,25 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
                 entry.insert("enabled".into(), json!(false));
             }
             // 没有条目就没什么可禁用的，不为此新建
-            _ => return Ok(()),
+            _ => return Ok(None),
         },
         PiChange::Remove => {
             if servers.remove(id).is_none() {
-                return Ok(());
+                return Ok(None);
             }
         }
     }
-    atomic_write_private(
-        path,
-        serde_json::to_string_pretty(&document)
-            .map_err(|e| AppError::Config(e.to_string()))?
-            .as_bytes(),
-    )
+    let written = serde_json::to_vec_pretty(&document)
+        .map_err(|error| AppError::Config(error.to_string()))?;
+    ensure_file_unchanged(path, previous.as_deref())?;
+    atomic_write_private(path, &written)?;
+    Ok(Some(PiFileWrite { previous, written }))
 }
 
 /// 从 Pi 的 `mcp.json` 导入。Pi 自己的字段（`timeout`、`exposure` 等）留在连接定义里原样保存；
 /// `enabled: false` 的条目导入后不勾选 Pi。和已有服务器连接方式不同的同名条目跳过并报告。
-pub fn import(state: &AppState) -> Result<usize, AppError> {
-    let document = read(&config_path()?)?;
+pub fn import(state: &AppState, app: &AppType) -> Result<usize, AppError> {
+    let document = read(&config_path(app)?)?;
     let mut existing = state.db.get_all_mcp_servers()?;
     let mut count = 0;
     let mut skipped = Vec::new();
@@ -217,7 +306,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
                 skipped.push(format!("'{id}': conflicts with an existing server"));
                 continue;
             }
-            server.apps.pi = enabled;
+            server.apps.set_enabled_for(app, enabled);
             server
         } else {
             count += 1;
@@ -225,10 +314,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
                 id: id.clone(),
                 name: id.clone(),
                 server: spec,
-                apps: McpApps {
-                    pi: enabled,
-                    ..Default::default()
-                },
+                apps: pi_family_apps(app, enabled),
                 description: None,
                 homepage: None,
                 docs: None,
@@ -245,6 +331,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
             skipped.join("; ")
         )))
     }
+}
+
+/// The MCP flags of a freshly imported entry: only the importing app is on.
+fn pi_family_apps(app: &AppType, enabled: bool) -> McpApps {
+    let mut apps = McpApps::default();
+    apps.set_enabled_for(app, enabled);
+    apps
 }
 
 pub(crate) fn transport_spec(spec: &Value) -> Value {
@@ -284,6 +377,266 @@ pub(crate) fn unified_spec(native: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
+    use crate::pi_config::test_support::{TestAgentDir, TestRpiAgentDir};
+    use crate::services::McpService;
+    use std::sync::Arc;
+
+    fn dual_server() -> McpServer {
+        serde_json::from_value(json!({
+            "id": "srv", "name": "Server", "server": {"command": "new"},
+            "apps": {"pi": true, "rpi": true}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn dual_app_service_save_disable_reenable_and_delete() {
+        let _pi = TestAgentDir::new();
+        let _rpi = TestRpiAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        for app in [AppType::Pi, AppType::Rpi] {
+            let path = config_path(&app).unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, r#"{"future":true,"mcpServers":{"srv":{"command":"old","timeout":123},"other":{"command":"keep"}}}"#).unwrap();
+        }
+        let mut server = dual_server();
+        McpService::upsert_server(&state, server.clone()).unwrap();
+        let saved = &state.db.get_all_mcp_servers().unwrap()["srv"];
+        assert!(saved.apps.pi && saved.apps.rpi);
+        for app in [AppType::Pi, AppType::Rpi] {
+            let doc = read(&config_path(&app).unwrap()).unwrap();
+            assert_eq!(doc["mcpServers"]["srv"]["command"], "new");
+            assert_eq!(doc["mcpServers"]["srv"]["timeout"], 123);
+        }
+        server.apps.pi = false;
+        McpService::upsert_server(&state, server.clone()).unwrap();
+        assert_eq!(
+            read(&config_path(&AppType::Pi).unwrap()).unwrap()["mcpServers"]["srv"]["enabled"],
+            false
+        );
+        assert_eq!(
+            read(&config_path(&AppType::Rpi).unwrap()).unwrap()["mcpServers"]["srv"]["enabled"],
+            true
+        );
+        server.apps.pi = true;
+        McpService::upsert_server(&state, server).unwrap();
+        McpService::delete_server(&state, "srv").unwrap();
+        assert!(!state.db.get_all_mcp_servers().unwrap().contains_key("srv"));
+        for app in [AppType::Pi, AppType::Rpi] {
+            let doc = read(&config_path(&app).unwrap()).unwrap();
+            assert!(doc["mcpServers"].get("srv").is_none());
+            assert_eq!(doc["mcpServers"]["other"]["command"], "keep");
+            assert_eq!(doc["future"], true);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn dual_app_later_file_failure_restores_first_file_and_database() {
+        let _pi = TestAgentDir::new();
+        let _rpi = TestRpiAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let server = dual_server();
+        McpService::upsert_server(&state, server.clone()).unwrap();
+        let pi_path = config_path(&AppType::Pi).unwrap();
+        let rpi_path = config_path(&AppType::Rpi).unwrap();
+        let original_pi = fs::read(&pi_path).unwrap();
+        fs::write(&rpi_path, "invalid JSON").unwrap();
+        let mut edited = server;
+        edited.server["command"] = json!("edited");
+        assert!(McpService::upsert_server(&state, edited).is_err());
+        assert_eq!(fs::read(&pi_path).unwrap(), original_pi);
+        assert_eq!(fs::read_to_string(&rpi_path).unwrap(), "invalid JSON");
+        assert_eq!(
+            state.db.get_all_mcp_servers().unwrap()["srv"].server["command"],
+            "new"
+        );
+        assert!(McpService::delete_server(&state, "srv").is_err());
+        assert_eq!(fs::read(pi_path).unwrap(), original_pi);
+        assert!(state.db.get_all_mcp_servers().unwrap().contains_key("srv"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn dual_app_db_failure_restores_existing_and_new_files() {
+        let _pi = TestAgentDir::new();
+        let _rpi = TestRpiAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let pi_path = config_path(&AppType::Pi).unwrap();
+        let rpi_path = config_path(&AppType::Rpi).unwrap();
+        fs::create_dir_all(pi_path.parent().unwrap()).unwrap();
+        let original = r#"{"mcpServers":{"other":{"command":"keep"}}}"#;
+        fs::write(&pi_path, original).unwrap();
+        state.db.conn.lock().unwrap().execute_batch(
+            "CREATE TRIGGER reject_save BEFORE INSERT ON mcp_servers BEGIN SELECT RAISE(FAIL, 'test failure'); END;"
+        ).unwrap();
+        assert!(McpService::upsert_server(&state, dual_server()).is_err());
+        assert_eq!(fs::read_to_string(&pi_path).unwrap(), original);
+        assert!(!rpi_path.exists(), "new files must be removed on rollback");
+        assert!(state.db.get_all_mcp_servers().unwrap().is_empty());
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_save;")
+            .unwrap();
+        McpService::upsert_server(&state, dual_server()).unwrap();
+        let pi_before = fs::read(&pi_path).unwrap();
+        let rpi_before = fs::read(&rpi_path).unwrap();
+        state.db.conn.lock().unwrap().execute_batch(
+            "CREATE TRIGGER reject_delete BEFORE DELETE ON mcp_servers BEGIN SELECT RAISE(FAIL, 'test failure'); END;"
+        ).unwrap();
+        assert!(McpService::delete_server(&state, "srv").is_err());
+        assert_eq!(fs::read(pi_path).unwrap(), pi_before);
+        assert_eq!(fs::read(rpi_path).unwrap(), rpi_before);
+        assert!(state.db.get_all_mcp_servers().unwrap().contains_key("srv"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn dual_app_noop_rollback_keeps_missing_files_missing() {
+        let _pi = TestAgentDir::new();
+        let _rpi = TestRpiAgentDir::new();
+        let error = sync_many_and_commit(
+            &[
+                (&AppType::Pi, PiChange::Disable),
+                (&AppType::Rpi, PiChange::Remove),
+            ],
+            "srv",
+            || Err::<(), _>(AppError::Database("test failure".into())),
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::Database(_)), "{error}");
+        for app in [AppType::Pi, AppType::Rpi] {
+            assert!(!config_path(&app).unwrap().exists());
+        }
+    }
+
+    #[test]
+    fn failed_commit_preserves_external_changes_and_rolls_back_other_files() {
+        for existing in [false, true] {
+            for externally_deleted in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let pi = dir.path().join("pi-mcp.json");
+                let rpi = dir.path().join("rpi-mcp.json");
+                let original = r#"{"mcpServers":{"srv":{"command":"original"}}}"#;
+                if existing {
+                    fs::write(&pi, original).unwrap();
+                    fs::write(&rpi, original).unwrap();
+                }
+                let external = b"external configuration, including invalid JSON";
+                let spec = json!({"command":"managed"});
+                let error = sync_files_and_commit(
+                    &[
+                        (pi.clone(), PiChange::Enable(&spec)),
+                        (rpi.clone(), PiChange::Enable(&spec)),
+                    ],
+                    "srv",
+                    || {
+                        if externally_deleted {
+                            fs::remove_file(&rpi).unwrap();
+                        } else {
+                            fs::write(&rpi, external).unwrap();
+                        }
+                        Err::<(), _>(AppError::Database("test commit failure".into()))
+                    },
+                )
+                .unwrap_err();
+                if externally_deleted {
+                    assert!(!rpi.exists(), "rollback must preserve an external deletion");
+                } else {
+                    assert_eq!(fs::read(&rpi).unwrap(), external);
+                }
+                if existing {
+                    assert_eq!(fs::read_to_string(&pi).unwrap(), original);
+                } else {
+                    assert!(
+                        !pi.exists(),
+                        "unchanged new files must be removed on rollback"
+                    );
+                }
+                let message = error.to_string();
+                assert!(message.contains("test commit failure"), "{message}");
+                assert!(message.contains("changed outside CC Switch"), "{message}");
+            }
+        }
+    }
+
+    #[test]
+    fn rollback_preserves_external_edits_to_an_earlier_or_aliased_file() {
+        for aliased in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let first = dir.path().join("mcp.json");
+            let second = if aliased {
+                first.clone()
+            } else {
+                dir.path().join("other-mcp.json")
+            };
+            let spec = json!({"command":"managed"});
+            let external = b"\xff\x00external non-UTF-8 edit";
+            let error = sync_files_and_commit(
+                &[
+                    (first.clone(), PiChange::Enable(&spec)),
+                    (second.clone(), PiChange::Enable(&spec)),
+                ],
+                "srv",
+                || {
+                    fs::write(&first, external).unwrap();
+                    Err::<(), _>(AppError::Database("test commit failure".into()))
+                },
+            )
+            .unwrap_err();
+            assert_eq!(fs::read(&first).unwrap(), external);
+            if !aliased {
+                assert!(!second.exists(), "the later file must still be rolled back");
+            }
+            assert!(error.to_string().contains("changed outside CC Switch"));
+        }
+    }
+
+    #[test]
+    fn failed_noop_commit_does_not_restore_over_external_edits() {
+        for existing in [false, true] {
+            for change in [PiChange::Disable, PiChange::Remove] {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("mcp.json");
+                if existing {
+                    fs::write(&path, r#"{"mcpServers":{"other":{"command":"keep"}}}"#).unwrap();
+                }
+                let external = b"external edit during a no-op";
+                let error = sync_files_and_commit(&[(path.clone(), change)], "absent", || {
+                    fs::write(&path, external).unwrap();
+                    Err::<(), _>(AppError::Database("test commit failure".into()))
+                })
+                .unwrap_err();
+                assert_eq!(fs::read(&path).unwrap(), external);
+                assert!(matches!(error, AppError::Database(_)), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn batch_with_aliased_paths_rolls_back_each_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let original = r#"{"mcpServers":{"srv":{"command":"original"}}}"#;
+        fs::write(&path, original).unwrap();
+        let spec = json!({"command":"new"});
+        let error = sync_files_and_commit(
+            &[
+                (path.clone(), PiChange::Enable(&spec)),
+                (path.clone(), PiChange::Enable(&spec)),
+            ],
+            "srv",
+            || Err::<(), _>(AppError::Database("test failure".into())),
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::Database(_)));
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
 
     #[test]
     fn keeps_pi_fields_and_other_servers_when_replacing_the_transport() {

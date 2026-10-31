@@ -208,6 +208,14 @@ vi.mock("@/components/mcp/UnifiedMcpPanel", async () => {
   return { default: Body };
 });
 
+vi.mock("@/components/prompts/PromptPanel", () => ({
+  default: ({ appId, apps }: { appId: string; apps: string[] }) => (
+    <div data-testid="prompts-panel">
+      {appId}:{apps.join(",")}
+    </div>
+  ),
+}));
+
 /** 侧栏里的应用行（v7 侧栏取代了原来页头的应用切换器） */
 const sidebarApp = (name: string) =>
   // 首次启动提示是模态对话框，会把侧栏标成 aria-hidden，所以带上 hidden
@@ -339,6 +347,49 @@ describe("App integration with MSW", () => {
 
     await waitFor(() => expect(modeRequests).toBeGreaterThan(before));
   });
+
+  it.each(["pi", "rpi"] as const)(
+    "refreshes only %s caches for a background provider switch",
+    async (app) => {
+      const other = app === "pi" ? "rpi" : "pi";
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+      });
+      const keys = (id: "pi" | "rpi") => [
+        [id, "currentState"],
+        ["providers", id],
+        ["providers", id, "mode"],
+      ];
+      for (const key of [...keys(app), ...keys(other)]) {
+        client.setQueryData(key, { cached: true });
+      }
+      const listener = vi.spyOn(providersApi, "onSwitched");
+      const { default: App } = await import("@/App");
+      try {
+        render(
+          <QueryClientProvider client={client}>
+            <App />
+          </QueryClientProvider>,
+        );
+        await waitFor(() => expect(listener).toHaveBeenCalled());
+        await screen.findByText("switch");
+        emitTauriEvent("provider-switched", {
+          appType: app,
+          providerId: "native-only",
+        });
+        await waitFor(() => {
+          for (const key of keys(app)) {
+            expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+          }
+        });
+        for (const key of keys(other)) {
+          expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+        }
+      } finally {
+        listener.mockRestore();
+      }
+    },
+  );
 
   it("resets provider view scroll when switching apps", async () => {
     const { default: App } = await import("@/App");
@@ -882,7 +933,9 @@ describe("App integration with MSW", () => {
     await waitFor(() =>
       expect(toastErrorMock).toHaveBeenCalledWith(
         "notifications.removeFromConfigFailed",
-        expect.objectContaining({ description: "kimi.error.defaultModelInUse" }),
+        expect.objectContaining({
+          description: "kimi.error.defaultModelInUse",
+        }),
       ),
     );
     await waitFor(() =>
@@ -934,6 +987,240 @@ describe("App integration with MSW", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument(),
     );
+  });
+
+  it("opens shared prompts for rpi when entering from its app page", async () => {
+    localStorage.setItem("cc-switch-last-app", "rpi");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await screen.findByTestId("provider-list");
+    fireEvent.click(sidebarApp("nav.prompts"));
+    expect(await screen.findByTestId("prompts-panel")).toHaveTextContent(
+      /^rpi:/,
+    );
+  });
+
+  it("removes rpi from native config without deleting its saved row, then enables it again", async () => {
+    localStorage.setItem("cc-switch-last-app", "rpi");
+    const provider = {
+      id: "custom",
+      name: "Custom rpi",
+      settingsConfig: {},
+      meta: { liveConfigManaged: true },
+    };
+    setProviders("rpi", { custom: provider });
+    setCurrentProviderId("rpi", "custom");
+    let enabled = true;
+    let reads = 0;
+    server.use(
+      http.post("http://tauri.local/get_rpi_current_state", () => {
+        reads += 1;
+        return HttpResponse.json({
+          enabledProviderIds: enabled ? ["custom"] : [],
+          defaultProviderId: null,
+        });
+      }),
+    );
+    const remove = vi
+      .spyOn(providersApi, "removeFromLiveConfig")
+      .mockImplementation(async () => {
+        enabled = false;
+        return true;
+      });
+    const enable = vi
+      .spyOn(providersApi, "switch")
+      .mockImplementation(async () => {
+        enabled = true;
+        return { warnings: [] };
+      });
+    const removeRow = vi.spyOn(providersApi, "delete");
+    try {
+      const { default: App } = await import("@/App");
+      renderApp(App);
+      await screen.findByText("remove");
+      await waitFor(() => expect(reads).toBeGreaterThan(0));
+      const before = reads;
+      fireEvent.click(screen.getByText("remove"));
+      fireEvent.click(screen.getByText("confirm-delete"));
+      await waitFor(() => expect(remove).toHaveBeenCalledWith("custom", "rpi"));
+      await waitFor(() => expect(reads).toBeGreaterThan(before));
+      expect(removeRow).not.toHaveBeenCalled();
+      expect(screen.getByTestId("provider-list")).toHaveTextContent(
+        "Custom rpi",
+      );
+      expect(enabled).toBe(false);
+      fireEvent.click(screen.getByText("switch"));
+      await waitFor(() => expect(enable).toHaveBeenCalledWith("custom", "rpi"));
+      expect(enabled).toBe(true);
+    } finally {
+      remove.mockRestore();
+      enable.mockRestore();
+      removeRow.mockRestore();
+    }
+  });
+
+  it("refreshes only rpi state when removing from native config is refused", async () => {
+    localStorage.setItem("cc-switch-last-app", "rpi");
+    setProviders("rpi", {
+      custom: { id: "custom", name: "Custom rpi", settingsConfig: {} },
+    });
+    setCurrentProviderId("rpi", "custom");
+    let reads = 0;
+    server.use(
+      http.post("http://tauri.local/get_rpi_current_state", () => {
+        reads += 1;
+        return HttpResponse.json({
+          enabledProviderIds: reads > 1 ? ["custom", "external"] : ["custom"],
+          defaultProviderId: null,
+        });
+      }),
+    );
+    const remove = vi
+      .spyOn(providersApi, "removeFromLiveConfig")
+      .mockRejectedValueOnce(
+        new Error("rpi models.json changed outside CC Switch"),
+      );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(["pi", "currentState"], {
+      enabledProviderIds: ["pi-only"],
+      defaultProviderId: null,
+    });
+    const { default: App } = await import("@/App");
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <App />
+        </QueryClientProvider>,
+      );
+      await waitFor(() => expect(reads).toBe(1));
+      fireEvent.click(screen.getByText("remove"));
+      fireEvent.click(screen.getByText("confirm-delete"));
+      await waitFor(() => expect(remove).toHaveBeenCalledWith("custom", "rpi"));
+      await waitFor(() =>
+        expect(client.getQueryData(["rpi", "currentState"])).toMatchObject({
+          enabledProviderIds: ["custom", "external"],
+        }),
+      );
+      expect(client.getQueryState(["pi", "currentState"])?.isInvalidated).toBe(
+        false,
+      );
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "notifications.removeFromConfigFailed",
+        expect.objectContaining({ description: "rpi.provider.writeConflict" }),
+      );
+    } finally {
+      remove.mockRestore();
+    }
+  });
+
+  it("refreshes only rpi state after enabling fails", async () => {
+    localStorage.setItem("cc-switch-last-app", "rpi");
+    setProviders("rpi", {
+      custom: { id: "custom", name: "Custom rpi", settingsConfig: {} },
+    });
+    setCurrentProviderId("rpi", "custom");
+    let reads = 0;
+    server.use(
+      http.post("http://tauri.local/get_rpi_current_state", () => {
+        reads += 1;
+        return HttpResponse.json({
+          enabledProviderIds: reads > 1 ? ["custom"] : [],
+          defaultProviderId: null,
+        });
+      }),
+    );
+    const enable = vi
+      .spyOn(providersApi, "switch")
+      .mockRejectedValueOnce(new Error("models.json changed"));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(["pi", "currentState"], {
+      enabledProviderIds: ["pi-only"],
+      defaultProviderId: null,
+    });
+    const { default: App } = await import("@/App");
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <App />
+        </QueryClientProvider>,
+      );
+      await waitFor(() => expect(reads).toBe(1));
+      fireEvent.click(screen.getByText("switch"));
+      await waitFor(() => expect(enable).toHaveBeenCalledWith("custom", "rpi"));
+      await waitFor(() => expect(reads).toBeGreaterThan(1));
+      expect(client.getQueryData(["rpi", "currentState"])).toMatchObject({
+        enabledProviderIds: ["custom"],
+      });
+      expect(client.getQueryState(["pi", "currentState"])?.isInvalidated).toBe(
+        false,
+      );
+      expect(toastErrorMock).toHaveBeenCalled();
+      expect(toastSuccessMock).not.toHaveBeenCalled();
+    } finally {
+      enable.mockRestore();
+    }
+  });
+
+  it("duplicates rpi with a generated key avoiding saved and native-only IDs", async () => {
+    localStorage.setItem("cc-switch-last-app", "rpi");
+    setProviders("rpi", {
+      custom: {
+        id: "custom",
+        name: "Custom rpi",
+        settingsConfig: {
+          baseUrl: "https://example.com/v1",
+          models: [{ id: "model" }],
+        },
+      },
+      "custom-copy": {
+        id: "custom-copy",
+        name: "Existing copy",
+        settingsConfig: {},
+      },
+    });
+    setCurrentProviderId("rpi", "custom");
+    let nativeOnlyIds: string[] = [];
+    let stateReads = 0;
+    server.use(
+      http.post("http://tauri.local/get_rpi_current_state", () => {
+        stateReads += 1;
+        return HttpResponse.json({
+          enabledProviderIds: ["custom", ...nativeOnlyIds],
+          defaultProviderId: null,
+        });
+      }),
+    );
+    const add = vi.spyOn(providersApi, "add");
+    try {
+      const { default: App } = await import("@/App");
+      renderApp(App);
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list")).toHaveTextContent(
+          "Custom rpi",
+        ),
+      );
+      await waitFor(() => expect(stateReads).toBeGreaterThan(0));
+      // The CLI adds a node after CC Switch has already cached membership.
+      nativeOnlyIds = ["custom-copy-2"];
+      fireEvent.click(screen.getByText("duplicate"));
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list")).toHaveTextContent(
+          "custom-copy-3",
+        ),
+      );
+      expect(add).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "custom-copy-3" }),
+        "rpi",
+        false,
+        undefined,
+      );
+    } finally {
+      add.mockRestore();
+    }
   });
 
   it("shows toast when duplicate cannot load live provider ids", async () => {

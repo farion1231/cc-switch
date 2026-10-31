@@ -23,7 +23,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh
+                        enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_rpi, enabled_agy, enabled_kimi, installed_at, content_hash, updated_at, enabled_dsh
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -46,16 +46,17 @@ impl Database {
                         grokbuild: row.get(11)?,
                         opencode: row.get(12)?,
                         hermes: row.get(13)?,
-                        pi: false,
+                        mcode: row.get(14)?,
+                        pi: row.get(15)?,
+                        rpi: row.get(16)?,
                         omp: false,
-                        mcode: row.get(17)?,
-                        agy: row.get(18)?,
-                        kimi: row.get(19)?,
-                        dsh: row.get(20)?,
+                        agy: row.get(17)?,
+                        kimi: row.get(18)?,
+                        dsh: row.get(22)?,
                     },
-                    installed_at: row.get(14)?,
-                    content_hash: row.get(15)?,
-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    installed_at: row.get(19)?,
+                    content_hash: row.get(20)?,
+                    updated_at: row.get::<_, i64>(21).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -75,7 +76,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh
+                        enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_rpi, enabled_agy, enabled_kimi, installed_at, content_hash, updated_at, enabled_dsh
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -97,16 +98,17 @@ impl Database {
                     grokbuild: row.get(11)?,
                     opencode: row.get(12)?,
                     hermes: row.get(13)?,
-                    pi: false,
+                    mcode: row.get(14)?,
+                    pi: row.get(15)?,
+                    rpi: row.get(16)?,
                     omp: false,
-                    mcode: row.get(17)?,
-                    agy: row.get(18)?,
-                    kimi: row.get(19)?,
-                    dsh: row.get(20)?,
+                    agy: row.get(17)?,
+                    kimi: row.get(18)?,
+                    dsh: row.get(22)?,
                 },
-                installed_at: row.get(14)?,
-                content_hash: row.get(15)?,
-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                installed_at: row.get(19)?,
+                content_hash: row.get(20)?,
+                updated_at: row.get::<_, i64>(21).unwrap_or(0),
             })
         });
 
@@ -124,8 +126,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+              enabled_mcode, enabled_pi, enabled_rpi, enabled_agy, enabled_kimi, installed_at, content_hash, updated_at, enabled_dsh)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 skill.id,
                 skill.name,
@@ -141,12 +143,14 @@ impl Database {
                 skill.apps.grokbuild,
                 skill.apps.opencode,
                 skill.apps.hermes,
+                skill.apps.mcode,
+                skill.apps.pi,
+                skill.apps.rpi,
+                skill.apps.agy,
+                skill.apps.kimi,
                 skill.installed_at,
                 skill.content_hash,
                 skill.updated_at,
-                skill.apps.mcode,
-                skill.apps.agy,
-                skill.apps.kimi,
                 skill.apps.dsh,
             ],
         )
@@ -216,8 +220,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_agy = ?9, enabled_kimi = ?10, enabled_dsh = ?11 WHERE id = ?7",
-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.agy, apps.kimi, apps.dsh],
+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_pi = ?9, enabled_rpi = ?10, enabled_agy = ?11, enabled_kimi = ?12, enabled_dsh = ?13 WHERE id = ?7",
+                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.pi, apps.rpi, apps.agy, apps.kimi, apps.dsh],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

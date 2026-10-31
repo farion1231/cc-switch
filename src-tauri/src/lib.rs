@@ -979,6 +979,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
+            match crate::services::provider::import_rpi_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} rpi provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No rpi provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import rpi providers: {e}"),
+            }
             match crate::services::provider::import_omp_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Synced {count} Oh My Pi provider(s) from native config");
@@ -1095,17 +1102,7 @@ pub fn run() {
             if app_state.db.is_prompts_table_empty().unwrap_or(false) {
                 log::info!("Prompts table empty, importing from live configurations...");
 
-                for app in [
-                    crate::app_config::AppType::Claude,
-                    crate::app_config::AppType::Codex,
-                    crate::app_config::AppType::Gemini,
-                    crate::app_config::AppType::GrokBuild,
-                    crate::app_config::AppType::OpenCode,
-                    crate::app_config::AppType::OpenClaw,
-                    crate::app_config::AppType::Hermes,
-                    crate::app_config::AppType::Pi,
-                    crate::app_config::AppType::Mcode,
-                ] {
+                for app in crate::services::prompt::PromptService::first_launch_apps() {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
                         app.clone(),
@@ -1618,7 +1615,9 @@ pub fn run() {
             commands::delete_pi_prompt_template,
             // Pi native provider and session views
             commands::get_pi_current_state,
+            commands::get_rpi_current_state,
             commands::update_pi_provider_usage_script,
+            commands::update_rpi_provider_usage_script,
             commands::get_pi_session_discovery,
             // Oh My Pi native provider and session views
             commands::get_omp_current_state,

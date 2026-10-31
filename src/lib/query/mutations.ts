@@ -71,6 +71,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "openclaw" ||
         appId === "hermes" ||
         appId === "pi" ||
+        appId === "rpi" ||
         appId === "mcode" ||
         appId === "kimi" ||
         appId === "dsh" ||
@@ -153,7 +154,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       const rawDetail = extractErrorMessage(error);
       const detail =
         (isPiFamilyApp(appId)
-          ? translatePiProviderMutationError(rawDetail, t)
+          ? translatePiProviderMutationError(rawDetail, t, appId)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
             : "") ||
@@ -223,7 +224,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       const rawDetail = extractErrorMessage(error);
       const detail =
         (isPiFamilyApp(appId)
-          ? translatePiProviderMutationError(rawDetail, t)
+          ? translatePiProviderMutationError(rawDetail, t, appId)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
             : "") ||
@@ -306,7 +307,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       const rawDetail = extractErrorMessage(error);
       const detail =
         (isPiFamilyApp(appId)
-          ? translatePiProviderMutationError(rawDetail, t)
+          ? translatePiProviderMutationError(rawDetail, t, appId)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
             : "") ||

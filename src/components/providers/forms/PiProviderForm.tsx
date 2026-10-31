@@ -566,8 +566,8 @@ export function PiProviderForm({
     initialData?.category ?? "custom",
   );
   const [providerKey, setProviderKey] = useState(providerId ?? "");
-  // Pi 和 omp 的供应商各管各的，查重只看当前应用。
-  const { data: existingProviders } = useProvidersQuery(isOmp ? "omp" : "pi");
+  // Pi-family provider keys are scoped to the selected native application.
+  const { data: existingProviders } = useProvidersQuery(appId);
   // 预设自带标识；同一家加第二次时会撞上已有的卡，在字段下直接提示。
   const isDuplicateProviderKey =
     !isEdit &&
@@ -1511,7 +1511,8 @@ export function PiProviderForm({
       const message =
         error instanceof PiFormValidationError
           ? rawMessage
-          : translatePiProviderMutationError(rawMessage, t) || rawMessage;
+          : translatePiProviderMutationError(rawMessage, t, appId) ||
+            rawMessage;
       setFormError(message);
       if (error instanceof PiFormValidationError) {
         const modelDetailsMatch = error.fieldSelector?.match(

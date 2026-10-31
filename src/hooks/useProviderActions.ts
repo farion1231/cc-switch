@@ -31,6 +31,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
+import { isPiFamilyApp } from "@/config/appConfig";
 import { logFrontendInfo } from "@/lib/frontendLogger";
 
 /**
@@ -307,7 +308,7 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi" || activeApp === "omp") {
+        if (isPiFamilyApp(activeApp)) {
           await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);

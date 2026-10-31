@@ -126,7 +126,11 @@ import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
-import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import {
+  invalidatePiProviderCaches,
+  piFamilyKeys,
+  usePiCurrentState,
+} from "@/lib/query/pi";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -329,7 +333,9 @@ function App() {
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning: currentAppUsesProxy && isProxyRunning,
   });
-  const { data: piCurrentState } = usePiCurrentState(activeApp === "pi");
+  const isPiFamily = isPiFamilyApp(activeApp);
+  const piFamilyApp: PiFamilyAppId = isPiFamily ? activeApp : "pi";
+  const { data: piCurrentState } = usePiCurrentState(isPiFamily, piFamilyApp);
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
   const isOpenClawView = activeApp === "openclaw" && isAppPage(currentView);
@@ -361,7 +367,7 @@ function App() {
       });
       toast.success(
         t(`${app}.provider.enabled`, {
-          defaultValue: "已在 Pi 中启用",
+          defaultValue: `已在 ${app === "pi" ? "Pi" : app === "rpi" ? "RPI" : "Oh My Pi"} 中启用`,
         }),
         { closeButton: true },
       );
@@ -369,14 +375,18 @@ function App() {
       const detail = extractErrorMessage(error);
       toast.error(
         t(`${app}.provider.enableFailed`, {
-          defaultValue: "无法在 Pi 中启用此供应商",
+          defaultValue: `无法在 ${app === "pi" ? "Pi" : app === "rpi" ? "RPI" : "Oh My Pi"} 中启用此供应商`,
         }),
         {
           description:
-            translatePiProviderMutationError(detail, t) || detail || undefined,
+            translatePiProviderMutationError(detail, t, app) ||
+            detail ||
+            undefined,
           closeButton: true,
         },
       );
+    } finally {
+      await invalidatePiProviderCaches(queryClient, app);
     }
   };
 
@@ -448,8 +458,8 @@ function App() {
             await queryClient.invalidateQueries({
               queryKey: ["providers", event.appType],
             });
-            if (event.appType === "pi") {
-              await invalidatePiProviderCaches(queryClient);
+            if (event.appType === "pi" || event.appType === "rpi") {
+              await invalidatePiProviderCaches(queryClient, event.appType);
             }
             if (event.appType === "claude") {
               // 托盘切卡、应用项目同样可能把默认登录收成新账号
@@ -993,7 +1003,9 @@ function App() {
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
   const refreshAdditiveLiveState = async (app: AppId) => {
     if (isPiFamilyApp(app)) {
-      await invalidatePiProviderCaches(queryClient, app);
+      await queryClient.invalidateQueries({
+        queryKey: piFamilyKeys.currentState(app),
+      });
     } else if (app === "opencode") {
       await Promise.all([
         queryClient.invalidateQueries({
@@ -1032,7 +1044,7 @@ function App() {
         const detail = extractErrorMessage(error);
         const description =
           (isPiFamilyApp(activeApp)
-            ? translatePiProviderMutationError(detail, t)
+            ? translatePiProviderMutationError(detail, t, activeApp)
             : activeApp === "kimi"
               ? translateKimiProviderMutationError(detail, t)
               : "") || detail;
@@ -1048,7 +1060,7 @@ function App() {
       toast.success(
         isPiFamilyApp(activeApp)
           ? t(`${activeApp}.provider.removed`, {
-              defaultValue: "已从 Pi 移除",
+              defaultValue: `已从 ${activeApp === "pi" ? "Pi" : activeApp === "rpi" ? "RPI" : "Oh My Pi"} 移除`,
             })
           : t("notifications.removeFromConfigSuccess", {
               defaultValue: "已从配置移除",
@@ -1132,8 +1144,7 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi" ||
-      activeApp === "omp"
+      isPiFamilyApp(activeApp)
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -1154,12 +1165,10 @@ function App() {
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
                 : (
-                    await queryClient.ensureQueryData({
-                      queryKey: [activeApp, "currentState"],
-                      queryFn: () =>
-                        piApi.getCurrentState(
-                          activeApp === "omp" ? "omp" : "pi",
-                        ),
+                    await queryClient.fetchQuery({
+                      queryKey: piFamilyKeys.currentState(activeApp),
+                      queryFn: () => piApi.getCurrentState(activeApp),
+                      staleTime: 0,
                     })
                   ).enabledProviderIds;
       } catch (error) {
@@ -1546,21 +1555,20 @@ function App() {
             appId={activeApp}
             isLoading={isLoading}
             onSwitch={(provider) =>
-              void (isPiFamilyApp(activeApp)
+              isPiFamilyApp(activeApp)
                 ? handleEnablePiProvider(provider, activeApp)
                 : activeApp === "kimi"
                   ? handleAddKimiProvider(provider)
-                  : switchProvider(provider))
+                  : switchProvider(provider)
             }
             onRemoveFromConfig={
               activeApp === "opencode" ||
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
-              activeApp === "pi" ||
+              isPiFamily ||
               activeApp === "mcode" ||
               activeApp === "kimi" ||
-              activeApp === "dsh" ||
-              activeApp === "omp"
+              activeApp === "dsh"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

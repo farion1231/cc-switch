@@ -14,6 +14,7 @@ describe("appConfig provider lifecycle", () => {
     "openclaw",
     "hermes",
     "pi",
+    "rpi",
     "mcode",
     "kimi",
     "dsh",

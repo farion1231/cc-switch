@@ -195,6 +195,7 @@ export function EditProviderDialog({
       if (
         appId === "opencode" ||
         appId === "pi" ||
+        appId === "rpi" ||
         appId === "mcode" ||
         appId === "kimi" ||
         appId === "dsh" ||
@@ -297,7 +298,10 @@ export function EditProviderDialog({
         unknown
       >;
       const nextProviderId =
-        (appId === "opencode" || appId === "openclaw" || appId === "pi") &&
+        (appId === "opencode" ||
+          appId === "openclaw" ||
+          appId === "pi" ||
+          appId === "rpi") &&
         values.providerKey?.trim()
           ? values.providerKey.trim()
           : provider.id;
@@ -380,7 +384,9 @@ export function EditProviderDialog({
       }
       backLabel={t("provider.backToList")}
       onClose={handlePanelClose}
-      contentClassName={appId === "pi" ? "pb-0 pt-4" : "pt-4"}
+      contentClassName={
+        appId === "pi" || appId === "rpi" ? "pb-0 pt-4" : "pt-4"
+      }
       footer={
         <>
           <Button

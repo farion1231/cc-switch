@@ -971,6 +971,8 @@
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "piConfigDir": "Pi 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
+    "rpiConfigDir": "rpi 配置目录",
+    "rpiConfigDirDescription": "覆盖 rpi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
     "ompConfigDir": "Oh My Pi 配置目录",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
@@ -980,6 +982,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
+    "browsePlaceholderRpi": "例如：/home/<你的用户名>/.rpi/agent",
     "browsePlaceholderOmp": "例如：/home/<你的用户名>/.omp/agent",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
@@ -1138,6 +1141,7 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
+    "rpi": "rpi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "omp": "Oh My Pi"
@@ -1146,6 +1150,18 @@
     "empty": {
       "title": "还没有添加自定义供应商",
       "description": "MiniMax 官方账号登录由 MiniMax Code 自行管理，无需导入；config.yaml 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
+    }
+  },
+  "rpi": {
+    "provider": {
+      "enabled": "已在 rpi 中启用",
+      "enableFailed": "无法在 rpi 中启用此供应商",
+      "removed": "已从 rpi 移除",
+      "writeConflict": "rpi 配置正在被其他进程修改，请稍后再试。"
+    },
+    "current": {
+      "readFailed": "无法读取 rpi 供应商配置",
+      "stateUnavailableHint": "CC Switch 读取到 rpi 供应商配置前，供应商变更已暂时禁用。"
     }
   },
   "pi": {
@@ -3602,7 +3618,8 @@
       "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
       "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
       "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
-    }
+    },
+    "enableInRpiAfterImport": "导入后立即在 rpi 中启用"
   },
   "iconPicker": {
     "search": "搜索图标",

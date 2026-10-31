@@ -910,6 +910,7 @@ describe("UnifiedSkillsPanel", () => {
           openclaw: false,
           hermes: false,
           pi: false,
+          rpi: false,
           mcode: false,
           kimi: false,
           dsh: false,

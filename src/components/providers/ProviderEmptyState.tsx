@@ -24,11 +24,17 @@ export function ProviderEmptyState({
   // live 节点里），没有可导入的内容，列表也不提供导入按钮，因此不能沿用
   // "请点击导入当前配置"的通用文案。
   const emptyCopyNs =
-    appId === "pi" || appId === "mcode" || appId === "kimi" || appId === "omp"
+    appId === "pi" ||
+    appId === "rpi" ||
+    appId === "mcode" ||
+    appId === "kimi" ||
+    appId === "omp"
       ? appId
       : appId === "dsh"
         ? "dsh"
         : null;
+  // RPI uses the same empty-state copy as Pi.
+  const emptyCopyKey = emptyCopyNs === "rpi" ? "pi" : emptyCopyNs;
   // Antigravity 没有切换，这句「切换只替换关键字段」对它不成立
   const showKeyFieldsHint =
     appId === "claude" ||
@@ -42,13 +48,13 @@ export function ProviderEmptyState({
         <Server className="h-6 w-6" strokeWidth={1.5} aria-hidden="true" />
       </div>
       <h2 className="text-section text-fg-1">
-        {emptyCopyNs
-          ? t(`${emptyCopyNs}.empty.title`)
+        {emptyCopyKey
+          ? t(`${emptyCopyKey}.empty.title`)
           : t("provider.noProviders")}
       </h2>
-      {emptyCopyNs && (
+      {emptyCopyKey && (
         <p className="mt-2 max-w-lg text-body text-fg-2">
-          {t(`${emptyCopyNs}.empty.description`)}
+          {t(`${emptyCopyKey}.empty.description`)}
         </p>
       )}
       {showKeyFieldsHint && (

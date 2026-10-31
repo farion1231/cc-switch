@@ -73,6 +73,7 @@ impl Database {
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_rpi BOOLEAN NOT NULL DEFAULT 0,
             enabled_omp BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
@@ -107,6 +108,8 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_rpi BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -589,6 +592,7 @@ impl Database {
                         Self::set_user_version(conn, 20)?;
                     }
                     20 => {
+                        // Keep upstream's v21 Antigravity migration intact.
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
@@ -602,6 +606,7 @@ impl Database {
                         Self::set_user_version(conn, 21)?;
                     }
                     21 => {
+                        // Preserve upstream's v22 Kimi migration.
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
@@ -615,7 +620,22 @@ impl Database {
                         Self::set_user_version(conn, 22)?;
                     }
                     22 => {
-                        // Oh My Pi：只有 MCP 存开关；Skills 的启用状态按原生目录现算（同 Pi）。
+                        // Upstream Kimi and earlier RPI builds both used v22 with
+                        // different columns. Reconcile either layout idempotently.
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                for column in
+                                    ["enabled_pi", "enabled_rpi", "enabled_agy", "enabled_kimi"]
+                                {
+                                    Self::add_column_if_missing(
+                                        conn,
+                                        table,
+                                        column,
+                                        "BOOLEAN NOT NULL DEFAULT 0",
+                                    )?;
+                                }
+                            }
+                        }
                         if Self::table_exists(conn, "mcp_servers")? {
                             Self::add_column_if_missing(
                                 conn,
@@ -655,6 +675,26 @@ impl Database {
                     }
                 }
                 version = Self::get_user_version(conn)?;
+            }
+            // RPI flags are additive and must also be installed for databases already
+            // at upstream's current version. Version numbers are maintainer-assigned.
+            for table in ["mcp_servers", "skills"] {
+                if Self::table_exists(conn, table)? {
+                    Self::add_column_if_missing(
+                        conn,
+                        table,
+                        "enabled_rpi",
+                        "BOOLEAN NOT NULL DEFAULT 0",
+                    )?;
+                }
+            }
+            if Self::table_exists(conn, "skills")? {
+                Self::add_column_if_missing(
+                    conn,
+                    "skills",
+                    "enabled_pi",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
             }
             Ok(())
         })();
@@ -4046,6 +4086,135 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_skills_supports_dao_without_losing_existing_state() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = db.conn.lock().unwrap();
+            // Actual v20 layout: neither enabled_pi nor enabled_rpi existed on Skills.
+            conn.execute_batch(
+                "DROP TABLE skills;
+                CREATE TABLE skills (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+                    directory TEXT NOT NULL, repo_owner TEXT, repo_name TEXT,
+                    repo_branch TEXT DEFAULT 'main', readme_url TEXT,
+                    enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+                    installed_at INTEGER NOT NULL DEFAULT 0, content_hash TEXT,
+                    updated_at INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO skills (id, name, directory, enabled_claude, enabled_mcode,
+                                    installed_at, content_hash, updated_at)
+                VALUES ('existing', 'Existing', 'existing', 1, 1, 123, 'original-hash', 456);
+                ALTER TABLE mcp_servers DROP COLUMN enabled_rpi;
+                ALTER TABLE mcp_servers DROP COLUMN enabled_agy;",
+            )?;
+            Database::set_user_version(&conn, 20)?;
+            // Startup runs CREATE before migration; it must not mask missing columns.
+            Database::create_tables_on_conn(&conn)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            assert!(Database::has_column(&conn, "mcp_servers", "enabled_rpi")?);
+        }
+        let mut skill = db.get_installed_skill("existing")?.expect("existing skill");
+        assert!(skill.apps.claude && skill.apps.mcode);
+        assert!(!skill.apps.pi && !skill.apps.rpi);
+        assert_eq!(skill.installed_at, 123);
+        assert_eq!(skill.content_hash.as_deref(), Some("original-hash"));
+        assert_eq!(skill.updated_at, 456);
+        skill.apps.rpi = true;
+        db.update_skill_apps(&skill.id, &skill.apps)?;
+        assert!(db.get_all_installed_skills()?["existing"].apps.rpi);
+        db.save_skill(&skill)?;
+        assert_eq!(db.get_all_installed_skills()?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_native_app_layouts_preserves_mcp_and_skill_state() -> Result<(), AppError> {
+        use crate::app_config::{AppType, InstalledSkill, McpServer};
+
+        // Released upstream layouts and earlier RPI layouts must all upgrade.
+        for (version, native_app) in [
+            (21, AppType::Agy),
+            (21, AppType::Rpi),
+            (22, AppType::Kimi),
+            (22, AppType::Rpi),
+            (23, AppType::Kimi),
+            (24, AppType::Kimi),
+        ] {
+            let db = Database::memory()?;
+            let apps = serde_json::json!({"claude": true, native_app.as_str(): true});
+            let mut server: McpServer = serde_json::from_value(serde_json::json!({
+                "id": "server", "name": "Existing server",
+                "server": {"command": "echo", "args": ["preserved"]}, "apps": apps
+            }))
+            .unwrap();
+            let mut skill: InstalledSkill = serde_json::from_value(serde_json::json!({
+                "id": "skill", "name": "Existing skill", "directory": "skill",
+                "installedAt": 123, "contentHash": "original-hash", "updatedAt": 456,
+                "apps": apps
+            }))
+            .unwrap();
+            db.save_mcp_server(&server)?;
+            db.save_skill(&skill)?;
+            {
+                let conn = db.conn.lock().unwrap();
+                if matches!(native_app, AppType::Agy | AppType::Kimi) {
+                    conn.execute_batch(
+                        "ALTER TABLE mcp_servers DROP COLUMN enabled_rpi;
+                         ALTER TABLE skills DROP COLUMN enabled_rpi;
+                         ALTER TABLE skills DROP COLUMN enabled_pi;",
+                    )?;
+                } else if version == 21 {
+                    conn.execute_batch(
+                        "ALTER TABLE mcp_servers DROP COLUMN enabled_agy;
+                         ALTER TABLE skills DROP COLUMN enabled_agy;",
+                    )?;
+                }
+                if native_app != AppType::Kimi {
+                    conn.execute_batch(
+                        "ALTER TABLE mcp_servers DROP COLUMN enabled_kimi;
+                         ALTER TABLE skills DROP COLUMN enabled_kimi;",
+                    )?;
+                }
+                Database::set_user_version(&conn, version)?;
+                Database::create_tables_on_conn(&conn)?;
+                Database::apply_schema_migrations_on_conn(&conn)?;
+                Database::apply_schema_migrations_on_conn(&conn)?;
+                assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            }
+            assert_eq!(db.get_all_mcp_servers()?["server"].apps, server.apps);
+            let restored = db.get_installed_skill("skill")?.unwrap();
+            assert_eq!(restored.apps, skill.apps);
+            assert_eq!(restored.installed_at, 123);
+            assert_eq!(restored.content_hash.as_deref(), Some("original-hash"));
+            assert_eq!(restored.updated_at, 456);
+
+            // Updating either application's flag must preserve its sibling's state.
+            for app in [AppType::Rpi, AppType::Agy, AppType::Kimi] {
+                server.apps.set_enabled_for(&app, true);
+                let updated = db
+                    .update_mcp_server_app_enabled("server", &app, true)?
+                    .unwrap();
+                assert_eq!(updated.apps, server.apps);
+                skill.apps.set_enabled_for(&app, true);
+                db.update_skill_apps("skill", &skill.apps)?;
+                assert_eq!(db.get_all_installed_skills()?["skill"].apps, skill.apps);
+            }
+            db.save_mcp_server(&server)?;
+            db.save_skill(&skill)?;
+            assert_eq!(db.get_all_mcp_servers()?["server"].apps, server.apps);
+            assert_eq!(db.get_installed_skill("skill")?.unwrap().apps, skill.apps);
+        }
         Ok(())
     }
 

@@ -581,9 +581,11 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
 };
 
 const PromptPanel: React.FC<PromptPanelProps> = (props) => {
-  if (props.appId === "pi") {
+  if (props.appId === "pi" || props.appId === "rpi") {
     return (
       <PiPromptPanel
+        key={props.appId}
+        appId={props.appId}
         open={props.open ?? true}
         apps={props.apps}
         onAppChange={props.onAppChange}

@@ -780,43 +780,27 @@ describe("buildAdditiveSections", () => {
     expect(item(sections, "current").menuItems).toBeUndefined();
   });
 
-  it("blocks every Pi change while Pi's current state is unavailable", () => {
-    const sections = buildAdditiveSections({
-      app: "pi",
-      t,
-      providers: [relay],
-      isInConfig: () => false,
-      piStateUnavailable: true,
-      actions: additiveActions(),
-    });
+  it.each(["pi", "rpi", "omp"] as const)(
+    "blocks every %s change while its current state is unavailable",
+    (app) => {
+      const sections = buildAdditiveSections({
+        app,
+        t,
+        providers: [relay],
+        isInConfig: () => false,
+        piStateUnavailable: true,
+        actions: additiveActions(),
+      });
 
-    expect(button(sections, "relay", "add")).toMatchObject({
-      label: "providerCard.action.enable",
-      disabledReason: "pi.current.stateUnavailableHint",
-    });
-    expect(item(sections, "relay").deleteDisabledReason).toBe(
-      "pi.current.stateUnavailableHint",
-    );
-  });
-
-  it("blocks every Oh My Pi change while its current state is unavailable", () => {
-    const sections = buildAdditiveSections({
-      app: "omp",
-      t,
-      providers: [relay],
-      isInConfig: () => false,
-      piStateUnavailable: true,
-      actions: additiveActions(),
-    });
-
-    expect(button(sections, "relay", "add")).toMatchObject({
-      label: "providerCard.action.enable",
-      disabledReason: "omp.current.stateUnavailableHint",
-    });
-    expect(item(sections, "relay").deleteDisabledReason).toBe(
-      "omp.current.stateUnavailableHint",
-    );
-  });
+      expect(button(sections, "relay", "add")).toMatchObject({
+        label: "providerCard.action.enable",
+        disabledReason: `${app}.current.stateUnavailableHint`,
+      });
+      expect(item(sections, "relay").deleteDisabledReason).toBe(
+        `${app}.current.stateUnavailableHint`,
+      );
+    },
+  );
 });
 
 describe("queueMoveSortUpdates", () => {

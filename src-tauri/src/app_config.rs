@@ -30,6 +30,8 @@ pub struct McpApps {
     #[serde(default)]
     pub pi: bool,
     #[serde(default)]
+    pub rpi: bool,
+    #[serde(default)]
     pub omp: bool,
 }
 
@@ -48,6 +50,7 @@ impl McpApps {
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
+            AppType::Rpi => self.rpi,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
             AppType::Agy => self.agy,
@@ -68,7 +71,8 @@ impl McpApps {
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::ClaudeDesktop => {}
+            AppType::Rpi => self.rpi = enabled,
+            AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
         }
@@ -110,6 +114,9 @@ impl McpApps {
         if self.pi {
             apps.push(AppType::Pi);
         }
+        if self.rpi {
+            apps.push(AppType::Rpi);
+        }
         if self.omp {
             apps.push(AppType::Omp);
         }
@@ -129,6 +136,7 @@ impl McpApps {
             && !self.dsh
             && !self.mcode
             && !self.pi
+            && !self.rpi
             && !self.omp
     }
 }
@@ -159,6 +167,8 @@ pub struct SkillApps {
     #[serde(default)]
     pub pi: bool,
     #[serde(default)]
+    pub rpi: bool,
+    #[serde(default)]
     pub omp: bool,
 }
 
@@ -173,6 +183,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode,
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
+            AppType::Rpi => self.rpi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
@@ -193,6 +204,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
+            AppType::Rpi => self.rpi = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
@@ -239,6 +251,9 @@ impl SkillApps {
         if self.pi {
             apps.push(AppType::Pi);
         }
+        if self.rpi {
+            apps.push(AppType::Rpi);
+        }
         if self.omp {
             apps.push(AppType::Omp);
         }
@@ -258,6 +273,7 @@ impl SkillApps {
             && !self.dsh
             && !self.mcode
             && !self.pi
+            && !self.rpi
             && !self.omp
     }
 
@@ -478,6 +494,7 @@ pub enum AppType {
     OpenClaw,
     Hermes,
     Pi,
+    Rpi,
     Mcode,
     Kimi,
     Dsh,
@@ -497,6 +514,7 @@ impl AppType {
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
             AppType::Pi => "pi",
+            AppType::Rpi => "rpi",
             AppType::Mcode => "mcode",
             AppType::Kimi => "kimi",
             AppType::Dsh => "dsh",
@@ -517,6 +535,7 @@ impl AppType {
                 | AppType::OpenClaw
                 | AppType::Hermes
                 | AppType::Pi
+                | AppType::Rpi
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh
@@ -550,6 +569,7 @@ impl AppType {
             AppType::OpenClaw,
             AppType::Hermes,
             AppType::Pi,
+            AppType::Rpi,
             AppType::Mcode,
             AppType::Kimi,
             AppType::Dsh,
@@ -575,6 +595,7 @@ impl FromStr for AppType {
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
+            "rpi" => Ok(AppType::Rpi),
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
@@ -582,8 +603,8 @@ impl FromStr for AppType {
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, kimi, dsh, agy, omp。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, kimi, dsh, agy, omp."),
             )),
         }
     }
@@ -624,6 +645,7 @@ impl CommonConfigSnippets {
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
             AppType::Pi
+            | AppType::Rpi
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
@@ -644,6 +666,7 @@ impl CommonConfigSnippets {
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
             AppType::Pi
+            | AppType::Rpi
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
@@ -976,6 +999,7 @@ impl MultiAppConfig {
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
             AppType::Pi
+            | AppType::Rpi
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
@@ -1025,6 +1049,7 @@ impl MultiAppConfig {
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
                 AppType::Pi
+                | AppType::Rpi
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh

@@ -69,6 +69,7 @@ export function AddProviderDialog({
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "pi" &&
+    appId !== "rpi" &&
     appId !== "omp" &&
     appId !== "mcode" &&
     appId !== "dsh" &&
@@ -294,6 +295,7 @@ export function AddProviderDialog({
           appId === "openclaw" ||
           appId === "hermes" ||
           appId === "pi" ||
+          appId === "rpi" ||
           appId === "mcode" ||
           appId === "kimi" ||
           appId === "dsh" ||

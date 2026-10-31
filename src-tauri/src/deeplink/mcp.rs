@@ -164,6 +164,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         kimi: false,
         dsh: false,
         pi: false,
+        rpi: false,
         omp: false,
     };
 
@@ -184,6 +185,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "kimi" => apps.kimi = true,
             "dsh" => apps.dsh = true,
             "pi" => apps.pi = true,
+            "rpi" => apps.rpi = true,
             "omp" => apps.omp = true,
             other => {
                 return Err(AppError::InvalidInput(format!(

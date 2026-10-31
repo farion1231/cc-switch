@@ -25,6 +25,7 @@ import type {
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appConfig";
+import { TOOL_NAMES } from "@/components/apps/useToolManagement";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -723,7 +724,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       within(
         screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
       ).getAllByRole("button", { name: "appsPage.dragHandle" }),
-    ).toHaveLength(APP_IDS.length - 2);
+    ).toHaveLength(TOOL_NAMES.length - 1);
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),

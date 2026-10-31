@@ -17,7 +17,7 @@ import {
 } from "./PromptLibrary";
 import { PromptPageFrame } from "./PromptPageFrame";
 import {
-  PI_PROMPT_SAVE_MUTATION_KEY,
+  piPromptSaveMutationKey,
   PiPromptTemplates,
   PiSystemPromptFiles,
   usePiPromptTemplatesQuery,
@@ -29,6 +29,7 @@ import {
   copyText,
   formatSize,
   renderSegs,
+  parentDir,
   showPromptToast,
   utf8Bytes,
 } from "./promptUtils";
@@ -37,6 +38,7 @@ import { toast } from "@/lib/toast";
 export type PiPromptTab = "global" | "system" | "templates";
 
 interface PiPromptPanelProps {
+  appId: AppId;
   open: boolean;
   apps: AppId[];
   onAppChange: (app: AppId) => void;
@@ -44,14 +46,9 @@ interface PiPromptPanelProps {
   onNavigationBlockedChange?: (blocked: boolean) => void;
 }
 
-/** 去掉路径最后一段（AGENTS.md），留下目录，末尾带分隔符。 */
-function parentDir(path: string): string {
-  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return index >= 0 ? path.slice(0, index + 1) : path;
-}
-
 /** Pi 的提示词页（PromptsPi.dc.html）：提示库 | 系统提示 | 模板 三段。 */
 const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
+  appId,
   open,
   apps,
   onAppChange,
@@ -79,10 +76,10 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
     toggleEnabled,
     importFromFile,
     getLatestPrompts,
-  } = usePromptActions("pi", { notify: false });
+  } = usePromptActions(appId, { notify: false });
   const { displayPath, location, invalidate, moreItems } =
-    usePromptPageCommon("pi");
-  const templates = usePiPromptTemplatesQuery();
+    usePromptPageCommon(appId);
+  const templates = usePiPromptTemplatesQuery(appId);
 
   const dialogOpen = copyingId !== null;
   const writePending = Boolean(togglingId) || busy;
@@ -90,7 +87,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
     loading || writePending || isFormOpen || dialogOpen;
   // 系统提示 / 模板编辑页自己的保存，按 mutation key 单独看
   const nativeSaving =
-    useIsMutating({ mutationKey: PI_PROMPT_SAVE_MUTATION_KEY }) > 0;
+    useIsMutating({ mutationKey: piPromptSaveMutationKey(appId) }) > 0;
   // 编辑页只盖住内容区，不锁导航：离开页面就关掉它（同供应商编辑页）；保存进行中仍锁
   const navigationBlocked = writePending || dialogOpen || nativeSaving;
   // 外观上的禁用晚 300ms 才出现：点一下启用这类很快的写入不让整列按钮闪一下变灰。
@@ -121,7 +118,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   useEffect(() => {
     const handlePromptImported = (event: Event) => {
       const customEvent = event as CustomEvent;
-      if (customEvent.detail?.app === "pi") {
+      if (customEvent.detail?.app === appId) {
         void reload();
       }
     };
@@ -129,7 +126,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
     window.addEventListener("prompt-imported", handlePromptImported);
     return () =>
       window.removeEventListener("prompt-imported", handlePromptImported);
-  }, [reload]);
+  }, [appId, reload]);
 
   useTauriEvent("profile-applied", () => {
     void reload();
@@ -182,7 +179,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
           title: t("prompts.toast.disabledPi", { name: target.name }),
           description: t("pi.prompts.reloadNotice"),
           onUndo: async () => {
-            await promptsApi.enablePrompt("pi", id);
+            await promptsApi.enablePrompt(appId, id);
             afterUndo();
           },
         });
@@ -200,13 +197,13 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
         .join(t("prompts.toast.joiner"));
       const onUndo = previousActive
         ? async () => {
-            await promptsApi.enablePrompt("pi", previousActive[0]);
+            await promptsApi.enablePrompt(appId, previousActive[0]);
             afterUndo();
           }
         : fileWasMissing && !backup
           ? async () => {
-              const latest = (await promptsApi.getPrompts("pi"))[id] ?? target;
-              await promptsApi.upsertPrompt("pi", id, {
+              const latest = (await promptsApi.getPrompts(appId))[id] ?? target;
+              await promptsApi.upsertPrompt(appId, id, {
                 ...latest,
                 enabled: false,
               });
@@ -231,7 +228,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
         description: t("prompts.toast.deletedPiSub"),
         undoneTitle: t("prompts.toast.restored", { name: original.name }),
         onUndo: async () => {
-          await promptsApi.upsertPrompt("pi", id, original);
+          await promptsApi.upsertPrompt(appId, id, original);
           afterUndo();
         },
       });
@@ -383,7 +380,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
 
   return (
     <PromptPageFrame
-      app="pi"
+      app={appId}
       apps={apps}
       onAppChange={onAppChange}
       appSwitchDisabled={navigationBlocked}
@@ -479,7 +476,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
             </div>
           ) : (
             <PromptEmptyState
-              app="pi"
+              app={appId}
               displayPath={displayPath}
               fileText={fileText}
               disabled={controlsDisabled}
@@ -522,9 +519,10 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
           />
         )
       ) : activeTab === "system" ? (
-        <PiSystemPromptFiles />
+        <PiSystemPromptFiles app={appId} />
       ) : (
         <PiPromptTemplates
+          app={appId}
           ref={templatesRef}
           search={templateQuery}
           onClearSearch={() => setTemplateQuery("")}
@@ -533,7 +531,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
 
       {isFormOpen && (
         <PromptFormPanel
-          appId="pi"
+          appId={appId}
           editingId={editingId ?? undefined}
           initialData={editingId ? prompts[editingId] : undefined}
           onSave={handleSave}
@@ -544,7 +542,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
       {copyingId && prompts[copyingId] ? (
         <PromptCopyDialog
           prompt={prompts[copyingId]}
-          targets={apps.filter((app) => app !== "pi")}
+          targets={apps.filter((app) => app !== appId)}
           pending={busy}
           onCancel={() => {
             if (!busy) setCopyingId(null);
