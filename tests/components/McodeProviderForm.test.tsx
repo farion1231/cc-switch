@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { McodeProviderForm } from "@/components/providers/forms/McodeProviderForm";
 import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
 import { piProviderPresets } from "@/config/piProviderPresets";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { setProviders } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -285,24 +286,116 @@ describe("McodeProviderForm", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps invalid JSON drafts from breaking the structured fields", () => {
+  it("shows the provider as its custom_provider node in config.yaml", () => {
     render(
       <McodeProviderForm
         appId="mcode"
+        providerId="existing"
         initialData={{ name: "Existing", settingsConfig: original }}
         submitLabel="Save"
         onSubmit={vi.fn()}
         onCancel={() => {}}
       />,
     );
-    fireEvent.change(screen.getByLabelText("provider.configJson"), {
-      target: { value: '{"options":{"baseURL":42}}' },
+    const text = (
+      screen.getByLabelText(
+        "providerForm.nativeConfig.title",
+      ) as HTMLTextAreaElement
+    ).value;
+    expect(text.startsWith("custom_provider:\n  existing:\n")).toBe(true);
+    expect(parseYaml(text)).toEqual({
+      custom_provider: { existing: original },
     });
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("provider.configJson"), {
-      target: { value: JSON.stringify(original) },
+  });
+
+  it("follows the provider key typed for a new provider", () => {
+    render(
+      <McodeProviderForm
+        appId="mcode"
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/opencode\.providerKey/), {
+      target: { value: "acme" },
     });
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(
+      parseYaml(
+        (
+          screen.getByLabelText(
+            "providerForm.nativeConfig.title",
+          ) as HTMLTextAreaElement
+        ).value,
+      ),
+    ).toHaveProperty("custom_provider.acme");
+  });
+
+  it.each([
+    [
+      "broken syntax",
+      "custom_provider: [",
+      "providerForm.nativeConfig.invalid",
+    ],
+    [
+      "another provider's node",
+      "custom_provider:\n  other:\n    kind: custom\n",
+      "providerForm.nativeConfig.scope",
+    ],
+    [
+      "a global setting",
+      `defaultModel: custom_provider:existing/model\n${stringifyYaml({ custom_provider: { existing: original } })}`,
+      "providerForm.nativeConfig.scope",
+    ],
+    [
+      "a field of the wrong type",
+      "custom_provider:\n  existing:\n    options:\n      baseURL: 42\n",
+      "providerForm.nativeConfig.schema",
+    ],
+  ])(
+    "keeps a YAML draft with %s from breaking the structured fields",
+    (_, value, message) => {
+      render(
+        <McodeProviderForm
+          appId="mcode"
+          providerId="existing"
+          initialData={{ name: "Existing", settingsConfig: original }}
+          submitLabel="Save"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />,
+      );
+      const editor = screen.getByLabelText("providerForm.nativeConfig.title");
+      fireEvent.change(editor, { target: { value } });
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      expect(screen.getByText(message)).toBeInTheDocument();
+      fireEvent.change(editor, {
+        target: {
+          value: stringifyYaml({ custom_provider: { existing: original } }),
+        },
+      });
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+      expect(screen.queryByText(message)).not.toBeInTheDocument();
+    },
+  );
+
+  it("keeps the JSON editor for DeepSeek Harness", () => {
+    render(
+      <McodeProviderForm
+        appId="dsh"
+        providerId="existing"
+        initialData={{ name: "Existing", settingsConfig: original }}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    expect(
+      JSON.parse(
+        (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
+          .value,
+      ),
+    ).toEqual(original);
   });
 
   it("borrows the MiniMax preset without changing Pi or copying Pi compatibility fields", () => {
