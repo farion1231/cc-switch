@@ -209,7 +209,7 @@ export const SessionDiff = memo(function SessionDiff({
     <div
       tabIndex={0}
       className={cn(
-        "max-h-[480px] overflow-auto rounded-[8px] border border-border bg-surface font-mono text-caption outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "selectable max-h-[480px] overflow-auto rounded-[8px] border border-border bg-surface font-mono text-caption outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >
