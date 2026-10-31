@@ -119,6 +119,14 @@ pub fn source_fingerprint(source: &ValidatedSource) -> io::Result<Fingerprint> {
         return Ok(fp);
     };
     match source.provider_id.as_str() {
+        "agy" => {
+            if let Ok(Some(db)) = crate::agy_conversation::for_transcript(path) {
+                fp.merge(fingerprint(&SourceLocation::Sqlite {
+                    db,
+                    session_id: String::new(),
+                })?);
+            }
+        }
         "grokbuild" => {
             let history = path.with_file_name(GROK_CHAT_HISTORY);
             if let Ok(meta) = fs::metadata(&history) {
