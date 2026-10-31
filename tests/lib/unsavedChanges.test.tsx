@@ -92,4 +92,26 @@ describe("unsaved changes tracker", () => {
     fireEvent.input(screen.getByRole("textbox", { name: "body" }));
     expect(hasUnsavedChanges()).toBe(true);
   });
+
+  it("ignores filter inputs marked data-unsaved-ignore while tracking explicit edit buttons", () => {
+    function FilterAndClearScope() {
+      return (
+        <div {...useUnsavedChangesTracker()}>
+          <input aria-label="filter" data-unsaved-ignore />
+          <button type="button" data-unsaved-edit>
+            clear-icon
+          </button>
+        </div>
+      );
+    }
+
+    render(<FilterAndClearScope />);
+    fireEvent.input(screen.getByRole("textbox", { name: "filter" }), {
+      target: { value: "claude" },
+    });
+    expect(hasUnsavedChanges()).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "clear-icon" }));
+    expect(hasUnsavedChanges()).toBe(true);
+  });
 });

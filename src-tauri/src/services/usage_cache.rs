@@ -14,6 +14,8 @@ use crate::services::subscription::SubscriptionQuota;
 pub struct UsageCache {
     subscription: RwLock<HashMap<AppType, SubscriptionQuota>>,
     codex_oauth: RwLock<HashMap<String, SubscriptionQuota>>,
+    /// 绑了账号的 Claude 官方卡，按授权中心的账号 id 存（和 Codex 托管账号一样不进应用级缓存）
+    claude_account: RwLock<HashMap<String, SubscriptionQuota>>,
     script: RwLock<HashMap<(AppType, String), UsageResult>>,
 }
 
@@ -41,6 +43,23 @@ impl UsageCache {
         f: impl FnOnce(&SubscriptionQuota) -> R,
     ) -> Option<R> {
         self.codex_oauth
+            .read()
+            .ok()
+            .and_then(|r| r.get(account_id).map(f))
+    }
+
+    pub fn put_claude_account(&self, account_id: String, quota: SubscriptionQuota) {
+        if let Ok(mut w) = self.claude_account.write() {
+            w.insert(account_id, quota);
+        }
+    }
+
+    pub fn with_claude_account<R>(
+        &self,
+        account_id: &str,
+        f: impl FnOnce(&SubscriptionQuota) -> R,
+    ) -> Option<R> {
+        self.claude_account
             .read()
             .ok()
             .and_then(|r| r.get(account_id).map(f))
@@ -111,6 +130,9 @@ impl UsageCache {
             scripts.clear();
         }
         if let Ok(mut accounts) = self.codex_oauth.write() {
+            accounts.clear();
+        }
+        if let Ok(mut accounts) = self.claude_account.write() {
             accounts.clear();
         }
     }

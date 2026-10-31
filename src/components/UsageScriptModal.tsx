@@ -200,7 +200,8 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
 }
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
-  if (!["claude", "codex", "gemini", "grokbuild"].includes(appId)) return false;
+  if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
+    return false;
   if (provider.category === "official") return true;
 
   const config = provider.settingsConfig as Record<string, any>;
@@ -219,7 +220,7 @@ function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
       (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
     );
   }
-  if (appId === "gemini") {
+  if (appId === "gemini" || appId === "agy") {
     const env = config?.env || {};
     const apiKey = env.GEMINI_API_KEY;
     const baseUrl = env.GOOGLE_GEMINI_BASE_URL;
@@ -301,7 +302,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey,
             baseUrl: extractCodexBaseUrl(configToml),
           };
-        } else if (appId === "gemini") {
+        } else if (appId === "gemini" || appId === "agy") {
           // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
           // Key fallback mirrors the backend resolver (Provider::resolve_usage_credentials).
           const env = (config as any).env || {};
@@ -324,8 +325,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: (config as any).api_key,
             baseUrl: (config as any).base_url,
           };
-        } else if (appId === "pi") {
-          // Pi: provider values are camelCase; a model may override baseUrl.
+        } else if (appId === "pi" || appId === "omp") {
+          // Pi / Oh My Pi: provider values are camelCase; a model may override baseUrl.
           const root = config as any;
           const firstModel = Array.isArray(root.models)
             ? root.models[0]
@@ -367,6 +368,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     provider,
     appId,
   );
+  // 绑了授权中心账号的 Claude 官方卡：额度按这个号查（同 ProviderCard 的 claudeBoundAccountId）
+  const claudeBoundAccountId =
+    appId === "claude" && isOfficialSubscription
+      ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
+        null
+      : null;
+  // 绑了账号的官方卡没保存过开关时默认开（卡片和托盘同一规则）
+  const defaultsToEnabled =
+    isBoundCodexOfficial || Boolean(claudeBoundAccountId);
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
@@ -377,7 +387,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         normalizedScript.templateType !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
       ) {
         return createUsageScript({
-          enabled: isBoundCodexOfficial ? normalizedScript.enabled : false,
+          enabled: defaultsToEnabled ? normalizedScript.enabled : false,
         });
       }
       // 已有配置：如果是 coding_plan 但没有 codingPlanProvider，自动检测填充
@@ -404,7 +414,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     }
 
     if (isOfficialSubscription) {
-      return createUsageScript({ enabled: isBoundCodexOfficial });
+      return createUsageScript({ enabled: defaultsToEnabled });
     }
 
     return createUsageScript({
@@ -484,7 +494,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       ) {
         return existingScript.templateType as string;
       }
-      // 官方 CLI/OAuth 供应商默认使用官方订阅额度模板，但开关默认关闭
+      // 官方 CLI/OAuth 供应商默认使用官方订阅额度模板；开关默认关，绑了账号的默认开
       if (isOfficialSubscription) {
         return TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
       }
@@ -570,7 +580,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           : null;
         const quota = isBoundCodexOfficial
           ? await subscriptionApi.getCodexOauthQuota(accountId)
-          : await subscriptionApi.getQuota(appId);
+          : claudeBoundAccountId
+            ? await subscriptionApi.getClaudeAccountQuota(claudeBoundAccountId)
+            : await subscriptionApi.getQuota(appId);
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -582,7 +594,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           queryClient.setQueryData(
             isBoundCodexOfficial
               ? ["codex_oauth", "quota", accountId ?? "default"]
-              : ["subscription", "quota", appId],
+              : claudeBoundAccountId
+                ? ["claude_official", "quota", claudeBoundAccountId]
+                : ["subscription", "quota", appId],
             quota,
           );
         } else {
@@ -1090,7 +1104,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <p className="text-sm text-fg-2">
-                  {t("usageScript.officialSubscriptionHint")}
+                  {appId === "agy"
+                    ? t("usageScript.officialSubscriptionHintAgy")
+                    : t("usageScript.officialSubscriptionHint")}
                 </p>
               </div>
             )}

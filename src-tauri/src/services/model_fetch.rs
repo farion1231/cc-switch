@@ -48,8 +48,8 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
-    max_input_tokens: Option<u64>,
-    max_output_tokens: Option<u64>,
+    max_input_tokens: Option<serde_json::Value>,
+    max_output_tokens: Option<serde_json::Value>,
     pricing: Option<serde_json::Value>,
 }
 
@@ -81,6 +81,12 @@ fn catalog_model_ids(models: Option<serde_json::Value>) -> Vec<String> {
             ["slug", "id"]
                 .iter()
                 .find_map(|k| m.get(k)?.as_str().filter(|s| !s.is_empty()))
+                .or_else(|| {
+                    m.get("name")?
+                        .as_str()?
+                        .strip_prefix("models/")
+                        .filter(|s| !s.is_empty())
+                })
         })
         .map(str::to_string)
         .collect()
@@ -120,7 +126,19 @@ pub async fn fetch_models(
     api_format: Option<&str>,
     request_headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<FetchedModel>, String> {
-    let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
+    let candidates = if api_format == Some("google-generative-ai")
+        && models_url_override.is_none()
+        && !is_full_url
+    {
+        let base = base_url.trim_end_matches('/');
+        let base = base
+            .strip_suffix("/v1beta")
+            .or_else(|| base.strip_suffix("/v1"))
+            .unwrap_or(base);
+        vec![format!("{base}/v1beta/models")]
+    } else {
+        build_models_url_candidates(base_url, is_full_url, models_url_override)?
+    };
     let headers =
         build_model_fetch_headers(api_key, api_format, user_agent.as_ref(), request_headers)?;
     let mut last_err: Option<String> = None;
@@ -158,8 +176,8 @@ pub async fn fetch_models(
                     .map(|m| FetchedModel {
                         id: m.id,
                         owned_by: m.owned_by,
-                        max_input_tokens: m.max_input_tokens,
-                        max_output_tokens: m.max_output_tokens,
+                        max_input_tokens: m.max_input_tokens.and_then(|value| value.as_u64()),
+                        max_output_tokens: m.max_output_tokens.and_then(|value| value.as_u64()),
                         pricing: parse_token_pricing(m.pricing),
                     })
                     .collect()
@@ -330,10 +348,15 @@ pub fn build_models_url_candidates(
         if !root.is_empty() && root.contains("://") {
             candidates.push(format!("{root}/v1/models"));
             candidates.push(format!("{root}/models"));
+            // 阿里云百炼 / 千问 Token Plan：`/apps/anthropic` 入口不提供 /v1/models，
+            // 模型列表只在 OpenAI 兼容路径 `/compatible-mode/v1/models` 下。
+            if trimmed.ends_with("/apps/anthropic") {
+                candidates.push(format!("{root}/compatible-mode/v1/models"));
+            }
         }
     }
 
-    // 候选最多 3 条，线性去重即可，不值得上 HashSet。
+    // 候选最多 4 条，线性去重即可，不值得上 HashSet。
     let mut unique: Vec<String> = Vec::with_capacity(candidates.len());
     for url in candidates {
         if !unique.iter().any(|u| u == &url) {
@@ -444,6 +467,54 @@ mod tests {
     }
 
     #[test]
+    fn unexpected_token_limits_do_not_reject_the_model_list() {
+        let values = [
+            serde_json::json!(1000000.0),
+            serde_json::json!("128000"),
+            serde_json::json!(-1),
+            serde_json::json!({"unexpected": true}),
+            serde_json::json!([10]),
+            serde_json::json!(true),
+            serde_json::Value::Null,
+        ];
+        for value in values {
+            let response: ModelsResponse = serde_json::from_value(serde_json::json!({
+                "data": [
+                    {"id": "valid", "max_input_tokens": 128000, "max_output_tokens": 8192},
+                    {"id": "unexpected", "max_input_tokens": value, "max_output_tokens": value},
+                    {"id": "absent"}
+                ]
+            }))
+            .unwrap();
+            let models = response.data.unwrap();
+            assert_eq!(models.len(), 3);
+            assert_eq!(
+                models[0].max_input_tokens.as_ref().and_then(|v| v.as_u64()),
+                Some(128000)
+            );
+            assert_eq!(
+                models[0]
+                    .max_output_tokens
+                    .as_ref()
+                    .and_then(|v| v.as_u64()),
+                Some(8192)
+            );
+            assert_eq!(
+                models[1].max_input_tokens.as_ref().and_then(|v| v.as_u64()),
+                None
+            );
+            assert_eq!(
+                models[1]
+                    .max_output_tokens
+                    .as_ref()
+                    .and_then(|v| v.as_u64()),
+                None
+            );
+            assert!(models[2].max_input_tokens.is_none());
+        }
+    }
+
+    #[test]
     fn parses_optional_model_token_limits() {
         let resp: ModelsResponse = serde_json::from_value(serde_json::json!({
             "data": [
@@ -463,8 +534,14 @@ mod tests {
         let entry = data.remove(0);
         assert_eq!(entry.id, "zhipu/glm-5.3");
         assert_eq!(entry.owned_by.as_deref(), Some("openai"));
-        assert_eq!(entry.max_input_tokens, Some(1_000_000));
-        assert_eq!(entry.max_output_tokens, Some(128_000));
+        assert_eq!(
+            entry.max_input_tokens.and_then(|value| value.as_u64()),
+            Some(1_000_000)
+        );
+        assert_eq!(
+            entry.max_output_tokens.and_then(|value| value.as_u64()),
+            Some(128_000)
+        );
     }
 
     #[test]
@@ -603,8 +680,30 @@ mod tests {
                 "https://dashscope.aliyuncs.com/apps/anthropic/v1/models",
                 "https://dashscope.aliyuncs.com/v1/models",
                 "https://dashscope.aliyuncs.com/models",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
             ]
         );
+    }
+
+    #[test]
+    fn test_candidates_qianwen_token_plan_compatible_mode() {
+        let c = build_models_url_candidates(
+            "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/",
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            c.last().map(String::as_str),
+            Some("https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1/models")
+        );
+    }
+
+    #[test]
+    fn test_candidates_plain_anthropic_suffix_skips_compatible_mode() {
+        let c =
+            build_models_url_candidates("https://api.example.com/anthropic", false, None).unwrap();
+        assert!(!c.iter().any(|u| u.contains("compatible-mode")));
     }
 
     #[test]
@@ -742,6 +841,15 @@ mod tests {
         assert_eq!(data.len(), 2);
         assert_eq!(data[0].id, "model-a");
         assert_eq!(data[1].id, "model-b");
+    }
+
+    #[test]
+    fn agy_google_model_catalog_keeps_other_protocol_ids() {
+        let models = catalog_model_ids(Some(serde_json::json!([
+            {"name":"models/gemini-test"}, {"id":"models/custom-id"},
+            {"slug":"slug","name":"models/ignored"}, {"name":"Display name"}
+        ])));
+        assert_eq!(models, ["gemini-test", "models/custom-id", "slug"]);
     }
 
     #[test]
