@@ -5156,6 +5156,24 @@ mod tests {
     }
 
     #[test]
+    fn test_responses_thinking_disabled_sets_reasoning_none() {
+        for output_config in [None, Some(json!({"effort": "high"}))] {
+            let mut input = json!({
+                "model": "gpt-6-luna",
+                "max_tokens": 1024,
+                "thinking": {"type": "disabled"},
+                "messages": [{"role": "user", "content": "Hello"}]
+            });
+            if let Some(output_config) = output_config {
+                input["output_config"] = output_config;
+            }
+
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["reasoning"]["effort"], "none");
+        }
+    }
+
+    #[test]
     fn test_responses_output_config_takes_priority_over_thinking() {
         let input = json!({
             "model": "gpt-5.4",
