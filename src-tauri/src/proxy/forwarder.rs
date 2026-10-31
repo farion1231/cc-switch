@@ -366,6 +366,8 @@ pub struct RequestForwarder {
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
     streaming_first_byte_timeout: std::time::Duration,
+    /// 首包之后的数据块间隔超时；语义校验缓冲阶段也遵循它。
+    streaming_idle_timeout: std::time::Duration,
     /// 单个客户端请求最多尝试的 provider 数。
     ///
     /// 由 `AppProxyConfig.max_retries` (UI: "请求失败时的重试次数, 0-10") 派生：
@@ -461,7 +463,7 @@ impl RequestForwarder {
         session_id: String,
         session_client_provided: bool,
         streaming_first_byte_timeout: u64,
-        _streaming_idle_timeout: u64,
+        streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
@@ -488,6 +490,7 @@ impl RequestForwarder {
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
             ),
+            streaming_idle_timeout: std::time::Duration::from_secs(streaming_idle_timeout),
             max_attempts,
             stack_request: false,
         }
@@ -2810,14 +2813,20 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
+            // HEAD 按 HTTP 语义不带响应体，不能据此判定上游生成失败。
+            if method == http::Method::HEAD {
+                return Ok((response, resolved_claude_api_format, outbound_model));
+            }
+            let response_is_streaming =
+                response.is_sse() || (request_is_streaming && !response.is_json());
             let mut response = self
-                .prepare_success_response_for_failover(response, request_is_streaming)
+                .prepare_success_response_for_failover(response, response_is_streaming)
                 .await?;
             // Streaming requests normally return SSE. If a compatible gateway
             // explicitly returns JSON instead, buffer and validate it inside the retry
             // loop as well so a 2xx Anthropic error envelope can still fail over. Do
             // not buffer unknown content types: some gateways omit the SSE header.
-            if codex_responses_to_anthropic && (!request_is_streaming || response.is_json()) {
+            if codex_responses_to_anthropic && !response_is_streaming {
                 response = self
                     .validate_codex_anthropic_success_response(response)
                     .await?;
@@ -2825,7 +2834,7 @@ impl RequestForwarder {
                 resolved_claude_api_format.as_deref(),
                 Some("openai_responses")
             ) {
-                if !request_is_streaming || response.is_json() {
+                if !response_is_streaming {
                     // Claude→Responses gateways can also return a semantic failure in an
                     // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
                     // retry loop so an early failure can still select another provider.
@@ -2834,19 +2843,23 @@ impl RequestForwarder {
                     // Delay committing the downstream stream until the upstream emits
                     // either productive output or a valid non-failure terminal event.
                     // A response.failed/error before output remains failover-safe.
-                    response = self.validate_responses_stream_start(response).await?;
+                    response = self.validate_responses_stream_start(response, None).await?;
                 }
             } else if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+                && super::providers::is_codex_responses_endpoint(endpoint)
                 && !codex_responses_to_chat
                 && !codex_responses_to_anthropic
-                && request_is_streaming
-                && !response.is_json()
-                && self.rectifier_config.enabled
-                && carries_encrypted_agent_task(&filtered_body)
             {
-                response = self
-                    .hold_encrypted_agent_task_stream(response, &filtered_body)
-                    .await?;
+                if !response_is_streaming {
+                    response = self.validate_responses_success_response(response).await?;
+                } else {
+                    let encrypted_task_request = (self.rectifier_config.enabled
+                        && carries_encrypted_agent_task(&filtered_body))
+                    .then_some(&filtered_body);
+                    response = self
+                        .validate_responses_stream_start(response, encrypted_task_request)
+                        .await?;
+                }
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -2876,37 +2889,29 @@ impl RequestForwarder {
         }
     }
 
-    /// 故障转移开启时，成功不能只看上游响应头。
+    /// 成功不能只看上游响应头，也不能接受空响应体。
     ///
-    /// - 非流式：先把完整 body 读到内存，读超时/连接中断会回到 retry loop 尝试下一家。
-    /// - 流式：至少等首个 chunk 到达，避免上游返回 200 后一直不吐 SSE 时被误记成功。
+    /// - 非流式（含上游忽略 stream 返回 JSON）：读取并解压 body 后检查。
+    /// - 流式：至少等到非空白数据，空 chunk 不算首包；预读字节原样回放。
+    /// - 超时为 0 只禁用计时，不跳过校验。错误留在 retry loop 内以记录失败、尝试下一家。
     async fn prepare_success_response_for_failover(
         &self,
         response: ProxyResponse,
         request_is_streaming: bool,
     ) -> Result<ProxyResponse, ProxyError> {
-        if request_is_streaming {
+        if response.is_sse() || (request_is_streaming && !response.is_json()) {
             return self.prime_streaming_response(response).await;
         }
 
-        if self.non_streaming_timeout.is_zero() {
-            return Ok(response);
-        }
-
-        let status = response.status();
-        let headers = response.headers().clone();
-        let body_timeout = self.non_streaming_timeout;
-        let body = tokio::time::timeout(
-            body_timeout,
-            response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES),
+        let (headers, status, body) = super::response_processor::read_decoded_body(
+            response,
+            "Forwarder",
+            self.non_streaming_timeout,
         )
-        .await
-        .map_err(|_| {
-            ProxyError::Timeout(format!(
-                "响应体读取超时: {}s（上游发完响应头后 body 未到达）",
-                body_timeout.as_secs()
-            ))
-        })??;
+        .await?;
+        if body.iter().all(u8::is_ascii_whitespace) {
+            return Err(ProxyError::ForwardFailed("上游返回空响应体".to_string()));
+        }
 
         Ok(ProxyResponse::buffered(status, headers, body))
     }
@@ -2959,10 +2964,8 @@ impl RequestForwarder {
             None => raw.to_vec(),
         };
 
-        if let Some(message) = responses_error_envelope_message(&decoded) {
-            return Err(ProxyError::TransformError(format!(
-                "Responses upstream returned a 2xx failure: {message}"
-            )));
+        if let Some(outcome) = inspect_responses_json_document(&String::from_utf8_lossy(&decoded)) {
+            outcome?;
         }
 
         Ok(ProxyResponse::buffered(status, headers, raw))
@@ -2971,26 +2974,56 @@ impl RequestForwarder {
     async fn validate_responses_stream_start(
         &self,
         response: ProxyResponse,
+        encrypted_task_request: Option<&Value>,
     ) -> Result<ProxyResponse, ProxyError> {
-        const MAX_PRIME_BYTES: usize = 256 * 1024;
-
+        let response = if let Some(encoding) = get_content_encoding(response.headers()) {
+            if !super::content_encoding::is_supported_content_encoding(&encoding) {
+                // 无法检查未知编码时保留原始流，交给客户端解码。
+                return Ok(response);
+            }
+            let status = response.status();
+            let mut headers = response.headers().clone();
+            super::response_processor::strip_entity_headers_for_rebuilt_body(&mut headers);
+            let decoded =
+                super::content_encoding::decompress_stream(&encoding, response.bytes_stream())
+                    .expect("supported content encoding");
+            ProxyResponse::streamed(status, headers, decoded)
+        } else {
+            response
+        };
         let status = response.status();
         let headers = response.headers().clone();
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
         let mut parse_buffer = String::new();
         let mut utf8_remainder = Vec::new();
+        let mut buffered_bytes = 0usize;
+        let mut received_chunk = false;
+        let inspect_event = |block: &str| match encrypted_task_request {
+            Some(request) => match encrypted_task_stream_start(block, request) {
+                StreamStart::Pending => None,
+                StreamStart::Commit => Some(Ok(())),
+                StreamStart::Rejected(error) => Some(Err(error)),
+            },
+            None => inspect_responses_start_event(block),
+        };
 
         loop {
-            let next = if self.streaming_first_byte_timeout.is_zero() {
+            // 收到生命周期/心跳也是收到首包；后续推理等待遵循静默超时，0 表示禁用。
+            let timeout = if received_chunk {
+                self.streaming_idle_timeout
+            } else {
+                self.streaming_first_byte_timeout
+            };
+            let next = if timeout.is_zero() {
                 stream.next().await
             } else {
-                tokio::time::timeout(self.streaming_first_byte_timeout, stream.next())
+                tokio::time::timeout(timeout, stream.next())
                     .await
                     .map_err(|_| {
                         ProxyError::Timeout(format!(
-                            "Responses stream produced no semantic output within {}s",
-                            self.streaming_first_byte_timeout.as_secs()
+                            "Responses stream received no data for {}s before semantic output",
+                            timeout.as_secs()
                         ))
                     })?
             };
@@ -3002,7 +3035,7 @@ impl RequestForwarder {
                     return Ok(ProxyResponse::streamed(status, headers, replay));
                 }
                 if !parse_buffer.trim().is_empty() {
-                    if let Some(outcome) = inspect_responses_start_event(parse_buffer.trim()) {
+                    if let Some(outcome) = inspect_event(parse_buffer.trim()) {
                         outcome?;
                         let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
                         return Ok(ProxyResponse::streamed(status, headers, replay));
@@ -3018,6 +3051,16 @@ impl RequestForwarder {
                     "Failed while validating Responses stream start: {error}"
                 ))
             })?;
+            if chunk.is_empty() {
+                continue;
+            }
+            received_chunk = true;
+            buffered_bytes += chunk.len();
+            if buffered_bytes > MAX_RESPONSE_BODY_BYTES {
+                return Err(ProxyError::ForwardFailed(format!(
+                    "Responses stream exceeded {MAX_RESPONSE_BODY_BYTES} buffered bytes before semantic output"
+                )));
+            }
             crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
             replay_chunks.push(chunk);
 
@@ -3032,116 +3075,63 @@ impl RequestForwarder {
             }
 
             while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
-                if let Some(outcome) = inspect_responses_start_event(&block) {
+                if let Some(outcome) = inspect_event(&block) {
                     outcome?;
                     let replay =
                         futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
                     return Ok(ProxyResponse::streamed(status, headers, replay));
                 }
             }
-
-            if replay_chunks.iter().map(Bytes::len).sum::<usize>() >= MAX_PRIME_BYTES {
-                log::warn!(
-                    "[Claude/Responses] semantic stream priming exceeded {MAX_PRIME_BYTES} bytes; committing buffered stream"
-                );
-                let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
-                return Ok(ProxyResponse::streamed(status, headers, replay));
-            }
         }
-    }
-
-    /// 原样转发的 Responses 请求末尾是一条带密文的子 agent 任务时（见
-    /// `opaque_state_rectifier::carries_encrypted_agent_task`），先看到第一个不是生命周期的事件
-    /// 再交出流：上游解不开密文时会在流里、输出之前回 `response.failed`，这时改成上游错误，
-    /// 回到重试循环里和 HTTP 报错一样整流或说明原因。其余情况（有输出、别的失败、到了截止
-    /// 时间、缓冲太多）把读过的字节原样接回去，客户端看到的流和没经过这里一样。
-    ///
-    /// 整个缓冲阶段只有一个截止时间（不是每读一块重新计时）：上游在输出前一直发心跳时，流
-    /// 也得按时交出去。解不开密文是上游一收到请求就报的错，不用等到生成，所以最多压
-    /// [`MAX_HOLD`]，首包超时更短时按首包超时。
-    async fn hold_encrypted_agent_task_stream(
-        &self,
-        response: ProxyResponse,
-        request: &Value,
-    ) -> Result<ProxyResponse, ProxyError> {
-        const MAX_HOLD_BYTES: usize = 256 * 1024;
-        const MAX_HOLD: std::time::Duration = std::time::Duration::from_secs(10);
-
-        let window = match self.streaming_first_byte_timeout {
-            timeout if timeout.is_zero() => MAX_HOLD,
-            timeout => timeout.min(MAX_HOLD),
-        };
-        let deadline = tokio::time::Instant::now() + window;
-        let status = response.status();
-        let headers = response.headers().clone();
-        let mut stream = Box::pin(response.bytes_stream());
-        let mut replay_chunks: Vec<Bytes> = Vec::new();
-        let mut held_bytes = 0usize;
-        let mut parse_buffer = String::new();
-        let mut utf8_remainder = Vec::new();
-
-        'hold: loop {
-            let Ok(next) = tokio::time::timeout_at(deadline, stream.next()).await else {
-                break 'hold;
-            };
-            let Some(chunk) = next else {
-                break 'hold;
-            };
-            // 还没有交出流，读出错和首包前出错一样回到重试循环。
-            let chunk = chunk
-                .map_err(|error| ProxyError::ForwardFailed(format!("读取流式响应失败: {error}")))?;
-            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
-            held_bytes += chunk.len();
-            replay_chunks.push(chunk);
-
-            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
-                match encrypted_task_stream_start(&block, request) {
-                    StreamStart::Pending => {}
-                    StreamStart::Commit => break 'hold,
-                    StreamStart::Rejected(error) => return Err(error),
-                }
-            }
-            if held_bytes > MAX_HOLD_BYTES {
-                break 'hold;
-            }
-        }
-
-        let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
-        Ok(ProxyResponse::streamed(status, headers, replay))
     }
 
     async fn prime_streaming_response(
         &self,
         response: ProxyResponse,
     ) -> Result<ProxyResponse, ProxyError> {
-        if self.streaming_first_byte_timeout.is_zero() {
-            return Ok(response);
-        }
-
         let status = response.status();
         let headers = response.headers().clone();
         let timeout = self.streaming_first_byte_timeout;
         let mut stream = Box::pin(response.bytes_stream());
 
-        let first = tokio::time::timeout(timeout, stream.next())
-            .await
-            .map_err(|_| {
-                ProxyError::Timeout(format!(
-                    "流式响应首包超时: {}s（上游已返回响应头但未返回数据）",
-                    timeout.as_secs()
-                ))
-            })?;
-
-        let Some(first) = first else {
-            return Err(ProxyError::ForwardFailed(
-                "流式响应在首包到达前结束".to_string(),
-            ));
+        let read_start = async {
+            let mut replay_chunks = Vec::new();
+            let mut buffered_bytes = 0;
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk
+                    .map_err(|e| ProxyError::ForwardFailed(format!("读取流式响应首包失败: {e}")))?;
+                if chunk.is_empty() {
+                    continue;
+                }
+                buffered_bytes += chunk.len();
+                if buffered_bytes > MAX_RESPONSE_BODY_BYTES {
+                    return Err(ProxyError::ResponseBodyTooLarge(MAX_RESPONSE_BODY_BYTES));
+                }
+                let has_data = chunk.iter().any(|byte| !byte.is_ascii_whitespace());
+                replay_chunks.push(chunk);
+                if has_data {
+                    return Ok(replay_chunks);
+                }
+            }
+            Err(ProxyError::ForwardFailed(
+                "上游返回空响应体（流式响应在有效首包到达前结束）".to_string(),
+            ))
+        };
+        let replay_chunks = if timeout.is_zero() {
+            read_start.await?
+        } else {
+            // 整个预读共用一次超时，空 chunk / 空白不能重置首包期限。
+            tokio::time::timeout(timeout, read_start)
+                .await
+                .map_err(|_| {
+                    ProxyError::Timeout(format!(
+                        "流式响应首包超时: {}s（上游已返回响应头但未返回数据）",
+                        timeout.as_secs()
+                    ))
+                })??
         };
 
-        let first =
-            first.map_err(|e| ProxyError::ForwardFailed(format!("读取流式响应首包失败: {e}")))?;
-
-        let replay = futures::stream::once(async move { Ok(first) }).chain(stream);
+        let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
         Ok(ProxyResponse::streamed(status, headers, replay))
     }
 
@@ -3706,13 +3696,13 @@ fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
     }
 }
 
-/// [`Forwarder::hold_encrypted_agent_task_stream`] 看到一个完整 SSE 块之后怎么做。
+/// 加密子 agent 任务在有效输出之前，识别上游是否拒绝了解密请求。
 enum StreamStart {
     /// 生命周期事件（或不是 JSON），接着读。
     Pending,
     /// 有输出或别的结局：交出流。
     Commit,
-    /// 输出之前上游就自证验不了请求里的密文。
+    /// 输出之前上游拒绝请求密文，或完成但没有输出。
     Rejected(ProxyError),
 }
 
@@ -3734,40 +3724,166 @@ fn encrypted_task_stream_start(block: &str, request: &Value) -> StreamStart {
         .filter(|event| !event.is_empty())
         .or_else(|| value.get("type").and_then(Value::as_str))
         .unwrap_or("");
+    let response = value.get("response").unwrap_or(&value);
+
     match event {
-        "response.created" | "response.in_progress" | "response.queued" => StreamStart::Pending,
+        "response.created" | "response.in_progress" | "response.queued" | "" => {
+            StreamStart::Pending
+        }
         "response.failed" | "error" => {
-            let response = value.get("response").unwrap_or(&value);
             let error = response.get("error").unwrap_or(response);
             match super::opaque_state_rectifier::in_stream_rejection(error, request) {
                 Some(rejection) => StreamStart::Rejected(rejection),
                 None => StreamStart::Commit,
             }
         }
-        _ => StreamStart::Commit,
+        "response.completed" => {
+            if responses_response_has_semantic_output(response) {
+                StreamStart::Commit
+            } else {
+                StreamStart::Rejected(empty_responses_completion_error())
+            }
+        }
+        event => match responses_event_value_has_semantic_output(event, &value) {
+            Some(false) => StreamStart::Pending,
+            _ => StreamStart::Commit,
+        },
     }
 }
-
 /// A streaming request may receive a whole JSON document even when the gateway
 /// omits `application/json`. `None` means either "not JSON" or "not complete yet";
-/// a parsed document is safe to commit unless it is a semantic failure envelope.
+/// a parsed document is safe to commit unless it is a semantic failure or an empty
+/// successful completion.
 fn inspect_responses_json_document(buffer: &str) -> Option<Result<(), ProxyError>> {
     let trimmed = buffer.trim();
     if !matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'[')) {
         return None;
     }
-    let _: Value = serde_json::from_str(trimmed).ok()?;
+    let value: Value = serde_json::from_str(trimmed).ok()?;
     if let Some(message) = responses_error_envelope_message(trimmed.as_bytes()) {
         return Some(Err(ProxyError::TransformError(format!(
             "Responses upstream returned a 2xx failure: {message}"
         ))));
     }
+    if value.get("status").and_then(Value::as_str) == Some("completed")
+        && !responses_response_has_semantic_output(&value)
+    {
+        return Some(Err(empty_responses_completion_error()));
+    }
     Some(Ok(()))
 }
 
+fn empty_responses_completion_error() -> ProxyError {
+    ProxyError::ForwardFailed(
+        "Responses upstream completed without producing semantic output".to_string(),
+    )
+}
+
+fn responses_response_has_semantic_output(response: &Value) -> bool {
+    response
+        .get("output")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(responses_output_item_has_semantic_output))
+}
+
+fn responses_output_item_has_semantic_output(item: &Value) -> bool {
+    match item.get("type").and_then(Value::as_str) {
+        Some("message") => item
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|parts| parts.iter().any(responses_content_part_has_semantic_output)),
+        Some("reasoning") => {
+            item.get("encrypted_content")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+                || item
+                    .get("summary")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            part.get("text")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| !text.trim().is_empty())
+                        })
+                    })
+                || item
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            part.get("text")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| !text.trim().is_empty())
+                        })
+                    })
+        }
+        // A tool invocation is meaningful output even when it takes no arguments.
+        Some("function_call" | "custom_tool_call" | "web_search_call") => true,
+        // Preserve compatibility with output item types unknown to this CC Switch build.
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn responses_content_part_has_semantic_output(part: &Value) -> bool {
+    match part.get("type").and_then(Value::as_str) {
+        Some("output_text") => part
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        Some("refusal") => part
+            .get("refusal")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        Some(_) => true,
+        None => false,
+    }
+}
+
+/// Some(false) 是已知但仍为空的输出事件；None 保持未知事件的透传兼容性。
+fn responses_event_value_has_semantic_output(event: &str, value: &Value) -> Option<bool> {
+    Some(match event {
+        "response.output_item.added" | "response.output_item.done" => value
+            .get("item")
+            .is_some_and(responses_output_item_has_semantic_output),
+        "response.content_part.added" | "response.content_part.done" => value
+            .get("part")
+            .is_some_and(responses_content_part_has_semantic_output),
+        "response.output_text.delta"
+        | "response.reasoning_summary_text.delta"
+        | "response.reasoning_text.delta"
+        | "response.refusal.delta" => value
+            .get("delta")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        "response.output_text.done"
+        | "response.reasoning_summary_text.done"
+        | "response.reasoning_text.done" => value
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        "response.refusal.done" => value
+            .get("refusal")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        "response.reasoning_summary_part.added" | "response.reasoning_summary_part.done" => value
+            .get("part")
+            .and_then(|part| part.get("text"))
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        // A function/custom-tool event itself proves a tool invocation exists, even
+        // when the invocation takes an empty argument object/input.
+        "response.function_call_arguments.delta"
+        | "response.function_call_arguments.done"
+        | "response.custom_tool_call_input.delta"
+        | "response.custom_tool_call_input.done" => true,
+        _ => return None,
+    })
+}
+
 /// Inspect one complete Responses SSE block while the response is still inside
-/// the retry loop. `None` means the event is lifecycle-only and priming should
-/// continue; `Some(Ok(()))` means it is safe to commit/replay the stream.
+/// the retry loop. `None` means the event is lifecycle-only or empty scaffolding and
+/// priming should continue; `Some(Ok(()))` means it is safe to commit/replay the stream.
 fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> {
     let mut named_event = None;
     let mut data_lines = Vec::new();
@@ -3781,7 +3897,11 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
     if data_lines.is_empty() {
         return None;
     }
-    let value: Value = match serde_json::from_str(&data_lines.join("\n")) {
+    let data = data_lines.join("\n");
+    if data.trim() == "[DONE]" {
+        return Some(Err(empty_responses_completion_error()));
+    }
+    let value: Value = match serde_json::from_str(&data) {
         Ok(value) => value,
         Err(_) => return None,
     };
@@ -3831,15 +3951,22 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
                 "Responses upstream {error_type}: {message}"
             ))))
         }
-        "response.created" | "response.in_progress" | "response.queued" => None,
-        "" => None,
-        // Productive output, incomplete, and completed terminals are all safe to
-        // expose. Mid-stream failures after this point are surfaced by the converter
-        // but intentionally do not switch providers.
-        _ => Some(Ok(())),
+        "response.created" | "response.in_progress" | "response.queued" | "" => None,
+        "response.completed" => {
+            if responses_response_has_semantic_output(response) {
+                Some(Ok(()))
+            } else {
+                Some(Err(empty_responses_completion_error()))
+            }
+        }
+        // Known empty output events keep priming; incomplete and unknown events
+        // preserve the previous behavior.
+        event => match responses_event_value_has_semantic_output(event, &value) {
+            Some(false) => None,
+            _ => Some(Ok(())),
+        },
     }
 }
-
 /// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
 fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Option<String>) {
     let (_path, query) = split_endpoint_and_query(endpoint);
@@ -4803,6 +4930,7 @@ mod tests {
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
             non_streaming_timeout,
             streaming_first_byte_timeout,
+            streaming_idle_timeout: streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
         }
@@ -5138,12 +5266,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_success_response_is_rejected_even_without_timeouts() {
+        for timeout in [Duration::ZERO, Duration::from_secs(1)] {
+            for streaming in [false, true] {
+                for body in [b"".as_slice(), b" \r\n\t".as_slice()] {
+                    let forwarder = test_forwarder(timeout, timeout);
+                    let response = ProxyResponse::buffered(
+                        StatusCode::OK,
+                        HeaderMap::new(),
+                        Bytes::copy_from_slice(body),
+                    );
+                    let error = forwarder
+                        .prepare_success_response_for_failover(response, streaming)
+                        .await
+                        .err()
+                        .expect("an empty 2xx response must fail before success bookkeeping");
+
+                    assert!(matches!(error, ProxyError::ForwardFailed(_)));
+                    assert_eq!(
+                        forwarder.categorize_proxy_error(&error, &test_provider_with_type(None)),
+                        ErrorCategory::Retryable
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn compressed_empty_success_response_is_rejected() {
+        use std::io::Write;
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(b" \r\n").unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("content-encoding", HeaderValue::from_static("gzip"));
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        let compressed = Bytes::from(encoder.finish().unwrap());
+
+        for streaming in [false, true] {
+            let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+            let response =
+                ProxyResponse::buffered(StatusCode::OK, headers.clone(), compressed.clone());
+            let error = forwarder
+                .prepare_success_response_for_failover(response, streaming)
+                .await
+                .err()
+                .expect("validate the decoded JSON body even for a streaming request");
+
+            assert!(matches!(error, ProxyError::ForwardFailed(_)));
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_empty_chunks_do_not_commit_the_response() {
+        for timeout in [Duration::ZERO, Duration::from_secs(1)] {
+            let forwarder = test_forwarder(timeout, timeout);
+            let response = ProxyResponse::streamed(
+                StatusCode::OK,
+                HeaderMap::new(),
+                futures::stream::iter(vec![
+                    Ok(Bytes::new()),
+                    Err(std::io::Error::other("failed before any response data")),
+                ]),
+            );
+            let error = forwarder
+                .prepare_success_response_for_failover(response, true)
+                .await
+                .err()
+                .expect("an empty chunk must not hide an upstream read error");
+
+            assert!(matches!(error, ProxyError::ForwardFailed(_)));
+        }
+    }
+
+    #[tokio::test]
     async fn streaming_success_primes_first_chunk_and_replays_it() {
         let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
         let response = ProxyResponse::streamed(
             StatusCode::OK,
             HeaderMap::new(),
             futures::stream::iter(vec![
+                Ok::<Bytes, std::io::Error>(Bytes::new()),
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(b" \r\n")),
                 Ok::<Bytes, std::io::Error>(Bytes::from_static(b"first")),
                 Ok::<Bytes, std::io::Error>(Bytes::from_static(b"second")),
             ]),
@@ -5159,8 +5363,31 @@ mod tests {
                 .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
                 .await
                 .unwrap(),
-            Bytes::from_static(b"firstsecond")
+            Bytes::from_static(b" \r\nfirstsecond")
         );
+    }
+
+    #[tokio::test]
+    async fn streaming_whitespace_does_not_reset_first_byte_timeout() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::from_millis(20));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::unfold((), |_| async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                Some((Ok(Bytes::from_static(b" ")), ()))
+            }),
+        );
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            forwarder.prepare_success_response_for_failover(response, true),
+        )
+        .await
+        .expect("whitespace must not extend the priming deadline")
+        .err()
+        .expect("whitespace is not a valid first byte");
+
+        assert!(matches!(error, ProxyError::Timeout(_)));
     }
 
     #[tokio::test]
@@ -5549,22 +5776,48 @@ mod tests {
             Some(Err(ProxyError::TransformError(message))) if message.contains("boom")
         ));
 
+        let empty_message = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}"
+        );
+        assert!(inspect_responses_start_event(empty_message).is_none());
+
+        let empty_completed = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}"
+        );
+        assert!(matches!(
+            inspect_responses_start_event(empty_completed),
+            Some(Err(ProxyError::ForwardFailed(message)))
+                if message.contains("without producing semantic output")
+        ));
+
         let delta = concat!(
             "event: response.output_text.delta\n",
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}"
         );
         assert!(matches!(inspect_responses_start_event(delta), Some(Ok(()))));
+
+        let tool_call = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"lookup\",\"arguments\":\"\"}}"
+        );
+        assert!(matches!(
+            inspect_responses_start_event(tool_call),
+            Some(Ok(()))
+        ));
     }
 
     #[test]
-    fn responses_stream_start_accepts_unlabelled_whole_json() {
+    fn responses_stream_start_validates_unlabelled_whole_json() {
+        assert!(matches!(
+            inspect_responses_json_document(r#"{"status":"completed","output":[]}"#),
+            Some(Err(ProxyError::ForwardFailed(message)))
+                if message.contains("without producing semantic output")
+        ));
         assert!(matches!(
             inspect_responses_json_document(
-                r#"{
-                    "status": "completed",
-
-                    "output": []
-                }"#
+                r#"{"status":"completed","output":[{"type":"function_call","name":"lookup","arguments":""}]}"#
             ),
             Some(Ok(()))
         ));
@@ -5577,7 +5830,6 @@ mod tests {
             matches!(failed, Some(Err(ProxyError::TransformError(message))) if message.contains("backend unavailable"))
         );
     }
-
     #[test]
     fn codex_anthropic_cache_is_default_on_but_honors_sub_switch() {
         let default = codex_anthropic_cache_config(&OptimizerConfig::default());
@@ -5590,6 +5842,166 @@ mod tests {
         });
         assert!(disabled.enabled);
         assert!(!disabled.cache_injection);
+    }
+
+    #[test]
+    fn responses_reasoning_content_is_productive_output() {
+        let response = json!({"status":"completed", "output":[{
+            "type":"reasoning", "summary":[],
+            "content":[{"type":"reasoning_text", "text":"Let me analyze this."}]
+        }]});
+        assert!(responses_response_has_semantic_output(&response));
+        assert!(matches!(
+            inspect_responses_json_document(&response.to_string()),
+            Some(Ok(()))
+        ));
+    }
+
+    #[test]
+    fn responses_whitespace_delta_is_not_productive_output() {
+        for event in [
+            "response.output_text.delta",
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_text.delta",
+            "response.refusal.delta",
+        ] {
+            let block = format!("data: {}", json!({"type":event, "delta":" \n"}));
+            assert!(inspect_responses_start_event(&block).is_none(), "{event}");
+        }
+    }
+
+    #[tokio::test]
+    async fn responses_semantic_wait_uses_idle_timeout_after_first_chunk() {
+        for idle_timeout in [Duration::ZERO, Duration::from_millis(250)] {
+            let mut fwd = test_forwarder(Duration::ZERO, Duration::from_millis(20));
+            fwd.streaming_idle_timeout = idle_timeout;
+            let response = ProxyResponse::streamed(
+                StatusCode::OK,
+                HeaderMap::new(),
+                futures::stream::unfold(0, |index| async move {
+                    let chunk = match index {
+                        0 => "data: {\"type\":\"response.created\",\"response\":{\"status\":\"in_progress\"}}\n\n",
+                        1 => {
+                            tokio::time::sleep(Duration::from_millis(80)).await;
+                            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"
+                        }
+                        _ => return None,
+                    };
+                    Some((Ok(Bytes::from_static(chunk.as_bytes())), index + 1))
+                }),
+            );
+            fwd.validate_responses_stream_start(response, None)
+                .await
+                .map_err(|error| error.to_string())
+                .expect("timely lifecycle events must switch to the idle timeout");
+        }
+    }
+
+    #[tokio::test]
+    async fn responses_semantic_wait_still_enforces_idle_timeout() {
+        let mut fwd = test_forwarder(Duration::ZERO, Duration::from_millis(20));
+        fwd.streaming_idle_timeout = Duration::from_millis(40);
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::once(async {
+                Ok(Bytes::from_static(
+                    b"data: {\"type\":\"response.created\"}\n\n",
+                ))
+            })
+            .chain(futures::stream::pending()),
+        );
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            fwd.validate_responses_stream_start(response, None),
+        )
+        .await
+        .expect("idle timeout must terminate the wait")
+        .err()
+        .expect("idle upstream must fail");
+        assert!(matches!(error, ProxyError::Timeout(_)));
+    }
+
+    #[tokio::test]
+    async fn responses_productive_output_is_replayed_before_terminal_event() {
+        let fwd = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let chunks = vec![
+            Bytes::from_static(b"data: {\"type\":\"response.created\"}\n\n"),
+            Bytes::from_static(
+                b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+            ),
+        ];
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::iter(chunks.clone().into_iter().map(Ok))
+                .chain(futures::stream::pending()),
+        );
+        let response = tokio::time::timeout(
+            Duration::from_secs(1),
+            fwd.validate_responses_stream_start(response, None),
+        )
+        .await
+        .expect("productive output must not wait for the completed event")
+        .expect("valid stream");
+        let replayed: Vec<_> = response
+            .bytes_stream()
+            .take(chunks.len())
+            .map(Result::unwrap)
+            .collect()
+            .await;
+        assert_eq!(replayed, chunks);
+    }
+
+    #[tokio::test]
+    async fn gzip_responses_remain_live_and_empty_completions_are_rejected() {
+        use std::io::Write;
+
+        let productive = b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n";
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(productive).unwrap();
+        encoder.flush().unwrap();
+        let prefix = Bytes::from(std::mem::take(encoder.get_mut()));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "content-type",
+            HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert("content-encoding", HeaderValue::from_static("gzip"));
+        headers.insert("content-length", HeaderValue::from_static("999"));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            headers.clone(),
+            futures::stream::once(async move { Ok(prefix) }).chain(futures::stream::pending()),
+        );
+        let fwd = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let response = tokio::time::timeout(
+            Duration::from_secs(1),
+            fwd.validate_responses_stream_start(response, None),
+        )
+        .await
+        .expect("gzip must yield output before the compressed stream finishes")
+        .expect("valid gzip SSE");
+        assert!(!response.headers().contains_key("content-encoding"));
+        assert!(!response.headers().contains_key("content-length"));
+        assert_eq!(
+            response.bytes_stream().next().await.unwrap().unwrap(),
+            productive.as_slice()
+        );
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(b"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n").unwrap();
+        let response = ProxyResponse::buffered(
+            StatusCode::OK,
+            headers,
+            Bytes::from(encoder.finish().unwrap()),
+        );
+        let error = fwd
+            .validate_responses_stream_start(response, None)
+            .await
+            .err()
+            .expect("compressed empty completion must fail");
+        assert!(matches!(error, ProxyError::ForwardFailed(_)));
     }
 
     #[test]
@@ -6465,7 +6877,9 @@ mod tests {
                     let captured = captured.clone();
                     async move {
                         captured.lock().await.push(body);
-                        axum::Json(json!({"status": "completed", "output": []}))
+                        axum::Json(json!({"status": "completed", "output": [{
+                            "type":"message", "role":"assistant", "content":[{"type":"output_text", "text":"ok"}]
+                        }]}))
                     }
                 }
             }),
@@ -7073,7 +7487,9 @@ mod tests {
                         (
                             StatusCode::OK,
                             [(http::header::CONTENT_TYPE, "application/json")],
-                            json!({ "id": "r1", "object": "response", "output": [] }).to_string(),
+                            json!({ "id": "r1", "object": "response", "status":"completed", "output": [{
+                                "type":"message", "role":"assistant", "content":[{"type":"output_text", "text":"ok"}]
+                            }] }).to_string(),
                         )
                     }
                 })
@@ -7722,6 +8138,272 @@ mod tests {
             }
         }
 
+        #[tokio::test]
+        async fn empty_codex_response_fails_over_and_records_provider_failure() {
+            let empty_json = json!({"status":"completed", "output":[]}).to_string();
+            let empty_sse = empty_completed_stream().2;
+            for timeout in [Duration::ZERO, Duration::from_secs(5)] {
+                for streaming in [false, true] {
+                    for (status, content_type, empty_body) in [
+                        (200, "application/json", ""),
+                        (204, "application/json", ""),
+                        (200, "text/event-stream", ""),
+                        (200, "text/event-stream", " \r\n"),
+                        (200, "application/json", empty_json.as_str()),
+                        (200, "text/event-stream", empty_sse.as_str()),
+                    ] {
+                        let bad =
+                            raw_upstream(vec![(status, content_type, empty_body.into())]).await;
+                        // A valid response without usage must still succeed.
+                        let good = upstream().await;
+                        let mut bad_provider = provider(&bad, "openai_responses");
+                        bad_provider.id = "empty".into();
+                        let mut good_provider = provider(&good, "openai_responses");
+                        good_provider.id = "good".into();
+                        let mut fwd = forwarder(false);
+                        fwd.max_attempts = 2;
+                        fwd.non_streaming_timeout = timeout;
+                        fwd.streaming_first_byte_timeout = timeout;
+                        fwd.current_provider_id_at_start = "empty".into();
+                        let mut request = body("listed", json!([]));
+                        request["stream"] = json!(streaming);
+
+                        let result = fwd
+                            .forward_with_retry(
+                                &AppType::Codex,
+                                http::Method::POST,
+                                "/responses",
+                                request,
+                                chatgpt_headers(),
+                                Extensions::new(),
+                                vec![bad_provider, good_provider],
+                            )
+                            .await
+                            .map_err(|error| error.error)
+                            .expect("an empty response must try the next provider");
+
+                        assert_eq!(result.provider.id, "good");
+                        assert_eq!(bad.seen.lock().await.len(), 1);
+                        assert_eq!(good.seen.lock().await.len(), 1);
+                        let breaker = fwd
+                            .router
+                            .get_circuit_breaker_stats("empty", "codex")
+                            .await
+                            .unwrap();
+                        assert_eq!(breaker.consecutive_failures, 1);
+                        assert_eq!(breaker.total_requests, 1);
+                        let status = fwd.status.read().await;
+                        assert_eq!(status.total_requests, 1);
+                        assert_eq!(status.success_requests, 1);
+                        assert_eq!(status.failed_requests, 0);
+                        assert_eq!(status.failover_count, 1);
+                        assert_eq!(fwd.current_providers.read().await["codex"].0, "good");
+                    }
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn empty_codex_response_without_fallback_returns_bad_gateway() {
+            use axum::response::IntoResponse;
+
+            let bad = raw_upstream(vec![(200, "application/json", String::new())]).await;
+            let fwd = forwarder(false);
+            let error = fwd
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    body("listed", json!([])),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&bad, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("an empty response must not report success");
+
+            assert!(matches!(error.error, ProxyError::ForwardFailed(_)));
+            assert_eq!(
+                error.error.into_response().status(),
+                StatusCode::BAD_GATEWAY
+            );
+            let status = fwd.status.read().await;
+            assert_eq!(status.success_requests, 0);
+            assert_eq!(status.failed_requests, 1);
+            assert!(fwd.current_providers.read().await.is_empty());
+        }
+
+        #[tokio::test]
+        async fn chat_completions_stream_bypasses_responses_validation() {
+            let wire = concat!(
+                "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
+                "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+                "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            );
+            for endpoint in ["/chat/completions", "/v1/chat/completions"] {
+                let upstream = raw_upstream(vec![(200, "text/event-stream", wire.into())]).await;
+                let result = forwarder(false)
+                    .forward_with_retry(
+                        &AppType::Codex, http::Method::POST, endpoint,
+                        json!({"model":"listed", "messages":[{"role":"user", "content":"hi"}], "stream":true}),
+                        chatgpt_headers(), Extensions::new(),
+                        vec![provider(&upstream, "openai_responses")],
+                    )
+                    .await
+                    .map_err(|error| error.error)
+                    .expect("normal Chat Completions SSE must pass through");
+                assert_eq!(body_text(result).await, wire);
+            }
+        }
+
+        #[tokio::test]
+        async fn head_response_does_not_require_a_body() {
+            let upstream = raw_upstream(vec![(200, "application/json", String::new())]).await;
+            let fwd = forwarder(false);
+            let result = fwd
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::HEAD,
+                    "/models",
+                    json!({}),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("HEAD has no response body by design");
+            assert_eq!(result.response.status(), StatusCode::OK);
+            assert_eq!(fwd.status.read().await.success_requests, 1);
+        }
+
+        #[tokio::test]
+        async fn native_json_empty_completion_is_rejected() {
+            for streaming in [false, true] {
+                let upstream = raw_upstream(vec![(
+                    200,
+                    "application/json",
+                    json!({"object":"response", "status":"completed", "output":[]}).to_string(),
+                )])
+                .await;
+                let mut request = body("listed", json!([]));
+                request["stream"] = json!(streaming);
+                let error = forwarder(false)
+                    .forward_with_retry(
+                        &AppType::Codex,
+                        http::Method::POST,
+                        "/responses",
+                        request,
+                        chatgpt_headers(),
+                        Extensions::new(),
+                        vec![provider(&upstream, "openai_responses")],
+                    )
+                    .await
+                    .err()
+                    .expect("JSON empty completions must fail just like SSE");
+                assert!(error
+                    .error
+                    .to_string()
+                    .contains("without producing semantic output"));
+            }
+        }
+
+        #[tokio::test]
+        async fn responses_tool_reasoning_and_refusal_only_completions_are_preserved() {
+            for item in [
+                json!({"type":"function_call", "call_id":"call_1", "name":"lookup", "arguments":"{}"}),
+                json!({"type":"custom_tool_call", "call_id":"call_1", "name":"shell", "input":""}),
+                json!({"type":"reasoning", "summary":[], "encrypted_content":"opaque-reasoning"}),
+                json!({"type":"reasoning", "summary":[{"type":"summary_text", "text":"Thinking."}]}),
+                json!({"type":"reasoning", "summary":[], "content":[{"type":"reasoning_text", "text":"Thinking."}]}),
+                json!({"type":"message", "role":"assistant", "content":[{"type":"refusal", "refusal":"Cannot comply."}]}),
+                json!({"type":"message", "role":"assistant", "content":[{"type":"output_audio", "data":"encoded-audio"}]}),
+            ] {
+                let completion =
+                    json!({"id":"r1", "object":"response", "status":"completed", "output":[item]});
+                for (content_type, wire) in [
+                    ("application/json", completion.to_string()),
+                    (
+                        "text/event-stream",
+                        sse(&[json!({"type":"response.completed", "response":completion})]).2,
+                    ),
+                ] {
+                    for encrypted_task in [false, true] {
+                        let upstream = raw_upstream(vec![(200, content_type, wire.clone())]).await;
+                        let request = if encrypted_task {
+                            sub_agent_request(Vec::new())
+                        } else {
+                            let mut request = body("listed", json!([]));
+                            request["stream"] = json!(true);
+                            request
+                        };
+                        let result = forwarder(false)
+                            .forward_with_retry(
+                                &AppType::Codex,
+                                http::Method::POST,
+                                "/responses",
+                                request,
+                                chatgpt_headers(),
+                                Extensions::new(),
+                                vec![provider(&upstream, "openai_responses")],
+                            )
+                            .await
+                            .map_err(|error| error.error)
+                            .expect("valid output must be preserved");
+                        assert_eq!(body_text(result).await, wire);
+                    }
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn lifecycle_only_and_whitespace_responses_are_rejected() {
+            let created = json!({"type":"response.created", "response":{"status":"in_progress"}});
+            let completed = json!({"type":"response.completed", "response":{"status":"completed", "output":[]}});
+            for wire in [
+                ": keepalive\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+                sse(&[created.clone()]).2,
+                sse(&[
+                    created,
+                    json!({"type":"response.output_text.delta", "delta":" \n"}),
+                    completed,
+                ])
+                .2,
+            ] {
+                for encrypted_task in [false, true] {
+                    let upstream =
+                        raw_upstream(vec![(200, "text/event-stream", wire.clone())]).await;
+                    let mut request = if encrypted_task {
+                        sub_agent_request(Vec::new())
+                    } else {
+                        body("listed", json!([]))
+                    };
+                    request["stream"] = json!(true);
+                    let mut fwd = forwarder(false);
+                    fwd.streaming_first_byte_timeout = Duration::ZERO;
+                    fwd.streaming_idle_timeout = Duration::ZERO;
+                    let error = fwd
+                        .forward_with_retry(
+                            &AppType::Codex,
+                            http::Method::POST,
+                            "/responses",
+                            request,
+                            chatgpt_headers(),
+                            Extensions::new(),
+                            vec![provider(&upstream, "openai_responses")],
+                        )
+                        .await
+                        .err()
+                        .expect("lifecycle and whitespace must not count as output");
+                    assert!(matches!(error.error, ProxyError::ForwardFailed(_)));
+                    assert_eq!(fwd.status.read().await.success_requests, 0);
+                }
+            }
+        }
+
         const ENCRYPTED_TASK_REJECTION: &str =
             "Encrypted function output content could not be decrypted or decoded.";
 
@@ -7751,10 +8433,24 @@ mod tests {
                 json!({ "type": "response.created", "response": { "id": "r1", "status": "in_progress" } }),
                 json!({ "type": "response.output_item.added", "output_index": 0,
                          "item": { "type": "message", "id": "msg_1", "role": "assistant", "content": [] } }),
-                json!({ "type": "response.completed", "response": { "id": "r1", "status": "completed", "output": [] } }),
+                json!({ "type": "response.content_part.added", "item_id": "msg_1", "output_index": 0,
+                         "content_index": 0, "part": { "type": "output_text", "text": "", "annotations": [] } }),
+                json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0,
+                         "content_index": 0, "delta": "ok" }),
+                json!({ "type": "response.completed", "response": { "id": "r1", "status": "completed",
+                         "output": [{ "type": "message", "id": "msg_1", "role": "assistant",
+                                      "content": [{ "type": "output_text", "text": "ok", "annotations": [] }] }] } }),
             ])
         }
 
+        fn empty_completed_stream() -> (u16, &'static str, String) {
+            sse(&[
+                json!({ "type": "response.created", "response": { "id": "r1", "status": "in_progress" } }),
+                json!({ "type": "response.output_item.added", "output_index": 0,
+                         "item": { "type": "message", "id": "msg_1", "role": "assistant", "content": [] } }),
+                json!({ "type": "response.completed", "response": { "id": "r1", "status": "completed", "output": [] } }),
+            ])
+        }
         /// 子 agent 的第一个请求：末尾是主 agent 那家签发的任务密文。`history` 放在它前面。
         fn sub_agent_request(history: Vec<Value>) -> Value {
             let mut input = history;
@@ -7827,6 +8523,57 @@ mod tests {
             assert_eq!(upstream.seen.lock().await.len(), 1);
         }
 
+        #[tokio::test]
+        async fn sub_agent_empty_completed_stream_is_rejected_before_commit() {
+            let upstream = raw_upstream(vec![empty_completed_stream()]).await;
+            let error = forward_sub_agent(&upstream, sub_agent_request(Vec::new()))
+                .await
+                .err()
+                .expect("empty completion must not be committed");
+            assert!(
+                matches!(
+                    error.error,
+                    ProxyError::ForwardFailed(ref message)
+                        if message.contains("without producing semantic output")
+                ),
+                "{:?}",
+                error.error
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn native_empty_completed_stream_is_rejected_before_commit() {
+            let upstream = raw_upstream(vec![empty_completed_stream()]).await;
+            let error = forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    json!({
+                        "model": "listed",
+                        "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }],
+                        "stream": true
+                    }),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("empty native completion must not be committed");
+            assert!(
+                matches!(
+                    &error.error,
+                    ProxyError::ForwardFailed(message)
+                        if message.contains("without producing semantic output")
+                ),
+                "{:?}",
+                error.error
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
         /// 历史里也有别家的状态时，先去掉历史里的、任务原样保留重试一次；还被拒才说明原因。
         #[tokio::test]
         async fn sub_agent_retry_strips_history_but_keeps_the_task() {
@@ -7880,9 +8627,9 @@ mod tests {
             assert_eq!(upstream.seen.lock().await.len(), 1);
         }
 
-        /// 缓冲阶段只有一个截止时间：上游在输出前一直发心跳，也不能无限期压着流不交给客户端。
+        /// 加密任务也要等有效输出：原来的短期密文检查窗口结束后不能放过空完成。
         #[tokio::test]
-        async fn sub_agent_hold_has_one_deadline_despite_heartbeats() {
+        async fn sub_agent_heartbeats_do_not_bypass_empty_completion_validation() {
             const HEARTBEATS: u32 = 40;
             let created = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n";
             let completed = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"status\":\"completed\",\"output\":[]}}\n\n";
@@ -7917,8 +8664,7 @@ mod tests {
             let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_millis(100))
                 .stack_request(true);
 
-            let started = std::time::Instant::now();
-            let result = forwarder
+            let error = forwarder
                 .forward_with_retry(
                     &AppType::Codex,
                     http::Method::POST,
@@ -7929,21 +8675,10 @@ mod tests {
                     vec![provider(&upstream, "openai_responses")],
                 )
                 .await
-                .map_err(|error| error.error)
-                .expect("committed");
-            let handed_over = started.elapsed();
-            // 心跳要发 800ms；截止时间 100ms，交出流不该等到心跳发完。
-            assert!(
-                handed_over < Duration::from_millis(500),
-                "held for {handed_over:?}"
-            );
-            let text = body_text(result).await;
-            assert!(text.starts_with(created), "{text}");
-            assert!(text.ends_with(completed), "{text}");
-            assert_eq!(
-                text.matches(": keepalive").count(),
-                (HEARTBEATS - 1) as usize
-            );
+                .err()
+                .expect("heartbeats must not commit an empty completion");
+            assert!(matches!(error.error, ProxyError::ForwardFailed(message)
+                if message.contains("without producing semantic output")));
         }
 
         /// 上游解得开（同一家）或者是别的失败：客户端收到的流和上游发的逐字节一样。
