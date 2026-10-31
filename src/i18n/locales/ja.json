@@ -1873,6 +1873,13 @@
     "enterpriseDomainPlaceholder": "例: company.ghe.com"
   },
   "codexOauth": {
+    "plan": {
+      "free": "Free",
+      "plus": "Plus",
+      "pro": "Pro",
+      "team": "Team",
+      "enterprise": "Enterprise"
+    },
     "authStatus": "認証状態",
     "notAuthenticated": "未認証",
     "loginRequired": "先に ChatGPT にログインしてください",
@@ -4943,6 +4950,8 @@
     "enterpriseDomain": "企業ドメイン",
     "enterpriseDomainRequired": "先に企業ドメインを入力してください（例：company.ghe.com）",
     "codexReauthNote": "ログイン情報（id_token）が足りないため、Codex のマネージドバインドに使えません",
+    "codexLoginExpiresOn": "ログインは{{date}}頃に期限切れになります。使用時に自動で更新されます",
+    "codexLoginMaybeExpired": "ログインの有効期限が切れている可能性があります。使用時に自動で更新されます",
     "xaiReauthNote": "ログイン情報が無効になり、このアカウントを使うプロバイダーは使えません",
     "statusLoading": "アカウントを読み込み中…",
     "xaiStatusLoadFailed": "xAI アカウントの状態を読み込めませんでした。再試行してください。",

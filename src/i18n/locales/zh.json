@@ -1873,6 +1873,13 @@
     "enterpriseDomainPlaceholder": "例如：company.ghe.com"
   },
   "codexOauth": {
+    "plan": {
+      "free": "Free",
+      "plus": "Plus",
+      "pro": "Pro",
+      "team": "Team",
+      "enterprise": "Enterprise"
+    },
     "authStatus": "认证状态",
     "notAuthenticated": "未认证",
     "loginRequired": "请先登录 ChatGPT 账号",
@@ -4943,6 +4950,8 @@
     "enterpriseDomain": "企业域名",
     "enterpriseDomainRequired": "先填企业域名，例如 company.ghe.com",
     "codexReauthNote": "缺少登录凭据（id_token），不能用于 Codex 托管绑定",
+    "codexLoginExpiresOn": "登录约在{{date}}过期，使用时会自动刷新",
+    "codexLoginMaybeExpired": "登录可能已过期，使用时会自动刷新",
     "xaiReauthNote": "登录凭据已失效，用到它的供应商无法使用",
     "statusLoading": "正在加载账号…",
     "xaiStatusLoadFailed": "无法加载 xAI 账号状态，请重试。",

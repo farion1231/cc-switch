@@ -1857,6 +1857,13 @@
     "automaticFormatHint": "Yönlendirme, her model için Copilot üst akış biçimini seçer; elle belirlenen biçim ayarları yok sayılır."
   },
   "codexOauth": {
+    "plan": {
+      "free": "Free",
+      "plus": "Plus",
+      "pro": "Pro",
+      "team": "Team",
+      "enterprise": "Enterprise"
+    },
     "authStatus": "Kimlik doğrulama durumu",
     "notAuthenticated": "Kimliği doğrulanmadı",
     "loginRequired": "Lütfen önce ChatGPT'de oturum açın",
@@ -4927,6 +4934,8 @@
     "enterpriseDomain": "Kurumsal alan adı",
     "enterpriseDomainRequired": "Önce kurumsal etki alanını girin, ör. şirket.ghe.com",
     "codexReauthNote": "Oturum açma kimlik bilgisi (id_token) eksik olduğundan Codex yönetilen bağlama için kullanılamaz",
+    "codexLoginExpiresOn": "Oturum açma {{date}} civarında sona eriyor; kullanımda otomatik olarak yenilenir",
+    "codexLoginMaybeExpired": "Oturum açma süresi dolmuş olabilir; kullanımda otomatik olarak yenilenir",
     "xaiReauthNote": "Oturum açma kimlik bilgilerinin süresi doldu; bunu kullanan sağlayıcılar çalışmaz",
     "statusLoading": "Hesaplar yükleniyor…",
     "xaiStatusLoadFailed": "xAI hesapları yüklenemedi. Yeniden deneyin.",
