@@ -21,6 +21,7 @@ mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
 pub mod hermes_config;
+mod host_open;
 mod init_status;
 mod jsonc_document;
 mod kimi_config;
