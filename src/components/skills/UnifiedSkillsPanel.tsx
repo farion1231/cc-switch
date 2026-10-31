@@ -534,7 +534,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const uninstallIds = async (ids: string[]) => {
     if (!beginWrite(true)) return;
     const done: InstalledSkill[] = [];
-    let piWarning: string | undefined;
+    const cleanupWarnings: string[] = [];
     let backupPath: string | undefined;
     try {
       for (const id of ids) {
@@ -542,12 +542,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         try {
           const result = await uninstallMutation.mutateAsync(id);
           if (skill) done.push(skill);
-          if (result.preservedPiPath) {
-            piWarning = t("skills.uninstallPiPreserved", {
-              path: result.preservedPiPath,
-            });
-          } else if (result.piCleanupIncomplete) {
-            piWarning = t("skills.uninstallPiCleanupIncomplete");
+          if (result.cleanupFailures?.length) {
+            cleanupWarnings.push(
+              t("skills.uninstallCleanupIncomplete", {
+                details: result.cleanupFailures
+                  .map(({ app, path, error }) =>
+                    [app, path, error].filter(Boolean).join(": "),
+                  )
+                  .join("; "),
+              }),
+            );
           }
           if (result.backupPath) backupPath = result.backupPath;
         } catch (error) {
@@ -572,13 +576,13 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         : t("skillsPage.toast.uninstalledMany", { count: done.length });
     const options = {
       description:
-        piWarning ??
+        (cleanupWarnings.length > 0 ? cleanupWarnings.join("\n") : undefined) ??
         (done.length === 1 && backupPath
           ? t("skills.backup.location", { path: backupPath })
           : t("skillsPage.toast.backupAt", { path: BACKUP_DIR })),
       closeButton: true,
     };
-    if (piWarning) toast.warning(text, options);
+    if (cleanupWarnings.length > 0) toast.warning(text, options);
     else toast.success(text, options);
   };
 
