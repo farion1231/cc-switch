@@ -747,6 +747,85 @@ describe("OpenCodeFormFields", () => {
     });
   });
 
+  it.each(["source-first", "target-first"])(
+    "preserves both models when a rename collides (%s)",
+    (order) => {
+      const source = {
+        name: "Source model",
+        limit: { context: 32768, output: 4096 },
+      };
+      const target = {
+        name: "Target model",
+        options: { reasoningEffort: "high" },
+      };
+      const models =
+        order === "source-first" ? { source, target } : { target, source };
+      const { props } = renderOpenCodeForm({ models });
+      const modelIdInput = screen.getByDisplayValue("source");
+
+      fireEvent.change(modelIdInput, { target: { value: "target" } });
+      fireEvent.blur(modelIdInput);
+
+      expect(props.onModelsChange).not.toHaveBeenCalled();
+      expect(screen.getByDisplayValue("source")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("target")).toBeInTheDocument();
+    },
+  );
+
+  it("restores a model ID when its draft is cleared", () => {
+    const { props } = renderOpenCodeForm();
+    const modelIdInput = screen.getByDisplayValue("kimi-k2");
+
+    fireEvent.change(modelIdInput, { target: { value: "   " } });
+    fireEvent.blur(modelIdInput);
+
+    expect(props.onModelsChange).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("kimi-k2")).toBeInTheDocument();
+  });
+
+  it("restores a rejected model ID when composition is unfinished on blur", () => {
+    const { props } = renderOpenCodeForm({
+      models: { source: { name: "Source" }, target: { name: "Target" } },
+    });
+    const modelIdInput = screen.getByDisplayValue("source");
+
+    fireEvent.compositionStart(modelIdInput);
+    fireEvent.change(modelIdInput, { target: { value: "target" } });
+    fireEvent.blur(modelIdInput);
+
+    expect(props.onModelsChange).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("source")).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue("target")).toHaveLength(1);
+  });
+
+  it.each(["source-first", "target-first"])(
+    "preserves both model options when a rename collides (%s)",
+    (order) => {
+      const source = { order: ["baseten"] };
+      const target = true;
+      const { props } = renderOpenCodeForm({
+        models: {
+          "kimi-k2": {
+            name: "Kimi K2",
+            options:
+              order === "source-first"
+                ? { source, target }
+                : { target, source },
+          },
+        },
+      });
+      expandFirstModel();
+      const optionKeyInput = screen.getByDisplayValue("source");
+
+      fireEvent.change(optionKeyInput, { target: { value: "target" } });
+      fireEvent.blur(optionKeyInput);
+
+      expect(props.onModelsChange).not.toHaveBeenCalled();
+      expect(screen.getByDisplayValue("source")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("target")).toBeInTheDocument();
+    },
+  );
+
   it("commits an unfinished model option key composition on its first blur", () => {
     const onModelsChange = vi.fn();
     renderOpenCodeForm({
@@ -772,6 +851,24 @@ describe("OpenCodeFormFields", () => {
         options: { 路由: "baseten" },
       },
     });
+  });
+
+  it("restores a rejected model option when composition is unfinished on blur", () => {
+    const { props } = renderOpenCodeForm({
+      models: {
+        "kimi-k2": { name: "Kimi K2", options: { source: 1, target: 2 } },
+      },
+    });
+    expandFirstModel();
+    const optionKeyInput = screen.getByDisplayValue("source");
+
+    fireEvent.compositionStart(optionKeyInput);
+    fireEvent.change(optionKeyInput, { target: { value: "target" } });
+    fireEvent.blur(optionKeyInput);
+
+    expect(props.onModelsChange).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("source")).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue("target")).toHaveLength(1);
   });
 
   it("reconciles a model option draft after JSON canonicalization", () => {
