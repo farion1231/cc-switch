@@ -102,6 +102,7 @@ fn parse_provider_deeplink(
     if !matches!(
         app.as_str(),
         "agy"
+            | "copilot"
             | "claude"
             | "codex"
             | "gemini"
@@ -266,9 +267,10 @@ fn parse_prompt_deeplink(
             | "hermes"
             | "pi"
             | "mcode"
+            | "copilot"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', or 'mcode', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'agy', 'copilot', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', or 'mcode', got '{app}'"
         )));
     }
 
@@ -355,9 +357,10 @@ fn parse_mcp_deeplink(
                 | "kimi"
                 | "dsh"
                 | "omp"
+                | "copilot"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', or 'omp', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', 'omp', or 'copilot', got '{trimmed}'"
             )));
         }
     }

@@ -213,6 +213,16 @@ impl Provider {
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
+            AppType::Copilot => {
+                let env = settings.get("env");
+                (
+                    str_at(env.and_then(|e| e.get("COPILOT_PROVIDER_BASE_URL"))),
+                    first_non_empty(
+                        env,
+                        &["COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BEARER_TOKEN"],
+                    ),
+                )
+            }
             AppType::Dsh => (
                 str_at(settings.pointer("/options/baseURL")),
                 str_at(settings.pointer("/options/apiKey")),

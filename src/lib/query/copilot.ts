@@ -1,5 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
+import {
+  copilotCliSignedInAccount,
+  copilotGetUsage,
+  copilotGetUsageForAccount,
+} from "@/lib/api/copilot";
 import type { QuotaTier } from "@/types/subscription";
 
 const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -59,5 +63,15 @@ export function useCopilotQuota(
     refetchOnWindowFocus: autoQuery,
     staleTime: REFETCH_INTERVAL,
     retry: 1,
+  });
+}
+
+/** Copilot CLI 当前登录的账号（官方卡没绑授权中心账号时，额度跟着它查）。 */
+export function useCopilotCliSignedInAccount(enabled = true) {
+  return useQuery({
+    queryKey: ["copilot", "cli-signed-in-account"],
+    queryFn: copilotCliSignedInAccount,
+    enabled,
+    staleTime: 60 * 1000,
   });
 }

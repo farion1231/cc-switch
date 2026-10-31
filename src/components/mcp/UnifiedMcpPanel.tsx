@@ -94,6 +94,7 @@ const IMPORT_SOURCE_FILES: Record<
     noteKey: "mcpPage.import.dshNote",
   },
   kimi: { file: "~/.kimi-code/mcp.json" },
+  copilot: { file: "~/.copilot/mcp-config.json" },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
@@ -106,6 +107,7 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "pi",
   "agy",
   "omp",
+  "copilot",
 ]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */

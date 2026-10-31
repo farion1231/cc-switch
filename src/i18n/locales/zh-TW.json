@@ -204,7 +204,8 @@
       "extraArgsHint": "接在啟動命令後面，只用於這次開啟的終端機。用空格分隔，含空格的值用引號括起來。",
       "agySwitchTitle": "會切換 agy 的登入",
       "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
-      "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。"
+      "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。",
+      "isolationBodyCopilot": "「{{name}}」的位址、Key 和模型只傳給這個終端機裡的 copilot，不寫進任何檔案；在別的終端機裡直接執行 copilot 仍是 GitHub 登入。"
     },
     "name": "名稱",
     "namePlaceholder": "例如：Claude 官方",
@@ -1141,6 +1142,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
+    "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
   },
   "mcode": {
@@ -1590,7 +1592,8 @@
       "rawMatch": "原文中的相符項目",
       "expandContent": "展開完整內容",
       "collapseContent": "收合"
-    }
+    },
+    "copilotDeleteHint": "請在 GitHub Copilot CLI 中刪除此工作階段，以保持工作階段儲存一致"
   },
   "console": {
     "providerSwitchReceived": "收到供應商切換事件：",
@@ -1871,7 +1874,29 @@
     "deploymentType": "GitHub 部署類型",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "例如：company.ghe.com"
+    "enterpriseDomainPlaceholder": "例如：company.ghe.com",
+    "form": {
+      "officialTitle": "使用 Copilot CLI 自己的 GitHub 登入",
+      "officialHint": "「開啟終端機」以這張卡的模型啟動 copilot；綁定授權中心的帳號後改用該帳號啟動。",
+      "byokTitle": "只在從這張卡開啟的終端機裡生效",
+      "byokHint": "Copilot CLI 只從程序環境讀取自帶模型，不會寫進 Copilot 自己的檔案。",
+      "apiFormat": "介面格式",
+      "baseUrl": "API 位址",
+      "baseUrlHint": "OpenAI 相容位址通常以 /v1 結尾（如 Ollama http://localhost:11434/v1）；Anthropic 只填主機（https://api.anthropic.com）。",
+      "model": "模型",
+      "officialModelHint": "留空則使用 Copilot 目前的模型。以 --model 傳入，只對這次工作階段生效；copilot 裡的 /model 照常可用。",
+      "byokModelHint": "介面要求的模型 ID（COPILOT_MODEL）。",
+      "reasoningEffort": "推理強度",
+      "reasoningEffortDefault": "Copilot 預設",
+      "reasoningEffortHint": "開啟終端機時作為 --reasoning-effort 傳入。選 none 時 Copilot 不再在 Responses 請求裡帶 reasoning.summary，部分中轉不認這個欄位。",
+      "maxPromptTokens": "最大輸入 Token",
+      "maxOutputTokens": "最大輸出 Token",
+      "envJsonHint": "進階：任意 COPILOT_PROVIDER_* 變數（如 COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN）都會原樣傳給 copilot。"
+    },
+    "quota": {
+      "accountNotInAuthCenter": "授權中心裡沒有 Copilot CLI 目前登入的帳號 {{login}}。請在授權中心新增它，或在卡片裡綁定帳號。",
+      "notSignedIn": "Copilot CLI 尚未登入。請執行 copilot 並用 /login 登入，或在卡片裡綁定授權中心的帳號。"
+    }
   },
   "codexOauth": {
     "authStatus": "驗證狀態",
@@ -4258,6 +4283,7 @@
       "pi": "透過 npm 安裝",
       "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
       "agy": "安裝時執行官方安裝腳本",
+      "copilot": "透過 npm 安裝",
       "omp": "安裝時執行官方安裝腳本"
     }
   },
