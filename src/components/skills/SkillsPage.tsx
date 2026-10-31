@@ -43,7 +43,7 @@ import {
   skillErrorReason,
 } from "@/lib/errors/skillErrorParser";
 import { cn } from "@/lib/utils";
-import { MatrixSearch, NeutralBadge } from "@/components/mcp/AppMatrix";
+import { MatrixSearch } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
 import { countRepoSkills } from "./RepoManagerPanel";
 import { describeRepoFailures, repoFailureKey } from "./repoFailures";
@@ -678,10 +678,6 @@ export function SkillsPage({
                 const line2Id = `sk-d-${index}-line2`;
                 const repo = `${row.repoOwner}/${row.repoName}`;
                 const docsUrl = discoverDocsUrl(row);
-                const showDir =
-                  row.directory &&
-                  row.directory.trim().toLowerCase() !==
-                    row.name.trim().toLowerCase();
                 return (
                   <li
                     key={item.key}
@@ -698,16 +694,13 @@ export function SkillsPage({
                         <span className="min-w-0 truncate text-body font-medium">
                           {row.name}
                         </span>
-                        {showDir && (
+                        {!isSkillsSh && (
                           <span
-                            title={row.directory}
+                            title={repo}
                             className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
                           >
-                            {row.directory}
+                            {repo}
                           </span>
-                        )}
-                        {!isSkillsSh && (
-                          <NeutralBadge mono>{repo}</NeutralBadge>
                         )}
                         {typeof row.installs === "number" && (
                           <span
@@ -742,28 +735,7 @@ export function SkillsPage({
                             : row.description}
                       </span>
                     </div>
-                    {docsUrl && (
-                      <HoverTip content={t("mcpPage.openDocs")}>
-                        <Button
-                          type="button"
-                          variant="quiet"
-                          size="icon-compact"
-                          className="shrink-0"
-                          aria-label={t("mcpPage.openDocs")}
-                          onClick={() =>
-                            void settingsApi
-                              .openExternal(docsUrl)
-                              .catch(() => undefined)
-                          }
-                        >
-                          <ExternalLink
-                            className="h-[15px] w-[15px]"
-                            strokeWidth={1.5}
-                          />
-                        </Button>
-                      </HoverTip>
-                    )}
-                    <div className="flex w-[180px] shrink-0 justify-end">
+                    <div className="flex max-w-[180px] shrink-0 justify-end">
                       {status.kind === "installed" ? (
                         <button
                           type="button"
@@ -774,9 +746,7 @@ export function SkillsPage({
                           })}
                           className="inline-flex h-7 items-center gap-0.5 rounded-control px-2 text-body text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
                         >
-                          {t("skillsPage.discover.installed", {
-                            count: enabledAppCount(status.skill),
-                          })}
+                          {t("skillsPage.discover.installed")}
                           <ChevronRight
                             className="h-3.5 w-3.5"
                             strokeWidth={2}
@@ -835,6 +805,29 @@ export function SkillsPage({
                         </Button>
                       )}
                     </div>
+                    {docsUrl ? (
+                      <HoverTip content={t("mcpPage.openDocs")}>
+                        <Button
+                          type="button"
+                          variant="quiet"
+                          size="icon-compact"
+                          className="shrink-0"
+                          aria-label={t("mcpPage.openDocs")}
+                          onClick={() =>
+                            void settingsApi
+                              .openExternal(docsUrl)
+                              .catch(() => undefined)
+                          }
+                        >
+                          <ExternalLink
+                            className="h-[15px] w-[15px]"
+                            strokeWidth={1.5}
+                          />
+                        </Button>
+                      </HoverTip>
+                    ) : (
+                      <span aria-hidden="true" className="w-7 shrink-0" />
+                    )}
                   </li>
                 );
               })}
