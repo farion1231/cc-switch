@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Download, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { copyText } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -78,6 +80,32 @@ export type ClaudeDesktopProviderFormValues = ProviderFormData & {
 };
 
 type ApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+
+/** Grok 目录里的快速变体。拉取列表不含它，只能手动填进实际请求模型。 */
+const XAI_BUILD_FAST_MODEL_ID = "grok-4.7-build-fast";
+
+function renderCopyableModelId(
+  text: string,
+  modelId: string,
+  onCopy: () => void,
+): ReactNode {
+  const parts = text.split(modelId);
+  if (parts.length === 1) return text;
+  return parts.map((part, index) => (
+    <span key={index}>
+      {part}
+      {index < parts.length - 1 ? (
+        <button
+          type="button"
+          className="font-mono underline underline-offset-2"
+          onClick={onCopy}
+        >
+          {modelId}
+        </button>
+      ) : null}
+    </span>
+  ));
+}
 
 type PresetEntry = {
   id: string;
@@ -286,6 +314,9 @@ export function ClaudeDesktopProviderForm({
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
+  );
+  const [xaiPriority, setXaiPriority] = useState<boolean>(
+    () => initialData?.meta?.xaiPriority ?? false,
   );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     "custom",
@@ -922,6 +953,8 @@ export function ClaudeDesktopProviderForm({
             : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
+    meta.xaiPriority =
+      activeProviderType === "xai_oauth" ? xaiPriority : undefined;
 
     delete meta.endpointAutoSelect;
     delete meta.isFullUrl;
@@ -1027,10 +1060,32 @@ export function ClaudeDesktopProviderForm({
                     onFastModeChange={setCodexFastMode}
                   />
                 ) : (
-                  <XaiOAuthSection
-                    selectedAccountId={selectedXaiAccountId}
-                    onAccountSelect={setSelectedXaiAccountId}
-                  />
+                  <>
+                    <XaiOAuthSection
+                      selectedAccountId={selectedXaiAccountId}
+                      onAccountSelect={setSelectedXaiAccountId}
+                    />
+                    {activeProviderType === "xai_oauth" && (
+                      <div className="mt-3 flex items-center justify-between rounded-md border bg-subtle p-3">
+                        <div className="space-y-1 pr-4">
+                          <Label className="text-sm font-medium">
+                            {t("claudeDesktop.xaiPriority", "Priority")}
+                          </Label>
+                          <p className="text-xs text-fg-2">
+                            {t("claudeDesktop.xaiPriorityDescription", {
+                              defaultValue:
+                                '发送 service_tier="priority"。api.x.ai 会接受并在回包里回显 priority。默认关闭。2026-10-22 对 https://api.x.ai/v1/responses 的短请求实测：字段被接受，回包 service_tier 从 default 变为 priority，首字时间没有变快。',
+                            })}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={xaiPriority}
+                          onCheckedChange={setXaiPriority}
+                          aria-label={t("claudeDesktop.xaiPriority", "Priority")}
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
@@ -1214,6 +1269,33 @@ export function ClaudeDesktopProviderForm({
                             "为 Sonnet、Opus、Haiku 三档分别填写实际请求模型；菜单显示名可写 DeepSeek、Kimi 等品牌名。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
                         })}
                       </p>
+                      {activeProviderType === "xai_oauth" && (
+                        <p className="text-xs leading-relaxed text-destructive">
+                          {renderCopyableModelId(
+                            t("claudeDesktop.xaiBuildFastNote", {
+                              defaultValue:
+                                "获取模型列表不含 grok-4.7-build-fast，这是预期。可手动把 grok-4.7-build-fast 填进「实际请求模型」。Grok 目录里它是 grok-4.7 的快速变体，价格约 2 倍；api.x.ai 的 /v1/responses 接受这个 ID，回包 model 就是 grok-4.7-build-fast。",
+                            }),
+                            XAI_BUILD_FAST_MODEL_ID,
+                            () => {
+                              void copyText(XAI_BUILD_FAST_MODEL_ID).then(
+                                () =>
+                                  toast.success(
+                                    t("claudeDesktop.modelIdCopied", {
+                                      defaultValue: "已复制",
+                                    }),
+                                  ),
+                                () =>
+                                  toast.error(
+                                    t("claudeDesktop.modelIdCopyFailed", {
+                                      defaultValue: "复制失败",
+                                    }),
+                                  ),
+                              );
+                            },
+                          )}
+                        </p>
+                      )}
                     </div>
 
                     <div className="hidden grid-cols-[140px_1fr_1fr_116px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
