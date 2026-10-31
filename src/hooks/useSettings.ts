@@ -358,6 +358,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const previousAppDir = initialAppConfigDir;
@@ -367,6 +368,7 @@ export function useSettings(): UseSettingsResult {
         const previousGrokDir = sanitizeDir(data?.grokConfigDir);
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
+        const previousHermesDir = sanitizeDir(data?.hermesConfigDir);
         const previousPiDir = sanitizeDir(data?.piConfigDir);
         const previousOmpDir = sanitizeDir(data?.ompConfigDir);
         const {
@@ -383,6 +385,7 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           piConfigDir: sanitizedPiDir,
           ompConfigDir: sanitizedOmpDir,
           language: mergedSettings.language,
@@ -474,6 +477,7 @@ export function useSettings(): UseSettingsResult {
         const grokDirChanged = sanitizedGrokDir !== previousGrokDir;
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
+        const hermesDirChanged = sanitizedHermesDir !== previousHermesDir;
         const piDirChanged = sanitizedPiDir !== previousPiDir;
         const ompDirChanged = sanitizedOmpDir !== previousOmpDir;
         if (
@@ -483,7 +487,8 @@ export function useSettings(): UseSettingsResult {
             geminiDirChanged ||
             grokDirChanged ||
             opencodeDirChanged ||
-            openclawDirChanged)
+            openclawDirChanged ||
+            hermesDirChanged)
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {
