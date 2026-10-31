@@ -515,9 +515,11 @@ function FooterButton({
 export function TrayPanel() {
   const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
   const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
-  // Windows 文本大小 / WebView 缩放可能让 CSS 像素和屏幕逻辑像素不再一一对应。
+  // 将 CSS 像素换算为原生窗口逻辑像素，适配文本和 WebKit 缩放。
   const coordinateScale =
-    nativePlacement?.platform === "windows"
+    nativePlacement &&
+    (nativePlacement.platform === "windows" ||
+      nativePlacement.platform === "linux")
       ? pixelRatio / nativePlacement.scaleFactor
       : 1;
   const placement = useMemo(
@@ -630,8 +632,9 @@ export function TrayPanel() {
     };
   }, [begin, load]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!placement) return;
+    document.documentElement.dataset.platform = placement.platform;
     document.documentElement.dataset.glass = placement.glass;
     document.documentElement.dataset.layout = placement.layout;
   }, [placement]);
