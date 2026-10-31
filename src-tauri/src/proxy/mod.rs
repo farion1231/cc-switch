@@ -5,6 +5,7 @@
 pub mod body_filter;
 pub mod cache_injector;
 pub mod circuit_breaker;
+mod client_model_alias;
 pub(crate) mod content_encoding;
 pub mod copilot_optimizer;
 pub mod error;
