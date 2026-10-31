@@ -607,23 +607,13 @@ async fn handle_claude_transform(
         .as_ref()
         .and_then(|meta| meta.provider_type.as_deref())
         == Some("codex_oauth");
-    // Codex OAuth 会把 openai_responses 响应强制升级为 SSE，即使客户端发的是 stream:false。
-    // should_use_claude_transform_streaming 默认会把这个组合路由到流式转换器——虽然能避免
-    // JSON parse 报 422，但会让非流客户端收到 text/event-stream，违反 Anthropic 非流语义。
-    // 这里为这个特定组合打开 override：把上游 SSE 聚合成 Anthropic JSON 回给客户端，其它
-    // 场景（任意上游 is_sse、非 Codex OAuth 等）仍沿用原有流式兜底。
-    let aggregate_codex_oauth_responses_sse =
-        !is_stream && is_codex_oauth && api_format == "openai_responses";
-    let use_streaming = if aggregate_codex_oauth_responses_sse {
-        false
-    } else {
-        should_use_claude_transform_streaming(
-            is_stream,
-            response.is_sse(),
-            api_format,
-            is_codex_oauth,
-        )
-    };
+    // Claude 的模型验证要求非流式 JSON，并直接读取 usage.input_tokens。
+    // Chat/Responses 上游即使强制返回 SSE，也必须聚合后再交给非流客户端。
+    // Codex OAuth 强制 SSE，但可能不标 Content-Type，保留这个额外识别条件。
+    let aggregate_responses_sse =
+        !is_stream && api_format == "openai_responses" && (is_codex_oauth || response.is_sse());
+    let use_streaming =
+        should_use_claude_transform_streaming(is_stream, response.is_sse(), api_format);
     let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
     let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
     let hosted_web_search_name =
@@ -754,7 +744,7 @@ async fn handle_claude_transform(
             std::time::Duration::ZERO
         };
     let enforce_codex_web_search_limit_while_aggregating =
-        aggregate_codex_oauth_responses_sse && hosted_web_search_max_uses.is_some();
+        aggregate_responses_sse && hosted_web_search_max_uses.is_some();
     let (mut response_headers, direct_anthropic_response, upstream_response) =
         if enforce_codex_web_search_limit_while_aggregating {
             if let Some(encoding) = get_content_encoding(response.headers()) {
@@ -778,18 +768,17 @@ async fn handle_claude_transform(
             let (response_headers, _status, body_bytes) =
                 read_decoded_body(response, ctx.tag, body_timeout).await?;
             let body_str = String::from_utf8_lossy(&body_bytes);
-            let upstream_response = if aggregate_codex_oauth_responses_sse {
+            let upstream_response = if aggregate_responses_sse {
                 responses_sse_to_response_value(&body_str)?
             } else {
                 match serde_json::from_slice(&body_bytes) {
                     Ok(value) => value,
-                    // 兜底嗅探（#2234）：部分网关对 stream:false 强制返回 SSE 体，却把
-                    // Content-Type 标成 application/json 等，is_sse() 的 header 检查失效。
-                    // 此时按 SSE 聚合成单个 JSON 再走既有非流转换器，客户端仍收到
-                    // Anthropic JSON，非流语义不变。gemini_native 暂无聚合器，落诊断错误。
+                    // 部分网关对 stream:false 强制返回 SSE，Content-Type 也可能错标。
+                    // 按内容嗅探并聚合为 JSON，保持客户端请求的非流语义。
+                    // gemini_native 暂无聚合器，落诊断错误。
                     Err(_) if body_looks_like_sse(&body_str) && api_format != "gemini_native" => {
                         log::warn!(
-                            "[Claude] 上游对非流请求返回未标记的 SSE 体（api_format={api_format}），按 SSE 聚合兜底"
+                            "[Claude] 上游对非流请求返回 SSE 体（api_format={api_format}），聚合为 JSON"
                         );
                         let aggregated = if api_format == "openai_responses" {
                             responses_sse_to_response_value(&body_str)
@@ -2639,9 +2628,9 @@ fn should_use_claude_transform_streaming(
     requested_streaming: bool,
     upstream_is_sse: bool,
     api_format: &str,
-    is_codex_oauth: bool,
 ) -> bool {
-    requested_streaming || upstream_is_sse || (is_codex_oauth && api_format == "openai_responses")
+    requested_streaming
+        || (upstream_is_sse && !matches!(api_format, "openai_chat" | "openai_responses"))
 }
 
 async fn responses_sse_stream_to_anthropic_message(
@@ -4089,13 +4078,100 @@ data: [DONE]\n\n";
         assert_eq!(anthropic["stop_reason"], "end_turn");
     }
 
+    #[tokio::test]
+    async fn claude_model_validation_receives_json_when_upstream_forces_sse() {
+        use crate::app_config::AppType;
+        use crate::mode::stack::StackTarget;
+        use crate::provider::Provider;
+        use crate::proxy::{
+            handler_context::RequestContext, hyper_client::ProxyResponse, server::ProxyState,
+        };
+        use serde_json::{json, Value};
+
+        let state = ProxyState::for_test(Arc::new(Database::memory().unwrap()));
+        state.config.write().await.enable_logging = false;
+        let model = "test-model";
+        let request = json!({"model": model, "stream": false, "max_tokens": 1,
+                "messages": [{"role": "user", "content": "Hi"}]});
+        let provider = Provider::with_id(
+            "validation-test".into(),
+            "Test Provider".into(),
+            json!({}),
+            None,
+        );
+        let ctx = RequestContext::new(
+            &state,
+            &request,
+            &HeaderMap::new(),
+            AppType::Claude,
+            "Claude",
+            "claude",
+            Some(StackTarget {
+                provider,
+                upstream_model: model.into(),
+                original_model: model.into(),
+            }),
+        )
+        .await
+        .unwrap();
+        let chat_sse = concat!(
+                "data: {\"id\":\"chatcmpl-validation\",\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":1}}\n\n",
+                "data: [DONE]\n\n"
+            );
+        let responses_sse = concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-validation\",\"model\":\"test-model\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hi\"}]}],\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}\n\n"
+            );
+
+        for (api_format, sse) in [
+            ("openai_chat", chat_sse),
+            ("openai_responses", responses_sse),
+        ] {
+            for content_type in ["text/event-stream", "application/json"] {
+                let mut headers = HeaderMap::new();
+                headers.insert("content-type", HeaderValue::from_static(content_type));
+                headers.insert(
+                    "content-length",
+                    HeaderValue::from_str(&sse.len().to_string()).unwrap(),
+                );
+                headers.insert("x-request-id", HeaderValue::from_static("validation-test"));
+                let upstream = ProxyResponse::buffered(
+                    StatusCode::OK,
+                    headers,
+                    Bytes::from_static(sse.as_bytes()),
+                );
+                let response = super::handle_claude_transform(
+                    upstream, &ctx, &state, &request, false, api_format, None,
+                )
+                .await
+                .unwrap();
+
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    response.headers()["content-type"],
+                    "application/json",
+                    "{api_format}: {content_type}"
+                );
+                assert!(response.headers().get("content-length").is_none());
+                assert_eq!(response.headers()["x-request-id"], "validation-test");
+                let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(body["type"], "message");
+                assert_eq!(body["model"], model);
+                assert_eq!(body["content"][0]["text"], "Hi");
+                assert_eq!(body["usage"]["input_tokens"], 7);
+                assert_eq!(body["usage"]["output_tokens"], 1);
+            }
+        }
+    }
+
     #[test]
-    fn codex_oauth_responses_force_streaming_even_if_client_sent_false() {
-        assert!(should_use_claude_transform_streaming(
+    fn non_streaming_responses_request_aggregates_forced_sse() {
+        assert!(!should_use_claude_transform_streaming(
             false,
-            false,
-            "openai_responses",
             true,
+            "openai_responses",
         ));
     }
 
@@ -4158,12 +4234,11 @@ data: [DONE]\n\n";
     }
 
     #[test]
-    fn upstream_sse_response_always_uses_streaming_path() {
-        assert!(should_use_claude_transform_streaming(
+    fn non_streaming_chat_request_aggregates_forced_sse() {
+        assert!(!should_use_claude_transform_streaming(
             false,
             true,
             "openai_chat",
-            false,
         ));
     }
 
@@ -4173,7 +4248,25 @@ data: [DONE]\n\n";
             false,
             false,
             "openai_responses",
+        ));
+    }
+
+    #[test]
+    fn requested_streaming_keeps_streaming_for_chat_and_responses() {
+        for api_format in ["openai_chat", "openai_responses"] {
+            for upstream_is_sse in [false, true] {
+                assert!(should_use_claude_transform_streaming(
+                    true,
+                    upstream_is_sse,
+                    api_format
+                ));
+            }
+        }
+        // Gemini has no non-streaming SSE aggregator; preserve its fallback.
+        assert!(should_use_claude_transform_streaming(
             false,
+            true,
+            "gemini_native"
         ));
     }
 
