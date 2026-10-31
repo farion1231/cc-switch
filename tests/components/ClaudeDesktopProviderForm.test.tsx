@@ -741,4 +741,139 @@ describe("ClaudeDesktopProviderForm", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it("模型映射模式下显示「完整 URL」开关并随保存写入 meta（#8393）", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Zhipu Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/paas/v4",
+            ANTHROPIC_AUTH_TOKEN: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          apiFormat: "openai_chat",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "glm-4.6" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    const toggle = screen.getByRole("switch", { name: "完整 URL" });
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].meta.isFullUrl).toBe(true);
+  });
+
+  it("已有的完整 URL 标记在编辑时回显为开启（#8393）", () => {
+    renderForm({
+      name: "Proxy Provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/paas/v4",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "proxy",
+        apiFormat: "openai_chat",
+        isFullUrl: true,
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "glm-4.6" },
+        },
+      },
+    });
+
+    expect(screen.getByRole("switch", { name: "完整 URL" })).toBeChecked();
+  });
+
+  it("直连模式不显示「完整 URL」开关（#8393）", () => {
+    renderForm({
+      name: "Direct Provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "direct",
+        isFullUrl: true,
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "claude-sonnet-5" },
+        },
+      },
+    });
+
+    expect(
+      screen.queryByRole("switch", { name: "完整 URL" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("托管 OAuth 供应商不显示「完整 URL」开关（#8393）", () => {
+    renderForm({
+      name: "Codex OAuth Provider",
+      category: "third_party",
+      settingsConfig: { env: {} },
+      meta: {
+        providerType: "codex_oauth",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct-managed",
+        },
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "upstream-model" },
+        },
+      },
+    });
+
+    expect(
+      screen.queryByRole("switch", { name: "完整 URL" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("从模型映射切回直连时清掉完整 URL 标记（#8393）", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/paas/v4",
+            ANTHROPIC_AUTH_TOKEN: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          apiFormat: "openai_chat",
+          isFullUrl: true,
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "glm-4.6" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "接入方式" }));
+    await user.click(await screen.findByRole("option", { name: "直连" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].meta.isFullUrl).toBeUndefined();
+  });
 });
