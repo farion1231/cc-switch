@@ -4839,7 +4839,7 @@
       "sourceRepos": "倉庫 · {{count}}",
       "reload": "重新讀取倉庫",
       "listLabel": "可安裝的 Skill",
-      "installed": "已安裝 · {{count}} 個應用",
+      "installed": "已安裝",
       "installedAria": "{{name}} 已安裝在 {{count}} 個應用，在「已安裝」裡查看",
       "dirTaken": "目錄名稱已被 {{name}}（{{source}}）使用",
       "installing": "安裝中",

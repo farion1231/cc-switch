@@ -4838,7 +4838,7 @@
       "sourceRepos": "仓库 · {{count}}",
       "reload": "重新读取仓库",
       "listLabel": "可安装的 Skill",
-      "installed": "已安装 · {{count}} 个应用",
+      "installed": "已安装",
       "installedAria": "{{name}} 已安装在 {{count}} 个应用，在「已安装」里查看",
       "dirTaken": "目录名已被 {{name}}（{{source}}）使用",
       "installing": "安装中",
