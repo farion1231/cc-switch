@@ -404,7 +404,7 @@
     },
     "unifyCodexHistory": {
       "title": "Birleşik Codex oturum geçmişi",
-      "message": "Etkinleştirildiğinde Codex CLI’nin devam edilebilir oturum listesinde resmî abonelik ve üçüncü taraf oturumları birlikte görünür (Codex masaüstü uygulaması yakın tarihli bir güncellemeden beri tüm oturumları gösterebilir ve bu ayardan etkilenmez). Not: Diğer arka uç encrypted_content içindeki akıl yürütme verilerinin şifresini çözemediği için eski bir oturuma farklı bir sağlayıcıyla devam etmek başarısız olabilir.\n\nMevcut resmî oturum geçmişinizi de paylaşılan listeye taşıyabilirsiniz (önce ~/.cc-switch/backups konumuna yedeklenir; bu ayarı kapatırken geri yükleyebilirsiniz).",
+      "message": "Resmi hesaplar yerleşik OpenAI kimliğini korur ve masaüstü özellikleri kullanılabilir. Yerel API oturumları yalnızca dosyada oturum açma bilgisi korunuyor ve istemci ayarları uyumluysa bu kimliği kullanır; aksi halde mevcut proxy bağlantısı korunur. Mevcut custom oturumlarının bağlantıları korunur; geçmiş dosyaları yeniden yazılmaz. Üçüncü taraf API için yerel yönlendirme kullanın; doğrudan API modu ayrı kalır. Şifreli akıl yürütme ve yerel arama uyumluluğu garanti edilmez.",
       "migrateExisting": "Ayrıca mevcut resmi oturum geçmişini taşıyın",
       "confirm": "Anladım, etkinleştir"
     },
@@ -880,7 +880,8 @@
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
-    "unifyCodexSessionHistoryDescription": "Yalnızca Codex CLI'yi etkiler: devam edilebilir oturum listesi yalnızca mevcut sağlayıcının oturumlarını gösterir. Etkinleştirildiğinde resmi abonelik, paylaşılan \"özel\" sağlayıcı kimliği altında çalışır, böylece resmi ve üçüncü taraf oturumları tek bir listede görünür. Codex masaüstü uygulaması, yeni bir güncellemeden bu yana tüm oturumları gösterebilir, dolayısıyla yalnızca masaüstü kullanıcılarının buna ihtiyacı yoktur. İsteğe bağlı olarak mevcut resmi oturumları (öncelikle yedeklenen) taşıyabilir ve kapattığınızda bunları yedeklemeden geri yükleyebilirsiniz. Not: eski bir oturumun sağlayıcılar arasında sürdürülmesi başarısız olabilir, çünkü encrypted_content mantığının şifresi yalnızca onu oluşturan arka uç tarafından çözülebilir.",
+    "unifyCodexSessionHistoryDescription": "Resmi hesaplar yerleşik OpenAI kimliğini korur ve masaüstü özellikleri kullanılabilir. Yerel API oturumları yalnızca dosyada oturum açma bilgisi korunuyor ve istemci ayarları uyumluysa bu kimliği kullanır; aksi halde mevcut proxy bağlantısı korunur. Mevcut custom oturumlarının bağlantıları korunur; geçmiş dosyaları yeniden yazılmaz. Üçüncü taraf API için yerel yönlendirme kullanın; doğrudan API modu ayrı kalır. Şifreli akıl yürütme ve yerel arama uyumluluğu garanti edilmez.",
+    "unifyCodexNativeIdentityNote": "Hesap değiştirirken geçmiş dosyalarını taşımadan mevcut bağlam korunur. Eski custom oturumları resmi bağlantı takma adını, yeni oturumlar yerleşik OpenAI kimliğini kullanır. Sağlayıcı kimliği için her geçişte yeniden başlatmak gerekmez. Düzeltmeden önce açılmış pencerelerin bir kez yeniden açılması gerekebilir.",
     "codexStackClassicSubagents": "Birleştirmedaki klasik alt ajan araçları",
     "codexStackClassicSubagentsDescription": "Ana ajan ile alt ajan farklı sağlayıcılar kullandığında açık olmalıdır; aksi halde alt ajan görevini alamaz.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml, bu ayara göre öncelikli olan [features] multi_agent_v2'yi açar, dolayısıyla hiçbir etkisi olmaz.",

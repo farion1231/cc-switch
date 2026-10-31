@@ -375,6 +375,8 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// Snapshot once per request; retries use the same identity boundary.
+    unified_codex_history: bool,
 }
 
 impl RequestForwarder {
@@ -490,6 +492,7 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            unified_codex_history: crate::settings::unify_codex_session_history(),
         }
     }
 
@@ -1475,6 +1478,22 @@ impl RequestForwarder {
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
+        if matches!(app_type, AppType::Codex)
+            && self.unified_codex_history
+            && super::providers::is_codex_responses_endpoint(endpoint)
+            && !super::providers::is_codex_official_provider(provider)
+        {
+            if let Some(body) = mapped_body.as_object_mut() {
+                body.remove("client_metadata");
+            }
+            if let Some(items) = mapped_body.get_mut("input").and_then(Value::as_array_mut) {
+                for item in items {
+                    if let Some(item) = item.as_object_mut() {
+                        item.remove("internal_chat_message_metadata_passthrough");
+                    }
+                }
+            }
+        }
         let is_copilot_codex_responses = matches!(app_type, AppType::Codex)
             && is_copilot
             && super::providers::is_codex_responses_endpoint(endpoint);
@@ -2515,7 +2534,8 @@ impl RequestForwarder {
                 &effective_endpoint,
                 codex_responses_to_anthropic,
                 codex_responses_to_chat,
-                codex_stack_request,
+                codex_stack_request
+                    || (matches!(app_type, AppType::Codex) && self.unified_codex_history),
                 codex_official_auth_passthrough,
             ) {
                 continue;
@@ -4805,6 +4825,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            unified_codex_history: false,
         }
     }
 
@@ -7161,6 +7182,46 @@ mod tests {
                 .map_err(|error| error.error)
                 .expect("forward");
             upstream.seen.lock().await.pop().expect("upstream request")
+        }
+
+        #[tokio::test]
+        async fn oauth_unified_routes_replace_credentials_and_strip_account_headers() {
+            let mut forwarder = forwarder(false);
+            forwarder.unified_codex_history = true;
+            let upstream = upstream().await;
+            let mut request = body("listed", json!([]));
+            request["client_metadata"] = json!({"mcp_attribution": "official-account"});
+            request["input"][0]["internal_chat_message_metadata_passthrough"] =
+                json!({"turn_id":"official-turn"});
+            let seen = send(
+                &forwarder,
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                request,
+            )
+            .await;
+            for name in [
+                "chatgpt-account-id",
+                "originator",
+                "session_id",
+                "x-codex-turn-state",
+                "x-oai-attestation",
+                "x-openai-fedramp",
+            ] {
+                assert!(
+                    !seen.headers.contains_key(name),
+                    "{name} reached the API upstream"
+                );
+            }
+            let auth = seen.headers.get("authorization").unwrap().to_str().unwrap();
+            assert!(auth.contains("sk-third-party"));
+            assert!(!auth.contains("chatgpt"));
+            assert!(seen.headers.contains_key("x-codex-beta-features"));
+            assert!(seen.body.get("client_metadata").is_none());
+            assert!(seen.body["input"][0]
+                .get("internal_chat_message_metadata_passthrough")
+                .is_none());
         }
 
         #[tokio::test]
