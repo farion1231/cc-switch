@@ -68,6 +68,17 @@ export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
       : typeof item?.default_reasoning_level === "string"
         ? item.default_reasoning_level
         : undefined;
+  const serviceTiers = Array.isArray(item?.serviceTiers)
+    ? item.serviceTiers
+    : Array.isArray(item?.service_tiers)
+      ? item.service_tiers
+      : undefined;
+  const defaultServiceTier =
+    typeof item?.defaultServiceTier === "string"
+      ? item.defaultServiceTier
+      : typeof item?.default_service_tier === "string"
+        ? item.default_service_tier
+        : undefined;
   return {
     model: typeof item?.model === "string" ? item.model : "",
     displayName:
@@ -93,6 +104,8 @@ export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
       ? { reasoningLevels }
       : {}),
     ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
+    ...(serviceTiers ? { serviceTiers } : {}),
+    ...(defaultServiceTier ? { defaultServiceTier } : {}),
   };
 };
 
