@@ -101,24 +101,26 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
 ///
 /// Priority:
-/// 1. Explicit `output_config.effort` — preserves the user's intent directly.
+/// 1. Explicit `thinking.type = disabled` → `none`; this takes precedence over
+///    `output_config.effort` (Workflow subagents send both fields).
+/// 2. Explicit `output_config.effort` — preserves the user's intent directly.
 ///    `low`/`medium`/`high`/`xhigh` map 1:1 (`xhigh` is what Claude Code's
 ///    `/effort xhigh` sends); `max` stays `max` for models that support a
 ///    distinct max tier, otherwise it falls back to `xhigh`. Unknown values are ignored.
-///    When thinking is off (`thinking` absent or `disabled`) the effort drops to
+///    When `thinking` is absent the effort drops to
 ///    the lowest tier: Claude Code keeps sending `effort` with thinking turned
-///    off (and Workflow subagents send `disabled` + effort), and forwarding it
+///    off, and forwarding it
 ///    verbatim would make OpenAI/xAI reason at full strength anyway. `none` /
 ///    `minimal` are not accepted by every whitelisted model, so the floor is `low`.
 ///    Models whose omitted `thinking` still means adaptive (the 5.x Claude models) are
 ///    made explicit before the transform by
 ///    [`make_default_adaptive_thinking_explicit`], since the mapped model name no
 ///    longer carries that default.
-/// 2. Fallback: `thinking.type` + `budget_tokens`:
+/// 3. Fallback: `thinking.type` + `budget_tokens`:
 ///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
 ///    - `enabled` with budget → `low` (<4 000) / `medium` (4 000–15 999) / `high` (≥16 000)
 ///    - `enabled` without budget → `high` (conservative default)
-///    - `disabled` / absent → `None`
+///    - absent → `None`
 ///
 /// The result is finally clamped to the tiers the target model accepts
 /// (see [`clamp_reasoning_effort_for_model`]).
@@ -132,7 +134,12 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
 }
 
 fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'static str> {
-    // --- Priority 1: explicit output_config.effort ---
+    // --- Priority 1: explicitly disabled thinking ---
+    if body.pointer("/thinking/type").and_then(|t| t.as_str()) == Some("disabled") {
+        return Some("none");
+    }
+
+    // --- Priority 2: explicit output_config.effort ---
     if let Some(effort) = body
         .pointer("/output_config/effort")
         .and_then(|v| v.as_str())
@@ -146,10 +153,10 @@ fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'sta
             "max" => Some("xhigh"),
             _ => None, // unknown value — do not inject
         };
-        let thinking_off = matches!(
-            body.pointer("/thinking/type").and_then(|t| t.as_str()),
-            None | Some("disabled")
-        );
+        let thinking_off = body
+            .pointer("/thinking/type")
+            .and_then(|t| t.as_str())
+            .is_none();
         return if thinking_off {
             mapped.map(|_| "low")
         } else {
@@ -157,7 +164,7 @@ fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'sta
         };
     }
 
-    // --- Priority 2: thinking.type + budget_tokens fallback ---
+    // --- Priority 3: thinking.type + budget_tokens fallback ---
     let thinking = body.get("thinking")?;
     match thinking.get("type").and_then(|t| t.as_str()) {
         Some("adaptive") => Some("xhigh"),
@@ -2175,14 +2182,14 @@ mod tests {
     }
 
     #[test]
-    fn test_output_config_with_thinking_disabled_clamps_to_low() {
+    fn test_thinking_disabled_overrides_output_config_effort() {
         // Workflow subagents send `thinking: disabled` alongside an effort.
         let body = json!({
             "model": "gpt-6-sol",
             "thinking": {"type": "disabled"},
             "output_config": {"effort": "max"}
         });
-        assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+        assert_eq!(resolve_reasoning_effort(&body), Some("none"));
     }
 
     #[test]
@@ -2337,9 +2344,9 @@ mod tests {
     }
 
     #[test]
-    fn test_thinking_disabled_no_reasoning_effort() {
+    fn test_thinking_disabled_maps_to_reasoning_effort_none() {
         let body = json!({"thinking": {"type": "disabled"}});
-        assert_eq!(resolve_reasoning_effort(&body), None);
+        assert_eq!(resolve_reasoning_effort(&body), Some("none"));
     }
 
     #[test]
