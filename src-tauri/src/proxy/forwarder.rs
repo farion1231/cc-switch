@@ -213,6 +213,53 @@ fn validate_codex_official_authorization(
     }
 }
 
+/// 官方路由请求的完整鉴权校验：先按托管绑定解析出上游 workspace 账号与 live 会话
+/// 一致性，再走 [`validate_codex_official_authorization`]。responses 转发与 `/models`
+/// 目录转发共用，保证两个入口的鉴权边界一致。
+pub(crate) async fn validate_codex_official_request(
+    app_handle: Option<&tauri::AppHandle>,
+    provider: &Provider,
+    headers: &http::HeaderMap,
+) -> Result<(), ProxyError> {
+    let (expected_chatgpt_account_id, managed_session_matches) = match provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+    {
+        Some(local_account_id) => {
+            let app_handle = app_handle.ok_or_else(|| {
+                ProxyError::AuthError("Codex OAuth 认证不可用（无 AppHandle）".to_string())
+            })?;
+            let codex_state = app_handle.state::<CodexOAuthState>();
+            let chatgpt_account_id = codex_state
+                .0
+                .chatgpt_account_id_for_account(&local_account_id)
+                .await
+                .map_err(|error| {
+                    ProxyError::AuthError(format!("Codex OAuth 账号解析失败: {error}"))
+                })?;
+            let session_matches = match codex_bearer_access_token(headers) {
+                Some(access_token) => crate::codex_config::codex_live_auth_matches_managed_request(
+                    &local_account_id,
+                    access_token,
+                )
+                .map_err(|error| {
+                    ProxyError::AuthError(format!("Codex OAuth 会话校验失败: {error}"))
+                })?,
+                None => false,
+            };
+            (Some(chatgpt_account_id), Some(session_matches))
+        }
+        None => (None, None),
+    };
+    validate_codex_official_authorization(
+        headers,
+        provider,
+        expected_chatgpt_account_id.as_deref(),
+        managed_session_matches,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexUpstreamFormat {
     NativeResponses,
@@ -1413,45 +1460,7 @@ impl RequestForwarder {
         let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
 
         if codex_official_auth_passthrough {
-            let (expected_chatgpt_account_id, managed_session_matches) = match provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
-            {
-                Some(local_account_id) => {
-                    let app_handle = self.app_handle.as_ref().ok_or_else(|| {
-                        ProxyError::AuthError("Codex OAuth 认证不可用（无 AppHandle）".to_string())
-                    })?;
-                    let codex_state = app_handle.state::<CodexOAuthState>();
-                    let chatgpt_account_id = codex_state
-                        .0
-                        .chatgpt_account_id_for_account(&local_account_id)
-                        .await
-                        .map_err(|error| {
-                            ProxyError::AuthError(format!("Codex OAuth 账号解析失败: {error}"))
-                        })?;
-                    let session_matches = match codex_bearer_access_token(headers) {
-                        Some(access_token) => {
-                            crate::codex_config::codex_live_auth_matches_managed_request(
-                                &local_account_id,
-                                access_token,
-                            )
-                            .map_err(|error| {
-                                ProxyError::AuthError(format!("Codex OAuth 会话校验失败: {error}"))
-                            })?
-                        }
-                        None => false,
-                    };
-                    (Some(chatgpt_account_id), Some(session_matches))
-                }
-                None => (None, None),
-            };
-            validate_codex_official_authorization(
-                headers,
-                provider,
-                expected_chatgpt_account_id.as_deref(),
-                managed_session_matches,
-            )?;
+            validate_codex_official_request(self.app_handle.as_ref(), provider, headers).await?;
         }
 
         // 应用模型映射（独立于格式转换）

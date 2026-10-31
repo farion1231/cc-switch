@@ -10,7 +10,7 @@
 use super::{
     content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
     error_mapper::{get_error_message, map_proxy_error_to_status},
-    forwarder::{ActiveConnectionGuard, CodexUpstreamFormat},
+    forwarder::{validate_codex_official_request, ActiveConnectionGuard, CodexUpstreamFormat},
     handler_config::{
         claude_stream_usage_event_filter, codex_stream_usage_event_filter, CLAUDE_PARSER_CONFIG,
         CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
@@ -47,6 +47,7 @@ use super::{
     ProxyError,
 };
 use crate::app_config::AppType;
+use crate::commands::CodexOAuthState;
 use crate::database::PRICING_SOURCE_REQUEST;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
@@ -54,6 +55,7 @@ use futures::StreamExt;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
+use tauri::Manager;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -89,13 +91,19 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 ///
 /// Claude Code 的模型发现（`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`）也打到这里：
 /// 按 [`is_claude_model_discovery`] 认出来，返回 Anthropic 形状的 Stack 模型列表。
+///
+/// OpenAI Official（官方 ChatGPT 路由，未开聚合）时转发到官方后端取账号目录，见
+/// [`forward_codex_official_models`]。
 pub async fn handle_models(
     State(state): State<ProxyState>,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
-) -> Result<Json<Value>, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     if is_claude_model_discovery(&uri, &headers) {
-        return Ok(Json(claude_model_discovery(&state)));
+        return Ok(Json(claude_model_discovery(&state)).into_response());
+    }
+    if let Some(catalog_response) = forward_codex_official_models(&state, &uri, &headers).await? {
+        return Ok(catalog_response);
     }
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
@@ -123,7 +131,191 @@ pub async fn handle_models(
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    Ok(Json(catalog).into_response())
+}
+
+/// 官方目录转发会话的超时上限。与 `services::codex_oauth_models` 的取数一致。
+const CODEX_OFFICIAL_MODELS_TIMEOUT_SECS: u64 = 15;
+
+/// OpenAI Official（官方 ChatGPT 路由）的 `/models` 转发（#7640）。
+///
+/// stale guard 只认 cc-switch 管理的目录文件，官方路由没选自定义目录时只能返回
+/// `{"models":[]}`（HTTP 200）——Codex 把空表当「账号没有模型」缓存，选择器里就只剩
+/// 内置列表。官方账号的目录按账号下发，只能问官方后端，所以这里把请求转发到
+/// `chatgpt.com/backend-api/codex/models`，透传原始 query（`client_version` 等），
+/// 上游响应与错误状态码都原样带回。
+///
+/// 返回 `Ok(None)` 表示官方分支不适用（不是 Codex 目录请求、聚合（Stack）开着——
+/// 聚合有自己的生成目录、当前 Codex 供应商不是官方），调用方继续走管理目录的
+/// 老逻辑。
+async fn forward_codex_official_models(
+    state: &ProxyState,
+    uri: &axum::http::Uri,
+    headers: &axum::http::HeaderMap,
+) -> Result<Option<axum::response::Response>, ProxyError> {
+    // Codex 取目录时会带 `client_version` query 或官方 CLI 的身份头（`originator` /
+    // `version`）；都没有的不当它是 Codex 目录请求（Claude 的发现已在上面分流）。
+    let query = uri.query().unwrap_or_default();
+    let has_query_param = |name: &str| {
+        query
+            .split('&')
+            .any(|pair| pair.split('=').next() == Some(name))
+    };
+    let looks_like_codex_catalog = has_query_param("client_version")
+        || headers.contains_key("originator")
+        || headers.contains_key("version");
+    if !looks_like_codex_catalog {
+        return Ok(None);
+    }
+
+    // 聚合（Stack）模式有自己的目录来源：cc-switch 生成聚合目录并写进 live 配置，
+    // stale guard 会命中；不在这里转发，保持聚合目录的既有优先级。
+    if crate::mode::stack::stack_mode_now(&AppType::Codex) {
+        return Ok(None);
+    }
+    let Some(provider) = crate::mode::current::provider_in_use(&state.db, &AppType::Codex)
+        .ok()
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    if !super::providers::is_codex_official_provider(&provider) {
+        return Ok(None);
+    }
+
+    // 鉴权：优先透传调用方（Codex CLI）的登录态——与 responses 转发同一条校验边界；
+    // 校验不过（未登录、占位 Key、托管会话与所选账号不一致）再取托管账号的 token。
+    let caller_authorized =
+        validate_codex_official_request(state.app_handle.as_ref(), &provider, headers).await;
+    let (authorization, chatgpt_account_id) = match caller_authorized {
+        Ok(()) => (
+            caller_header(headers, "authorization"),
+            caller_header(headers, "chatgpt-account-id"),
+        ),
+        Err(caller_error) => {
+            let fallback = managed_codex_official_models_auth(state, &provider).await;
+            match fallback {
+                Ok(Some(auth)) => {
+                    log::debug!(
+                        "[models] 官方目录透传鉴权未过，改用托管账号 token: {caller_error}"
+                    );
+                    (Some(auth.0), auth.1)
+                }
+                // 没有托管绑定：沿用调用方的校验错误（更贴近调用方的问题）。
+                Ok(None) => {
+                    log::debug!("[models] 官方目录转发：供应商无托管账号绑定: {caller_error}");
+                    return Err(caller_error);
+                }
+                // 有绑定但取 token 失败：返回更贴近根因的托管错误（提示重新登录）。
+                Err(fallback_error) => {
+                    log::debug!("[models] 官方目录转发托管账号 token 获取失败: {fallback_error}");
+                    return Err(fallback_error);
+                }
+            }
+        }
+    };
+
+    let mut url = crate::services::codex_oauth_models::CODEX_OAUTH_MODELS_URL.to_string();
+    if let Some(query) = uri.query().filter(|query| !query.is_empty()) {
+        url.push('?');
+        url.push_str(query);
+    }
+
+    let client = super::http_client::get();
+    let mut request = client.get(&url).timeout(std::time::Duration::from_secs(
+        CODEX_OFFICIAL_MODELS_TIMEOUT_SECS,
+    ));
+    if let Some(authorization) = authorization {
+        request = request.header(axum::http::header::AUTHORIZATION, authorization);
+    }
+    if let Some(chatgpt_account_id) = chatgpt_account_id {
+        request = request.header("chatgpt-account-id", chatgpt_account_id);
+    }
+    // 客户端身份头：优先透传调用方（真实 Codex CLI）的值，缺失时补官方 CLI 的固定值。
+    let originator = caller_header(headers, "originator")
+        .unwrap_or_else(|| super::providers::codex_oauth_auth::CODEX_OAUTH_ORIGINATOR.to_string());
+    let version = caller_header(headers, "version").unwrap_or_else(|| {
+        super::providers::codex_oauth_auth::CODEX_OAUTH_CLIENT_VERSION.to_string()
+    });
+    request = request
+        .header("originator", originator)
+        .header("version", version);
+    if let Some(user_agent) = caller_header(headers, "user-agent") {
+        request = request.header(axum::http::header::USER_AGENT, user_agent);
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| ProxyError::ForwardFailed(super::error::describe_reqwest_error(error)))?;
+    let status = response.status();
+    // 上游的 ETag 要原样带回：Codex 从响应头读 ETag 做目录缓存，并在后续 responses
+    // 响应带 X-Models-Etag 时与缓存比较，不一致才重拉全量目录。丢掉它会让 Codex
+    // 每次采样都经代理同步重拉一遍几百 KB 的官方目录（farion1231 review #8922）。
+    let etag = response.headers().get(reqwest::header::ETAG).cloned();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| ProxyError::ForwardFailed(super::error::describe_reqwest_error(error)))?;
+    if !status.is_success() {
+        // 上游错误按原状态码透传（JSON 错误体一并带回），不折成 200 空表。
+        return Err(ProxyError::UpstreamError {
+            status: status.as_u16(),
+            body: Some(body),
+        });
+    }
+    let catalog: Value = serde_json::from_str(&body)
+        .map_err(|error| ProxyError::ForwardFailed(format!("官方模型目录响应解析失败: {error}")))?;
+    let mut catalog_response = Json(catalog).into_response();
+    if let Some(etag) = etag {
+        catalog_response
+            .headers_mut()
+            .insert(axum::http::header::ETAG, etag);
+    }
+    Ok(Some(catalog_response))
+}
+
+/// 从请求头取字符串值（去空白、丢弃空值）。
+fn caller_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// 官方目录转发的托管账号鉴权回退：取该供应商绑定的 ChatGPT 账号的有效
+/// access_token 与上游 workspace id。供应商没有托管绑定时返回 `None`，调用方
+/// 沿用透传路径的校验错误。
+async fn managed_codex_official_models_auth(
+    state: &ProxyState,
+    provider: &crate::provider::Provider,
+) -> Result<Option<(String, Option<String>)>, ProxyError> {
+    let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .filter(|account_id| !account_id.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let Some(app_handle) = state.app_handle.as_ref() else {
+        return Err(ProxyError::AuthError(
+            "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
+        ));
+    };
+    let codex_state = app_handle.state::<CodexOAuthState>();
+    let codex_auth = &codex_state.0;
+    let token = codex_auth
+        .get_valid_token_for_account(&account_id)
+        .await
+        .map_err(|error| ProxyError::AuthError(format!("Codex OAuth 认证失败: {error}")))?;
+    let chatgpt_account_id = codex_auth
+        .chatgpt_account_id_for_account(&account_id)
+        .await
+        .map_err(|error| ProxyError::AuthError(format!("Codex OAuth 账号解析失败: {error}")))?;
+    Ok(Some((format!("Bearer {token}"), Some(chatgpt_account_id))))
 }
 
 // ============================================================================
@@ -4626,13 +4818,19 @@ mod stack_tests {
     async fn claude_model_discovery_lists_nothing_outside_proxy_mode() {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
-        let Json(body) = handle_models(
+        let response = handle_models(
             State(proxy_state()),
             "/v1/models?limit=1000".parse().unwrap(),
             headers,
         )
         .await
         .expect("models");
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body, json!({ "data": [], "has_more": false }));
     }
 }
