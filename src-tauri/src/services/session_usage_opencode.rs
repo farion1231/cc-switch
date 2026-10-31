@@ -111,8 +111,15 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     let cursors = crate::services::session_usage::load_sync_cursors(db)?;
     let last_modified = cursors.get(&db_path_str).map_or(0, |c| c.last_modified);
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // 存量耗时回填：旧版本入库的行 latency_ms 恒为 0，常规同步不会回填它们
+    // （会话游标已推进，且 INSERT OR IGNORE 不更新既有行）。检查标记，未完成时
+    // 即使文件未变化也要打开数据库补一轮。
+    let backfill_needed =
+        db.get_setting(LATENCY_BACKFILL_MARKER)?.as_deref() != Some(LATENCY_BACKFILL_MARKER_DONE);
+    let file_unchanged = file_modified <= last_modified;
+
+    // 文件未变化且回填已完成时跳过
+    if file_unchanged && !backfill_needed {
         return Ok(SessionSyncResult {
             imported: 0,
             skipped: 0,
@@ -128,6 +135,25 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
 
+    let schema = detect_schema(&opencode_conn)?;
+
+    if backfill_needed {
+        if let Err(e) = backfill_opencode_latency(db, &opencode_conn, schema) {
+            log::warn!("[OPENCODE-SYNC] 历史耗时回填失败: {e}");
+        }
+    }
+
+    if file_unchanged {
+        return Ok(SessionSyncResult {
+            imported: 0,
+            skipped: 0,
+            files_scanned: 1,
+            suspected_duplicates: 0,
+            deferred_files: 0,
+            errors: vec![],
+        });
+    }
+
     let mut result = SessionSyncResult {
         imported: 0,
         skipped: 0,
@@ -137,8 +163,6 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         errors: vec![],
     };
     let mut has_sync_errors = false;
-
-    let schema = detect_schema(&opencode_conn)?;
 
     // 查询所有会话
     let sessions = query_sessions(&opencode_conn, schema)?;
@@ -552,6 +576,109 @@ fn insert_opencode_message(
     Ok(inserted_rows > 0)
 }
 
+/// 存量耗时回填的完成标记（一次性）。旧版本入库的行 latency_ms 恒为 0。
+const LATENCY_BACKFILL_MARKER: &str = "opencode_latency_backfill";
+const LATENCY_BACKFILL_MARKER_DONE: &str = "1";
+
+/// 一次性把存量行的耗时补上：扫描全部已完成消息，只更新仍为 0/缺失的行。
+/// 任一扫描或写入失败时不落标记，下轮同步重试；重复执行幂等。
+fn backfill_opencode_latency(
+    db: &Database,
+    opencode_conn: &rusqlite::Connection,
+    schema: OpenCodeSchema,
+) -> Result<u32, AppError> {
+    if db.get_setting(LATENCY_BACKFILL_MARKER)?.as_deref() == Some(LATENCY_BACKFILL_MARKER_DONE) {
+        return Ok(0);
+    }
+
+    let (updates, complete) = collect_latency_backfill(opencode_conn, schema);
+
+    let mut updated = 0u32;
+    let mut had_error = false;
+    for (request_id, latency_ms) in updates {
+        match update_latency_if_zero(db, &request_id, latency_ms) {
+            Ok(true) => updated += 1,
+            Ok(false) => {}
+            Err(e) => {
+                log::warn!("[OPENCODE-SYNC] 回填耗时失败 {request_id}: {e}");
+                had_error = true;
+            }
+        }
+    }
+
+    if complete && !had_error {
+        db.set_setting(LATENCY_BACKFILL_MARKER, LATENCY_BACKFILL_MARKER_DONE)?;
+        if updated > 0 {
+            log::info!("[OPENCODE-SYNC] 存量耗时回填完成: 更新 {updated} 条");
+        }
+    }
+
+    Ok(updated)
+}
+
+/// 扫描全部会话的已完成消息，返回待回填的 (request_id, latency_ms)。
+/// 第二个返回值表示扫描是否完整；不完整时不落回填标记，下轮重试。
+fn collect_latency_backfill(
+    conn: &rusqlite::Connection,
+    schema: OpenCodeSchema,
+) -> (Vec<(String, i64)>, bool) {
+    let sessions = match query_sessions(conn, schema) {
+        Ok(sessions) => sessions,
+        Err(e) => {
+            log::warn!("[OPENCODE-SYNC] 回填扫描会话失败: {e}");
+            return (Vec::new(), false);
+        }
+    };
+
+    let mut updates = Vec::new();
+    let mut complete = true;
+    for (session_id, _) in &sessions {
+        let query_result = match query_assistant_messages(conn, schema, session_id) {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!("[OPENCODE-SYNC] 回填扫描消息失败 {session_id}: {e}");
+                complete = false;
+                continue;
+            }
+        };
+        for (message_id, msg_data) in &query_result.messages {
+            if msg_data.latency_ms > 0 {
+                updates.push((
+                    format!("opencode_session:{session_id}:{message_id}"),
+                    msg_data.latency_ms,
+                ));
+            }
+        }
+    }
+    (updates, complete)
+}
+
+/// 仅当既有行的 latency_ms 仍为 0/缺失时写入耗时，已有值不动。
+fn update_latency_if_zero(
+    db: &Database,
+    request_id: &str,
+    latency_ms: i64,
+) -> Result<bool, AppError> {
+    let conn = lock_conn!(db.conn);
+    update_latency_if_zero_conn(&conn, request_id, latency_ms)
+}
+
+fn update_latency_if_zero_conn(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    latency_ms: i64,
+) -> Result<bool, AppError> {
+    let changed = conn
+        .execute(
+            "UPDATE proxy_request_logs SET latency_ms = ?1
+             WHERE request_id = ?2 AND data_source = 'opencode_session'
+               AND (latency_ms IS NULL OR latency_ms = 0)",
+            rusqlite::params![latency_ms, request_id],
+        )
+        .map_err(|e| AppError::Database(format!("回填 OpenCode 会话耗时失败: {e}")))?;
+    Ok(changed > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -948,5 +1075,94 @@ mod tests {
         assert_eq!(result.messages[0].1.model_id, "deepseek-v4.1-flash");
         assert_eq!(result.messages[1].1.input_tokens, 300);
         assert!(result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_update_latency_if_zero_conn() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE proxy_request_logs (
+                 request_id TEXT PRIMARY KEY,
+                 data_source TEXT,
+                 latency_ms INTEGER
+             );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO proxy_request_logs VALUES ('zero', 'opencode_session', 0),
+                                                     ('null', 'opencode_session', NULL),
+                                                     ('filled', 'opencode_session', 1234),
+                                                     ('other', 'codex_session', 0)",
+            [],
+        )
+        .unwrap();
+
+        // 0 和 NULL 都能补，已有值和其他来源的行不动
+        assert!(update_latency_if_zero_conn(&conn, "zero", 5000).unwrap());
+        assert!(update_latency_if_zero_conn(&conn, "null", 6000).unwrap());
+        assert!(!update_latency_if_zero_conn(&conn, "filled", 7000).unwrap());
+        assert!(!update_latency_if_zero_conn(&conn, "other", 8000).unwrap());
+        assert!(!update_latency_if_zero_conn(&conn, "missing", 9000).unwrap());
+
+        let zero: i64 = conn
+            .query_row(
+                "SELECT latency_ms FROM proxy_request_logs WHERE request_id = 'zero'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let filled: i64 = conn
+            .query_row(
+                "SELECT latency_ms FROM proxy_request_logs WHERE request_id = 'filled'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(zero, 5000);
+        assert_eq!(filled, 1234);
+    }
+
+    #[test]
+    fn test_collect_latency_backfill_scans_all_sessions() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_v2 (id TEXT, time_updated INTEGER);
+             CREATE TABLE session_message (
+                 id TEXT,
+                 session_id TEXT,
+                 type TEXT,
+                 time_created INTEGER,
+                 time_updated INTEGER,
+                 data TEXT
+             );
+             INSERT INTO session_v2 VALUES ('s1', 10);
+             INSERT INTO session_v2 VALUES ('s2', 20);",
+        )
+        .unwrap();
+
+        let done = serde_json::json!({
+            "tokens": { "input": 1000, "output": 200 },
+            "model": { "id": "m" },
+            "time": { "created": 1000, "completed": 4000 }
+        })
+        .to_string();
+        let pending = serde_json::json!({
+            "tokens": { "input": 500, "output": 0 },
+            "model": { "id": "m" },
+            "time": { "created": 2000 }
+        })
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO session_message VALUES ('m1', 's1', 'assistant', 1, 1, ?1),
+                                                  ('m2', 's1', 'assistant', 2, 2, ?2)",
+            rusqlite::params![done, pending],
+        )
+        .unwrap();
+
+        let (updates, complete) = collect_latency_backfill(&conn, OpenCodeSchema::V2);
+        // 扫描完整；只收集已完成消息的耗时（未完成的没有 completed，跳过）
+        assert!(complete);
+        assert_eq!(updates, vec![("opencode_session:s1:m1".to_string(), 3000)]);
     }
 }
