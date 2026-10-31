@@ -1987,6 +1987,30 @@ impl RequestForwarder {
             }
         }
 
+        // DeepSeek's native Responses endpoint pairs tool calls with outputs
+        // positionally. Codex may replay hook/developer or reasoning items
+        // between the call and its matching output, which otherwise makes the
+        // whole thread fail with `No tool output found for tool call ...`.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && !codex_official_auth_passthrough
+            && super::providers::codex_provider_needs_native_responses_tool_pairing_repair(provider)
+        {
+            let moved = super::providers::transform_codex_responses_tool_history::repair_interleaved_tool_turns(
+                &mut request_body,
+            );
+            let synthesized = super::providers::transform_codex_responses_tool_history::synthesize_missing_tool_outputs(
+                &mut request_body,
+            );
+            if moved > 0 || synthesized > 0 {
+                log::debug!(
+                    "[Codex] Repaired DeepSeek tool history: moved={moved}, synthesized={synthesized} (provider={})",
+                    provider.id
+                );
+            }
+        }
+
         // Native Responses passthrough to a strict third-party gateway (xAI).
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
