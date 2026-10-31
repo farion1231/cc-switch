@@ -1273,6 +1273,20 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    // 同 Claude Code 预设：OpenAI 平台 API Key，经路由转 Responses
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    category: "cn_official",
+    baseUrl: "https://api.openai.com",
+    mode: "proxy",
+    apiFormat: "openai_responses",
+    modelRoutes: brandedRoutes("gpt-6.1-sol", "gpt-6.1-sol", "gpt-6-luna"),
+    endpointCandidates: ["https://api.openai.com"],
+    icon: "openai",
+    iconColor: "#00A67E",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     category: "cn_official",

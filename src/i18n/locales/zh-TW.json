@@ -1612,6 +1612,13 @@
     "openReleaseNotesFailed": "開啟更新日誌失敗："
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "設定檔 {{path}}（只顯示這一家）",
+      "hint": "按應用自己的格式顯示這一家在檔案裡的部分，儲存後寫進這個檔案；預設模型等全域設定不在這裡。在這裡寫的註解不會儲存。",
+      "invalid": "{{format}} 格式錯誤：{{error}}",
+      "scope": "這裡只能寫 {{section}} 這一個節點；供應商標識請在上方修改。",
+      "schema": "有欄位的類型不對，請對照上方表單檢查。"
+    },
     "supplierName": "供應商名稱",
     "supplierNameRequired": "供應商名稱 *",
     "supplierNamePlaceholder": "例如：Anthropic 官方",
@@ -1830,6 +1837,11 @@
     "customUserAgentHelp": "替換轉發到供應商的請求裡的 User-Agent。",
     "localProxyRequestOverridesHelp": "作用於格式轉換後發給上游的請求。",
     "apiFormatHelp": "看供應商原生支援哪種協定：Anthropic Messages 原樣轉發、不轉換格式；其餘三種由路由轉成 Anthropic Messages。",
+    "reasoningEffort": "思考檔位",
+    "reasoningEffortHelp": "經路由轉成 OpenAI 格式時，用戶端選的思考檔位怎麼送給上游。自動：按上游支援的檔位送出，認不出的上游最多送 high，關掉思考時不送。原樣送出：用戶端選哪檔送哪檔，上游不支援 xhigh 或 max 時會報錯。不送出：上游因這個參數報錯時使用。",
+    "reasoningEffortAuto": "自動（建議）",
+    "reasoningEffortOff": "不送出",
+    "reasoningEffortPassthrough": "原樣送出",
     "directModeFormatInUse": "這張卡正在直連使用：改成這種格式後儲存，請求會失敗。請先切到路由或聚合。",
     "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。"
   },
@@ -4839,7 +4851,7 @@
       "sourceRepos": "倉庫 · {{count}}",
       "reload": "重新讀取倉庫",
       "listLabel": "可安裝的 Skill",
-      "installed": "已安裝 · {{count}} 個應用",
+      "installed": "已安裝",
       "installedAria": "{{name}} 已安裝在 {{count}} 個應用，在「已安裝」裡查看",
       "dirTaken": "目錄名稱已被 {{name}}（{{source}}）使用",
       "installing": "安裝中",
@@ -5030,6 +5042,8 @@
     },
     "modelSelectionHint": "點擊供應商卡片的切換按鈕選擇預設供應商；若要指定其他模型，請在 Kimi Code 中使用 /model。",
     "contextSize": "上下文長度",
+    "configTomlScope": "這裡只能寫 [providers.{{key}}] 和屬於它的 [models.*] 表；供應商標識請在上方修改。",
+    "configTomlSchema": "設定不完整：請檢查供應商的 type，以及每個模型的 model 和 max_context_size（正整數）。",
     "deleteSessionHint": "請在 Kimi Code 中刪除，以同時更新工作階段索引和歷史紀錄。",
     "empty": {
       "title": "新增 Kimi Code 供應商",

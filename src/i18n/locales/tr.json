@@ -4822,7 +4822,7 @@
       "sourceRepos": "Depolar · {{count}}",
       "reload": "Kod depolarını yeniden yükle",
       "listLabel": "Yükleyebileceğiniz beceriler",
-      "installed": "Yüklendi · {{count}} uygulamalar",
+      "installed": "Yüklendi",
       "installedAria": "{{name}}, {{count}} uygulamalarına yüklenir; Yüklendi altında görüntüleyin",
       "dirTaken": "Klasör adı {{name}} ({{source}}) tarafından kullanılıyor",
       "installing": "Kurulum",

@@ -1611,6 +1611,13 @@
     "openReleaseNotesFailed": "Failed to open release notes:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "Config file {{path}} (this provider only)",
+      "hint": "Shows this provider's part of the file in the app's own format and writes it there on save. Global settings such as the default model are not here. Comments typed here are not saved.",
+      "invalid": "Invalid {{format}}: {{error}}",
+      "scope": "Only the {{section}} node belongs here. Change the Provider Key in the field above.",
+      "schema": "Some fields have the wrong type. Check them against the form above."
+    },
     "supplierName": "Provider Name",
     "supplierNameRequired": "Provider Name *",
     "supplierNamePlaceholder": "e.g., Anthropic Official",
@@ -1829,6 +1836,11 @@
     "customUserAgentHelp": "Replaces the User-Agent of requests forwarded to the provider.",
     "localProxyRequestOverridesHelp": "Applies to the upstream request after format conversion.",
     "apiFormatHelp": "Pick the protocol the provider supports natively: Anthropic Messages is forwarded as is without conversion; routing converts the other three to Anthropic Messages.",
+    "reasoningEffort": "Reasoning effort",
+    "reasoningEffortHelp": "How the thinking level chosen in the client is sent upstream when routing converts requests to OpenAI format. Auto: sent at a level the upstream supports; unrecognized upstreams get at most high, and nothing is sent when thinking is off. Send as is: whatever level the client picks is sent, so upstreams that don't support xhigh or max will return an error. Don't send: use this if the upstream rejects the parameter.",
+    "reasoningEffortAuto": "Auto (recommended)",
+    "reasoningEffortOff": "Don't send",
+    "reasoningEffortPassthrough": "Send as is",
     "directModeFormatInUse": "This card is in use in direct mode: saving it with this format makes requests fail. Switch to routing or Aggregation first.",
     "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card."
   },
@@ -4838,7 +4850,7 @@
       "sourceRepos": "Repos · {{count}}",
       "reload": "Reload repositories",
       "listLabel": "Skills you can install",
-      "installed": "Installed · {{count}} apps",
+      "installed": "Installed",
       "installedAria": "{{name}} is installed in {{count}} apps; view it under Installed",
       "dirTaken": "Folder name is used by {{name}} ({{source}})",
       "installing": "Installing",
@@ -5029,6 +5041,8 @@
     },
     "modelSelectionHint": "Use the switch button on a provider card to select it. To choose another model, use /model in Kimi Code.",
     "contextSize": "Context size",
+    "configTomlScope": "Only [providers.{{key}}] and its own [models.*] tables belong here. Change the Provider Key in the field above.",
+    "configTomlSchema": "Incomplete config: check the provider's type, and each model's model and max_context_size (a positive integer).",
     "capabilities": {
       "image_in": "Image input",
       "thinking": "Thinking",
