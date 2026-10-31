@@ -450,6 +450,8 @@
       "trayStylePanel": "Panel",
       "trayStyleMenu": "Menu",
       "trayStyleHelp": "What opens when you click the tray icon (on Windows, left-click always opens the main window and right-click opens the selected style). Panel: each app's in-use provider, quota and usage, with search and switching. Menu: the system's native menu. Takes effect right away.",
+      "macosWidget": "Desktop widget",
+      "macosWidgetHelp": "Feeds the macOS desktop widgets: each app's in-use provider and quota, quota for every Auth Center account, and usage stats. When on, quota is checked in the background even with the main window closed: in-use accounts every 10 minutes, the rest every 30 minutes. Requires macOS 14 or later; right-click the desktop, choose Edit Widgets, and search for CC Switch.",
       "minimizeToTrayHelp": "When on, the close button only hides the window and CC Switch keeps running in the system tray (lightweight mode is in the tray menu). When off, the close button quits.",
       "terminalHelp": "The terminal used by “Open terminal” on provider cards. If it isn't available, the system default terminal is used."
     },

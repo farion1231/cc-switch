@@ -43,6 +43,7 @@ pub mod usage_stats;
 pub mod webdav;
 pub mod webdav_auto_sync;
 pub mod webdav_sync;
+pub mod widget_snapshot;
 
 pub use config::ConfigService;
 pub use mcp::McpService;

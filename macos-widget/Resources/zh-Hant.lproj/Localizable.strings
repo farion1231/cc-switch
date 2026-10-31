@@ -1,0 +1,15 @@
+/* 「用量」小组件的配置项和范围名（UsageIntent.swift）。时间范围和 CC Switch 用量页同名。 */
+"usage.range" = "時間範圍";
+"usage.range.today" = "當天";
+"usage.range.1d" = "近 24 小時";
+"usage.range.7d" = "近 7 天";
+"usage.range.14d" = "近 14 天";
+"usage.range.30d" = "近 30 天";
+"usage.range.all" = "全部";
+"usage.style" = "樣式";
+"usage.style.overview" = "概覽";
+"usage.style.trend" = "趨勢";
+"usage.style.apps" = "按應用";
+"usage.style.metrics" = "指標";
+"usage.intent.title" = "用量";
+"usage.intent.description" = "選擇時間範圍與樣式。";

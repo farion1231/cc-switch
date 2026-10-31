@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isMac } from "@/lib/platform";
 import { TerminalSelect } from "@/components/settings/TerminalSettings";
 import {
   SettingsBlock,
@@ -243,6 +243,19 @@ export function GeneralSection({
                     },
                   ]}
                 />
+              }
+            />
+          )}
+          {isMac() && (
+            <SettingsSwitchRow
+              label={t("settings.general.macosWidget")}
+              help={{
+                title: t("settings.general.macosWidget"),
+                body: t("settings.general.macosWidgetHelp"),
+              }}
+              checked={!!settings.macosWidgetEnabled}
+              onCheckedChange={(value) =>
+                void onAutoSave({ macosWidgetEnabled: value })
               }
             />
           )}
