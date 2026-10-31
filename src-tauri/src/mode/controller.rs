@@ -1016,6 +1016,11 @@ pub async fn detach_all(state: &AppState) {
         if let Err(error) = result {
             log::error!("退出时把 {} 指回直连失败: {error}", app.as_str());
         }
+        if app == AppType::Codex {
+            // 收尾兜底：auth.json 还停在接管期的纯 key 占位上时提醒（#8390）。
+            let direct = direct_provider(state, &app).ok().flatten();
+            codex_direct::warn_if_auth_left_as_key_placeholder(direct.as_ref());
+        }
     }
     if state.proxy_service.is_running().await {
         if let Err(error) = state.proxy_service.stop().await {
