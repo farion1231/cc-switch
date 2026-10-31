@@ -60,6 +60,7 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   // Antigravity：Gemini 一组、Claude 和 GPT 一组，各有 5 小时和每周两档
   agy_gemini_five_hour: "subscription.agyGeminiFiveHour",
   agy_gemini_weekly: "subscription.agyGeminiWeekly",
+  agy_gemini_argon_weekly: "subscription.agyGeminiArgonWeekly",
   agy_third_party_five_hour: "subscription.agyThirdPartyFiveHour",
   agy_third_party_weekly: "subscription.agyThirdPartyWeekly",
   // Token Plan（five_hour 已在上方官方映射中）

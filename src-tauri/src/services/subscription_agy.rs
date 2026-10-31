@@ -16,6 +16,7 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 pub const TIER_AGY_GEMINI_FIVE_HOUR: &str = "agy_gemini_five_hour";
 pub const TIER_AGY_GEMINI_WEEKLY: &str = "agy_gemini_weekly";
+pub const TIER_AGY_GEMINI_ARGON_WEEKLY: &str = "agy_gemini_argon_weekly";
 pub const TIER_AGY_THIRD_PARTY_FIVE_HOUR: &str = "agy_third_party_five_hour";
 pub const TIER_AGY_THIRD_PARTY_WEEKLY: &str = "agy_third_party_weekly";
 
@@ -55,6 +56,7 @@ fn tier_name(bucket_id: &str) -> Option<&'static str> {
     match bucket_id {
         "gemini-5h" => Some(TIER_AGY_GEMINI_FIVE_HOUR),
         "gemini-weekly" => Some(TIER_AGY_GEMINI_WEEKLY),
+        "gemini-argon-wtu-weekly" => Some(TIER_AGY_GEMINI_ARGON_WEEKLY),
         "3p-5h" => Some(TIER_AGY_THIRD_PARTY_FIVE_HOUR),
         "3p-weekly" => Some(TIER_AGY_THIRD_PARTY_WEEKLY),
         _ => None,
@@ -65,8 +67,9 @@ fn sort_order(name: &str) -> usize {
     match name {
         TIER_AGY_GEMINI_FIVE_HOUR => 0,
         TIER_AGY_GEMINI_WEEKLY => 1,
-        TIER_AGY_THIRD_PARTY_FIVE_HOUR => 2,
-        _ => 3,
+        TIER_AGY_GEMINI_ARGON_WEEKLY => 2,
+        TIER_AGY_THIRD_PARTY_FIVE_HOUR => 3,
+        _ => 4,
     }
 }
 
@@ -176,7 +179,8 @@ mod tests {
       "command": {"name": "usage", "data": {"description": "...", "groups": [
         {"name": "Gemini Models", "buckets": [
           {"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.75, "reset_time": "2026-10-27T15:13:36Z"},
-          {"id": "gemini-5h", "window": "5h", "remaining_fraction": 1, "reset_time": "2026-10-21T04:16:37Z"}
+          {"id": "gemini-5h", "window": "5h", "remaining_fraction": 1, "reset_time": "2026-10-21T04:16:37Z"},
+          {"id": "gemini-argon-wtu-weekly", "window": "weekly", "remaining_fraction": 0.8, "reset_time": "2026-10-27T18:00:00Z"}
         ]},
         {"name": "Claude and GPT models", "buckets": [
           {"id": "3p-weekly", "window": "weekly", "remaining_fraction": 0.1, "reset_time": "2026-10-27T23:16:37Z"},
@@ -195,13 +199,15 @@ mod tests {
             [
                 TIER_AGY_GEMINI_FIVE_HOUR,
                 TIER_AGY_GEMINI_WEEKLY,
+                TIER_AGY_GEMINI_ARGON_WEEKLY,
                 TIER_AGY_THIRD_PARTY_FIVE_HOUR,
                 TIER_AGY_THIRD_PARTY_WEEKLY,
             ]
         );
         let used: Vec<_> = tiers.iter().map(|t| t.utilization.round()).collect();
-        assert_eq!(used, [0.0, 25.0, 100.0, 90.0]);
+        assert_eq!(used, [0.0, 25.0, 20.0, 100.0, 90.0]);
         assert_eq!(tiers[1].resets_at.as_deref(), Some("2026-10-27T15:13:36Z"));
+        assert_eq!(tiers[2].resets_at.as_deref(), Some("2026-10-27T18:00:00Z"));
     }
 
     #[test]
