@@ -2812,6 +2812,19 @@ impl Database {
             // costUsdTicks（1 tick = 1e-10 USD）双轮实测反推：input/output 与
             // grok-4.5 同为 2/6，cache read 同为 0.30
             ("grok-4.5-build", "Grok 4.5 Build", "2", "6", "0.30", "0"),
+            // grok-4.6-build 同理：查价层不剥 -build，且 grok- 不走前缀匹配，
+            // 必须单独 seed，否则会话导入只能用 CLI 自报 total、分项成本为 0
+            ("grok-4.6-build", "Grok 4.6 Build", "2", "6", "0.50", "0"),
+            ("grok-4.7-build", "Grok 4.7 Build", "2", "6", "0.50", "0"),
+            // docs.x.ai：Grok 4.7 Fast（仅 Cursor / Grok Build）<200k 档 $4 / $12，cached $1
+            (
+                "grok-4.7-build-fast",
+                "Grok 4.7 Build Fast",
+                "4",
+                "12",
+                "1",
+                "0",
+            ),
             ("grok-4.3", "Grok 4.3", "1.25", "2.50", "0.20", "0"),
             (
                 "grok-4.20-0309-reasoning",
