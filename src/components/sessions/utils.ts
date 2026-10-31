@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { createElement } from "react";
 import type { AppId } from "@/lib/api";
-import type { SessionMeta } from "@/types";
+import type { SessionMessage, SessionMeta } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
 
@@ -12,6 +12,7 @@ export const SESSION_APP_IDS = [
   "opencode",
   "hermes",
   "gemini",
+  "cursor",
   "pi",
   "omp",
   "grokbuild",
@@ -36,6 +37,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   opencode: ["~/.local/share/opencode"],
   openclaw: ["~/.openclaw/agents/<agent>/sessions"],
   hermes: ["~/.hermes/state.db", "~/.hermes/sessions"],
+  cursor: ["~/Library/Application Support/Cursor/User/globalStorage"],
   pi: ["~/.pi/agent/sessions"],
   omp: ["~/.omp/agent/sessions"],
   mcode: ["~/.minimax"],
@@ -149,6 +151,38 @@ export const formatRelativeTime = (
     month: "short",
     day: "numeric",
   });
+};
+
+const ROLE_HEADINGS: Record<string, string> = {
+  user: "User",
+  assistant: "Assistant",
+  system: "System",
+  tool: "Tool",
+};
+
+/**
+ * 将会话导出为 Markdown（标题 + 角色分区），可直接粘贴给其他 AI 工具。
+ * Cursor 无按会话 ID 恢复的接口，导出是回顾对话的主要方式。
+ */
+export const buildSessionMarkdown = (
+  session: SessionMeta,
+  messages: SessionMessage[],
+): string => {
+  const lines: string[] = [
+    `# ${session.title?.trim() || session.providerId}`,
+    "",
+  ];
+  for (const message of messages) {
+    const content = (message.content ?? "").trim();
+    if (!content) continue;
+    lines.push(
+      `## ${ROLE_HEADINGS[message.role] ?? message.role}`,
+      "",
+      content,
+      "",
+    );
+  }
+  return lines.join("\n").trimEnd() + "\n";
 };
 
 export const formatSessionTitle = (session: SessionMeta) => {

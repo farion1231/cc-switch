@@ -50,7 +50,8 @@
     "collapse": "Collapse",
     "more": "More",
     "retry": "Retry",
-    "required": "required"
+    "required": "required",
+    "copyFailed": "Copy failed. Please copy manually."
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
@@ -552,6 +553,13 @@
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
         }
+      },
+      "publicRoute": {
+        "title": "Public Routing",
+        "description": "Expose local routing via a public tunnel to apps that support custom Base URLs (e.g. Cursor)",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "proxyRequired": "Start local routing first to configure public routing"
       }
     },
     "language": "Language",
@@ -1112,6 +1120,7 @@
       "general": "General",
       "appConfig": "App config",
       "routing": "Local routing",
+      "publicRoute": "Public Routing",
       "network": "Network",
       "data": "Data",
       "about": "About"
@@ -1137,6 +1146,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
@@ -1343,6 +1353,11 @@
     "roleSystem": "System",
     "roleTool": "Tool",
     "noResumeCommand": "This session cannot be resumed",
+    "exportMarkdown": "Export Markdown",
+    "exportMarkdownCopied": "Markdown copied",
+    "exportMarkdownTooltip": "Export this session as Markdown to the clipboard",
+    "copyCommand": "Copy Command",
+    "copyMessage": "Copy Message",
     "messageCopied": "Message copied",
     "expandContent": "Expand full content",
     "collapseContent": "Collapse",
@@ -2760,7 +2775,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -3261,6 +3277,78 @@
       "overLimitBy": "{{over}} characters over the limit — Hermes will truncate on next load",
       "toggledOn": "{{name}} enabled. Takes effect when Hermes restarts or starts a new session.",
       "toggledOff": "{{name}} disabled. Takes effect when Hermes restarts or starts a new session."
+    }
+  },
+  "cursor": {
+    "needsRouting": "Needs Routing",
+    "form": {
+      "baseUrl": "API Endpoint",
+      "baseUrlHint": "The API endpoint URL for this provider.",
+      "model": "Model (optional)",
+      "modelPlaceholder": "gpt-4o, claude-sonnet-4-20250514, ...",
+      "modelHint": "Optional. Leave empty to use the provider's default model."
+    },
+    "needsPublicRoute": "Needs Public Routing",
+    "needsPublicRouteHint": "Open Public Routing in Settings",
+    "restore": {
+      "title": "Restore Cursor settings?",
+      "message": "You've left routing takeover, but Cursor still points at the public URL, which is now dead. Restore the settings captured before the write? (Snapshot: {{when}})",
+      "confirm": "Restore",
+      "cancel": "Not now",
+      "done": "Cursor settings restored"
+    }
+  },
+  "cursorSetup": {
+    "title": "Set up Cursor ({{provider}})",
+    "lead": "Cursor's cloud can't reach your machine's address, so a third-party provider needs local routing plus a public tunnel, then Cursor must be pointed at it.",
+    "steps": {
+      "localRoute": "Local routing",
+      "publicRoute": "Public routing",
+      "exitCursor": "Quit Cursor",
+      "pasteKey": "Paste the key"
+    },
+    "checking": "Checking setup requirements…",
+    "switching": "Switching to this provider…",
+    "writing": "Writing Cursor settings…",
+    "cardA": {
+      "title": "Turn on local routing first",
+      "body": "Requests to a third-party provider go through CC Switch's local proxy; with local routing off, they never get here.",
+      "action": "Open routing"
+    },
+    "cardB": {
+      "title": "Then turn on public routing",
+      "body": "Cursor's cloud can't reach your local address (it is rejected as private), so the local proxy must be exposed through a public tunnel.",
+      "action": "Open Public Routing settings"
+    },
+    "cardC": {
+      "title": "Quit Cursor completely first",
+      "body": "While Cursor is running it writes its settings back and overwrites ours, so the automatic write would be lost. This dialog continues by itself once Cursor is quit.",
+      "waiting": "Waiting for Cursor to quit…",
+      "action": "Do it later"
+    },
+    "cardD": {
+      "title": "Only the API key is left",
+      "body": "The Base URL and \"use a custom API key\" have been written automatically. Cursor stores the key encrypted, so it can neither be read nor written for you — paste it once by hand.",
+      "pathLabel": "Paste it here:",
+      "copy": "Copy key",
+      "copied": "Key copied",
+      "copyFailed": "Copy failed, please copy it manually",
+      "done": "I have pasted it"
+    },
+    "writeFailed": {
+      "title": "Could not write Cursor settings",
+      "body": "The Base URL and the available model list were not written. Make sure Cursor is completely quit, then retry.",
+      "retry": "Retry"
+    },
+    "connectivity": {
+      "label": "Connectivity check",
+      "testing": "Testing local routing, then the public tunnel…",
+      "localFailed": "Local routing is unreachable: the request never reached CC Switch's local proxy.",
+      "publicFailed": "Local routing works, but the public tunnel is unreachable: Cloudflare's edge could not deliver the request back into the tunnel.",
+      "ok": "Local routing and the public tunnel are both reachable, so Cursor can be used.",
+      "keyReminder": "One requirement remains: the API key still has to be pasted into Cursor once (see above).",
+      "detailLabel": "Details:",
+      "retest": "Test again"
     }
   },
   "env": {
@@ -3882,7 +3970,45 @@
       "stopFailed": "Failed to stop routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped; all apps are back on direct connections",
-    "stopWithRestoreFailed": "Stop failed: {{detail}}"
+    "stopWithRestoreFailed": "Stop failed: {{detail}}",
+    "publicRoute": {
+      "title": "Public Routing",
+      "statusOff": "Expose local routing to external apps via a public tunnel",
+      "statusStarting": "Establishing tunnel…",
+      "statusRunning": "Tunnel established",
+      "enabled": "Public routing enabled, establishing tunnel…",
+      "disabled": "Public routing disabled",
+      "toggleFailed": "Failed to toggle public routing",
+      "waitingTunnel": "Establishing public tunnel (cloudflared), usually takes a few seconds…",
+      "publicUrl": "Public URL",
+      "setupTitle": "Example: finish the setup in Cursor",
+      "stepBaseUrl": "Settings → Models → Override OpenAI Base URL:",
+      "stepApiKey": "OpenAI API Key: paste the tunnel key auto-generated by CC Switch (required — the public tunnel enforces auth):",
+      "stepModel": "Add a model and select it: use the client name from the provider's modelCatalog (Cursor Model Name); the proxy maps it to the upstream model automatically",
+      "ephemeralHint": "Quick tunnel URLs change on every rebuild; the new URL has been copied — paste it again in Cursor. For a stable address, switch to Fixed Domain mode while disabled.",
+      "keyCopied": "Key copied",
+      "takeoverHint": "Cursor routed through the local proxy requires Public Routing (tunnel). See Settings → Routing → Public Routing for setup",
+      "switching": "Switching…",
+      "tunnelMode": "Tunnel Mode",
+      "modeQuick": "Quick Tunnel",
+      "modeQuickHint": "No account needed; URL changes on every rebuild",
+      "modeNamed": "Fixed Domain",
+      "modeNamedHint": "Requires a Cloudflare account; URL stays stable",
+      "namedTunnelName": "Tunnel Name",
+      "namedHostname": "Public Hostname",
+      "namedSetupTitle": "One-time setup (run in terminal)",
+      "saveTunnelConfig": "Save Tunnel Config",
+      "configSaved": "Tunnel config saved",
+      "configSaveFailed": "Failed to save tunnel config",
+      "baseUrlCopied": "Base URL copied. Paste it into Cursor → Settings → Models → Override OpenAI Base URL",
+      "routePathsTitle": "Route paths per app (copy as needed)",
+      "namedStableHint": "Fixed domain never changes — paste once in Cursor and you're done.",
+      "regenerateKey": "Regenerate",
+      "keyRegenerated": "New key generated and copied. Paste it into Cursor → Settings → Models → OpenAI API Key",
+      "keyRegenerateFailed": "Failed to regenerate key",
+      "keyRegeneratedNoCopy": "New key generated. Click the copy button above to copy it into Cursor manually.",
+      "routePathsGateHint": "Only apps with Local Routing enabled can be reached via Public Routing; requests to disabled apps are rejected"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} is reachable ({{responseTimeMs}}ms)",
@@ -4237,6 +4363,7 @@
     "columnVisible": "Show",
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
     "desktopHelp": "Claude Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
+    "cursorHelp": "Cursor is a desktop app and can't be installed or upgraded here; CC Switch connects to it through routing takeover.",
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",

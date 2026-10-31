@@ -50,7 +50,8 @@
     "collapse": "收起",
     "more": "更多",
     "retry": "重试",
-    "required": "必填"
+    "required": "必填",
+    "copyFailed": "复制失败，请手动复制"
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
@@ -552,6 +553,13 @@
           "debug": "详细信息，包含 SSE 流和请求/响应详情",
           "trace": "全部日志，最详细"
         }
+      },
+      "publicRoute": {
+        "title": "公网路由",
+        "description": "经公网隧道把本地路由暴露给支持自定义 Base URL 的应用（如 Cursor）",
+        "enabled": "已启用",
+        "disabled": "未启用",
+        "proxyRequired": "需要先启动本地路由，才能配置公网路由"
       }
     },
     "language": "界面语言",
@@ -1112,6 +1120,7 @@
       "general": "通用",
       "appConfig": "应用配置",
       "routing": "本地路由",
+      "publicRoute": "公网路由",
       "network": "网络",
       "data": "数据",
       "about": "关于"
@@ -1137,6 +1146,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
@@ -1344,6 +1354,12 @@
     "roleTool": "工具",
     "noResumeCommand": "此会话无法恢复",
     "messageCopied": "已复制这条消息",
+    "exportMarkdown": "导出 Markdown",
+    "exportMarkdownCopied": "Markdown 已复制",
+    "exportMarkdownTooltip": "导出为 Markdown 复制到剪贴板",
+    "copyCommand": "复制命令",
+    "copyMessage": "复制消息",
+    "conversationHistory": "对话记录",
     "expandContent": "展开完整内容",
     "collapseContent": "收起",
     "helpTitle": "会话从哪里来",
@@ -2760,7 +2776,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -3261,6 +3278,78 @@
       "overLimitBy": "超出上限 {{over}} 字符，Hermes 下次加载时会截断",
       "toggledOn": "已启用 {{name}}，Hermes 下次启动或新建会话时生效。",
       "toggledOff": "已停用 {{name}}，Hermes 下次启动或新建会话时生效。"
+    }
+  },
+  "cursor": {
+    "needsRouting": "需要路由",
+    "form": {
+      "baseUrl": "API 端点",
+      "baseUrlHint": "供应商的 API 端点地址。",
+      "model": "模型（可选）",
+      "modelPlaceholder": "gpt-4o, claude-sonnet-4-20250514, ...",
+      "modelHint": "可选。留空则使用供应商的默认模型。"
+    },
+    "needsPublicRoute": "需要公网路由",
+    "needsPublicRouteHint": "打开设置中的公网路由",
+    "restore": {
+      "title": "还原 Cursor 设置？",
+      "message": "已退出路由接管，但 Cursor 里仍写着公网地址（已失效）。是否还原为写入前的设置？（快照：{{when}}）",
+      "confirm": "一键还原",
+      "cancel": "暂不",
+      "done": "已还原 Cursor 设置"
+    }
+  },
+  "cursorSetup": {
+    "title": "接入 Cursor（{{provider}}）",
+    "lead": "Cursor 云端够不到你本机的地址，非官方供应商要经本地路由 + 公网隧道，再把它自己的 Base URL 指过来。",
+    "steps": {
+      "localRoute": "本地路由",
+      "publicRoute": "公网路由",
+      "exitCursor": "退出 Cursor",
+      "pasteKey": "粘贴密钥"
+    },
+    "checking": "正在检查接入条件…",
+    "switching": "正在切换到该供应商…",
+    "writing": "正在写入 Cursor 设置…",
+    "cardA": {
+      "title": "先开启本地路由",
+      "body": "第三方供应商的请求要先经 CC Switch 的本地代理转发；本地路由没开，请求根本到不了这里。",
+      "action": "去开启路由"
+    },
+    "cardB": {
+      "title": "再开启公网路由",
+      "body": "Cursor 云端访问不到你本机的地址（会被当成内网拒绝），需要一条公网隧道把本地代理暴露出去。",
+      "action": "打开公网路由设置"
+    },
+    "cardC": {
+      "title": "请先完全退出 Cursor",
+      "body": "Cursor 运行中会把设置回写覆盖，自动写入会失效。完全退出后本框会自动继续。",
+      "waiting": "正在等待 Cursor 退出…",
+      "action": "稍后再补"
+    },
+    "cardD": {
+      "title": "只差密钥",
+      "body": "Base URL 与「使用自定义 API Key」已自动写好。密钥在 Cursor 里是加密存储的，读不出也写不进，需要手动粘一次。",
+      "pathLabel": "粘到这里：",
+      "copy": "复制密钥",
+      "copied": "密钥已复制",
+      "copyFailed": "复制失败，请手动复制",
+      "done": "我已粘贴"
+    },
+    "writeFailed": {
+      "title": "写入 Cursor 设置失败",
+      "body": "没能写入 Base URL 和可用模型列表。请确认 Cursor 已完全退出后重试。",
+      "retry": "重试"
+    },
+    "connectivity": {
+      "label": "连通性检查",
+      "testing": "正在按 本地路由 → 公网隧道 依次测试…",
+      "localFailed": "本地路由不通：请求没能到达 CC Switch 的本地代理。",
+      "publicFailed": "本地路由正常，但公网隧道不通：Cloudflare 边缘没能把请求送回隧道。",
+      "ok": "本地路由与公网隧道都通，Cursor 已可以使用。",
+      "keyReminder": "前提：密钥仍需在 Cursor 里粘一次（见上）。",
+      "detailLabel": "详情：",
+      "retest": "重新测试"
     }
   },
   "env": {
@@ -3882,7 +3971,45 @@
       "stopFailed": "停止路由服务失败：{{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，所有应用已退回直连",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "publicRoute": {
+      "title": "公网路由",
+      "statusOff": "把本地路由经公网隧道暴露给外部应用",
+      "statusStarting": "隧道建立中…",
+      "statusRunning": "隧道已建立",
+      "enabled": "公网路由已启用，正在建立隧道…",
+      "disabled": "公网路由已关闭",
+      "toggleFailed": "切换公网路由失败",
+      "waitingTunnel": "正在建立公网隧道（cloudflared），通常需要几秒…",
+      "publicUrl": "公网地址",
+      "setupTitle": "接入示例：在 Cursor 中完成以下配置",
+      "stepBaseUrl": "Settings → Models → Override OpenAI Base URL 填：",
+      "stepApiKey": "OpenAI API Key 填 CC Switch 自动生成的隧道密钥（必填，公网隧道鉴权用）：",
+      "stepModel": "添加模型并选中使用：模型名填供应商 modelCatalog 里配置的客户端名（Cursor Model Name），代理会自动映射为上游模型名",
+      "ephemeralHint": "快速隧道地址每次重建都会变；新地址已自动复制到剪贴板，需在 Cursor 中重新粘贴。需要固定地址可在关闭后改用「固定域名」模式。",
+      "keyCopied": "密钥已复制",
+      "takeoverHint": "Cursor 经本地路由接管时需要配置公网路由（隧道），请到 设置 → 路由 → 公网路由 查看设置方式",
+      "switching": "切换中…",
+      "tunnelMode": "隧道模式",
+      "modeQuick": "快速隧道",
+      "modeQuickHint": "免账号，地址每次重建都会变",
+      "modeNamed": "固定域名",
+      "modeNamedHint": "需 Cloudflare 账户，地址不变",
+      "namedTunnelName": "隧道名",
+      "namedHostname": "对外域名",
+      "namedSetupTitle": "一次性配置（在终端执行）",
+      "saveTunnelConfig": "保存隧道配置",
+      "configSaved": "隧道配置已保存",
+      "configSaveFailed": "保存隧道配置失败",
+      "baseUrlCopied": "Base URL 已复制，请到 Cursor → Settings → Models → Override OpenAI Base URL 粘贴",
+      "routePathsTitle": "各应用路由路径（按需复制）",
+      "namedStableHint": "固定域名不会变化，Cursor 里粘贴一次即可长期使用。",
+      "regenerateKey": "重新生成",
+      "keyRegenerated": "新密钥已生成并复制，请到 Cursor → Settings → Models → OpenAI API Key 重新粘贴",
+      "keyRegenerateFailed": "重新生成密钥失败",
+      "keyRegeneratedNoCopy": "新密钥已生成，请点击上方复制按钮手动复制到 Cursor",
+      "routePathsGateHint": "仅已开启「本地路由」接管的应用可经公网路由访问；未开启的应用请求会被拒绝"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 连通正常 ({{responseTimeMs}}ms)",
@@ -4237,6 +4364,7 @@
     "columnVisible": "显示",
     "visibleHelp": "关掉后，这个应用不再出现在侧栏、托盘菜单、MCP / Skills 的应用列，以及提示词和会话的应用下拉里。只是不显示：它的供应商、MCP 等配置都还在，它自己的配置文件也不会被改动。",
     "desktopHelp": "Claude Desktop 是桌面应用，不能在这里安装或升级；CC Switch 通过它的配置文件接入。",
+    "cursorHelp": "Cursor 是桌面应用，不能在这里安装或升级；CC Switch 通过路由接管接入。",
     "desktopUnsupported": "当前系统不支持",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",

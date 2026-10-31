@@ -267,6 +267,12 @@ impl Provider {
                 crate::omp_config::provider_base_url(settings).unwrap_or_default(),
                 crate::omp_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
+            // Cursor uses a flat settingsConfig: { baseUrl, apiKey, model }
+            // (same canonical format as the CursorFormFields frontend).
+            AppType::Cursor => (
+                str_at(settings.get("baseUrl")),
+                str_at(settings.get("apiKey")),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a

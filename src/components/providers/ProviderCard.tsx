@@ -398,6 +398,23 @@ export function ProviderCard({
             {presentation.chips.map((chip) => (
               <CardChipBadge key={chip.key} chip={chip} />
             ))}
+            {presentation.publicRoute && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  presentation.publicRoute?.onOpenPublicRouteSettings();
+                }}
+                className="inline-flex h-[18px] shrink-0 items-center whitespace-nowrap rounded-md bg-amber-100 px-1.5 text-badge font-semibold text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60 cursor-pointer"
+                title={t("cursor.needsPublicRouteHint", {
+                  defaultValue: "打开设置中的公网路由",
+                })}
+              >
+                {t("cursor.needsPublicRoute", {
+                  defaultValue: "需要公网路由",
+                })}
+              </button>
+            )}
             {presentation.showHealth && health && (
               <HealthChip
                 consecutiveFailures={health.consecutive_failures}
