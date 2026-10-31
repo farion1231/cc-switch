@@ -2,6 +2,7 @@ pub mod agy_account;
 pub mod backup_storage;
 pub mod balance;
 pub mod claude_account;
+pub mod codebuddy_account;
 pub mod codex_oauth_models;
 pub mod codex_session_compression;
 pub mod coding_plan;
@@ -60,6 +61,7 @@ pub use usage_stats::{
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 
+pub mod session_usage_codebuddy;
 pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 

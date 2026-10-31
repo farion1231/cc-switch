@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
+import { authApi } from "@/lib/api";
 import type { AppId } from "@/lib/api/types";
 import type { ProviderMeta } from "@/types";
 import type {
@@ -274,6 +275,30 @@ export function useKimiAccountQuota(
   });
 
   return useQuotaKeepLastGood(query, accountId);
+}
+
+/**
+ * CodeBuddy 账号的套餐与积分（按授权中心账号 ID，用该账号副本里的令牌只读查询）。
+ * 后端 5 分钟内走缓存；`refresh()` 跳过缓存重查（↻ 按钮用）。
+ */
+export function useCodebuddyAccountQuota(accountId: string, lang: string) {
+  const force = useRef(false);
+  const query = useQuery({
+    queryKey: ["codebuddy_oauth", "quota", accountId, lang],
+    queryFn: () => {
+      const skipCache = force.current;
+      force.current = false;
+      return authApi.codebuddyAccountQuota(accountId, lang, skipCache);
+    },
+    staleTime: REFETCH_INTERVAL,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+  const refresh = () => {
+    force.current = true;
+    return query.refetch();
+  };
+  return { ...query, refresh };
 }
 
 /**

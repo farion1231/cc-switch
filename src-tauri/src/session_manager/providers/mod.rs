@@ -14,6 +14,7 @@ pub mod pi;
 mod pi_blocks;
 mod utils;
 
+pub mod codebuddy;
 pub mod kimi;
 pub mod mcode;
 

@@ -482,6 +482,129 @@ describe("buildAdditiveSections", () => {
     setDefault: vi.fn(),
   });
 
+  it("lists CodeBuddy official sign-in cards under added / available, one added at a time", () => {
+    const bound = (id: string, accountId?: string) =>
+      provider(id, {
+        category: "official",
+        meta: accountId
+          ? {
+              authBinding: {
+                source: "managed_account",
+                authProvider: "codebuddy_oauth",
+                accountId,
+              },
+            }
+          : undefined,
+      });
+    const alice = bound("cb-alice", "1@www.codebuddy.cn");
+    const bob = bound("cb-bob", "2@www.codebuddy.ai");
+    const expired = bound("cb-expired", "3@www.codebuddy.ai");
+    const gone = bound("cb-gone", "9@www.codebuddy.ai");
+    const unbound = bound("cb-unbound");
+    const model = provider("deepseek");
+    const spare = provider("qwen");
+    const actions = { ...additiveActions(), switchAccount: vi.fn() };
+    const build = (currentAccountId: string | null, switchingId?: string) =>
+      buildAdditiveSections({
+        app: "codebuddy",
+        t,
+        providers: [model, alice, bob, expired, gone, unbound, spare],
+        // 官方卡绝不按 models.json 判断（这里故意都说「在」，也不能影响分区）
+        isInConfig: (p) => p.id !== "qwen",
+        codebuddyAccounts: {
+          status: "ready",
+          currentAccountId,
+          accounts: [
+            { id: "1@www.codebuddy.cn", requiresReauth: false },
+            { id: "2@www.codebuddy.ai", requiresReauth: false },
+            { id: "3@www.codebuddy.ai", requiresReauth: true },
+          ],
+          switchingId,
+        },
+        actions,
+      });
+    const ids = (sections: ReturnType<typeof build>, key: string) =>
+      sections
+        .find((section) => section.key === key)!
+        .items.map((entry) => entry.provider.id);
+
+    let sections = build("1@www.codebuddy.cn");
+    // 没有单独的官方分组
+    expect(sections.map((section) => section.key)).toEqual([
+      "added",
+      "available",
+    ]);
+    expect(ids(sections, "added")).toEqual(["deepseek", "cb-alice"]);
+    expect(ids(sections, "available")).toEqual([
+      "cb-bob",
+      "cb-expired",
+      "cb-gone",
+      "cb-unbound",
+      "qwen",
+    ]);
+
+    // 已添加的官方卡：「移除」不可用（不替 CodeBuddy 登出），说明添加另一张即可切换
+    expect(item(sections, "cb-alice")).toMatchObject({
+      chips: [{ key: "official" }],
+    });
+    expect(item(sections, "cb-alice").status).toBeUndefined();
+    const remove = button(sections, "cb-alice", "remove");
+    expect(remove.disabledReason).toBe("codebuddy.official.removeHint");
+    remove.onClick();
+    expect(actions.remove).not.toHaveBeenCalled();
+
+    // 可添加的官方卡：「添加」= 切到它绑定的账号，不走 models.json 的添加
+    expect(button(sections, "cb-bob", "add").disabledReason).toBeUndefined();
+    button(sections, "cb-bob", "add").onClick();
+    expect(actions.switchAccount).toHaveBeenCalledWith(bob);
+    expect(actions.add).not.toHaveBeenCalled();
+    expect(button(sections, "cb-expired", "add").disabledReason).toBe(
+      "codebuddy.official.expired",
+    );
+    expect(button(sections, "cb-gone", "add").disabledReason).toBe(
+      "codebuddy.official.accountDeleted",
+    );
+    expect(item(sections, "cb-gone").chips.map((chip) => chip.key)).toEqual([
+      "official",
+      "accountDeleted",
+    ]);
+    expect(button(sections, "cb-unbound", "add").disabledReason).toBe(
+      "codebuddy.official.unbound",
+    );
+    // 模型卡照旧
+    button(sections, "qwen", "add").onClick();
+    expect(actions.add).toHaveBeenCalledWith(spare);
+
+    // 正在添加时其他官方卡先等一等
+    sections = build("1@www.codebuddy.cn", "cb-bob");
+    expect(button(sections, "cb-bob", "add").disabledReason).toBe(
+      "codebuddy.official.adding",
+    );
+
+    // 换成 bob 之后 alice 自动回到「可添加」
+    sections = build("2@www.codebuddy.ai");
+    expect(ids(sections, "added")).toEqual(["deepseek", "cb-bob"]);
+    expect(ids(sections, "available")).toContain("cb-alice");
+
+    // CodeBuddy 没登录（或正在登录新号）：没有官方卡在「已添加」
+    sections = build(null);
+    expect(ids(sections, "added")).toEqual(["deepseek"]);
+  });
+
+  it("keeps CodeBuddy without official cards to the two model sections", () => {
+    const sections = buildAdditiveSections({
+      app: "codebuddy",
+      t,
+      providers: [provider("deepseek")],
+      isInConfig: () => true,
+      actions: additiveActions(),
+    });
+    expect(sections.map((section) => section.key)).toEqual([
+      "added",
+      "available",
+    ]);
+  });
+
   it("splits added and available providers and keeps OMO to one at a time", () => {
     const omo = provider("omo", { category: "omo" });
     const otherOmo = provider("omo-2", { category: "omo" });

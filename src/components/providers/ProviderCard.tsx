@@ -28,6 +28,8 @@ import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import { useClaudeDefaultPlan } from "@/lib/query/subscription";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
+import CodebuddyAccountQuotaFooter from "@/components/CodebuddyAccountQuotaFooter";
+import { codebuddyRegion } from "@/components/providers/forms/CodebuddyLogin";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
@@ -216,6 +218,33 @@ export function ProviderCard({
   const managedCodexAccount = codexAuthStatus?.accounts.find(
     (account) => account.id === managedCodexAccountId,
   );
+  // CodeBuddy 官方登录卡：第二行写绑定的账号，右侧写这个号的套餐积分
+  const isCodebuddyOfficial =
+    appId === "codebuddy" && provider.category === "official";
+  const codebuddyAccountId = isCodebuddyOfficial
+    ? resolveManagedAccountId(provider.meta, "codebuddy_oauth")?.trim() || null
+    : null;
+  const {
+    data: codebuddyAuthStatus,
+    isSuccess: isCodebuddyStatusSuccess,
+    isError: isCodebuddyStatusError,
+  } = useQuery({
+    queryKey: ["managed-auth-status", "codebuddy_oauth"],
+    queryFn: () => authApi.authGetStatus("codebuddy_oauth"),
+    enabled: isCodebuddyOfficial,
+    staleTime: 30_000,
+  });
+  const codebuddyAccount = codebuddyAuthStatus?.accounts.find(
+    (account) => account.id === codebuddyAccountId,
+  );
+  const codebuddyRegionLabel = (() => {
+    const region = codebuddyRegion(codebuddyAccount?.github_domain);
+    if (region === "mainland")
+      return t("authCenter.codebuddy.mainland", { defaultValue: "国内版" });
+    if (region === "global")
+      return t("authCenter.codebuddy.global", { defaultValue: "国际版" });
+    return codebuddyAccount?.github_domain || null;
+  })();
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
     managedCodexAccount?.login &&
@@ -406,7 +435,70 @@ export function ProviderCard({
             )}
           </div>
 
-          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+          {isCodebuddyOfficial ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              {codebuddyAccount ? (
+                <>
+                  <span
+                    className="min-w-0 truncate"
+                    title={manualNote ?? codebuddyAccount.login}
+                  >
+                    {manualNote ??
+                      [codebuddyAccount.login, codebuddyRegionLabel]
+                        .filter(Boolean)
+                        .join(" · ")}
+                  </span>
+                  {codebuddyAccount.requires_reauth && (
+                    <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {t("authCenter.needsReauth", {
+                        defaultValue: "需要重新登录",
+                      })}
+                    </span>
+                  )}
+                </>
+              ) : isCodebuddyStatusError ? (
+                <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t("authCenter.codebuddy.statusLoadFailed", {
+                      defaultValue: "无法读取 CodeBuddy 账号，请重试。",
+                    })}
+                  </span>
+                </span>
+              ) : isCodebuddyStatusSuccess || !codebuddyAccountId ? (
+                <>
+                  <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">
+                      {codebuddyAccountId
+                        ? t("codebuddy.official.accountDeleted", {
+                            defaultValue: "账号已删除，请重新选择",
+                          })
+                        : t("codebuddy.official.unbound", {
+                            defaultValue: "还没有选择账号，请编辑卡片选择一个",
+                          })}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-body font-medium text-action-text hover:underline"
+                    onClick={() => onEdit(provider)}
+                  >
+                    {t("codex.chooseAccount", {
+                      defaultValue: "选择账号",
+                    })}
+                  </button>
+                </>
+              ) : (
+                <span className="min-w-0 truncate">
+                  {t("codebuddy.official.statusLoading", {
+                    defaultValue: "正在读取账号…",
+                  })}
+                </span>
+              )}
+            </div>
+          ) : codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               {codexOfficialIdentity === "native_login" ? (
                 <span className="min-w-0 truncate" title={manualNote}>
@@ -550,6 +642,12 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : isCodebuddyOfficial ? (
+                codebuddyAccount && !codebuddyAccount.requires_reauth ? (
+                  <CodebuddyAccountQuotaFooter
+                    accountId={codebuddyAccount.id}
+                  />
+                ) : null
               ) : appId === "kimi" && isOfficial ? (
                 // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
                 <KimiAccountQuotaFooter

@@ -1382,6 +1382,7 @@
     "deleteEllipsis": "刪除",
     "selectSessionLabel": "選擇 {{title}}",
     "mcodeDeleteHint": "請在 MiniMax Code 中刪除",
+    "codebuddyDeleteHint": "請在 CodeBuddy Code 中管理此會話：背景任務、團隊成員和檔案歷史都引用它的記錄",
     "agyDeleteHint": "請在 Antigravity 中刪除工作階段，以同步清理執行狀態",
     "groupMeta": "{{count}} 個工作階段 · {{time}}",
     "bucketToday": "今天",
@@ -4622,6 +4623,7 @@
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
       "claudeNote": "（頂層 mcpServers）",
+      "codebuddyNote": "（依 .mcp.json → mcp.json → ~/.codebuddy.json 讀取最先存在的一個）",
       "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp）",
       "ok": "知道了"
     },
@@ -4926,6 +4928,7 @@
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
+      "codebuddyHelp": "CodeBuddy Code 的官方登入（國內版、國際版都在這裡）。要切換帳號，在供應商列表裡為帳號建立一張「CodeBuddy 官方登入」卡並點「新增」。「新增帳號」會開啟終端機執行 codebuddy，登入後這裡自動收錄；已登入時會先讓 CodeBuddy 暫時登出原來的帳號，放棄可恢復。權杖由 CodeBuddy 自己續期。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
       "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
       "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，Claude Code 的登入會即時換成這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。"
@@ -4981,6 +4984,32 @@
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
       "switched": "已切換，新開的 agy 會使用這個帳號。",
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
+    },
+    "codebuddy": {
+      "mainland": "國內版",
+      "global": "國際版",
+      "expiredNote": "登入已過期，需要重新登入",
+      "addedOn": "{{date}}收錄",
+      "imported": "已收錄 {{login}}。",
+      "uncollected": "CodeBuddy 目前登入的是 {{login}}，還沒收錄到這裡。",
+      "importCurrent": "收錄目前帳號",
+      "unrecognized": "無法辨識 CodeBuddy 的登入檔格式",
+      "unrecognizedNote": "可能由 WorkBuddy 加密託管。CC Switch 不會改動它，也無法切換帳號。",
+      "statusLoadFailed": "無法讀取 CodeBuddy 帳號，請重試。",
+      "empty": "還沒有 CodeBuddy 帳號。點「新增帳號」登入，或收錄 CodeBuddy 目前登入的帳號。",
+      "login": "登入新帳號",
+      "current": "CodeBuddy 使用中",
+      "pendingNote": "已在終端機開啟 codebuddy，依提示登入（沒有出現登入畫面就輸入 /login），完成後這裡會自動收錄。",
+      "reopenTerminal": "重新開啟終端機",
+      "removeNote": "只刪除 CC Switch 裡的副本，不會讓 CodeBuddy 登出。",
+      "quota": {
+        "credits": "積分",
+        "enterprise": "企業版",
+        "unlimited": "不限量",
+        "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
+        "usedDetail": "本週期已用 {{used}} 積分",
+        "refreshPending": "權杖待 CodeBuddy 續期，切到這個帳號用一次後再查"
+      }
     },
     "claude": {
       "pasteSubmitted": "已送出，正在完成登入…",
@@ -5091,6 +5120,47 @@
       "renameProvider": "Oh My Pi 供應商識別碼不能重新命名。",
       "providerMissing": "此 Oh My Pi 供應商已不在儲存的清單中。",
       "legacyModelsJson": "Oh My Pi 目錄裡仍是舊的 models.json，omp 會在下次啟動時將它遷移為 models.yml。請先執行一次 omp，再回來新增供應商。"
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "尚未新增自訂模型",
+      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理；要切換官方帳號，為帳號建立一張「CodeBuddy 官方登入」卡，在這裡點「新增」。~/.codebuddy/models.json 中已有的自訂模型會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增模型。"
+    },
+    "modelsHint": "模型 ID 寫入 models.json 的 id，也是 /model 中選擇的名稱，通常就是介面的模型名稱，新增後不可修改。顯示名稱與上方的「名稱」是同一個值。",
+    "modelIdDuplicate": "此模型 ID 已被使用，請更換",
+    "modelIdInvalid": "模型 ID 不能以空格開頭或結尾。",
+    "vendor": "廠商標籤",
+    "urlHint": "填寫完整路徑，通常以 /chat/completions 結尾；支援 ${VAR} 環境變數參照。",
+    "urlInvalid": "請輸入有效的 http(s) 位址。",
+    "apiKeyPlaceholder": "輸入 API Key，或寫成 ${MY_API_KEY} 參照環境變數",
+    "maxInputTokens": "最大輸入 Token",
+    "maxOutputTokens": "最大輸出 Token",
+    "jsonHint": "對應 models.json 中的一筆模型設定（id 由上方模型 ID 決定）。儲存後 CodeBuddy Code 會自動重新載入。",
+    "official": {
+      "presetName": "CodeBuddy 官方登入",
+      "account": "登入帳號",
+      "accountHint": "選擇這張卡要用的 CodeBuddy 帳號。CodeBuddy 同時只能登入一個帳號：在供應商列表裡點這張卡的「新增」，CodeBuddy 的登入就會換成它，正在執行的 CodeBuddy 也會自動換過去。",
+      "accountDeleted": "帳號已刪除，請重新選擇",
+      "accountDeletedChip": "帳號已刪除",
+      "unbound": "還沒有選擇帳號，請編輯卡片選擇一個",
+      "statusLoading": "正在讀取帳號…",
+      "expired": "這個帳號的登入已過期，請在授權中心重新登入後再新增",
+      "importCurrent": "收錄目前登入（{{login}}）",
+      "adding": "正在新增…",
+      "added": "已新增 {{name}}，CodeBuddy 已登入這個帳號。正在執行的 CodeBuddy 會自動換過去，新開的也會使用它。",
+      "addFailed": "新增失敗：{{error}}",
+      "removeHint": "CodeBuddy 同時只能登入一個帳號，新增另一張官方卡即可切換"
+    },
+    "login": {
+      "confirmTitle": "登入新的 CodeBuddy 帳號",
+      "confirmMessage": "CodeBuddy 目前登入的是 {{login}}，同一時間只能登入一個帳號。繼續後會先把它收錄到授權中心，再讓 CodeBuddy 暫時登出（不刪除登入資訊、不通知伺服器），然後開啟終端機登入新帳號。\n\n寫入後，正在執行的 CodeBuddy 工作階段會暫時變為未登入，直到你完成登入。中途放棄可以一鍵恢復原來的登入。",
+      "confirm": "繼續登入",
+      "signedInHint": "CodeBuddy 已登入時，登入新帳號會先讓它暫時登出原來的帳號：寫入後，正在執行的 CodeBuddy 工作階段會暫時變為未登入，直到你完成登入。",
+      "pendingReplacing": "已讓 CodeBuddy 暫時登出原來的帳號，並在終端機開啟了 codebuddy。依提示登入新帳號，完成後這裡會自動收錄。",
+      "restore": "恢復原來的登入",
+      "restored": "已恢復原來的 CodeBuddy 登入。",
+      "restoreFailed": "沒能恢復原來的登入（CodeBuddy 可能正在寫入登入檔）。可以在授權中心重新登入，或在終端機裡登入。"
     }
   },
   "dsh": {
