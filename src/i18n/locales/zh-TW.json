@@ -891,6 +891,7 @@
     "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
     "skipClaudeOnboardingDescription": "Claude Code 第一次啟動時會先走一遍引導流程，要求選擇主題並登入 Anthropic 帳號。如果你用的是第三方供應商，不需要登入官方帳號，開啟後就能略過這一步直接使用。原理是在 ~/.claude.json 中寫入 hasCompletedOnboarding: true；關閉時刪除該欄位，下次啟動會重新出現引導。",
+    "remoteEnabled": "啟用遠端管理服務",
     "codexAuth": "Codex 應用增強",
     "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
@@ -4193,6 +4194,75 @@
     "expiredHintAccounts": "請在授權中心重新登入這個帳號",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "remote": {
+    "approval": {
+      "title": "需要裝置授權",
+      "evidence": {
+        "tailnet": "Tailnet 網路",
+        "loopback": "本機回環位址",
+        "unavailable": "無法核實對端身分",
+        "nodeName": "節點名",
+        "nodeStableId": "節點穩定 ID",
+        "loginName": "帳號",
+        "peerAddr": "對端位址",
+        "loopbackDescription": "來自本機程序。",
+        "notInTailnet": "不在零信任覆蓋網路內",
+        "notInTailnetDescription": "該位址不在你的零信任覆蓋網路（如 Tailscale）內，無法準確識別對端的唯一身分",
+        "unavailableDescription": "無法透過零信任覆蓋網路（如 Tailscale）核實該位址的歸屬，無法準確識別對端的唯一身分",
+        "degradedPeerAddr": "已確認對端位址：{{addr}}",
+        "degradedCaution": "請謹慎批准。",
+        "degradedAck": "我已知悉：對端 IP 已確認，但無法準確識別其唯一身分，仍要批准。"
+      },
+      "userCode": {
+        "label": "驗證碼",
+        "empty": "尚無驗證碼——請在該裝置上開啟連結以繼續。"
+      },
+      "foreignAccount": {
+        "warning": "該裝置登入的是另一個帳號，請先切換帳號再授權。",
+        "ack": "我已在另一台裝置上核實過帳號。"
+      },
+      "approve": "批准",
+      "reject": "拒絕",
+      "close": "關閉",
+      "failed": "無法完成該審批請求。",
+      "client": {
+        "label": "發起裝置"
+      },
+      "defaultAction": {
+        "approve": "建議動作：批准",
+        "reject": "建議動作：拒絕"
+      }
+    },
+    "settings": {
+      "bindScope": {
+        "label": "綁定範圍",
+        "confirm": "確認綁定範圍",
+        "description": "遠端管理服務監聽在哪些網路介面上。",
+        "loopback": "僅本機",
+        "loopbackDescription": "只監聽 127.0.0.1，其他裝置無法連線。",
+        "tailscale": "僅 Tailscale",
+        "tailscaleDescription": "同時監聽 127.0.0.1 與 Tailscale IP，Tailnet 內的裝置可以連線。",
+        "allInterfaces": "全部網卡",
+        "allInterfacesDescription": "監聽 0.0.0.0，任何能存取本機區域網路或 Tailscale 位址的裝置都可以連線。",
+        "widenTitle": "確認放寬綁定範圍？",
+        "widenTransition": "目前：{{current}} → 目標：{{target}}",
+        "newAddresses": "新增可達位址：",
+        "allInterfacesAddress": "全部網卡（0.0.0.0），連接埠 {{port}}",
+        "credentialNote": "非回環來源的請求仍然必須持有配對憑證。",
+        "cancel": "取消",
+        "applied": "綁定範圍已更新。",
+        "notApplied": "綁定範圍未改變。",
+        "failed": "修改綁定範圍失敗。",
+        "tailscaleUnavailable": "Tailscale 未安裝或未執行，請先安裝 Tailscale。"
+      },
+      "cors": {
+        "mode": "CORS 模式"
+      },
+      "origin": {
+        "whitelist": "來源白名單"
+      }
+    }
   },
   "nav": {
     "mainLabel": "主導覽",

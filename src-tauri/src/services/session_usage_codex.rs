@@ -2887,8 +2887,11 @@ mod tests {
         Ok(())
     }
 
+    // 该用例经生产同步链路写入进程级全局 parent_timelines，必须与其它 serial 用例串行。
     #[test]
+    #[serial_test::serial]
     fn test_unchanged_incomplete_tail_is_skipped_after_cursor_reload() -> Result<(), AppError> {
+        clear_codex_replay_caches();
         use std::io::Write;
         for has_usage in [false, true] {
             for tail in ["{\"type\":\"event_msg\"", "  "] {
@@ -3079,7 +3082,9 @@ mod tests {
 
     /// 分支线程翻页产生的双段文件名带有残留的 forked_from_id，
     /// 解析时应被识别为本线程延续（Continuation），并恢复上一页基线计算增量。
+    // 该用例经 parse_codex_file_with_index 写进程级全局 parent_timelines，必须与其它 serial 用例串行。
     #[test]
+    #[serial_test::serial]
     fn test_parse_codex_file_recognizes_branch_thread_paginated_continuation(
     ) -> Result<(), AppError> {
         let dir = tempdir().unwrap();

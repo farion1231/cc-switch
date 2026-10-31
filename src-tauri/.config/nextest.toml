@@ -8,3 +8,9 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 [profile.ci]
 # 跑完全部测试再汇总失败
 fail-fast = false
+
+# gate 类测试内部会再跑一遍 `cargo clippy`，在负载高的 CI runner 上超过 180s
+# 是正常现象，不是卡死 —— 单独给这两个二进制放大超时。
+[[profile.ci.overrides]]
+filter = 'binary(events_sink_gate) | binary(auth_policy_gate)'
+slow-timeout = { period = "300s", terminate-after = 2 }

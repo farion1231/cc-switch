@@ -462,6 +462,11 @@ export interface Settings {
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
 
+  // ===== 远程管理设置 =====
+  remoteEnabled?: boolean;
+  remotePort?: number;
+  remoteTailscaleEnabled?: boolean;
+
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
   // 应用页和侧栏的应用顺序（应用 ID，拖动排序后写入；缺的应用按默认顺序插回）

@@ -3101,6 +3101,17 @@ fn emit_switched(app: &tauri::AppHandle, app_type: &AppType, provider_id: &str) 
     if let Err(e) = app.emit("provider-switched", event_data) {
         log::error!("发射 provider-switched 事件失败: {e}");
     }
+
+    // 广播给远程浏览器（SSE）：与桌面事件同源同刻，让远程管理模式下的页面
+    // 立即刷新「使用中」标记。上游 4.0.14 重写托盘时把 emit 拆成了本函数，
+    // 旧 `handle_provider_click` / `handle_auto_click` 里的广播点随之消失，
+    // 这里挂回统一出口。
+    let app = app.clone();
+    let app_type_str = app_type.as_str().to_string();
+    let provider_id = provider_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        crate::remote::broadcast_provider_switch(&app, &app_type_str, &provider_id).await;
+    });
 }
 
 #[cfg(target_os = "macos")]
