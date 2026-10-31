@@ -4241,6 +4241,7 @@
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
     "newVersion": "有新版本 {{version}}",
+    "notDetected": "未检测到",
     "notRunnable": "无法运行",
     "updateNeedsNode": "新版本 {{version}} 要求 Node {{required}}，这处安装用的是 Node {{current}}，需要先升级 Node。",
     "otherInstalls": "另有 {{count}} 处安装",
