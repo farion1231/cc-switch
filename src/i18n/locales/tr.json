@@ -877,6 +877,17 @@
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
     "skipClaudeOnboardingDescription": "İlk başlatmada Claude Code, bir tema seçmenizi ve bir Anthropic hesabında oturum açmanızı isteyen bir katılım akışı çalıştırır. Üçüncü taraf bir sağlayıcı kullanıyorsanız bu oturum açma işlemine ihtiyacınız yoktur; bu nedenle, bunu açmak doğrudan atlar. ~/.claude.json'a hasCompletedOnboarding: true yazılarak çalışır; kapatıldığında bu alan kaldırılır ve bir sonraki başlatmada katılım yeniden görünür.",
     "codexAuth": "Codex Uygulama Geliştirmeleri",
+    "codexQuotaProtection": {
+      "title": "Resmî kota koruması",
+      "help": "Kullanım eşiklerinden birine ulaşıldığında yeni resmî istekleri durdurur; üçüncü taraf modeller kullanılabilir kalır. Yalnızca CC Switch üzerinden geçen Codex resmî isteklerini kapsar: her istek önce kendi oturum açma bilgisiyle gerçek kotayı sorgular, bu nedenle her resmî istek biraz daha yavaştır ve aynı hesabın istekleri sırayla denetlenir. Kota sorgusu başarısız olursa istekler durur; eşiklerin altına düşen yeni bir ölçümde devam eder. Devam eden istekler ve diğer uygulamalar kotayı yine tüketebilir; koruma, normal kotanın tükenmesiyle Luna Reserve etkinleşmesini önler.",
+      "thresholds": "Resmî istekler için kullanım eşikleri",
+      "fiveHour": "5 saatlik kullanım (%)",
+      "weekly": "Haftalık kullanım (%)",
+      "save": "Eşikleri kaydet",
+      "reset": "Varsayılanları geri yükle",
+      "hint": "Eşiklerden birinde duraklatır. Varsayılanlar: %95 / %98. Kaydedilen değişiklikler yeni isteklere hemen uygulanır.",
+      "invalid": "1 ile 99 arasında tam sayılar girin."
+    },
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",

@@ -892,6 +892,17 @@
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "Claude Code 第一次启动时会先走一遍引导流程，要求选主题并登录 Anthropic 账号。如果你用的是第三方供应商，不需要登录官方账号，开启后就能跳过这一步直接使用。原理是在 ~/.claude.json 里写入 hasCompletedOnboarding: true；关闭时删除该字段，下次启动会重新出现引导。",
     "codexAuth": "Codex 应用增强",
+    "codexQuotaProtection": {
+      "title": "官方额度保护",
+      "help": "达到任一使用率阈值时暂停新的官方请求，第三方模型仍可使用。仅保护经过 CC Switch 的 Codex 官方请求：每次请求前都会用该请求自身的登录查询一次真实额度，因此每个官方请求会略有延迟，同一账号的请求也会依次检查；额度查询失败时暂停。重查低于阈值后自动恢复。运行中的请求和其他应用仍可能耗尽额度；保护期间不会因正常额度耗尽而进入 Luna Reserve。",
+      "thresholds": "暂停官方请求的使用率",
+      "fiveHour": "五小时使用率（%）",
+      "weekly": "周使用率（%）",
+      "save": "保存阈值",
+      "reset": "恢复默认值",
+      "hint": "任一达到即暂停。默认 95% / 98%，保存后立即对新请求生效。",
+      "invalid": "请输入 1–99 的整数。"
+    },
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
