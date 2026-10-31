@@ -5050,6 +5050,33 @@
       "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
     }
   },
+  "qwen": {
+    "modelSelectionHint": "Use the switch button on a provider card to make it current. To use another model, run /model in Qwen Code.",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrlRequired": "The Anthropic protocol needs a base URL.",
+    "baseUrlInvalid": "The base URL must start with http:// or https://.",
+    "envKey": "Environment variable",
+    "envKeyHint": "This provider reads its key from this environment variable. It is managed in the native Qwen Code configuration and can't be changed here.",
+    "modelOverride": "Protocol and endpoint used only by this model (from the native config)",
+    "removeModel": "Remove model",
+    "contextWindowSize": "Context window",
+    "duplicateModelId": "This model ID is already used.",
+    "empty": {
+      "title": "Add a Qwen Code provider",
+      "description": "Configure an endpoint, API key and models. Providers already in settings.json appear here automatically."
+    },
+    "deleteSessionHint": "Delete this session in Qwen Code (qwen sessions) to update its index and archive together.",
+    "error": {
+      "currentModelInUse": "Qwen Code is using a model from this provider. Switch to another provider first, or pick another model with /model in Qwen Code.",
+      "modelOwnedByOther": "This model at the same base URL already belongs to another provider. Change the model ID or the base URL."
+    }
+  },
   "omp": {
     "empty": {
       "title": "No API key providers yet",
