@@ -86,6 +86,7 @@ static TRAY_SECTION_SUBMENUS: Lazy<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>>
 #[derive(Clone, Copy)]
 pub struct TrayTexts {
     pub show_main: &'static str,
+    pub reload_ui: &'static str,
     pub open_website: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
@@ -190,6 +191,7 @@ impl TrayTexts {
         match language {
             "en" => Self {
                 show_main: "Open CC Switch",
+                reload_ui: "Reload UI",
                 open_website: "Open official website",
                 lightweight_mode: "Lightweight mode",
                 quit: "Quit CC Switch",
@@ -249,6 +251,7 @@ impl TrayTexts {
             "tr" => {
                 let mut texts = Self::from_language("en");
                 texts.show_main = "CC Switch'i aç";
+                texts.reload_ui = "Arayüzü yenile";
                 texts.open_website = "Resmî web sitesini aç";
                 texts.lightweight_mode = "Hafif mod";
                 texts.quit = "CC Switch'ten çık";
@@ -303,6 +306,7 @@ impl TrayTexts {
             }
             "ja" => Self {
                 show_main: "CC Switch を開く",
+                reload_ui: "UIを再読み込み",
                 open_website: "公式サイトを開く",
                 lightweight_mode: "軽量モード",
                 quit: "CC Switch を終了",
@@ -359,6 +363,7 @@ impl TrayTexts {
             },
             "zh-TW" => Self {
                 show_main: "開啟 CC Switch",
+                reload_ui: "重新載入介面",
                 open_website: "開啟官方網站",
                 lightweight_mode: "輕量模式",
                 quit: "退出 CC Switch",
@@ -413,6 +418,7 @@ impl TrayTexts {
             },
             _ => Self {
                 show_main: "打开 CC Switch",
+                reload_ui: "刷新界面",
                 open_website: "打开官方网站",
                 lightweight_mode: "轻量模式",
                 quit: "退出 CC Switch",
@@ -1981,6 +1987,8 @@ fn build_menu_model(
 
     // 窗口找不回来时托盘是唯一入口，「打开 CC Switch」一直放在最上面。
     menu.push(TrayEntry::item("show_main", texts.show_main));
+    // 界面卡死/白屏时的显式恢复入口：重载 WebView（Rust 侧调用，不依赖存活的 JS）
+    menu.push(TrayEntry::item("reload_ui", texts.reload_ui));
     menu.push(TrayEntry::Separator);
 
     if !apps.is_empty() {
@@ -2877,6 +2885,10 @@ pub fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // 渲染进程死亡后自动恢复没能完成时，这里补一次重载：左键托盘、快捷面板
+        // 的「打开主窗口」、托盘导航入口都走这个函数，只 show 白屏窗口救不回来
+        #[cfg(target_os = "windows")]
+        crate::webview_recovery::reload_if_renderer_failure_pending(&window);
         #[cfg(target_os = "linux")]
         {
             crate::linux_fix::nudge_main_window(window.clone(), "tray-show-main");
@@ -3128,6 +3140,20 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
 
     match event_id {
         "show_main" => show_main_window(app),
+        "reload_ui" => {
+            // Windows 下的重载走恢复模块（带日志）；其他平台直接重载
+            #[cfg(target_os = "windows")]
+            if let Err(e) = crate::webview_recovery::reload_main_window(app) {
+                // 重载失败时保留故障标志：手动路径还能再试
+                log::error!("托盘重载主界面失败: {e}");
+            }
+            #[cfg(not(target_os = "windows"))]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(e) = window.reload() {
+                    log::error!("托盘重载主界面失败: {e}");
+                }
+            }
+        }
         "open_website" => {
             if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
                 log::error!("打开官方网站失败: {e}");
@@ -4359,6 +4385,7 @@ mod tests {
             texts_of(&menu),
             [
                 "打开 CC Switch",
+                "刷新界面",
                 "---",
                 "Claude Code · Kimi For Coding",
                 "Grok Build · 添加供应商…",
@@ -4369,8 +4396,8 @@ mod tests {
                 "退出 CC Switch",
             ]
         );
-        assert!(matches!(&menu[3], TrayEntry::Item { id, .. } if id == "nav:add:grokbuild"));
-        assert!(matches!(&menu[8], TrayEntry::Item { id, .. } if id == "quit"));
+        assert!(matches!(&menu[4], TrayEntry::Item { id, .. } if id == "nav:add:grokbuild"));
+        assert!(matches!(&menu[9], TrayEntry::Item { id, .. } if id == "quit"));
     }
 
     #[test]
@@ -4419,7 +4446,7 @@ mod tests {
             vec![entry("or", "OpenRouter"), official],
         );
         let menu = model(&[], &[app]);
-        assert_eq!(text_of(&menu[2]), "Grok Build · 路由 · OpenRouter");
+        assert_eq!(text_of(&menu[3]), "Grok Build · 路由 · OpenRouter");
         let children = children_of(&menu, &AppType::GrokBuild);
         assert_eq!(text_of(&children[0]), "路由");
         assert!(
@@ -4484,7 +4511,7 @@ mod tests {
         );
         app.stack_members = vec!["deepseek".to_string(), "kimi".to_string()];
         let menu = model(&[], &[app]);
-        assert_eq!(text_of(&menu[2]), "Codex · 聚合 · DeepSeek");
+        assert_eq!(text_of(&menu[3]), "Codex · 聚合 · DeepSeek");
         let children = children_of(&menu, &AppType::Codex);
         assert_eq!(
             texts_of(&children),
@@ -4524,7 +4551,7 @@ mod tests {
         );
         routed.current_id = Some("kimi".to_string());
         let menu = model(&[], &[routed]);
-        assert_eq!(text_of(&menu[2]), "Claude Desktop · 路由 · Kimi For Coding");
+        assert_eq!(text_of(&menu[3]), "Claude Desktop · 路由 · Kimi For Coding");
         let children = children_of(&menu, &AppType::ClaudeDesktop);
         assert!(
             matches!(&children[1], TrayEntry::Check { id, checked: true, .. } if id == "prov:claude-desktop:kimi")
@@ -4553,8 +4580,9 @@ mod tests {
         );
         assert_eq!(text_of(&menu[1]), "---");
         assert_eq!(text_of(&menu[2]), "打开 CC Switch");
+        assert_eq!(text_of(&menu[3]), "刷新界面");
         assert_eq!(
-            text_of(&menu[4]),
+            text_of(&menu[5]),
             "Claude Desktop · 路由 · Kimi For Coding · 需要处理"
         );
         // 子菜单和其他路由应用一样以模式标题开头，服务没在跑由顶部问题区说。

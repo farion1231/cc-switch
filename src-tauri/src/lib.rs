@@ -46,6 +46,8 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+#[cfg(target_os = "windows")]
+mod webview_recovery;
 
 mod tray;
 #[cfg(target_os = "windows")]
@@ -445,6 +447,10 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
+                // 渲染进程死亡后自动恢复没能完成时，借二次启动补一次重载；
+                // 正常情况下标志未置位，这里不会多余地打断用户
+                #[cfg(target_os = "windows")]
+                crate::webview_recovery::reload_if_renderer_failure_pending(&window);
                 #[cfg(target_os = "linux")]
                 {
                     linux_fix::nudge_main_window(window.clone(), "single-instance");
@@ -1457,6 +1463,11 @@ pub fn run() {
                     });
                 }
             }
+
+            // Windows: 渲染进程被系统（常见于内存压力）杀掉后 WebView2 只留白屏，
+            // wry/tauri 都不暴露 ProcessFailed；挂 COM 事件在死亡发生时自动重载
+            #[cfg(target_os = "windows")]
+            crate::webview_recovery::install(app.handle(), crate::webview_recovery::MAIN_WINDOW_LABEL);
 
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();

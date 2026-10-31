@@ -70,6 +70,9 @@ interface RequestLogTableProps {
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
+/** 新行进场底色动画的行数上限（每行每格一个全视口 box-shadow 动画，防失控）。 */
+const NEW_ROW_HIGHLIGHT_LIMIT = 12;
+
 const isSameLocalDay = (a: Date, b: Date) =>
   a.getFullYear() === b.getFullYear() &&
   a.getMonth() === b.getMonth() &&
@@ -260,7 +263,10 @@ export function RequestLogTable({
       page !== 0 ||
       shown?.view !== view ||
       !tbody ||
-      typeof tbody.animate !== "function"
+      typeof tbody.animate !== "function" ||
+      // 窗口不可见时刷新照常发生（事件驱动的重取），没人看的动效
+      // 只会白烧主线程和光栅化——系统内存压力下这是压垮渲染进程的帮凶
+      document.hidden
     ) {
       return;
     }
@@ -271,11 +277,16 @@ export function RequestLogTable({
     const highlight = getComputedStyle(tbody)
       .getPropertyValue("--action-soft")
       .trim();
+    // 新行底色是每格一个全视口尺寸的 inset box-shadow 动画，一批几十行
+    // 就是几百个巨型动画。实际刷新一批只来几行，超出上限的直接静默显示
+    // （同屏可见的新行不会超过它；这是防失控的上限而非正常路径）。
+    const highlightLimit = NEW_ROW_HIGHLIGHT_LIMIT;
     ids.forEach((id, index) => {
       const row = tbody.rows[index];
       const from = before.get(id);
       if (!row) return;
       if (from === undefined) {
+        if (index >= highlightLimit) return;
         // 底色画在每个单元格上（盖得住固定列自己的底色）；
         // 叠在格子原有的阴影上（贴左列滚动后的分隔线），动画期间不把它冲掉
         for (const cell of Array.from(row.cells)) {

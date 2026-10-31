@@ -19,6 +19,7 @@ import {
   Feather,
   Plus,
   Power,
+  RefreshCw,
   Search,
   Settings,
 } from "lucide-react";
@@ -1119,6 +1120,12 @@ export function TrayPanel() {
               icon={<ExternalLink className="h-4 w-4" />}
               text={texts.openMain}
               onClick={() => action("show_main")}
+            />
+            {/* 渲染进程被杀后 JS 已死，主界面会白屏；这里从 Rust 侧重载 */}
+            <FooterButton
+              icon={<RefreshCw className="h-4 w-4" />}
+              text={texts.reloadUi}
+              onClick={() => action("reload_ui")}
             />
             <FooterButton
               icon={<Power className="h-4 w-4" />}
