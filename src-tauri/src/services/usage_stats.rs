@@ -446,8 +446,7 @@ fn providers_join(log_alias: &str, provider_alias: &str) -> String {
 }
 
 /// SQL 标量表达式：行的「有效计价模型」—— pricing_model 非空优先，NULL/'' 回落
-/// model。这是 `get_model_stats` 的分组键，也是 Dashboard 模型筛选的匹配口径：
-/// 筛选值来自模型统计列表，两边必须用同一表达式才能选得中。
+/// model。统计展示可合并同价的推理档位，原始请求仍保留此计价基准。
 fn effective_model_sql(alias: &str) -> String {
     format!("COALESCE(NULLIF({alias}.pricing_model, ''), {alias}.model)")
 }
@@ -459,13 +458,14 @@ fn effective_model_sql(alias: &str) -> String {
 /// 注意：传入 `provider_name` 时调用方必须把 [`providers_join`] 拼进 FROM，
 /// 否则 `{provider_alias}.name` 无法解析。
 fn push_provider_model_filters(
+    conn: &Connection,
     conditions: &mut Vec<String>,
     params: &mut Vec<Box<dyn rusqlite::ToSql>>,
     log_alias: &str,
     provider_alias: &str,
     provider_name: Option<&str>,
     model: Option<&str>,
-) {
+) -> Result<(), AppError> {
     if let Some(name) = provider_name {
         conditions.push(format!(
             "{} = ?",
@@ -474,9 +474,49 @@ fn push_provider_model_filters(
         params.push(Box::new(name.to_string()));
     }
     if let Some(m) = model {
-        conditions.push(format!("{} = ?", effective_model_sql(log_alias)));
-        params.push(Box::new(m.to_string()));
+        let mut models = vec![m.to_string()];
+        if statistics_model(conn, m)? == m {
+            for suffix in REASONING_EFFORT_SUFFIXES {
+                let variant = format!("{m}{suffix}");
+                if statistics_model(conn, &variant)? == m {
+                    models.push(variant);
+                }
+            }
+        }
+        let placeholders = vec!["?"; models.len()].join(", ");
+        conditions.push(format!(
+            "{} IN ({placeholders})",
+            effective_model_sql(log_alias)
+        ));
+        params.extend(
+            models
+                .into_iter()
+                .map(|m| Box::new(m) as Box<dyn rusqlite::ToSql>),
+        );
     }
+    Ok(())
+}
+
+/// 仅合并四项 token 单价完全一致的推理档位；缺失或自定义差价保持独立。
+fn statistics_model(conn: &Connection, model: &str) -> Result<String, AppError> {
+    let Some(base) = strip_reasoning_effort_suffix(model) else {
+        return Ok(model.to_string());
+    };
+    let parse = |row: (String, String, String, String)| {
+        ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3).ok()
+    };
+    let pricing = find_model_pricing_row(conn, model)?.and_then(parse);
+    let base_pricing = find_model_pricing_row(conn, &base)?.and_then(parse);
+    if let (Some(p), Some(b)) = (pricing, base_pricing) {
+        if p.input_cost_per_million == b.input_cost_per_million
+            && p.output_cost_per_million == b.output_cost_per_million
+            && p.cache_read_cost_per_million == b.cache_read_cost_per_million
+            && p.cache_creation_cost_per_million == b.cache_creation_cost_per_million
+        {
+            return Ok(base);
+        }
+    }
+    Ok(model.to_string())
 }
 
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
@@ -972,13 +1012,14 @@ impl Database {
             params_vec.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut conditions,
             &mut params_vec,
             "l",
             "p",
             provider_name,
             model,
-        );
+        )?;
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -1007,13 +1048,14 @@ impl Database {
             rollup_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
             provider_name,
             model,
-        );
+        )?;
 
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
@@ -1131,13 +1173,14 @@ impl Database {
             detail_params.push(Box::new(end));
         }
         push_provider_model_filters(
+            &conn,
             &mut detail_conditions,
             &mut detail_params,
             "l",
             "p",
             provider_name,
             model,
-        );
+        )?;
         let detail_where = format!("WHERE {}", detail_conditions.join(" AND "));
         let detail_join = if provider_name.is_some() {
             providers_join("l", "p")
@@ -1155,13 +1198,14 @@ impl Database {
             &rollup_bounds,
         );
         push_provider_model_filters(
+            &conn,
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
             provider_name,
             model,
-        );
+        )?;
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -1311,13 +1355,14 @@ impl Database {
                 extra_params.push(Box::new(at.to_string()));
             }
             push_provider_model_filters(
+                &conn,
                 &mut extra_conditions,
                 &mut extra_params,
                 "l",
                 "p",
                 provider_name,
                 model,
-            );
+            )?;
             let extra_filter = extra_conditions
                 .iter()
                 .map(|c| format!("AND {c}"))
@@ -1425,13 +1470,14 @@ impl Database {
             extra_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut extra_conditions,
             &mut extra_params,
             "l",
             "p",
             provider_name,
             model,
-        );
+        )?;
         let extra_filter = extra_conditions
             .iter()
             .map(|c| format!("AND {c}"))
@@ -1509,13 +1555,14 @@ impl Database {
             rollup_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
             provider_name,
             model,
-        );
+        )?;
 
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
@@ -1634,13 +1681,14 @@ impl Database {
             detail_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut detail_conditions,
             &mut detail_params,
             "l",
             "p",
             provider_name,
             model,
-        );
+        )?;
         let detail_where = if detail_conditions.is_empty() {
             String::new()
         } else {
@@ -1671,13 +1719,14 @@ impl Database {
             rollup_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
             provider_name,
             model,
-        );
+        )?;
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -1737,13 +1786,14 @@ impl Database {
             detail_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut detail_conditions,
             &mut detail_params,
             "l",
             "p",
             provider_name,
             model,
-        );
+        )?;
         let detail_where = if detail_conditions.is_empty() {
             String::new()
         } else {
@@ -1764,13 +1814,14 @@ impl Database {
             rollup_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
             provider_name,
             model,
-        );
+        )?;
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -1930,13 +1981,14 @@ impl Database {
             detail_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut detail_conditions,
             &mut detail_params,
             "l",
             "p",
             provider_name,
             model,
-        );
+        )?;
         let detail_where = if detail_conditions.is_empty() {
             String::new()
         } else {
@@ -1962,13 +2014,14 @@ impl Database {
             rollup_params.push(Box::new(at.to_string()));
         }
         push_provider_model_filters(
+            &conn,
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
             provider_name,
             model,
-        );
+        )?;
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -2036,70 +2089,108 @@ impl Database {
             ORDER BY total_cost DESC"
         );
 
-        let (first_token_ms, est_first_token_ms) = {
-            let detail_refs: Vec<&dyn rusqlite::ToSql> =
-                detail_params.iter().map(|p| p.as_ref()).collect();
-            let from_sql = format!("FROM proxy_request_logs l {detail_join}");
-            let medians = |eligible_sql: String| {
-                first_token_medians(
-                    &conn,
-                    &detail_model,
-                    &from_sql,
-                    &detail_where,
-                    &eligible_sql,
-                    &detail_refs,
-                )
-            };
-            (
-                medians(first_token_eligible_sql("l"))?,
-                medians(est_first_token_eligible_sql("l"))?,
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|p| p.as_ref()).collect();
+        params.extend(rollup_params.iter().map(|p| p.as_ref()));
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, u64>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, i64>(5)?.max(0) as u64,
+                row.get::<_, i64>(6)?.max(0) as u64,
+                row.get::<_, i64>(7)?.max(0) as u64,
+                row.get::<_, i64>(8)?.max(0) as u64,
+            ))
+        })?;
+        let mut grouped: HashMap<String, (ModelStats, f64, u64)> = HashMap::new();
+        let mut model_cases = Vec::new();
+        for row in rows {
+            let (raw, count, tokens, cost, successes, output, ms, est_output, est_ms) = row?;
+            let model = statistics_model(&conn, &raw)?;
+            if model != raw {
+                // 来自数据库的模型名作为 SQL 字符串字面量使用。
+                model_cases.push(format!(
+                    "WHEN '{}' THEN '{}'",
+                    raw.replace('\'', "''"),
+                    model.replace('\'', "''")
+                ));
+            }
+            let (stats, total_cost, success_count) =
+                grouped.entry(model.clone()).or_insert_with(|| {
+                    (
+                        ModelStats {
+                            model,
+                            request_count: 0,
+                            total_tokens: 0,
+                            total_cost: String::new(),
+                            avg_cost_per_request: String::new(),
+                            success_rate: 0.0,
+                            speed_output_tokens: 0,
+                            speed_generation_ms: 0,
+                            est_speed_output_tokens: 0,
+                            est_speed_duration_ms: 0,
+                            first_token_median_ms: None,
+                            est_first_token_median_ms: None,
+                        },
+                        0.0,
+                        0,
+                    )
+                });
+            stats.request_count += count;
+            stats.total_tokens += tokens;
+            stats.speed_output_tokens += output;
+            stats.speed_generation_ms += ms;
+            stats.est_speed_output_tokens += est_output;
+            stats.est_speed_duration_ms += est_ms;
+            *total_cost += cost;
+            *success_count += successes;
+        }
+
+        // 首字时间按合并后的全部样本取中位数，不能平均各档位的中位数。
+        let median_model = if model_cases.is_empty() {
+            detail_model
+        } else {
+            format!(
+                "CASE {detail_model} {} ELSE {detail_model} END",
+                model_cases.join(" ")
             )
         };
-
-        let mut stmt = conn.prepare(&sql)?;
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = detail_params;
-        params.extend(rollup_params);
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let row_mapper = |row: &rusqlite::Row| {
-            let request_count: i64 = row.get(1)?;
-            let model: String = row.get(0)?;
-            let first_token_median_ms = first_token_ms.get(&model).copied();
-            let est_first_token_median_ms = est_first_token_ms.get(&model).copied();
-            let total_cost: f64 = row.get(3)?;
-            let avg_cost = if request_count > 0 {
-                total_cost / request_count as f64
-            } else {
-                0.0
-            };
-            let success_count: i64 = row.get(4)?;
-            let success_rate = if request_count > 0 {
-                (success_count as f32 / request_count as f32) * 100.0
-            } else {
-                0.0
-            };
-
-            Ok(ModelStats {
-                model,
-                request_count: request_count as u64,
-                total_tokens: row.get::<_, i64>(2)? as u64,
-                total_cost: format!("{total_cost:.6}"),
-                avg_cost_per_request: format!("{avg_cost:.6}"),
-                success_rate,
-                speed_output_tokens: row.get::<_, i64>(5)?.max(0) as u64,
-                speed_generation_ms: row.get::<_, i64>(6)?.max(0) as u64,
-                est_speed_output_tokens: row.get::<_, i64>(7)?.max(0) as u64,
-                est_speed_duration_ms: row.get::<_, i64>(8)?.max(0) as u64,
-                first_token_median_ms,
-                est_first_token_median_ms,
-            })
+        let detail_refs: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|p| p.as_ref()).collect();
+        let from_sql = format!("FROM proxy_request_logs l {detail_join}");
+        let medians = |eligible_sql: String| {
+            first_token_medians(
+                &conn,
+                &median_model,
+                &from_sql,
+                &detail_where,
+                &eligible_sql,
+                &detail_refs,
+            )
         };
-
-        let rows = stmt.query_map(param_refs.as_slice(), row_mapper)?;
-
-        let mut stats = Vec::new();
-        for row in rows {
-            stats.push(row?);
-        }
+        let first_token_ms = medians(first_token_eligible_sql("l"))?;
+        let est_first_token_ms = medians(est_first_token_eligible_sql("l"))?;
+        let mut stats: Vec<_> = grouped
+            .into_values()
+            .map(|(mut stat, cost, successes)| {
+                stat.total_cost = format!("{cost:.6}");
+                if stat.request_count > 0 {
+                    stat.avg_cost_per_request = format!("{:.6}", cost / stat.request_count as f64);
+                    stat.success_rate = successes as f32 / stat.request_count as f32 * 100.0;
+                } else {
+                    stat.avg_cost_per_request = "0.000000".to_string();
+                }
+                stat.first_token_median_ms = first_token_ms.get(&stat.model).copied();
+                stat.est_first_token_median_ms = est_first_token_ms.get(&stat.model).copied();
+                (stat, cost)
+            })
+            .collect();
+        stats.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.model.cmp(&b.0.model)));
+        let stats = stats.into_iter().map(|(stat, _)| stat).collect();
 
         Ok(stats)
     }
@@ -2130,13 +2221,14 @@ impl Database {
         // 与 Dashboard 顶部下拉筛选同口径：Provider 按展示名精确匹配（会话占位
         // 行如 "Claude (Session)" 也能命中），模型按有效计价模型匹配。
         push_provider_model_filters(
+            &conn,
             &mut conditions,
             &mut params,
             "l",
             "p",
             filters.provider_name.as_deref(),
             filters.model.as_deref(),
-        );
+        )?;
         if let Some(status) = filters.status_code {
             conditions.push("l.status_code = ?".to_string());
             params.push(Box::new(status as i64));
@@ -2895,8 +2987,17 @@ fn strip_model_date_suffix(model_id: &str) -> Option<String> {
     None
 }
 
+const REASONING_EFFORT_SUFFIXES: &[&str] =
+    &["-minimal", "-low", "-medium", "-high", "-xhigh", "-tiered"];
+
 fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
-    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
+    for suffix in REASONING_EFFORT_SUFFIXES {
+        // tiered 是 Gemini Flash 的档位接口名，不剥离其他模型的同名后缀。
+        if *suffix == "-tiered"
+            && !(model_id.starts_with("gemini-") && model_id.ends_with("-flash-tiered"))
+        {
+            continue;
+        }
         if let Some(stripped) = model_id.strip_suffix(suffix) {
             if !stripped.is_empty() {
                 return Some(stripped.to_string());
@@ -3007,6 +3108,189 @@ mod tests {
             )",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_flash_tiered_pricing_backfill_and_grouping() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO model_pricing VALUES
+                ('gemini-3.8-flash', 'Flash', '0.75', '3.75', '0.075', '0')",
+                [],
+            )?;
+            for (id, model) in [
+                ("tiered", "gemini-3.8-flash-tiered"),
+                ("medium", "gemini-3.8-flash-medium"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_session",
+                    model,
+                    "session_log",
+                    1000,
+                    100,
+                    200,
+                    0,
+                    0,
+                    200,
+                    "0",
+                )?;
+            }
+        }
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.8-flash")?,
+            2
+        );
+        let stats = db.get_model_stats(None, None, Some("agy"), None, Some("gemini-3.8-flash"))?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].model, "gemini-3.8-flash");
+        assert_eq!(stats[0].request_count, 2);
+        assert_eq!(stats[0].total_cost, "0.001650");
+        let detail = db.get_request_detail("tiered")?.expect("tiered request");
+        assert_eq!(detail.model, "gemini-3.8-flash-tiered");
+        assert_eq!(detail.total_cost_usd, "0.000825");
+        Ok(())
+    }
+
+    #[test]
+    fn test_reasoning_statistics_require_equal_prices() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing VALUES
+            ('gemini-3.8-flash', 'Flash', '0.75', '3.75', '0.075', '0'),
+            ('gemini-3.8-flash-high', 'High', '0.750', '3.750', '0.0750', '0.0'),
+            ('gemini-3.8-flash-low', 'Low', '0.75', '3.75', '0.15', '0'),
+            ('gemini-3.8-flash-minimal', 'Minimal', '0.75', '3.75', '0.075', '1'),
+            ('claude-opus-5-5', 'Opus', '4', '20', '0.2', '5')",
+            [],
+        )?;
+        for model in [
+            "gemini-3.8-flash-high",
+            "gemini-3.8-flash-medium",
+            "gemini-3.8-flash-tiered",
+        ] {
+            assert_eq!(statistics_model(&conn, model)?, "gemini-3.8-flash");
+        }
+        for model in [
+            "gemini-3.8-flash-low",
+            "gemini-3.8-flash-minimal",
+            "missing-high",
+            "gemini-3.5-flash-lite",
+            "custom-tiered",
+        ] {
+            assert_eq!(statistics_model(&conn, model)?, model);
+        }
+        assert_eq!(
+            statistics_model(&conn, "claude-opus-5.5-medium")?,
+            "claude-opus-5.5"
+        );
+        let tiered = find_model_pricing(&conn, "gemini-3.8-flash-tiered").expect("Flash pricing");
+        assert_eq!(tiered.input_cost_per_million.to_string(), "0.75");
+        assert_eq!(tiered.output_cost_per_million.to_string(), "3.75");
+        // 输入或输出差价同样不能合并。
+        for column in ["input_cost_per_million", "output_cost_per_million"] {
+            conn.execute(&format!("UPDATE model_pricing SET {column} = '99' WHERE model_id = 'gemini-3.8-flash-high'"), [])?;
+            assert_eq!(
+                statistics_model(&conn, "gemini-3.8-flash-high")?,
+                "gemini-3.8-flash-high"
+            );
+            conn.execute("UPDATE model_pricing SET input_cost_per_million = '0.75', output_cost_per_million = '3.75' WHERE model_id = 'gemini-3.8-flash-high'", [])?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_merged_reasoning_models_keep_totals_filters_and_medians() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let ts = local_ts(2026, 6, 10, 12, 0, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO model_pricing VALUES
+                ('gemini-4-argon', 'Argon', '2', '10', '0.1', '0')",
+                [],
+            )?;
+            for (id, model, first, cost) in [
+                ("base", "gemini-4-argon", 10, "1"),
+                ("high-1", "gemini-4-argon-high", 20, "2"),
+                ("high-2", "gemini-4-argon-high", 1000, "3"),
+                ("medium", "gemini-4-argon-medium", 2000, "4"),
+            ] {
+                insert_usage_log(
+                    &conn, id, "agy", "_session", model, "proxy", ts, 100, 200, 0, 0, 200, cost,
+                )?;
+                conn.execute("UPDATE proxy_request_logs SET first_token_ms = ?1, latency_ms = ?1 + 1000 WHERE request_id = ?2", params![first, id])?;
+            }
+            conn.execute("UPDATE proxy_request_logs SET model = 'routed-alias', pricing_model = 'gemini-4-argon-medium' WHERE request_id = 'medium'", [])?;
+            conn.execute("INSERT INTO usage_daily_rollups (
+                date, app_type, provider_id, model, request_count, success_count,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, avg_latency_ms
+            ) VALUES ('2026-06-08', 'agy', '_session', 'gemini-4-argon-high', 2, 1, 200, 400, 0, 0, '5', 1000)", [])?;
+        }
+        let stats = db.get_model_stats(None, None, Some("agy"), None, None)?;
+        assert_eq!(stats.len(), 1);
+        let stat = &stats[0];
+        assert_eq!(stat.model, "gemini-4-argon");
+        assert_eq!(stat.request_count, 6);
+        assert_eq!(stat.total_tokens, 1800);
+        assert_eq!(stat.total_cost, "15.000000");
+        assert_eq!(stat.avg_cost_per_request, "2.500000");
+        assert!((stat.success_rate - 500.0 / 6.0).abs() < 0.001);
+        assert_eq!(stat.speed_output_tokens, 800);
+        assert_eq!(stat.speed_generation_ms, 4000);
+        assert_eq!(stat.first_token_median_ms, Some(510));
+        let model = Some("gemini-4-argon");
+        let summary = db.get_usage_summary(None, None, Some("agy"), None, model)?;
+        assert_eq!(summary.total_requests, 6);
+        assert_eq!(summary.total_cost, "15.000000");
+        assert_eq!(
+            db.get_usage_summary_by_app(None, None, None, model)?[0]
+                .summary
+                .total_requests,
+            6
+        );
+        assert_eq!(
+            db.get_provider_stats(None, None, Some("agy"), None, model)?[0].request_count,
+            6
+        );
+        assert_eq!(
+            db.get_model_stats(None, None, Some("agy"), None, model)?[0].request_count,
+            6
+        );
+        assert_eq!(
+            db.get_first_usage_date(Some("agy"), None, model)?
+                .as_deref(),
+            Some("2026-06-08")
+        );
+        let trends = db.get_daily_trends(
+            Some(local_ts(2026, 6, 8, 0, 0, 0)),
+            Some(ts + 1),
+            Some("agy"),
+            None,
+            model,
+        )?;
+        assert_eq!(trends.iter().map(|t| t.request_count).sum::<u64>(), 6);
+        let hourly =
+            db.get_daily_trends(Some(ts - 3600), Some(ts + 1), Some("agy"), None, model)?;
+        assert_eq!(hourly.iter().map(|t| t.request_count).sum::<u64>(), 4);
+        let logs = db.get_request_logs(
+            &LogFilters {
+                model: model.map(str::to_string),
+                ..Default::default()
+            },
+            0,
+            10,
+        )?;
+        assert_eq!(logs.total, 4);
+        assert!(logs.data.iter().any(|l| l.model == "gemini-4-argon-high"));
+        assert!(logs.data.iter().any(|l| l.model == "routed-alias"));
         Ok(())
     }
 
