@@ -385,6 +385,7 @@ fn quota_status(status: CredentialStatus, message: &str) -> SubscriptionQuota {
         tiers: vec![],
         extra_usage: None,
         reset_credits: None,
+        membership: None,
         credits_balance: None,
         error: None,
         queried_at: Some(chrono::Utc::now().timestamp_millis()),

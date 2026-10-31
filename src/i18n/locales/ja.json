@@ -4146,6 +4146,12 @@
     "suggestedDefaultsHint": "このプリセットの推奨デフォルトモデル設定を使用します"
   },
   "subscription": {
+    "membership": {
+      "validUntil": "{{plan}} · サブスクリプション有効期限 {{date}}",
+      "expired": "{{plan}} · サブスクリプションは {{date}} に期限切れ",
+      "unavailable": "{{plan}} · サブスクリプション有効期限を取得できません",
+      "hint": "会員の有効期限は利用枠のリセットやログイントークンの有効期限とは異なります。自動更新の状態は ChatGPT のサブスクリプション管理で確認してください。"
+    },
     "title": "サブスクリプションクォータ",
     "short": {
       "fiveHour": "5h",
