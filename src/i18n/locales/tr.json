@@ -1049,6 +1049,7 @@
     "toolUpgradeUnanchoredHint": "Komut satırınızın hangi yüklemeyi kullandığı belirlenemiyor; varsayılan yükseltme komutunu çalıştıracaktır (PATH'deki ilk npm'ye yüklenebilir).",
     "toolUpgradeUnmanagedTitle": "Bu araçların yükseltilmesi atlandı",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}), npm veya tanınan bir yükleyici tarafından kurulmadığından CC Switch, onu nasıl yükselteceğini söyleyemez. Kurulum şeklinizi yükseltin (örn. Winget, Scoop veya resmi kurulum betiğini yeniden çalıştırın).",
+    "toolUpgradeDesktopManagedDetail": "Bu OpenCode CLI, OpenCode Desktop ile birlikte gelir ve Desktop uygulamasıyla güncellenir.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Windows",
