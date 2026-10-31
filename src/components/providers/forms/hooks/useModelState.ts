@@ -4,9 +4,9 @@ interface UseModelStateProps {
   settingsConfig: string;
   onConfigChange: (config: string) => void;
   /**
-   * 现读当前配置。latestConfigRef 只在渲染期从 settingsConfig 快照赋值，而写
-   * settingsConfig 不触发重渲染，所以别处（JSON 编辑器、通用配置合并）的改动
-   * 不会进入那个 ref。改模型时若基于它重建整份 JSON 会把那些改动覆盖回去。
+   * 现读当前配置。latestConfigRef 只在渲染期从 settingsConfig 快照赋值，可能
+   * 早于别处（如 JSON 编辑器）的写入。改模型时若基于它重建整份 JSON 会把那些
+   * 改动覆盖回去。
    */
   getSettingsConfig?: () => string;
 }

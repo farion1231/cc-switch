@@ -14,10 +14,9 @@ interface UseBaseUrlStateProps {
   onSettingsConfigChange: (config: string) => void;
   onCodexConfigChange?: (config: string) => void;
   /**
-   * 现读当前配置。`settingsConfig` 是调用方在渲染期取的快照，而写入
-   * settingsConfig 不会触发重渲染，所以别处（JSON 编辑器、通用配置片段合并）
-   * 写进去的改动不会反映到那份快照里。改 Base URL 时若基于旧快照重建整份
-   * JSON，就会把那些改动覆盖回去。传入本 getter 即可在事件发生时现读。
+   * 现读当前配置。`settingsConfig` 是调用方在渲染期取的快照，可能早于别处
+   * （如 JSON 编辑器）的写入。改 Base URL 时若基于旧快照重建整份 JSON，就会
+   * 把那些改动覆盖回去。传入本 getter 即可在事件发生时现读。
    */
   getSettingsConfig?: () => string;
 }

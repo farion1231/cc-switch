@@ -21,8 +21,8 @@ interface UseTemplateValuesProps {
   settingsConfig: string;
   onConfigChange: (config: string) => void;
   /**
-   * 现读当前配置。`settingsConfig` 是调用方渲染期取的快照，而写 settingsConfig
-   * 不触发重渲染，套用模板变量时基于旧快照重建整份配置会覆盖别处的改动。
+   * 现读当前配置。`settingsConfig` 是调用方渲染期取的快照，可能早于别处（如
+   * JSON 编辑器）的写入，套用模板变量时基于旧快照重建整份配置会覆盖那些改动。
    */
   getSettingsConfig?: () => string;
 }

@@ -10,8 +10,8 @@ interface UseApiKeyStateProps {
   initialConfig?: string;
   onConfigChange: (config: string) => void;
   /**
-   * 现读当前配置。`initialConfig` 是调用方渲染期取的快照，而写 settingsConfig
-   * 不触发重渲染，改 API Key 时若基于旧快照重建整份 JSON 会覆盖别处的改动。
+   * 现读当前配置。`initialConfig` 是调用方渲染期取的快照，可能早于别处（如 JSON
+   * 编辑器）的写入，改 API Key 时若基于旧快照重建整份 JSON 会覆盖那些改动。
    */
   getConfig?: () => string;
   selectedPresetId: string | null;

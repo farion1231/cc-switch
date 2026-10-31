@@ -514,9 +514,9 @@ function ProviderFormFull({
     [form],
   );
 
-  // settingsConfig is not subscribed through register/Controller, so writes do
-  // not trigger a render. Event handlers must read the current value instead of
-  // rebuilding JSON from a render-time snapshot.
+  // Event handlers must read the current settingsConfig instead of rebuilding
+  // JSON from a render-time snapshot: the JSON editor writes through
+  // form.setValue, and a snapshot taken during render can predate those edits.
   const getSettingsConfig = useCallback(
     () => form.getValues("settingsConfig"),
     [form],
@@ -1463,11 +1463,12 @@ function ProviderFormFull({
 
     const { baseUrl: submitBaseUrl, apiKey: submitApiKey } =
       readSubmitTimeCredentials();
+    // Same rule as isCopilotProvider, but with the submit-time base URL.
     const isCopilotProviderAtSubmit =
-      appId === "claude" &&
-      (presetProviderType === "github_copilot" ||
-        initialProviderType === "github_copilot" ||
-        submitBaseUrl.includes("githubcopilot.com"));
+      (appId === "codex" && hasManagedCopilotIdentity) ||
+      (appId === "claude" &&
+        (hasManagedCopilotIdentity ||
+          submitBaseUrl.includes("githubcopilot.com")));
 
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
     if (isCopilotProviderAtSubmit && isCopilotStatusError) {
@@ -1952,10 +1953,10 @@ function ProviderFormFull({
     }
 
     const isCopilotProviderForSubmit =
-      appId === "claude" &&
-      (presetProviderType === "github_copilot" ||
-        initialProviderType === "github_copilot" ||
-        readSubmitTimeCredentials().baseUrl.includes("githubcopilot.com"));
+      (appId === "codex" && hasManagedCopilotIdentity) ||
+      (appId === "claude" &&
+        (hasManagedCopilotIdentity ||
+          readSubmitTimeCredentials().baseUrl.includes("githubcopilot.com")));
     const providerType = isCopilotProviderForSubmit
       ? "github_copilot"
       : isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound
