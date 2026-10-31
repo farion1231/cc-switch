@@ -487,6 +487,8 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     format!(
         "NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            AND {log_alias}.status_code >= 200
+            AND {log_alias}.status_code < 300
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -529,7 +531,7 @@ const DEDUP_SESSION_SOURCES_SQL: &str =
 /// Dashboard 读路径用的去重条件：语义和 [`effective_usage_log_filter`] 完全一致，
 /// 只是先看时间窗口里两类日志各有多少，再挑便宜的写法。
 ///
-/// - 窗口里没有成功的代理日志、或没有会话日志：不可能有重复，直接不加条件。
+/// - 窗口里没有成功的代理日志、或没有成功的会话日志：不可能有重复，直接不加条件。
 /// - 代理日志更少：先从代理日志出发找出重复的会话行（一次性子查询），
 ///   主查询只做 `rowid NOT IN`，不再逐行关联。会话日志占绝大多数时快很多。
 /// - 会话日志更少：保留原来的逐行 `EXISTS`。
@@ -555,6 +557,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
                 COALESCE(SUM(CASE WHEN {data_source} = 'proxy'
                     AND c.status_code >= 200 AND c.status_code < 300 THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN {data_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+                    AND c.status_code >= 200 AND c.status_code < 300
                     THEN 1 ELSE 0 END), 0)
              FROM proxy_request_logs c
              WHERE c.created_at BETWEEN ?1 AND ?2"
@@ -582,6 +585,8 @@ pub(crate) fn effective_usage_log_filter_for_range(
                      CASE WHEN dedup_p.app_type = 'claude-desktop' THEN 'claude' ELSE dedup_p.app_type END
                  )
              AND {ds_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+             AND dedup_s.status_code >= 200
+             AND dedup_s.status_code < 300
              AND dedup_s.input_tokens = dedup_p.input_tokens
              AND dedup_s.output_tokens = dedup_p.output_tokens
              AND dedup_s.cache_read_tokens = dedup_p.cache_read_tokens
@@ -774,6 +779,51 @@ pub(crate) fn has_matching_proxy_usage_log(
             )
         })
         .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
+}
+
+// Claude 结构化错误没有可用于指纹匹配的 token/model 用量；代理侧与会话侧
+// 只能用应用、HTTP 状态、时间和会话身份关联。session_id 可用时必须精确匹配，
+// 避免十分钟窗口内同状态码的独立失败互相吞掉；旧数据缺会话身份时才退化为
+// 维护者要求的 app_type + status_code + 时间窗匹配。
+static MATCHING_PROXY_ERROR_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
+    let l_data_source = data_source_expr("l");
+    let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE {l_data_source} = 'proxy'
+              AND {app_type_match}
+              AND l.status_code = ?2
+              AND l.status_code >= 400
+              AND l.created_at BETWEEN ?3 - ?4 AND ?3 + ?4
+              AND (?5 IS NULL OR NULLIF(TRIM(l.session_id), '') = ?5)
+        )"
+    )
+});
+
+pub(crate) fn has_matching_proxy_error_log(
+    conn: &Connection,
+    app_type: &str,
+    status_code: i64,
+    created_at: i64,
+    session_id: Option<&str>,
+) -> Result<bool, AppError> {
+    let session_id = session_id.map(str::trim).filter(|value| !value.is_empty());
+    conn.prepare_cached(&MATCHING_PROXY_ERROR_LOG_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    app_type,
+                    status_code,
+                    created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                    session_id,
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|e| AppError::Database(format!("查询重复代理错误日志失败: {e}")))
 }
 
 /// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
@@ -3377,6 +3427,67 @@ mod tests {
     }
 
     #[test]
+    fn test_matching_proxy_error_log_uses_status_session_and_window() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "desktop-proxy-error",
+            "claude-desktop",
+            "anthropic",
+            "claude-sonnet-4-5",
+            "proxy",
+            1_000,
+            0,
+            0,
+            0,
+            0,
+            403,
+            "0",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET session_id = 'session-error'
+             WHERE request_id = 'desktop-proxy-error'",
+            [],
+        )?;
+
+        assert!(has_matching_proxy_error_log(
+            &conn,
+            "claude",
+            403,
+            1_060,
+            Some("session-error")
+        )?);
+        assert!(!has_matching_proxy_error_log(
+            &conn,
+            "claude",
+            401,
+            1_060,
+            Some("session-error")
+        )?);
+        assert!(!has_matching_proxy_error_log(
+            &conn,
+            "claude",
+            403,
+            1_060,
+            Some("another-session")
+        )?);
+        assert!(!has_matching_proxy_error_log(
+            &conn,
+            "claude",
+            403,
+            1_601,
+            Some("session-error")
+        )?);
+        // 旧会话日志没有 session_id 时仍按维护者要求退化到状态码 + 时间窗。
+        assert!(has_matching_proxy_error_log(
+            &conn, "claude", 403, 1_060, None
+        )?);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_effective_filter_dedups_claude_session_against_desktop_proxy() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         create_legacy_nullable_logs_table(&conn)?;
@@ -3396,6 +3507,58 @@ mod tests {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(request_ids, vec!["desktop-proxy"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filters_keep_failed_session_even_when_tokens_match_proxy(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        for (request_id, data_source, status_code, created_at, input_tokens) in [
+            ("proxy-zero", "proxy", 200, 1_000, 0),
+            // Claude 非代理 API 错误通常四项 token 都为 0；不能被相邻的成功
+            // proxy 零 token 行当作跨源重复而隐藏。
+            ("session-error", "session_log", 403, 1_060, 0),
+            // 让优化路径选择 rowid NOT IN，覆盖两种过滤器的同一语义。
+            ("session-success-unrelated", "session_log", 200, 2_000, 1),
+        ] {
+            insert_usage_log(
+                &conn,
+                request_id,
+                "claude",
+                if data_source == "proxy" {
+                    "anthropic"
+                } else {
+                    "_session"
+                },
+                "claude-sonnet-4-5",
+                data_source,
+                created_at,
+                input_tokens,
+                0,
+                0,
+                0,
+                status_code,
+                "0",
+            )?;
+        }
+
+        let ranged = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        assert!(ranged.contains("NOT IN"));
+        for filter in [effective_usage_log_filter("l"), ranged] {
+            let ids = conn
+                .prepare(&format!(
+                    "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+                ))?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                ids,
+                ["proxy-zero", "session-error", "session-success-unrelated"]
+            );
+        }
 
         Ok(())
     }
