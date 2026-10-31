@@ -1723,6 +1723,23 @@ requires_openai_auth = true`,
     iconColor: "#0078D4",
   },
   {
+    // OpenAI 平台 API Key 直连（按量计费，和上面的 ChatGPT 登录卡是两套额度）。
+    // api.openai.com 已在原生 Responses 白名单里，GPT 行由后端镜像官方目录，不另写 modelCatalog。
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "openai",
+      "https://api.openai.com/v1",
+      "gpt-6.1-sol",
+    ),
+    endpointCandidates: ["https://api.openai.com/v1"],
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",

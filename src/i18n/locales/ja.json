@@ -1611,6 +1611,13 @@
     "openReleaseNotesFailed": "リリースノートを開けませんでした:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "設定ファイル {{path}}（このプロバイダーのみ）",
+      "hint": "このプロバイダーの部分をアプリ本来の形式で表示し、保存時にこのファイルへ書き込みます。デフォルトモデルなどのグローバル設定はここにはありません。ここに書いたコメントは保存されません。",
+      "invalid": "{{format}} の形式が正しくありません：{{error}}",
+      "scope": "ここには {{section}} ノードだけを書けます。プロバイダーキーは上の欄で変更してください。",
+      "schema": "型が正しくない項目があります。上のフォームと照らし合わせて確認してください。"
+    },
     "supplierName": "プロバイダー名",
     "supplierNameRequired": "プロバイダー名 *",
     "supplierNamePlaceholder": "例: Anthropic Official",
@@ -1829,6 +1836,11 @@
     "customUserAgentHelp": "プロバイダーへ転送するリクエストの User-Agent を置き換えます。",
     "localProxyRequestOverridesHelp": "形式変換後に上流へ送るリクエストに適用されます。",
     "apiFormatHelp": "プロバイダーがネイティブ対応するプロトコルを選びます。Anthropic Messages はそのまま転送して変換なし、他の三つはルーティングが Anthropic Messages に変換します。",
+    "reasoningEffort": "思考レベル",
+    "reasoningEffortHelp": "ルーティングが OpenAI 形式に変換するとき、クライアントで選んだ思考レベルを上流にどう送るかを決めます。自動：上流が対応するレベルで送ります。判別できない上流には最大 high まで送り、思考をオフにしたときは送りません。そのまま送信：クライアントで選んだレベルをそのまま送ります。上流が xhigh や max に対応していない場合はエラーになります。送信しない：上流がこのパラメータでエラーを返す場合に選びます。",
+    "reasoningEffortAuto": "自動（推奨）",
+    "reasoningEffortOff": "送信しない",
+    "reasoningEffortPassthrough": "そのまま送信",
     "directModeFormatInUse": "このカードは直結で使用中です。この形式で保存するとリクエストが失敗します。先にルーティングか集約に切り替えてください。",
     "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。"
   },
@@ -4838,7 +4850,7 @@
       "sourceRepos": "リポジトリ · {{count}}",
       "reload": "リポジトリを読み直す",
       "listLabel": "インストールできる Skill",
-      "installed": "インストール済み · {{count}} アプリ",
+      "installed": "インストール済み",
       "installedAria": "{{name}} は {{count}} アプリにインストール済み。「インストール済み」で表示",
       "dirTaken": "フォルダー名は {{name}}（{{source}}）が使用中",
       "installing": "インストール中",
@@ -5029,6 +5041,8 @@
     },
     "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
     "contextSize": "コンテキスト長",
+    "configTomlScope": "ここには [providers.{{key}}] とそれに属する [models.*] テーブルだけを書けます。プロバイダーキーは上の欄で変更してください。",
+    "configTomlSchema": "設定が不完全です：プロバイダーの type と、各モデルの model・max_context_size（正の整数）を確認してください。",
     "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
     "empty": {
       "title": "Kimi Code プロバイダーを追加",
