@@ -64,30 +64,54 @@ fn is_opencode_upstream(upstream_host: Option<&str>) -> bool {
         .is_some_and(|host| host == "opencode.ai" || host.ends_with(".opencode.ai"))
 }
 
-/// Derive a session id that stays **stable within one conversation**: a digest
-/// of the system prompt plus the first user message.
-///
-/// The gateway uses the session id for upstream routing and prompt caching, so
-/// it must not change between the turns of a conversation. Claude Desktop hands
-/// CC Switch a fresh id on every request, which defeats that; hashing the
-/// conversation prefix keeps the id stable while still separating conversations.
-fn conversation_fingerprint(body: &Value) -> Option<String> {
-    let mut hasher = Sha256::new();
-    let mut fed = false;
-    if let Some(system) = body.get("system") {
-        hasher.update(without_cache_control(system).to_string().as_bytes());
-        fed = true;
+/// The first user turn of a request, whichever shape it arrived in: `messages`
+/// (Anthropic Messages / OpenAI Chat) or `input` (Codex Responses, where it is
+/// usually a list of items and occasionally a bare string).
+fn first_user_message(body: &Value) -> Option<Value> {
+    if let Some(input) = body.get("input") {
+        if let Some(text) = input.as_str() {
+            return Some(Value::String(text.to_string()));
+        }
+        if let Some(item) = input.as_array().and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+        }) {
+            return Some(item.clone());
+        }
     }
-    if let Some(first_user) = body
-        .get("messages")
+    body.get("messages")
         .and_then(Value::as_array)
         .and_then(|messages| {
             messages
                 .iter()
                 .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
         })
-    {
-        hasher.update(without_cache_control(first_user).to_string().as_bytes());
+        .cloned()
+}
+
+/// Derive a session id that stays **stable within one conversation**: a digest of
+/// the conversation prefix - its instructions plus the first user message.
+///
+/// The gateway uses the session id for upstream routing and prompt caching, so it
+/// must not change between the turns of a conversation. Claude Desktop hands CC
+/// Switch a fresh id on every request, which defeats that; hashing the
+/// conversation prefix keeps the id stable while still separating conversations.
+///
+/// Both request shapes are covered, because Codex reaches the same OpenCode
+/// gateway: Anthropic Messages carries `system` + `messages`, Codex Responses
+/// carries `instructions` + `input`.
+fn conversation_fingerprint(body: &Value) -> Option<String> {
+    let mut hasher = Sha256::new();
+    let mut fed = false;
+    for key in ["system", "instructions"] {
+        if let Some(prefix) = body.get(key).filter(|value| !value.is_null()) {
+            hasher.update(without_cache_control(prefix).to_string().as_bytes());
+            fed = true;
+        }
+    }
+    if let Some(first_user) = first_user_message(body) {
+        hasher.update(without_cache_control(&first_user).to_string().as_bytes());
         fed = true;
     }
     if !fed {
@@ -117,21 +141,38 @@ fn native_session_header(headers: &http::HeaderMap) -> Option<&str> {
     })
 }
 
-/// Pick the value for `x-opencode-session`, most stable identity first: a native
-/// session header the client already sends, the client-provided session id, the
-/// conversation fingerprint, then the generated id.
+/// Pick the value for `x-opencode-session`: the most stable identity first (a
+/// native session header the client already sends, the client-provided session
+/// id, the conversation fingerprint, then the generated id), scoped by the
+/// conversation fingerprint.
+///
+/// The base identity is stable for the whole client session, but Claude Code runs
+/// its subagents under the parent's session id while every agent carries its own
+/// conversation prefix. The gateway caches one prefix set per session id, so a
+/// shared id makes agents evict each other's prefixes and the whole session falls
+/// back to paying full price for fresh input. Appending the fingerprint gives each
+/// agent its own cache namespace; it is left off when the fingerprint *is* the
+/// base, so clients that send nothing keep the id they had before.
 fn pick_opencode_session<'a>(
     native: Option<&'a str>,
     client_provided: Option<&'a str>,
     fingerprint: Option<&'a str>,
     generated: &'a str,
 ) -> Option<String> {
-    [native, client_provided, fingerprint, Some(generated)]
+    let base = [native, client_provided, fingerprint, Some(generated)]
         .into_iter()
         .flatten()
         .map(str::trim)
-        .find(|value| !value.is_empty())
-        .map(str::to_string)
+        .find(|value| !value.is_empty())?;
+    let scope = fingerprint
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != base)
+        .map(|value| value.strip_prefix("ccsw-").unwrap_or(value))
+        .map(|value| value.get(..8).unwrap_or(value));
+    Some(match scope {
+        Some(scope) => format!("{base}--{scope}"),
+        None => base.to_string(),
+    })
 }
 
 /// Clone `value` without any `cache_control` key, at any depth.
@@ -1484,20 +1525,21 @@ impl RequestForwarder {
         // injection site below). It has to be derived here: `mapped_body` is moved
         // by the format conversion further down.
         //
-        // Only that upstream consumes it, and only when the client neither sent
-        // `x-opencode-session` nor supplied a session id, so guard the work: the
-        // digest serialises the system prompt plus the first user message, which
-        // routinely carry files and images and can reach megabytes. The host check
-        // uses `base_url` - none of the URL-construction branches below rewrites the
-        // authority (the only one that replaces the host wholesale is Copilot's
-        // dynamic endpoint, which points at GitHub, never opencode.ai).
+        // Only that upstream consumes it, and only when the client did not send
+        // `x-opencode-session` itself. It is derived even when the client supplied
+        // a session id: that id is shared by every agent in the session, and the
+        // fingerprint is what separates their cache namespaces. The digest
+        // serialises the system prompt plus the first user message, which routinely
+        // carry files and images and can reach megabytes - paid on every OpenCode
+        // request. The host check uses `base_url` - none of the URL-construction
+        // branches below rewrites the authority (the only one that replaces the host
+        // wholesale is Copilot's dynamic endpoint, which points at GitHub, never
+        // opencode.ai).
         let base_url_host = base_url
             .parse::<http::Uri>()
             .ok()
             .and_then(|u| u.authority().map(|a| a.to_string()));
-        let opencode_conversation_fingerprint = if !self.session_client_provided
-            && !headers.contains_key("x-opencode-session")
-            && native_session_header(headers).is_none()
+        let opencode_conversation_fingerprint = if !headers.contains_key("x-opencode-session")
             && is_opencode_upstream(base_url_host.as_deref())
         {
             conversation_fingerprint(&mapped_body)
@@ -4702,15 +4744,65 @@ mod tests {
     }
 
     #[test]
+    fn conversation_fingerprint_reads_the_codex_responses_shape() {
+        // Codex reaches the same OpenCode gateway, but its body is a Responses
+        // payload - `instructions` + `input`, with no `system` or `messages` - so
+        // the Anthropic-shaped reader alone would leave it with a session-wide id.
+        let turn1 = json!({
+            "instructions": "You are Codex.",
+            "input": [
+                {"type": "message", "role": "user",
+                 "content": [{"type": "input_text", "text": "task one"}]}
+            ]
+        });
+        // Later turns append items; instructions and the first user item stay put.
+        let turn2 = json!({
+            "instructions": "You are Codex.",
+            "input": [
+                {"type": "message", "role": "user",
+                 "content": [{"type": "input_text", "text": "task one"}]},
+                {"type": "message", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "ok"}]},
+                {"type": "function_call_output", "call_id": "c1", "output": "{}"}
+            ]
+        });
+        let other = json!({
+            "instructions": "You are Codex.",
+            "input": [
+                {"type": "message", "role": "user",
+                 "content": [{"type": "input_text", "text": "task two"}]}
+            ]
+        });
+
+        let a = conversation_fingerprint(&turn1).expect("fingerprint");
+        let b = conversation_fingerprint(&turn2).expect("fingerprint");
+        let c = conversation_fingerprint(&other).expect("fingerprint");
+        assert_eq!(a, b, "one Codex conversation must keep a single session id");
+        assert_ne!(
+            a, c,
+            "different Codex conversations must not share a session id"
+        );
+    }
+
+    #[test]
+    fn conversation_fingerprint_reads_a_plain_string_input() {
+        // Simpler Responses payloads send `input` as a bare string, not a list.
+        let a = conversation_fingerprint(&json!({"input": "task one"})).expect("fingerprint");
+        let b = conversation_fingerprint(&json!({"input": "task two"})).expect("fingerprint");
+        assert_ne!(a, b, "a string input still separates conversations");
+    }
+
+    #[test]
     fn opencode_session_precedence() {
-        // native client header > client-provided id > fingerprint > generated id
+        // native client header > client-provided id > fingerprint > generated id,
+        // each scoped by the conversation fingerprint.
         assert_eq!(
             pick_opencode_session(Some("native"), Some("client"), Some("fp"), "gen").as_deref(),
-            Some("native")
+            Some("native--fp")
         );
         assert_eq!(
             pick_opencode_session(None, Some("client"), Some("fp"), "gen").as_deref(),
-            Some("client")
+            Some("client--fp")
         );
         assert_eq!(
             pick_opencode_session(None, None, Some("fp"), "gen").as_deref(),
@@ -4726,6 +4818,161 @@ mod tests {
             Some("gen")
         );
         assert_eq!(pick_opencode_session(None, None, None, "  "), None);
+    }
+
+    #[test]
+    fn opencode_session_scopes_the_client_id_with_the_conversation() {
+        // One client session running several agents: the parent and each agent
+        // carry the same client id, so the fingerprint is what keeps them in
+        // separate cache namespaces.
+        let parent = pick_opencode_session(None, Some("sess-1"), Some("ccsw-aaaaaaaa1111"), "gen");
+        let agent = pick_opencode_session(None, Some("sess-1"), Some("ccsw-bbbbbbbb2222"), "gen");
+        assert_eq!(parent.as_deref(), Some("sess-1--aaaaaaaa"));
+        assert_eq!(agent.as_deref(), Some("sess-1--bbbbbbbb"));
+        assert_ne!(parent, agent, "agents must not share a cache namespace");
+        // The id keeps the client's identity, so the gateway still sees one session.
+        assert!(parent.unwrap().starts_with("sess-1--"));
+        // A fingerprint that already is the id is not appended to itself.
+        assert_eq!(
+            pick_opencode_session(None, None, Some("ccsw-aaaaaaaa1111"), "gen").as_deref(),
+            Some("ccsw-aaaaaaaa1111")
+        );
+        // The scope is the fingerprint's first eight characters (the `ccsw-`
+        // prefix is not repeated); a shorter digest is used whole.
+        assert_eq!(
+            pick_opencode_session(None, Some("sess-1"), Some("ccsw-ab"), "gen").as_deref(),
+            Some("sess-1--ab")
+        );
+    }
+
+    #[test]
+    fn concurrent_agents_in_one_session_get_separate_cache_namespaces() {
+        // A client session runs its subagents under the parent's session id, so the
+        // client-supplied id is identical for every agent. Under concurrency each
+        // agent must still land in its own cache namespace; sharing one is what made
+        // the gateway serve a 20-subagent session at 25% cache-read hit instead of
+        // 92% (`pick_opencode_session`).
+        //
+        // Both request shapes reach the same gateway: Claude Code and Claude Desktop
+        // send Anthropic Messages, Codex sends a Responses payload.
+        const SESSION: &str = "1eee7ad5-6764-4cc5-95b9-a606e19d81e0";
+        const AGENTS_PER_SHAPE: usize = 4;
+        const TURNS: usize = 25;
+
+        fn anthropic_turn(agent: usize, turn: usize) -> Value {
+            let mut messages = vec![json!({"role": "user", "content": format!("task {agent}")})];
+            for step in 0..turn {
+                messages.push(json!({"role": "assistant", "content": format!("step {step}")}));
+                messages.push(json!({"role": "user", "content": format!("next {step}")}));
+            }
+            json!({"system": "You are a subagent.", "messages": messages})
+        }
+
+        fn responses_turn(agent: usize, turn: usize) -> Value {
+            let mut input = vec![json!({
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": format!("task {agent}")}]
+            })];
+            for step in 0..turn {
+                input.push(json!({
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": format!("step {step}")}]
+                }));
+                input.push(json!({
+                    "type": "message", "role": "user",
+                    "content": [{"type": "input_text", "text": format!("next {step}")}]
+                }));
+            }
+            json!({"instructions": "You are a subagent.", "input": input})
+        }
+
+        type TurnBuilder = fn(usize, usize) -> Value;
+
+        let shapes: [TurnBuilder; 2] = [anthropic_turn, responses_turn];
+        let agents: Vec<(TurnBuilder, usize)> = shapes
+            .iter()
+            .flat_map(|shape| (0..AGENTS_PER_SHAPE).map(move |agent| (*shape, agent)))
+            .collect();
+
+        // Reference digests, computed single-threaded.
+        let reference: Vec<String> = agents
+            .iter()
+            .map(|(shape, agent)| {
+                conversation_fingerprint(&shape(*agent, TURNS - 1)).expect("fingerprint")
+            })
+            .collect();
+        let reference = &reference;
+
+        // Every agent works concurrently, all carrying the same client session id.
+        let ids: Vec<Vec<String>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = agents
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    let (shape, agent) = *entry;
+                    scope.spawn(move || {
+                        (0..TURNS)
+                            .map(|turn| {
+                                let fingerprint = conversation_fingerprint(&shape(agent, turn))
+                                    .expect("fingerprint");
+                                assert_eq!(
+                                    fingerprint, reference[index],
+                                    "the digest must not depend on thread or on how far the conversation has grown"
+                                );
+                                pick_opencode_session(
+                                    None,
+                                    Some(SESSION),
+                                    Some(&fingerprint),
+                                    "generated",
+                                )
+                                .expect("session")
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("worker thread panicked"))
+                .collect()
+        });
+
+        for (index, per_turn) in ids.iter().enumerate() {
+            assert!(
+                per_turn.iter().all(|id| id == &per_turn[0]),
+                "agent {index} must keep one namespace while its conversation grows: {per_turn:?}"
+            );
+            assert!(
+                per_turn[0].starts_with(&format!("{SESSION}--")),
+                "agent {index} keeps the client session as its base: {}",
+                per_turn[0]
+            );
+        }
+
+        let agent_ids: Vec<String> = ids.iter().map(|per_turn| per_turn[0].clone()).collect();
+        let mut unique = agent_ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            agent_ids.len(),
+            unique.len(),
+            "concurrent agents must not share a cache namespace, Anthropic and Codex requests alike: {unique:?}"
+        );
+
+        // The parent is one more conversation on the same session id, and must not
+        // be dragged into a subagent's namespace.
+        let parent_fingerprint = conversation_fingerprint(&json!({
+            "system": "You are Claude Code.",
+            "messages": [{"role": "user", "content": "help me"}]
+        }))
+        .expect("fingerprint");
+        let parent =
+            pick_opencode_session(None, Some(SESSION), Some(&parent_fingerprint), "generated")
+                .expect("session");
+        assert!(
+            !agent_ids.contains(&parent),
+            "the parent must not share a namespace with a subagent: {parent}"
+        );
     }
 
     #[test]
