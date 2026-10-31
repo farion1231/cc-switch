@@ -284,6 +284,32 @@ describe("AppsPage concurrent CLI upgrades", () => {
       });
   });
 
+  it("waits for Codex loading even while the check-updates label is hidden in the DOM", async () => {
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    const codexReady = deferred<void>();
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      if (tools.includes("codex")) await codexReady.promise;
+      return getVersions(tools);
+    });
+    // Finish the first dynamic import before starting a DOM wait. Under the full
+    // suite, transforming AppsPage can take longer than findByText's timeout.
+    await import("@/components/apps/AppsPage");
+    const loading = renderApps();
+    expect(await screen.findByText("appsPage.checkUpdates")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(
+      screen.queryByRole("button", { name: "appsPage.checkUpdates" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "appsPage.checking" }),
+    ).toBeDisabled();
+    await act(async () => codexReady.resolve());
+    await loading;
+    expect(updateButton("Codex")).toBeEnabled();
+  });
+
   it("copies only the selected application's manual command and switches installation methods", async () => {
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
