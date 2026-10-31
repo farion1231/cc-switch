@@ -676,9 +676,10 @@ export function SwitchModePanel({
         <StackSettingsSheet
           open={stackSettingsOpen}
           onOpenChange={setStackSettingsOpen}
-          // 默认那家不发布 `ccs-*` 模型
+          // 官方默认供应商使用已发布的不带前缀的模型。
           models={(stack?.subagentModels ?? []).filter(
-            (model) => model.providerId !== routeId,
+            (model) =>
+              model.providerId !== routeId || !model.id.startsWith("ccs-"),
           )}
           // 官方做默认那家时，合并目录里有官方的 codex-auto-review，自动审批默认用它
           routeOfficial={

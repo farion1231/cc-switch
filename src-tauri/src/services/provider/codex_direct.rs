@@ -706,6 +706,8 @@ pub(crate) fn plan(
     }
     if let Some(catalog) = &stack_catalog {
         let (model, effort) = crate::settings::codex_stack_subagent();
+        // 原生 slug 只对应官方默认那家：默认换成第三方后，同名的第三方模型不能顶替。
+        let model = model.filter(|m| m.starts_with("ccs-") || provider.is_some_and(is_official));
         nested.extend(stack_subagent_nested(
             catalog,
             model.as_deref(),
@@ -855,8 +857,8 @@ fn stack_subagent_nested(
 }
 
 /// 聚合面板「子代理模型」下拉的选项：发布 Stack 模型的成员（按名单顺序）发布的每个模型，
-/// 带上它在合并目录里的推理强度档位。和 [`stack_catalog`] 用同一份行（只算本地，不取官方
-/// 列表），配置坏掉的成员同样跳过。
+/// 带上它在合并目录里的推理强度档位。和 [`stack_catalog`] 用同一份第三方行，
+/// 配置坏掉的成员同样跳过。官方行见 [`published_official_subagent_choices`]。
 pub(crate) fn stack_subagent_choices(
     members: &[Member],
 ) -> Vec<crate::mode::stack::StackSubagentModel> {
@@ -895,6 +897,56 @@ pub(crate) fn stack_subagent_choices(
         }
     }
     choices
+}
+
+/// Only the active official route may expose unprefixed catalog models.
+pub(crate) fn published_official_subagent_choices(
+    provider: &Provider,
+) -> Vec<crate::mode::stack::StackSubagentModel> {
+    if !is_official(provider) || route_owns_catalog(provider) {
+        return Vec::new();
+    }
+    crate::config::read_json_file::<Value>(&get_codex_model_catalog_path())
+        .map(|catalog| official_subagent_choices(&catalog, provider))
+        .unwrap_or_default()
+}
+
+fn official_subagent_choices(
+    catalog: &Value,
+    provider: &Provider,
+) -> Vec<crate::mode::stack::StackSubagentModel> {
+    catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("visibility").and_then(Value::as_str) == Some("list"))
+        .filter(|entry| {
+            entry.get("multi_agent_version").and_then(Value::as_str) != Some("disabled")
+        })
+        .filter_map(|entry| {
+            let model = entry.get("slug")?.as_str()?;
+            // Keep this aligned with the UI's reserved-prefix filtering, including
+            // incomplete ccs-* names that the router treats as plain models.
+            if model.starts_with("ccs-") {
+                return None;
+            }
+            let display = entry
+                .get("display_name")
+                .and_then(Value::as_str)
+                .unwrap_or(model);
+            Some(crate::mode::stack::StackSubagentModel {
+                id: model.to_string(),
+                provider_id: provider.id.clone(),
+                display_name: crate::mode::stack::display_name(display, &provider.name),
+                efforts: catalog_entry_efforts(entry).map(str::to_string).collect(),
+                default_effort: entry
+                    .get("default_reasoning_level")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            })
+        })
+        .collect()
 }
 
 /// 目录条目支持的推理强度（`supported_reasoning_levels[].effort`）。
@@ -1335,8 +1387,29 @@ pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppErr
 
 #[cfg(test)]
 mod tests {
-    use super::{is_proxy_base_url, stack_subagent_nested};
+    use super::{is_proxy_base_url, official_subagent_choices, stack_subagent_nested, Provider};
     use serde_json::json;
+
+    #[test]
+    fn official_subagent_choices_only_offer_published_usable_native_models() {
+        let provider = Provider::with_id("official".into(), "OpenAI".into(), json!({}), None);
+        let catalog = json!({"models": [
+            {"slug": "gpt-official", "visibility": "list", "display_name": "GPT", "supported_reasoning_levels": [{"effort": "high"}], "default_reasoning_level": "high"},
+            {"slug": "hidden", "visibility": "hide"},
+            {"slug": "disabled", "visibility": "list", "multi_agent_version": "disabled"},
+            {"slug": "ccs-other/gpt", "visibility": "list"},
+            {"slug": "ccs-malformed", "visibility": "list"},
+            {"visibility": "list"}
+        ]});
+        let choices = official_subagent_choices(&catalog, &provider);
+        assert_eq!(choices.len(), 1);
+        assert_eq!(choices[0].id, "gpt-official");
+        assert_eq!(choices[0].provider_id, "official");
+        assert_eq!(choices[0].display_name, "GPT（OpenAI）");
+        assert_eq!(choices[0].efforts, vec!["high"]);
+        assert_eq!(choices[0].default_effort.as_deref(), Some("high"));
+        assert!(official_subagent_choices(&json!({}), &provider).is_empty());
+    }
 
     /// 子代理设置按合并目录校验：不在目录里、或者父 agent 用新版工具时会拒收的
     /// （`multi_agent_version = "disabled"`）都不写；强度不在档位里只写模型。

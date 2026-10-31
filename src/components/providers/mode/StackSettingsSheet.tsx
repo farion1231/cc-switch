@@ -38,7 +38,7 @@ const warningClass =
 interface StackSettingsSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 能选的模型（后端 `StackView.subagentModels` 去掉默认那家） */
+  /** 子代理可选模型，含默认官方供应商已发布的原生模型。 */
   models: ProxyStackSubagentModel[];
   /** 默认那家是官方：合并目录里有官方的 codex-auto-review，自动审批默认用它 */
   routeOfficial?: boolean;
@@ -82,8 +82,12 @@ export function StackSettingsSheet({
     }
   };
 
+  // 官方原生模型仅补入子代理选项，审批选项保持原来的范围。
+  const autoReviewModels = models.filter((model) =>
+    model.id.startsWith("ccs-"),
+  );
   const autoReviewModel = settings?.codexStackAutoReviewModel || undefined;
-  const autoReviewSelected = models.find(
+  const autoReviewSelected = autoReviewModels.find(
     (candidate) => candidate.id === autoReviewModel,
   );
   // 选过的模型不在名单里了：后端不写，用 Codex 的默认审批模型
@@ -135,7 +139,7 @@ export function StackSettingsSheet({
                     ? t("mode.stackSettings.autoReviewDefaultOfficial")
                     : t("mode.stackSettings.autoReviewDefaultMain")}
                 </SelectItem>
-                {models.map((candidate) => (
+                {autoReviewModels.map((candidate) => (
                   <SelectItem key={candidate.id} value={candidate.id}>
                     {candidate.displayName}
                   </SelectItem>
