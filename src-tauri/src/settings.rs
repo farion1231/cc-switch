@@ -10,6 +10,16 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::services::skill::{SkillStorageLocation, SyncMethod};
 
+/// Device-local references to externally owned Skills. Neither source paths nor
+/// ownership of the links we created belong in the cloud-synced database.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedSkillSource {
+    pub path: String,
+    #[serde(default)]
+    pub projections: BTreeMap<String, Vec<PathBuf>>,
+}
+
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -599,6 +609,8 @@ pub struct AppSettings {
     /// Skill 存储位置：cc_switch（默认）或 unified（~/.agents/skills/）
     #[serde(default)]
     pub skill_storage_location: SkillStorageLocation,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub linked_skill_sources: BTreeMap<String, LinkedSkillSource>,
 
     // ===== WebDAV 同步设置 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -705,6 +717,7 @@ impl Default for AppSettings {
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
+            linked_skill_sources: BTreeMap::new(),
             webdav_sync: None,
             s3_sync: None,
             webdav_backup: None,
@@ -1066,6 +1079,16 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     });
     *guard = new_settings;
     Ok(())
+}
+
+pub(crate) fn update_frontend_settings(new_settings: AppSettings) -> Result<(), AppError> {
+    // Merge while holding the settings lock: a registration may have changed
+    // since the command read settings or the frontend opened its form.
+    mutate_settings(|current| {
+        let sources = current.linked_skill_sources.clone();
+        *current = new_settings;
+        current.linked_skill_sources = sources;
+    })
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
@@ -1455,6 +1478,52 @@ pub fn get_skill_sync_method() -> SyncMethod {
             e.into_inner()
         })
         .skill_sync_method
+}
+
+pub(crate) fn get_linked_skill_source(directory: &str) -> Option<LinkedSkillSource> {
+    get_settings()
+        .linked_skill_sources
+        .into_iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(directory))
+        .map(|(_, source)| source)
+}
+
+pub(crate) fn set_linked_skill_projection(
+    directory: &str,
+    app: &AppType,
+    destination: &Path,
+    enabled: bool,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        if let Some(source) = settings.linked_skill_sources.get_mut(directory) {
+            let paths = source
+                .projections
+                .entry(app.as_str().to_string())
+                .or_default();
+            if enabled {
+                if !paths.iter().any(|path| path == destination) {
+                    paths.push(destination.to_path_buf());
+                }
+            } else {
+                paths.retain(|path| path != destination);
+            }
+        }
+    })
+}
+
+pub(crate) fn set_linked_skill_source(
+    directory: &str,
+    source: Option<LinkedSkillSource>,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        if let Some(source) = source {
+            settings
+                .linked_skill_sources
+                .insert(directory.to_string(), source);
+        } else {
+            settings.linked_skill_sources.remove(directory);
+        }
+    })
 }
 
 // ===== Skill 存储位置管理函数 =====
