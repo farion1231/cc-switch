@@ -89,14 +89,15 @@ pub(super) fn update(
     mut provider: Provider,
 ) -> Result<bool, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
-    if original_id.is_some_and(|id| id != provider.id) {
-        return Err(AppError::Config("omp.errors.renameProvider".into()));
-    }
+    let original_id = original_id.unwrap_or(&provider.id).to_string();
     state
         .db
-        .get_provider_by_id(&provider.id, "omp")?
+        .get_provider_by_id(&original_id, "omp")?
         .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
     prepare(&mut provider)?;
+    if original_id != provider.id {
+        return super::pi_family::rename(state, &AppType::Omp, &original_id, &provider);
+    }
     omp_config::change_and_commit(
         &provider.id,
         Some(&provider.settings_config),

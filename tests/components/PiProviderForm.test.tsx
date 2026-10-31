@@ -1,14 +1,23 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render as testingLibraryRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PiProviderForm } from "@/components/providers/forms/PiProviderForm";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
-import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
 import { piProviderPresets } from "@/config/piProviderPresets";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -23,6 +32,26 @@ async function fetchModelsAndClosePicker(user: User) {
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+}
+
+function render(
+  ui: ReactElement,
+  { seedCurrentState = true }: { seedCurrentState?: boolean } = {},
+) {
+  const queryClient = createTestQueryClient();
+  for (const app of ["pi", "omp"]) {
+    const queryKey = [app, "currentState"];
+    queryClient.setQueryDefaults(queryKey, { staleTime: Infinity });
+    if (seedCurrentState) {
+      queryClient.setQueryData(queryKey, {
+        enabledProviderIds: [],
+        defaultProviderId: null,
+      });
+    }
+  }
+  return testingLibraryRender(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
   );
 }
 
@@ -165,6 +194,7 @@ describe("PiProviderForm", () => {
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.websiteUrl")).toBeInTheDocument();
+    expect(screen.getByLabelText(/pi\.form\.providerKey/)).toBeEnabled();
     expect(screen.getByRole("button", { name: "Save preset" })).toBeEnabled();
     await waitFor(() =>
       expect(onSubmitReadyChange).toHaveBeenLastCalledWith(true),
@@ -173,6 +203,126 @@ describe("PiProviderForm", () => {
     expect(screen.queryByText("pi.form.stepAuth")).not.toBeInTheDocument();
     expect(screen.queryByText("pi.form.stepModel")).not.toBeInTheDocument();
   });
+
+  it.each(["pi", "omp"] as const)(
+    "submits a renamed %s key after removal from live config",
+    async (appId) => {
+      const onSubmit = vi.fn().mockResolvedValue(undefined);
+      render(
+        <PiProviderForm
+          appId={appId}
+          providerId="saved-provider"
+          submitLabel="Save renamed provider"
+          onSubmit={onSubmit}
+          onCancel={() => {}}
+          initialData={{ name: "Saved provider", settingsConfig: {} }}
+        />,
+      );
+
+      const providerKeyInput = screen.getByLabelText("pi.form.providerKey");
+      expect(providerKeyInput).toBeEnabled();
+      fireEvent.change(providerKeyInput, {
+        target: { value: "renamed-provider" },
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Save renamed provider" }),
+      );
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0].providerKey).toBe("renamed-provider");
+    },
+  );
+
+  it.each(["pi", "omp"] as const)(
+    "blocks renaming a %s provider to an existing key",
+    async (appId) => {
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_providers`, () =>
+          HttpResponse.json({
+            "taken-provider": { id: "taken-provider", name: "Taken provider" },
+          }),
+        ),
+      );
+      const onSubmit = vi.fn();
+      render(
+        <PiProviderForm
+          appId={appId}
+          providerId="saved-provider"
+          submitLabel="Save renamed provider"
+          onSubmit={onSubmit}
+          onCancel={() => {}}
+          initialData={{ name: "Saved provider", settingsConfig: {} }}
+        />,
+      );
+
+      fireEvent.change(screen.getByLabelText("pi.form.providerKey"), {
+        target: { value: "taken-provider" },
+      });
+      expect(
+        await screen.findByText("pi.form.providerKeyDuplicate"),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Save renamed provider" }),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "pi.form.providerKeyDuplicate",
+      );
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["pi", "omp"] as const)(
+    "keeps the %s provider key locked while the live state is unresolved",
+    async (appId) => {
+      let resolveCurrentState!: () => void;
+      const currentStateReady = new Promise<void>((resolve) => {
+        resolveCurrentState = resolve;
+      });
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_${appId}_current_state`, async () => {
+          await currentStateReady;
+          return HttpResponse.json({
+            enabledProviderIds: ["live-provider"],
+            defaultProviderId: "live-provider",
+          });
+        }),
+      );
+      const user = userEvent.setup();
+
+      render(
+        <PiProviderForm
+          appId={appId}
+          providerId="live-provider"
+          submitLabel="Save live provider"
+          onSubmit={() => {}}
+          onCancel={() => {}}
+          initialData={{
+            name: "Live provider",
+            settingsConfig: {
+              name: "Live provider",
+              baseUrl: "https://api.example.com/v1",
+            },
+          }}
+        />,
+        { seedCurrentState: false },
+      );
+
+      const providerKeyInput = screen.getByLabelText(/pi\.form\.providerKey/);
+      expect(providerKeyInput).toBeDisabled();
+      await user.type(providerKeyInput, "-renamed");
+      expect(providerKeyInput).toHaveValue("live-provider");
+
+      act(() => resolveCurrentState());
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("该供应商已添加到应用配置中，供应商标识不可修改"),
+        ).toBeInTheDocument(),
+      );
+      expect(providerKeyInput).toBeDisabled();
+      expect(providerKeyInput).toHaveValue("live-provider");
+    },
+  );
 
   it("uses the OpenCode-style provider hierarchy without per-model endpoints", () => {
     render(

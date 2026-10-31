@@ -123,19 +123,19 @@ pub(super) fn update(
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     let original_id = original_id.unwrap_or(&provider.id).to_string();
-    if original_id != provider.id {
-        return Err(AppError::InvalidInput(
-            "Pi provider keys cannot be renamed".to_string(),
-        ));
-    }
 
     state
         .db
         .get_provider_by_id(&original_id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{original_id}' not found")))?;
+
     strip_unsupported_pi_metadata(&mut provider);
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+
+    if original_id != provider.id {
+        return super::pi_family::rename(state, &app_type, &original_id, &provider);
+    }
 
     let previous_native =
         crate::pi_config::replace_pi_provider_if_present(&original_id, &provider.settings_config)?;
@@ -784,6 +784,72 @@ mod tests {
 
         let providers = ProviderService::list(&state, AppType::Pi).expect("sync native provider");
         assert_eq!(providers["cc-switch-test-copy"].name, "Native OAuth");
+    }
+
+    #[test]
+    #[serial]
+    fn provider_key_is_locked_while_in_live_and_editable_after_removal() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        let settings_path = agent_dir.join("settings.json");
+        let auth_path = agent_dir.join("auth.json");
+        let settings_contents = br#"{"defaultProvider":"cc-switch-test","defaultModel":"model-a"}"#;
+        let auth_contents = br#"{"cc-switch-test":{"type":"api_key","key":"native-secret"}}"#;
+        fs::write(&settings_path, settings_contents).expect("write native defaults");
+        fs::write(&auth_path, auth_contents).expect("write native auth");
+
+        // Add into live config: the key is now in models.json.
+        ProviderService::add(&state, AppType::Pi, input("model-a"), true)
+            .expect("add live provider");
+        assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+
+        // Rename must be rejected while the provider is still in models.json.
+        let mut renamed = input("model-a");
+        renamed.id = "cc-switch-renamed".to_string();
+        let error = update(&state, Some("cc-switch-test"), renamed.clone())
+            .expect_err("rename of a live provider must be rejected");
+        assert!(error.to_string().contains("models.json"));
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test", "pi")
+            .unwrap()
+            .is_some());
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-renamed").unwrap());
+
+        // Remove from live config: the key leaves models.json but stays in DB.
+        ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
+            .expect("remove from live config");
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test", "pi")
+            .unwrap()
+            .is_some());
+
+        // Now rename succeeds.
+        update(&state, Some("cc-switch-test"), renamed.clone()).expect("rename after removal");
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-renamed", "pi")
+            .unwrap()
+            .is_some());
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test", "pi")
+            .unwrap()
+            .is_none());
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-renamed").unwrap());
+        assert_eq!(
+            fs::read(settings_path).expect("read native defaults"),
+            settings_contents
+        );
+        assert_eq!(
+            fs::read(auth_path).expect("read native auth"),
+            auth_contents
+        );
     }
 
     #[test]
