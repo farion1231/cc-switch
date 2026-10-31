@@ -1058,6 +1058,38 @@ pub(crate) fn update_sync_state_on_conn(
     Ok(())
 }
 
+/// 写入字节游标（Grok 等按行流式扫描）。`last_line_offset` 置 0，表示
+/// 行号/事件计数游标已退役；存量 Grok 行的事件计数只在 `last_byte_offset`
+/// 仍为 NULL 时用一次，转换成字节位置后不再读取。
+pub(crate) fn update_byte_sync_state(
+    db: &Database,
+    file_path: &str,
+    last_modified: i64,
+    byte_offset: i64,
+) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    conn.prepare_cached(
+        "INSERT OR REPLACE INTO session_log_sync
+         (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset)
+         VALUES (?1, ?2, 0, ?3, ?4)",
+    )
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            file_path,
+            last_modified,
+            now,
+            byte_offset
+        ])
+    })
+    .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
+    Ok(())
+}
+
 /// 一条回复写库的结果。
 #[derive(Debug, PartialEq, Eq)]
 enum SessionRowOutcome {
