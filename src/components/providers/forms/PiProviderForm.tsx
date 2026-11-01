@@ -153,12 +153,30 @@ interface PiModelDraft {
   hasInput: boolean;
   contextWindow: string;
   hasContextWindow: boolean;
+  /** True when contextWindow was last filled from fetched /v1/models metadata. */
+  autoContextWindow: boolean;
   maxTokens: string;
   hasMaxTokens: boolean;
+  /** True when maxTokens was last filled from fetched /v1/models metadata. */
+  autoMaxTokens: boolean;
+  autoCostFields: Partial<Record<PiCostField, true>>;
+  /** Preserve manual prices while an incomplete cost object cannot be emitted. */
+  pendingManualCost?: Record<string, unknown>;
   thinkingLevelMap: unknown;
   hasThinkingLevelMap: boolean;
   passthrough: Record<string, unknown>;
 }
+
+type PiCostField = "input" | "output" | "cacheRead" | "cacheWrite";
+
+const FETCHED_PRICING_FIELDS = [
+  ["prompt", "input"],
+  ["completion", "output"],
+  ["inputCacheRead", "cacheRead"],
+  ["inputCacheWrite", "cacheWrite"],
+] as const satisfies ReadonlyArray<
+  [keyof NonNullable<FetchedModel["pricing"]>, PiCostField]
+>;
 
 const OMP_SECTION = "providers";
 
@@ -223,6 +241,100 @@ function optionalNumberText(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value)
     ? String(value)
     : "";
+}
+
+function optionalPositiveNumberText(value: unknown): string | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? String(value)
+    : undefined;
+}
+
+function usdPerTokenToMillion(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(normalized)) {
+    return undefined;
+  }
+  const perToken = Number(normalized);
+  const perMillion = perToken * 1_000_000;
+  return Number.isFinite(perToken) &&
+    perToken >= 0 &&
+    Number.isFinite(perMillion)
+    ? perMillion
+    : undefined;
+}
+
+function withFetchedPricing(
+  model: PiModelDraft,
+  pricing: FetchedModel["pricing"] | undefined,
+): PiModelDraft {
+  const passthrough = { ...model.passthrough };
+  const cost = { ...model.pendingManualCost, ...asObject(passthrough.cost) };
+  for (const field of Object.keys(model.autoCostFields) as PiCostField[]) {
+    delete cost[field];
+  }
+
+  const manualCost = { ...cost };
+  const autoCostFields: Partial<Record<PiCostField, true>> = {};
+  for (const [source, target] of FETCHED_PRICING_FIELDS) {
+    const value = usdPerTokenToMillion(pricing?.[source]);
+    if (value !== undefined && !hasOwn(cost, target)) {
+      cost[target] = value;
+      autoCostFields[target] = true;
+    }
+  }
+
+  // Pi custom models require every cost field when cost is present. Never
+  // turn missing or invalid source prices into zero, or write a partial fill.
+  const complete = FETCHED_PRICING_FIELDS.every(
+    ([, field]) =>
+      typeof cost[field] === "number" &&
+      Number.isFinite(cost[field]) &&
+      (cost[field] as number) >= 0,
+  );
+  if (complete) {
+    passthrough.cost = cost;
+  } else {
+    delete passthrough.cost;
+  }
+  return {
+    ...model,
+    passthrough,
+    autoCostFields: complete ? autoCostFields : {},
+    pendingManualCost:
+      !complete && Object.keys(manualCost).length > 0 ? manualCost : undefined,
+  };
+}
+
+function retainUnchangedAutoCostFields(
+  next: PiModelDraft,
+  previous: PiModelDraft | undefined,
+): PiModelDraft {
+  if (!previous) return next;
+  const previousCost = asObject(previous.passthrough.cost);
+  const nextCost = asObject(next.passthrough.cost);
+  const autoCostFields: Partial<Record<PiCostField, true>> = {};
+  for (const field of Object.keys(previous.autoCostFields) as PiCostField[]) {
+    if (Object.is(previousCost[field], nextCost[field])) {
+      autoCostFields[field] = true;
+    }
+  }
+  return {
+    ...next,
+    autoCostFields,
+    pendingManualCost:
+      !hasOwn(next.passthrough, "cost") && !hasOwn(previous.passthrough, "cost")
+        ? previous.pendingManualCost
+        : undefined,
+    autoContextWindow:
+      previous.autoContextWindow &&
+      previous.hasContextWindow === next.hasContextWindow &&
+      previous.contextWindow === next.contextWindow,
+    autoMaxTokens:
+      previous.autoMaxTokens &&
+      previous.hasMaxTokens === next.hasMaxTokens &&
+      previous.maxTokens === next.maxTokens,
+  };
 }
 
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
@@ -329,8 +441,11 @@ function modelDraft(
     hasInput: hasOwn(model, "input"),
     contextWindow: optionalNumberText(model.contextWindow),
     hasContextWindow: hasOwn(model, "contextWindow"),
+    autoContextWindow: false,
     maxTokens: optionalNumberText(model.maxTokens),
     hasMaxTokens: hasOwn(model, "maxTokens"),
+    autoMaxTokens: false,
+    autoCostFields: {},
     thinkingLevelMap: model.thinkingLevelMap,
     hasThinkingLevelMap: hasOwn(model, "thinkingLevelMap"),
     passthrough: objectWithout(model, MODEL_CONTROLLED_KEYS),
@@ -421,8 +536,11 @@ function newModel(): PiModelDraft {
     hasInput: true,
     contextWindow: "",
     hasContextWindow: true,
+    autoContextWindow: false,
     maxTokens: "",
     hasMaxTokens: true,
+    autoMaxTokens: false,
+    autoCostFields: {},
     thinkingLevelMap: undefined,
     hasThinkingLevelMap: false,
     passthrough: {},
@@ -811,7 +929,10 @@ export function PiProviderForm({
 
         const previousDraft =
           previousIndex >= 0 ? previousDrafts[previousIndex] : undefined;
-        return modelDraft(model, { key: previousDraft?.key });
+        return retainUnchangedAutoCostFields(
+          modelDraft(model, { key: previousDraft?.key }),
+          previousDraft,
+        );
       });
       replaceModelsState(nextModels);
       const nextKeys = new Set(nextModels.map((model) => model.key));
@@ -1032,21 +1153,57 @@ export function PiProviderForm({
     );
   };
 
-  const changeModelId = (key: string, id: string) => {
+  const changeModelId = (key: string, id: string, fetched?: FetchedModel) => {
+    const contextWindow = optionalPositiveNumberText(fetched?.maxInputTokens);
+    const maxTokens = optionalPositiveNumberText(fetched?.maxOutputTokens);
     commitModels(
-      modelsRef.current.map((model) =>
-        model.key === key
-          ? {
-              ...model,
-              id,
-              name:
-                model.hasName &&
-                (model.name.length === 0 || model.name === model.id)
-                  ? id
-                  : model.name,
-            }
-          : model,
-      ),
+      modelsRef.current.map((model) => {
+        if (model.key !== key) return model;
+        return withFetchedPricing(
+          {
+            ...model,
+            id,
+            name:
+              model.hasName &&
+              (model.name.length === 0 || model.name === model.id)
+                ? id
+                : model.name,
+            ...(fetched || id !== model.id
+              ? {
+                  ...(contextWindow !== undefined &&
+                  (!model.contextWindow.trim() || model.autoContextWindow)
+                    ? {
+                        contextWindow,
+                        hasContextWindow: true,
+                        autoContextWindow: true,
+                      }
+                    : contextWindow === undefined && model.autoContextWindow
+                      ? {
+                          contextWindow: "",
+                          hasContextWindow: false,
+                          autoContextWindow: false,
+                        }
+                      : {}),
+                  ...(maxTokens !== undefined &&
+                  (!model.maxTokens.trim() || model.autoMaxTokens)
+                    ? {
+                        maxTokens,
+                        hasMaxTokens: true,
+                        autoMaxTokens: true,
+                      }
+                    : maxTokens === undefined && model.autoMaxTokens
+                      ? {
+                          maxTokens: "",
+                          hasMaxTokens: false,
+                          autoMaxTokens: false,
+                        }
+                      : {}),
+                }
+              : {}),
+          },
+          fetched?.pricing,
+        );
+      }),
     );
   };
 
@@ -1063,8 +1220,7 @@ export function PiProviderForm({
     prefetch: fetchedModels.length > 0,
   });
 
-  // 补上模型已知的窗口、输出上限、推理、图片输入和思考档位。补全可能晚到：
-  // 读最新的模型行，确认这一行仍是这个模型再补。
+  // 补全可能晚到：确认模型行仍指向同一模型，再应用 metadata。
   const fillModelMetadataFor = (key: string, id: string, silent?: boolean) => {
     const row = modelsRef.current.find((model) => model.key === key);
     // 模型单独指向别的地址时，按它实际请求的地址查参数。
@@ -1091,8 +1247,12 @@ export function PiProviderForm({
     );
   };
 
-  const selectFetchedModelId = (key: string, id: string) => {
-    changeModelId(key, id);
+  const selectFetchedModelId = (
+    key: string,
+    id: string,
+    fetched?: FetchedModel,
+  ) => {
+    changeModelId(key, id, fetched);
     fillModelMetadataFor(key, id);
   };
 
@@ -1127,7 +1287,14 @@ export function PiProviderForm({
       );
     }
     // 弹窗里已经显示过这些参数，补完不再提示。
-    for (const model of added) fillModelMetadataFor(model.key, model.id, true);
+    for (const model of added) {
+      changeModelId(
+        model.key,
+        model.id,
+        fetchedModels.find((item) => item.id === model.id),
+      );
+      fillModelMetadataFor(model.key, model.id, true);
+    }
   };
 
   const updateThinkingLevelMap = (
@@ -1754,7 +1921,11 @@ export function PiProviderForm({
                     onApply={handleApplyFetchedModels}
                     onFetch={handleFetchModels}
                     isFetching={isFetchingModels}
-                    metadataSource={{ baseUrl, presets: piPresetModelSources }}
+                    metadataSource={{
+                      baseUrl,
+                      presets: piPresetModelSources,
+                      preferFetchedContextWindow: true,
+                    }}
                   />
                   <Button
                     id="pi-add-model"
@@ -1835,8 +2006,8 @@ export function PiProviderForm({
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
                                 models={fetchedModels}
-                                onSelect={(id) =>
-                                  selectFetchedModelId(model.key, id)
+                                onSelect={(id, fetched) =>
+                                  selectFetchedModelId(model.key, id, fetched)
                                 }
                               />
                             )}
@@ -1930,6 +2101,7 @@ export function PiProviderForm({
                                   updateModelOverride(model.key, {
                                     contextWindow: event.target.value,
                                     hasContextWindow: true,
+                                    autoContextWindow: false,
                                   })
                                 }
                                 placeholder="128000"
@@ -1957,6 +2129,7 @@ export function PiProviderForm({
                                   updateModelOverride(model.key, {
                                     maxTokens: event.target.value,
                                     hasMaxTokens: true,
+                                    autoMaxTokens: false,
                                   })
                                 }
                                 placeholder="16384"
