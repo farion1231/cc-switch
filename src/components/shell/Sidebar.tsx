@@ -121,10 +121,29 @@ function SidebarTopBar({
         type="button"
         onClick={onToggle}
         aria-label={label}
-        style={NO_DRAG}
+        style={{
+          ...NO_DRAG,
+          ...(isMac()
+            ? {
+                width: "var(--mac-titlebar-button-size, 28px)",
+                height: "var(--mac-titlebar-button-size, 28px)",
+              }
+            : {}),
+        }}
         className="flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-[background-color,color,scale] hover:bg-subtle hover:text-fg-1 active:scale-[0.96]"
       >
-        <Icon className="h-4 w-4" strokeWidth={1.5} />
+        <Icon
+          className="h-4 w-4"
+          style={
+            isMac()
+              ? {
+                  width: "var(--mac-titlebar-icon-size, 16px)",
+                  height: "var(--mac-titlebar-icon-size, 16px)",
+                }
+              : undefined
+          }
+          strokeWidth={1.5}
+        />
       </button>
     </HoverTip>
   );
@@ -136,13 +155,21 @@ function SidebarTopBar({
         <div
           className="h-11 shrink-0"
           {...DRAG_REGION_ATTR}
-          style={DRAG_REGION_STYLE as React.CSSProperties}
+          style={{
+            ...(DRAG_REGION_STYLE as React.CSSProperties),
+            height: "var(--mac-titlebar-spacer-height, 44px)",
+          }}
         />
         {/* 品牌区与导航之间不画分隔线：靠侧栏底色和留白分开，免得和右侧页头下边框近似平行却差 11px */}
         <div
           className="-mt-[18px] mb-2 flex h-9 shrink-0 items-center gap-2 pe-2 ps-4"
           {...DRAG_REGION_ATTR}
-          style={DRAG_REGION_STYLE as React.CSSProperties}
+          style={{
+            ...(DRAG_REGION_STYLE as React.CSSProperties),
+            marginTop: "var(--mac-titlebar-expanded-row-margin-top, -18px)",
+            marginBottom: "var(--mac-titlebar-expanded-row-margin-bottom, 8px)",
+            height: "var(--mac-titlebar-expanded-row-height, 36px)",
+          }}
         >
           <img
             src={ccswitchLogo}
@@ -166,10 +193,19 @@ function SidebarTopBar({
         <div
           className="h-11 shrink-0"
           {...DRAG_REGION_ATTR}
-          style={DRAG_REGION_STYLE as React.CSSProperties}
+          style={{
+            ...(DRAG_REGION_STYLE as React.CSSProperties),
+            height: "var(--mac-titlebar-spacer-height, 44px)",
+          }}
         />
         {/* 往上贴近红绿灯，和展开时品牌行同高（中心 y≈44） */}
-        <div className="-mt-4 flex h-8 shrink-0 items-center justify-center">
+        <div
+          className="-mt-4 flex h-8 shrink-0 items-center justify-center"
+          style={{
+            marginTop: "var(--mac-titlebar-collapsed-row-margin-top, -16px)",
+            height: "var(--mac-titlebar-collapsed-row-height, 32px)",
+          }}
+        >
           {toggleButton}
         </div>
       </>
