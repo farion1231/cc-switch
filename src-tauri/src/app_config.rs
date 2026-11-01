@@ -915,6 +915,10 @@ impl MultiAppConfig {
     /// - Ok(true)  表示成功导入了非空文件
     /// - Ok(false) 表示未导入（文件不存在、内容为空或读取失败）
     fn auto_import_prompt_if_exists(config: &mut Self, app: AppType) -> Result<bool, AppError> {
+        let file_access = crate::prompt_files::PromptFileAccess::acquire(&app)?;
+        if file_access.detached {
+            return Ok(false);
+        }
         let file_path = prompt_file_path(&app)?;
 
         // 检查文件是否存在
