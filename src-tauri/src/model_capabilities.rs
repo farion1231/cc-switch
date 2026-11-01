@@ -80,6 +80,11 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         // official API continues serving V4 Pro after September 14, 2026
         // (api-docs.deepseek.com), but hosted aliases can differ. First-party
         // presets declare text-only explicitly; unknown gateways fail open.
+        // `deepseek-v4-flash-0731` is OpenRouter's dated alias for the
+        // 2026-07-31 Flash release, still listed there as text-only; it is not
+        // one of the legacy names the official API accepts. Keep this exact: a
+        // future `-vision` / `-vl` sibling must fail open.
+        "deepseek-v4-flash-0731",
         "glm-5.1",
         // Exact rather than prefix matching: GLM visual models use a `v`
         // suffix (for example glm-5.2v), which must remain image-capable.
@@ -229,6 +234,9 @@ mod tests {
         // 识图的 V4.1 Flash。两者均已移出名单，必须 fail-open。
         assert!(!is_confirmed_text_only_model("deepseek/deepseek-v4-flash"));
         assert!(!is_confirmed_text_only_model("deepseek/deepseek-v4-pro"));
+        assert!(is_confirmed_text_only_model(
+            "deepseek/deepseek-v4-flash-0731"
+        ));
         assert!(is_confirmed_text_only_model("GLM-5.2[1M]"));
         assert!(is_confirmed_text_only_model("GLM-5.3[1M]"));
         assert!(is_confirmed_text_only_model("qwen/qwen3-coder-plus"));
@@ -244,6 +252,7 @@ mod tests {
     #[test]
     fn unconfirmed_family_suffixes_fail_open() {
         for model in [
+            "deepseek-v4-flash-vision",
             "minimax-m2.7-vision",
             "qwen3-coder-ultra",
             "qwen3-coder-vl",
