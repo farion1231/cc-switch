@@ -51,7 +51,9 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
-    #[serde(default)]
+    // 2afe8cdb 把 OMP 改成默认显示，但漏了这个字段缺省值；与 Default 实现和
+    // 前端 DEFAULT_VISIBLE_APPS 保持同口径，老配置升级后默认可见。
+    #[serde(default = "default_true")]
     pub omp: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
@@ -1671,6 +1673,57 @@ mod tests {
         .expect("visible apps");
 
         assert!(visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn visible_apps_old_settings_default_omp_visible_hermes_hidden() {
+        // Configs saved before the omp/hermes fields existed must deserialize
+        // to the same defaults as a fresh install: OMP visible (2afe8cdb),
+        // hermes still intentionally hidden.
+        let visible: VisibleApps = serde_json::from_value(serde_json::json!({
+            "claude": true,
+            "codex": true
+        }))
+        .expect("visible apps");
+
+        assert!(visible.is_visible(&AppType::Omp));
+        assert!(!visible.is_visible(&AppType::Hermes));
+    }
+
+    #[test]
+    fn upgrade_from_pre_omp_settings_makes_omp_visible_via_real_load_path() {
+        // A settings.json as v4.0.19 would have written it: visibleApps exists
+        // (old app list only), no omp key. Loaded through the app's real
+        // lenient parser, OMP must come out visible, and the next save must
+        // persist the explicit value so the default never bites again.
+        let content = serde_json::json!({
+            "language": "zh",
+            "nativeTrayMenu": true,
+            "visibleApps": {
+                "claude": true,
+                "claude-desktop": true,
+                "codex": true,
+                "gemini": true,
+                "grokbuild": true,
+                "opencode": true,
+                "openclaw": false,
+                "hermes": true,
+                "pi": true,
+                "mcode": true,
+                "kimi": true,
+                "agy": true
+            }
+        })
+        .to_string();
+
+        let (settings, lossy) = parse_settings_lenient(&content);
+        assert!(!lossy);
+        let visible = settings.visible_apps.clone().expect("visible apps kept");
+        assert!(visible.is_visible(&AppType::Omp));
+        assert_eq!(
+            serde_json::to_value(&settings).expect("serialize settings")["visibleApps"]["omp"],
+            serde_json::json!(true)
+        );
     }
 
     #[test]
