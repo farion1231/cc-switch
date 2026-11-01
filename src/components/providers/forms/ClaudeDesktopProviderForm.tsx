@@ -28,12 +28,17 @@ import { BasicFormFields } from "./BasicFormFields";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
+import {
+  formatRequestOverrideObject,
+  parseHeaderOverrideJson,
+} from "@/lib/requestOverrides";
 import type {
   ClaudeApiFormat,
   ClaudeDesktopModelRoute,
@@ -295,6 +300,12 @@ export function ClaudeDesktopProviderForm({
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
+  );
+  // 路由模式下由本地代理附加的自定义请求头；直连模式不生效但随表单保留。
+  const [headersOverride, setHeadersOverride] = useState(() =>
+    formatRequestOverrideObject(
+      initialData?.meta?.localProxyRequestOverrides?.headers,
+    ),
   );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     "custom",
@@ -728,6 +739,29 @@ export function ClaudeDesktopProviderForm({
       );
       return;
     }
+    const headerOverrides = parseHeaderOverrideJson(headersOverride);
+    if (headerOverrides.error) {
+      toast.error(
+        t("providerForm.localProxyRequestOverridesInvalid", {
+          error: headerOverrides.error,
+          defaultValue: `本地代理请求覆盖格式错误：${headerOverrides.error}`,
+        }),
+      );
+      return;
+    }
+    const requestHeaders =
+      headerOverrides.headers && Object.keys(headerOverrides.headers).length > 0
+        ? headerOverrides.headers
+        : undefined;
+    if (effectiveMode === "direct" && requestHeaders) {
+      // 直连不走本地代理，请求头不会生效；提示后仍保存，切回模型映射即恢复生效。
+      toast.warning(
+        t("claudeDesktop.requestHeadersDirectModeWarning", {
+          defaultValue:
+            "自定义请求头只在模型映射（路由）模式下生效；当前为直连模式，保存的请求头不会随请求发送。",
+        }),
+      );
+    }
     const selectedAccountExists = (
       accountId: string | null,
       accounts: Array<{ id: string }>,
@@ -946,6 +980,12 @@ export function ClaudeDesktopProviderForm({
             : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
+
+    // 显式覆写 spread 进来的旧值：清空输入时写 undefined，避免残留旧请求头。
+    // 直连模式下同样保存（不生效），用户切回模型映射后无需重填。
+    meta.localProxyRequestOverrides = requestHeaders
+      ? { headers: requestHeaders }
+      : undefined;
 
     delete meta.endpointAutoSelect;
     delete meta.isFullUrl;
@@ -1357,6 +1397,20 @@ export function ClaudeDesktopProviderForm({
                       );
                     })}
                   </div>
+
+                  {/* Copilot 上游的请求由转发层按 Copilot 客户端的样子发，请求覆盖会被跳过 */}
+                  {!usesAutomaticCopilotFormat && (
+                    <div className="border-t border-border pt-4">
+                      <LocalProxyRequestOverridesField
+                        headersJson={headersOverride}
+                        onHeadersJsonChange={setHeadersOverride}
+                        help={t("claudeDesktop.requestHeadersHelp", {
+                          defaultValue:
+                            "由本地代理在模型映射（路由）模式下附加到发给上游的请求。authorization、x-api-key、content-type 等标准头由代理托管，不可覆盖；其他自定义名称的请求头可用。",
+                        })}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 

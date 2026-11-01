@@ -326,6 +326,8 @@
     "addRoute": "新增模型",
     "routeInvalid": "請選擇模型角色並填寫實際請求模型",
     "routesRequired": "至少填寫一個模型對應",
+    "requestHeadersHelp": "由本地代理在模型對應（路由）模式下附加到發給上游的請求。authorization、x-api-key、content-type 等標準頭由代理託管，不可覆蓋；其他自訂名稱的請求頭可用。",
+    "requestHeadersDirectModeWarning": "自訂請求頭只在模型對應（路由）模式下生效；目前為直連模式，儲存的請求頭不會隨請求發送。",
     "statusTitle": "Claude Desktop 設定需要檢查",
     "statusUnsupported": "目前平台暫不支援 Claude Desktop 3P 設定寫入。",
     "statusStaleRawModels": "Claude Desktop profile 中存在非 Sonnet / Opus / Haiku 角色模型名稱，新版 Claude Desktop 可能拒絕載入；重新切換目前供應商可修復。",
