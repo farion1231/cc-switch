@@ -586,28 +586,49 @@ mod tests {
 
     #[tokio::test]
     async fn replacement_closes_the_previous_keep_alive_connection() {
+        use http_body_util::{BodyExt, Empty};
+
         let dir = tempfile::tempdir().unwrap();
         let manager = CodexOAuthManager::new(dir.path().into());
         let listener = bind_callback_listener(0).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
         manager
             .start_browser_flow_with_listener(None, listener, Duration::from_secs(LOGIN_LIFETIME))
             .await
             .unwrap();
         let endpoint = format!("http://127.0.0.1:{port}/auth/callback");
+        // Observe this socket directly: a pooled client can race the old FIN
+        // and try to reuse it before noticing that the login was replaced.
+        let socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        let (mut client, connection) =
+            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
+                .await
+                .unwrap();
+        let connection = tokio::spawn(connection);
         let old = client
-            .get(&endpoint)
-            .query(&[("state", "wrong"), ("code", "c")])
-            .send()
+            .send_request(
+                hyper::Request::builder()
+                    .uri("/auth/callback?state=wrong&code=c")
+                    .header(header::HOST, format!("127.0.0.1:{port}"))
+                    .body(Empty::<hyper::body::Bytes>::new())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(old.status(), StatusCode::BAD_REQUEST);
-        old.bytes().await.unwrap();
+        old.into_body().collect().await.unwrap();
         let response = manager
             .start_browser_flow_at_port(None, port, Duration::from_secs(LOGIN_LIFETIME))
             .await
             .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), connection)
+            .await
+            .expect("the previous keep-alive connection must close")
+            .unwrap()
+            .unwrap();
+        assert!(client.is_closed());
         let url = url::Url::parse(&response.verification_uri).unwrap();
         let state = url
             .query_pairs()
@@ -615,7 +636,11 @@ mod tests {
             .unwrap()
             .1
             .into_owned();
-        let new = client
+        let new = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap()
             .get(&endpoint)
             .query(&[("state", state.as_str()), ("error", "access_denied")])
             .send()

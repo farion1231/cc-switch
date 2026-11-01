@@ -11,6 +11,78 @@ use crate::claude_mcp;
 use crate::services::McpService;
 use crate::store::AppState;
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiImportRequest {
+    pub url: Option<String>,
+    pub document: Option<String>,
+    pub base_url: Option<String>,
+}
+
+/// Preview only: never calls a business endpoint or changes client files.
+#[tauri::command]
+pub async fn preview_mcp_api(
+    request: ApiImportRequest,
+) -> Result<crate::mcp_api::ApiPreview, String> {
+    let source = request.url.filter(|v| !v.trim().is_empty());
+    let document = request.document.filter(|v| !v.trim().is_empty());
+    let document = match (source.as_deref(), document) {
+        (Some(url), None) => crate::mcp_api::fetch_document(url).await?,
+        (None, Some(document)) => document,
+        _ => return Err("Provide either a document URL or JSON/YAML text".into()),
+    };
+    tokio::task::spawn_blocking(move || {
+        crate::mcp_api::compile_document(&document, source.as_deref(), request.base_url.as_deref())
+    })
+    .await
+    .map_err(|_| "API document processing failed".to_string())?
+}
+
+/// Returns a standard stdio spec; persistence and sync remain with McpService.
+#[tauri::command]
+pub fn build_mcp_api_spec(
+    tools: Vec<crate::mcp_api::ApiTool>,
+    headers: std::collections::BTreeMap<String, String>,
+) -> Result<serde_json::Value, String> {
+    crate::mcp_api::validate_headers(&headers)?;
+    let encoded =
+        crate::mcp_api::encode_profile(&crate::mcp_api::ApiProfile { version: 1, tools })?;
+    let executable = crate::mcp_api::runtime_executable(
+        std::env::current_exe().map_err(|_| "Cannot locate CC Switch executable")?,
+        if cfg!(target_os = "linux") {
+            std::env::var_os("APPIMAGE").map(std::path::PathBuf::from)
+        } else {
+            None
+        },
+        cfg!(target_os = "linux") && std::env::var_os("FLATPAK_ID").is_some(),
+    )?;
+    let headers = serde_json::to_string(&headers).map_err(|_| "Cannot encode request headers")?;
+    if headers.len() > 16 * 1024 {
+        return Err("Static headers exceed 16 KiB".into());
+    }
+    if headers.len() + encoded.len() > crate::mcp_api::MAX_ENCODED {
+        return Err("Combined API definition and headers exceed 24 KiB; select fewer tools".into());
+    }
+    Ok(
+        serde_json::json!({"type":"stdio","command":executable.to_str().ok_or("Executable path is not UTF-8")?,"args":["--mcp-api"],
+        "env":{crate::mcp_api::CONFIG_ENV:encoded,crate::mcp_api::HEADERS_ENV:headers}}),
+    )
+}
+
+#[tauri::command]
+pub fn decode_mcp_api_spec(spec: serde_json::Value) -> Result<crate::mcp_api::ApiPreview, String> {
+    let profile = crate::mcp_api::decode_profile(
+        spec["env"][crate::mcp_api::CONFIG_ENV]
+            .as_str()
+            .ok_or("API profile is missing")?,
+    )?;
+    Ok(crate::mcp_api::ApiPreview {
+        title: "API".into(),
+        tools: profile.tools,
+        skipped: Vec::new(),
+    })
+}
+
 /// 获取 Claude MCP 状态
 #[tauri::command]
 pub async fn get_claude_mcp_status() -> Result<claude_mcp::McpStatus, String> {
