@@ -496,6 +496,43 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("mcp-editor")).toBeInTheDocument();
   }, 10_000);
 
+  it("shows a retained Codex history safety stop and deduplicates the event", async () => {
+    server.use(
+      http.post("http://tauri.local/has_codex_history_migration_error", () =>
+        HttpResponse.json(true),
+      ),
+    );
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "settings.codexHistoryMigrationFailed",
+        expect.objectContaining({
+          description: "settings.codexHistoryMigrationRecovery",
+          duration: Infinity,
+        }),
+      ),
+    );
+    const count = toastErrorMock.mock.calls.length;
+    emitTauriEvent("codex-history-migration-failed", null);
+    expect(toastErrorMock).toHaveBeenCalledTimes(count);
+  });
+
+  it("shows Codex migration failures arriving after startup", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toBeInTheDocument(),
+    );
+    emitTauriEvent("codex-history-migration-failed", null);
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "settings.codexHistoryMigrationFailed",
+        expect.objectContaining({ closeButton: true }),
+      ),
+    );
+  });
+
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);

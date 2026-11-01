@@ -873,6 +873,7 @@ pub fn run() {
 
             {
                 let db_for_codex_history_migration = app_state.db.clone();
+                let history_notice_app = app.handle().clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     match crate::codex_history_migration::maybe_migrate_codex_third_party_history_provider_bucket(
                         &db_for_codex_history_migration,
@@ -880,6 +881,8 @@ pub fn run() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
                                 log::debug!("○ Codex history provider bucket migration skipped: {reason}");
+                            } else if outcome.retry_pending {
+                                log::debug!("○ Codex history provider bucket migration has temporary skips; retry pending");
                             } else {
                                 log::info!(
                                     "✓ Codex history provider bucket migration completed: sources={}, jsonl_files={}, state_rows={}",
@@ -891,6 +894,7 @@ pub fn run() {
                         }
                         Err(e) => {
                             log::warn!("✗ Codex history provider bucket migration failed: {e}");
+                            crate::init_status::report_codex_history_migration_error(&history_notice_app);
                         }
                     }
 
@@ -909,6 +913,7 @@ pub fn run() {
                         }
                         Err(e) => {
                             log::warn!("✗ Codex provider template bucket migration failed: {e}");
+                            crate::init_status::report_codex_history_migration_error(&history_notice_app);
                         }
                     }
 
@@ -918,6 +923,8 @@ pub fn run() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
                                 log::debug!("○ Codex legacy official history bucket migration skipped: {reason}");
+                            } else if outcome.retry_pending {
+                                log::debug!("○ Codex legacy official history bucket migration has temporary skips; retry pending");
                             } else {
                                 log::info!(
                                     "✓ Codex legacy official history bucket migration completed: jsonl_files={}, state_rows={}",
@@ -928,6 +935,7 @@ pub fn run() {
                         }
                         Err(e) => {
                             log::warn!("✗ Codex legacy official history bucket migration failed: {e}");
+                            crate::init_status::report_codex_history_migration_error(&history_notice_app);
                         }
                     }
 
@@ -937,6 +945,8 @@ pub fn run() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
                                 log::debug!("○ Codex official history unify migration skipped: {reason}");
+                            } else if outcome.retry_pending {
+                                log::debug!("○ Codex official history unify migration has temporary skips; retry pending");
                             } else {
                                 log::info!(
                                     "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
@@ -947,6 +957,7 @@ pub fn run() {
                         }
                         Err(e) => {
                             log::warn!("✗ Codex official history unify migration failed: {e}");
+                            crate::init_status::report_codex_history_migration_error(&history_notice_app);
                         }
                     }
                 });
@@ -1552,6 +1563,7 @@ pub fn run() {
             commands::get_init_error,
             commands::get_migration_result,
             commands::get_skills_migration_result,
+            commands::has_codex_history_migration_error,
             commands::get_app_config_path,
             commands::open_app_config_folder,
             commands::reveal_app_log_file,
@@ -1564,6 +1576,8 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
+            commands::migrate_managed_codex_history,
+            commands::repair_legacy_official_codex_history,
             commands::codex_forces_multi_agent_v2,
             commands::get_codex_session_compression,
             commands::set_codex_session_compression,
