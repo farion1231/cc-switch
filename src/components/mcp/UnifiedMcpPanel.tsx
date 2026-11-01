@@ -1,7 +1,15 @@
 import React, { useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTranslation } from "react-i18next";
-import { Download, MoreHorizontal, Pencil, Plus, Server } from "lucide-react";
+import {
+  BookOpen,
+  Download,
+  Globe,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Server,
+} from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -36,6 +44,7 @@ import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import McpFormModal from "./McpFormModal";
+import { McpHoverCard } from "./McpHoverCard";
 import {
   MatrixCell,
   MatrixColumnHeader,
@@ -842,18 +851,23 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                           (app) => fails[failKey(id, app)],
                         );
                         const summary = summaryOf(server.server);
+                        const description = server.description?.trim();
+                        const subtitleText = description || summary;
+                        const isDescription = Boolean(description);
+
                         const failedNames = rowFailedApps
                           .map((app) => APP_DISPLAY_NAME[app])
                           .join(listSeparator);
-                        const hasDocs = Boolean(
-                          server.docs ||
-                            server.homepage ||
-                            mcpPresets.find((item) => item.id === id)?.docs,
+                        const preset = mcpPresets.find(
+                          (item) => item.id === id,
                         );
+                        const docsUrl = server.docs || preset?.docs;
+                        const homepageUrl = server.homepage || preset?.homepage;
+                        const hasDocs = Boolean(docsUrl || homepageUrl);
+                        const tags = Array.isArray(server.tags)
+                          ? server.tags
+                          : [];
                         const displayName = server.name?.trim() || id;
-                        const hasCustomName = Boolean(
-                          server.name?.trim() && server.name.trim() !== id,
-                        );
                         return (
                           <li
                             key={id}
@@ -863,22 +877,22 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                               index > 0 && "border-t border-border",
                             )}
                           >
-                            <div className="flex min-w-0 flex-1 flex-col pe-3">
-                              <div className="flex min-w-0 items-center gap-1.5">
+                            <McpHoverCard
+                              id={id}
+                              server={server}
+                              appIds={appIds}
+                              onOpenDocs={() => void openDocs(server, id)}
+                              onOpenHomepage={(url) =>
+                                void settingsApi.openExternal(url)
+                              }
+                            >
+                              <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
                                 <span
                                   title={displayName}
                                   className="min-w-0 truncate text-body font-medium"
                                 >
                                   {displayName}
                                 </span>
-                                {hasCustomName && (
-                                  <span
-                                    title={id}
-                                    className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
-                                  >
-                                    {id}
-                                  </span>
-                                )}
                                 <NeutralBadge mono>
                                   {transportOf(server.server)}
                                 </NeutralBadge>
@@ -887,13 +901,77 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                     {t("mcpPage.notEnabled")}
                                   </NeutralBadge>
                                 )}
+                                {(homepageUrl || docsUrl) && (
+                                  <div className="flex shrink-0 items-center gap-0.5">
+                                    {homepageUrl && (
+                                      <HoverTip
+                                        content={t("mcpPage.openHomepage")}
+                                      >
+                                        <button
+                                          type="button"
+                                          aria-label={t("mcpPage.openHomepage")}
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            void settingsApi.openExternal(
+                                              homepageUrl,
+                                            );
+                                          }}
+                                          className="rounded p-0.5 text-fg-3 transition-colors hover:bg-subtle hover:text-fg-1 focus:outline-none"
+                                        >
+                                          <Globe
+                                            className="h-3.5 w-3.5"
+                                            strokeWidth={1.5}
+                                          />
+                                        </button>
+                                      </HoverTip>
+                                    )}
+                                    {docsUrl && docsUrl !== homepageUrl && (
+                                      <HoverTip content={t("mcpPage.openDocs")}>
+                                        <button
+                                          type="button"
+                                          aria-label={t("mcpPage.openDocs")}
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            void openDocs(server, id);
+                                          }}
+                                          className="rounded p-0.5 text-fg-3 transition-colors hover:bg-subtle hover:text-fg-1 focus:outline-none"
+                                        >
+                                          <BookOpen
+                                            className="h-3.5 w-3.5"
+                                            strokeWidth={1.5}
+                                          />
+                                        </button>
+                                      </HoverTip>
+                                    )}
+                                  </div>
+                                )}
+                                {tags.length > 0 && (
+                                  <div className="hidden sm:flex items-center gap-1 min-w-0 shrink overflow-hidden">
+                                    {tags.slice(0, 2).map((tag) => (
+                                      <NeutralBadge
+                                        key={tag}
+                                        className="max-w-[80px] truncate font-normal text-fg-3"
+                                      >
+                                        #{tag}
+                                      </NeutralBadge>
+                                    ))}
+                                    {tags.length > 2 && (
+                                      <NeutralBadge className="font-normal text-fg-3">
+                                        +{tags.length - 2}
+                                      </NeutralBadge>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                               <div className="flex min-w-0 items-center text-caption text-fg-2">
                                 <span
-                                  title={summary}
-                                  className="min-w-0 truncate font-mono"
+                                  title={subtitleText}
+                                  className={cn(
+                                    "min-w-0 truncate",
+                                    !isDescription && "font-mono",
+                                  )}
                                 >
-                                  {summary}
+                                  {subtitleText}
                                 </span>
                                 {rowFailedApps.length > 0 && (
                                   <span className="ms-2.5 shrink-0 whitespace-nowrap text-warning-text">
@@ -924,7 +1002,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                   </span>
                                 )}
                               </div>
-                            </div>
+                            </McpHoverCard>
                             <div className="flex shrink-0">
                               {appIds.map((app) => {
                                 const failure = fails[failKey(id, app)];
