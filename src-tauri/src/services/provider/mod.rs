@@ -157,7 +157,11 @@ fn lock_native_provider_operations(
     state: &AppState,
     app_type: &AppType,
 ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
-    matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh).then(|| {
+    matches!(
+        app_type,
+        AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Codebuddy
+    )
+    .then(|| {
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
     })
 }
