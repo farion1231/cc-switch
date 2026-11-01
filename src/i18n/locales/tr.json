@@ -3836,6 +3836,8 @@
       "errorRateHint": "Hata oranı bu değeri aştığında devre kesiciyi açın",
       "minRequests": "Minimum İstekler",
       "minRequestsHint": "Hata oranını hesaplamadan önce minimum istekler",
+      "modelMismatchBreaker": "Model uyuşmazlığında devre kesici",
+      "modelMismatchBreakerHint": "Yukarı akış, istenen modelden farklı bir modelle yanıt verdiğinde (örn. gpt-6 istendi ama luna yanıtladı) devre kesiciye bir başarısızlık kaydedilir ve eşik aşıldığında sağlayıcı atlanır. Varsayılan olarak kapalı: yalnızca uyarı.",
       "explanationTitle": "Nasıl Çalışır?",
       "failureThresholdLabel": "Arıza Eşiği",
       "failureThresholdExplain": "Bu kadar çok ardışık arızadan sonra devre kesici açılarak sağlayıcının geçici olarak kullanılamaz hale gelmesine neden olur",
@@ -3867,7 +3869,10 @@
       "stopFailed": "Yönlendirme hizmeti durdurulamadı: {{detail}}"
     },
     "stoppedWithRestore": "Yönlendirme hizmeti durduruldu; tüm uygulamalar doğrudan bağlantılara geri döndü",
-    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}"
+    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}",
+    "modelMismatch": {
+      "detected": "Model uyuşmazlığı: \"{{provider}}\" sağlayıcısına {{requestModel}} istendi, ancak {{responseModel}} yanıtladı"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}}'ye ulaşılabilir ({{responseTimeMs}}ms)",

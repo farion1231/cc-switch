@@ -3864,6 +3864,8 @@
       "errorRateHint": "错误率超过此值时打开熔断器",
       "minRequests": "最小请求数",
       "minRequestsHint": "计算错误率前的最小请求数",
+      "modelMismatchBreaker": "模型不一致时熔断",
+      "modelMismatchBreakerHint": "上游返回的模型与请求的模型不一致（如请求 gpt-6 实际用 luna 响应）时，计入一次熔断器失败，达到阈值后跳过该供应商。默认关闭：只弹提示不熔断。",
       "explanationTitle": "工作原理",
       "failureThresholdLabel": "失败阈值",
       "failureThresholdExplain": "连续失败达到此次数时，熔断器打开，该供应商暂时不可用",
@@ -3895,7 +3897,10 @@
       "stopFailed": "停止路由服务失败：{{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，所有应用已退回直连",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "modelMismatch": {
+      "detected": "模型不一致：供应商「{{provider}}」请求 {{requestModel}}，实际响应 {{responseModel}}"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 连通正常 ({{responseTimeMs}}ms)",

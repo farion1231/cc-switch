@@ -3864,6 +3864,8 @@
       "errorRateHint": "Open circuit breaker when error rate exceeds this value",
       "minRequests": "Minimum Requests",
       "minRequestsHint": "Minimum requests before calculating error rate",
+      "modelMismatchBreaker": "Break on model mismatch",
+      "modelMismatchBreakerHint": "When the upstream responds with a different model than requested (e.g. requested gpt-6 but luna answered), record a circuit-breaker failure and skip the provider once the threshold is reached. Off by default: warnings only.",
       "explanationTitle": "How It Works",
       "failureThresholdLabel": "Failure Threshold",
       "failureThresholdExplain": "Circuit breaker opens after this many consecutive failures, making the provider temporarily unavailable",
@@ -3895,7 +3897,10 @@
       "stopFailed": "Failed to stop routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped; all apps are back on direct connections",
-    "stopWithRestoreFailed": "Stop failed: {{detail}}"
+    "stopWithRestoreFailed": "Stop failed: {{detail}}",
+    "modelMismatch": {
+      "detected": "Model mismatch: provider \"{{provider}}\" was requested {{requestModel}} but responded with {{responseModel}}"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} is reachable ({{responseTimeMs}}ms)",
