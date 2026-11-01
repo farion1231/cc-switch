@@ -153,7 +153,7 @@ jobs:
       # 只缓存依赖：本仓库的 crate 每次都要重编，缓存它只会让缓存变大、恢复变慢。
       # key 自带 OS、rustc 版本和 Cargo.lock；shared-key 让 WSL2 job 能读到 Windows 这份。
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri -> target
           shared-key: backend
@@ -213,7 +213,7 @@ jobs:
       # 只恢复不保存：这里只编 lib 测试，若由它先存，同 key 的 Windows 缓存就只剩一小半。
       # 完整缓存由 backend 矩阵的 Windows job 保存（同一个 shared-key）。
       - name: Restore Rust dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri -> target
           shared-key: backend

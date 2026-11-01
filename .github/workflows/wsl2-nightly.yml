@@ -57,7 +57,7 @@ jobs:
       # 只恢复不保存：夜间只编 lib 测试，若由它存进 main 的缓存，PR 的 Windows job 会精确命中
       # 这份不完整的缓存。完整缓存由 ci.yml backend 矩阵的 Windows job 保存（同一个 shared-key）。
       - name: Restore Rust dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri -> target
           shared-key: backend
