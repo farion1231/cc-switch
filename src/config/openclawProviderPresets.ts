@@ -1263,6 +1263,56 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    // OpenAI 平台 API Key 直连 Responses（按量计费）。前缀不用 openai：那是 OpenClaw 内置供应商的键
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    settingsConfig: {
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "gpt-6-luna",
+          name: "GPT-6 Luna",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "openai-api/gpt-6.1-sol",
+      },
+      modelCatalog: {
+        "openai-api/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
+        "openai-api/gpt-6-luna": { alias: "GPT-6 Luna" },
+      },
+    },
+  },
+  {
     name: "SubRouter",
     websiteUrl: "https://subrouter.ai",
     apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
@@ -1309,6 +1359,55 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "subrouter/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
       },
     },
+  },
+  {
+    name: "OspreyAI",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    settingsConfig: {
+      baseUrl: "https://open.ospreyai.cn",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "ospreyai/claude-opus-5-5",
+        fallbacks: ["ospreyai/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "ospreyai/claude-opus-5-5": { alias: "Opus" },
+        "ospreyai/claude-sonnet-5-5": { alias: "Sonnet" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
   },
   {
     name: "Shengsuanyun",
@@ -4554,7 +4653,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       baseUrl: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
       apiKey: "",
@@ -4582,7 +4682,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     family: "streamlake",
     regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key?channel=ccswitch",
     settingsConfig: {
       baseUrl: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
       apiKey: "",
@@ -7170,10 +7270,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
-      baseUrl: "https://tokenflux.dev",
+      baseUrl: "https://tokenflux.com",
       apiKey: "",
       api: "anthropic-messages",
       models: [

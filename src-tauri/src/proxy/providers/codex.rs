@@ -665,8 +665,7 @@ fn infer_codex_chat_reasoning_config(
         .and_then(|value| value.as_str())
         .map(ToString::to_string)
         .or_else(|| codex_provider_upstream_model(provider))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+        .unwrap_or_default();
     let base_url = provider
         .settings_config
         .get("base_url")
@@ -680,9 +679,20 @@ fn infer_codex_chat_reasoning_config(
                 .and_then(|v| v.as_str())
                 .and_then(extract_codex_base_url_from_toml)
         })
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let name = provider.name.to_ascii_lowercase();
+        .unwrap_or_default();
+    infer_chat_reasoning_config(&provider.name, &base_url, &model)
+}
+
+/// 按供应商名、上游地址、上游模型名推断 Chat 兼容上游的 reasoning 接口。
+/// Codex Responses → Chat 与 Claude 路由（经 Chat / Responses 转发）共用这份判定。
+pub(crate) fn infer_chat_reasoning_config(
+    name: &str,
+    base_url: &str,
+    model: &str,
+) -> Option<CodexChatReasoningConfig> {
+    let name = name.to_ascii_lowercase();
+    let base_url = base_url.to_ascii_lowercase();
+    let model = model.to_ascii_lowercase();
 
     // 平台优先：聚合 / 托管平台的 reasoning 接口由平台的推理框架决定，而非模型官方实现，
     // 因此先按平台标识（仅 name + base_url，不含 model 名）判定并覆盖模型规则。

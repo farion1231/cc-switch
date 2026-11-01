@@ -380,11 +380,12 @@ fn anthropic_web_search_to_responses(
         .get("blocked_domains")
         .and_then(Value::as_array)
         .filter(|domains| !domains.is_empty());
-    if blocked_domains.is_some() {
-        // OpenAI Responses currently exposes an allow-list but no deny-list.
-        // Failing closed avoids silently searching domains the caller excluded.
+    if blocked_domains.is_some() && is_codex_oauth {
+        // The Responses API documents `filters.blocked_domains`, but the
+        // ChatGPT Codex backend does not. Failing closed avoids silently
+        // searching domains the caller excluded if that backend ignores it.
         return Err(ProxyError::InvalidRequest(
-            "Anthropic WebSearch blocked_domains cannot be represented by the Responses API"
+            "Anthropic WebSearch blocked_domains is not supported by the Codex OAuth backend"
                 .to_string(),
         ));
     }
@@ -405,14 +406,19 @@ fn anthropic_web_search_to_responses(
         response_tool["external_web_access"] = json!(true);
     }
 
+    let mut filters = serde_json::Map::new();
     if let Some(allowed_domains) = tool
         .get("allowed_domains")
         .and_then(Value::as_array)
         .filter(|domains| !domains.is_empty())
     {
-        response_tool["filters"] = json!({
-            "allowed_domains": allowed_domains
-        });
+        filters.insert("allowed_domains".to_string(), json!(allowed_domains));
+    }
+    if let Some(blocked_domains) = blocked_domains {
+        filters.insert("blocked_domains".to_string(), json!(blocked_domains));
+    }
+    if !filters.is_empty() {
+        response_tool["filters"] = Value::Object(filters);
     }
 
     if let Some(user_location) = tool
@@ -3692,7 +3698,32 @@ mod tests {
     }
 
     #[test]
-    fn test_hosted_web_search_blocked_domains_fails_closed() {
+    fn test_hosted_web_search_blocked_domains_maps_to_responses_filters() {
+        let input = json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [{
+                "type": "web_search_20260209",
+                "name": "web_search",
+                "allowed_callers": ["direct"],
+                "blocked_domains": ["doc.rust-lang.org", "docs.rs", "github.com"]
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(
+            result["tools"][0],
+            json!({
+                "type": "web_search",
+                "filters": {
+                    "blocked_domains": ["doc.rust-lang.org", "docs.rs", "github.com"]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_hosted_web_search_blocked_domains_fails_closed_on_codex_oauth() {
         let input = json!({
             "model": "gpt-5",
             "messages": [{"role": "user", "content": "Search"}],

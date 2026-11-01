@@ -11,6 +11,7 @@ pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
 pub(crate) mod codex_official_models;
+pub(crate) mod codex_terminal;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
@@ -57,8 +58,8 @@ pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::{
-    provider_exists_in_live_config, sync_additive_app_to_live, write_live_for_state,
-    LiveSyncOutcome,
+    initialize_dsh_profiles, provider_exists_in_live_config, sync_additive_app_to_live,
+    write_live_for_state, LiveSyncOutcome,
 };
 
 // Internal re-exports
@@ -148,6 +149,18 @@ impl EditorSaveKind {
 
 /// Provider business logic service
 pub struct ProviderService;
+
+/// Native provider lists refresh saved rows as well as reading them. Keep the
+/// entire snapshot/readback under the same per-app lock as provider mutations,
+/// so an in-flight list cannot restore a deleted row or overwrite a newer edit.
+fn lock_native_provider_operations(
+    state: &AppState,
+    app_type: &AppType,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh).then(|| {
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
+    })
+}
 
 /// Result of a provider switch operation, including any non-fatal warnings
 #[derive(Debug, serde::Serialize, Default)]
@@ -5461,6 +5474,14 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
+        if app_type == AppType::Dsh {
+            // A profile can appear while CC Switch is running. Keep the provider list usable
+            // when a native lock or an invalid profile prevents the initial sync; retry later.
+            if let Err(error) = initialize_dsh_profiles(state) {
+                log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
+            }
+        }
         if app_type == AppType::Pi {
             return pi::list(state);
         }
@@ -5468,7 +5489,7 @@ impl ProviderService {
             return omp::list(state);
         }
         if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh) {
-            let native = if app_type == AppType::Dsh {
+            let native = if matches!(app_type, AppType::Dsh) {
                 crate::dsh_config::get_providers()?
             } else if app_type == AppType::Kimi {
                 crate::kimi_config::get_providers()?
@@ -5542,19 +5563,19 @@ impl ProviderService {
         write_live: bool,
         create: bool,
     ) -> Result<bool, AppError> {
-        if app_type == &AppType::Dsh {
+        if matches!(app_type, AppType::Dsh) {
             return if write_live {
                 crate::dsh_config::save_and_commit(
                     &provider.id,
                     Some(provider.settings_config.clone()),
                     create,
                     || {
-                        state.db.save_provider("dsh", provider)?;
+                        state.db.save_provider(app_type.as_str(), provider)?;
                         Ok(true)
                     },
                 )
             } else {
-                state.db.save_provider("dsh", provider)?;
+                state.db.save_provider(app_type.as_str(), provider)?;
                 Ok(true)
             };
         }
@@ -5633,6 +5654,7 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Kimi
             && crate::kimi_config::is_official_provider(&provider.settings_config)
         {
@@ -5660,15 +5682,13 @@ impl ProviderService {
 
         if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
-            // Adds are serialized here; the live write repeats the check under MCode's file lock.
-            let _guard = futures::executor::block_on(
-                state.proxy_service.lock_switch_for_app(app_type.as_str()),
-            );
+            // The per-app lock also serializes native list refreshes and other mutations;
+            // the live write repeats the check under MCode's file lock.
             if state
                 .db
                 .get_provider_by_id(&provider.id, app_type.as_str())?
                 .is_some()
-                || if app_type == AppType::Dsh {
+                || if matches!(app_type, AppType::Dsh) {
                     crate::dsh_config::provider_key_exists(&provider.id)?
                 } else if app_type == AppType::Kimi {
                     crate::kimi_config::provider_key_exists(&provider.id)?
@@ -5688,10 +5708,19 @@ impl ProviderService {
         // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
 
+        // 累加式写 live 失败（如配置文件解析不了）时要撤回这一行，先记下原来的
+        let existing_row = if app_type.is_additive_mode() {
+            state
+                .db
+                .get_provider_by_id(&provider.id, app_type.as_str())?
+        } else {
+            None
+        };
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
+        // Additive mode apps (OpenCode, OpenClaw, Hermes): optionally write to live config.
         if app_type.is_additive_mode() {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
             if matches!(app_type, AppType::OpenCode)
@@ -5704,8 +5733,13 @@ impl ProviderService {
             if !add_to_live {
                 return Ok(true);
             }
-            write_live_for_state(state, &app_type, &provider)?;
-            return Ok(true);
+            return Self::keep_row_if_written(
+                state,
+                &app_type,
+                &provider.id,
+                existing_row.as_ref(),
+                write_live_for_state(state, &app_type, &provider),
+            );
         }
 
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
@@ -6210,6 +6244,7 @@ impl ProviderService {
         original_id: Option<&str>,
         provider: Provider,
     ) -> Result<bool, AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         let mut provider = provider;
         if app_type == AppType::Kimi {
             // Official cards come from signing in. Their models, name and notes are
@@ -6521,12 +6556,13 @@ impl ProviderService {
     /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
-        if app_type == AppType::Dsh {
+        if matches!(app_type, AppType::Dsh) {
             return crate::dsh_config::save_and_commit(id, None, false, || {
-                state.db.delete_provider("dsh", id)
+                state.db.delete_provider(app_type.as_str(), id)
             });
         }
         if app_type == AppType::Kimi {
@@ -6632,6 +6668,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type != AppType::Kimi {
             return Err(AppError::InvalidInput(format!(
                 "{} adds providers through switch",
@@ -6659,14 +6696,15 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Pi {
             return pi::remove(state, id);
         }
-        if app_type == AppType::Dsh {
+        if matches!(app_type, AppType::Dsh) {
             return crate::dsh_config::save_and_commit(id, None, false, || {
-                if let Some(mut provider) = state.db.get_provider_by_id(id, "dsh")? {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
                     Self::set_provider_live_config_managed(&mut provider, false);
-                    state.db.save_provider("dsh", &provider)?;
+                    state.db.save_provider(app_type.as_str(), &provider)?;
                 }
                 Ok(())
             });
@@ -6809,6 +6847,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<SwitchResult, AppError> {
+        let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Pi {
             return pi::enable(state, id);
         }
@@ -6831,14 +6870,14 @@ impl ProviderService {
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
 
-        if app_type == AppType::Dsh {
+        if matches!(app_type, AppType::Dsh) {
             let mut provider = _provider.clone();
             Self::set_provider_live_config_managed(&mut provider, true);
             crate::dsh_config::save_and_commit(
                 id,
                 Some(provider.settings_config.clone()),
                 false,
-                || state.db.save_provider("dsh", &provider),
+                || state.db.save_provider(app_type.as_str(), &provider),
             )?;
             return Ok(SwitchResult::default());
         }
