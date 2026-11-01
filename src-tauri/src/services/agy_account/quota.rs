@@ -243,15 +243,16 @@ fn error_message(body: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::services::subscription_agy::{
-        TIER_AGY_GEMINI_FIVE_HOUR, TIER_AGY_GEMINI_WEEKLY, TIER_AGY_THIRD_PARTY_FIVE_HOUR,
-        TIER_AGY_THIRD_PARTY_WEEKLY,
+        TIER_AGY_GEMINI_ARGON_WEEKLY, TIER_AGY_GEMINI_FIVE_HOUR, TIER_AGY_GEMINI_WEEKLY,
+        TIER_AGY_THIRD_PARTY_FIVE_HOUR, TIER_AGY_THIRD_PARTY_WEEKLY,
     };
 
     // retrieveUserQuotaSummary 的真实结构（数值改过）
     const SAMPLE: &str = r#"{"groups": [
       {"displayName": "Gemini Models", "buckets": [
         {"bucketId": "gemini-weekly", "window": "weekly", "resetTime": "2026-10-28T07:41:54Z", "remainingFraction": 1},
-        {"bucketId": "gemini-5h", "window": "5h", "resetTime": "2026-10-21T12:41:54Z", "remainingFraction": 0.5}
+        {"bucketId": "gemini-5h", "window": "5h", "resetTime": "2026-10-21T12:41:54Z", "remainingFraction": 0.5},
+        {"bucketId": "gemini-argon-wtu-weekly", "window": "weekly", "resetTime": "2026-10-28T09:00:00Z", "remainingFraction": 0.6}
       ]},
       {"displayName": "Claude and GPT models", "buckets": [
         {"bucketId": "3p-weekly", "window": "weekly", "resetTime": "2026-10-28T04:42:02Z", "remainingFraction": 0.988746},
@@ -269,13 +270,15 @@ mod tests {
             [
                 TIER_AGY_GEMINI_FIVE_HOUR,
                 TIER_AGY_GEMINI_WEEKLY,
+                TIER_AGY_GEMINI_ARGON_WEEKLY,
                 TIER_AGY_THIRD_PARTY_FIVE_HOUR,
                 TIER_AGY_THIRD_PARTY_WEEKLY,
             ]
         );
         let used: Vec<_> = tiers.iter().map(|t| t.utilization.round()).collect();
-        assert_eq!(used, [50.0, 0.0, 100.0, 1.0]);
+        assert_eq!(used, [50.0, 0.0, 40.0, 100.0, 1.0]);
         assert_eq!(tiers[0].resets_at.as_deref(), Some("2026-10-21T12:41:54Z"));
+        assert_eq!(tiers[2].resets_at.as_deref(), Some("2026-10-28T09:00:00Z"));
     }
 
     #[test]
