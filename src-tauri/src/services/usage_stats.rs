@@ -2698,14 +2698,34 @@ fn query_model_pricing_prefix(
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
     let pattern = format!("{model_id}-%");
+    // 排除候选 id 自身的档位变体行（GPT-6.x 的 fast/flex/长上下文，见
+    // session_usage_codex::pricing_model_id 与 seed_model_pricing 的档位播种）：
+    // 基础行缺失时前缀回退会在这些变体里任取一条（同为 16 字符，顺序不定），
+    // 把标准价请求按 0.5×~4× 的档位价错算。`-fast` 的候选同时排除 `-long`
+    // （candidate+"-long"），避免 fast 行被删后请求落到 fast-long 的价上。
+    let exclusions = [
+        format!("{model_id}-fast"),
+        format!("{model_id}-flex"),
+        format!("{model_id}-long"),
+        format!("{model_id}-fast-long"),
+        format!("{model_id}-flex-long"),
+    ];
     conn.query_row(
         "SELECT input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
          FROM model_pricing
          WHERE model_id LIKE ?1
+           AND model_id NOT IN (?2, ?3, ?4, ?5, ?6)
          ORDER BY LENGTH(model_id) ASC
          LIMIT 1",
-        [pattern],
+        rusqlite::params![
+            pattern,
+            exclusions[0],
+            exclusions[1],
+            exclusions[2],
+            exclusions[3],
+            exclusions[4]
+        ],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,

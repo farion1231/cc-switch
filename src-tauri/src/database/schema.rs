@@ -3012,6 +3012,59 @@ impl Database {
             .map_err(|e| AppError::Database(format!("插入模型定价失败: {e}")))?;
         }
 
+        // GPT-6.x 家族的档位变体（#7832）：Codex 会话导入按 service_tier 与
+        // 单次输入量（>272K 视为长上下文）选择变体行计费（见
+        // session_usage_codex::pricing_model_id），这里派生出对应的价格行。
+        // 官方参考价倍率，2026-10-03 核对：
+        // https://developers.openai.com/api/docs/pricing
+        //   fast = 2×、flex = 0.5×；长上下文 input 2×、output 1.5×（缓存读写
+        //   跟随 input 倍率）。倍率从各基础行派生，基础价更新后变体随之更新。
+        for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data
+            .iter()
+            .filter(|row| matches!(row.0, "gpt-6.1-sol" | "gpt-6-astra" | "gpt-6-luna"))
+        {
+            let parse = |price: &str| {
+                price
+                    .parse::<rust_decimal::Decimal>()
+                    .unwrap_or_else(|_| panic!("静态定价小数解析失败: {price}"))
+            };
+            let (base_input, base_output, base_read, base_write) = (
+                parse(input),
+                parse(output),
+                parse(cache_read),
+                parse(cache_creation),
+            );
+            for (suffix, tier_factor, is_long) in [
+                ("long", rust_decimal::Decimal::ONE, true),
+                ("fast", rust_decimal::Decimal::TWO, false),
+                ("fast-long", rust_decimal::Decimal::TWO, true),
+                ("flex", rust_decimal::Decimal::new(5, 1), false),
+                ("flex-long", rust_decimal::Decimal::new(5, 1), true),
+            ] {
+                let long_input = if is_long {
+                    rust_decimal::Decimal::TWO
+                } else {
+                    rust_decimal::Decimal::ONE
+                };
+                let long_output = if is_long {
+                    rust_decimal::Decimal::new(15, 1)
+                } else {
+                    rust_decimal::Decimal::ONE
+                };
+                let input_factor = tier_factor * long_input;
+                let output_factor = tier_factor * long_output;
+                stmt.execute(rusqlite::params![
+                    format!("{model_id}-{suffix}"),
+                    format!("{display_name} ({suffix}, API estimate)"),
+                    (base_input * input_factor).to_string(),
+                    (base_output * output_factor).to_string(),
+                    (base_read * input_factor).to_string(),
+                    (base_write * input_factor).to_string(),
+                ])
+                .map_err(|e| AppError::Database(format!("插入档位定价失败: {e}")))?;
+            }
+        }
+
         log::info!("已插入 {} 条默认模型定价数据", pricing_data.len());
         Ok(())
     }
@@ -3935,6 +3988,39 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seeds_gpt6_tier_variant_pricing() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        // 档位行由基础行派生（fast 2×、flex 0.5×、长上下文 input 2× / output
+        // 1.5×、缓存读写跟随 input 倍率）。Decimal 按数值比较，不比字符串刻度。
+        let cases = [
+            ("gpt-6.1-sol-fast", "4", "20", "0.20", "5.00"),
+            ("gpt-6.1-sol-long", "4", "15", "0.20", "5.00"),
+            ("gpt-6.1-sol-fast-long", "8", "30", "0.40", "10.00"),
+            ("gpt-6.1-sol-flex", "1", "5", "0.05", "1.25"),
+            ("gpt-6.1-sol-flex-long", "2", "7.5", "0.10", "2.50"),
+            ("gpt-6-astra-fast", "20", "100", "2", "25"),
+            ("gpt-6-luna-flex-long", "0.10", "0.375", "0.01", "0.125"),
+        ];
+        for (id, input, output, read, write) in cases {
+            let stored: (String, String, String, String) = conn
+                .query_row(
+                    "SELECT input_cost_per_million, output_cost_per_million,
+                            cache_read_cost_per_million, cache_creation_cost_per_million
+                     FROM model_pricing WHERE model_id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .unwrap_or_else(|e| panic!("{id} 应有播种的档位价格行: {e}"));
+            let parse = |v: &str| v.parse::<rust_decimal::Decimal>().unwrap();
+            let expect = [input, output, read, write].map(parse);
+            let actual = [stored.0, stored.1, stored.2, stored.3].map(|v| parse(&v));
+            assert_eq!(actual, expect, "{id} 的四项单价应为基础行的档位倍率");
+        }
+        Ok(())
+    }
 
     #[test]
     fn migrate_v23_to_v24_preserves_existing_session_cursors() -> Result<(), AppError> {
