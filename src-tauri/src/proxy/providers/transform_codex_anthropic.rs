@@ -17,14 +17,14 @@ use super::transform_codex_chat::{
 };
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
-use crate::proxy::json_canonical::canonical_json_string;
+use crate::proxy::json_canonical::{canonical_json_string, canonicalize_tool_arguments};
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use crate::proxy::tool_media::{
     strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
@@ -515,21 +515,43 @@ fn convert_input_to_messages(
     tool_context: &CodexToolContext,
 ) -> Result<Vec<Value>, ProxyError> {
     let mut messages: Vec<Value> = Vec::new();
+    // A model can be cut off after Codex has recorded its tool call as
+    // completed. Keep the original (possibly truncated) arguments and the
+    // matching parser error as ordinary text so replaying that history does
+    // not permanently reject the conversation at an Anthropic upstream.
+    let mut invalid_function_calls: HashMap<String, String> = HashMap::new();
+    let mut recovered_invalid_function_calls = 0_usize;
 
     for item in items {
         let item_type = item.get("type").and_then(|t| t.as_str());
+        let call_id = matches!(
+            item_type,
+            Some("function_call" | "custom_tool_call" | "tool_search_call")
+        )
+        .then(|| {
+            item.get("call_id")
+                .and_then(Value::as_str)
+                .or_else(|| item.get("id").and_then(Value::as_str))
+                .unwrap_or("")
+        });
+        if let Some(call_id) = call_id {
+            // A later call may reuse an older call id. Its result must be paired
+            // with the newer call rather than an earlier malformed call.
+            invalid_function_calls.remove(call_id);
+        }
         if matches!(
             item_type,
             Some("function_call" | "custom_tool_call" | "tool_search_call")
         ) && item.get("status").and_then(Value::as_str) == Some("incomplete")
         {
             log::warn!(
-                "[Codex/Anthropic] Dropping incomplete historical tool call: type={}, call_id={}",
+                "[Codex/Anthropic] Dropping incomplete historical tool call: type={}, call_id_len={}",
                 item_type.unwrap_or("unknown"),
                 item.get("call_id")
                     .and_then(Value::as_str)
                     .or_else(|| item.get("id").and_then(Value::as_str))
                     .unwrap_or("")
+                    .len()
             );
             continue;
         }
@@ -544,21 +566,32 @@ fn convert_input_to_messages(
                 let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let namespace = item.get("namespace").and_then(|value| value.as_str());
                 let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
-                let args_str = item.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
-                let input: Value = if args_str.trim().is_empty() {
-                    json!({})
-                } else {
-                    serde_json::from_str(args_str).map_err(|error| {
-                        ProxyError::InvalidRequest(format!(
-                            "Invalid function_call arguments for '{name}': {error}"
-                        ))
-                    })?
+                let args_str = canonicalize_tool_arguments(item.get("arguments"));
+                let parsed_input = serde_json::from_str::<Value>(&args_str).ok();
+                let Some(input) = parsed_input.filter(|value| value.is_object()) else {
+                    log::warn!(
+                        "[Codex/Anthropic] Preserving historical function_call with invalid arguments as text: name_len={}, call_id_len={}, args_bytes={}",
+                        name.len(),
+                        call_id.len(),
+                        args_str.len()
+                    );
+                    push_block(
+                        &mut messages,
+                        "assistant",
+                        json!({
+                            "type": "text",
+                            "text": format!(
+                                "[Historical tool call with invalid arguments; context only, not a new tool invocation]\nname: {name}\narguments: {}",
+                                args_str
+                            )
+                        }),
+                    );
+                    if !call_id.is_empty() {
+                        invalid_function_calls.insert(call_id.to_string(), name.to_string());
+                    }
+                    recovered_invalid_function_calls += 1;
+                    continue;
                 };
-                if !input.is_object() {
-                    return Err(ProxyError::InvalidRequest(format!(
-                        "Function call arguments for '{name}' must be a JSON object"
-                    )));
-                }
                 let input = sanitize_anthropic_tool_use_input(name, input);
                 push_block(
                     &mut messages,
@@ -617,6 +650,21 @@ fn convert_input_to_messages(
             }
             Some("function_call_output" | "custom_tool_call_output" | "tool_search_output") => {
                 let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(name) = invalid_function_calls.remove(call_id) {
+                    let output = tool_result_content_from_responses_item(item);
+                    let output_text = tool_result_content_as_text(&output.content);
+                    push_block(
+                        &mut messages,
+                        "user",
+                        json!({
+                            "type": "text",
+                            "text": format!(
+                                "[Result for historical tool call '{name}' with invalid arguments]\n{output_text}"
+                            )
+                        }),
+                    );
+                    continue;
+                }
                 let output = tool_result_content_from_responses_item(item);
                 let mut block = json!({
                     "type": "tool_result",
@@ -742,7 +790,42 @@ fn convert_input_to_messages(
         }
     }
 
+    if recovered_invalid_function_calls > 0 {
+        log::warn!(
+            "[Codex/Anthropic] Recovered {recovered_invalid_function_calls} historical function_call item(s) with invalid arguments"
+        );
+    }
+
     Ok(messages)
+}
+
+fn tool_result_content_as_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .map(|part| {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    return text.to_string();
+                }
+                if matches!(
+                    part.get("type").and_then(Value::as_str),
+                    Some("image" | "document")
+                ) {
+                    return "[non-text tool result omitted from recovered invalid tool call]"
+                        .to_string();
+                }
+                canonical_json_string(part)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Object(_) => content
+            .get("text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| canonical_json_string(content)),
+        other => canonical_json_string(other),
+    }
 }
 
 struct ToolResultContent {
@@ -2026,20 +2109,191 @@ mod tests {
     }
 
     #[test]
-    fn test_request_invalid_or_non_object_arguments_error() {
-        for arguments in ["{broken", "[1,2]"] {
+    fn test_request_structured_arguments_are_canonicalized() {
+        let result = responses_request_to_anthropic(
+            json!({
+                "model": "c",
+                "input": [
+                    {
+                        "type": "function_call",
+                        "call_id": "c1",
+                        "name": "inspect",
+                        "arguments": {"b": 2, "a": 1}
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "c1",
+                        "output": "ok"
+                    }
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+        assert_eq!(
+            result["messages"][1]["content"][0]["input"],
+            json!({"b": 2, "a": 1})
+        );
+    }
+
+    #[test]
+    fn test_request_invalid_or_non_object_arguments_are_preserved_as_text() {
+        for arguments in [
+            "{broken",
+            "{\"code\":\"faces.append((a,b,e",
+            "[1,2]",
+            "null",
+            "true",
+            "42",
+            "\"text\"",
+        ] {
             let input = json!({
                 "model":"c",
                 "input":[
+                    {"role":"user","content":[{"type":"input_text","text":"run it"}]},
                     {"type":"function_call","call_id":"c1","name":"t","arguments":arguments},
-                    {"type":"function_call_output","call_id":"c1","output":"ok"}
+                    {"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"failed to parse function arguments"}]},
+                    {"role":"user","content":[{"type":"input_text","text":"continue"}]}
                 ]
             });
-            assert!(matches!(
-                responses_request_to_anthropic(input, 4096),
-                Err(ProxyError::InvalidRequest(_))
-            ));
+            let result = responses_request_to_anthropic(input, 4096).unwrap();
+            let serialized = result["messages"].to_string();
+            assert!(serialized.contains("Historical tool call with invalid arguments"));
+            assert!(serialized.contains("failed to parse function arguments"));
+            assert!(serialized.contains("continue"));
+            assert!(!serialized.contains("\"type\":\"tool_use\""));
+            assert!(!serialized.contains("\"type\":\"tool_result\""));
+            let messages = result["messages"].as_array().unwrap();
+            assert_eq!(messages[0]["role"], "user");
+            assert_eq!(messages[0]["content"][0]["text"], "run it");
+            assert_eq!(messages[1]["role"], "assistant");
+            assert_eq!(messages[1]["content"][0]["type"], "text");
+            assert!(messages[1]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains(arguments));
+            assert_eq!(messages[2]["role"], "user");
+            assert!(messages[2]["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|block| block["type"] == "text"));
         }
+    }
+
+    #[test]
+    fn test_recovered_bad_history_preserves_parallel_tool_pair() {
+        for bad_call_first in [false, true] {
+            for bad_result_first in [false, true] {
+                let good_call = json!({"type": "function_call", "status": "completed", "call_id": "good",
+                    "name": "read_file", "arguments": "{\"path\":\"/tmp/a\"}"});
+                let bad_call = json!({"type": "function_call", "status": "completed", "call_id": "bad",
+                    "name": "execute_blender_code", "arguments": "{\"code\":\"faces.append((a,b,e"});
+                let good_result = json!({"type": "function_call_output", "call_id": "good", "output": "file contents"});
+                let bad_result = json!({"type": "function_call_output", "call_id": "bad", "output": "EOF while parsing a string at line 1 column 5854"});
+                let mut input = vec![json!({"role": "user", "content": "run both"})];
+                input.extend(if bad_call_first {
+                    [bad_call, good_call]
+                } else {
+                    [good_call, bad_call]
+                });
+                input.extend(if bad_result_first {
+                    [bad_result, good_result]
+                } else {
+                    [good_result, bad_result]
+                });
+                input.push(json!({"role": "user", "content": "continue"}));
+                let request = responses_request_to_anthropic(
+                    json!({"model": "claude", "input": input}),
+                    4096,
+                )
+                .unwrap();
+                let messages = request["messages"].as_array().unwrap();
+                let blocks = messages
+                    .iter()
+                    .flat_map(|message| message["content"].as_array().unwrap())
+                    .collect::<Vec<_>>();
+                let tool_uses = blocks
+                    .iter()
+                    .filter(|block| block["type"] == "tool_use")
+                    .collect::<Vec<_>>();
+                let tool_results = blocks
+                    .iter()
+                    .filter(|block| block["type"] == "tool_result")
+                    .collect::<Vec<_>>();
+                assert_eq!(tool_uses.len(), 1);
+                assert_eq!(tool_results.len(), 1);
+                assert_eq!(tool_uses[0]["id"], "good");
+                assert_eq!(tool_uses[0]["input"], json!({"path": "/tmp/a"}));
+                assert_eq!(tool_results[0]["tool_use_id"], "good");
+                assert_eq!(tool_results[0]["content"], "file contents");
+                let text = blocks
+                    .iter()
+                    .filter_map(|block| block["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(text.contains("{\"code\":\"faces.append((a,b,e"));
+                assert!(text.contains("EOF while parsing a string at line 1 column 5854"));
+                assert!(text.contains("continue"));
+                for pair in messages.windows(2) {
+                    if pair[0]["content"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|block| block["type"] == "tool_use")
+                    {
+                        assert_eq!(pair[1]["role"], "user");
+                        assert_eq!(pair[1]["content"][0]["type"], "tool_result");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_reused_call_id_does_not_reuse_invalid_result_mapping() {
+        let result = responses_request_to_anthropic(
+            json!({
+                "model": "c",
+                "input": [
+                    {"role": "user", "content": [{"type": "input_text", "text": "run it"}]},
+                    {"type": "function_call", "call_id": "c1", "name": "old_tool", "arguments": "{broken"},
+                    {"type": "function_call", "call_id": "c1", "name": "new_tool", "arguments": "{\"x\":1}", "status": "incomplete"},
+                    {"type": "function_call_output", "call_id": "c1", "output": "did not run"}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+
+        let serialized = result["messages"].to_string();
+        assert!(serialized.contains("Historical tool call with invalid arguments"));
+        assert!(!serialized.contains("Result for historical tool call"));
+        assert!(!serialized.contains("\"type\":\"tool_result\""));
+    }
+
+    #[test]
+    fn test_recovered_invalid_tool_omits_media_payload() {
+        let result = responses_request_to_anthropic(
+            json!({
+                "model": "c",
+                "input": [
+                    {"role": "user", "content": [{"type": "input_text", "text": "run it"}]},
+                    {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{broken"},
+                    {"type": "function_call_output", "call_id": "c1", "output": [{
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64,MEDIA_SENTINEL"
+                    }]}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+
+        let serialized = result["messages"].to_string();
+        assert!(serialized.contains("non-text tool result omitted"));
+        assert!(!serialized.contains("MEDIA_SENTINEL"));
+        assert!(!serialized.contains("data:image/png"));
     }
 
     #[test]
