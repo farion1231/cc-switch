@@ -732,9 +732,11 @@ function ToolRow({
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
   const canUninstall = isToolPresent(info, report);
+  // 安装报告只枚举本机路径，不能据此判断 WSL 中是否已安装。
+  const hasLocalInstall = Boolean(defaultInstall) && info?.env_type !== "wsl";
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
-    (isVersionLoading || broken
+    (isVersionLoading || broken || (!info?.version && hasLocalInstall)
       ? null
       : !info?.version
         ? "install"
@@ -774,7 +776,7 @@ function ToolRow({
       {t("appsPage.notRunnable")}
     </span>
   ) : (
-    <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
+    <span className="text-caption text-fg-2">{t("appsPage.notDetected")}</span>
   );
 
   const actionButton = action ? (
@@ -928,7 +930,22 @@ function ToolRow({
       }
       meta={meta}
       version={version}
-      action={actionButton}
+      action={
+        <>
+          {!info?.version && !isBusy && (
+            <Button
+              variant="neutral"
+              size="compact"
+              onClick={() => void tools.retryToolDetection(tool)}
+              disabled={isVersionLoading}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              {t("common.retry")}
+            </Button>
+          )}
+          {actionButton}
+        </>
+      }
       visibility={visibility}
       menu={
         (canUninstall || busyAction === "uninstall") && (
