@@ -50,6 +50,19 @@ const API_FORMAT_LABELS: Record<
   gemini_native: "Gemini",
 };
 
+const CREDENTIAL_PROTECTION_APPS: ReadonlySet<string> = new Set([
+  "claude",
+  "claude-desktop",
+  "codex",
+  "gemini",
+  "grokbuild",
+  "opencode",
+  "openclaw",
+  "hermes",
+  "pi",
+  "mcode",
+]);
+
 /**
  * 下载链接里的 `iconUrl`，按上传图标的流程重新编码成 96×96 PNG。
  * 任何一步失败都返回 undefined，确认框退回链接里的内置图标或首字母，不提示用户。
@@ -90,6 +103,9 @@ export function DeepLinkImportDialog() {
   const [isImporting, setIsImporting] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [activateAfterImport, setActivateAfterImport] = useState(false);
+  const [protectCredential, setProtectCredential] = useState(false);
+  const credentialProtectionSupported =
+    request?.app != null && CREDENTIAL_PROTECTION_APPS.has(request.app);
   // 当前显示的请求：导入是异步的，期间可能来了新链接把确认框换掉，
   // 导入结束时只在确认框仍显示这条请求时才关闭，否则新链接的确认框会被一起关掉
   const shownRequestRef = useRef<DeepLinkImportRequest | null>(null);
@@ -176,6 +192,7 @@ export function DeepLinkImportDialog() {
       if (disposed) return false;
       // 与请求一起初始化，避免弹窗先显示旧开关状态，再由 effect 更新。
       setActivateAfterImport(initialActivation(next));
+      setProtectCredential(false);
       shownRequestRef.current = next;
       setRequest(next);
       setIsOpen(true);
@@ -253,6 +270,15 @@ export function DeepLinkImportDialog() {
         request.resource === "provider" || request.resource === "prompt"
           ? { ...request, enabled: activateAfterImport }
           : request;
+      if (request.resource === "provider") {
+        payload = {
+          ...payload,
+          credentialEditProtected:
+            request.credentialEditProtected === true &&
+            credentialProtectionSupported &&
+            protectCredential,
+        };
+      }
       if (request.resource === "provider" && request.iconUrl) {
         const icon = await linkIconTaskRef.current;
         payload = {
@@ -520,6 +546,29 @@ export function DeepLinkImportDialog() {
                       {request.app}
                     </div>
                   </div>
+
+                  {request.credentialEditProtected === true && (
+                    <label className="flex items-start gap-3 rounded-md border border-border p-3">
+                      <input
+                        type="checkbox"
+                        checked={protectCredential}
+                        disabled={!credentialProtectionSupported}
+                        onChange={(event) =>
+                          setProtectCredential(event.target.checked)
+                        }
+                      />
+                      <span className="text-sm">
+                        {t("credentialProtection.importLabel")}
+                        <span className="block text-caption text-fg-3">
+                          {t(
+                            credentialProtectionSupported
+                              ? "credentialProtection.importHint"
+                              : "credentialProtection.unsupportedApp",
+                          )}
+                        </span>
+                      </span>
+                    </label>
+                  )}
 
                   {/* Provider Name */}
                   <div className="grid grid-cols-3 items-center gap-4">

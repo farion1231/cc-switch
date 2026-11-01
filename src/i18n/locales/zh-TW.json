@@ -3522,6 +3522,17 @@
     },
     "updatesIncomplete": "沒有發現更新，但有 {{count}} 個倉庫沒有讀到"
   },
+  "credentialProtection": {
+    "unsupportedApp": "此應用程式暫不支援憑證編輯保護。",
+    "importLabel": "保護此憑證，避免誤修改",
+    "importHint": "此連結建議啟用編輯保護。勾選後，一般編輯將保留 Key 及其傳送位址。你可以稍後明確解除保護。",
+    "title": "已啟用憑證編輯保護",
+    "description": "模型及其他設定可以編輯。若要手動修改 Key、憑證來源或傳送位址，請先解除保護。",
+    "remove": "解除保護",
+    "confirmTitle": "解除憑證編輯保護？",
+    "confirmMessage": "現有 Key 和用戶端設定保持不變。編輯器將關閉，未儲存的修改不會套用。重新開啟後即可手動編輯憑證。",
+    "removeFailed": "無法解除憑證編輯保護，尚未套用你的修改。"
+  },
   "deeplink": {
     "confirmImport": "確認匯入供應商設定",
     "confirmImportDescription": "以下設定將匯入至 CC Switch",

@@ -97,6 +97,24 @@ pub async fn update_provider(
     .map_err(|e| format!("供应商更新任务执行失败: {e}"))?
 }
 
+#[tauri::command]
+pub async fn remove_provider_credential_protection(
+    app_handle: tauri::AppHandle,
+    app: String,
+    id: String,
+) -> Result<(), String> {
+    let app = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "Application state unavailable".to_string())?;
+        ProviderService::remove_credential_protection(state.inner(), app, &id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| "Could not remove credential editing protection".to_string())?
+}
+
 /// 供应商编辑器底部 JSON 的显示内容：切到这个供应商之后配置文件会是什么样。
 /// `settingsConfig` 是供应商的行（新增时传空对象）。
 /// Codex draft metadata wins over the stored provider's metadata when supplied.

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useCredentialEditProtection } from "@/contexts/CredentialEditProtectionContext";
 import { Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { fieldClass } from "@/components/ui/input";
@@ -32,6 +33,7 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
 }) => {
   const { t } = useTranslation();
   const [showKey, setShowKey] = useState(false);
+  const protectedCredential = useCredentialEditProtection();
 
   return (
     <div className="space-y-2">
@@ -52,7 +54,10 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
           type={showKey ? "text" : "password"}
           id={id}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            if (!protectedCredential) onChange(e.target.value);
+          }}
+          readOnly={protectedCredential}
           placeholder={placeholder ?? t("apiKeyInput.placeholder")}
           disabled={disabled}
           // 只标给读屏，不用原生 required：空 Key 由表单校验弹「仍要保存」确认，

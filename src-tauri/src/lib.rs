@@ -13,6 +13,7 @@ mod codex_rollout_file;
 mod codex_state_db;
 mod commands;
 mod config;
+mod credential_edit_guard;
 mod database;
 mod deeplink;
 mod dsh_config;
@@ -1538,6 +1539,7 @@ pub fn run() {
             commands::get_current_provider,
             commands::add_provider,
             commands::update_provider,
+            commands::remove_provider_credential_protection,
             commands::get_provider_editor_view,
             commands::delete_provider,
             commands::add_provider_to_live_config,

@@ -350,6 +350,7 @@ fn test_build_gemini_provider_with_model() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("gemini".to_string()),
@@ -405,6 +406,7 @@ fn test_build_gemini_provider_without_model() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("gemini".to_string()),
@@ -453,6 +455,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -502,6 +505,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
 /// 构造一个只带用量脚本字段的 provider 请求，其余保持最小。
 fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImportRequest {
     DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -620,6 +624,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -670,6 +675,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -725,6 +731,7 @@ fn test_parse_and_merge_config_claude() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -850,6 +857,7 @@ fn test_parse_and_merge_config_url_override() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -914,6 +922,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -972,6 +981,7 @@ fn test_build_claude_provider_without_config_unchanged() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        credential_edit_protected: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -2066,6 +2076,98 @@ fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
     assert!(imported_usage_script(AppType::Codex, &request).is_none());
     let request = coding_plan_request("claude", "https://zenmux.ai/api/anthropic");
     assert!(imported_usage_script(AppType::Claude, &request).is_some());
+}
+
+#[test]
+fn credential_guard_link_flag_is_strict_and_optional() {
+    let base = "ccswitch://v1/import?resource=provider&app=claude&name=Custom&endpoint=https://example.com&apiKey=test-key";
+    assert_eq!(
+        parse_deeplink_url(base).unwrap().credential_edit_protected,
+        None
+    );
+    for (flag, expected) in [("true", true), ("false", false)] {
+        assert_eq!(
+            parse_deeplink_url(&format!("{base}&credentialEditProtected={flag}"))
+                .unwrap()
+                .credential_edit_protected,
+            Some(expected)
+        );
+    }
+    for suffix in [
+        "",
+        "1",
+        "null",
+        "TRUE",
+        "true&credentialEditProtected=false",
+    ] {
+        assert!(parse_deeplink_url(&format!("{base}&credentialEditProtected={suffix}")).is_err());
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn credential_guard_import_persists_opt_in_and_initial_endpoint_set() {
+    let _home = TestHomeGuard::new();
+    let db = Arc::new(Database::memory().unwrap());
+    let state = AppState::new(db.clone());
+    let request = parse_deeplink_url("ccswitch://v1/import?resource=provider&app=claude&name=Custom&endpoint=https://example.com,https://backup.example.com&apiKey=test-key&credentialEditProtected=true").unwrap();
+    let id = super::import_provider_from_deeplink(&state, request).unwrap();
+    let stored = db.get_provider_by_id(&id, "claude").unwrap().unwrap();
+    assert!(crate::credential_edit_guard::is_protected(&stored));
+    assert!(!stored
+        .settings_config
+        .to_string()
+        .contains("credentialEditProtected"));
+    assert!(db.get_all_providers("claude").unwrap()[&id]
+        .meta
+        .as_ref()
+        .unwrap()
+        .custom_endpoints
+        .contains_key("https://backup.example.com"));
+    assert!(db
+        .add_custom_endpoint("claude", &id, "https://new.example.com")
+        .is_err());
+    assert!(db
+        .remove_custom_endpoint("claude", &id, "https://backup.example.com")
+        .is_err());
+    let mut changed = stored.clone();
+    changed.meta.as_mut().unwrap().custom_endpoints.insert(
+        "https://new.example.com".into(),
+        crate::settings::CustomEndpoint {
+            url: "https://new.example.com".into(),
+            added_at: 0,
+            last_used: None,
+        },
+    );
+    assert!(db.save_provider("claude", &changed).is_err());
+    crate::services::ProviderService::remove_credential_protection(&state, AppType::Claude, &id)
+        .unwrap();
+    db.add_custom_endpoint("claude", &id, "https://new.example.com")
+        .unwrap();
+    assert_eq!(
+        db.get_provider_by_id(&id, "claude")
+            .unwrap()
+            .unwrap()
+            .settings_config,
+        stored.settings_config
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn credential_guard_rejects_an_unsupported_app_before_importing() {
+    let _home = TestHomeGuard::new();
+    let db = Arc::new(Database::memory().unwrap());
+    let state = AppState::new(db.clone());
+    let url = "ccswitch://v1/import?resource=provider&app=agy&name=Custom&endpoint=https://example.com&apiKey=test-key";
+    let protected = parse_deeplink_url(&format!("{url}&credentialEditProtected=true")).unwrap();
+    assert!(super::import_provider_from_deeplink(&state, protected).is_err());
+    assert!(db.get_all_providers("agy").unwrap().is_empty());
+    let ordinary = parse_deeplink_url(url).unwrap();
+    let id = super::import_provider_from_deeplink(&state, ordinary).unwrap();
+    assert!(!crate::credential_edit_guard::is_protected(
+        &db.get_provider_by_id(&id, "agy").unwrap().unwrap()
+    ));
 }
 
 #[test]
