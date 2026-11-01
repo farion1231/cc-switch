@@ -20,6 +20,9 @@ vi.mock("@/components/providers/forms/AgyOAuthSection", () => ({
 vi.mock("@/components/providers/KimiAccountLogin", () => ({
   KimiAccountLogin: () => <div data-testid="kimi" />,
 }));
+vi.mock("@/components/providers/forms/CodebuddyAccountSection", () => ({
+  CodebuddyAccountSection: () => <div data-testid="codebuddy" />,
+}));
 vi.mock("@/components/providers/DshAccount", () => ({
   DshAccountLogin: () => <div data-testid="dsh" />,
 }));

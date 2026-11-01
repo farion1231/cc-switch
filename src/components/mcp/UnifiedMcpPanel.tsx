@@ -94,6 +94,10 @@ const IMPORT_SOURCE_FILES: Record<
     noteKey: "mcpPage.import.dshNote",
   },
   kimi: { file: "~/.kimi-code/mcp.json" },
+  codebuddy: {
+    file: "~/.codebuddy/.mcp.json",
+    noteKey: "mcpPage.import.codebuddyNote",
+  },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
@@ -102,6 +106,7 @@ const IMPORT_SOURCE_FILES: Record<
 const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "kimi",
+  "codebuddy",
   "dsh",
   "pi",
   "agy",

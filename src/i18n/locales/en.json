@@ -1382,6 +1382,7 @@
     "selectSessionLabel": "Select {{title}}",
     "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
+    "codebuddyDeleteHint": "Manage this session in CodeBuddy Code: background jobs, teammates and file history refer to its transcript",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
     "bucketYesterday": "Yesterday",
@@ -4634,6 +4635,7 @@
       "failedTitle": "Some apps couldn't be read",
       "filesTitle": "Which files were read",
       "claudeNote": " (top-level mcpServers)",
+      "codebuddyNote": " (the first existing of .mcp.json, mcp.json, ~/.codebuddy.json)",
       "dshNote": " (written to every initialized profile: web, desktop, headless, acp)",
       "ok": "Got it"
     },
@@ -4938,6 +4940,7 @@
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
+      "codebuddyHelp": "The official sign-in for CodeBuddy Code (both the China and international sites). To switch accounts, create a \"CodeBuddy Official Sign-in\" card for the account in the provider list and click Add. \"Add account\" opens a terminal running codebuddy and adds the account here once you finish; if CodeBuddy is already signed in, it's signed out for now and can be restored if you give up. CodeBuddy refreshes its own tokens.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
       "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
@@ -4997,6 +5000,32 @@
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
+    },
+    "codebuddy": {
+      "mainland": "China",
+      "global": "International",
+      "expiredNote": "Sign-in expired, sign in again",
+      "addedOn": "Added {{date}}",
+      "imported": "Added {{login}}.",
+      "uncollected": "CodeBuddy is signed in as {{login}}, which isn't in this list yet.",
+      "importCurrent": "Add current account",
+      "unrecognized": "CodeBuddy's sign-in file is in an unrecognized format",
+      "unrecognizedNote": "It may be encrypted by WorkBuddy. CC Switch leaves it untouched and can't switch accounts.",
+      "statusLoadFailed": "Couldn't read CodeBuddy accounts. Try again.",
+      "empty": "No CodeBuddy accounts yet. Click Add account to sign in, or add the account CodeBuddy is signed in with.",
+      "login": "Sign in to new account",
+      "current": "In use by CodeBuddy",
+      "pendingNote": "Opened codebuddy in a terminal. Follow the prompts to sign in (type /login if no sign-in screen appears); the account is added here once you finish.",
+      "reopenTerminal": "Reopen terminal",
+      "removeNote": "Only removes CC Switch's copy. CodeBuddy stays signed in.",
+      "quota": {
+        "credits": "Credits",
+        "enterprise": "Enterprise",
+        "unlimited": "Unlimited",
+        "detail": "{{remaining}} of {{total}} credits left, {{used}} used",
+        "usedDetail": "{{used}} credits used this cycle",
+        "refreshPending": "Token awaiting renewal by CodeBuddy. Switch to this account and use it once, then check again."
+      }
     },
     "claude": {
       "pasteSubmitted": "Submitted. Finishing sign-in…",
@@ -5113,6 +5142,47 @@
       "renameProvider": "Oh My Pi provider keys cannot be renamed.",
       "providerMissing": "This Oh My Pi provider is no longer saved.",
       "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "No custom models yet",
+      "description": "CodeBuddy's official models are managed by CodeBuddy Code itself. To switch official accounts, create a \"CodeBuddy Official Sign-in\" card for the account and click Add here. Custom models already in ~/.codebuddy/models.json appear here automatically. Use the + button in the top-right corner to add a preset or custom model."
+    },
+    "modelsHint": "The model ID is the id written to models.json and the name you pick in /model, usually the endpoint's model name. It can't be changed once added. The display name is the same value as Name above.",
+    "modelIdDuplicate": "This model ID is already in use",
+    "modelIdInvalid": "The model ID can't start or end with a space.",
+    "vendor": "Vendor label",
+    "urlHint": "Use the full path, usually ending in /chat/completions. ${VAR} environment references work.",
+    "urlInvalid": "Enter a valid http(s) URL.",
+    "apiKeyPlaceholder": "Enter an API key, or reference an environment variable as ${MY_API_KEY}",
+    "maxInputTokens": "Max input tokens",
+    "maxOutputTokens": "Max output tokens",
+    "jsonHint": "One model entry in models.json (its id comes from Model ID above). CodeBuddy Code reloads the file on its own after you save.",
+    "official": {
+      "presetName": "CodeBuddy Official Sign-in",
+      "account": "Account",
+      "accountHint": "Choose the CodeBuddy account this card uses. CodeBuddy can only be signed in to one account at a time: click Add on this card in the provider list to sign CodeBuddy in to it, and a running CodeBuddy picks it up automatically.",
+      "accountDeleted": "Account removed. Choose another one.",
+      "accountDeletedChip": "Account removed",
+      "unbound": "No account chosen yet. Edit the card to choose one.",
+      "statusLoading": "Loading accounts…",
+      "expired": "This account's sign-in has expired. Sign in again in the Auth Center before adding it.",
+      "importCurrent": "Add current sign-in ({{login}})",
+      "adding": "Adding…",
+      "added": "Added {{name}}. CodeBuddy is now signed in to this account; a running CodeBuddy switches automatically, and new sessions use it too.",
+      "addFailed": "Couldn't add: {{error}}",
+      "removeHint": "CodeBuddy can only be signed in to one account at a time. Add another official card to switch."
+    },
+    "login": {
+      "confirmTitle": "Sign in to another CodeBuddy account",
+      "confirmMessage": "CodeBuddy is signed in as {{login}} and can only use one account at a time. Continuing first adds that account to the Auth Center, then signs CodeBuddy out for now (the sign-in is kept and no server is contacted), and opens a terminal to sign in to the new account.\n\nAfter this, running CodeBuddy sessions show as signed out until you finish signing in. If you give up, you can restore the original sign-in with one click.",
+      "confirm": "Continue",
+      "signedInHint": "While CodeBuddy is signed in, signing in to a new account first signs it out of the current one: running CodeBuddy sessions show as signed out until you finish signing in.",
+      "pendingReplacing": "Signed CodeBuddy out of the current account for now and opened codebuddy in a terminal. Follow the prompts to sign in to the new account; it's added here once you finish.",
+      "restore": "Restore original sign-in",
+      "restored": "Restored the original CodeBuddy sign-in.",
+      "restoreFailed": "Couldn't restore the original sign-in (CodeBuddy may be writing its sign-in file). Sign in again from the Auth Center or a terminal."
     }
   },
   "dsh": {

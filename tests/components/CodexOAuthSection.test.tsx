@@ -41,6 +41,9 @@ vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
 vi.mock("@/components/providers/KimiAccountLogin", () => ({
   KimiAccountLogin: () => <div />,
 }));
+vi.mock("@/components/providers/forms/CodebuddyAccountSection", () => ({
+  CodebuddyAccountSection: () => <div />,
+}));
 
 vi.mock("@/components/providers/DshAccount", () => ({
   DshAccountLogin: () => <div />,

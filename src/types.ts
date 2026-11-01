@@ -324,6 +324,7 @@ export interface VisibleApps {
   dsh?: boolean;
   agy: boolean;
   omp: boolean;
+  codebuddy: boolean;
 }
 
 // WebDAV 同步状态
@@ -777,6 +778,7 @@ export interface McpServerSpec {
 export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
+  codebuddy?: boolean;
   dsh?: boolean;
   agy?: boolean;
   claude: boolean;
