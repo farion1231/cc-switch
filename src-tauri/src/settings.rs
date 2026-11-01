@@ -228,6 +228,11 @@ pub struct S3SyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// Selected S3 provider preset shown in the settings UI. Purely presentational,
+    /// but persisted so an explicit choice (e.g. MinIO, whose endpoint cannot be
+    /// inferred) survives reopening the page (#6663).
+    #[serde(default)]
+    pub preset: String,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -244,6 +249,7 @@ impl Default for S3SyncSettings {
             endpoint: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            preset: String::new(),
             status: WebDavSyncStatus::default(),
         }
     }
@@ -289,6 +295,7 @@ impl S3SyncSettings {
         self.endpoint = self.endpoint.trim().to_string();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
+        self.preset = self.preset.trim().to_string();
         if self.remote_root.is_empty() {
             self.remote_root = default_remote_root();
         }
@@ -1565,6 +1572,26 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn s3_preset_round_trips_and_stays_absent_from_old_files() {
+        // Files written before the preset was persisted must still load; the
+        // frontend then derives the preset from the endpoint.
+        let old: S3SyncSettings =
+            serde_json::from_value(serde_json::json!({ "endpoint": "https://minio.local:9000" }))
+                .expect("old s3 settings");
+        assert!(old.preset.is_empty());
+
+        let mut settings = S3SyncSettings {
+            preset: "  s3-minio  ".to_string(),
+            ..S3SyncSettings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.preset, "s3-minio");
+
+        let saved = serde_json::to_value(&settings).expect("serialize");
+        assert_eq!(saved["preset"], "s3-minio");
+    }
 
     #[test]
     fn codex_stack_classic_tools_default_on_and_ignore_the_old_off_key() {
