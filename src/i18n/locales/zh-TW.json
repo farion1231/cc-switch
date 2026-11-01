@@ -760,6 +760,7 @@
         "content": "將同步以下內容至 WebDAV 伺服器：",
         "dbItem": "資料庫（所有 Provider 設定和資料）",
         "skillsItem": "技能包（所有自訂技能）",
+        "extraItem": "自訂路徑（extra.zip）",
         "targetPath": "目標路徑",
         "existingData": "雲端已有資料",
         "deviceName": "上傳裝置",
@@ -770,6 +771,23 @@
         "legacyNotice": "檢測到舊版雲端路徑資料。本次上傳將寫入新路徑 v2/db-v6，不會覆寫舊路徑。",
         "confirm": "確認上傳"
       }
+    },
+    "syncExtraPaths": {
+      "title": "自訂同步路徑",
+      "description": "將這些 ~/.claude 下的目錄或檔案一併打包進雲同步快照，例如 hooks 引用的腳本、output-styles、agents。同時適用於 WebDAV 與 S3 同步。",
+      "empty": "尚未新增自訂路徑，同步內容與原本完全一致。",
+      "placeholder": "例如：hooks 或 hooks/guard.sh",
+      "sourceLabel": "同步路徑",
+      "enabled": "隨同步啟用",
+      "remove": "移除",
+      "add": "新增路徑",
+      "rulesHint": "僅支援相對於 ~/.claude 的路徑；不支援 ..、絕對路徑與符號連結；與本機 Skills 儲存目錄重疊的路徑會被略過。",
+      "errorEmpty": "路徑不能為空，且不能包含空分量（連續或結尾分隔符）",
+      "errorAbsolute": "不支援絕對路徑，請填寫相對於 ~/.claude 的路徑",
+      "errorTraversal": "路徑分量不能是 . 或 ..",
+      "errorInvalidChar": "包含不合法字元（Windows 保留字元 < > : \" | ? *，或以點/空格結尾）",
+      "errorDuplicate": "存在重複路徑",
+      "errorNested": "存在互相巢狀的路徑，請只保留其中之一"
     },
     "syncType": {
       "label": "同步方式",
@@ -862,6 +880,7 @@
         "content": "將同步以下內容到 S3 儲存桶：",
         "dbItem": "資料庫（所有 Provider 設定和資料）",
         "skillsItem": "技能包（所有自訂技能）",
+        "extraItem": "自訂路徑（extra.zip）",
         "targetPath": "目標物件路徑",
         "existingData": "雲端已有資料",
         "deviceName": "上傳裝置",
