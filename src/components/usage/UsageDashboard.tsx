@@ -95,7 +95,7 @@ const isRefreshIntervalOption = (
 const normalizeRefreshInterval = (value: number | undefined) =>
   isRefreshIntervalOption(value) ? value : DEFAULT_REFRESH_INTERVAL_MS;
 
-const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
+const STATUS_CODE_OPTIONS = [200, 400, 401, 403, 429, 500] as const;
 
 // 页签只放数据视图；显示和定价设置在「用量设置」抽屉里
 type UsageTab = "logs" | "providers" | "models";
