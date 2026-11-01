@@ -433,6 +433,8 @@ export interface Settings {
   checkToolUpdatesOnStartup?: boolean;
   // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
   nativeTrayMenu?: boolean;
+  // 给 macOS 桌面小组件供数（后台定时查额度、写快照；默认关）
+  macosWidgetEnabled?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
   // Run official Codex under the shared "custom" provider id so future

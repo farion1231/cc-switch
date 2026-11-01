@@ -444,6 +444,8 @@
       "trayStylePanel": "Panel",
       "trayStyleMenu": "Menü",
       "trayStyleHelp": "Tepsi simgesine tıkladığınızda ne açılacağını belirler (Windows'ta sol tıklama her zaman ana pencereyi, sağ tıklama ise seçilen görünümü açar). Panel: her uygulamanın etkin sağlayıcısını, kotasını ve kullanımını arama ve geçiş seçenekleriyle gösterir. Menü: sistemin yerel menüsünü açar. Değişiklik hemen uygulanır.",
+      "macosWidget": "Masaüstü widget'ı",
+      "macosWidgetHelp": "macOS masaüstü widget'larına veri sağlar: her uygulamanın etkin sağlayıcısı ve kotası, Hesaplar sayfasındaki tüm hesapların kotası ve kullanım istatistikleri. Açıkken, ana pencere kapalı olsa bile kota arka planda denetlenir: kullanımdaki hesaplar 10 dakikada bir, diğerleri 30 dakikada bir. macOS 14 veya üzeri gerekir; masaüstüne sağ tıklayıp Widget'ları Düzenle'yi seçin ve CC Switch'i arayın.",
       "minimizeToTrayHelp": "Açık olduğunda, kapat düğmesi yalnızca pencereyi gizler ve CC Switch sistem tepsisinde çalışmaya devam eder (hafif mod tepsi menüsündedir). Kapatıldığında kapatma düğmesi kapanır.",
       "terminalHelp": "Sağlayıcı kartlarındaki “Açık terminal”in kullandığı terminal. Mevcut değilse sistemin varsayılan terminali kullanılır."
     },
