@@ -4742,9 +4742,20 @@
     "resync": "按這裡的開關重寫各應用設定"
   },
   "skillsPage": {
+    "linkSource": {
+      "menu": "連結本機原件…",
+      "select": "選擇包含 SKILL.md 的技能原件目錄",
+      "success": "已連結 {{name}}，原目錄的修改會直接共用",
+      "label": "已連結原件",
+      "preserved": "原件和外來連結已保留，僅移除 CC Switch 建立的路由。",
+      "uninstallBody": "已連結的原件和外來連結會保留，僅移除 CC Switch 建立的路由。其他選取的 Skill 會先備份到 {{path}} 再移除。",
+      "convertTitle": "讓 {{name}} 改用所選原件？",
+      "convertBody": "將 {{path}} 設為目前已啟用應用和所選安裝目標的原件。所選目錄保持原樣，舊託管快照存入 Skill 備份。遇到獨立的應用副本或外來連結會報告衝突，不會合併或覆寫。",
+      "convertAction": "使用此原件"
+    },
     "noun": "Skill",
     "helpTitle": "Skills 怎麼同步",
-    "help": "主副本放在 CC Switch 的目錄裡，再同步到你勾選的應用。Claude Desktop、OpenClaw 不支援 Skills，所以表格裡沒有這兩欄。",
+    "help": "Skill 預設放在託管目錄。「連結本機原件」會保留既有原件的位置，透過符號連結共用修改。Claude Desktop、OpenClaw 不支援 Skills。",
     "add": "新增 Skill",
     "addMenu": {
       "discover": "在探索裡瀏覽",

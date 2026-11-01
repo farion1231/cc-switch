@@ -20,6 +20,7 @@ const m = vi.hoisted(() => ({
   uninstall: vi.fn(),
   importSkills: vi.fn(),
   installFromZip: vi.fn(),
+  openDirectory: vi.fn(),
   deleteBackup: vi.fn(),
   restoreBackup: vi.fn(),
   checkUpdates: vi.fn(),
@@ -36,6 +37,8 @@ const m = vi.hoisted(() => ({
   checking: false,
   visibleApps: ["claude", "codex", "pi"] as string[],
 }));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: m.openDirectory }));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -166,6 +169,7 @@ async function openMenu(trigger: string, item: string) {
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    localStorage.removeItem("cc-switch:skills:install-to");
     m.installed = [];
     m.backups = [];
     m.updates = [];
@@ -195,6 +199,7 @@ describe("UnifiedSkillsPanel", () => {
       .mockReset()
       .mockResolvedValue({ data: { updates: [], failures: [] } });
     m.installFromZip.mockReset();
+    m.openDirectory.mockReset().mockResolvedValue(null);
     m.updateSkill
       .mockReset()
       .mockImplementation(async (id: string) => makeSkill({ id }));
@@ -206,6 +211,128 @@ describe("UnifiedSkillsPanel", () => {
     ]) {
       fn.mockReset();
     }
+  });
+
+  it("links an original to the selected apps and reports a partial route failure", async () => {
+    m.openDirectory.mockResolvedValueOnce("/workspace/live-skill");
+    const linked = makeSkill({
+      id: "local:live-skill",
+      sourcePath: "/workspace/live-skill",
+    });
+    const register = vi
+      .spyOn(skillsApi, "linkSource")
+      .mockResolvedValueOnce(linked);
+    m.toggle.mockRejectedValueOnce(new Error("Codex folder is occupied"));
+    renderPanel();
+    await openMenu("skillsPage.add", "skillsPage.linkSource.menu");
+    await waitFor(() =>
+      expect(register).toHaveBeenCalledWith(
+        "/workspace/live-skill",
+        "claude",
+        false,
+      ),
+    );
+    expect(m.openDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({ directory: true, multiple: false }),
+    );
+    await waitFor(() =>
+      expect(m.toggle).toHaveBeenCalledWith({
+        id: linked.id,
+        app: "codex",
+        enabled: true,
+      }),
+    );
+    await waitFor(() => expect(m.toastWarning).toHaveBeenCalled());
+    expect(m.scanUnmanaged).toHaveBeenCalled();
+    register.mockRestore();
+  });
+
+  it("releases the write lock after cancelling or failing to link an original", async () => {
+    const register = vi
+      .spyOn(skillsApi, "linkSource")
+      .mockRejectedValue(new Error("Source is unavailable"));
+    renderPanel();
+    await openMenu("skillsPage.add", "skillsPage.linkSource.menu");
+    await waitFor(() => expect(m.openDirectory).toHaveBeenCalledTimes(1));
+    expect(register).not.toHaveBeenCalled();
+    m.openDirectory.mockResolvedValueOnce("/workspace/live-skill");
+    await openMenu("skillsPage.add", "skillsPage.linkSource.menu");
+    await waitFor(() =>
+      expect(m.toastError).toHaveBeenCalledWith("common.error", {
+        description: "Error: Source is unavailable",
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "skillsPage.add" }),
+    ).toBeEnabled();
+    expect(m.toggle).not.toHaveBeenCalled();
+    register.mockRestore();
+  });
+
+  it("identifies linked originals and explains that uninstall preserves them", async () => {
+    m.installed = [
+      makeSkill({
+        sourcePath: "/workspace/alpha-skill",
+        repoOwner: undefined,
+        repoName: undefined,
+      }),
+    ];
+    renderPanel();
+    expect(screen.getByText("skillsPage.linkSource.label")).toHaveAttribute(
+      "title",
+      "/workspace/alpha-skill",
+    );
+    const menu = screen.getByRole("button", { name: "skillsPage.rowMoreAria" });
+    await userEvent.click(menu);
+    await userEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "skillsPage.uninstallEllipsis",
+      }),
+    );
+    expect(
+      screen.getByText("skillsPage.linkSource.uninstallBody"),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.uninstall" }),
+    );
+    await waitFor(() =>
+      expect(m.toastSuccess).toHaveBeenCalledWith(
+        "skills.uninstallSuccess",
+        expect.objectContaining({
+          description: "skillsPage.linkSource.preserved",
+        }),
+      ),
+    );
+  });
+
+  it("requires confirmation before converting an existing managed snapshot to a chosen original", async () => {
+    m.installed = [makeSkill()];
+    m.openDirectory.mockResolvedValueOnce("/workspace/alpha-skill");
+    const register = vi
+      .spyOn(skillsApi, "linkSource")
+      .mockResolvedValueOnce(
+        makeSkill({ sourcePath: "/workspace/alpha-skill" }),
+      );
+    renderPanel();
+    await openMenu("skillsPage.add", "skillsPage.linkSource.menu");
+    expect(
+      await screen.findByText("skillsPage.linkSource.convertBody"),
+    ).toBeInTheDocument();
+    expect(register).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "skillsPage.linkSource.convertAction",
+      }),
+    );
+    await waitFor(() =>
+      expect(register).toHaveBeenCalledWith(
+        "/workspace/alpha-skill",
+        "claude",
+        true,
+      ),
+    );
+    await waitFor(() => expect(m.refetchBackups).toHaveBeenCalled());
+    register.mockRestore();
   });
 
   it("always shows the Pi column and toggles it like the other apps", async () => {

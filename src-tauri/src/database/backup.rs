@@ -123,6 +123,16 @@ impl Database {
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
     pub fn export_sql_string_for_sync(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
+        // A linked original belongs to this device; another device has neither
+        // its path nor its files. Do not export dangling installation records.
+        for directory in crate::settings::get_settings().linked_skill_sources.keys() {
+            snapshot
+                .execute(
+                    "DELETE FROM skills WHERE directory = ?1 COLLATE NOCASE",
+                    [directory],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
         Self::dump_sql(&snapshot, SYNC_SKIP_TABLES)
     }
 
@@ -237,6 +247,7 @@ impl Database {
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
             }
+            Self::restore_linked_skill_rows(&main_conn, &temp_conn)?;
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "替换主数据库")?;
@@ -248,6 +259,55 @@ impl Database {
             .unwrap_or_default();
 
         Ok(backup_id)
+    }
+
+    /// Preserve this device's external registrations before committing an import.
+    /// Work on staging so a restore failure leaves the live DB untouched.
+    fn restore_linked_skill_rows(source: &Connection, target: &Connection) -> Result<(), AppError> {
+        let registrations = crate::settings::get_settings().linked_skill_sources;
+        if registrations.is_empty() {
+            return Ok(());
+        }
+        let columns = Self::get_table_columns(source, "skills")?;
+        let names = columns
+            .iter()
+            .map(|name| Self::quote_identifier(name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let placeholders = (1..=columns.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut select = source
+            .prepare(&format!(
+                "SELECT {names} FROM skills WHERE directory = ?1 COLLATE NOCASE"
+            ))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let tx = target
+            .unchecked_transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for directory in registrations.keys() {
+            let mut rows = select
+                .query([directory])
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+                let values = (0..columns.len())
+                    .map(|i| row.get::<_, rusqlite::types::Value>(i))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                tx.execute(
+                    "DELETE FROM skills WHERE directory = ?1 COLLATE NOCASE",
+                    [directory],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+                tx.execute(
+                    &format!("INSERT OR REPLACE INTO skills ({names}) VALUES ({placeholders})"),
+                    rusqlite::params_from_iter(values),
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 创建内存快照以避免长时间持有数据库锁
@@ -1076,6 +1136,9 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
+            // Keep device-local Skill registrations when restoring an older DB.
+            // Otherwise settings and symlinks outlive their missing skills rows.
+            Self::restore_linked_skill_rows(&main_conn, &staging_conn)?;
             let backup = Backup::new(&staging_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;
@@ -1250,6 +1313,94 @@ mod tests {
         fn drop(&mut self) {
             let _ = update_settings(self.previous.clone());
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn cloud_snapshot_keeps_linked_originals_and_local_registration_out_of_remote_storage() {
+        use crate::app_config::AppType;
+        use crate::services::skill::SkillService;
+        use crate::services::sync_protocol::{apply_snapshot, build_local_snapshot};
+        use std::io::{Cursor, Write};
+        use std::sync::Arc;
+
+        let test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard {
+            previous: get_settings(),
+        };
+        update_settings(AppSettings::default()).unwrap();
+        let source = test_home.path().join("workspace/cloud-linked-probe");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: local-original\n---\n").unwrap();
+        std::fs::write(source.join("probe.txt"), "local-original").unwrap();
+        let local = Arc::new(Database::memory().unwrap());
+        let installed = SkillService::link_source(&local, &source, &AppType::Claude).unwrap();
+        let registration = get_settings().linked_skill_sources;
+        crate::settings::update_frontend_settings(AppSettings::default()).unwrap();
+        assert_eq!(get_settings().linked_skill_sources, registration);
+        let snapshot = build_local_snapshot(&local).unwrap();
+        assert!(!String::from_utf8(snapshot.db_sql)
+            .unwrap()
+            .contains("cloud-linked-probe"));
+        assert_eq!(
+            zip::ZipArchive::new(Cursor::new(snapshot.skills_zip))
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let remote = Database::memory().unwrap();
+        let mut collision = installed.clone();
+        collision.id = "repo:cloud-linked-probe".into();
+        collision.name = "remote-copy".into();
+        collision.apps = Default::default();
+        remote.save_skill(&collision).unwrap();
+        // A regular Skill with the same name on another machine must not
+        // overwrite this machine's registration or materialize a second copy.
+        let remote_sql = remote.export_sql_string().unwrap();
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer
+            .start_file("cloud-linked-probe/SKILL.md", options)
+            .unwrap();
+        writer.write_all(b"remote copy").unwrap();
+        writer
+            .start_file("ordinary-probe/SKILL.md", options)
+            .unwrap();
+        writer.write_all(b"ordinary remote Skill").unwrap();
+        let archive = writer.finish().unwrap().into_inner();
+        apply_snapshot(&local, remote_sql.as_bytes(), &archive).unwrap();
+
+        let ssot = SkillService::get_ssot_dir().unwrap();
+        assert!(!ssot.join("cloud-linked-probe").exists());
+        assert!(ssot.join("ordinary-probe/SKILL.md").is_file());
+        assert_eq!(get_settings().linked_skill_sources, registration);
+        assert_eq!(
+            local
+                .get_installed_skill(&installed.id)
+                .unwrap()
+                .unwrap()
+                .name,
+            installed.name
+        );
+        assert!(local.get_installed_skill(&collision.id).unwrap().is_none());
+        assert_eq!(
+            std::fs::read_link(test_home.path().join(".claude/skills/cloud-linked-probe")).unwrap(),
+            source.canonicalize().unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(source.join("probe.txt")).unwrap(),
+            "local-original"
+        );
+
+        // A snapshot from a device without this Skill must preserve it too.
+        let empty = Database::memory()
+            .unwrap()
+            .export_sql_string_for_sync()
+            .unwrap();
+        apply_snapshot(&local, empty.as_bytes(), &archive).unwrap();
+        assert!(local.get_installed_skill(&installed.id).unwrap().is_some());
     }
 
     #[test]
@@ -2842,6 +2993,142 @@ mod tests {
             "safety backup must exactly represent the live state being replaced"
         );
         Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn restoring_database_backup_preserves_linked_skill_registration_and_route() {
+        use crate::app_config::AppType;
+        use crate::services::skill::SkillService;
+        use std::sync::Arc;
+
+        let test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard {
+            previous: get_settings(),
+        };
+        update_settings(AppSettings::default()).unwrap();
+        let db = Arc::new(Database::init().unwrap());
+
+        // The selected backup predates this device-local source registration.
+        let backup = db.backup_database_file().unwrap().unwrap();
+        let filename = backup.file_name().unwrap().to_string_lossy().into_owned();
+        let source = test_home.path().join("workspace/restore-linked-probe");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: restore-linked-probe\n---\n",
+        )
+        .unwrap();
+        let installed = SkillService::link_source(&db, &source, &AppType::Codex).unwrap();
+        let route = test_home.path().join(".codex/skills/restore-linked-probe");
+        let original = source.canonicalize().unwrap();
+        assert_eq!(std::fs::read_link(&route).unwrap(), original);
+
+        db.restore_from_backup(&filename).unwrap();
+
+        let restored = db
+            .get_installed_skill(&installed.id)
+            .unwrap()
+            .expect("restore must retain the locally registered Skill row");
+        assert_eq!(restored.directory, installed.directory);
+        assert_eq!(std::fs::read_link(&route).unwrap(), original);
+        assert!(get_settings()
+            .linked_skill_sources
+            .contains_key("restore-linked-probe"));
+
+        // The restored registration must still be manageable from the UI.
+        SkillService::uninstall(&db, &installed.id).unwrap();
+        assert!(std::fs::symlink_metadata(&route).is_err());
+        assert!(source.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn restoring_unlinked_skill_row_cannot_delete_original_in_host_directory() {
+        use crate::app_config::AppType;
+        use crate::services::skill::SkillService;
+        use std::sync::Arc;
+
+        let test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard {
+            previous: get_settings(),
+        };
+        update_settings(AppSettings::default()).unwrap();
+        let db = Arc::new(Database::init().unwrap());
+
+        // A real original in the app's native root has no managed SSOT slot.
+        let source = test_home.path().join(".claude/skills/restore-orphan-probe");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: restore-orphan-probe\n---\n",
+        )
+        .unwrap();
+        let installed = SkillService::link_source(&db, &source, &AppType::Claude).unwrap();
+        let backup = db.backup_database_file().unwrap().unwrap();
+        let filename = backup.file_name().unwrap().to_string_lossy().into_owned();
+
+        SkillService::uninstall(&db, &installed.id).unwrap();
+        assert!(!get_settings()
+            .linked_skill_sources
+            .contains_key("restore-orphan-probe"));
+        assert!(source.join("SKILL.md").is_file());
+
+        db.restore_from_backup(&filename).unwrap();
+        // The backup contains a stale Skill row but no longer has its local
+        // registration: never turn that row into ownership of the real folder.
+        let toggle = SkillService::toggle_app(&db, &installed.id, &AppType::Claude, false);
+        assert!(
+            source.join("SKILL.md").is_file(),
+            "disabling a restored orphan row must not delete a user's original"
+        );
+        assert!(
+            toggle.is_err(),
+            "a stale row with no managed source should fail closed"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn importing_unlinked_skill_row_cannot_delete_original_in_host_directory() {
+        use crate::app_config::AppType;
+        use crate::services::skill::SkillService;
+        use std::sync::Arc;
+
+        let test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard {
+            previous: get_settings(),
+        };
+        update_settings(AppSettings::default()).unwrap();
+        let db = Arc::new(Database::init().unwrap());
+
+        let source = test_home.path().join(".claude/skills/import-orphan-probe");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: import-orphan-probe\n---\n",
+        )
+        .unwrap();
+        let installed = SkillService::link_source(&db, &source, &AppType::Claude).unwrap();
+        let sql = db.export_sql_string().unwrap();
+
+        SkillService::uninstall(&db, &installed.id).unwrap();
+        assert!(!get_settings()
+            .linked_skill_sources
+            .contains_key("import-orphan-probe"));
+        assert!(source.join("SKILL.md").is_file());
+
+        db.import_sql_string(&sql).unwrap();
+        assert!(db.get_installed_skill(&installed.id).unwrap().is_some());
+        let toggle = SkillService::toggle_app(&db, &installed.id, &AppType::Claude, false);
+        assert!(toggle.is_err(), "an imported orphan row must fail closed");
+        assert!(
+            source.join("SKILL.md").is_file(),
+            "disabling an imported orphan row must not delete a user's original"
+        );
     }
 
     #[cfg(windows)]
