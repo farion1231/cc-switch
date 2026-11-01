@@ -18,6 +18,10 @@ export interface DailyMemorySearchResult {
 }
 
 export const workspaceApi = {
+  async getRootDirectory(): Promise<string> {
+    return invoke<string>("get_workspace_root_directory");
+  },
+
   async readFile(filename: string): Promise<string | null> {
     return invoke<string | null>("read_workspace_file", { filename });
   },
