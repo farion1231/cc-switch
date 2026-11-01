@@ -410,7 +410,7 @@
     },
     "unifyCodexHistory": {
       "title": "统一 Codex 会话历史",
-      "message": "开启后，Codex CLI 的 resume 列表会把官方订阅与第三方的会话合并显示（Codex 桌面版更新后已经可以显示全部会话，不受影响）。注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。\n\n可选择同时把现有官方会话历史迁入共享列表（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择恢复）。",
+      "message": "官方账号保留内置 OpenAI 身份，桌面功能保持可用。本地路由中的 API 会话仅在保有文件登录且客户端设置兼容时共用该身份，否则保留原有代理连接。既有 custom 会话保留连接定义，不改写历史文件。第三方 API 请使用本地路由；严格直连 API 仍单独使用。历史可见不代表加密推理或原生搜索可跨后端续接。",
       "migrateExisting": "同时迁入现有官方会话历史",
       "confirm": "我已了解，继续开启"
     },
@@ -895,7 +895,8 @@
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
-    "unifyCodexSessionHistoryDescription": "只影响 Codex CLI：CLI 的 resume 列表只显示当前供应商的会话，开启后官方订阅改以共享的 custom 供应商标识运行，官方与第三方会话出现在同一列表中。Codex 桌面版更新后已经可以显示全部会话，只用桌面版无需开启。可选择把现有官方会话一并迁入（迁移前自动备份），关闭时可按备份恢复。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "unifyCodexSessionHistoryDescription": "官方账号保留内置 OpenAI 身份，桌面功能保持可用。本地路由中的 API 会话仅在保有文件登录且客户端设置兼容时共用该身份，否则保留原有代理连接。既有 custom 会话保留连接定义，不改写历史文件。第三方 API 请使用本地路由；严格直连 API 仍单独使用。历史可见不代表加密推理或原生搜索可跨后端续接。",
+    "unifyCodexNativeIdentityNote": "切换账号时保留既有上下文，不搬动历史文件。旧 custom 会话保留官方连接别名，新会话使用内置 OpenAI 身份，无需因供应商标识变化反复重启。修复前已打开的旧窗口可能需要重开一次。",
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供应商时必须打开，否则子 agent 收不到任务。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",
