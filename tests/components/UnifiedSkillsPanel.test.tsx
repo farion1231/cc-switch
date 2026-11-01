@@ -615,6 +615,47 @@ describe("UnifiedSkillsPanel", () => {
     expect(m.updateSkill).toHaveBeenCalledWith("b");
   });
 
+  it.each([
+    ["single", "string"],
+    ["single", "Error"],
+    ["all", "string"],
+    ["all", "Error"],
+  ])("formats a %s update conflict received as %s", async (mode, errorType) => {
+    const skill = makeSkill();
+    m.installed = [skill];
+    m.updates = [{ id: skill.id, name: skill.name, remoteHash: "new" }];
+    const error = JSON.stringify({
+      code: "AMBIGUOUS_SKILL_NAME",
+      context: { name: "browser-skill" },
+    });
+    m.updateSkill.mockRejectedValueOnce(
+      errorType === "Error" ? new Error(error) : error,
+    );
+    renderPanel();
+
+    if (mode === "single") {
+      await openMenu("skillsPage.rowMoreAria", "skills.update");
+    } else {
+      await userEvent.click(
+        screen.getByRole("button", { name: "skillsPage.updateAllCount" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: "skillsPage.confirm.updateAllButton",
+        }),
+      );
+    }
+
+    await waitFor(() => {
+      expect(m.toastError).toHaveBeenCalledWith("skills.updateFailed", {
+        description: `${skill.name}: skills.error.ambiguousSkillName`,
+      });
+    });
+    expect(m.updateSkill).toHaveBeenCalledTimes(1);
+    expect(m.updateSkill).toHaveBeenCalledWith(skill.id);
+    expect(m.toastSuccess).not.toHaveBeenCalled();
+  });
+
   it("switches Installed / Discover with page tabs", async () => {
     m.installed = [makeSkill()];
     renderPanel();
