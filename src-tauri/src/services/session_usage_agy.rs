@@ -1,6 +1,11 @@
 //! Exact counters exported by agy; absent models remain unknown (never use today's provider).
 //! Amounts are the matching Gemini API prices, like every other session-log import.
-use super::{session_usage::SessionSyncResult, sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH};
+use super::{
+    session_usage::{
+        load_sync_cursors, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    },
+    sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
+};
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::{
@@ -10,23 +15,48 @@ use crate::{
 };
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
+use std::fs;
 use std::path::Path;
 
 mod native_models;
 
 pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
+    let cursors = load_sync_cursors(db)?;
     for session in agy::scan_sessions() {
         let Some(path) = session.source_path else {
             continue;
         };
         result.files_scanned += 1;
-        match agy::records(std::path::Path::new(&path)) {
+        let file_path = Path::new(&path);
+        let metadata = match fs::metadata(file_path) {
+            Ok(m) => m,
+            Err(e) => {
+                log::debug!(
+                    "Antigravity {}: cannot read metadata {path}: {e}",
+                    session.session_id
+                );
+                continue;
+            }
+        };
+        let file_modified = metadata_modified_nanos(&metadata);
+        let last_modified = cursors.get(&path).map_or(0, |c| c.last_modified);
+        if file_modified <= last_modified {
+            continue;
+        }
+
+        match agy::records(file_path) {
             Ok(rows) => {
-                match import_records(db, &session.session_id, &rows, Some(Path::new(&path))) {
+                match import_records(db, &session.session_id, &rows, Some(file_path)) {
                     Ok((imported, skipped)) => {
                         result.imported += imported;
                         result.skipped += skipped;
+                        if let Err(e) = update_sync_state(db, &path, file_modified, 0) {
+                            log::warn!(
+                                "Antigravity {}: failed to update sync cursor: {e}",
+                                session.session_id
+                            );
+                        }
                     }
                     Err(e) => result
                         .errors
@@ -665,5 +695,36 @@ mod tests {
         );
         row["status"] = json!("DONE");
         assert_eq!(import_records(&db, "s", &[row], None).unwrap(), (1, 0));
+    }
+
+    #[test]
+    fn agy_sync_updates_cursor_and_skips_unchanged_files() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let transcript_dir = dir.path().join("brain/sess1/.system_generated/logs");
+        fs::create_dir_all(&transcript_dir).unwrap();
+        let file_path = transcript_dir.join("transcript_full.jsonl");
+        fs::write(&file_path, "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":50,\"output_tokens\":10}\n").unwrap();
+
+        let metadata = fs::metadata(&file_path).unwrap();
+        let file_modified = metadata_modified_nanos(&metadata);
+        let path_str = file_path.to_string_lossy().to_string();
+
+        // 首次同步前游标不存在
+        let cursors = load_sync_cursors(&db).unwrap();
+        let last_modified = cursors.get(&path_str).map_or(0, |c| c.last_modified);
+        assert_eq!(last_modified, 0);
+
+        // 模拟首次导入并更新游标
+        let rows = agy::records(&file_path).unwrap();
+        let (imported, _) = import_records(&db, "sess1", &rows, Some(&file_path)).unwrap();
+        assert_eq!(imported, 1);
+        update_sync_state(&db, &path_str, file_modified, 0).unwrap();
+
+        // 游标已记下修改时间
+        let cursors = load_sync_cursors(&db).unwrap();
+        let last_modified = cursors.get(&path_str).map_or(0, |c| c.last_modified);
+        assert_eq!(last_modified, file_modified);
+        assert!(file_modified <= last_modified, "未改动的文件应当被跳过");
     }
 }
