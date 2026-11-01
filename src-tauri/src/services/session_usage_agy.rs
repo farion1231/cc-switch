@@ -46,23 +46,21 @@ pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         }
 
         match agy::records(file_path) {
-            Ok(rows) => {
-                match import_records(db, &session.session_id, &rows, Some(file_path)) {
-                    Ok((imported, skipped)) => {
-                        result.imported += imported;
-                        result.skipped += skipped;
-                        if let Err(e) = update_sync_state(db, &path, file_modified, 0) {
-                            log::warn!(
-                                "Antigravity {}: failed to update sync cursor: {e}",
-                                session.session_id
-                            );
-                        }
+            Ok(rows) => match import_records(db, &session.session_id, &rows, Some(file_path)) {
+                Ok((imported, skipped)) => {
+                    result.imported += imported;
+                    result.skipped += skipped;
+                    if let Err(e) = update_sync_state(db, &path, file_modified, 0) {
+                        log::warn!(
+                            "Antigravity {}: failed to update sync cursor: {e}",
+                            session.session_id
+                        );
                     }
-                    Err(e) => result
-                        .errors
-                        .push(format!("Antigravity {}: {e}", session.session_id)),
                 }
-            }
+                Err(e) => result
+                    .errors
+                    .push(format!("Antigravity {}: {e}", session.session_id)),
+            },
             Err(e) => result.errors.push(e),
         }
     }
