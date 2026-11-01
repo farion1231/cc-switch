@@ -102,8 +102,13 @@ winreg = "0.52"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
+    "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_Graphics_Gdi",
+    "Win32_System_Environment",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Shell",
     "Win32_UI_HiDpi",
