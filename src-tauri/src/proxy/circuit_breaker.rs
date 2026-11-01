@@ -879,25 +879,38 @@ mod tests {
 
     #[tokio::test]
     async fn closing_clears_the_upstream_retry_after_override() {
-        // 上游说过等 3600 秒，之后这次 Open 正常走完、回到 Closed。
-        // 再下一次普通失败必须用配置时长——不能沿用一段早该过期的承诺。
+        // 上游说过等 3600 秒；这次 Open 结束回到 Closed 后，普通失败的熔断时长
+        // 必须回到配置值——不能沿用一段已经与现状无关的承诺。
+        //
+        // 注意不能用 allow_request 的放行来等 3600 过期（那要真等一小时），
+        // 所以这里直接对 effective_open_timeout_seconds 做数值断言：
+        // 第一次 Open 带 3600 覆盖；回到 Closed 后再一次普通失败，
+        // 覆盖必须是 None，生效时长等于配置。
         let config = CircuitBreakerConfig {
             failure_threshold: 1,
-            success_threshold: 1,
-            timeout_seconds: 0,
+            timeout_seconds: 45,
             ..Default::default()
         };
         let breaker = CircuitBreaker::new(config);
 
         breaker.record_failure(false, None, Some(3600)).await;
-        // 探测放行 → 半开 → 一次成功 → 回到 Closed（同时清掉 open_for）
-        assert!(breaker.allow_request().await.allowed);
-        breaker.record_success(true).await;
+        assert_eq!(
+            breaker.effective_open_timeout_seconds().await,
+            3600,
+            "Open 期间上游承诺生效"
+        );
+
+        // 手动回到 Closed（与探测恢复走同一个 transition_to_closed，
+        // 那里负责清掉 open_for）
+        breaker.reset().await;
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
 
         breaker.record_failure(false, None, None).await;
-        // 配置的 0 秒重新生效，而不是残留的 3600
-        assert!(breaker.allow_request().await.allowed);
+        assert_eq!(
+            breaker.effective_open_timeout_seconds().await,
+            45,
+            "Closed 之后再打开，必须用配置时长而不是残留的 3600"
+        );
     }
 
     #[tokio::test]
