@@ -520,6 +520,11 @@
         "mediaHeuristic": "Text-Only Model Preflight",
         "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged"
       },
+      "privacyFilter": {
+        "title": "Privacy Filter",
+        "description": "When on, the proxy replaces personal data (email, phone number, national ID, bank card, IP) and secrets (API keys, tokens, passwords, private keys) in request text with placeholders such as [EMAIL] and [SECRET] before forwarding, including tool results. When off, requests are forwarded unchanged. Placeholders follow the interface language. This is a local, rule-based filter and replacements can't be undone. It applies in Routing and Aggregation modes; in Direct mode, requests don't pass through CC Switch and aren't filtered. Thinking blocks, tool-call arguments, and images are left unchanged. Ported from packyme/privacy-filter.",
+        "enabled": "Enable privacy filter"
+      },
       "optimizer": {
         "title": "Bedrock Request Optimizer",
         "description": "Automatically optimize Thinking and Cache configuration before sending requests (only applies to Bedrock providers)",

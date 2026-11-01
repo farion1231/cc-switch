@@ -514,6 +514,11 @@
         "mediaHeuristic": "Salt Metin Model Ön Kontrolü",
         "mediaHeuristicDescription": "Göndermeden önce, yerleşik onaylanmış salt metin kayıt defterindeki modellerin resimlerini çıkarır. Bunu kapatmak yalnızca proxy'nin kayıt defteri tabanlı ön kontrolünü devre dışı bırakır; beyan edilen salt metin işleme ve yukarı akış hatası geri dönüşü kalır ve Codex model kataloğu yetenek bildirimleri değişmez"
       },
+      "privacyFilter": {
+        "title": "Gizlilik Filtresi",
+        "description": "Açıkken proxy, isteği iletmeden önce istek metnindeki (araç sonuçları dahil) kişisel verileri (e-posta, telefon, kimlik numarası, banka kartı, IP) ve gizli anahtarları (API anahtarı, token, parola, özel anahtar) [E-POSTA], [GİZLİ_ANAHTAR] gibi yer tutucularla değiştirir. Kapalıyken istekler olduğu gibi iletilir. Yer tutucular arayüz dilini izler. Yerel, kural tabanlı bir filtredir ve değişiklikler geri alınamaz. Yönlendirme ve Birleştirme modlarında çalışır; Doğrudan modda istekler CC Switch üzerinden geçmez ve filtrelenmez. Düşünme blokları, araç çağrısı argümanları ve görseller değiştirilmez. packyme/privacy-filter projesinden uyarlanmıştır.",
+        "enabled": "Gizlilik filtresini etkinleştir"
+      },
       "optimizer": {
         "title": "Bedrock istek iyileştirici",
         "description": "İstekleri göndermeden önce Thinking ve Cache yapılandırmasını otomatik olarak optimize edin (yalnızca Bedrock sağlayıcıları için geçerlidir)",
