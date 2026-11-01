@@ -837,7 +837,7 @@ function ProviderFormFull({
   const [localCodexImpersonateClaudeCode, setLocalCodexImpersonateClaudeCode] =
     useState<boolean>(initialData?.meta?.impersonateClaudeCode === true);
 
-  // Codex → Anthropic output ceiling override (empty string = use the 8192 default).
+  // Codex conversion output ceiling (empty string = use the protocol/upstream default).
   // Kept as a string so the numeric input can be cleared; parsed on save.
   const [localCodexMaxOutputTokens, setLocalCodexMaxOutputTokens] =
     useState<string>(
@@ -2104,11 +2104,11 @@ function ProviderFormFull({
         localCodexImpersonateClaudeCode
           ? true
           : undefined,
-      // Persist only for codex+anthropic when a positive value was entered
+      // Persist for Codex conversion paths when a positive value was entered.
       maxOutputTokens:
         appId === "codex" &&
         category !== "official" &&
-        localCodexApiFormat === "anthropic" &&
+        (localCodexApiFormat === "anthropic" || isCodexChatFormat) &&
         localCodexMaxOutputTokens.trim() !== "" &&
         Number(localCodexMaxOutputTokens) > 0
           ? Number(localCodexMaxOutputTokens)

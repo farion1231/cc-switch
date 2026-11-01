@@ -221,7 +221,7 @@ interface CodexFormFieldsProps {
   // Anthropic path: whether to emulate the Claude Code client
   impersonateClaudeCode: boolean;
   onImpersonateClaudeCodeChange: (value: boolean) => void;
-  // Anthropic path: output ceiling override (empty string = use default). Digits only.
+  // Converted Chat/Anthropic path: output ceiling (empty string = use default). Digits only.
   maxOutputTokens: string;
   onMaxOutputTokensChange: (value: string) => void;
   codexChatReasoning?: CodexChatReasoning;
@@ -1532,14 +1532,19 @@ export function CodexFormFields({
               defaultValue:
                 "默认上限 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
             })
-          : t("codexConfig.maxOutputTokensHint", {
-              defaultValue:
-                "Codex 不带输出上限，默认 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
-            }),
-        "codex-anthropic-max-output-tokens",
+          : isChatFormat
+            ? t("codexConfig.maxOutputTokensChatHint", {
+                defaultValue:
+                  "仅当 Codex 请求未指定输出上限时使用。普通模型发送 max_tokens，o 系列发送 max_completion_tokens。",
+              })
+            : t("codexConfig.maxOutputTokensHint", {
+                defaultValue:
+                  "Codex 不带输出上限，默认 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+              }),
+        "codex-max-output-tokens",
       )}
       <Input
-        id="codex-anthropic-max-output-tokens"
+        id="codex-max-output-tokens"
         type="number"
         min={1}
         inputMode="numeric"
@@ -1547,9 +1552,15 @@ export function CodexFormFields({
         onChange={(event) =>
           onMaxOutputTokensChange(event.target.value.replace(/[^\d]/g, ""))
         }
-        placeholder={t("codexConfig.maxOutputTokensPlaceholder", {
-          defaultValue: "留空则使用默认 8192",
-        })}
+        placeholder={
+          isChatFormat
+            ? t("codexConfig.maxOutputTokensChatPlaceholder", {
+                defaultValue: "留空则使用上游默认值",
+              })
+            : t("codexConfig.maxOutputTokensPlaceholder", {
+                defaultValue: "留空则使用默认 8192",
+              })
+        }
       />
       <p className="text-xs leading-relaxed text-fg-2">
         {t("codexConfig.maxOutputTokensWarning", {
@@ -2175,13 +2186,15 @@ export function CodexFormFields({
               {showFormatFields &&
                 isAnthropicFormat &&
                 impersonateClaudeCodeToggle}
-              {showFormatFields && isAnthropicFormat && maxOutputTokensField}
+              {showFormatFields &&
+                (isAnthropicFormat || isChatFormat) &&
+                maxOutputTokensField}
               {showReasoning && (
                 <div
                   className={cn(
                     "space-y-3",
                     showFormatFields &&
-                      isAnthropicFormat &&
+                      (isAnthropicFormat || isChatFormat) &&
                       "border-t border-border pt-3",
                   )}
                 >
@@ -2193,7 +2206,8 @@ export function CodexFormFields({
                   className={cn(
                     "space-y-3",
                     (showFullUrlToggle ||
-                      (showFormatFields && isAnthropicFormat) ||
+                      (showFormatFields &&
+                        (isAnthropicFormat || isChatFormat)) ||
                       showReasoning) &&
                       "border-t border-border pt-3",
                   )}
@@ -2420,7 +2434,7 @@ export function CodexFormFields({
                 {upstreamFormatSelect}
                 {isAnthropicFormat && anthropicAuthFieldSelect}
                 {isAnthropicFormat && impersonateClaudeCodeToggle}
-                {isAnthropicFormat && maxOutputTokensField}
+                {(isAnthropicFormat || isChatFormat) && maxOutputTokensField}
                 {showFullUrlToggle && fullUrlToggle}
               </div>
             )}

@@ -2027,6 +2027,8 @@
     "maxOutputTokensLabel": "最大输出 tokens",
     "maxOutputTokensPlaceholder": "留空则使用默认 8192",
     "maxOutputTokensHint": "Codex 不带输出上限，默认 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+    "maxOutputTokensChatPlaceholder": "留空则使用上游默认值",
+    "maxOutputTokensChatHint": "仅当 Codex 请求未指定输出上限时使用。普通模型发送 max_tokens，o 系列发送 max_completion_tokens。",
     "promptCacheRoutingLabel": "提示词缓存路由",
     "promptCacheRoutingAuto": "自动（推荐）",
     "promptCacheRoutingEnabled": "开启",

@@ -511,6 +511,70 @@ pub fn apply_codex_chat_upstream_model(
     apply_codex_upstream_model(provider, body)
 }
 
+/// Resolve a provider-specific output ceiling across every supported storage
+/// shape. Structured metadata is authoritative, followed by legacy/direct
+/// settings and finally the top-level value in an embedded Codex TOML config.
+/// Invalid, zero, or negative values are ignored so a lower-priority valid
+/// source can still be used.
+pub fn codex_provider_max_output_tokens(provider: &Provider) -> Option<u64> {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.max_output_tokens)
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("max_output_tokens")
+                .and_then(JsonValue::as_u64)
+                .filter(|value| *value > 0)
+                .or_else(|| {
+                    provider
+                        .settings_config
+                        .get("maxOutputTokens")
+                        .and_then(JsonValue::as_u64)
+                        .filter(|value| *value > 0)
+                })
+        })
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(JsonValue::as_str)
+                .and_then(extract_codex_max_output_tokens_from_toml)
+        })
+}
+
+/// Apply a provider-configured output ceiling as a fallback for the Codex
+/// Responses -> Chat bridge.
+///
+/// Codex normally omits an output-token limit. Chat-compatible upstreams then
+/// fall back to their own (often small) default, which reasoning-heavy turns
+/// can consume before producing visible text. Keep this strictly a fallback:
+/// any client-supplied limit shape wins, including shapes the converter
+/// preserves for a specific model family. The caller must already have selected
+/// the Chat bridge; Copilot can make that selection dynamically per model, so
+/// this helper intentionally does not infer the wire format from static provider
+/// metadata.
+pub fn apply_codex_chat_default_max_output_tokens(
+    provider: &Provider,
+    body: &mut JsonValue,
+) -> bool {
+    if ["max_output_tokens", "max_tokens", "max_completion_tokens"]
+        .iter()
+        .any(|field| body.get(*field).is_some())
+    {
+        return false;
+    }
+
+    let Some(max_output_tokens) = codex_provider_max_output_tokens(provider) else {
+        return false;
+    };
+
+    body["max_output_tokens"] = JsonValue::from(max_output_tokens);
+    true
+}
+
 /// Same model-substitution logic as `apply_codex_chat_upstream_model`, but without
 /// the chat gating check. Reused by the anthropic conversion path (the forwarder has
 /// already confirmed this provider uses anthropic).
@@ -956,6 +1020,16 @@ fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn extract_codex_max_output_tokens_from_toml(config_text: &str) -> Option<u64> {
+    config_text
+        .parse::<TomlValue>()
+        .ok()?
+        .get("max_output_tokens")?
+        .as_integer()
+        .and_then(|value| u64::try_from(value).ok())
+        .filter(|value| *value > 0)
+}
+
 fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
     // Canonical parser lives in codex_config; keep this thin alias so the
     // proxy hot path and the usage-credential resolver share one implementation.
@@ -1211,6 +1285,7 @@ impl ProviderAdapter for CodexAdapter {
 mod tests {
     use super::*;
     use crate::provider::ProviderMeta;
+    use crate::proxy::providers::transform_codex_chat;
     use serde_json::json;
 
     fn create_provider(config: serde_json::Value) -> Provider {
@@ -2165,6 +2240,113 @@ wire_api = "responses"
 
         assert_eq!(upstream_model.as_deref(), Some("kimi-k2"));
         assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("kimi-k2"));
+    }
+
+    #[test]
+    fn test_chat_default_max_output_tokens_maps_to_model_specific_field() {
+        let mut provider = create_provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            max_output_tokens: Some(16_384),
+            ..ProviderMeta::default()
+        });
+        assert!(!codex_provider_uses_chat_completions(&provider));
+
+        for (model, expected_field, other_field) in [
+            ("gpt-5.4", "max_tokens", "max_completion_tokens"),
+            ("o3", "max_completion_tokens", "max_tokens"),
+        ] {
+            let mut body = json!({ "model": model, "input": "ping" });
+            assert!(apply_codex_chat_default_max_output_tokens(
+                &provider, &mut body
+            ));
+
+            let converted = transform_codex_chat::responses_to_chat_completions(body)
+                .expect("convert Responses request to Chat");
+            assert_eq!(converted[expected_field], 16_384, "model={model}");
+            assert!(converted.get(other_field).is_none(), "model={model}");
+        }
+    }
+
+    #[test]
+    fn test_codex_provider_max_output_tokens_reads_sources_in_priority_order() {
+        let mut provider = create_provider(json!({
+            "max_output_tokens": 8_192,
+            "config": "max_output_tokens = 4096"
+        }));
+        assert_eq!(codex_provider_max_output_tokens(&provider), Some(8_192));
+
+        provider.meta = Some(ProviderMeta {
+            max_output_tokens: Some(16_384),
+            ..ProviderMeta::default()
+        });
+        assert_eq!(codex_provider_max_output_tokens(&provider), Some(16_384));
+
+        provider.meta = Some(ProviderMeta {
+            max_output_tokens: Some(0),
+            ..ProviderMeta::default()
+        });
+        assert_eq!(codex_provider_max_output_tokens(&provider), Some(8_192));
+
+        provider.settings_config["max_output_tokens"] = json!(0);
+        assert_eq!(codex_provider_max_output_tokens(&provider), Some(4_096));
+
+        let provider = create_provider(json!({ "maxOutputTokens": 2_048 }));
+        assert_eq!(codex_provider_max_output_tokens(&provider), Some(2_048));
+    }
+
+    #[test]
+    fn test_codex_provider_max_output_tokens_rejects_non_positive_or_non_integer_values() {
+        for direct in [
+            json!(-1),
+            json!(0),
+            json!(1.5),
+            json!("2048"),
+            JsonValue::Null,
+        ] {
+            let provider = create_provider(json!({ "max_output_tokens": direct }));
+            assert_eq!(codex_provider_max_output_tokens(&provider), None);
+        }
+
+        for config in [
+            "max_output_tokens = -1",
+            "max_output_tokens = 0",
+            "max_output_tokens = 1.5",
+            "max_output_tokens = \"2048\"",
+            "max_output_tokens =",
+        ] {
+            let provider = create_provider(json!({ "config": config }));
+            assert_eq!(codex_provider_max_output_tokens(&provider), None);
+        }
+    }
+
+    #[test]
+    fn test_chat_default_max_output_tokens_preserves_client_limit_shapes() {
+        let mut provider = create_provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            max_output_tokens: Some(16_384),
+            ..ProviderMeta::default()
+        });
+
+        for field in ["max_output_tokens", "max_tokens", "max_completion_tokens"] {
+            let mut body = json!({ "model": "o3", "input": "ping" });
+            body[field] = json!(2_048);
+            let before = body.clone();
+
+            assert!(!apply_codex_chat_default_max_output_tokens(
+                &provider, &mut body
+            ));
+            assert_eq!(body, before, "field={field}");
+        }
+    }
+
+    #[test]
+    fn test_chat_default_max_output_tokens_requires_configured_limit() {
+        let provider = create_provider(json!({}));
+        let mut body = json!({ "model": "gpt-5.4", "input": "ping" });
+        assert!(!apply_codex_chat_default_max_output_tokens(
+            &provider, &mut body
+        ));
+        assert!(body.get("max_output_tokens").is_none());
     }
 
     #[test]
