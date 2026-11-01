@@ -5073,6 +5073,22 @@
       "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"
     }
   },
+  "codexDesktop": {
+    "open": "Codex を開く",
+    "opening": "起動中...",
+    "openHint": "インストール済みの Codex デスクトップアプリを開きます。",
+    "opened": "Codex デスクトップアプリを開きました。",
+    "switchAndOpen": "切り替えて Codex を開く",
+    "switchedAndOpened": "アカウントを切り替えて Codex デスクトップアプリを開きました。",
+    "restart": "Codexを再起動",
+    "restarting": "再起動中…",
+    "restartHint": "デスクトップアプリを閉じて開き直します。実行中のタスクは中断されます。",
+    "restarted": "Codexデスクトップアプリを開き直しました。",
+    "failed": "Codex デスクトップアプリの起動または再起動に失敗しました：{{error}}",
+    "switchAndRestart": "切り替えてCodexを再起動",
+    "switchedAndRestarted": "アカウントを切り替えてCodexデスクトップアプリを開き直しました。",
+    "switchRestartFailed": "アカウントは切り替わりましたが、Codex デスクトップアプリの起動または再起動に失敗しました：{{error}}"
+  },
   "omp": {
     "empty": {
       "title": "API キープロバイダーはまだありません",

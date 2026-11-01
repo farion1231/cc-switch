@@ -5018,6 +5018,22 @@
       "description": "关掉后只复制登录链接，由你自己选浏览器打开，适合用独立的浏览器环境管理多个账号。"
     }
   },
+  "codexDesktop": {
+    "open": "打开 Codex",
+    "opening": "正在打开...",
+    "openHint": "打开已安装的 Codex 桌面应用。",
+    "opened": "Codex 桌面应用已打开。",
+    "switchAndOpen": "切换并打开 Codex",
+    "switchedAndOpened": "账号已切换，Codex 桌面应用已打开。",
+    "restart": "重启 Codex",
+    "restarting": "正在重启…",
+    "restartHint": "关闭并重新打开桌面应用，会中断正在运行的任务。",
+    "restarted": "Codex 桌面应用已重新打开。",
+    "failed": "Codex 桌面应用打开或重启失败：{{error}}",
+    "switchAndRestart": "切换并重启 Codex",
+    "switchedAndRestarted": "账号已切换，Codex 桌面应用已重新打开。",
+    "switchRestartFailed": "账号已切换，但 Codex 桌面应用打开或重启失败：{{error}}"
+  },
   "kimi": {
     "oauth": {
       "useAccount": "使用此账号",

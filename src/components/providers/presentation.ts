@@ -143,6 +143,10 @@ export interface SwitchModeInput {
   /** 需要路由的原因（悬停「需要路由」时的说明） */
   routingReason: (provider: Provider) => string;
   serviceRunning: boolean;
+  desktopAction?: {
+    running: boolean;
+    onSelect: (provider: Provider) => void;
+  };
   actions: {
     switchDirect: (provider: Provider) => void;
     needsRouteDialog: (provider: Provider) => void;
@@ -274,6 +278,22 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
               provider: p,
               presentation: {
                 chips,
+                menuItems:
+                  app === "codex" &&
+                  input.desktopAction &&
+                  !providerNeedsRouting(app, p)
+                    ? [
+                        {
+                          key: "switchAndRestart",
+                          label: t(
+                            input.desktopAction.running
+                              ? "codexDesktop.switchAndRestart"
+                              : "codexDesktop.switchAndOpen",
+                          ),
+                          onSelect: () => input.desktopAction?.onSelect(p),
+                        },
+                      ]
+                    : undefined,
                 buttons: [
                   {
                     key: "switch",
