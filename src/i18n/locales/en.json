@@ -2184,6 +2184,7 @@
     "universalDetail": "Synced to Claude Code, Codex, Gemini CLI",
     "manageUniversal": "Manage existing universal providers ›",
     "loginWith": {
+      "deepseek": "Sign in with a DeepSeek account",
       "kimi": "Sign in with a Kimi account",
       "claude": "Sign in with a Claude account",
       "chatgpt": "Sign in with a ChatGPT account",

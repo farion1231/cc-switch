@@ -2184,6 +2184,7 @@
     "universalDetail": "同步到 Claude Code、Codex、Gemini CLI",
     "manageUniversal": "管理已有的统一供应商 ›",
     "loginWith": {
+      "deepseek": "用 DeepSeek 账号登录",
       "kimi": "使用 Kimi 账号登录",
       "claude": "用 Claude 账号登录",
       "chatgpt": "用 ChatGPT 账号登录",
