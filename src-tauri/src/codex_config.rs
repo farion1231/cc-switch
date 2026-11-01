@@ -2290,7 +2290,7 @@ fn find_codex_official_model<'a>(model: &str, candidates: &'a [Value]) -> Option
     })
 }
 
-/// 第三方供应商上命中官方的 GPT 行：保留官方的提示词、工具和档位，窗口接受显式覆盖，
+/// 第三方供应商上命中官方的 GPT 行：保留官方的提示词和工具，窗口与档位接受显式覆盖，
 /// 未配置时保持官方默认。其余只改掉属于官方账号或官方后端的字段。
 fn codex_official_model_entry(
     official: &Value,
@@ -2331,8 +2331,7 @@ fn codex_official_model_entry(
     entry
 }
 
-/// 除窗口外，反向解析会保留的显示名、模态、并行工具调用是否和官方镜像一致。
-/// 镜像的官方能力不用存回表单，显式窗口另行还原。
+/// 核对官方镜像的指令及反向解析字段；窗口、档位的显式差异另行还原。
 fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> bool {
     let expected = codex_official_model_entry(
         official,
@@ -2341,6 +2340,18 @@ fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> boo
         CodexCatalogToolProfile::NativeResponses,
         None,
     );
+    // 旧格式只有 base_instructions。提示词和工具也须匹配，避免把 Anthropic
+    // 通用模板或从其他模型克隆的 Chat 条目误认成官方镜像。
+    if entry
+        .get("model_messages")
+        .and_then(|messages| messages.get("instructions_template"))
+        .is_none()
+        && ["base_instructions", "apply_patch_tool_type"]
+            .iter()
+            .any(|key| entry.get(*key) != expected.get(*key))
+    {
+        return false;
+    }
     [
         "display_name",
         "input_modalities",
@@ -2410,15 +2421,25 @@ fn codex_catalog_from_specs_for_row(
         .enumerate()
         .map(|(index, spec)| {
             let mut entry = match find_codex_official_model(&spec.model, &official) {
-                Some(found) => codex_official_model_entry(
-                    found,
-                    &spec.model,
-                    index,
-                    profile,
-                    // Match Codex's global override and Stack's sink_row_windows:
-                    // a provider-wide window takes precedence over a model's.
-                    configured_context_window.or(spec.context_window),
-                ),
+                Some(found) => {
+                    let mut entry = codex_official_model_entry(
+                        found,
+                        &spec.model,
+                        index,
+                        profile,
+                        // Match Codex's global override and Stack's sink_row_windows:
+                        // a provider-wide window takes precedence over a model's.
+                        configured_context_window.or(spec.context_window),
+                    );
+                    if let Some(obj) = entry.as_object_mut() {
+                        apply_codex_reasoning_level_override(
+                            obj,
+                            found.get("default_reasoning_level").and_then(Value::as_str),
+                            spec,
+                        );
+                    }
+                    entry
+                }
                 None => codex_catalog_model_entry(
                     &template,
                     spec,
@@ -2919,13 +2940,13 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         ) {
             continue;
         }
-        // 官方镜像只还原模型名和显式窗口，不能把官方能力当成用户填的存回库里。通用模板没有
-        // `model_messages`（走 Anthropic 的行不照搬）；旧版 ProxyChat 克隆的 gpt-5.5 模板
-        // 有，但带着用户填的显示名、窗口，下面逐项比对不上，照旧还原。
+        // 官方镜像只还原模型名及窗口、档位的显式差异，不能把官方能力当成用户填的存回库里。
+        // 新旧指令字段都可用于识别；通用模板和旧版 Chat 克隆仍需经过下面的镜像比对。
         if entry
             .get("model_messages")
             .and_then(|messages| messages.get("instructions_template"))
             .is_some()
+            || entry.get("base_instructions").is_some_and(Value::is_string)
         {
             let official = official.get_or_insert_with(codex_openai_official_models);
             if let Some(found) = find_codex_official_model(model, official)
@@ -2941,6 +2962,30 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
                     .filter(|window| *window > 0 && Some(*window) != fallback_window)
                 {
                     restored["contextWindow"] = json!(window);
+                }
+                // Compare effort IDs, not descriptions: wording changes in the official
+                // catalog must not become sticky user overrides on recovery.
+                let efforts = |row: &Value| {
+                    row.get("supported_reasoning_levels")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|level| level.get("effort").and_then(Value::as_str))
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                };
+                let levels = efforts(entry);
+                if !levels.is_empty()
+                    && (levels != efforts(found)
+                        || entry.get("default_reasoning_level")
+                            != found.get("default_reasoning_level"))
+                {
+                    restored["reasoningLevels"] = json!(levels);
+                    if let Some(default) =
+                        entry.get("default_reasoning_level").and_then(Value::as_str)
+                    {
+                        restored["defaultReasoningLevel"] = json!(default);
+                    }
                 }
                 entries.push(restored);
                 continue;
@@ -3217,6 +3262,8 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::ffi::OsString;
+
+    mod reasoning_overrides;
 
     #[test]
     fn official_proxy_route_is_recognized_by_its_address() {
@@ -5218,8 +5265,8 @@ wire_api = "responses"
         let models = with_official_models(official_gpt_rows(), || {
             catalog_for(
                 json!([
-                    // 提示词、工具和思考档位保持官方值；未填窗口时也保留官方默认。
-                    { "model": "gpt-6-sol", "reasoningLevels": ["none"] },
+                    // 未声明覆盖时，提示词、工具、思考档位和窗口保持官方值。
+                    { "model": "gpt-6-sol" },
                     { "model": "glm-5" }
                 ]),
                 "",
