@@ -4,7 +4,12 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { KimiProviderForm } from "@/components/providers/forms/KimiProviderForm";
-import { kimiProviderPresets } from "@/config/kimiProviderPresets";
+import { parse as parseToml } from "smol-toml";
+import {
+  kimiProviderPresets,
+  type KimiProviderConfig,
+} from "@/config/kimiProviderPresets";
+import { kimiConfigToToml } from "@/components/providers/forms/helpers/kimiToml";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import type { ProviderCategory } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
@@ -80,7 +85,7 @@ function setup(
 }
 
 describe("KimiProviderForm", () => {
-  it.each(["import", "json"] as const)(
+  it.each(["import", "toml"] as const)(
     "preserves native capabilities from %s without exposing audio or video controls",
     async (source) => {
       const nativeConfig = structuredClone(config);
@@ -118,9 +123,14 @@ describe("KimiProviderForm", () => {
         undefined,
         source === "import" ? native : config,
       );
-      if (source === "json") {
-        fireEvent.change(screen.getByLabelText("provider.configJson"), {
-          target: { value: JSON.stringify(native) },
+      if (source === "toml") {
+        fireEvent.change(screen.getByLabelText("providerForm.nativeConfig.title"), {
+          target: {
+            value: kimiConfigToToml(
+              native as KimiProviderConfig,
+              "managed:kimi-code",
+            ),
+          },
         });
       }
       expandModels();
@@ -133,9 +143,6 @@ describe("KimiProviderForm", () => {
       expect(
         screen.queryByRole("switch", { name: "kimi.capabilities.video_in" }),
       ).not.toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
-        target: { value: "https://updated.example.com/v1" },
-      });
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
       await waitFor(() => expect(submit).toHaveBeenCalledOnce());
       const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
@@ -143,10 +150,7 @@ describe("KimiProviderForm", () => {
         capabilities: native.models["kimi-code/k3"].capabilities,
         overrides: native.models["kimi-code/k3"].overrides,
       });
-      expect(saved.provider).toEqual({
-        ...config.provider,
-        base_url: "https://updated.example.com/v1",
-      });
+      expect(saved.provider).toEqual(config.provider);
     },
   );
 
@@ -264,30 +268,104 @@ describe("KimiProviderForm", () => {
     },
   );
 
-  it("edits native endpoints while preserving OAuth and model overrides", async () => {
+  it("edits only the models of an official account, keeping its login", async () => {
     const submit = setup();
-    fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
-      target: { value: "https://example.com/v1" },
-    });
+    expect(
+      screen.getByText("kimi.oauth.connectionManaged"),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("opencode.baseUrl")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
-    expect(saved.provider).toEqual({
-      ...config.provider,
-      base_url: "https://example.com/v1",
-    });
+    expect(saved.provider).toEqual(config.provider);
     expect(saved.models).toEqual(config.models);
     expect(submit.mock.calls[0][0].providerKey).toBe("managed:kimi-code");
   });
 
+  it("adds models from the official account's own catalog", async () => {
+    const user = userEvent.setup();
+    let requested: unknown;
+    server.use(
+      http.post("http://tauri.local/kimi_oauth_models", async ({ request }) => {
+        requested = await request.json();
+        return HttpResponse.json({
+          "kimi-code/k3": {
+            provider: "managed:kimi-code",
+            model: "k3",
+            max_context_size: 1048576,
+          },
+          "kimi-code/k3.1-pro": {
+            provider: "managed:kimi-code",
+            model: "k3.1-pro",
+            display_name: "K3.1 Pro",
+            max_context_size: 1048576,
+            capabilities: ["tool_use", "thinking"],
+            support_efforts: ["high", "max"],
+            default_effort: "max",
+          },
+        });
+      }),
+    );
+    const submit = setup();
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(await screen.findByRole("checkbox", { name: "k3.1-pro" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.modelPicker.apply" }),
+    );
+    expect(requested).toEqual({ accountId: "managed:kimi-code" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.models["kimi-code/k3.1-pro"]).toEqual({
+      provider: "managed:kimi-code",
+      model: "k3.1-pro",
+      display_name: "K3.1 Pro",
+      max_context_size: 1048576,
+      capabilities: ["tool_use", "thinking"],
+      support_efforts: ["high", "max"],
+      default_effort: "max",
+    });
+    expect(saved.models["kimi-code/k3"]).toEqual(config.models["kimi-code/k3"]);
+  });
+
   it("shows request headers inline like Pi", () => {
-    setup();
+    const { oauth: _oauth, ...apiKeyProvider } = config.provider;
+    setup(vi.fn(), undefined, {
+      ...config,
+      provider: { ...apiKeyProvider, type: "openai", api_key: "sk-test" },
+    });
     expect(screen.getByDisplayValue("X-Custom")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
         name: "providerForm.advancedOptionsToggle",
       }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps provider key composition local until the IME commits", () => {
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <KimiProviderForm
+          appId="kimi"
+          submitLabel="Save"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    const key = screen.getByLabelText("opencode.providerKey");
+
+    fireEvent.compositionStart(key);
+    fireEvent.change(key, { target: { value: "Te好st" } });
+    // The IME still owns the marked text; normalizing it here would replace the
+    // composition range and duplicate the typed letters.
+    expect(key).toHaveValue("Te好st");
+
+    fireEvent.compositionEnd(key, { data: "Te好st" });
+    expect(key).toHaveValue("test");
   });
 
   it("flags a preset whose provider key collides with an existing card", async () => {
@@ -328,13 +406,52 @@ describe("KimiProviderForm", () => {
     );
   });
 
-  it("blocks invalid JSON until the editor is corrected", () => {
+  it("shows this provider's tables in config.toml layout", () => {
+    setup();
+    const text = (
+      screen.getByLabelText("providerForm.nativeConfig.title") as HTMLTextAreaElement
+    ).value;
+    expect(text).toContain('[providers."managed:kimi-code"]');
+    expect(text).toContain('[models."kimi-code/k3"]');
+    expect(parseToml(text)).toEqual({
+      providers: { "managed:kimi-code": config.provider },
+      models: config.models,
+    });
+  });
+
+  it.each([
+    ["broken syntax", "[providers", "providerForm.nativeConfig.invalid"],
+    [
+      "another provider's table",
+      '[providers.other]\ntype = "openai"\n',
+      "kimi.configTomlScope",
+    ],
+    [
+      "a global setting",
+      `default_model = "kimi-code/k3"\n${kimiConfigToToml(config as KimiProviderConfig, "managed:kimi-code")}`,
+      "kimi.configTomlScope",
+    ],
+    [
+      "a model without context size",
+      '[providers."managed:kimi-code"]\ntype = "kimi"\n\n[models.x]\nmodel = "k3"\n',
+      "kimi.configTomlSchema",
+    ],
+  ])("blocks %s until the TOML is corrected", (_, value, message) => {
     const submit = setup();
-    const editor = screen.getByLabelText("provider.configJson");
-    fireEvent.change(editor, { target: { value: "{" } });
+    const editor = screen.getByLabelText("providerForm.nativeConfig.title");
+    fireEvent.change(editor, { target: { value } });
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    fireEvent.change(editor, { target: { value: JSON.stringify(config) } });
+    expect(screen.getByText(message)).toBeInTheDocument();
+    fireEvent.change(editor, {
+      target: {
+        value: kimiConfigToToml(
+          config as KimiProviderConfig,
+          "managed:kimi-code",
+        ),
+      },
+    });
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
   });
 
@@ -421,9 +538,11 @@ describe("KimiProviderForm", () => {
     });
     await waitFor(() =>
       expect(
-        JSON.parse(
-          (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
-            .value,
+        (
+          parseToml(
+            (screen.getByLabelText("providerForm.nativeConfig.title") as HTMLTextAreaElement)
+              .value,
+          ) as { models: Record<string, { max_context_size: number }> }
         ).models["acme/model-x"].max_context_size,
       ).toBe(123456),
     );

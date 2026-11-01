@@ -11,6 +11,7 @@ use super::codex_chat_common::{
 };
 use super::codex_compaction;
 use super::inline_think::split_leading_think_block;
+use super::transform::unwrap_chat_completion_envelope;
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -20,7 +21,8 @@ use crate::proxy::{
     },
     tool_media::{
         chat_file_from_input_file, flush_pending_chat_tool_media, plan_chat_tool_output_media,
-        queue_chat_tool_output_media, strip_and_clamp_media_from_tool_value, ToolMediaScope,
+        plan_chat_tool_output_media_with_marker, queue_chat_tool_output_media,
+        strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
         TOOL_RESULT_MEDIA_MOVED_MARKER,
     },
 };
@@ -487,7 +489,7 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-fn map_reasoning_effort<'a>(
+pub(crate) fn map_reasoning_effort<'a>(
     effort: &str,
     mode: Option<&str>,
     effort_levels: Option<&'a [String]>,
@@ -502,8 +504,11 @@ fn map_reasoning_effort<'a>(
     // passthrough 面向枚举未知的通用上游，档位由用户/预设的 reasoningLevels 声明
     // 背书，与 max/xhigh 一样原值透传。
     match mode.unwrap_or("passthrough") {
+        // DeepSeek 官方档位 low / high / max，其余档位照官方服务端的换算折
+        // （api-docs.deepseek.com/guides/thinking_mode：minimal→low、medium/xhigh→high、ultra→max）。
         "deepseek" => match effort.as_str() {
-            "max" | "xhigh" | "ultra" => Some("max"),
+            "minimal" | "low" => Some("low"),
+            "max" | "ultra" => Some("max"),
             _ => Some("high"),
         },
         "low_high" => match effort.as_str() {
@@ -1213,9 +1218,10 @@ fn flush_pending_orphan_results(
 /// 上下文，但不能以 role=tool 的形式发给严格上游。
 ///
 /// 输出里的图片/文件媒体块复用配对路径的提取逻辑：文本 body 内联
-/// `TOOL_RESULT_MEDIA_MOVED_MARKER`，媒体本体作为同一条 user 消息的
-/// content parts 跟随，避免图片被 base64 序列化成纯文本——模型既看不到
-/// 图，token 还会被瞬间撑爆。
+/// `TOOL_RESULT_MEDIA_ATTACHED_MARKER` 占位，媒体本体作为同一条 user
+/// 消息的 content parts 跟随，避免图片被 base64 序列化成纯文本——模型既
+/// 看不到图，token 还会被瞬间撑爆。配对路径的 "moved to the following
+/// user message" 占位在本路径会指向一条不存在的消息，不能沿用。
 fn append_orphan_tool_output_as_user_message(messages: &mut Vec<Value>, item: &Value) {
     let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
     let (body, media_parts) = plan_orphan_tool_output_body(item.get("output"));
@@ -1239,10 +1245,16 @@ fn append_orphan_tool_output_as_user_message(messages: &mut Vec<Value>, item: &V
 }
 
 /// 计算孤儿工具结果的文本 body 与媒体 parts。媒体识别复用配对路径的
-/// `plan_chat_tool_output_media`；没有媒体时保持旧版逐字段的纯文本序列化，
-/// 不给无媒体输出多加一层 JSON 包装。
+/// `plan_chat_tool_output_media_with_marker`；没有媒体时保持旧版逐字段的
+/// 纯文本序列化，不给无媒体输出多加一层 JSON 包装。
+///
+/// 孤儿路径的媒体就挂在这条 user 消息自己的后续 parts 里，占位符用
+/// `TOOL_RESULT_MEDIA_ATTACHED_MARKER`（与 Anthropic/Gemini/Responses
+/// bridge 的"媒体已作为原生媒体挂载"用词一致）。
 fn plan_orphan_tool_output_body(output: Option<&Value>) -> (String, Vec<Value>) {
-    if let Some(plan) = output.cloned().and_then(plan_chat_tool_output_media) {
+    if let Some(plan) = output.cloned().and_then(|output| {
+        plan_chat_tool_output_media_with_marker(output, TOOL_RESULT_MEDIA_ATTACHED_MARKER)
+    }) {
         return (plan.tool_content, plan.media_parts);
     }
     let body = match output {
@@ -1921,6 +1933,7 @@ pub(crate) fn chat_completion_to_response_with_context(
     body: Value,
     tool_context: &CodexToolContext,
 ) -> Result<Value, ProxyError> {
+    let body = unwrap_chat_completion_envelope(body);
     let choices = body
         .get("choices")
         .and_then(|v| v.as_array())
@@ -2997,6 +3010,14 @@ mod tests {
         assert!(text.starts_with(ORPHAN_TOOL_OUTPUT_MARKER), "{text}");
         assert!(text.contains("screenshot follows"), "{text}");
         assert!(
+            text.contains(TOOL_RESULT_MEDIA_ATTACHED_MARKER),
+            "inline media placeholder must match where the media lands: {text}"
+        );
+        assert!(
+            !text.contains("following user message"),
+            "media travels in this same message: {text}"
+        );
+        assert!(
             !text.contains(&data_url),
             "base64 image must not stay in the text body: {text}"
         );
@@ -3094,6 +3115,26 @@ mod tests {
         assert_eq!(messages[1].get("reasoning_content"), None);
         assert_eq!(messages[3]["reasoning_content"], "think-before-call");
         assert_eq!(messages[3]["tool_calls"][0]["id"], "call_next");
+    }
+
+    #[test]
+    fn map_reasoning_effort_deepseek_keeps_official_tiers() {
+        // DeepSeek 官方档位 low / high / max，其余照官方服务端的换算折。
+        for (requested, expected) in [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "high"),
+            ("max", "max"),
+            ("ultra", "max"),
+        ] {
+            assert_eq!(
+                map_reasoning_effort(requested, Some("deepseek"), None),
+                Some(expected),
+                "{requested}"
+            );
+        }
     }
 
     #[test]
@@ -3638,7 +3679,8 @@ mod tests {
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
-        assert_eq!(result["reasoning_effort"], "max");
+        // DeepSeek 官方服务端把 xhigh 当 high。
+        assert_eq!(result["reasoning_effort"], "high");
     }
 
     #[test]
@@ -3984,6 +4026,33 @@ mod tests {
             "Need to inspect the code."
         );
         assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_completion_to_response_unwraps_data_envelope() {
+        // #5658：ClinePass 把非流式 Chat 响应包在 data 里
+        let input = json!({
+            "success": true,
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "model": "cline-pass/deepseek-v4.1-flash",
+                "created": 1_700_000_000,
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "OK"}
+                }],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
+            }
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["model"], "cline-pass/deepseek-v4.1-flash");
+        assert_eq!(result["created_at"], 1_700_000_000);
+        assert_eq!(result["status"], "completed");
+        assert_eq!(result["output"][0]["content"][0]["text"], "OK");
+        assert_eq!(result["usage"]["input_tokens"], 12);
+        assert_eq!(result["usage"]["output_tokens"], 1);
     }
 
     #[test]

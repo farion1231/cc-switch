@@ -65,6 +65,7 @@ import { HermesFormFields } from "./HermesFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
+  getApiKeyFromConfig,
   hasApiKeyField,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
@@ -84,6 +85,10 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
+import {
+  toClaudeReasoningEffortChoice,
+  type ClaudeReasoningEffortChoice,
+} from "./ClaudeReasoningEffortField";
 import type { DirectModeFormatNotice } from "./shared";
 import {
   claudeStackModelsFromEnv,
@@ -99,6 +104,7 @@ import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { KimiProviderForm } from "./KimiProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
+import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
 import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
@@ -329,8 +335,9 @@ export interface ProviderFormProps {
 
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
-  if (props.appId === "mcode") return <McodeProviderForm {...props} />;
-  if (props.appId === "pi") {
+  if (props.appId === "mcode" || props.appId === "dsh")
+    return <McodeProviderForm {...props} />;
+  if (props.appId === "pi" || props.appId === "omp") {
     return <PiProviderForm {...props} />;
   }
   if (props.appId === "claude-desktop") {
@@ -443,6 +450,9 @@ function ProviderFormFull({
     setHasValidCodexOfficialSelection(true);
     setCodexFastMode(initialData?.meta?.codexFastMode ?? false);
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setClaudeReasoningEffort(
+      toClaudeReasoningEffortChoice(initialData?.meta?.claudeReasoningEffort),
+    );
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
@@ -503,8 +513,19 @@ function ProviderFormFull({
 
   const handleSettingsConfigChange = useCallback(
     (config: string) => {
+      if (form.getValues("settingsConfig") === config) {
+        return;
+      }
       form.setValue("settingsConfig", config);
     },
+    [form],
+  );
+
+  // Event handlers must read the current settingsConfig instead of rebuilding
+  // JSON from a render-time snapshot: the JSON editor writes through
+  // form.setValue, and a snapshot taken during render can predate those edits.
+  const getSettingsConfig = useCallback(
+    () => form.getValues("settingsConfig"),
     [form],
   );
 
@@ -542,6 +563,7 @@ function ProviderFormFull({
   } = useApiKeyState({
     initialConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
+    getConfig: getSettingsConfig,
     selectedPresetId,
     category,
     appType: appId,
@@ -555,6 +577,7 @@ function ProviderFormFull({
     codexConfig: "",
     onSettingsConfigChange: handleSettingsConfigChange,
     onCodexConfigChange: () => {},
+    getSettingsConfig,
   });
 
   const {
@@ -572,7 +595,28 @@ function ProviderFormFull({
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
+    getSettingsConfig,
   });
+
+  // Values used for submit-time validation/identity detection must come from
+  // the current JSON editor contents, not stale hook state from the last render.
+  const readSubmitTimeCredentials = useCallback(() => {
+    const raw = getSettingsConfig() || "{}";
+    let parsedBaseUrl: string | null = null;
+    try {
+      const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
+      const candidate = parsed.env?.ANTHROPIC_BASE_URL;
+      parsedBaseUrl = typeof candidate === "string" ? candidate.trim() : "";
+    } catch {
+      // The JSON validator will report malformed input; retain hook state for
+      // the auxiliary checks until the user fixes it.
+      parsedBaseUrl = null;
+    }
+    return {
+      baseUrl: parsedBaseUrl ?? baseUrl,
+      apiKey: parsedBaseUrl === null ? apiKey : getApiKeyFromConfig(raw, appId),
+    };
+  }, [apiKey, appId, baseUrl, getSettingsConfig]);
 
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
     if (appId !== "claude") return "anthropic";
@@ -597,7 +641,6 @@ function ProviderFormFull({
           delete config.env[prev];
           config.env[field] = value;
           const updated = JSON.stringify(config, null, 2);
-          form.setValue("settingsConfig", updated);
           handleSettingsConfigChange(updated);
         }
       } catch {
@@ -647,12 +690,20 @@ function ProviderFormFull({
   const [selectedAgyAccountId, setSelectedAgyAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "agy_oauth"));
+  // Claude 官方卡绑定的 Claude 官方账号；null = 默认登录（~/.claude）
+  const [selectedClaudeAccountId, setSelectedClaudeAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "claude_official"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
+    );
+  const [claudeReasoningEffort, setClaudeReasoningEffort] =
+    useState<ClaudeReasoningEffortChoice>(() =>
+      toClaudeReasoningEffortChoice(initialData?.meta?.claudeReasoningEffort),
     );
   const [promptCacheRouting, setPromptCacheRouting] =
     useState<PromptCacheRoutingMode>(
@@ -992,6 +1043,7 @@ function ProviderFormFull({
     selectedPresetId: appId === "claude" ? selectedPresetId : null,
     presetEntries: appId === "claude" ? presetEntries : [],
     settingsConfig: form.getValues("settingsConfig"),
+    getSettingsConfig,
     onConfigChange: handleSettingsConfigChange,
   });
 
@@ -1054,10 +1106,10 @@ function ProviderFormFull({
           config.env = {};
         }
         config.env[key] = value;
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+        handleSettingsConfigChange(JSON.stringify(config, null, 2));
       } catch {}
     },
-    [form],
+    [form, handleSettingsConfigChange],
   );
 
   const handleGeminiApiKeyChange = useCallback(
@@ -1110,8 +1162,8 @@ function ProviderFormFull({
     initialData,
     appId,
     providerId,
-    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
-    getSettingsConfig: () => form.getValues("settingsConfig"),
+    onSettingsConfigChange: handleSettingsConfigChange,
+    getSettingsConfig,
   });
   const isNativeOpencode =
     appId === "opencode" &&
@@ -1162,8 +1214,8 @@ function ProviderFormFull({
     initialData,
     appId,
     providerId,
-    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
-    getSettingsConfig: () => form.getValues("settingsConfig"),
+    onSettingsConfigChange: handleSettingsConfigChange,
+    getSettingsConfig,
   });
   const {
     data: openclawLiveProviderIds = [],
@@ -1174,8 +1226,8 @@ function ProviderFormFull({
     initialData,
     appId,
     providerId,
-    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
-    getSettingsConfig: () => form.getValues("settingsConfig"),
+    onSettingsConfigChange: handleSettingsConfigChange,
+    getSettingsConfig,
   });
   const {
     data: hermesLiveProviderIds = [],
@@ -1420,8 +1472,17 @@ function ProviderFormFull({
       }
     }
 
+    const { baseUrl: submitBaseUrl, apiKey: submitApiKey } =
+      readSubmitTimeCredentials();
+    // Same rule as isCopilotProvider, but with the submit-time base URL.
+    const isCopilotProviderAtSubmit =
+      (appId === "codex" && hasManagedCopilotIdentity) ||
+      (appId === "claude" &&
+        (hasManagedCopilotIdentity ||
+          submitBaseUrl.includes("githubcopilot.com")));
+
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
-    if (isCopilotProvider && isCopilotStatusError) {
+    if (isCopilotProviderAtSubmit && isCopilotStatusError) {
       toast.error(
         t("copilot.statusLoadFailed", {
           defaultValue: "无法加载 GitHub Copilot 账号状态，请重试。",
@@ -1429,7 +1490,7 @@ function ProviderFormFull({
       );
       return;
     }
-    if (isCopilotProvider && !isCopilotStatusSuccess) {
+    if (isCopilotProviderAtSubmit && !isCopilotStatusSuccess) {
       toast.error(
         t("copilot.statusLoading", {
           defaultValue: "正在加载 GitHub Copilot 账号状态，请稍后再试。",
@@ -1437,7 +1498,7 @@ function ProviderFormFull({
       );
       return;
     }
-    if (isCopilotProvider && !isCopilotAuthenticated) {
+    if (isCopilotProviderAtSubmit && !isCopilotAuthenticated) {
       toast.error(
         t("copilot.loginRequired", {
           defaultValue: "请先登录 GitHub Copilot",
@@ -1512,7 +1573,7 @@ function ProviderFormFull({
         (account) => account.id === accountId && !account.requires_reauth,
       );
     if (
-      isCopilotProvider &&
+      isCopilotProviderAtSubmit &&
       !selectedAccountExists(selectedGitHubAccountId, copilotAccounts)
     ) {
       toast.error(
@@ -1583,7 +1644,7 @@ function ProviderFormFull({
         if (
           !isClaudeCodexOauthProvider &&
           !isXaiOauthProvider &&
-          !baseUrl.trim()
+          !submitBaseUrl.trim()
         ) {
           issues.push(
             t("providerForm.endpointRequired", {
@@ -1592,10 +1653,10 @@ function ProviderFormFull({
           );
         }
         if (
-          !isCopilotProvider &&
+          !isCopilotProviderAtSubmit &&
           !isClaudeCodexOauthProvider &&
           !isXaiOauthProvider &&
-          !apiKey.trim()
+          !submitApiKey.trim()
         ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
@@ -1902,7 +1963,12 @@ function ProviderFormFull({
       delete baseMeta.custom_endpoints;
     }
 
-    const providerType = isCopilotProvider
+    const isCopilotProviderForSubmit =
+      (appId === "codex" && hasManagedCopilotIdentity) ||
+      (appId === "claude" &&
+        (hasManagedCopilotIdentity ||
+          readSubmitTimeCredentials().baseUrl.includes("githubcopilot.com")));
+    const providerType = isCopilotProviderForSubmit
       ? "github_copilot"
       : isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound
         ? "codex_oauth"
@@ -1929,7 +1995,7 @@ function ProviderFormFull({
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
-      authBinding: isCopilotProvider
+      authBinding: isCopilotProviderForSubmit
         ? {
             source: "managed_account",
             authProvider: "github_copilot",
@@ -1961,10 +2027,18 @@ function ProviderFormFull({
                     authProvider: "agy_oauth",
                     accountId: selectedAgyAccountId,
                   }
-                : undefined,
+                : appId === "claude" &&
+                    category === "official" &&
+                    selectedClaudeAccountId
+                  ? {
+                      source: "managed_account",
+                      authProvider: "claude_official",
+                      accountId: selectedClaudeAccountId,
+                    }
+                  : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
-        isCopilotProvider && selectedGitHubAccountId
+        isCopilotProviderForSubmit && selectedGitHubAccountId
           ? selectedGitHubAccountId
           : undefined,
       codexFastMode: isClaudeCodexOauthProvider ? codexFastMode : undefined,
@@ -1978,6 +2052,14 @@ function ProviderFormFull({
         isCodexChatFormat &&
         promptCacheRouting !== "auto"
           ? promptCacheRouting
+          : undefined,
+      claudeReasoningEffort:
+        appId === "claude" &&
+        category !== "official" &&
+        (localApiFormat === "openai_chat" ||
+          localApiFormat === "openai_responses") &&
+        claudeReasoningEffort !== "auto"
+          ? claudeReasoningEffort
           : undefined,
       customUserAgent:
         (appId === "claude" || appId === "codex") && category !== "official"
@@ -2358,6 +2440,7 @@ function ProviderFormFull({
     } else {
       setLocalApiFormat("anthropic");
     }
+    setClaudeReasoningEffort("auto");
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
@@ -2677,6 +2760,8 @@ function ProviderFormFull({
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}
+              reasoningEffort={claudeReasoningEffort}
+              onReasoningEffortChange={setClaudeReasoningEffort}
               apiKeyField={localApiKeyField}
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
@@ -2691,6 +2776,18 @@ function ProviderFormFull({
               directModeFormatNotice={directModeFormatNotice}
               stackModelRows={shownClaudeStackRows}
               onStackModelRowsChange={handleClaudeStackRowsChange}
+            />
+          )}
+
+          {appId === "claude" && category === "official" && (
+            <ClaudeAccountSelect
+              value={selectedClaudeAccountId}
+              onChange={setSelectedClaudeAccountId}
+              onManageAccounts={
+                onManageAuthAccounts
+                  ? () => onManageAuthAccounts("claude_official")
+                  : undefined
+              }
             />
           )}
 
@@ -2973,7 +3070,7 @@ function ProviderFormFull({
                 )}
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
-                  onChange={(config) => form.setValue("settingsConfig", config)}
+                  onChange={handleSettingsConfigChange}
                   placeholder={
                     isNativeOpencode
                       ? "{}"
@@ -3003,7 +3100,7 @@ function ProviderFormFull({
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
                   onChange={(config) => {
-                    form.setValue("settingsConfig", config);
+                    handleSettingsConfigChange(config);
                     if (appId === "openclaw") {
                       openclawForm.syncOpenclawUserAgentFromConfig(config);
                     }
@@ -3042,7 +3139,7 @@ function ProviderFormFull({
             <>
               <CommonConfigEditor
                 value={form.getValues("settingsConfig")}
-                onChange={(value) => form.setValue("settingsConfig", value)}
+                onChange={handleSettingsConfigChange}
                 inactiveFields={inactiveFields}
               />
               {settingsConfigErrorField}

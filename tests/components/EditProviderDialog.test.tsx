@@ -616,4 +616,33 @@ describe("EditProviderDialog", () => {
     act(() => staleCallback?.(true));
     expect(reopenedButton).toBeDisabled();
   });
+
+  it("Oh My Pi 编辑表单报告未就绪时禁用保存按钮", async () => {
+    const provider: Provider = {
+      id: "omp-provider",
+      name: "Oh My Pi Provider",
+      settingsConfig: {
+        baseUrl: "https://api.example.com/v1",
+        api: "openai-completions",
+      },
+    };
+    mockFormReady = false;
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="omp"
+      />,
+    );
+
+    const saveButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(saveButton).toBeDisabled());
+
+    act(() => submitReadyCallbacks.at(-1)?.(true));
+    await waitFor(() => expect(saveButton).toBeEnabled());
+  });
 });
