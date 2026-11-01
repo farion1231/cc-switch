@@ -502,12 +502,14 @@ fn build_provider_meta(
 
     // 套餐地址且没带脚本：和在应用里新建一样，按套餐额度查询并默认启用
     // （链接写了 `usageEnabled` 仍照办）。额度走后端固定端点，不执行任何脚本。
-    // 火山例外：查额度要账号级 AccessKey，链接里没有，默认启用只会显示「额度查询失败」，
-    // 所以只预选套餐不启用（前端 `codingPlanEnabledByDefault` 与此一致）。
+    // 火山与阿里云两条套餐线例外：查额度要账号级 AccessKey，链接里没有，默认启用
+    // 只会显示「额度查询失败」，所以只预选套餐不启用（前端 `codingPlanEnabledByDefault`
+    // 与此一致）。
     if let (Some(provider_id), true) = (coding_plan_provider, code.is_empty()) {
+        let needs_ak_sk = matches!(provider_id, "volcengine" | "bailian" | "qwen_token_plan");
         return Ok(Some(ProviderMeta {
             usage_script: Some(UsageScript {
-                enabled: request.usage_enabled.unwrap_or(provider_id != "volcengine"),
+                enabled: request.usage_enabled.unwrap_or(!needs_ak_sk),
                 language: "javascript".to_string(),
                 code,
                 timeout: Some(10),
