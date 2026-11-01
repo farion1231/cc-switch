@@ -2250,6 +2250,79 @@
     "realTotalHint": "Input + Output + Cache Write + Cache Read",
     "freshInput": "Fresh Input",
     "cacheHitRate": "Cache Hit Rate",
+    "project": "Project",
+    "projectFilter": {
+      "selected": "{{count}} projects selected",
+      "label": "Project",
+      "title": "Filter by project",
+      "all": "All projects",
+      "unknown": "Unidentified project"
+    },
+    "projects": {
+      "apps": "Apps",
+      "providers": "Providers",
+      "lastActive": "Last active",
+      "share": "Share"
+    },
+    "providers": {
+      "expandModels": "Expand model share"
+    },
+    "share": {
+      "metricLabel": "Share metric",
+      "metric": {
+        "tokens": "Tokens",
+        "cost": "Cost",
+        "requests": "Requests",
+        "cache": "Cache"
+      },
+      "providers": "Provider share",
+      "providersAria": "Provider share for this project",
+      "models": "Model share",
+      "modelsAria": "Model share",
+      "modelsIn": "Model share · {{provider}}",
+      "cacheHit": "Cache hit {{rate}}",
+      "requestCount": "{{value}} requests",
+      "total": "Total",
+      "other": "Other",
+      "allProviders": "All providers",
+      "requestCacheHit": "{{value}} requests · Cache hit {{rate}}"
+    },
+    "cacheBreakdown": {
+      "models": "Model input share",
+      "modelsIn": "Model input share · {{provider}}",
+      "providersInput": "Provider input share",
+      "weightedRate": "Weighted cache hit rate",
+      "readOfInput": "Read {{read}} / Input {{input}}",
+      "help": "Cache read ÷ (fresh input + cache write + cache read), weighted by tokens; output excluded. No input shows —. Missing data is excluded.",
+      "read": "Cache read",
+      "write": "Cache write",
+      "fresh": "Fresh input",
+      "order": "Largest input first",
+      "missing": "Cache data unavailable",
+      "excluded": "{{count}} models with missing cache data excluded from totals",
+      "loadError": "Unable to load usage"
+    },
+    "attributionSource": "Attribution source",
+    "attributionConfidence": "Attribution confidence",
+    "attributionReason": "Unattributed reason",
+    "attribution": {
+      "source": {
+        "unknown": "Unknown",
+        "proxy": "Proxy log",
+        "session_meta": "Session metadata",
+        "activation": "Provider timeline",
+        "dedup": "Dedup backfill",
+        "pre_migration_no_evidence": "No evidence before migration"
+      },
+      "confidence": {
+        "unknown": "Unknown",
+        "exact": "Exact",
+        "high": "High"
+      }
+    },
+    "quality": {
+      "summary": "{{provider}} requests with unknown provider, {{project}} with unknown project"
+    },
     "requestLogs": "Request Logs",
     "providerStats": "Provider Stats",
     "modelStats": "Model Stats",
@@ -2266,6 +2339,7 @@
     "requestModel": "Request Model",
     "responseModel": "Response Model",
     "noData": "No data",
+    "loading": "Loading…",
     "unknownProvider": "Unknown Provider",
     "sessionProvider": {
       "short": "Session logs",
@@ -2522,6 +2596,7 @@
     },
     "tabs": {
       "label": "Details",
+      "projects": "Projects",
       "providers": "Providers",
       "models": "Models",
       "pricing": "Pricing"

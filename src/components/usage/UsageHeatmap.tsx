@@ -24,7 +24,11 @@ interface UsageHeatmapProps {
   /** 格子深浅按哪个指标分档：由上方指标条选 */
   metric: UsageMetric;
   appType?: string;
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
+  projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   refreshIntervalMs: number;
 }
@@ -167,15 +171,24 @@ function cellStyle(level: number) {
  * 起点按周取整，同一周内查询键不变。
  */
 function useAllSpansDailyTrends(
-  filters: { appType?: string; providerName?: string; model?: string },
+  filters: {
+    appType?: string;
+    providerAppType?: string;
+    providerId?: string;
+    providerName?: string;
+    projectKey?: string;
+    projectKeys?: string[];
+    model?: string;
+  },
   refreshIntervalMs: number,
 ) {
   const refetchInterval = refreshIntervalMs > 0 ? refreshIntervalMs : false;
   const firstDateQuery = useUsageFirstDate(filters, { refetchInterval });
   const today = startOfDay(new Date());
-  const spanCount = firstDateQuery.isSuccess
-    ? spanCountFor(firstDateQuery.data, today)
-    : null;
+  const spanCount =
+    firstDateQuery.isSuccess && !firstDateQuery.isPlaceholderData
+      ? spanCountFor(firstDateQuery.data, today)
+      : null;
   const startKey = dayKey(spanStart(today, (spanCount ?? 1) - 1));
   const selection = useMemo<UsageRangeSelection>(
     () => ({
@@ -196,7 +209,11 @@ function useAllSpansDailyTrends(
   return {
     spanCount: spanCount ?? 1,
     trends: trendsQuery.data,
-    isLoading: firstDateQuery.isPending || trendsQuery.isLoading,
+    isLoading:
+      firstDateQuery.isPending ||
+      firstDateQuery.isPlaceholderData ||
+      trendsQuery.isLoading ||
+      trendsQuery.isPlaceholderData,
   };
 }
 
@@ -247,7 +264,11 @@ function buildSpan(
 export function UsageHeatmap({
   metric,
   appType,
+  providerAppType,
+  providerId,
   providerName,
+  projectKey,
+  projectKeys,
   model,
   refreshIntervalMs,
 }: UsageHeatmapProps) {
@@ -273,7 +294,15 @@ export function UsageHeatmap({
   const locale = getLocaleFromLanguage(language);
 
   const { spanCount, trends, isLoading } = useAllSpansDailyTrends(
-    { appType, providerName, model },
+    {
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    },
     refreshIntervalMs,
   );
 

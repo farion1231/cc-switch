@@ -6816,6 +6816,7 @@ impl ProviderService {
     ///   操作里提交；累加式应用按各自的规则写入。
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
         let app = app_type.as_str().to_string();
+        let attribution_app = app_type.clone();
         let result = Self::switch_inner(state, app_type, id);
         match &result {
             Ok(result) if result.warnings.is_empty() => {
@@ -6838,6 +6839,20 @@ impl ProviderService {
                 "[SWITCH] {app} 切到 {id} 失败: {}",
                 crate::error_for_log(&error.to_string())
             ),
+        }
+        if result.is_ok() {
+            if let Err(err) =
+                crate::services::usage_attribution::record_activation_for_current_state(
+                    &state.db,
+                    &attribution_app,
+                    "switch",
+                )
+            {
+                log::warn!(
+                    "[USAGE-ATTR] 写入 {} 切换激活失败: {err}",
+                    attribution_app.as_str()
+                );
+            }
         }
         result
     }

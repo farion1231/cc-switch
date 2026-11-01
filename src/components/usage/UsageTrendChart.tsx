@@ -31,7 +31,11 @@ interface UsageTrendChartProps {
   /** 画哪个指标：由上方指标条选 */
   metric: UsageMetric;
   appType?: string;
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
+  projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   refreshIntervalMs: number;
 }
@@ -281,7 +285,11 @@ export function UsageTrendChart({
   range,
   metric,
   appType,
+  providerAppType,
+  providerId,
   providerName,
+  projectKey,
+  projectKeys,
   model,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
@@ -291,9 +299,21 @@ export function UsageTrendChart({
   const { data: settings } = useSettingsQuery();
   const chartType = resolveTrendChartType(settings?.usageDisplay);
   const { startDate, endDate } = resolveUsageRange(range);
-  const { data: trends, isLoading } = useUsageTrends(
+  const {
+    data: trends,
+    isLoading,
+    isPlaceholderData,
+  } = useUsageTrends(
     range,
-    { appType, providerName, model },
+    {
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -393,7 +413,7 @@ export function UsageTrendChart({
       </h2>
 
       <div ref={chartBoxRef} className="mt-1 h-[132px] w-full">
-        {isLoading ? (
+        {isLoading || isPlaceholderData ? (
           <div className="flex h-full items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-fg-3" />
           </div>

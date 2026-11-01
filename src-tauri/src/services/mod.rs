@@ -38,6 +38,7 @@ pub mod subscription;
 pub mod subscription_agy;
 pub mod subscription_grok;
 pub mod sync_protocol;
+pub mod usage_attribution;
 pub mod usage_cache;
 pub mod usage_stats;
 pub mod webdav;
@@ -56,8 +57,9 @@ pub use speedtest::{EndpointLatency, SpeedtestService};
 pub use usage_cache::UsageCache;
 #[allow(unused_imports)]
 pub use usage_stats::{
-    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary, UsageSummaryByApp,
+    DailyStats, DataQualityStats, LogFilters, ModelStats, PaginatedLogs, ProjectOption,
+    ProjectStats, ProviderLimitStatus, ProviderStats, RequestLogDetail, UsageSummary,
+    UsageSummaryByApp,
 };
 
 pub mod session_usage_kimi;

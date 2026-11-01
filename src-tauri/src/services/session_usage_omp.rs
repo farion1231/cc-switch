@@ -119,6 +119,15 @@ mod tests {
         );
 
         let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // A matching native label in Pi must not identify an Oh My Pi provider.
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config)
+                 VALUES ('workbuddy', 'pi', 'Pi-only provider', '{}')",
+                [],
+            )?;
+        }
         let result = sync_pi_files(&db, &OMP, std::slice::from_ref(&path));
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         assert_eq!(result.imported, 4);
@@ -158,9 +167,24 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
             assert_eq!(aborted, (499, "Request was aborted".to_string()));
+            let attributed: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs
+                 WHERE app_type = 'omp' AND attribution_source = 'unknown'
+                   AND attribution_confidence = 'unknown' AND provider_name_snapshot = ''
+                   AND project_key != '' AND session_key = '01a187ce-171e-7335-946a-3114ab4dcbe7'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(attributed, 4);
+            let project_apps: Vec<String> = conn
+                .prepare("SELECT DISTINCT app_type FROM session_projects")?
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(project_apps, ["omp"]);
         }
 
-        let providers = db.get_provider_stats(None, None, Some(OMP.app_type), None, None)?;
+        let providers =
+            db.get_provider_stats(None, None, Some(OMP.app_type), None, None, None, None, None)?;
         assert!(providers.iter().any(|provider| {
             provider.provider_id == OMP.provider_placeholder
                 && provider.provider_name == "Oh My Pi (Session)"

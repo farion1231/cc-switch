@@ -15,6 +15,7 @@ use crate::services::session_usage::{
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::find_model_pricing;
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -151,6 +152,8 @@ struct ParsedPiFile {
     records: Vec<PiUsageRecord>,
     last_complete_line: i64,
     incomplete_tail: bool,
+    session_id: Option<String>,
+    session_cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -362,9 +365,24 @@ fn sync_single_pi_file(
     let tx = conn.unchecked_transaction().map_err(|error| {
         AppError::Database(format!("启动 {} 用量导入事务失败: {error}", flavor.label))
     })?;
+    let project = parsed.session_id.as_deref().and_then(|session_id| {
+        let key =
+            crate::services::usage_attribution::normalize_session_key(flavor.app_type, session_id);
+        parsed.session_cwd.as_deref().and_then(|cwd| {
+            crate::services::usage_attribution::project_from_cwd(
+                flavor.app_type,
+                &key,
+                cwd,
+                "session_meta",
+            )
+        })
+    });
+    if let Some(project) = project.as_ref() {
+        crate::database::Database::upsert_session_project_on_conn(&tx, project)?;
+    }
     let mut result = SessionSyncResult::default();
     for record in &parsed.records {
-        if insert_pi_record(&tx, flavor, record)? {
+        if insert_pi_record(&tx, flavor, record, project.as_ref())? {
             result.imported = result.imported.saturating_add(1);
         } else {
             result.skipped = result.skipped.saturating_add(1);
@@ -510,6 +528,7 @@ fn parse_pi_file(
     let mut line_number = 0i64;
     let mut bytes_read = 0u64;
     let mut session_id = None;
+    let mut session_cwd = None;
     let mut session_timestamp = None;
     let mut records = Vec::new();
     let mut incomplete_tail = false;
@@ -599,6 +618,7 @@ fn parse_pi_file(
             }
             let header_timestamp_millis = value.get("timestamp").and_then(parse_timestamp_millis);
             session_timestamp = header_timestamp_millis.map(|timestamp| timestamp / 1000);
+            session_cwd = value.get("cwd").and_then(Value::as_str).map(str::to_string);
             if let Some(byte_offset) = start_at_byte.filter(|offset| *offset >= bytes_read) {
                 reader.seek(SeekFrom::Start(byte_offset)).map_err(|error| {
                     AppError::Config(format!("无法定位 {} 会话增量边界: {error}", flavor.label))
@@ -637,6 +657,8 @@ fn parse_pi_file(
         records,
         last_complete_line: line_number,
         incomplete_tail,
+        session_id,
+        session_cwd,
     })
 }
 
@@ -1030,6 +1052,7 @@ fn insert_pi_record(
     conn: &rusqlite::Connection,
     flavor: &'static Flavor,
     record: &PiUsageRecord,
+    project: Option<&crate::services::usage_attribution::SessionProject>,
 ) -> Result<bool, AppError> {
     let ledger_error = |action: &str, error: rusqlite::Error| {
         AppError::Database(format!(
@@ -1103,6 +1126,51 @@ fn insert_pi_record(
             Decimal::ZERO,
         ));
 
+    let native_provider = record.provider_id.trim();
+    let mapped_provider =
+        if native_provider.is_empty() || native_provider == flavor.provider_placeholder {
+            None
+        } else {
+            conn.query_row(
+                "SELECT id FROM providers
+             WHERE app_type = ?1 AND (id = ?2 OR LOWER(name) = LOWER(?2))
+             LIMIT 1",
+                rusqlite::params![flavor.app_type, native_provider],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(format!("映射 Pi 供应商失败: {error}")))?
+        };
+    let attribution = match mapped_provider {
+        Some(provider_id) => {
+            crate::services::usage_attribution::Attribution::exact(provider_id, "session_meta")
+        }
+        None => {
+            // 保留原生 provider 线索便于排查；置信度明确标记为 unknown。
+            let keep_native =
+                !native_provider.is_empty() && native_provider != flavor.provider_placeholder;
+            crate::services::usage_attribution::Attribution::unknown(
+                if keep_native {
+                    native_provider
+                } else {
+                    flavor.provider_placeholder
+                },
+                if keep_native {
+                    "native_provider_not_mapped"
+                } else {
+                    "no_native_provider"
+                },
+            )
+        }
+    };
+    let provider_name_snapshot =
+        crate::services::usage_attribution::provider_name_snapshot_on_conn(
+            conn,
+            &attribution.provider_id,
+            flavor.app_type,
+        )?
+        .unwrap_or_default();
+
     conn.execute(
         "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model, pricing_model,
@@ -1112,13 +1180,16 @@ fn insert_pi_record(
             cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
+            , project_key, project_name, project_path, session_key,
+            attribution_source, attribution_confidence, attribution_reason, provider_name_snapshot
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
+            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26,
+            ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34
         )",
         rusqlite::params![
             record.request_id,
-            record.provider_id,
+            attribution.provider_id,
             flavor.app_type,
             record.model,
             record.request_model,
@@ -1143,6 +1214,14 @@ fn insert_pi_record(
             "1.0",
             record.created_at,
             flavor.data_source,
+            project.map(|p| p.project_key.as_str()).unwrap_or(""),
+            project.map(|p| p.project_name.as_str()).unwrap_or(""),
+            project.map(|p| p.project_path.as_str()).unwrap_or(""),
+            project.map(|p| p.session_key.as_str()).unwrap_or(""),
+            attribution.source,
+            attribution.confidence,
+            attribution.reason,
+            provider_name_snapshot,
         ],
     )
     .map(|changed| changed > 0)
@@ -1364,7 +1443,8 @@ mod tests {
             assert_eq!(empty_failure, (500, 0, "Pi request failed".to_string()));
         }
 
-        let providers = db.get_provider_stats(None, None, Some("pi"), None, None)?;
+        let providers =
+            db.get_provider_stats(None, None, Some("pi"), None, None, None, None, None)?;
         assert!(providers.iter().any(|provider| {
             provider.provider_id == PI.provider_placeholder
                 && provider.provider_name == "Pi (Session)"
@@ -1581,7 +1661,8 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()?;
             assert_eq!(timings, vec![(10_000, None), (20_000, None)]);
         }
-        let stats = db.get_provider_stats(None, None, Some(PI.app_type), None, None)?;
+        let stats =
+            db.get_provider_stats(None, None, Some(PI.app_type), None, None, None, None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].est_speed_output_tokens, 1_500);
         assert_eq!(stats[0].est_speed_duration_ms, 30_000);

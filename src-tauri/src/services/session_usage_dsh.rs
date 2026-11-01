@@ -103,6 +103,21 @@ pub(crate) fn sync_dsh_usage_from(
     root: &Path,
 ) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
+    {
+        // A native route name does not identify a CC Switch provider card.
+        // Repair retained rows even when their source cursor has not changed.
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "UPDATE proxy_request_logs
+             SET attribution_source='unknown', attribution_confidence='unknown',
+                 attribution_reason='dsh_native_session'
+             WHERE app_type='dsh' AND data_source='dsh_session'
+               AND provider_id IN ('_dsh_session', '_dsh_account_session')
+               AND (attribution_source!='unknown' OR attribution_confidence!='unknown'
+                    OR attribution_reason!='dsh_native_session')",
+            [],
+        )?;
+    }
     let cursors = load_sync_cursors(db)?;
     // 目录层级：sessions/<项目>/<会话>/session.v4.jsonl(.zstd)
     let Ok(projects) = fs::read_dir(root) else {
@@ -257,8 +272,10 @@ fn sync_file(
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming,
-                cost_multiplier, created_at, data_source, input_token_semantics
-            ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 200, ?17, ?18, 1, '1', ?19, ?20, ?21)",
+                cost_multiplier, created_at, data_source, input_token_semantics,
+                attribution_source, attribution_confidence, attribution_reason
+            ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 200, ?17, ?18, 1, '1', ?19, ?20, ?21,
+                'unknown', 'unknown', 'dsh_native_session')",
             rusqlite::params![
                 request.request_id,
                 if request.via_account {
@@ -717,6 +734,62 @@ mod tests {
                 row.get(0)
             })
             .unwrap()
+    }
+
+    #[test]
+    fn dsh_usage_keeps_native_attribution_unknown_across_unchanged_syncs() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("project/session-test/session.v4.jsonl");
+        let account = assistant_message(
+            1,
+            1,
+            "account",
+            1_700_000_003_000,
+            "deepseek-flash",
+            10,
+            5,
+            20,
+            1_700_000_000_200,
+        );
+        let mut api = assistant_message(
+            1,
+            2,
+            "api",
+            1_700_000_004_000,
+            "deepseek-flash",
+            30,
+            15,
+            40,
+            1_700_000_000_300,
+        );
+        api["data"]["message"]["source"]["provider"] = json!("synthetic-gateway");
+        write_lines(&path, &[header(), account, api]);
+        assert_eq!(sync_dsh_usage_from(&db, dir.path()).unwrap().imported, 2);
+
+        for cycle in 0..2 {
+            {
+                let conn = db.conn.lock().unwrap();
+                let native: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM proxy_request_logs
+                     WHERE app_type='dsh' AND data_source='dsh_session'
+                       AND attribution_source='unknown' AND attribution_confidence='unknown'
+                       AND attribution_reason='dsh_native_session'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(native, 2, "cycle {cycle}");
+                let totals: (i64, i64, i64, i64) = conn.query_row(
+                    "SELECT COUNT(*), COUNT(DISTINCT provider_id), SUM(input_tokens), SUM(output_tokens) FROM proxy_request_logs",
+                    [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                ).unwrap();
+                assert_eq!(totals, (2, 2, 40, 20));
+                conn.execute("UPDATE proxy_request_logs SET attribution_source='proxy', attribution_confidence='exact', attribution_reason=''", []).unwrap();
+            }
+            assert_eq!(sync_dsh_usage_from(&db, dir.path()).unwrap().imported, 0);
+        }
     }
 
     #[test]

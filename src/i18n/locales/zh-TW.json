@@ -2251,6 +2251,64 @@
     "realTotalHint": "Input + Output + 快取建立 + 快取命中",
     "freshInput": "新增輸入",
     "cacheHitRate": "快取命中率",
+    "project": "專案",
+    "projectFilter": {
+      "selected": "已選 {{count}} 個專案",
+      "label": "專案",
+      "title": "依專案篩選",
+      "all": "全部專案",
+      "unknown": "未識別專案"
+    },
+    "projects": {
+      "apps": "應用數",
+      "providers": "供應商數",
+      "lastActive": "最後活躍",
+      "share": "占專案比例"
+    },
+    "providers": {
+      "expandModels": "展開模型佔比"
+    },
+    "share": {
+      "metricLabel": "佔比口徑",
+      "metric": {
+        "tokens": "Token",
+        "cost": "費用",
+        "requests": "請求",
+        "cache": "快取"
+      },
+      "providers": "供應商佔比",
+      "providersAria": "專案供應商佔比",
+      "models": "模型佔比",
+      "modelsAria": "模型佔比",
+      "modelsIn": "模型佔比 · {{provider}}",
+      "cacheHit": "快取命中 {{rate}}",
+      "requestCount": "{{value}} 次請求",
+      "total": "合計",
+      "other": "其他",
+      "allProviders": "全部供應商",
+      "requestCacheHit": "{{value}} 次請求 · 快取命中 {{rate}}"
+    },
+    "cacheBreakdown": {
+      "models": "模型輸入佔比",
+      "modelsIn": "模型輸入佔比 · {{provider}}",
+      "providersInput": "供應商輸入占比",
+      "weightedRate": "加權快取命中率",
+      "readOfInput": "命中 {{read}} / 輸入 {{input}}",
+      "help": "命中率 = 快取命中 ÷（新增輸入 + 快取寫入 + 快取命中），按 Token 加權，不含輸出。零輸入顯示 —，缺失資料不計入彙總。",
+      "read": "快取命中",
+      "write": "快取寫入",
+      "fresh": "新增輸入",
+      "order": "按輸入量遞減",
+      "missing": "快取資料缺失",
+      "excluded": "{{count}} 個模型缺少快取資料，未計入彙總",
+      "loadError": "載入用量失敗"
+    },
+    "attributionSource": "歸屬來源",
+    "attributionConfidence": "歸屬信心度",
+    "attributionReason": "未歸屬原因",
+    "quality": {
+      "summary": "未識別供應商 {{provider}} 筆、未識別專案 {{project}} 筆請求"
+    },
     "requestLogs": "請求日誌",
     "providerStats": "Provider 統計",
     "modelStats": "模型統計",
@@ -2267,6 +2325,7 @@
     "requestModel": "請求模型",
     "responseModel": "回傳模型",
     "noData": "暫無資料",
+    "loading": "載入中…",
     "unknownProvider": "未知供應商",
     "sessionProvider": {
       "short": "工作階段日誌",
@@ -2522,6 +2581,7 @@
       "daily": "按天"
     },
     "tabs": {
+      "projects": "專案",
       "label": "明細",
       "providers": "供應商",
       "models": "模型",
