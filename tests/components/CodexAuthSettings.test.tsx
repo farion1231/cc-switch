@@ -87,6 +87,46 @@ describe("CodexAuthSettings classic sub-agent toggle", () => {
   });
 });
 
+describe("Codex unified history desktop compatibility", () => {
+  it.each([false, true])(
+    "shows the desktop compatibility warning before changing the setting (enabled: %s)",
+    async (enabled) => {
+      getCompressionMock.mockResolvedValue(false);
+      diskUsageMock.mockResolvedValue(0);
+      hasBackupMock.mockResolvedValue(false);
+      const onChange = vi.fn();
+      await act(async () => {
+        render(
+          <CodexAuthSettings
+            settings={
+              { unifyCodexSessionHistory: enabled } as SettingsFormState
+            }
+            onChange={onChange}
+          />,
+        );
+      });
+      expect(screen.getByRole("note")).toHaveTextContent(
+        "settings.unifyCodexDesktopCompatibility",
+      );
+      fireEvent.click(
+        screen.getByRole("switch", {
+          name: "settings.unifyCodexSessionHistory",
+        }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveTextContent(
+        enabled
+          ? "confirm.unifyCodexHistoryOff.message"
+          : "confirm.unifyCodexHistory.message",
+      );
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "common.cancel" }),
+      );
+      expect(onChange).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("CodexAuthSettings session compression toggle", () => {
   const COMPRESSION = "settings.codexSessionCompression";
 

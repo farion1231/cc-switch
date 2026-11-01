@@ -10,6 +10,16 @@ If a profile references a managed legacy connection that still depends on the of
 
 > The unified-history toggle was introduced in CC Switch v3.16.x; the manual migration action and safe patches below describe the current implementation. This guide is based on the current code; every command and path can be verified by hand. Examples use de-identified data and contain no real session content or API keys.
 
+## Desktop features and restore boundaries
+
+Unified history mainly serves CLI lists filtered by the current connection. If your Codex Desktop version already lists chats across providers, you usually do not need it just to view history. Listing a chat and resuming its saved connection are separate capabilities.
+
+Enabling it also gives official connections the `custom` identity. This may hide Dot, dictation, or other Desktop features requiring the built-in `openai` identity. The setting and enable dialog display this compatibility warning.
+
+To use native official Desktop features, disable unified history, select OpenAI Official, and fully quit and reopen Codex. Before disabling, remember that existing `custom` chats keep their connection ID and may fail to reconnect. Backup restoration only covers official chats migrated at enable time. It excludes chats created while enabled and `custom` chats whose origin cannot be verified; keep a working original connection for those chats. Restoring history requires separate confirmation and does not repair every old connection.
+
+Related reports: [#8851](https://github.com/farion1231/cc-switch/issues/8851), [#8881](https://github.com/farion1231/cc-switch/issues/8881).
+
 ## What this feature is
 
 "Unified Codex session history" is a switch that CC Switch v3.16.x adds for Codex. You'll find it under **Settings -> App Configuration -> Codex** ("Codex App Enhancements" is the group title; the switch itself is called "Unified Codex session history"). Once enabled, **sessions from your official subscription (ChatGPT login / OpenAI API key) appear in the same history / resume list as sessions from every third-party provider CC Switch manages**—they are no longer split into two lists that can't see each other.
@@ -21,7 +31,7 @@ Codex stores a connection ID in `model_provider`. CLI history may filter by this
 - Sessions from your official subscription go under Codex's built-in **`openai`** tag;
 - Every third-party provider CC Switch manages goes under the **`custom`** tag.
 
-The two drawers can't see each other. If you **switch frequently between official and third-party**, you'll hit this kind of fragmentation: "the session I was just chatting in with the official account disappeared from the history list after I switched to a third-party provider"—it isn't actually gone, it's just been sorted into the other drawer. This split both makes it easy to believe a session was lost, and makes it inconvenient to review and resume all your sessions in one place.
+In CLI lists filtered by the current connection, the two drawers appear separately. If you **switch frequently between official and third-party**, you'll hit this kind of fragmentation: "the session I was just chatting in with the official account disappeared from the history list after I switched to a third-party provider"—it isn't actually gone, it's just been sorted into the other drawer. This split both makes it easy to believe a session was lost, and makes it inconvenient to review and resume all your sessions in one place.
 
 **This switch exists to eliminate that fragmentation**: it makes the official subscription run under the `custom` tag too, so official and third-party sessions merge into one list and everything is easy to find and resume in a single place.
 
@@ -141,6 +151,9 @@ The moment you flip the switch on, CC Switch **does not save immediately**; inst
   > Official subscriptions and third-party APIs will share the custom connection ID in both Codex CLI and desktop. Reopen loaded chats after switching connections. The destination backend may not support the original encrypted reasoning content.
   >
   > You can also migrate existing official history, with a backup saved first and an option to restore it when turning this off.
+  >
+  > Official connections use custom instead of the built-in openai identity, which may hide Dot, dictation, and other Desktop features. You usually do not need this option just to view chats in a Desktop version that already lists providers together.
+
 - **Checkbox**: Also migrate existing official session history
 - **Confirm button**: I understand, enable
 - **Cancel button**: Cancel
@@ -188,13 +201,17 @@ When disabling, CC Switch **first spends a moment probing whether there's a migr
 - **Title**: Turn off unified session history
 - **Body**:
 
-  > After turning this off, the official subscription and third-party providers return to separate history lists. Sessions created while it was on cannot be attributed to a provider, so they stay in the third-party history and the official subscription will not see them.
+  > Official subscriptions will use the openai connection ID again. Existing custom chats keep that ID and may fail to reconnect.
+  >
+  > Restoring backups only covers official chats migrated at enable time. It excludes chats created while enabled and custom chats whose origin cannot be verified; keep a working original connection for those chats.
+  >
+  > To use native official Desktop features, select OpenAI Official after disabling and fully quit and reopen Codex.
 
 - **Checkbox** (shown conditionally): Restore the official sessions migrated at enable time back to the official history (exact restore from backup)
 - **Confirm button**: Turn off
 - **Cancel button**: Cancel
 
-> **Key point**: the body says the official subscription **will not see them**—**won't see**, not **delete**. The new sessions you chatted during the unified period are still fully present in the `custom` drawer; after disabling, the official side simply won't see them.
+> **Key point**: disabling does not delete chats. CLI lists may hide chats belonging to other connections; Desktop may still display them, while resuming fails if the saved connection no longer works. Backup restoration only covers original official chats verified against the ledger.
 
 **This restore checkbox is checked by default.** In other words, the default behavior is "restore the official sessions you migrated in back to the official history at the same time you disable." You only need to keep it checked and click "Turn off."
 

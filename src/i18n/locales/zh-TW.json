@@ -410,7 +410,7 @@
     },
     "unifyCodexHistory": {
       "title": "統一 Codex 會話歷史",
-      "message": "官方訂閱和第三方 API 將共用 custom 連線識別，Codex CLI 與桌面版均適用。切換連線後，已開啟的聊天可能需要重新開啟。目標後端可能不支援原有加密推理內容。\n\n可同時遷入現有官方對話歷史；遷移前自動備份，關閉時可依備份還原。",
+      "message": "官方訂閱和第三方 API 將共用 custom 連線識別，Codex CLI 與桌面版均適用。切換連線後，已開啟的聊天可能需要重新開啟。目標後端可能不支援原有加密推理內容。\n\n可同時遷入現有官方對話歷史；遷移前自動備份，關閉時可依備份還原。\n\n官方連線會使用 custom 而非內建 openai 身分，可能隱藏 Dot、語音輸入等桌面功能。若只需在支援跨供應商清單的桌面版查看對話，通常無需啟用。",
       "migrateExisting": "同時遷入現有官方會話歷史",
       "confirm": "我已了解，繼續開啟"
     },
@@ -422,7 +422,7 @@
     },
     "unifyCodexHistoryOff": {
       "title": "關閉統一會話歷史",
-      "message": "官方訂閱將重新使用 openai 連線識別。在 custom 下建立的對話仍保留該識別；桌面版能顯示它們，不代表連線已更新。之前遷入的官方對話可依備份帳本還原。",
+      "message": "官方訂閱將重新使用 openai 連線識別碼；原 custom 對話仍保留該識別碼，可能無法繼續連線。\n\n依備份還原只處理當時遷入的官方對話，不包括啟用期間新建或來源無法確認的 custom 對話；這些對話需要保留有效的原連線。\n\n如需使用原生官方桌面功能，停用後選擇 OpenAI Official，並完全結束、重新開啟 Codex。",
       "restoreBackup": "把開啟時遷入的官方會話還原回官方歷史（按備份精確還原）",
       "confirm": "關閉"
     },
@@ -902,6 +902,7 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
     "unifyCodexSessionHistoryDescription": "官方訂閱和第三方 API 共用 custom 連線識別，使儲存的對話能夠跟隨連線切換。Codex 桌面版也適用：顯示全部對話不等於更新對話的連線。已開啟的聊天可能需要重新開啟才能採用新設定。可選擇遷入現有官方對話（遷移前自動備份），關閉時依備份還原。跨供應商續聊亦取決於目標後端是否支援原有加密推理內容。",
+    "unifyCodexDesktopCompatibility": "統一歷史主要用於 CLI 歷史清單，可能隱藏 Codex 桌面端的 Dot、語音輸入等官方功能。若目前桌面版本已能跨供應商列出對話，通常無需僅為查看歷史而啟用。",
     "codexManagedHistory": "遷入第三方舊對話",
     "codexManagedHistoryAction": "遷入舊對話",
     "codexManagedHistoryCompleted": "已檢查第三方舊對話，遷移 {{files}} 個檔案、{{rows}} 筆索引記錄。請重新開啟對話載入連線；若仍使用舊設定，請自行重新啟動 Codex。",

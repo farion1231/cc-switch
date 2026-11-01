@@ -410,7 +410,7 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "Official subscriptions and third-party APIs will share the custom connection ID in both Codex CLI and desktop. Reopen loaded chats after switching connections. The destination backend may not support the original encrypted reasoning content.\n\nYou can also migrate existing official history, with a backup saved first and an option to restore it when turning this off.",
+      "message": "Official subscriptions and third-party APIs will share the custom connection ID in both Codex CLI and desktop. Reopen loaded chats after switching connections. The destination backend may not support the original encrypted reasoning content.\n\nYou can also migrate existing official history, with a backup saved first and an option to restore it when turning this off.\n\nOfficial connections use custom instead of the built-in openai identity, which may hide Dot, dictation, and other Desktop features. You usually do not need this option just to view chats in a Desktop version that already lists providers together.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
@@ -422,7 +422,7 @@
     },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "Official subscriptions will use the openai connection ID again. Sessions created under custom keep that ID; showing them in the desktop list does not change their connection. Previously migrated official sessions can be restored from the backup ledger.",
+      "message": "Official subscriptions will use the openai connection ID again. Existing custom chats keep that ID and may fail to reconnect.\n\nRestoring backups only covers official chats migrated at enable time. It excludes chats created while enabled and custom chats whose origin cannot be verified; keep a working original connection for those chats.\n\nTo use native official Desktop features, select OpenAI Official after disabling and fully quit and reopen Codex.",
       "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
       "confirm": "Turn off"
     },
@@ -902,6 +902,7 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
     "unifyCodexSessionHistoryDescription": "Official subscriptions and third-party APIs share the custom connection ID, so saved chats can follow connection changes. This applies to Codex desktop too: showing all chats does not update their saved connection. Reopen loaded chats to adopt new settings. Existing official history can be migrated with a backup and restored when this is turned off. Cross-provider continuation also depends on support for the original encrypted reasoning content.",
+    "unifyCodexDesktopCompatibility": "Unified history mainly serves CLI history lists and may hide Dot, dictation, or other official Codex Desktop features. If your Desktop version already lists chats across providers, you usually do not need it just to view history.",
     "codexManagedHistory": "Migrate legacy third-party chats",
     "codexManagedHistoryAction": "Migrate old chats",
     "codexManagedHistoryCompleted": "Legacy third-party chats checked: {{files}} files and {{rows}} index rows migrated. Reopen chats to load the connection; restart Codex yourself if it still uses old settings.",
