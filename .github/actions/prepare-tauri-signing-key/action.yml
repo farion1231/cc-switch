@@ -47,7 +47,6 @@ runs:
               echo "✅ 使用一行 Base64 私钥，已构造两行文件"
             else
               echo "❌ TAURI_SIGNING_PRIVATE_KEY 格式无法识别：既不是两行原文，也不是其 base64，亦非一行 base64" >&2
-              echo "密钥前10个字符: $(echo "$RAW" | head -c 10)..." >&2
               exit 1
             fi
           fi
@@ -68,6 +67,6 @@ runs:
         fi
         echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
         if [ -n "$KEY_PASSWORD" ]; then
-          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
+        echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
         fi
         echo "✅ Tauri signing key prepared"
