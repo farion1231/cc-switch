@@ -110,6 +110,12 @@ pub const CLAUDE_EXCLUSIVE_ENV: &[&str] = &[
     // 向 ANTHROPIC_BASE_URL 取模型列表：网关（含代理模式下的 Stack 模型）要它，用户也可能
     // 自己设成全局。
     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+    // 官方文档写明给代理、网关的非必要流量开关（遥测、更新检查等）：网关按逐字节对齐
+    // 服务的账号要求关闭，深链导入的供应商会带上它。
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    // 官方文档同名环境变量：只认已验证 CLI 版本的网关必须固定版本，静默自动升级会把
+    // 用户锁在门外，直到网关验证新版本。
+    "DISABLE_AUTOUPDATER",
 ];
 
 pub fn claude_exclusive_env(key: &str) -> bool {
@@ -256,6 +262,17 @@ mod tests {
             "env",
         ] {
             assert!(!claude_floor_top(key), "{key} must stay a user key");
+        }
+    }
+
+    #[test]
+    fn gateway_compatibility_flags_are_exclusive() {
+        for key in [
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+            "DISABLE_AUTOUPDATER",
+        ] {
+            assert!(claude_exclusive_env(key), "{key} should be exclusive");
+            assert!(!claude_floor_env(key), "{key} must not be a key field");
         }
     }
 
