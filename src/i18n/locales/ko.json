@@ -3067,6 +3067,10 @@
       "context7": {
         "name": "@upstash/context7-mcp",
         "description": "최신 라이브러리 문서와 코드 예제를 제공하는 Context7 문서 검색 도구입니다. API 키를 설정하면 사용 한도가 늘어납니다."
+      },
+      "deja-vu": {
+        "name": "@vshulcz/deja-vu",
+        "description": "디스크에 저장된 Claude Code, Codex, Gemini CLI, OpenCode, DSH 세션 기록을 인덱싱하여 도구 간 즉시 검색 및 회상을 지원하는 로컬 세션 메모리"
       }
     }
   },

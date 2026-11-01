@@ -3067,6 +3067,10 @@
       "context7": {
         "name": "@upstash/context7-mcp",
         "description": "Context7-Dokumentationssuche mit aktuellen Bibliotheksdokumenten und Codebeispielen, mit höheren Limits bei konfiguriertem Schlüssel"
+      },
+      "deja-vu": {
+        "name": "@vshulcz/deja-vu",
+        "description": "Lokaler Cross-Agent-Sitzungsspeicher, der vorhandene Sitzungsverläufe von Claude Code, Codex, Gemini CLI, OpenCode und DSH auf der Festplatte für den sofortigen Abruf zwischen Tools indiziert"
       }
     }
   },
