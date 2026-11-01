@@ -35,14 +35,44 @@ pub(crate) fn profile_path(name: &str) -> PathBuf {
 
 /// Always prepare Web and Desktop: DSH's initProfile preserves an existing patch and supplies
 /// the remaining files on first launch. Optional runtime profiles are only written if present.
+///
+/// A profile directory reached through a link is the same file as its target (symlink, Windows
+/// junction, 8.3 short name or case-only alias). Listing both spellings made
+/// [`edit_files_and_commit`] take the same `<file>.lock` twice, so every provider and MCP write
+/// failed with a bogus concurrency conflict (#9100). One file is listed once.
 pub(crate) fn target_paths() -> Vec<PathBuf> {
+    let mut seen: Vec<PathBuf> = Vec::new();
     TARGET_PROFILES
         .iter()
         .filter_map(|name| {
             let path = profile_path(name);
             (DISPLAY_PROFILES.contains(name) || path.exists()).then_some(path)
         })
+        .filter(|path| {
+            let identity = path_identity(path);
+            if seen.contains(&identity) {
+                return false;
+            }
+            seen.push(identity);
+            true
+        })
         .collect()
+}
+
+/// Stable identity of one native file: its real parent directory plus the file name.
+///
+/// The file itself may not exist yet — the first write to a profile creates `cordis.patch.yml` —
+/// but its parent always does, so resolving the parent is enough. When even the parent cannot be
+/// resolved the path is kept as written: a directory that does not exist cannot be an alias of
+/// another one.
+fn path_identity(path: &Path) -> PathBuf {
+    let Some(name) = path.file_name() else {
+        return path.to_path_buf();
+    };
+    match path.parent().map(fs::canonicalize) {
+        Some(Ok(parent)) => parent.join(name),
+        _ => path.to_path_buf(),
+    }
 }
 
 /// The authoritative profile providers and MCP are read from first: `web`, else `desktop`, else
@@ -1951,6 +1981,31 @@ mod tests {
         fs::read_to_string(home.join("profiles").join(name).join("cordis.patch.yml")).ok()
     }
 
+    /// Makes `link` an alias of the `target` directory. Returns false where the platform refuses
+    /// to create links (Windows without developer mode or elevation), so tests can skip.
+    fn link_dir(link: &Path, target: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            // A junction needs neither elevation nor developer mode, unlike a directory symlink.
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (link, target);
+            false
+        }
+    }
+
     #[test]
     #[serial_test::serial]
     fn provider_writes_prepare_web_and_desktop_and_keep_optional_profiles_native_owned() {
@@ -1980,6 +2035,69 @@ mod tests {
             assert!(!profile_text(root, name).unwrap().contains("gateway"));
         }
         assert!(root.join("profiles/desktop/cordis.patch.yml").exists());
+    }
+
+    /// `profiles/desktop` pointing at `profiles/web` is one file, not two: it must be locked and
+    /// written once instead of twice (#9100).
+    #[test]
+    #[serial_test::serial]
+    fn target_paths_dedupes_alias_profiles() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+        if !link_dir(&root.join("profiles/desktop"), &root.join("profiles/web")) {
+            return;
+        }
+
+        let paths = target_paths();
+        assert_eq!(paths.len(), 1, "alias profile written twice: {paths:?}");
+        assert_eq!(paths[0], profile_path("web"));
+    }
+
+    /// The end-to-end shape of the bug: with `desktop` aliasing `web`, every provider and MCP
+    /// write used to fail with a concurrency conflict, because the second `create_new` on the
+    /// same `<file>.lock` hit `AlreadyExists`.
+    #[test]
+    #[serial_test::serial]
+    fn provider_and_mcp_writes_succeed_when_desktop_aliases_web() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+        if !link_dir(&root.join("profiles/desktop"), &root.join("profiles/web")) {
+            return;
+        }
+
+        set_provider("gateway", editor_config()).unwrap();
+        assert!(get_providers().unwrap().contains_key("gateway"));
+        assert!(provider_key_exists("gateway").unwrap());
+
+        let spec = json!({"command":"node","args":["fetch.js"]});
+        sync_mcp_and_commit("fetch", Some(&spec), || Ok(())).unwrap();
+        assert_eq!(mcp_entries().unwrap().len(), 1);
+
+        // The single file really holds both, written once each.
+        let text = profile_text(root, "web").unwrap();
+        assert_eq!(text.matches("apiKeyEnv: CC_SWITCH_DSH_GATEWAY").count(), 1);
+        assert_eq!(text.matches("serverName: fetch").count(), 1);
+        assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
+
+        // Removal goes through the same path list.
+        remove_provider("gateway").unwrap();
+        assert!(!get_providers().unwrap().contains_key("gateway"));
+    }
+
+    /// Deduplication must not merge genuinely separate profiles.
+    #[test]
+    #[serial_test::serial]
+    fn target_paths_keeps_independent_profiles_apart() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "desktop", "headless"]);
+        let paths = target_paths();
+        assert_eq!(paths.len(), 3, "{paths:?}");
+        assert_eq!(paths[0], profile_path("web"));
+        assert_eq!(paths[1], profile_path("desktop"));
+        assert_eq!(paths[2], profile_path("headless"));
     }
 
     #[test]
