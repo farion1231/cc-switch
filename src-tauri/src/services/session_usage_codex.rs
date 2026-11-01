@@ -596,6 +596,15 @@ pub(crate) fn reset_codex_usage_on_conn(
         )
         .map_err(|error| AppError::Database(format!("清理 Codex 用量汇总失败: {error}")))?;
     }
+    if sqlite_table_exists(conn, "session_usage_dedup")?
+        && sqlite_column_exists(conn, "session_usage_dedup", "data_source")?
+    {
+        conn.execute(
+            "DELETE FROM session_usage_dedup WHERE data_source = 'codex_session'",
+            [],
+        )
+        .map_err(|error| AppError::Database(format!("清理 Codex 去重账本失败: {error}")))?;
+    }
     if sqlite_table_exists(conn, "session_log_sync")?
         && sqlite_column_exists(conn, "session_log_sync", "file_path")?
     {
@@ -2450,7 +2459,7 @@ fn insert_codex_session_entry_on_conn(
         cache_creation_tokens: delta.cache_write_input,
         created_at,
     };
-    if should_skip_session_insert(conn, request_id, &dedup_key)? {
+    if should_skip_session_insert(conn, "codex_session", request_id, &dedup_key)? {
         return Ok(false);
     }
     if has_suspected_codex_session_duplicate(conn, request_id, &dedup_key)? {
@@ -2538,6 +2547,8 @@ fn insert_codex_session_entry_on_conn(
                 INPUT_TOKEN_SEMANTICS_TOTAL, // input_tokens 含缓存读写
             ]))
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
+
+    crate::services::usage_stats::record_session_usage_dedup(conn, "codex_session", request_id)?;
 
     Ok(inserted_rows > 0)
 }
@@ -6101,7 +6112,11 @@ mod tests {
                  INSERT INTO usage_daily_rollups (date, app_type, provider_id, model)
                  VALUES
                     ('2026-07-10', 'codex', '_codex_session', 'gpt'),
-                    ('2026-07-10', 'gemini', '_gemini_session', 'gemini');",
+                    ('2026-07-10', 'gemini', '_gemini_session', 'gemini');
+                 INSERT INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+                 VALUES
+                    ('codex_session', 'codex-row', 'codex-row', 0),
+                    ('gemini_session', 'gemini-row', 'gemini-row', 0);",
             )?;
             for path in [
                 current_codex.to_string_lossy().to_string(),
@@ -6133,13 +6148,102 @@ mod tests {
                 [],
                 |row| row.get(0),
             )?;
+            let codex_dedup: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'codex_session'",
+                [],
+                |row| row.get(0),
+            )?;
+            let gemini_dedup: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'gemini_session'",
+                [],
+                |row| row.get(0),
+            )?;
             let remaining_cursors: i64 =
                 conn.query_row("SELECT COUNT(*) FROM session_log_sync", [], |row| {
                     row.get(0)
                 })?;
             assert_eq!((codex_rows, gemini_rows, codex_rollups), (0, 1, 0));
+            assert_eq!((codex_dedup, gemini_dedup), (0, 1));
             assert_eq!(remaining_cursors, 2);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_codex_reset_usage_allows_reimport_and_keeps_stats() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let codex_dir = temp.path();
+        let sessions_dir = codex_dir.join("sessions");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        let rollout_file = rollout_path(&sessions_dir, CHILD_A_ID);
+
+        write_jsonl(
+            &rollout_file,
+            &[
+                session_meta_at(CHILD_A_ID, None, None, "2026-07-10T03:00:00Z"),
+                turn_context_at("2026-07-10T03:00:01Z"),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        let files = vec![rollout_file.clone()];
+        let rollout_index = build_rollout_index(&files);
+
+        // 1. 初次同步导入 1 条
+        let mut pass1 = CodexSyncPass::load(&db)?;
+        let res1 = sync_single_codex_file(&db, &rollout_file, &rollout_index, &mut pass1)?;
+        assert_eq!(res1.imported, 1, "初次同步应导入 1 条");
+
+        {
+            let conn = lock_conn!(db.conn);
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count, 1);
+            let dedup_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'codex_session'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(dedup_count, 1, "导入后应写入 session_usage_dedup 账本");
+        }
+
+        // 2. 执行 Codex 重建（reset_codex_usage_on_conn）
+        {
+            let conn = lock_conn!(db.conn);
+            reset_codex_usage_on_conn(&conn, codex_dir)?;
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count, 0, "reset 后明细应被清空");
+            let dedup_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'codex_session'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(dedup_count, 0, "reset 后账本必须一并清空，防止阻止重新导入");
+        }
+
+        // 3. 再次同步，应该成功重新导入 1 条，统计保持
+        let mut pass2 = CodexSyncPass::load(&db)?;
+        let res2 = sync_single_codex_file(&db, &rollout_file, &rollout_index, &mut pass2)?;
+        assert_eq!(res2.imported, 1, "reset 后再次同步应成功重新导入 1 条");
+
+        {
+            let conn = lock_conn!(db.conn);
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count, 1, "重新导入后统计完整恢复");
+        }
+
         Ok(())
     }
 
