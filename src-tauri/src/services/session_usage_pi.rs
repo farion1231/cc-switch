@@ -32,10 +32,15 @@ const REVISION_TAIL_BYTES: u64 = 4096;
 const REVISION_MARKER_SHIFT: u32 = 61;
 const REVISION_COMPLETE_SHIFT: u32 = 60;
 const REVISION_SIZE_SHIFT: u32 = 32;
-// Keep the original cursor format so existing history stays incremental.
-const REVISION_MARKER: u64 = 0b101;
+// The original cursor tag. Flavors without official subagent tool results
+// keep writing it, so their existing history stays incremental.
+const LEGACY_REVISION_MARKER: u64 = 0b101;
 // Earlier builds of the timing fix wrote this tag with the same cursor layout.
 const COMPAT_REVISION_MARKER: u64 = 0b110;
+// Flavors importing official subagent tool results rescan older cursors once
+// to recover previously ignored subagent usage. The durable request ledger
+// keeps already imported history unchanged.
+const SUBAGENT_REVISION_MARKER: u64 = 0b111;
 const REVISION_SIZE_MASK: u64 = (1 << 28) - 1;
 const PI_REQUEST_DEDUP_SQL: &str = "SELECT EXISTS(
          SELECT 1 FROM session_usage_dedup
@@ -83,6 +88,10 @@ pub(crate) struct Flavor {
     /// Whether a fixed-width `{"type":"title"}` slot may precede the session
     /// header. Only Oh My Pi writes one.
     pub(crate) title_slot: bool,
+    /// Whether `subagent` tool results of Pi's official example extension
+    /// carry child usage in `details.results`. That extension runs children
+    /// with `--no-session`, so the parent's tool result is their only record.
+    pub(crate) subagent_tool_results: bool,
     pub(crate) session_files: fn() -> Result<Vec<PathBuf>, String>,
 }
 
@@ -96,6 +105,7 @@ pub(crate) const PI: Flavor = Flavor {
     label: "Pi",
     model_usage_carrier: false,
     title_slot: false,
+    subagent_tool_results: true,
     session_files: crate::session_manager::providers::pi::session_files,
 };
 
@@ -161,9 +171,25 @@ struct PiFileRevision {
     complete: bool,
 }
 
+fn revision_marker(flavor: &Flavor) -> u64 {
+    if flavor.subagent_tool_results {
+        SUBAGENT_REVISION_MARKER
+    } else {
+        LEGACY_REVISION_MARKER
+    }
+}
+
+fn accepts_revision_marker(flavor: &Flavor, marker: u64) -> bool {
+    if flavor.subagent_tool_results {
+        marker == SUBAGENT_REVISION_MARKER
+    } else {
+        marker == LEGACY_REVISION_MARKER || marker == COMPAT_REVISION_MARKER
+    }
+}
+
 impl PiFileRevision {
-    fn encoded(self) -> i64 {
-        ((REVISION_MARKER << REVISION_MARKER_SHIFT)
+    fn encoded(self, flavor: &Flavor) -> i64 {
+        ((revision_marker(flavor) << REVISION_MARKER_SHIFT)
             | (u64::from(self.complete) << REVISION_COMPLETE_SHIFT)
             | (self.file_size << REVISION_SIZE_SHIFT)
             | u64::from(self.tail_fingerprint)) as i64
@@ -330,7 +356,7 @@ fn sync_single_pi_file(
     let file_path_string = file_path.to_string_lossy().to_string();
     let modified = metadata_modified_nanos(&metadata);
     let revision = pi_file_revision(flavor, file_path, &metadata, modified)?;
-    let previous = decode_pi_sync_state(cursors.get(&file_path_string));
+    let previous = decode_pi_sync_state(flavor, cursors.get(&file_path_string));
     if previous.is_some_and(|state| state.revision == revision) {
         return Ok(SessionSyncResult::default());
     }
@@ -389,13 +415,13 @@ fn sync_single_pi_file(
 
 /// 从批量预取的游标解码 Pi 同步状态（revision 编码在 `last_synced_at`）。
 fn decode_pi_sync_state(
+    flavor: &Flavor,
     cursor: Option<&crate::services::session_usage::SyncCursor>,
 ) -> Option<PiSyncState> {
     let cursor = cursor?;
     let last_line_offset = cursor.last_line_offset;
     let encoded_revision = cursor.last_synced_at as u64;
-    let marker = encoded_revision >> REVISION_MARKER_SHIFT;
-    if marker != REVISION_MARKER && marker != COMPAT_REVISION_MARKER {
+    if !accepts_revision_marker(flavor, encoded_revision >> REVISION_MARKER_SHIFT) {
         return None;
     }
     let file_size = (encoded_revision >> REVISION_SIZE_SHIFT) & REVISION_SIZE_MASK;
@@ -428,7 +454,7 @@ fn update_pi_sync_state_on_conn(
     // is private to Pi rows; no production consumer interprets last_synced_at.
     conn.execute(
         "UPDATE session_log_sync SET last_synced_at = ?2 WHERE file_path = ?1",
-        rusqlite::params![file_path, revision.encoded()],
+        rusqlite::params![file_path, revision.encoded(flavor)],
     )
     .map_err(|error| {
         AppError::Database(format!("更新 {} 会话同步状态失败: {error}", flavor.label))
@@ -608,6 +634,22 @@ fn parse_pi_file(
             }
             continue;
         }
+        if let Some(subagent) = parse_subagent_records(
+            flavor,
+            &value,
+            session_id.as_deref().unwrap_or_default(),
+            session_timestamp,
+            file_modified_nanos / 1_000_000_000,
+        ) {
+            // Same rule as below: before the cutoff a nested file's usage is
+            // carried by its parent's projection.
+            records.extend(
+                subagent
+                    .into_iter()
+                    .filter(|record| !nested || record.created_at >= scope.cutoff),
+            );
+            continue;
+        }
         let Some(record) = parse_usage_record(
             flavor,
             &value,
@@ -638,6 +680,112 @@ fn parse_pi_file(
         last_complete_line: line_number,
         incomplete_tail,
     })
+}
+
+/// Only recognize the official example extension's tool-result contract.
+/// Preserve the legacy top-level usage path and request IDs for pi-subagents.
+/// Do not walk arbitrary details/compaction snapshots looking for `usage`.
+///
+/// pi-subagents reuses the `subagent` tool name and a similar `details`
+/// shape, but its children keep their own session files, linked through
+/// `sessionFile`. Those files (or, before the cutoff, the projection's
+/// top-level usage) are the record of that usage, so any linked session
+/// leaves the entry to the projection path and nothing is read from details.
+fn parse_subagent_records(
+    flavor: &'static Flavor,
+    entry: &Value,
+    session_id: &str,
+    session_timestamp: Option<i64>,
+    file_timestamp: i64,
+) -> Option<Vec<PiUsageRecord>> {
+    if !flavor.subagent_tool_results || entry.get("type")?.as_str()? != "message" {
+        return None;
+    }
+    let message = entry.get("message")?;
+    if message.get("role")?.as_str()? != "toolResult"
+        || message.get("toolName")?.as_str()? != "subagent"
+        || message.get("usage").is_some()
+    {
+        return None;
+    }
+    let details = message.get("details")?;
+    if !matches!(
+        details.get("mode")?.as_str()?,
+        "single" | "parallel" | "chain"
+    ) {
+        return None;
+    }
+    let mut linked_sessions = Vec::new();
+    collect_session_files(details, &mut linked_sessions);
+    if !linked_sessions.is_empty() {
+        return None;
+    }
+    let results = details.get("results")?.as_array()?;
+    let parent_identity =
+        pi_request_identity(flavor, entry, "subagent", &Value::Null, Some(message));
+    let mut records = Vec::new();
+    for (result_index, result) in results.iter().enumerate() {
+        let mut has_request_usage = false;
+        if let Some(messages) = result.get("messages").and_then(Value::as_array) {
+            for (message_index, child) in messages.iter().enumerate() {
+                if child.get("role").and_then(Value::as_str) != Some("assistant")
+                    || !child.get("usage").is_some_and(Value::is_object)
+                {
+                    continue;
+                }
+                has_request_usage = true;
+                let child_entry = serde_json::json!({
+                    "type": "message",
+                    "id": format!("{}:result:{result_index}:message:{message_index}", parent_identity.request_id),
+                    // The parent entry is written after the entire task; it is
+                    // not a per-request end time. Never infer latency from it.
+                    "timestamp": child.get("timestamp").or_else(|| entry.get("timestamp")),
+                    "message": child,
+                });
+                if let Some(record) = parse_usage_record(
+                    flavor,
+                    &child_entry,
+                    session_id,
+                    session_timestamp,
+                    file_timestamp,
+                ) {
+                    records.push(record);
+                }
+            }
+        }
+        if has_request_usage {
+            continue; // `result.usage` is the sum of these requests.
+        }
+        // Some saved results retain only the summary. Its cost is a scalar,
+        // unlike AssistantMessage.usage.cost. Keep it as one aggregate record;
+        // `turns` cannot reconstruct individual requests or their timing.
+        if let Some(usage) = result.get("usage").filter(|value| value.is_object()) {
+            let mut usage = usage.clone();
+            usage["cost"] = serde_json::json!({"total": usage.get("cost").cloned()});
+            let aggregate_entry = serde_json::json!({
+                "type": "message",
+                "id": format!("{}:result:{result_index}:aggregate", parent_identity.request_id),
+                "timestamp": entry.get("timestamp"),
+                "message": {
+                    "role": "assistant",
+                    "model": result.get("model"),
+                    "stopReason": result.get("stopReason"),
+                    "errorMessage": result.get("errorMessage"),
+                    "usage": usage,
+                },
+            });
+            if let Some(record) = parse_usage_record(
+                flavor,
+                &aggregate_entry,
+                session_id,
+                session_timestamp,
+                file_timestamp,
+            ) {
+                records.push(record);
+            }
+        }
+    }
+    Some(records)
 }
 
 /// A pi-subagents projection sums the usage of the child sessions it links.
@@ -1258,6 +1406,331 @@ mod tests {
             .expect("restore session timestamp");
     }
 
+    fn subagent_entry(mode: &str, results: Value) -> Value {
+        serde_json::json!({
+            "type": "message", "id": "subagent-result",
+            "timestamp": "2023-11-14T22:14:20Z",
+            "message": {
+                "role": "toolResult", "toolName": "subagent", "toolCallId": "call-1",
+                "details": {"mode": mode, "results": results}, "content": [],
+            },
+        })
+    }
+
+    #[test]
+    fn official_subagent_modes_import_requests_once_with_original_semantics() -> Result<(), AppError>
+    {
+        for mode in ["single", "parallel", "chain"] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = session_path(temp.path(), mode);
+            let child = serde_json::json!({
+                "role": "assistant", "provider": "child-provider", "model": "child-model",
+                "timestamp": 1700000001000i64, "stopReason": "stop",
+                "usage": {"input": 10, "output": 2, "cacheRead": 30, "cacheWrite": 4,
+                    "cost": {"input": 0.01, "output": 0.02, "cacheRead": 0.003, "cacheWrite": 0.004, "total": 0.037}},
+            });
+            let entry = subagent_entry(
+                mode,
+                serde_json::json!([
+                    {"messages": [child.clone(), {"role": "toolResult", "usage": {"input": 999}}, child],
+                     "usage": {"input": 20, "output": 4, "cacheRead": 60, "cacheWrite": 8, "cost": 0.074}},
+                    {"messages": [], "usage": {"input": 0, "output": 0, "cost": 0}},
+                ]),
+            );
+            let header = r#"{"type":"session","version":3,"id":"subagent-session"}"#;
+            let main = assistant_line("main", "2023-11-14T22:13:20Z", 1);
+            write_lines(&path, &[header, &main, &entry.to_string()]);
+            let db = Database::memory()?;
+            let first = sync_pi_files(&db, &PI, std::slice::from_ref(&path));
+            assert!(first.errors.is_empty(), "{:?}", first.errors);
+            assert_eq!(first.imported, 3);
+            let repeated = sync_pi_files(&db, &PI, std::slice::from_ref(&path));
+            assert_eq!((repeated.imported, repeated.skipped), (0, 0));
+            // Copies and rewrites must not import either child again, even
+            // though the two genuine requests have identical usage/timestamps.
+            let copy = session_path(temp.path(), "copy");
+            fs::copy(&path, &copy).unwrap();
+            assert_eq!(sync_pi_files(&db, &PI, &[copy]).imported, 0);
+            write_lines(&path, &[header, &main, &entry.to_string(), ""]);
+            assert_eq!(sync_pi_files(&db, &PI, &[path]).imported, 0);
+            let conn = lock_conn!(db.conn);
+            let mut stmt = conn.prepare(
+                "SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, session_id FROM proxy_request_logs
+                 WHERE provider_id = 'child-provider' AND model = 'child-model'",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, u32>(0)?,
+                        row.get::<_, u32>(1)?,
+                        row.get::<_, u32>(2)?,
+                        row.get::<_, u32>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(rows.len(), 2);
+            for row in rows {
+                assert_eq!(
+                    row,
+                    (10, 2, 30, 4, "0.037".into(), 0, "subagent-session".into())
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn old_cursor_backfills_summary_only_results_and_preserves_scalar_cost() -> Result<(), AppError>
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = session_path(temp.path(), "backfill");
+        // The main request has another 9 output/cache tokens.
+        let main = assistant_line("main", "2023-11-14T22:13:20Z", 82_961);
+        // Synthetic totals exercise backfill; they do not reconstruct the
+        // original report's 35 requests.
+        let entry = subagent_entry(
+            "parallel",
+            serde_json::json!([
+                {"model": "scout-model", "usage": {"input": 76186, "cost": 0.01}},
+                {"model": "planner-model", "usage": {"cacheRead": 280247, "cost": 0.02}},
+                {"model": "worker-model", "usage": {"output": 65676, "cost": 0.03}},
+            ]),
+        );
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","id":"backfill"}"#,
+                &main,
+                &entry.to_string(),
+            ],
+        );
+        let db = Database::memory()?;
+        let metadata = fs::metadata(&path).unwrap();
+        let revision = pi_file_revision(&PI, &path, &metadata, metadata_modified_nanos(&metadata))?;
+        {
+            let conn = lock_conn!(db.conn);
+            let record = parse_usage_record(
+                &PI,
+                &serde_json::from_str(&main).unwrap(),
+                "backfill",
+                None,
+                0,
+            )
+            .unwrap();
+            assert!(insert_pi_record(&conn, &PI, &record)?);
+            let old_revision = (revision.encoded(&PI) as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
+                | (0b101 << REVISION_MARKER_SHIFT);
+            update_pi_sync_state_on_conn(&conn, &PI, &path.to_string_lossy(), revision, 3)?;
+            conn.execute(
+                "UPDATE session_log_sync SET last_synced_at = ?1 WHERE file_path = ?2",
+                rusqlite::params![old_revision as i64, path.to_string_lossy()],
+            )?;
+        }
+        let result = sync_pi_files(&db, &PI, std::slice::from_ref(&path));
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!((result.imported, result.skipped), (3, 1));
+        let repeated = sync_pi_files(&db, &PI, &[path]);
+        assert_eq!((repeated.imported, repeated.skipped), (0, 0));
+        let conn = lock_conn!(db.conn);
+        let total: i64 = conn.query_row(
+            "SELECT SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens)
+             FROM proxy_request_logs",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total, 505_079);
+        let cost: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE model = 'planner-model'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(cost, "0.02");
+        Ok(())
+    }
+
+    #[test]
+    fn top_level_subagent_usage_survives_upgrade_and_rewrite_without_double_counting(
+    ) -> Result<(), AppError> {
+        for mode in ["single", "parallel", "chain"] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = session_path(temp.path(), mode);
+            let header = r#"{"type":"session","id":"existing-subagent"}"#;
+            let mut entry = subagent_entry(
+                mode,
+                serde_json::json!([
+                    {"model": "child-model", "usage": {"input": 600, "output": 60, "cost": 0.3}},
+                    {"model": "child-model", "usage": {"input": 400, "output": 40, "cost": 0.2}},
+                ]),
+            );
+            entry["message"]["usage"] = serde_json::json!({
+                "input": 1000, "output": 100, "cost": {"total": 0.5},
+            });
+            write_lines(&path, &[header, &entry.to_string()]);
+            let db = Database::memory()?;
+            let metadata = fs::metadata(&path).unwrap();
+            let revision =
+                pi_file_revision(&PI, &path, &metadata, metadata_modified_nanos(&metadata))?;
+            // Seed the exact record and cursor produced by the old importer.
+            {
+                let conn = lock_conn!(db.conn);
+                let record = parse_usage_record(&PI, &entry, "existing-subagent", None, 0).unwrap();
+                assert!(insert_pi_record(&conn, &PI, &record)?);
+                update_pi_sync_state_on_conn(&conn, &PI, &path.to_string_lossy(), revision, 2)?;
+                let old_revision = (revision.encoded(&PI) as u64
+                    & ((1 << REVISION_MARKER_SHIFT) - 1))
+                    | (0b110 << REVISION_MARKER_SHIFT);
+                conn.execute(
+                    "UPDATE session_log_sync SET last_synced_at = ?1 WHERE file_path = ?2",
+                    rusqlite::params![old_revision as i64, path.to_string_lossy()],
+                )?;
+            }
+            for rewrite in [false, true] {
+                if rewrite {
+                    write_lines(&path, &[&format!("{header} "), &entry.to_string()]);
+                }
+                let result = sync_pi_files(&db, &PI, std::slice::from_ref(&path));
+                assert!(result.errors.is_empty(), "{:?}", result.errors);
+                assert_eq!((result.imported, result.skipped), (0, 1));
+                let conn = lock_conn!(db.conn);
+                let totals: (i64, i64, f64) = conn.query_row(
+                    "SELECT COUNT(*),
+                        SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens),
+                        SUM(CAST(total_cost_usd AS REAL)) FROM proxy_request_logs",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(totals, (1, 1100, 0.5));
+            }
+            let repeated = sync_pi_files(&db, &PI, &[path]);
+            assert!(repeated.errors.is_empty(), "{:?}", repeated.errors);
+            assert_eq!((repeated.imported, repeated.skipped), (0, 0));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ignores_unrelated_details_and_keeps_failed_child_usage() {
+        let mut entry = subagent_entry(
+            "single",
+            serde_json::json!([
+                {"messages": [{"role": "assistant", "stopReason": "aborted",
+                    "usage": {"input": 3}, "errorMessage": "cancelled"}],
+                 "usage": {"input": 3}},
+            ]),
+        );
+        let records = parse_subagent_records(&PI, &entry, "session", None, 0).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status_code, 499);
+        assert_eq!(records[0].input_tokens, 3);
+        entry["message"]["toolName"] = serde_json::json!("other-plugin");
+        assert!(parse_subagent_records(&PI, &entry, "session", None, 0).is_none());
+        entry["message"]["toolName"] = serde_json::json!("subagent");
+        entry["message"]["details"]["mode"] = serde_json::json!("unknown");
+        assert!(parse_subagent_records(&PI, &entry, "session", None, 0).is_none());
+    }
+
+    #[test]
+    fn pi_subagents_details_with_child_sessions_are_counted_once() -> Result<(), AppError> {
+        // pi-subagents reuses the official `subagent` tool name and a similar
+        // details shape, but links child session files. Whether or not the
+        // projection carries top-level usage, the children are the only count.
+        for with_projection_usage in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let parent = session_path(temp.path(), "parent");
+            let child = run_session(&parent.with_extension(""), "run-a");
+            let child_message = json!({
+                "role": "assistant", "provider": "fixture-provider", "model": "fixture-model",
+                "timestamp": 1700000001000i64, "stopReason": "stop",
+                "usage": {"input": 10, "output": 2, "cacheRead": 5, "cacheWrite": 2,
+                    "cost": {"total": 0}},
+            });
+            let mut entry = subagent_entry(
+                "single",
+                json!([{
+                    "sessionFile": child.to_string_lossy(),
+                    "messages": [child_message],
+                    "usage": {"input": 10, "output": 2, "cacheRead": 5, "cacheWrite": 2, "cost": 0},
+                }]),
+            );
+            entry["timestamp"] = json!("2023-11-14T22:13:40Z");
+            if with_projection_usage {
+                entry["message"]["usage"] = json!({
+                    "input": 10, "output": 2, "cacheRead": 5, "cacheWrite": 2,
+                    "cost": {"total": 0},
+                });
+            }
+            write_nested_lines(
+                &parent,
+                &[&session_header("session-parent", None), &entry.to_string()],
+            );
+            write_nested_lines(
+                &child,
+                &[
+                    &session_header("session-a", Some(&parent)),
+                    &assistant_line("a1", "2023-11-14T22:13:25Z", 10),
+                ],
+            );
+
+            let db = Database::memory()?;
+            set_child_cutoff(&db, 1_700_000_000)?;
+            let files = [parent.clone(), child.clone()];
+            let result = sync_pi_files(&db, &PI, &files);
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            assert_eq!(pi_rows_input_and_unknown(&db)?, (1, 10, 0));
+            let again = sync_pi_files(&db, &PI, &files);
+            assert_eq!(again.imported, 0);
+            assert!(parse_subagent_records(&PI, &entry, "session-parent", None, 0).is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn oh_my_pi_ignores_official_subagent_details_and_keeps_its_cursors() -> Result<(), AppError> {
+        use crate::services::session_usage_omp::OMP;
+        let child = json!({
+            "role": "assistant", "provider": "child-provider", "model": "child-model",
+            "usage": {"input": 10, "output": 2},
+        });
+        let entry = subagent_entry(
+            "single",
+            json!([{"messages": [child], "usage": {"input": 10}}]),
+        );
+        assert!(parse_subagent_records(&OMP, &entry, "session", None, 0).is_none());
+
+        for marker in [0b101u64, 0b110] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = session_path(temp.path(), "omp-cursor");
+            let header = r#"{"type":"session","version":3,"id":"omp-cursor"}"#;
+            let main = assistant_line("main", "2023-11-14T22:13:30Z", 1);
+            write_lines(&path, &[header, &main, &entry.to_string()]);
+            let db = Database::memory()?;
+            let first = sync_pi_files(&db, &OMP, std::slice::from_ref(&path));
+            assert!(first.errors.is_empty(), "{:?}", first.errors);
+            assert_eq!(first.imported, 1);
+            let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
+            let cursor = &cursors[path.to_string_lossy().as_ref()];
+            assert_eq!(
+                cursor.last_synced_at as u64 >> REVISION_MARKER_SHIFT,
+                LEGACY_REVISION_MARKER
+            );
+            let revision = (cursor.last_synced_at as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
+                | (marker << REVISION_MARKER_SHIFT);
+            lock_conn!(db.conn).execute(
+                "UPDATE session_log_sync SET last_synced_at = ?1 WHERE file_path = ?2",
+                rusqlite::params![revision as i64, path.to_string_lossy()],
+            )?;
+            // Oh My Pi's existing cursors stay valid: no rescan, no import.
+            let unchanged = sync_pi_files(&db, &OMP, std::slice::from_ref(&path));
+            assert!(unchanged.errors.is_empty());
+            assert_eq!((unchanged.imported, unchanged.skipped), (0, 0));
+        }
+        Ok(())
+    }
+
     #[test]
     fn dedup_lookups_use_complete_identity_indexes() -> Result<(), AppError> {
         let db = Database::memory()?;
@@ -1591,7 +2064,7 @@ mod tests {
     }
 
     #[test]
-    fn compatible_cursors_stay_incremental_without_changing_history() -> Result<(), AppError> {
+    fn old_cursors_rescan_once_without_changing_existing_history() -> Result<(), AppError> {
         for marker in [0b101u64, 0b110] {
             let temp = tempfile::tempdir().unwrap();
             let path = session_path(temp.path(), "compatible-cursor");
@@ -1620,7 +2093,9 @@ mod tests {
 
             let unchanged = sync_pi_files(&db, &PI, std::slice::from_ref(&path));
             assert!(unchanged.errors.is_empty());
-            assert_eq!((unchanged.imported, unchanged.skipped), (0, 0));
+            assert_eq!((unchanged.imported, unchanged.skipped), (0, 2));
+            let repeated = sync_pi_files(&db, &PI, std::slice::from_ref(&path));
+            assert_eq!((repeated.imported, repeated.skipped), (0, 0));
 
             let third = assistant_line("new", "2023-11-14T22:13:50Z", 3);
             {
@@ -1633,7 +2108,10 @@ mod tests {
             let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
             let cursor = &cursors[path.to_string_lossy().as_ref()];
             assert_eq!(cursor.last_line_offset, 4);
-            assert_eq!(cursor.last_synced_at as u64 >> REVISION_MARKER_SHIFT, 0b101);
+            assert_eq!(
+                cursor.last_synced_at as u64 >> REVISION_MARKER_SHIFT,
+                SUBAGENT_REVISION_MARKER
+            );
 
             // A normal rewrite may revisit old requests, but deduplication must
             // leave their missing or previously recorded timing untouched.
@@ -2069,6 +2547,7 @@ mod tests {
         assert_eq!(deferred.imported, 0);
         assert_eq!(deferred.deferred_files, 1);
         let deferred_state = decode_pi_sync_state(
+            &PI,
             crate::services::session_usage::load_sync_cursors(&db)
                 .unwrap()
                 .get(path.to_string_lossy().as_ref()),
