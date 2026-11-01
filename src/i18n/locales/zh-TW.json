@@ -2186,6 +2186,7 @@
     "universalDetail": "同步到 Claude Code、Codex、Gemini CLI",
     "manageUniversal": "管理現有的統一供應商 ›",
     "loginWith": {
+      "deepseek": "使用 DeepSeek 帳號登入",
       "kimi": "使用 Kimi 帳號登入",
       "claude": "用 Claude 帳號登入",
       "chatgpt": "用 ChatGPT 帳號登入",
@@ -4973,7 +4974,11 @@
       "open": "開啟授權頁面",
       "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。",
       "browserNote": "已在瀏覽器開啟 {{service}} 的登入頁，登入並同意授權後這裡會自動更新。",
-      "reopen": "重新開啟登入頁"
+      "reopen": "重新開啟登入頁",
+      "copyLink": "複製登入連結",
+      "linkCopied": "登入連結已複製。",
+      "linkNote": "登入連結已複製。在你要用的瀏覽器裡開啟，登入並同意授權後這裡會自動更新。",
+      "linkCodeNote": "登入連結已複製。在你要用的瀏覽器裡開啟並輸入驗證碼，完成後這裡會自動更新。注意 {{service}} 的使用條款。"
     },
     "toast": {
       "added": "已新增 {{service}} 帳號。",
@@ -5037,6 +5042,10 @@
       "empty": "還沒有新增 Claude 帳號。要在多個訂閱帳號之間切換時在這裡登入。",
       "removeNote": "只刪除 CC Switch 為這個帳號儲存的登入，不會讓它在其他地方登出；Claude Code 目前的登入（~/.claude）不受影響。綁定它的卡片會改用 Claude Code 目前的登入。",
       "wslUnsupported": "Claude 設定目錄在 WSL 裡，暫不支援新增和切換 Claude 帳號。"
+    },
+    "openBrowser": {
+      "title": "登入時自動開啟瀏覽器",
+      "description": "關掉後只複製登入連結，由你自己選瀏覽器開啟，適合用獨立的瀏覽器環境管理多個帳號。"
     }
   },
   "kimi": {

@@ -2185,6 +2185,7 @@
     "universalDetail": "Synced to Claude Code, Codex, Gemini CLI",
     "manageUniversal": "Manage existing universal providers ›",
     "loginWith": {
+      "deepseek": "Sign in with a DeepSeek account",
       "kimi": "Sign in with a Kimi account",
       "claude": "Sign in with a Claude account",
       "chatgpt": "Sign in with a ChatGPT account",
@@ -4972,7 +4973,11 @@
       "open": "Open the authorization page",
       "note": "The authorization page is open in your browser; this updates on its own when you finish. Mind {{service}}'s terms of use.",
       "browserNote": "The {{service}} sign-in page is open in your browser. Sign in and grant access, and this updates automatically.",
-      "reopen": "Reopen sign-in page"
+      "reopen": "Reopen sign-in page",
+      "copyLink": "Copy sign-in link",
+      "linkCopied": "Sign-in link copied.",
+      "linkNote": "Sign-in link copied. Open it in the browser you want to use, sign in and grant access, and this updates automatically.",
+      "linkCodeNote": "Sign-in link copied. Open it in the browser you want to use and enter the code; this updates on its own when you finish. Mind {{service}}'s terms of use."
     },
     "toast": {
       "added": "{{service}} account added.",
@@ -5036,6 +5041,10 @@
       "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
       "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
       "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
+    },
+    "openBrowser": {
+      "title": "Open the browser when signing in",
+      "description": "Turn this off to only copy the sign-in link and open it in a browser of your choice — handy when you keep accounts in separate browser profiles."
     }
   },
   "kimi": {

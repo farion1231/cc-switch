@@ -854,11 +854,11 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.a6api.com",
+        ANTHROPIC_BASE_URL: "https://api.a6api.vip",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
