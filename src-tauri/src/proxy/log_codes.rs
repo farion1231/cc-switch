@@ -18,6 +18,8 @@ pub mod cb {
     pub const TRIGGERED_FAILURES: &str = "CB-004";
     pub const TRIGGERED_ERROR_RATE: &str = "CB-005";
     pub const MANUAL_RESET: &str = "CB-006";
+    /// 上游 429 带 Retry-After：按上游给的恢复时间直接熔断
+    pub const TRIGGERED_RATE_LIMITED: &str = "CB-007";
 }
 
 /// 服务器日志码

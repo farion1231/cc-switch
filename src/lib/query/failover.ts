@@ -47,6 +47,15 @@ export function useResetCircuitBreaker() {
       queryClient.invalidateQueries({
         queryKey: ["providerHealth", variables.providerId, variables.appType],
       });
+      // 刷新熔断器统计：重置会清空失败证据，不刷新的话界面上那几条
+      // 证据会继续挂在一个已经被清掉的状态旁边
+      queryClient.invalidateQueries({
+        queryKey: [
+          "circuitBreakerStats",
+          variables.providerId,
+          variables.appType,
+        ],
+      });
       // 刷新供应商列表（因为可能发生了自动恢复切换）
       queryClient.invalidateQueries({
         queryKey: ["providers", variables.appType],
@@ -84,14 +93,36 @@ export function useUpdateCircuitBreakerConfig() {
 }
 
 /**
- * 获取熔断器统计信息
+ * 获取熔断器统计信息（含失败证据）
+ *
+ * `enabled=false` 时完全不发请求：代理没在跑的时候后端只会返回 null，
+ * 让每个供应商卡片各打一次空转的调用没有意义。
  */
-export function useCircuitBreakerStats(providerId: string, appType: string) {
+export function useCircuitBreakerStats(
+  providerId: string,
+  appType: string,
+  enabled = true,
+) {
   return useQuery({
     queryKey: ["circuitBreakerStats", providerId, appType],
     queryFn: () => failoverApi.getCircuitBreakerStats(providerId, appType),
-    enabled: !!providerId && !!appType,
+    enabled: enabled && !!providerId && !!appType,
     refetchInterval: 5000, // 每 5 秒刷新一次
+  });
+}
+
+/**
+ * 当前在飞请求明细。
+ *
+ * 与熔断器统计不同，这个不需要 provider/app 参数：一次拿全部，前端按
+ * app/模型筛选就地过滤。2s 轮询与代理状态一致。
+ */
+export function useInFlightRequests(enabled = true) {
+  return useQuery({
+    queryKey: ["inFlightRequests"],
+    queryFn: () => failoverApi.getInFlightRequests(),
+    enabled,
+    refetchInterval: 2000,
   });
 }
 

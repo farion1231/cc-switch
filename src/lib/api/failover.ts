@@ -4,6 +4,7 @@ import type {
   CircuitBreakerConfig,
   CircuitBreakerStats,
   FailoverQueueItem,
+  InFlightRequest,
 } from "@/types/proxy";
 
 export interface Provider {
@@ -57,6 +58,11 @@ export const failoverApi = {
     appType: string,
   ): Promise<CircuitBreakerStats | null> {
     return invoke("get_circuit_breaker_stats", { providerId, appType });
+  },
+
+  // 当前在飞请求明细（代理没在运行时为空）
+  async getInFlightRequests(): Promise<InFlightRequest[]> {
+    return invoke("get_in_flight_requests");
   },
 
   // ========== 故障转移队列 API（新） ==========

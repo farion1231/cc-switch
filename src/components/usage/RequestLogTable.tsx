@@ -10,6 +10,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useRequestLogs } from "@/lib/query/usage";
 import { TablePagination } from "./TablePagination";
+import { InFlightSection } from "./InFlightSection";
 import { HelpTip } from "@/components/ui/help-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
@@ -657,7 +658,16 @@ export function RequestLogTable({
   };
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col gap-2">
+      {/* 在飞的请求置顶显示明细；飞完从这里消失、出现在下面的日志里。
+          独立区块而不是插进日志表：日志表的行动画按 tbody 行号做位移，
+          中途插行会把已有行的位移算错。 */}
+      <InFlightSection
+        appType={dashboardAppType}
+        providerName={providerName}
+        model={model}
+        active={page === 0}
+      />
       <div ref={scrollRef} className={usageTable.scroller}>
         {/* 表格按内容取宽（w-max），至少铺满面板；比面板宽时在外层横向滚动，每列都完整显示 */}
         <table

@@ -457,6 +457,26 @@ impl ProxyServer {
             .reset_provider_breaker(provider_id, app_type)
             .await;
     }
+
+    /// 当前在飞请求明细
+    pub async fn get_in_flight_requests(&self) -> Vec<crate::proxy::in_flight::InFlightRequest> {
+        self.state.status.read().await.in_flight.snapshot().await
+    }
+
+    /// 读取指定 Provider 的熔断器统计（含失败证据）
+    ///
+    /// 熔断器是懒创建的：这个 provider 从没失败过就压根没有实例，返回 `None`
+    /// 让调用方区分「健康且无记录」和「读不到」。
+    pub async fn get_circuit_breaker_stats(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Option<crate::proxy::circuit_breaker::CircuitBreakerStats> {
+        self.state
+            .provider_router
+            .get_circuit_breaker_stats(provider_id, app_type)
+            .await
+    }
 }
 
 #[cfg(test)]

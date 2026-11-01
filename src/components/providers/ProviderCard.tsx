@@ -45,6 +45,7 @@ import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isProxyAppId } from "@/config/appConfig";
 import { ProviderCardActions } from "./ProviderCardActions";
+import { BreakerEvidencePanel } from "./BreakerEvidencePanel";
 import { terminalAvailable, terminalIsIsolated } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
@@ -661,6 +662,15 @@ export function ProviderCard({
           />
         </div>
       </div>
+
+      {/* 熔断依据：只在代理模式下、且确实有过失败记录时才出现。
+          放在卡片正文下方而不是标题行里——它是「为什么这样调度」的解释，
+          不是一眼扫过的状态徽章。 */}
+      {presentation.showHealth && isProxyAppId(appId) && (
+        <div className="mx-4 mb-3">
+          <BreakerEvidencePanel providerId={provider.id} appType={appId} />
+        </div>
+      )}
 
       {isExpanded && hasMultiplePlans && (
         <div className="mx-4 mb-3 border-t border-border pt-3">

@@ -6,6 +6,7 @@ use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
+use crate::proxy::circuit_breaker::CircuitBreakerStats;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
@@ -654,6 +655,32 @@ impl ProxyService {
             log::info!("已重置 Provider {provider_id} (app: {app_type}) 的熔断器");
         }
         Ok(())
+    }
+
+    /// 当前在飞请求明细（用量页置顶展示用）
+    ///
+    /// 代理没在运行时返回空列表：注册表随 `ProxyStatus` 生死，停着的时候是空的。
+    pub async fn get_in_flight_requests(&self) -> Vec<crate::proxy::in_flight::InFlightRequest> {
+        let server = self.server.read().await;
+        match server.as_ref() {
+            Some(server) => server.get_in_flight_requests().await,
+            None => Vec::new(),
+        }
+    }
+
+    /// 读取指定 Provider 的熔断器统计（含失败证据）
+    ///
+    /// 代理没在运行时返回 `None`——熔断器是进程内状态，停着的时候没有可读的东西。
+    pub async fn get_circuit_breaker_stats(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Option<CircuitBreakerStats> {
+        let server = self.server.read().await;
+        let server = server.as_ref()?;
+        server
+            .get_circuit_breaker_stats(provider_id, app_type)
+            .await
     }
 }
 

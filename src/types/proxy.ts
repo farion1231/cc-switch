@@ -188,12 +188,45 @@ export interface CircuitBreakerConfig {
 
 export type CircuitState = "closed" | "open" | "half_open";
 
+/** 一条在飞请求：正在上游跑、还没写进请求日志的请求。 */
+export interface InFlightRequest {
+  /** 注册表内部 id；行 key 也用它，请求结束时条目消失 */
+  id: number;
+  appType: string;
+  providerId: string;
+  providerName: string;
+  /** 实际发往上游的模型名；还没解析出来时为 null */
+  model: string | null;
+  /** 请求开始时刻（RFC 3339）；耗时前端按本地时钟算 */
+  startedAt: string;
+  streaming: boolean;
+}
+
 export interface CircuitBreakerStats {
   state: CircuitState;
   consecutiveFailures: number;
   consecutiveSuccesses: number;
   totalRequests: number;
   failedRequests: number;
+  /**
+   * 最近的失败证据，新的在前。
+   *
+   * 回答「是哪几个请求让你判它熔断的」：只有真正计入健康度的失败才会出现在这里，
+   * 客户端错误（400/422 之类）走 neutral 路径，不会污染这个列表。
+   */
+  failureEvidence?: FailureEvidence[];
+}
+
+/** 一条失败证据：一次真正计入熔断器的请求失败。 */
+export interface FailureEvidence {
+  /** 失败发生时刻（RFC 3339，带时区） */
+  at: string;
+  /** 上游 HTTP 状态码；超时、连接重置这类网络层失败没有状态码 */
+  status: number | null;
+  /** 给用户看的一句话原因 */
+  reason: string;
+  /** 这次失败是否直接触发了熔断 */
+  tripped: boolean;
 }
 
 // 供应商健康状态枚举

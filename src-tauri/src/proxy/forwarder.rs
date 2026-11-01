@@ -5,6 +5,7 @@
 use super::hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES};
 use super::{
     body_filter::filter_private_params_with_whitelist,
+    circuit_breaker::FailureDetail,
     content_encoding::{decompress_body_with_limit, get_content_encoding},
     error::*,
     failover_switch::FailoverSwitchManager,
@@ -313,15 +314,50 @@ pub struct ForwardError {
 /// 不需要每条出口路径都手动调用。
 pub(crate) struct ActiveConnectionGuard {
     status: Arc<RwLock<ProxyStatus>>,
+    /// 在飞注册表与本次请求的条目 id。`entry` 为 `None` 表示还没登记
+    /// （还没轮到任何 provider，或注册表已满被拒）。
+    in_flight: Option<Arc<super::in_flight::InFlightRegistry>>,
+    entry: Option<u64>,
 }
 
 impl ActiveConnectionGuard {
     pub(crate) async fn acquire(status: Arc<RwLock<ProxyStatus>>) -> Self {
+        let in_flight = Some(status.read().await.in_flight.clone());
         {
             let mut s = status.write().await;
             s.active_connections = s.active_connections.saturating_add(1);
         }
-        Self { status }
+        Self {
+            status,
+            in_flight,
+            entry: None,
+        }
+    }
+
+    /// 把这条连接登记到指定 provider 名下（故障转移时更新同一条目）。
+    ///
+    /// 注册表满/条目已消失时会静默放弃登记：在飞行明细是给 UI 看的辅助信息，
+    /// 任何一条丢失都不该影响请求本身。
+    pub(crate) async fn mark_in_flight(
+        &mut self,
+        app_type: &str,
+        provider: &Provider,
+        model: Option<String>,
+        streaming: bool,
+    ) {
+        let Some(registry) = self.in_flight.as_ref() else {
+            return;
+        };
+        self.entry = registry
+            .upsert(
+                self.entry,
+                app_type,
+                &provider.id,
+                &provider.name,
+                model,
+                streaming,
+            )
+            .await;
     }
 }
 
@@ -329,10 +365,15 @@ impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
         // Drop 不能 await：把减量操作调度到 tokio runtime
         let status = self.status.clone();
+        let in_flight = self.in_flight.take();
+        let entry = self.entry.take();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 let mut s = status.write().await;
                 s.active_connections = s.active_connections.saturating_sub(1);
+                if let (Some(registry), Some(entry)) = (in_flight, entry) {
+                    registry.remove(entry).await;
+                }
             });
         }
         // 没有 runtime 时静默丢失计数（仅 UI 展示用，可接受最终一致性）
@@ -521,7 +562,7 @@ impl RequestForwarder {
         if used_half_open_permit {
             if let Err(e) = self
                 .router
-                .record_result(provider_id, app_type, true, true, None)
+                .record_result(provider_id, app_type, true, true, None, None, None)
                 .await
             {
                 log::warn!(
@@ -536,7 +577,7 @@ impl RequestForwarder {
         let app_type = app_type.to_string();
         tokio::spawn(async move {
             if let Err(e) = router
-                .record_result(&provider_id, &app_type, false, true, None)
+                .record_result(&provider_id, &app_type, false, true, None, None, None)
                 .await
             {
                 log::warn!(
@@ -688,6 +729,8 @@ impl RequestForwarder {
                 used_half_open_permit,
                 false,
                 Some(error.to_string()),
+                Some(describe_failure(error)),
+                retry_after_seconds(error),
             )
             .await;
         self.status.write().await.last_error = Some(last_error);
@@ -741,14 +784,18 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
+        // 在飞明细要在「等待上游」阶段就可见，所以流式与否在入口处就判定好，
+        // 随第一次登记写进注册表。
+        let request_is_streaming = is_streaming_request(endpoint, &body, &headers);
         if !self.routing_state_enabled() {
             return self
                 .forward_with_retry_inner(
-                    app_type, method, endpoint, body, headers, extensions, providers,
+                    app_type, method, endpoint, body, headers, extensions, providers, None,
+                    request_is_streaming,
                 )
                 .await;
         }
-        let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
+        let mut guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         {
             let mut s = self.status.write().await;
             s.total_requests = s.total_requests.saturating_add(1);
@@ -757,6 +804,7 @@ impl RequestForwarder {
         let result = self
             .forward_with_retry_inner(
                 app_type, method, endpoint, body, headers, extensions, providers,
+                Some(&mut guard), request_is_streaming,
             )
             .await;
         // 把 guard 注入到 Ok 结果，让它随响应一起流转到 response_processor，
@@ -777,6 +825,9 @@ impl RequestForwarder {
     /// * `body` - 请求体
     /// * `headers` - 请求头
     /// * `providers` - 已选择的 Provider 列表（由 RequestContext 提供，避免重复调用 select_providers）
+    /// * `guard` - 路由路径传入的活跃连接 guard，per-attempt 用来把在飞明细登记到
+    ///   当前 provider 名下；Stack 路径传 `None`（不碰路由状态，也不登记在飞）
+    /// * `request_is_streaming` - 入口处判定的流式标记，只进在飞明细
     #[allow(clippy::too_many_arguments)]
     async fn forward_with_retry_inner(
         &self,
@@ -787,6 +838,8 @@ impl RequestForwarder {
         headers: axum::http::HeaderMap,
         extensions: Extensions,
         providers: Vec<Provider>,
+        mut guard: Option<&mut ActiveConnectionGuard>,
+        request_is_streaming: bool,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
         let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
@@ -872,6 +925,14 @@ impl RequestForwarder {
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
             // 新「正在尝试哪个 provider」的展示字段。
             self.note_attempt(provider).await;
+
+            // 在飞明细登记到当前 provider 名下：故障转移时 upsert 同一条目，
+            // 在飞列表里始终是「这一条请求现在在哪家」而不是两家各一条。
+            if let Some(g) = guard.as_deref_mut() {
+                let client_model = body.get("model").and_then(Value::as_str).map(str::to_string);
+                g.mark_in_flight(app_type_str, provider, client_model, request_is_streaming)
+                    .await;
+            }
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             let mut attempted_codex_upstream_format = None;
@@ -2854,6 +2915,13 @@ impl RequestForwarder {
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
+            // 429 的 Retry-After 必须在消费 response 之前读出来：body 读完后
+            // response 就被移走了。没有这个头时是 None，下游行为与以前完全一致。
+            let retry_after_seconds = if status_code == 429 {
+                parse_retry_after_seconds(response.headers())
+            } else {
+                None
+            };
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
             // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
             // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
@@ -2875,6 +2943,7 @@ impl RequestForwarder {
             Err(ProxyError::UpstreamError {
                 status: status_code,
                 body: body_text,
+                retry_after_seconds,
             })
         }
     }
@@ -3381,6 +3450,72 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
     }
 }
 
+/// 上游 429 明确给了恢复时间时，取出那个秒数；其他情况一律 `None`。
+///
+/// 这是「带 Retry-After 的 429」与「普通 429」唯一的分叉点：返回 `None` 时熔断
+/// 时长沿用配置，行为与没有这个特性时逐字一致。
+fn retry_after_seconds(error: &ProxyError) -> Option<u64> {
+    match error {
+        ProxyError::UpstreamError {
+            status,
+            retry_after_seconds,
+            ..
+        } if *status == 429 => *retry_after_seconds,
+        _ => None,
+    }
+}
+
+/// 把一次失败压缩成熔断器证据要的两样东西：上游状态码 + 一句原因。
+///
+/// 状态码只在上游真的回了 HTTP 响应时才有；超时、连接重置这类网络层失败没有状态码，
+/// 在证据里留空，UI 会显示成「网络错误」而不是编一个 0。
+fn describe_failure(error: &ProxyError) -> FailureDetail {
+    match error {
+        ProxyError::UpstreamError { status, body, .. } => {
+            // 上游错误体常常是 JSON，整段塞进证据里 UI 没法看；取一句人类可读的。
+            let reason = body
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|body| {
+                    let summary = summarize_upstream_body(body);
+                    summarize_text_for_log(&summary, MAX_EVIDENCE_REASON_CHARS)
+                })
+                .unwrap_or_else(|| format!("上游返回 HTTP {status}，无错误内容"));
+            FailureDetail::new(Some(*status), reason)
+        }
+        other => FailureDetail::new(None, other.to_string()),
+    }
+}
+
+/// 证据里的原因文本上限。UI 一行放得下这么多，再多也只是噪音。
+const MAX_EVIDENCE_REASON_CHARS: usize = 160;
+
+/// 解析上游 429 响应里的 `Retry-After`，返回需要等待的秒数。
+///
+/// 只认两种 RFC 9110 形式：delta-seconds（`"120"`）和 HTTP-date
+/// （`"Wed, 21 Oct 2015 07:28:00 GMT"`）。解析不出来一律 `None`——包括负数、
+/// 溢出的巨大值、以及过去的时间点。**拿不到就返回 None 是刻意的**：调用方据此
+/// 退回配置里的熔断时长，行为与没有这个特性时完全一致，绝不会因为一个畸形头
+/// 把供应商永久熔断。
+fn parse_retry_after_seconds(headers: &http::HeaderMap) -> Option<u64> {
+    let raw = headers.get(http::header::RETRY_AFTER)?.to_str().ok()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if let Ok(seconds) = raw.parse::<u64>() {
+        return (seconds > 0).then_some(seconds);
+    }
+
+    // HTTP-date：与当前时间比较，已经过去的时间点按「立即可重试」处理，
+    // 但没有可等待的时长，所以同样返回 None。
+    let at = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
+    let wait = at.with_timezone(&chrono::Utc) - chrono::Utc::now();
+    let seconds = wait.num_seconds();
+    (seconds > 0).then_some(seconds as u64)
+}
+
 /// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
 fn is_bedrock_provider(provider: &Provider) -> bool {
     provider
@@ -3445,7 +3580,7 @@ fn build_terminal_failure_log(
 
 fn summarize_proxy_error(error: &ProxyError) -> String {
     match error {
-        ProxyError::UpstreamError { status, body } => {
+        ProxyError::UpstreamError { status, body, .. } => {
             let body_summary = body
                 .as_deref()
                 .map(summarize_upstream_body)
@@ -4604,7 +4739,7 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::provider::LocalProxyRequestOverrides;
-    use axum::http::header::{HeaderValue, ACCEPT};
+    use axum::http::header::{HeaderValue, ACCEPT, RETRY_AFTER};
     use axum::http::HeaderMap;
     use bytes::Bytes;
     use http::StatusCode;
@@ -4851,10 +4986,145 @@ mod tests {
     }
 
     #[test]
+    fn retry_after_seconds_reads_delta_seconds() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("120"));
+        assert_eq!(parse_retry_after_seconds(&headers), Some(120));
+    }
+
+    #[test]
+    fn retry_after_seconds_reads_http_date() {
+        let at = chrono::Utc::now() + chrono::Duration::seconds(90);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            RETRY_AFTER,
+            HeaderValue::from_str(&at.to_rfc2822()).expect("header value"),
+        );
+        // 传输过程中秒数会掉一点点，取区间而不是等值
+        let seconds = parse_retry_after_seconds(&headers).expect("parsed");
+        assert!((85..=90).contains(&seconds), "got {seconds}");
+    }
+
+    #[test]
+    fn retry_after_seconds_rejects_everything_it_cannot_trust() {
+        for raw in [
+            // 缺失
+            None,
+            // 空
+            Some(""),
+            // 非数字
+            Some("soon"),
+            // 0 秒 = 没有可等待的时长，按配置走
+            Some("0"),
+            // 负数
+            Some("-30"),
+            // 已经过去的 HTTP-date
+            Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+        ] {
+            let mut headers = HeaderMap::new();
+            if let Some(raw) = raw {
+                headers.insert(
+                    RETRY_AFTER,
+                    HeaderValue::from_str(raw).expect("header value"),
+                );
+            }
+            assert_eq!(
+                parse_retry_after_seconds(&headers),
+                None,
+                "expected None for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_429_without_retry_after_leaves_the_breaker_timeout_untouched() {
+        let error = ProxyError::UpstreamError {
+            status: 429,
+            body: None,
+            retry_after_seconds: None,
+        };
+        // 这就是「不带的行为照旧」：调用方拿到 None，熔断时长仍取配置值
+        assert_eq!(retry_after_seconds(&error), None);
+    }
+
+    #[test]
+    fn a_429_with_retry_after_carries_the_upstream_recovery_time() {
+        let error = ProxyError::UpstreamError {
+            status: 429,
+            body: None,
+            retry_after_seconds: Some(300),
+        };
+        assert_eq!(retry_after_seconds(&error), Some(300));
+    }
+
+    #[test]
+    fn a_non_429_never_borrows_a_retry_after() {
+        // 只有 429 才认这个头；其他状态码即便带了也不该改变熔断时长
+        let error = ProxyError::UpstreamError {
+            status: 503,
+            body: None,
+            retry_after_seconds: Some(300),
+        };
+        assert_eq!(retry_after_seconds(&error), None);
+    }
+
+    #[test]
+    fn describe_failure_prefers_the_upstream_error_message() {
+        let error = ProxyError::UpstreamError {
+            status: 503,
+            body: Some(r#"{"error":{"message":"model is overloaded"}}"#.to_string()),
+            retry_after_seconds: None,
+        };
+        let detail = describe_failure(&error);
+        assert_eq!(detail.status, Some(503));
+        assert_eq!(detail.reason, "model is overloaded");
+    }
+
+    #[test]
+    fn describe_failure_keeps_raw_text_when_it_is_not_json() {
+        let error = ProxyError::UpstreamError {
+            status: 502,
+            body: Some("bad gateway from edge".to_string()),
+            retry_after_seconds: None,
+        };
+        let detail = describe_failure(&error);
+        assert_eq!(detail.status, Some(502));
+        assert_eq!(detail.reason, "bad gateway from edge");
+    }
+
+    #[test]
+    fn describe_failure_truncates_a_huge_body() {
+        let long = "x".repeat(MAX_EVIDENCE_REASON_CHARS * 3);
+        let long_len = long.len();
+        let error = ProxyError::UpstreamError {
+            status: 500,
+            body: Some(long),
+            retry_after_seconds: None,
+        };
+        let detail = describe_failure(&error);
+        // 不能把整个 body 塞进证据里；留一点给省略号
+        assert!(
+            detail.reason.chars().count() <= MAX_EVIDENCE_REASON_CHARS + 3,
+            "reason was {} chars",
+            detail.reason.chars().count()
+        );
+        assert!(detail.reason.len() < long_len, "must be truncated");
+    }
+
+    #[test]
+    fn describe_failure_reports_network_failures_without_a_status() {
+        let detail = describe_failure(&ProxyError::Timeout("upstream timed out".to_string()));
+        // 网络层失败没有 HTTP 状态码；编一个 0 会让 UI 显示成「HTTP 0」
+        assert_eq!(detail.status, None);
+        assert!(detail.reason.contains("超时"));
+    }
+
+    #[test]
     fn single_provider_retryable_log_uses_single_provider_code() {
         let error = ProxyError::UpstreamError {
             status: 429,
             body: Some(r#"{"error":{"message":"rate limit exceeded"}}"#.to_string()),
+            retry_after_seconds: None,
         };
 
         let (code, message) = build_retryable_failure_log("PackyCode-response", 1, 1, &error);
@@ -5620,14 +5890,17 @@ mod tests {
             ProxyError::UpstreamError {
                 status: 401,
                 body: None,
+                retry_after_seconds: None,
             },
             ProxyError::UpstreamError {
                 status: 403,
                 body: None,
+                retry_after_seconds: None,
             },
             ProxyError::UpstreamError {
                 status: 429,
                 body: None,
+                retry_after_seconds: None,
             },
             ProxyError::Timeout("timeout".to_string()),
         ] {
@@ -5657,7 +5930,8 @@ mod tests {
                 &ProxyError::UpstreamError {
                     status: 401,
                     body: None,
-                },
+                    retry_after_seconds: None,
+            },
                 &provider,
             ),
             ErrorCategory::Retryable
@@ -6838,6 +7112,7 @@ mod tests {
             body: Some(
                 r#"{"error":{"message":"This model does not support image input"}}"#.to_string(),
             ),
+            retry_after_seconds: None,
         }
     }
     #[test]
@@ -6929,6 +7204,7 @@ mod tests {
                 r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#
                     .to_string(),
             ),
+            retry_after_seconds: None,
         };
 
         assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
@@ -6944,6 +7220,7 @@ mod tests {
                 r#"{"error":{"message":"No endpoints found that support image input"}}"#
                     .to_string(),
             ),
+            retry_after_seconds: None,
         };
 
         assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
@@ -6987,6 +7264,7 @@ mod tests {
         let context_error = ProxyError::UpstreamError {
             status: 400,
             body: Some(r#"{"error":{"message":"maximum context length exceeded"}}"#.to_string()),
+            retry_after_seconds: None,
         };
 
         assert!(!fwd.media_retry_should_trigger("Codex", false, &body, &context_error));
@@ -7592,6 +7870,7 @@ mod tests {
             let unsupported = ProxyError::UpstreamError {
                 status: 400,
                 body: Some("unsupported input item".to_string()),
+                retry_after_seconds: None,
             };
             let forwarder = forwarder(false);
             let gate = |app_type: AppType, provider: &Provider| {
@@ -7638,6 +7917,7 @@ mod tests {
             let unsupported = ProxyError::UpstreamError {
                 status: 400,
                 body: Some("unsupported input item".to_string()),
+                retry_after_seconds: None,
             };
 
             assert_eq!(
@@ -7803,6 +8083,7 @@ mod tests {
             let ProxyError::UpstreamError {
                 status: 400,
                 body: Some(body),
+                ..
             } = error
             else {
                 return false;
@@ -8296,7 +8577,7 @@ mod tests {
                 for _ in 0..20 {
                     let _ = fwd
                         .router
-                        .record_result(id, "claude", false, false, Some("seed".into()))
+                        .record_result(id, "claude", false, false, Some("seed".into()), None, None)
                         .await;
                 }
             }

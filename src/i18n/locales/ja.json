@@ -2619,6 +2619,11 @@
       "title": "使用量の設定",
       "pricingSummary": "モデルごとに 100 万トークンあたりの料金を設定します。models.dev から同期することもできます",
       "managePricing": "料金を管理…"
+    },
+    "inFlightLog": {
+      "title": "実行中のリクエスト {{count}} 件",
+      "modelPending": "モデル解決中…",
+      "streaming": "ストリーミング"
     }
   },
   "usageScript": {
@@ -3894,7 +3899,16 @@
       "stopFailed": "ルーティングサービスの停止に失敗しました: {{detail}}"
     },
     "stoppedWithRestore": "ルーティングサービスを停止し、すべてのアプリを直接接続に戻しました",
-    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
+    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}",
+    "breaker": {
+      "evidenceSummary": "失敗の証拠 {{evidenceCount}} 件 · 連続失敗 {{failures}} 回",
+      "noEvidence": "失敗の証拠はありません",
+      "clearCounters": "カウンターをクリアしてスケジューリングに復帰",
+      "clearShort": "クリア",
+      "networkError": "ネットワーク",
+      "tripped": "サーキットブレーカー作動",
+      "trippedProbe": "プローブ失敗"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} は接続可能 ({{responseTimeMs}}ms)",

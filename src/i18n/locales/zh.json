@@ -2619,6 +2619,11 @@
       "title": "用量设置",
       "pricingSummary": "按模型设置每百万 Tokens 的价格，可从 models.dev 同步",
       "managePricing": "管理定价…"
+    },
+    "inFlightLog": {
+      "title": "{{count}} 个请求正在进行",
+      "modelPending": "模型解析中…",
+      "streaming": "流式"
     }
   },
   "usageScript": {
@@ -3894,7 +3899,16 @@
       "stopFailed": "停止路由服务失败：{{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，所有应用已退回直连",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "breaker": {
+      "evidenceSummary": "失败证据 {{evidenceCount}} 条 · 连续失败 {{failures}} 次",
+      "noEvidence": "没有失败证据",
+      "clearCounters": "清除计数并重新加入调度",
+      "clearShort": "清除计数",
+      "networkError": "网络",
+      "tripped": "触发熔断",
+      "trippedProbe": "探测失败"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 连通正常 ({{responseTimeMs}}ms)",

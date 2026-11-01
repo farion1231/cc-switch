@@ -43,7 +43,16 @@ pub enum ProxyError {
     ProviderUnhealthy(String),
 
     #[error("上游错误 (状态码 {status}): {body:?}")]
-    UpstreamError { status: u16, body: Option<String> },
+    UpstreamError {
+        status: u16,
+        body: Option<String>,
+        /// 上游在 429 响应里给的 Retry-After（秒）。
+        ///
+        /// 只有 429 且该头能解析成秒数时才是 `Some`；其余情况一律 `None`，
+        /// 此时熔断时长沿用配置值，与加入这个字段之前的行为完全一致。
+        #[serde(default)]
+        retry_after_seconds: Option<u64>,
+    },
 
     #[error("超过最大重试次数")]
     MaxRetriesExceeded,
@@ -85,6 +94,7 @@ impl IntoResponse for ProxyError {
             ProxyError::UpstreamError {
                 status: upstream_status,
                 body: upstream_body,
+                ..
             } => {
                 let http_status =
                     StatusCode::from_u16(*upstream_status).unwrap_or(StatusCode::BAD_GATEWAY);

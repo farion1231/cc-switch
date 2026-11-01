@@ -59,13 +59,21 @@ impl Default for ProxyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProxyStatus {
     /// 是否运行中
-    pub running: bool,
-    /// 监听地址
+    pub running: bool,    /// 监听地址
     pub address: String,
     /// 监听端口
     pub port: u16,
     /// 活跃连接数
     pub active_connections: usize,
+    /// 正在进行的请求明细（用量页把在飞行置顶展示）。
+    ///
+    /// `serde(skip)` + `Arc`：这不是要序列化给前端的字段（前端走独立的
+    /// `get_in_flight_requests` 命令）， Clone 共享同一个注册表，所以
+    /// `status.clone()` 流转到哪，注册表就到哪——不用给 `RequestForwarder`
+    /// 的每处构造点都加参数。代理重启时 `ProxyServer::new` 建全新的
+    /// `ProxyStatus`，注册表随之清空，语义正好。
+    #[serde(skip)]
+    pub in_flight: std::sync::Arc<crate::proxy::in_flight::InFlightRegistry>,
     /// 总请求数
     pub total_requests: u64,
     /// 成功请求数

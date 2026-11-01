@@ -6,7 +6,9 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::circuit_breaker::{
+    AllowResult, CircuitBreaker, CircuitBreakerConfig, FailureDetail,
+};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -150,6 +152,12 @@ impl ProviderRouter {
     }
 
     /// 记录供应商请求结果
+    ///
+    /// `failure_detail` 只在失败时有意义：它带着这次失败的上游状态码和原因，会被
+    /// 存进熔断器的证据列表，供 UI 解释「为什么判它不健康」。成功时忽略。
+    ///
+    /// `retry_after_seconds` 同样只在失败时有意义：上游 429 明确给了恢复时间时，
+    /// 这次熔断就按它来，而不是配置里的固定时长。
     pub async fn record_result(
         &self,
         provider_id: &str,
@@ -157,6 +165,8 @@ impl ProviderRouter {
         used_half_open_permit: bool,
         success: bool,
         error_msg: Option<String>,
+        failure_detail: Option<FailureDetail>,
+        retry_after_seconds: Option<u64>,
     ) -> Result<(), AppError> {
         // 1. 按应用独立获取熔断器配置
         let failure_threshold = match self.db.get_proxy_config_for_app(app_type).await {
@@ -171,7 +181,15 @@ impl ProviderRouter {
         if success {
             breaker.record_success(used_half_open_permit).await;
         } else {
-            breaker.record_failure(used_half_open_permit).await;
+            // 调用方没给细节时，用 error_msg 兜底造一条，别让证据列表里出现空条目。
+            let detail = failure_detail.or_else(|| {
+                error_msg
+                    .as_deref()
+                    .map(|msg| FailureDetail::new(None, msg))
+            });
+            breaker
+                .record_failure(used_half_open_permit, detail, retry_after_seconds)
+                .await;
         }
 
         // 3. 更新数据库健康状态（使用配置的阈值）
@@ -239,8 +257,7 @@ impl ProviderRouter {
         }
     }
 
-    /// 获取熔断器状态
-    #[allow(dead_code)]
+    /// 获取熔断器状态（含失败证据）
     pub async fn get_circuit_breaker_stats(
         &self,
         provider_id: &str,
@@ -577,7 +594,7 @@ mod tests {
         let router = ProviderRouter::new(db.clone());
 
         router
-            .record_result("b", "claude", false, false, Some("fail".to_string()))
+            .record_result("b", "claude", false, false, Some("fail".to_string()), None, None)
             .await
             .unwrap();
 
@@ -616,7 +633,7 @@ mod tests {
 
         // 触发熔断：1 次失败
         router
-            .record_result("a", "claude", false, false, Some("fail".to_string()))
+            .record_result("a", "claude", false, false, Some("fail".to_string()), None, None)
             .await
             .unwrap();
 

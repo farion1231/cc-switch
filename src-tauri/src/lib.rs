@@ -1779,6 +1779,7 @@ pub fn run() {
             commands::get_circuit_breaker_config,
             commands::update_circuit_breaker_config,
             commands::get_circuit_breaker_stats,
+            commands::get_in_flight_requests,
             // Failover queue management
             commands::get_failover_queue,
             commands::get_available_providers_for_failover,

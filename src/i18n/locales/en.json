@@ -2619,6 +2619,11 @@
       "title": "Usage settings",
       "pricingSummary": "Set per-model prices per million tokens, or sync them from models.dev",
       "managePricing": "Manage pricing…"
+    },
+    "inFlightLog": {
+      "title": "{{count}} request(s) in progress",
+      "modelPending": "resolving model…",
+      "streaming": "streaming"
     }
   },
   "usageScript": {
@@ -3894,7 +3899,16 @@
       "stopFailed": "Failed to stop routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped; all apps are back on direct connections",
-    "stopWithRestoreFailed": "Stop failed: {{detail}}"
+    "stopWithRestoreFailed": "Stop failed: {{detail}}",
+    "breaker": {
+      "evidenceSummary": "{{evidenceCount}} failure evidence · {{failures}} consecutive failures",
+      "noEvidence": "No failure evidence",
+      "clearCounters": "Clear counters and rejoin scheduling",
+      "clearShort": "Clear",
+      "networkError": "network",
+      "tripped": "tripped the breaker",
+      "trippedProbe": "probe failed"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} is reachable ({{responseTimeMs}}ms)",

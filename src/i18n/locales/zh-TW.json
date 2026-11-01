@@ -2620,6 +2620,11 @@
       "title": "用量設定",
       "pricingSummary": "依模型設定每百萬 Tokens 的價格，可從 models.dev 同步",
       "managePricing": "管理定價…"
+    },
+    "inFlightLog": {
+      "title": "{{count}} 個請求正在進行",
+      "modelPending": "模型解析中…",
+      "streaming": "串流"
     }
   },
   "usageScript": {
@@ -3895,7 +3900,16 @@
       "stopFailed": "停止路由服務失敗：{{detail}}"
     },
     "stoppedWithRestore": "路由服務已關閉，所有應用程式已退回直連",
-    "stopWithRestoreFailed": "停止失敗：{{detail}}"
+    "stopWithRestoreFailed": "停止失敗：{{detail}}",
+    "breaker": {
+      "evidenceSummary": "失敗證據 {{evidenceCount}} 條 · 連續失敗 {{failures}} 次",
+      "noEvidence": "沒有失敗證據",
+      "clearCounters": "清除計數並重新加入排程",
+      "clearShort": "清除計數",
+      "networkError": "網路",
+      "tripped": "觸發熔斷",
+      "trippedProbe": "探測失敗"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 連通正常 ({{responseTimeMs}}ms)",

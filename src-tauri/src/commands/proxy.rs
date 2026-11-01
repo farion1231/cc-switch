@@ -534,6 +534,14 @@ pub async fn reset_circuit_breaker(
     Ok(())
 }
 
+/// 当前在飞请求明细（代理没在运行时为空列表）
+#[tauri::command]
+pub async fn get_in_flight_requests(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::proxy::in_flight::InFlightRequest>, String> {
+    Ok(state.proxy_service.get_in_flight_requests().await)
+}
+
 /// 获取熔断器配置
 #[tauri::command]
 pub async fn get_circuit_breaker_config(
@@ -568,6 +576,9 @@ pub async fn update_circuit_breaker_config(
 }
 
 /// 获取熔断器统计信息（仅当代理服务器运行时）
+///
+/// 代理没在跑时返回 `None`：熔断器状态只存在于运行中的进程里，此时前端不该
+/// 拿一个空结构去渲染「0 次失败」——那会被读成「一切正常」，而真相是「没有数据」。
 #[tauri::command]
 pub async fn get_circuit_breaker_stats(
     state: tauri::State<'_, AppState>,
@@ -575,8 +586,8 @@ pub async fn get_circuit_breaker_stats(
     app_type: String,
 ) -> Result<Option<CircuitBreakerStats>, String> {
     require_mode_app(&app_type)?;
-    // 这个功能需要访问运行中的代理服务器的内存状态
-    // 目前先返回 None，后续可以通过 ProxyService 暴露接口来实现
-    let _ = (state, provider_id, app_type);
-    Ok(None)
+    Ok(state
+        .proxy_service
+        .get_circuit_breaker_stats(&provider_id, &app_type)
+        .await)
 }
