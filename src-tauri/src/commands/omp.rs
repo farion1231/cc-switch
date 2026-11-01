@@ -3,6 +3,11 @@ use crate::services::pi_state::PiCurrentState;
 use crate::store::AppState;
 use tauri::State;
 
+#[tauri::command]
+pub(crate) fn omp_list_logins() -> Vec<crate::omp_logins::OmpLogin> {
+    crate::omp_logins::list_logins()
+}
+
 /// Explicit providers in models.yml, plus the provider part of `modelRoles.default` (which may
 /// name a built-in provider with no explicit node). Same shape as Pi's state.
 fn current_state(state: &AppState) -> Result<PiCurrentState, AppError> {

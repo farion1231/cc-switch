@@ -23,6 +23,11 @@ import type { OpenClawProviderConfig, Provider } from "@/types";
 import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { ompApi } from "@/lib/api/omp";
+import {
+  OmpLoginCard,
+  ompLoginPresentation,
+} from "@/components/providers/OmpLoginCard";
 import {
   extractErrorMessage,
   translatePiProviderMutationError,
@@ -340,6 +345,19 @@ export function ProviderList({
           .toLowerCase()
           .includes(searchKeyword)),
   );
+  const { data: ompLogins } = useQuery({
+    queryKey: ["omp-logins"],
+    queryFn: ompApi.listLogins,
+    enabled: appId === "omp",
+  });
+  const loginCards = appId === "omp" ? (ompLogins ?? []) : [];
+  const filteredLogins = loginCards.filter((login) =>
+    [login.provider, ompLoginPresentation(login.provider).name]
+      .join("\n")
+      .toLowerCase()
+      .includes(searchKeyword),
+  );
+  const extraAdded = (showDshAccountCard ? 1 : 0) + filteredLogins.length;
 
   // 关掉面板就不再过滤：搜索词留着，下次打开还在，但列表不会悄悄少几家
   const filteredProviders = useMemo(() => {
@@ -410,7 +428,7 @@ export function ProviderList({
         isHermesReadOnlyProvider(provider.settingsConfig),
       piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
       kimiCurrentId: currentProviderId,
-      extraAdded: showDshAccountCard ? 1 : 0,
+      extraAdded,
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -440,7 +458,7 @@ export function ProviderList({
     hermesModelConfig?.provider,
     isPiStateReady,
     currentProviderId,
-    showDshAccountCard,
+    extraAdded,
     onRemoveFromConfig,
     onDelete,
     onDisableOmo,
@@ -508,7 +526,11 @@ export function ProviderList({
     );
   }
 
-  if (sortedProviders.length === 0 && !dshAccountCard) {
+  if (
+    sortedProviders.length === 0 &&
+    !dshAccountCard &&
+    loginCards.length === 0
+  ) {
     return (
       <div className="space-y-4">
         {piStateErrorNotice}
@@ -638,7 +660,7 @@ export function ProviderList({
   const liftLeadTitle =
     !hostedSearch &&
     Boolean(leadSection?.title) &&
-    (filteredProviders.length > 0 || showDshAccountCard);
+    (filteredProviders.length > 0 || extraAdded > 0);
   const showListHeader =
     !hostedSearch && (Boolean(leadSection?.title) || isSearchOpen);
 
@@ -662,7 +684,7 @@ export function ProviderList({
         </div>
       )}
 
-      {filteredProviders.length === 0 && !showDshAccountCard ? (
+      {filteredProviders.length === 0 && extraAdded === 0 ? (
         <div className="rounded-panel border border-dashed border-border px-6 py-8 text-center text-body text-fg-2">
           {t("provider.noSearchResults", {
             defaultValue: "No providers match your search.",
@@ -683,9 +705,13 @@ export function ProviderList({
               {section.key === "added" &&
                 showDshAccountCard &&
                 dshAccountCard && <DshAccountCard status={dshAccountCard} />}
+              {section.key === "added" &&
+                filteredLogins.map((login) => (
+                  <OmpLoginCard key={login.provider} login={login} />
+                ))}
               {section.items.length === 0 &&
               section.emptyText &&
-              !(section.key === "added" && showDshAccountCard) ? (
+              !(section.key === "added" && extraAdded > 0) ? (
                 <div className="rounded-panel border border-dashed border-border px-4 py-3 text-caption text-fg-3">
                   {section.emptyText}
                 </div>
