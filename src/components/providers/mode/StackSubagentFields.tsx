@@ -55,7 +55,7 @@ export function sameStackSubagent(
 }
 
 interface StackSubagentFieldsProps {
-  /** 能选的模型：已去掉默认那家（它不发布 `ccs-*` 模型） */
+  /** 已发布的子代理模型，含官方默认供应商的原生模型。 */
   models: ProxyStackSubagentModel[];
   value: StackSubagentValue;
   onChange: (next: StackSubagentValue) => void;

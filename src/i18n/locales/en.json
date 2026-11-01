@@ -4311,7 +4311,7 @@
       "unavailableOption": "{{model}} (no longer aggregated)",
       "unavailable": "The selected model is no longer in the aggregation (the provider was removed or stopped publishing it), so sub-agents follow the main model for now. It comes back once you add it again.",
       "noModels": "No aggregated models are published yet. Add providers to the aggregation first.",
-      "classicOff": "The sub-agent runs on a different provider from the main agent, so Codex's new sub-agent tools encrypt its task where only the main agent's provider can read it, and the sub-agent receives nothing. You must turn on \"Classic sub-agent tools in aggregation\" below.",
+      "classicOff": "If the sub-agent runs on a different provider from the main agent, Codex's new sub-agent tools encrypt its task where only the main agent's provider can read it, and the sub-agent receives nothing. You must turn on \"Classic sub-agent tools in aggregation\" below.",
       "autoReviewModel": "Auto Review model",
       "autoReviewDescription": "The model Codex uses to decide whether an action may go ahead when automatic approval (Approve for me) is on. It can be another provider's aggregated model. Restart Codex after changes.",
       "autoReviewDefaultOfficial": "Official Auto Review (default)",

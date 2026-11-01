@@ -794,7 +794,7 @@ pub struct StackMemberView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackSubagentModel {
-    /// 发布给客户端的模型 id（`ccs-<key>/<model>`），也是写进 `[agents]` 的值。
+    /// 发布给客户端的模型 id（第三方为 `ccs-<key>/<model>`，官方为原生 ID），也是写进 `[agents]` 的值。
     pub id: String,
     pub provider_id: String,
     /// `<模型显示名>（<供应商名>）`，和模型选择器里一样。

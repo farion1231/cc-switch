@@ -4312,7 +4312,7 @@
       "unavailableOption": "{{model}}（已不在聚合裡）",
       "unavailable": "所選模型已不在聚合名單裡（成員被移除或模型不再發布），子代理暫時跟隨主模型；加回來後自動恢復。",
       "noModels": "聚合名單裡還沒有發布的模型，先把供應商加入聚合。",
-      "classicOff": "子代理和主代理不在同一家，Codex 新版的子 agent 工具會把任務加密，只有主代理那家解得開，子代理會收不到任務。必須打開下面的「聚合模式下子 agent 用經典工具」。",
+      "classicOff": "當子代理和主代理不在同一家時，Codex 新版的子 agent 工具會把任務加密，只有主代理那家解得開，子代理會收不到任務。必須打開下面的「聚合模式下子 agent 用經典工具」。",
       "autoReviewModel": "自動審批模型",
       "autoReviewDescription": "Codex 開了自動審批（Approve for me）時，判斷操作能不能放行所用的模型，可以選聚合裡別家的模型。修改後需要重新啟動 Codex。",
       "autoReviewDefaultOfficial": "官方 Auto Review（預設）",
