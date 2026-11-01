@@ -1537,6 +1537,8 @@ pub fn run() {
             commands::get_providers,
             commands::get_current_provider,
             commands::add_provider,
+            commands::preview_provider_bulk_import,
+            commands::import_provider_bulk,
             commands::update_provider,
             commands::get_provider_editor_view,
             commands::delete_provider,

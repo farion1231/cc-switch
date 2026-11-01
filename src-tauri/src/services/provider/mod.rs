@@ -3,6 +3,7 @@
 //! Handles provider CRUD operations, switching, and configuration management.
 
 pub(crate) mod agy_direct;
+mod bulk_import;
 pub(crate) mod claude_direct;
 mod claude_editor;
 pub(crate) mod claude_official;
@@ -54,6 +55,7 @@ pub fn import_omp_providers_from_live(state: &AppState) -> Result<usize, AppErro
     omp::import_from_live(state)
 }
 
+pub use bulk_import::{BulkProviderImportResult, BulkProviderPreview};
 pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
@@ -5404,6 +5406,19 @@ impl ProviderService {
     }
 
     fn normalize_usage_script_credential_overrides(app_type: &AppType, provider: &mut Provider) {
+        // Resolving Pi/OMP credentials can read environment variables or .env files.
+        // Only do that when an actual usage-script override needs comparison.
+        let needs_credentials = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.usage_script.as_ref())
+            .is_some_and(|script| {
+                script.template_type.as_deref() != Some("token_plan")
+                    && (script.api_key.is_some() || script.base_url.is_some())
+            });
+        if !needs_credentials {
+            return;
+        }
         let current_credentials = provider.resolve_usage_credentials(app_type);
 
         let Some(usage_script) = provider
@@ -5413,10 +5428,6 @@ impl ProviderService {
         else {
             return;
         };
-
-        if usage_script.template_type.as_deref() == Some("token_plan") {
-            return;
-        }
 
         if usage_script.api_key.as_deref().is_some_and(|api_key| {
             Self::should_clear_usage_api_key_override(api_key, &current_credentials)
