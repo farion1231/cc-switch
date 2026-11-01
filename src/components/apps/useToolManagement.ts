@@ -321,12 +321,39 @@ export async function checkToolUpdatesInBackground(): Promise<void> {
       (tool) => latestToolVersionRequests.get(tool.name) === requestId,
     );
     if (current.length === 0) return;
+    let nextInstallReports = toolManagementState.installReports;
+    const outdatedOpenCode = current.find(
+      (tool) =>
+        tool.name === "opencode" &&
+        isUpdateAvailable(tool.version, tool.latest_version),
+    );
+    if (outdatedOpenCode && !nextInstallReports?.opencode) {
+      try {
+        const [report] = await settingsApi.listToolInstallations(["opencode"]);
+        if (report) {
+          nextInstallReports = {
+            ...(nextInstallReports ?? {}),
+            opencode: report,
+          };
+        }
+      } catch (error) {
+        console.error(
+          "[useToolManagement] background OpenCode install probe failed",
+          error,
+        );
+        // Probe failure should fall back to the historical UX rather than hiding
+        // updates forever. Execution still re-checks the update plan in Rust.
+        if (nextInstallReports === null) nextInstallReports = {};
+      }
+    }
+
     const latest = toolManagementState.toolVersionsCache;
     updateToolManagementState({
       toolVersionsCache: {
         data: mergeToolVersions(latest?.data ?? [], current),
         at: Date.now(),
       },
+      installReports: nextInstallReports,
     });
   } catch (error) {
     console.error("[useToolManagement] Background update check failed", error);
@@ -335,13 +362,16 @@ export async function checkToolUpdatesInBackground(): Promise<void> {
 
 /** 已检查过的命令行应用里有没有可升级的（不触发检查，只读缓存）。 */
 export function useToolUpdatesAvailable(): boolean {
-  const { toolVersionsCache } = useSyncExternalStore(
+  const { toolVersionsCache, installReports } = useSyncExternalStore(
     subscribeToolManagement,
     getToolManagementState,
   );
   return (
-    toolVersionsCache?.data.some((tool) =>
-      isUpdateAvailable(tool.version, tool.latest_version),
+    toolVersionsCache?.data.some(
+      (tool) =>
+        !(tool.name === "opencode" && installReports === null) &&
+        !installReports?.[tool.name as ToolName]?.unmanaged &&
+        isUpdateAvailable(tool.version, tool.latest_version),
     ) ?? false
   );
 }
@@ -393,11 +423,13 @@ export function useToolManagement() {
         return (
           !busyTools.has(toolName) &&
           !loadingTools[toolName] &&
+          !(toolName === "opencode" && installReports === null) &&
+          !installReports?.[toolName]?.unmanaged &&
           !tool?.update_blocked_by_node &&
           isUpdateAvailable(tool?.version, tool?.latest_version)
         );
       }),
-    [toolVersionByName, busyTools, loadingTools],
+    [toolVersionByName, busyTools, loadingTools, installReports],
   );
 
   const refreshToolVersions = useCallback(
@@ -529,7 +561,11 @@ export function useToolManagement() {
   // 安装分布：路径、来源（npm / 原生 / Homebrew…）、有没有多处安装。只在本机探测，不联网。
   const loadInstallations = useCallback(
     async (options?: { force?: boolean }) => {
-      if (!options?.force && toolManagementState.installReports) return;
+      const currentReports = toolManagementState.installReports;
+      const hasCompleteReports =
+        currentReports !== null &&
+        TOOL_NAMES.every((toolName) => currentReports[toolName] !== undefined);
+      if (!options?.force && hasCompleteReports) return;
       try {
         const reports = await settingsApi.listToolInstallations([
           ...TOOL_NAMES,
@@ -544,6 +580,11 @@ export function useToolManagement() {
           "[useToolManagement] probeToolInstallations failed",
           error,
         );
+        // Mark the initial probe as finished so an unavailable diagnostics call
+        // does not permanently suppress OpenCode's historical upgrade fallback.
+        if (toolManagementState.installReports === null) {
+          updateToolManagementState({ installReports: {} });
+        }
       }
     },
     [],
