@@ -324,6 +324,18 @@ pub struct LocalMigrations {
     /// 旧版官方路由桶（`cc-switch-official`）迁回 openai 桶的标记，按 Codex 目录生效。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_legacy_official_history_bucket_v1: Option<CodexLegacyOfficialHistoryBucketMigration>,
+    /// StepFun 存量供应商补窗口默认值的标记。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stepfun_context_window_v1: Option<StepFunContextWindowMigration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepFunContextWindowMigration {
+    pub completed_at: String,
+    /// 补过默认值的供应商 id。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub migrated_provider_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1113,6 +1125,25 @@ pub fn is_codex_provider_template_migrated() -> bool {
         .as_ref()
         .and_then(|migrations| migrations.codex_provider_template_v1.as_ref())
         .is_some()
+}
+
+pub fn is_stepfun_context_window_migrated() -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| migrations.stepfun_context_window_v1.as_ref())
+        .is_some()
+}
+
+pub fn mark_stepfun_context_window_migrated(
+    migration: StepFunContextWindowMigration,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        let migrations = settings
+            .local_migrations
+            .get_or_insert_with(Default::default);
+        migrations.stepfun_context_window_v1 = Some(migration);
+    })
 }
 
 pub fn mark_codex_provider_template_migrated(
