@@ -476,6 +476,44 @@ pub fn transform_claude_request_for_api_format(
 /// Claude 适配器
 pub struct ClaudeAdapter;
 
+/// 是否是 API 版本路径段（`v1`、`v4`、`v10`……）。URL 路径大小写敏感，所以不做小写化。
+fn is_version_path_segment(segment: &str) -> bool {
+    match segment.strip_prefix('v') {
+        Some(digits) => !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// `base_url` 的最后一个**路径**段是否是 API 版本段，例如 OpenAI 的 `.../v1` 或智谱的
+/// `.../api/paas/v4`。`?query` / `#fragment` 和结尾的 `/` 不影响判断。
+///
+/// 只看路径，不看 authority：`http://v4` 这种单段主机名（内网 DNS）没有路径，
+/// 不能把主机名当成版本段，否则 `/v1/messages` 会被拼成 `/messages`，整个供应商
+/// 的请求都会打到错误端点。
+fn base_url_ends_with_version(base_url: &str) -> bool {
+    let trimmed = base_url.trim();
+    // Drop the scheme so the authority can be split off by the first separator.
+    let after_scheme = match trimmed.split_once("://") {
+        Some((_, rest)) => rest,
+        None => trimmed,
+    };
+    // Authority first, path second. No separator at all means an origin-only URL,
+    // which has no path to inspect.
+    let path = match after_scheme.split_once(['/', '?', '#']) {
+        Some((_, path)) => path,
+        None => return false,
+    };
+    // A `?query`/`#fragment` must not hide the last path segment.
+    let path = match path.split_once(['?', '#']) {
+        Some((path, _)) => path,
+        None => path,
+    };
+    match path.trim_end_matches('/').rsplit('/').next() {
+        Some(segment) => is_version_path_segment(segment),
+        None => false,
+    }
+}
+
 impl ClaudeAdapter {
     pub fn new() -> Self {
         Self
@@ -884,18 +922,22 @@ impl ProviderAdapter for ClaudeAdapter {
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
         //
-        let mut base = format!(
-            "{}/{}",
-            base_url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
-        );
+        let base = base_url.trim_end_matches('/');
+        let endpoint = endpoint.trim_start_matches('/');
 
-        // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
-        while base.contains("/v1/v1") {
-            base = base.replace("/v1/v1", "/v1");
-        }
+        // 上游把 API 版本放进 base_url 时（智谱 `.../api/paas/v4`、OpenAI `.../v1`），
+        // endpoint 自带的版本段是多余的：拼上去会得到 `/v4/v1/chat/completions` 而 404。
+        // 只丢掉这一处版本段，其余路径原样拼接；base_url 不带版本段时完全不影响。
+        let endpoint = if base_url_ends_with_version(base_url) {
+            match endpoint.split_once('/') {
+                Some((first, rest)) if is_version_path_segment(first) => rest,
+                _ => endpoint,
+            }
+        } else {
+            endpoint
+        };
 
-        base
+        format!("{base}/{endpoint}")
     }
 
     fn get_auth_headers(
@@ -1613,6 +1655,88 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
         assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_reuses_base_url_version_for_openai_endpoints() {
+        let adapter = ClaudeAdapter::new();
+
+        // 智谱的 Anthropic 兼容地址不带 /v1，但上游格式选 OpenAI Chat 时 endpoint 被改写成
+        // /v1/chat/completions，两个版本段拼在一起会 404。
+        assert_eq!(
+            adapter.build_url(
+                "https://open.bigmodel.cn/api/paas/v4",
+                "/v1/chat/completions"
+            ),
+            "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+        );
+        assert_eq!(
+            adapter.build_url(
+                "https://open.bigmodel.cn/api/paas/v4",
+                "/v1/responses?foo=bar"
+            ),
+            "https://open.bigmodel.cn/api/paas/v4/responses?foo=bar"
+        );
+    }
+
+    #[test]
+    fn test_build_url_version_dedupe_keeps_other_paths_untouched() {
+        let adapter = ClaudeAdapter::new();
+
+        // base_url 自己带 /v1 时结果和以前一致（原来只去重字面量 /v1/v1）。
+        assert_eq!(
+            adapter.build_url("https://api.openai.com/v1", "/v1/messages"),
+            "https://api.openai.com/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://api.openai.com/v1/", "/v1/messages"),
+            "https://api.openai.com/v1/messages"
+        );
+        // 结尾不是版本段时原样拼接。
+        assert_eq!(
+            adapter.build_url("https://api.anthropic.com", "/v1/messages"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://openrouter.ai/api", "/v1/messages"),
+            "https://openrouter.ai/api/v1/messages"
+        );
+    }
+
+    #[test]
+    fn base_url_ends_with_version_ignores_query_and_fragment() {
+        assert!(base_url_ends_with_version("https://x.com/v1"));
+        assert!(base_url_ends_with_version("https://x.com/v4/"));
+        assert!(base_url_ends_with_version("https://x.com/api/paas/v10"));
+        assert!(base_url_ends_with_version("https://x.com/v4?beta=true"));
+        assert!(base_url_ends_with_version("https://x.com/v4#frag"));
+
+        // 不是 `v` + 纯数字的结尾都不能当成版本段。
+        assert!(!base_url_ends_with_version("https://api.anthropic.com"));
+        assert!(!base_url_ends_with_version("https://openrouter.ai/api"));
+        assert!(!base_url_ends_with_version("https://x.com/v1beta"));
+        assert!(!base_url_ends_with_version("https://x.com/version"));
+        assert!(!base_url_ends_with_version("https://x.com/v"));
+        // origin-only URL 没有路径：主机名长得像版本段也不算（内网 DNS 的 `http://v4`）。
+        assert!(!base_url_ends_with_version("http://v4"));
+        assert!(!base_url_ends_with_version("https://v1"));
+        assert!(!base_url_ends_with_version("https://v4?beta=true"));
+    }
+
+    #[test]
+    fn test_build_url_keeps_endpoint_version_when_base_url_has_no_path() {
+        let adapter = ClaudeAdapter::new();
+
+        // A single-label host that looks like a version segment must not swallow the
+        // endpoint's own `/v1`, or every request for that provider 404s.
+        assert_eq!(
+            adapter.build_url("http://v4", "/v1/messages"),
+            "http://v4/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://v1", "/v1/chat/completions"),
+            "https://v1/v1/chat/completions"
+        );
     }
 
     #[test]
