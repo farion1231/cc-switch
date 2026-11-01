@@ -63,30 +63,67 @@ struct DeltaFunction {
 /// OpenAI 流式响应的 usage 信息（完整版）
 #[derive(Debug, Deserialize)]
 struct Usage {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_u32")]
     prompt_tokens: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_u32")]
     completion_tokens: u32,
     #[serde(default)]
     prompt_tokens_details: Option<PromptTokensDetails>,
     /// Some compatible servers return Anthropic-style cache fields directly
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_opt_u32")]
     cache_read_input_tokens: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_opt_u32")]
     cache_creation_input_tokens: Option<u32>,
     /// DeepSeek 风格文档化缓存命中字段（部分中转把标准字段硬编码为桩 0、
     /// 真值只放这里，#8041）
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_opt_u32")]
     prompt_cache_hit_tokens: Option<u32>,
 }
 
 /// Nested token details from OpenAI format
 #[derive(Debug, Deserialize)]
 struct PromptTokensDetails {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_u32")]
     cached_tokens: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_u32")]
     cache_write_tokens: u32,
+}
+
+/// usage 数字字段宽松解析（#8791）：部分中转把它们写成字符串或浮点。宽松度与非流式
+/// 路径的 `as_u64` 对齐——严格 `u32` 会让整个 chunk 反序列化失败、被 `if let Ok(chunk)`
+/// 静默丢弃，usage 连同正文一起消失，message_delta 兜底成全 0。
+fn lenient_u32(value: &Value) -> Option<u32> {
+    match value {
+        Value::Number(number) => number
+            .as_u64()
+            .or_else(|| {
+                number
+                    .as_f64()
+                    .filter(|float| float.fract() == 0.0 && *float >= 0.0)
+                    .map(|float| float as u64)
+            })
+            .and_then(|tokens| u32::try_from(tokens).ok()),
+        Value::String(text) => text.trim().parse::<u32>().ok(),
+        _ => None,
+    }
+}
+
+fn de_lenient_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(lenient_u32(&Value::deserialize(deserializer)?).unwrap_or(0))
+}
+
+fn de_lenient_opt_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    Ok(lenient_u32(&value))
 }
 
 #[derive(Debug, Clone)]
@@ -911,6 +948,54 @@ mod tests {
 
     fn event_type(event: &Value) -> Option<&str> {
         event.get("type").and_then(|v| v.as_str())
+    }
+
+    /// #8791 的实测形态：finish_reason  chunk 不带 usage，usage 单独一个
+    /// `choices: []` 的 chunk 跟在后面，[DONE] 之前到达。message_delta 必须带上
+    /// 真实用量，否则下游（Zed/ACP）的上下文指示器恒为 0。
+    #[tokio::test]
+    async fn test_usage_only_chunk_after_finish_reason_reaches_message_delta() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_u\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_u\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_u\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":16,\"completion_tokens\":10,\"total_tokens\":26}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("message_delta");
+        assert_eq!(
+            message_delta["usage"],
+            json!({"input_tokens": 16, "output_tokens": 10})
+        );
+    }
+
+    /// #8791：部分中转把 usage 的数字字段写成字符串或浮点。严格反序列化会让整个
+    /// chunk 解析失败被丢弃（`if let Ok(chunk)`），usage 连带内容一起消失，
+    /// message_delta 兜底成全 0——与下游看到的症状一致。
+    #[tokio::test]
+    async fn test_usage_with_non_standard_number_types_still_reaches_message_delta() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_s\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_s\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_s\",\"choices\":[],\"usage\":{\"prompt_tokens\":\"16\",\"completion_tokens\":10.0}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("message_delta");
+        assert_eq!(
+            message_delta["usage"],
+            json!({"input_tokens": 16, "output_tokens": 10})
+        );
+        let text = collect_delta_text(&events, "text_delta", "/delta/text");
+        assert_eq!(text, "hi");
     }
 
     /// 收集某一类 content_block_delta 的文本字段并拼接，用于断言流式增量的最终内容。
