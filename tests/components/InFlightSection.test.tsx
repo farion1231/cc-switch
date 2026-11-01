@@ -1,4 +1,4 @@
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InFlightSection } from "@/components/usage/InFlightSection";
@@ -13,7 +13,9 @@ vi.mock("@/lib/query/failover", () => ({
   useInFlightRequests: () => ({ data: entriesRef.value }),
 }));
 
-function renderSection(props: Partial<Parameters<typeof InFlightSection>[0]> = {}) {
+function renderSection(
+  props: Partial<Parameters<typeof InFlightSection>[0]> = {},
+) {
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
       <InFlightSection active {...props} />
@@ -52,7 +54,9 @@ describe("InFlightSection", () => {
   });
 
   it("shows provider, model and a running elapsed time", () => {
-    entriesRef.value = [entry({ startedAt: new Date(Date.now() - 65_000).toISOString() })];
+    entriesRef.value = [
+      entry({ startedAt: new Date(Date.now() - 65_000).toISOString() }),
+    ];
     renderSection();
 
     expect(screen.getByText("Relay A")).toBeInTheDocument();
@@ -77,10 +81,25 @@ describe("InFlightSection", () => {
 
   it("honours the same filters as the log table below it", () => {
     entriesRef.value = [
-      entry({ id: 1, appType: "claude", providerName: "Relay A", model: "m-a" }),
+      entry({
+        id: 1,
+        appType: "claude",
+        providerName: "Relay A",
+        model: "m-a",
+      }),
       entry({ id: 2, appType: "codex", providerName: "Relay A", model: "m-a" }),
-      entry({ id: 3, appType: "claude", providerName: "Relay B", model: "m-a" }),
-      entry({ id: 4, appType: "claude", providerName: "Relay A", model: "m-b" }),
+      entry({
+        id: 3,
+        appType: "claude",
+        providerName: "Relay B",
+        model: "m-a",
+      }),
+      entry({
+        id: 4,
+        appType: "claude",
+        providerName: "Relay A",
+        model: "m-b",
+      }),
     ];
     renderSection({ appType: "claude", providerName: "Relay A", model: "m-a" });
 
@@ -101,5 +120,60 @@ describe("InFlightSection", () => {
     renderSection();
 
     expect(screen.getByText(/2 个请求正在进行/)).toBeInTheDocument();
+  });
+
+  it("invalidates the request log when an in-flight request finishes", () => {
+    // 日志表默认不自动刷新；请求从置顶消失时必须由这里通知日志查询，
+    // 否则「飞完滚下去」断在半路——上面没了，下面也没出现
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <InFlightSection active />
+      </QueryClientProvider>,
+    );
+    entriesRef.value = [entry({ id: 1 })];
+    rerender(
+      <QueryClientProvider client={client}>
+        <InFlightSection active />
+      </QueryClientProvider>,
+    );
+
+    entriesRef.value = [];
+    rerender(
+      <QueryClientProvider client={client}>
+        <InFlightSection active />
+      </QueryClientProvider>,
+    );
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["usage", "logs"] });
+  });
+
+  it("does not invalidate the log when the in-flight set only grows", () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <InFlightSection active />
+      </QueryClientProvider>,
+    );
+    entriesRef.value = [entry({ id: 1 })];
+    rerender(
+      <QueryClientProvider client={client}>
+        <InFlightSection active />
+      </QueryClientProvider>,
+    );
+    invalidate.mockClear();
+
+    entriesRef.value = [entry({ id: 1 }), entry({ id: 2 })];
+    rerender(
+      <QueryClientProvider client={client}>
+        <InFlightSection active />
+      </QueryClientProvider>,
+    );
+
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });

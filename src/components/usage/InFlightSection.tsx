@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useInFlightRequests } from "@/lib/query/failover";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,28 @@ export function InFlightSection({
     const timer = window.setInterval(() => setTick((v) => v + 1), 1000);
     return () => window.clearInterval(timer);
   }, [entries.length]);
+
+  // 「飞完滚下去」的另一半：日志表默认不自动刷新（refreshIntervalMs=0，
+  // 手动刷新是刻意省流量的设计），所以请求结束的信号必须由这里发给日志查询，
+  // 否则请求会从置顶消失却迟迟不出现在下面的表里，看起来像被吞了。
+  // 只失效 ["usage","logs"] 这一支，不碰统计卡片那些聚合查询。
+  const queryClient = useQueryClient();
+  const shownIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const shown = shownIdsRef.current;
+    const current = new Set(entries.map((entry) => entry.id));
+    let finished = false;
+    for (const id of shown) {
+      if (!current.has(id)) {
+        finished = true;
+        break;
+      }
+    }
+    shownIdsRef.current = current;
+    if (finished) {
+      void queryClient.invalidateQueries({ queryKey: ["usage", "logs"] });
+    }
+  }, [entries, queryClient]);
 
   if (!active || entries.length === 0) return null;
 
