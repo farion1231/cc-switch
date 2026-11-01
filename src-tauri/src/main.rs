@@ -7,6 +7,39 @@ fn main() {
     // 参考: https://github.com/tauri-apps/tauri/issues/9394
     #[cfg(target_os = "linux")]
     {
+        // 规避 AppImage 打包的旧版 libwayland-client 与宿主 Mesa/Wayland 的 EGL 冲突 (#8723, #7335)
+        // linuxdeploy 打包的旧版 libwayland-client.so.0 排在 LD_LIBRARY_PATH 最前，
+        // 导致 WebKitWebProcess 在较新发行版（Arch / openSUSE / Fedora / Ubuntu 24.04+）上启动即报错：
+        // Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...
+        // 在检测到 Wayland 会话与 AppImage 环境时，预加载宿主系统的原生 libwayland-client.so.0 即可彻底解决此崩溃。
+        if std::env::var("_CC_SWITCH_WAYLAND_PRELOADED").is_err() && std::env::var("APPIMAGE").is_ok() {
+            let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+                || std::env::var("XDG_SESSION_TYPE")
+                    .map(|s| s.eq_ignore_ascii_case("wayland"))
+                    .unwrap_or(false);
+
+            if is_wayland {
+                let candidates = [
+                    "/usr/lib64/libwayland-client.so.0",
+                    "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0",
+                    "/usr/lib/libwayland-client.so.0",
+                    "/usr/lib/aarch64-linux-gnu/libwayland-client.so.0",
+                ];
+                if let Some(host_wayland) = candidates.iter().find(|p| std::path::Path::new(p).exists()) {
+                    use std::os::unix::process::CommandExt;
+                    let mut cmd = std::process::Command::new(std::env::current_exe().unwrap_or_default());
+                    cmd.args(std::env::args_os().skip(1));
+                    cmd.env("_CC_SWITCH_WAYLAND_PRELOADED", "1");
+                    let new_preload = match std::env::var("LD_PRELOAD") {
+                        Ok(existing) if !existing.is_empty() => format!("{}:{}", host_wayland, existing),
+                        _ => host_wayland.to_string(),
+                    };
+                    cmd.env("LD_PRELOAD", new_preload);
+                    let _ = cmd.exec();
+                }
+            }
+        }
+
         if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
