@@ -16,65 +16,7 @@ use support::{
 };
 
 fn settings_path(home: &Path) -> PathBuf {
-    home.join(".xsec-agent-shield").join("settings.json")
-}
-
-#[test]
-fn startup_catalog_seeds_only_local_defaults_and_manual_import_remains_available() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let home = ensure_test_home();
-    let files = [
-        (
-            ".codex/auth.json",
-            r#"{"OPENAI_API_KEY":"startup-import-canary"}"#,
-        ),
-        (".codex/config.toml", "model = \"gpt-5\"\n"),
-        (
-            ".codex/sessions/old.jsonl",
-            "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"ccswitch\"}}\n",
-        ),
-        (
-            ".claude/settings.json",
-            r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"foreign-token"}}"#,
-        ),
-        (
-            ".claude.json",
-            r#"{"mcpServers":{"foreign-server":{"command":"echo"}}}"#,
-        ),
-        (".claude/CLAUDE.md", "foreign prompt canary"),
-    ];
-    for (relative, content) in files {
-        let path = home.join(relative);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, content).unwrap();
-    }
-    let state = create_test_state().expect("create test state");
-    ProviderService::initialize_startup_catalog(&state).expect("initialize local catalog");
-    ProviderService::initialize_startup_catalog(&state).expect("repeat startup");
-
-    let providers = state.db.get_all_providers("codex").unwrap();
-    assert_eq!(providers.len(), 1);
-    assert!(providers.contains_key("codex-official"));
-    assert!(state.db.is_mcp_table_empty().unwrap());
-    assert!(state.db.is_prompts_table_empty().unwrap());
-    for (relative, content) in files {
-        assert_eq!(
-            std::fs::read(home.join(relative)).unwrap(),
-            content.as_bytes()
-        );
-    }
-
-    assert!(import_default_config_test_hook(&state, AppType::Codex).unwrap());
-    let imported = state
-        .db
-        .get_provider_by_id("default", "codex")
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        imported.settings_config["auth"]["OPENAI_API_KEY"],
-        "startup-import-canary"
-    );
+    home.join(".cc-switch").join("settings.json")
 }
 
 #[test]
@@ -317,7 +259,7 @@ fn grokbuild_switch_back_after_client_changed_default_model() {
 }
 
 #[test]
-fn codex_manual_import_fresh_install_syncs_current_setting() {
+fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
@@ -328,6 +270,12 @@ fn codex_manual_import_fresh_install_syncs_current_setting() {
     write_codex_live_atomic(&auth, Some(config)).expect("seed codex live config");
 
     let state = create_test_state().expect("create test state");
+
+    assert!(
+        ProviderService::should_import_default_config_on_startup(&state, &AppType::Codex)
+            .expect("check startup import eligibility"),
+        "empty Codex provider set should import on startup"
+    );
 
     import_default_config_test_hook(&state, AppType::Codex).expect("import codex default");
 
@@ -377,10 +325,16 @@ fn codex_manual_import_fresh_install_syncs_current_setting() {
         "official seeding should add codex-official alongside imported default"
     );
     assert!(providers_after_seed.contains_key("codex-official"));
+
+    assert!(
+        !ProviderService::should_import_default_config_on_startup(&state, &AppType::Codex)
+            .expect("re-check startup import eligibility"),
+        "subsequent startup should skip once Codex already has providers"
+    );
 }
 
 #[test]
-fn codex_manual_import_accepts_config_without_auth_file() {
+fn codex_startup_import_accepts_config_without_auth_file() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
@@ -499,8 +453,11 @@ fn codex_startup_import_skips_when_only_official_seed_exists() {
     );
     assert!(providers_before.contains_key("codex-official"));
 
-    ProviderService::initialize_startup_catalog(&state)
-        .expect("repeat startup catalog initialization");
+    assert!(
+        !ProviderService::should_import_default_config_on_startup(&state, &AppType::Codex)
+            .expect("check startup import eligibility"),
+        "startup should skip import when codex-official already exists"
+    );
 
     let providers_after = state
         .db
@@ -793,7 +750,7 @@ fn switch_provider_updates_claude_live_and_state() {
     // 验证数据已持久化到数据库
     let home_dir = std::env::var("HOME").expect("HOME should be set by ensure_test_home");
     let db_path = std::path::Path::new(&home_dir)
-        .join(".xsec-agent-shield")
+        .join(".cc-switch")
         .join("cc-switch.db");
     assert!(
         db_path.exists(),
@@ -867,8 +824,8 @@ fn import_refuses_live_config_under_proxy_takeover() {
     reset_test_fs();
     ensure_test_home();
 
-    // 接管态 Codex Live：auth 是 XSEC_SHIELD_PROXY_MANAGED 占位符，不是用户真实配置
-    let auth = json!({"OPENAI_API_KEY": "XSEC_SHIELD_PROXY_MANAGED"});
+    // 接管态 Codex Live：auth 是 PROXY_MANAGED 占位符，不是用户真实配置
+    let auth = json!({"OPENAI_API_KEY": "PROXY_MANAGED"});
     let config = r#"model = "gpt-5"
 "#;
     write_codex_live_atomic(&auth, Some(config)).expect("seed taken-over codex live");

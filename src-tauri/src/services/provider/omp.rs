@@ -51,7 +51,6 @@ fn sync_native(state: &AppState) -> Result<usize, AppError> {
     }
     Ok(changed)
 }
-#[allow(dead_code)] // 上游启动自动导入入口；本项目改为显式导入
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
     sync_native(state)

@@ -114,6 +114,8 @@ const LEGACY_CCSWITCH_CODEX_MODEL_PROVIDER_IDS: &[&str] = &[
 
 #[derive(Debug, Clone, Default)]
 pub struct CodexHistoryProviderBucketMigrationOutcome {
+    /// 上游迁移日志会读这个字段；本项目未启用该迁移的启动重试，暂时只写不读。
+    #[allow(dead_code)]
     pub source_provider_ids: Vec<String>,
     pub migrated_jsonl_files: usize,
     pub migrated_state_rows: usize,

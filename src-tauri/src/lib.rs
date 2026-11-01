@@ -398,7 +398,7 @@ fn raise_open_file_limit() {
     }
 }
 
-/// 又启动了一个实例（或经命令行打开 ccswitch:// 链接）：退出轻量模式、处理链接、把主窗口拿到前台。
+/// 又启动了一个实例（或经命令行打开 xsecshield:// 链接）：退出轻量模式、处理链接、把主窗口拿到前台。
 /// 在后台线程上调用（见 single_instance 回调），一次处理一个：连着启动两次时，
 /// 不能两边都看到主窗口不在、各建一个。
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -545,7 +545,7 @@ pub fn run() {
             app_store::refresh_app_config_dir_override(app.handle());
             panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
 
-            // 初始化日志（输出到 <app_config_dir>/logs/cc-switch.log）
+            // 初始化日志（输出到 <app_config_dir>/logs/xsec-agent-shield.log）
             {
                 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -570,7 +570,7 @@ pub fn run() {
                             Target::new(TargetKind::Stdout),
                             Target::new(TargetKind::Folder {
                                 path: log_dir,
-                                file_name: Some("cc-switch".into()),
+                                file_name: Some("xsec-agent-shield".into()),
                             }),
                         ])
                         // KeepSome(4) 保留 4 个轮转归档，加上当前文件最多约 100 MiB。
@@ -596,9 +596,17 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             set_windows_app_user_model_id(app.handle());
 
-            // P0-01：开发构建不注册 Updater 插件。XSEC 发布身份、签名与更新渠道
-            // 尚未确认，任何更新检查/安装入口（含便携版下载）都被禁用，而不是
-            // 只删端点 URL；详见 docs/development-plan.md 的 P0-01 与 V14。
+            // 注册 Updater 插件（桌面端）；放在 logger 之后，确保失败可诊断。
+            #[cfg(desktop)]
+            {
+                if let Err(e) = app
+                    .handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())
+                {
+                    // 若配置不完整（如缺少 pubkey），跳过 Updater 而不中断应用
+                    log::warn!("初始化 Updater 插件失败，已跳过：{e}");
+                }
+            }
 
             // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
             // 也能向前端推送 `usage-log-recorded`。
@@ -607,7 +615,7 @@ pub fn run() {
 
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
-            let db_path = app_config_dir.join("cc-switch.db");
+            let db_path = app_config_dir.join("xsec-agent-shield.db");
             let json_path = app_config_dir.join("config.json");
 
             // 检查是否需要从 config.json 迁移到 SQLite
@@ -802,33 +810,272 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
-            // Startup seeds only Shield's own database. Existing Agent credentials,
-            // providers, MCP entries and prompt files require an explicit import action.
+            // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
+            //
+            // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env
+            // 落成 "default" provider 设为 current，再追加官方预设（is_current=false）。
+            // 降级回旧版时，旧版的回填和整份写入仍靠这一行保住用户原来的 live 配置。
+            //
+            // 捕获首次运行快照：所有全新装用户都会看到欢迎弹窗介绍 XSEC Agent Shield 的工作方式。
+            // 读失败时默认不弹，宁可漏弹也不要因为故障打扰用户。
             let first_run_already_confirmed = crate::settings::get_settings()
                 .first_run_notice_confirmed
                 .unwrap_or(false);
-            let fresh_install_at_startup = app_state.db.is_providers_empty().unwrap_or(false);
+            let fresh_install_at_startup =
+                app_state.db.is_providers_empty().unwrap_or(false);
 
-            match crate::services::provider::initialize_startup_catalog(&app_state) {
-                Ok(count) if count > 0 => log::info!("✓ Seeded {count} official provider(s)"),
+            for app_type in
+                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
+            {
+                if !crate::services::provider::should_import_default_config_on_startup(
+                    &app_state,
+                    &app_type,
+                )
+                .unwrap_or(false)
+                {
+                    log::debug!(
+                        "○ {} already has providers; live import skipped",
+                        app_type.as_str()
+                    );
+                    continue;
+                }
+
+                match crate::services::provider::import_default_config(
+                    &app_state,
+                    app_type.clone(),
+                ) {
+                    Ok(true) => log::info!(
+                        "✓ Imported live config for {} as default provider",
+                        app_type.as_str()
+                    ),
+                    Ok(false) => log::debug!(
+                        "○ {} already has providers; live import skipped",
+                        app_type.as_str()
+                    ),
+                    Err(e) => log::debug!(
+                        "○ No live config to import for {}: {e}",
+                        app_type.as_str()
+                    ),
+                }
+            }
+
+            if let Err(error) = crate::services::provider::initialize_dsh_profiles(&app_state) {
+                log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
+            }
+
+            match app_state.db.init_default_official_providers() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Seeded {count} official provider(s)");
+                }
                 Ok(_) => {}
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
-            // Retry only the migration explicitly requested by the user in settings.
-            // Its implementation checks both the unify toggle and migrate-existing consent.
-            tauri::async_runtime::spawn_blocking(|| {
-                match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
-                    Ok(outcome) => log::debug!(
-                        "Codex authorized history migration: sources={}, skipped={:?}",
-                        outcome.source_provider_ids.len(), outcome.skipped_reason
-                    ),
-                    Err(e) => log::warn!("✗ Codex official history unify migration failed: {e}"),
-                }
-            });
+            {
+                tauri::async_runtime::spawn_blocking(move || {
+                    // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
+                    // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
+                    match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ Codex official history unify migration skipped: {reason}");
+                            } else {
+                                log::info!(
+                                    "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
+                                    outcome.migrated_jsonl_files,
+                                    outcome.migrated_state_rows
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Codex official history unify migration failed: {e}");
+                        }
+                    }
+                });
+            }
 
+            // 老用户 / 已确认的路径由 `fresh_install_at_startup` 自行拦截，这里不做写入。
+            // 字段只由前端在用户点击"我知道了"时 save_settings 回写，语义是"用户显式确认过"。
             if !first_run_already_confirmed && fresh_install_at_startup {
                 log::info!("✓ First-run welcome notice pending");
+            }
+
+            // 1.6. 自动同步累加模式应用的原生 providers 到数据库
+            //
+            // additive 模式的 import 函数按 id 幂等——
+            // 新 id 执行导入，已有 id 则更新 settings 和 display name，所以每次
+            // 启动都跑是安全的：既保证新装用户开箱可见 live 中的供应商，也让外部
+            // 修改的 live 文件能在重启后同步到数据库（与之前依赖前端"导入当前配置"
+            // 按钮手动触发不同）。
+            //
+            // 底层 read_*_config 在文件不存在时返回默认空配置，因此新装且无
+            // live 文件的用户走 Ok(0) 路径，不会产生错误日志噪音。
+            match crate::services::provider::import_opencode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} OpenCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No OpenCode provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import OpenCode providers: {e}"),
+            }
+            match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} OpenClaw provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No OpenClaw provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
+            }
+            match crate::services::provider::import_hermes_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Hermes provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
+            }
+            match crate::services::provider::import_pi_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Pi provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No Pi provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
+            }
+            match crate::services::provider::import_omp_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Oh My Pi provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
+            }
+
+            // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
+            {
+                let has_omo = app_state
+                    .db
+                    .get_all_providers("opencode")
+                    .map(|providers| providers.values().any(|p| p.category.as_deref() == Some("omo")))
+                    .unwrap_or(false);
+                if !has_omo {
+                    match crate::services::OmoService::import_from_local(&app_state, &crate::services::omo::STANDARD) {
+                        Ok(provider) => {
+                            log::info!("✓ Imported OMO config from local as provider '{}'", provider.name);
+                        }
+                        Err(AppError::OmoConfigNotFound) => {
+                            log::debug!("○ No OMO config to import");
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Failed to import OMO config from local: {e}");
+                        }
+                    }
+                }
+            }
+
+            // 2.3 OMO Slim config import (when no omo-slim provider in DB, import from local)
+            {
+                let has_omo_slim = app_state
+                    .db
+                    .get_all_providers("opencode")
+                    .map(|providers| {
+                        providers
+                            .values()
+                            .any(|p| p.category.as_deref() == Some("omo-slim"))
+                    })
+                    .unwrap_or(false);
+                if !has_omo_slim {
+                    match crate::services::OmoService::import_from_local(&app_state, &crate::services::omo::SLIM) {
+                        Ok(provider) => {
+                            log::info!(
+                                "✓ Imported OMO Slim config from local as provider '{}'",
+                                provider.name
+                            );
+                        }
+                        Err(AppError::OmoConfigNotFound) => {
+                            log::debug!("○ No OMO Slim config to import");
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Failed to import OMO Slim config from local: {e}");
+                        }
+                    }
+                }
+            }
+
+            // 3. 导入 MCP 服务器配置（表空时触发）
+            if app_state.db.is_mcp_table_empty().unwrap_or(false) {
+                log::info!("MCP table empty, importing from live configurations...");
+
+                match crate::services::mcp::McpService::import_from_claude(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Claude");
+                    }
+                    Ok(_) => log::debug!("○ No Claude MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Claude MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_codex(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Codex");
+                    }
+                    Ok(_) => log::debug!("○ No Codex MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Codex MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_gemini(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Gemini");
+                    }
+                    Ok(_) => log::debug!("○ No Gemini MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Gemini MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_grokbuild(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Grok Build");
+                    }
+                    Ok(_) => log::debug!("○ No Grok Build MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Grok Build MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_opencode(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from OpenCode");
+                    }
+                    Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_hermes(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Hermes");
+                    }
+                    Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
+                }
+            }
+
+            // 4. 导入提示词文件（表空时触发）
+            if app_state.db.is_prompts_table_empty().unwrap_or(false) {
+                log::info!("Prompts table empty, importing from live configurations...");
+
+                for app in [
+                    crate::app_config::AppType::Claude,
+                    crate::app_config::AppType::Codex,
+                    crate::app_config::AppType::Gemini,
+                    crate::app_config::AppType::GrokBuild,
+                    crate::app_config::AppType::OpenCode,
+                    crate::app_config::AppType::OpenClaw,
+                    crate::app_config::AppType::Hermes,
+                    crate::app_config::AppType::Pi,
+                    crate::app_config::AppType::Mcode,
+                ] {
+                    match crate::services::prompt::PromptService::import_from_file_on_first_launch(
+                        &app_state,
+                        app.clone(),
+                    ) {
+                        Ok(count) if count > 0 => {
+                            log::info!("✓ Imported {count} prompt(s) for {}", app.as_str());
+                        }
+                        Ok(_) => log::debug!("○ No prompt file found for {}", app.as_str()),
+                        Err(e) => log::warn!("✗ Failed to import prompt for {}: {e}", app.as_str()),
+                    }
+                }
             }
 
             // 迁移旧的 app_config_dir 配置到 Store
@@ -1018,7 +1265,7 @@ pub fn run() {
                 std::thread::spawn(move || {
                     // 上次切换登录时崩溃、断电：先补完（配置操作在前面已补完，指针已落定）
                     crate::services::provider::claude_official::recover_login_switch(&db);
-                    // 默认目录的设置、MCP 可能在 CC Switch 没运行时改过
+                    // 默认目录的设置、MCP 可能在 XSEC Agent Shield 没运行时改过
                     crate::services::claude_account::sync_all_shared(&data_dir)
                 });
             }
@@ -1760,15 +2007,16 @@ pub fn run() {
 
 /// 应用退出前的清理工作
 ///
-/// 停止代理但保留客户端本地路由。应用关闭后连接失败，不能静默转为明文直连。
+/// 把接上代理的客户端都指回直连（模式和代理路由保留，下次启动再接上），再停止代理。
+/// 客户端不能一直指着代理：开机自启默认关闭，XSEC Agent Shield 一关客户端就连不上了。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
-        crate::mode::controller::shutdown_preserving_routes(state.inner()).await;
-        log::info!("退出清理完成：客户端路由保持不变，代理已停止");
+        crate::mode::controller::detach_all(state.inner()).await;
+        log::info!("退出清理完成：客户端已指回直连，代理已停止");
     }
 }
 
-/// 系统终止应用时最多等退出清理这么久：停代理服务自带 5 秒超时，不改写客户端文件。
+/// 系统终止应用时最多等退出清理这么久：停代理服务自带 5 秒超时，指回直连只是写几个文件。
 const SYSTEM_EXIT_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// 系统直接终止应用时（macOS ⌘Q、Dock「退出」、注销关机）的退出清理。
@@ -1979,7 +2227,7 @@ fn show_database_init_error_dialog(
             您的数据尚未丢失，应用不会自动删除数据库文件。\n\
             常见原因包括：数据库版本过新、文件损坏、权限不足、磁盘空间不足等。\n\n\
             建议：\n\
-            1) 先备份整个配置目录（包含 cc-switch.db）\n\
+            1) 先备份整个配置目录（包含 xsec-agent-shield.db）\n\
             2) 如果提示“数据库版本过新”，请升级到更新版本\n\
             3) 如果刚升级出现异常，可回退旧版本导出/备份后再升级\n\n\
             点击「重试」重新尝试初始化\n\
@@ -1993,7 +2241,7 @@ fn show_database_init_error_dialog(
             Your data is NOT lost - the app will not delete the database automatically.\n\
             Common causes include: newer database version, corrupted file, permission issues, or low disk space.\n\n\
             Suggestions:\n\
-            1) Back up the entire config directory (including cc-switch.db)\n\
+            1) Back up the entire config directory (including xsec-agent-shield.db)\n\
             2) If you see “database version is newer”, please upgrade XSEC Agent Shield\n\
             3) If this happened right after upgrading, consider rolling back to export/backup then upgrade again\n\n\
             Click 'Retry' to attempt initialization again\n\

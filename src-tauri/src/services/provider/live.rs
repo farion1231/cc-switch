@@ -942,7 +942,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Codex => {
             let mut result = crate::codex_config::read_codex_live_settings()?;
             // `modelCatalog` is a cc-switch private field that lives only in
-            // the DB SSOT plus the `xsec-agent-shield-model-catalog.json` projection
+            // the DB SSOT plus the `cc-switch-model-catalog.json` projection
             // file — it is never inlined into `auth.json` or `config.toml`.
             // Reverse-parse the projection so the edit form for the active
             // Codex provider doesn't see an empty mapping table.
@@ -1075,7 +1075,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     }
 
     // 允许 "只有官方 seed 预设" 的情况下继续导入 live：
-    // - 启动只 seed；用户手动导入时允许与官方预设共存
+    // - 启动编排顺序是先 import 后 seed，新用户启动时 providers 为空，导入照常
     // - 老用户已有非 seed provider，跳过导入（正确）
     // - 用户手动点 ProviderEmptyState 的导入按钮时，与官方 seed 共存而不被阻塞
     if state.db.has_non_official_seed_provider(app_type.as_str())? {
@@ -1083,7 +1083,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     }
 
     // 拒绝把"代理模式下的 Live"导入为供应商：代理模式下 Live 里只有
-    // XSEC_SHIELD_PROXY_MANAGED 占位符和本地代理地址，不是用户的真实配置。一旦导入，
+    // PROXY_MANAGED 占位符和本地代理地址，不是用户的真实配置。一旦导入，
     // 它会成为直连指针（SSOT），退出代理时会把占位符当真实配置写回 Live。
     // 典型触发场景：代理模式下切换 app_config_dir 并重启，新数据库首启导入。
     if state.proxy_service.live_has_proxy_placeholder(&app_type) {
@@ -1245,10 +1245,20 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     Ok(true) // 真正导入了
 }
 
-/// Startup initializes only Shield's own catalog. Importing live Agent data is
-/// an explicit action and must not be added to this bootstrap path.
-pub fn initialize_startup_catalog(state: &AppState) -> Result<usize, AppError> {
-    state.db.init_default_official_providers()
+/// Decide whether startup should auto-import the current live config as `default`.
+///
+/// This is intentionally stricter than the manual import path:
+/// if the app already has any provider row at all (including official seeds),
+/// startup must skip auto-import to avoid recreating `default` on each launch.
+pub fn should_import_default_config_on_startup(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<bool, AppError> {
+    if app_type.is_additive_mode() {
+        return Ok(false);
+    }
+
+    Ok(!state.db.has_any_provider_for_app(app_type.as_str())?)
 }
 
 /// Remove an OpenCode provider from the live configuration
@@ -1273,7 +1283,7 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 /// Import all providers from OpenCode live config to database
 ///
 /// This imports existing providers from ~/.config/opencode/opencode.json
-/// into the CC Switch database. Each provider found will be added to the
+/// into the XSEC Agent Shield database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::opencode_config;
@@ -1369,7 +1379,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 /// Import all providers from OpenClaw live config to database
 ///
 /// This imports existing providers from ~/.openclaw/openclaw.json
-/// into the CC Switch database. Each provider found will be added to the
+/// into the XSEC Agent Shield database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::openclaw_config;
@@ -1457,7 +1467,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
 /// Import all providers from Hermes live config to database
 ///
 /// This imports existing providers from ~/.hermes/config.yaml
-/// into the CC Switch database. Each provider found will be added to the
+/// into the XSEC Agent Shield database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::hermes_config;

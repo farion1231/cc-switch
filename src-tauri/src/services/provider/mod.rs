@@ -42,16 +42,14 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, initialize_startup_catalog, read_live_settings,
-    sync_current_to_live,
+    import_opencode_providers_from_live, read_live_settings,
+    should_import_default_config_on_startup, sync_current_to_live,
 };
 
-#[allow(dead_code)] // 上游启动自动导入入口；本项目改为显式导入
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
 }
 
-#[allow(dead_code)] // 上游启动自动导入入口；本项目改为显式导入
 pub fn import_omp_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     omp::import_from_live(state)
 }
@@ -7883,8 +7881,11 @@ impl ProviderService {
         import_default_config(state, app_type)
     }
 
-    pub fn initialize_startup_catalog(state: &AppState) -> Result<usize, AppError> {
-        initialize_startup_catalog(state)
+    pub fn should_import_default_config_on_startup(
+        state: &AppState,
+        app_type: &AppType,
+    ) -> Result<bool, AppError> {
+        should_import_default_config_on_startup(state, app_type)
     }
 
     /// Read current live settings (re-export)

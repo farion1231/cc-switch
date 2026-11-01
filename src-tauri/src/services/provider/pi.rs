@@ -23,7 +23,6 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     state.db.get_all_providers(PI_APP)
 }
 
-#[allow(dead_code)] // 上游启动自动导入入口；本项目改为显式导入
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
     let native = crate::pi_config::read_pi_native_providers()?;
