@@ -139,3 +139,13 @@ export const dshAccountPreset: McodeProviderPreset = {
     models: {},
   },
 };
+
+export const DSH_CODEX_PRESET_ID = "dsh-codex-account";
+export const dshCodexPreset: McodeProviderPreset = {
+  ...dshAccountPreset,
+  name: "OpenAI Codex",
+  nameKey: "dsh.codex.name",
+  providerKey: DSH_CODEX_PRESET_ID,
+  websiteUrl: "https://chatgpt.com",
+  icon: "openai",
+};

@@ -817,7 +817,16 @@ async fn query_provider_usage_inner(
         // xAI OAuth 托管供应商的额度属绑定的 SuperGrok 账号，而非所在 app 的
         // CLI 凭据（对 codex/claude 而言 CLI 凭据是 ChatGPT/Claude 订阅，跨了
         // 订阅体系，查出来的数字张冠李戴）。
-        let quota = if provider.map(Provider::is_xai_oauth).unwrap_or(false) {
+        let quota = if app_type == AppType::Dsh && provider_id == "openai-codex" {
+            let account_id = crate::dsh_config::codex_binding()
+                .map_err(|_| "Cannot read DSH Codex binding")?
+                .ok_or("Select a DSH Codex account first")?;
+            crate::commands::codex_oauth::query_codex_oauth_quota_for(
+                &state.codex_oauth_manager,
+                &account_id,
+            )
+            .await?
+        } else if provider.map(Provider::is_xai_oauth).unwrap_or(false) {
             let account_id = provider
                 .and_then(|p| p.meta.as_ref())
                 .and_then(|m| m.managed_account_id_for("xai_oauth"));

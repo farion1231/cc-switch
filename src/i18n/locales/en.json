@@ -2640,6 +2640,7 @@
     "copilotAutoAuth": "Auto OAuth authentication, no manual credentials needed",
     "tokenPlanHint": "Automatically uses the provider's API Key and Base URL to query Token Plan quota",
     "balanceHint": "Automatically uses the provider's API Key to query account balance",
+    "managedCodexSubscriptionHint": "Query subscription quota for the ChatGPT account bound to this provider. Change the account by editing the provider.",
     "officialSubscriptionHint": "Reads the local CLI OAuth credentials and calls the official API to query subscription quota. Disabled by default and only requests after you enable it.",
     "officialSubscriptionHintAgy": "Runs agy's built-in /usage command to check the signed-in account's quota. Sign-in credentials are not read; each check takes about 10 seconds. Disabled by default and only runs after you enable it.",
     "resetDate": "Reset date",
@@ -5116,6 +5117,13 @@
     }
   },
   "dsh": {
+    "codex": {
+      "name": "OpenAI Codex account",
+      "selectAccount": "Select an account before fetching models.",
+      "help": "Use an account from Accounts natively in DSH Web and Desktop. One Codex account is active per DSH home.",
+      "apply": "Use this account",
+      "confirm": "This replaces the current DSH Codex login. In-flight requests continue; reopen DSH if the change is not reflected."
+    },
     "empty": {
       "title": "Add a DeepSeek Harness provider",
       "description": "Configure an endpoint, API key and models. Existing custom providers appear here automatically."

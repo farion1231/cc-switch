@@ -53,7 +53,7 @@ pub async fn get_codex_oauth_quota(
     result
 }
 
-async fn query_codex_oauth_quota_for(
+pub(crate) async fn query_codex_oauth_quota_for(
     manager: &CodexOAuthManager,
     id: &str,
 ) -> Result<SubscriptionQuota, String> {

@@ -5518,6 +5518,18 @@ impl ProviderService {
                     }
                     provider.settings_config = config.clone();
                 }
+                if app_type == AppType::Dsh && id == "openai-codex" {
+                    provider
+                        .meta
+                        .get_or_insert_with(Default::default)
+                        .auth_binding = crate::dsh_config::codex_binding()?.map(|account_id| {
+                        crate::provider::AuthBinding {
+                            source: crate::provider::AuthBindingSource::ManagedAccount,
+                            auth_provider: Some("codex_oauth".into()),
+                            account_id: Some(account_id),
+                        }
+                    });
+                }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
                 if app_type == AppType::Kimi {
                     crate::kimi_config::normalize_provider_identity(

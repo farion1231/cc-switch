@@ -7,7 +7,10 @@ import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  resolveManagedAccountId,
+  resolveDshCodexAccountId,
+} from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -200,6 +203,7 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
 }
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
+  if (resolveDshCodexAccountId(appId, provider)) return true;
   if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
     return false;
   if (provider.category === "official") return true;
@@ -373,8 +377,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const providerCredentials = getProviderCredentials();
-  const isBoundCodexOfficial =
-    resolveCodexOfficialIdentity(appId, provider) === "managed_account";
+  const usesManagedCodexQuota =
+    resolveCodexOfficialIdentity(appId, provider) === "managed_account" ||
+    Boolean(resolveDshCodexAccountId(appId, provider));
   const isOfficialSubscription = isOfficialSubscriptionProvider(
     provider,
     appId,
@@ -387,7 +392,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       : null;
   // 绑了账号的官方卡没保存过开关时默认开（卡片和托盘同一规则）
   const defaultsToEnabled =
-    isBoundCodexOfficial || Boolean(claudeBoundAccountId);
+    usesManagedCodexQuota || Boolean(claudeBoundAccountId);
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
@@ -583,13 +588,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       // 官方订阅额度模板使用 CLI/OAuth 凭据和官方 API
       if (selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const accountId = isBoundCodexOfficial
+        const accountId = usesManagedCodexQuota
           ? (resolveManagedAccountId(
               provider.meta,
               PROVIDER_TYPES.CODEX_OAUTH,
             ) ?? null)
           : null;
-        const quota = isBoundCodexOfficial
+        const quota = usesManagedCodexQuota
           ? await subscriptionApi.getCodexOauthQuota(accountId)
           : claudeBoundAccountId
             ? await subscriptionApi.getClaudeAccountQuota(claudeBoundAccountId)
@@ -603,7 +608,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             closeButton: true,
           });
           queryClient.setQueryData(
-            isBoundCodexOfficial
+            usesManagedCodexQuota
               ? ["codex_oauth", "quota", accountId ?? "default"]
               : claudeBoundAccountId
                 ? ["claude_official", "quota", claudeBoundAccountId]
@@ -1115,9 +1120,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <p className="text-sm text-fg-2">
-                  {appId === "agy"
-                    ? t("usageScript.officialSubscriptionHintAgy")
-                    : t("usageScript.officialSubscriptionHint")}
+                  {usesManagedCodexQuota
+                    ? t("usageScript.managedCodexSubscriptionHint")
+                    : appId === "agy"
+                      ? t("usageScript.officialSubscriptionHintAgy")
+                      : t("usageScript.officialSubscriptionHint")}
                 </p>
               </div>
             )}

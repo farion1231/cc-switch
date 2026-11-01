@@ -1,4 +1,4 @@
-import type { ProviderMeta } from "@/types";
+import type { Provider, ProviderMeta } from "@/types";
 
 export function resolveManagedAccountId(
   meta: ProviderMeta | undefined,
@@ -18,4 +18,14 @@ export function resolveManagedAccountId(
   }
 
   return null;
+}
+
+/** Native DSH Codex uses its local binding, not the CLI or proxy default account. */
+export function resolveDshCodexAccountId(
+  appId: string,
+  provider: Provider,
+): string | null {
+  return appId === "dsh" && provider.id === "openai-codex"
+    ? resolveManagedAccountId(provider.meta, "codex_oauth")?.trim() || null
+    : null;
 }
