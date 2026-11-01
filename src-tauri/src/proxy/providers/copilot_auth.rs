@@ -617,6 +617,18 @@ impl CopilotAuthManager {
         accounts.get(account_id).map(GitHubAccount::from)
     }
 
+    /// 指定账号的 GitHub OAuth Token 和域名，给 Copilot CLI 的 `COPILOT_GITHUB_TOKEN` 用。
+    /// 只在打开终端时经子进程环境传出，不写进任何文件或命令行。
+    pub async fn github_credentials_for_account(
+        &self,
+        account_id: &str,
+    ) -> Option<(String, String)> {
+        let accounts = self.accounts.read().await;
+        accounts
+            .get(account_id)
+            .map(|account| (account.github_token.clone(), account.github_domain.clone()))
+    }
+
     /// 移除指定账号
     pub async fn remove_account(&self, account_id: &str) -> Result<(), CopilotAuthError> {
         log::info!("[CopilotAuth] 移除账号: {account_id}");

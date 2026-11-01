@@ -12,6 +12,7 @@ mod codex_editor;
 mod codex_login;
 pub(crate) mod codex_official_models;
 pub(crate) mod codex_terminal;
+pub(crate) mod copilot_direct;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
@@ -5759,8 +5760,8 @@ impl ProviderService {
                     gemini_direct::switch_to(state.db.as_ref(), &provider)?;
                     return Ok(true);
                 }
-                // Antigravity 的卡只用来打开终端，添加不写任何文件。
-                AppType::Agy => return Ok(true),
+                // Antigravity、Copilot CLI 的卡只用来打开终端，添加不写任何文件。
+                AppType::Agy | AppType::Copilot => return Ok(true),
                 AppType::GrokBuild => {
                     grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
                     return Ok(true);
@@ -5911,6 +5912,7 @@ impl ProviderService {
             AppType::Codex => codex_direct::is_official(&row),
             AppType::Gemini => gemini_direct::is_official(&row),
             AppType::Agy => agy_direct::is_official(&row),
+            AppType::Copilot => copilot_direct::is_official(&row),
             _ => false,
         };
         Ok(if official {
@@ -6640,7 +6642,7 @@ impl ProviderService {
 
         // For other apps: 本地记录、DB、代理路由任何一处指着它都不能删。Antigravity 没有
         // 「启用」，旧版留下的直连指针不拦删除。
-        if app_type != AppType::Agy
+        if !matches!(app_type, AppType::Agy | AppType::Copilot)
             && crate::mode::current::is_referenced(&state.db, &app_type, id)?
         {
             return Err(AppError::Message(
@@ -6830,7 +6832,8 @@ impl ProviderService {
             // 规则拒绝：什么都没改。
             Err(error @ AppError::Localized { key, .. })
                 if *key == "switch.official_blocked_by_proxy"
-                    || *key == "agy.switch.unsupported" =>
+                    || *key == "agy.switch.unsupported"
+                    || *key == "copilot.switch.unsupported" =>
             {
                 log::info!("[SWITCH] {app} 拒绝切到 {id}: {error}");
             }
@@ -6857,6 +6860,14 @@ impl ProviderService {
                 "agy.switch.unsupported",
                 "Antigravity 的卡片不需要启用，用「打开终端」启动即可",
                 "Antigravity cards are not enabled; use Open terminal to start one",
+            ));
+        }
+        // Copilot CLI 同理：自带模型只能经进程环境传入（见 copilot_config 模块说明）。
+        if app_type == AppType::Copilot {
+            return Err(AppError::localized(
+                "copilot.switch.unsupported",
+                "GitHub Copilot CLI 的卡片不需要启用，用「打开终端」启动即可",
+                "GitHub Copilot CLI cards are not enabled; use Open terminal to start one",
             ));
         }
 
@@ -7329,7 +7340,8 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => Ok(String::new()),
+            | AppType::Agy
+            | AppType::Copilot => Ok(String::new()),
         }
     }
 
@@ -7352,7 +7364,8 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => Ok(String::new()),
+            | AppType::Agy
+            | AppType::Copilot => Ok(String::new()),
         }
     }
 
@@ -8046,6 +8059,9 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::Copilot => {
+                crate::copilot_config::validate_settings(&provider.settings_config)?
+            }
             AppType::GrokBuild => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
                     AppError::localized(
@@ -8293,6 +8309,27 @@ impl ProviderService {
                     .cloned()
                     .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string());
 
+                Ok((api_key, base_url))
+            }
+            AppType::Copilot => {
+                let env = provider.settings_config.get("env");
+                let get = |key: &str| {
+                    env.and_then(|env| env.get(key))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                };
+                let api_key = get(crate::copilot_config::API_KEY_ENV)
+                    .or_else(|| get(crate::copilot_config::BEARER_TOKEN_ENV))
+                    .unwrap_or_default();
+                let base_url = get(crate::copilot_config::BASE_URL_ENV).ok_or_else(|| {
+                    AppError::localized(
+                        "copilot.missing_base_url",
+                        "缺少 COPILOT_PROVIDER_BASE_URL",
+                        "Missing COPILOT_PROVIDER_BASE_URL",
+                    )
+                })?;
                 Ok((api_key, base_url))
             }
             AppType::OpenCode => {
