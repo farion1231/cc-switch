@@ -162,6 +162,8 @@
     "editClaudeProvider": "Claude Code プロバイダーを編集",
     "editCodexProvider": "Codex プロバイダーを編集",
     "configError": "設定エラー",
+    "liveConfigReadFailed": "{{app}} の設定ファイルを読み込めません",
+    "liveConfigReadFailedHint": "設定ファイルを修正するまで、プロバイダーの追加・削除は失敗します。",
     "notConfigured": "公式サイト用に未設定",
     "applyToClaudePlugin": "Claude プラグインに適用",
     "removeFromClaudePlugin": "Claude プラグインから解除",
@@ -196,6 +198,10 @@
       "recent": "最近使ったフォルダ",
       "forget": "最近使ったフォルダから削除",
       "confirm": "ターミナルを開く",
+      "skipPermissions": "権限の確認をスキップ",
+      "extraArgs": "追加の引数（任意）",
+      "extraArgsPlaceholder": "例: --debug --append-system-prompt \"簡潔に答えて\"",
+      "extraArgsHint": "起動コマンドの後ろに付け、今回開くターミナルだけで使います。スペースで区切り、スペースを含む値は引用符で囲んでください。",
       "agySwitchTitle": "agy のログインを切り替えます",
       "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
       "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。"
@@ -727,6 +733,15 @@
       "saved": "保存済み",
       "unsavedChanges": "先に設定を保存してください",
       "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
+      "clear": "設定をクリア",
+      "clearing": "クリア中...",
+      "clearSuccess": "この端末の WebDAV 設定をクリアしました",
+      "clearFailed": "設定のクリアに失敗しました：{{error}}",
+      "clearConfirm": {
+        "title": "WebDAV 設定をクリア",
+        "message": "この端末に保存されている WebDAV のアドレス、ユーザー名、パスワード、リモートフォルダを削除し、自動同期を停止します。サーバーにアップロード済みのデータは削除されません。",
+        "confirm": "クリア"
+      },
       "fetchingRemote": "リモート情報を取得中...",
       "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
       "confirmDownload": {
@@ -1352,6 +1367,7 @@
     "groupByTime": "時間順",
     "groupByProject": "プロジェクト別",
     "desktopNote": "Claude Desktop には独自のセッション記録がないため、Claude Code のセッションを表示しています。",
+    "dshMergedNote": "DeepSeek Harness の Web と Desktop は同じセッション記録を共有しているため、ここではまとめて表示します。",
     "matchCount": "一致 {{count}} 件",
     "totalCount": "全 {{count}} 件",
     "selectAllMatches": "一致したものをすべて選択",
@@ -1595,6 +1611,13 @@
     "openReleaseNotesFailed": "リリースノートを開けませんでした:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "設定ファイル {{path}}（このプロバイダーのみ）",
+      "hint": "このプロバイダーの部分をアプリ本来の形式で表示し、保存時にこのファイルへ書き込みます。デフォルトモデルなどのグローバル設定はここにはありません。ここに書いたコメントは保存されません。",
+      "invalid": "{{format}} の形式が正しくありません：{{error}}",
+      "scope": "ここには {{section}} ノードだけを書けます。プロバイダーキーは上の欄で変更してください。",
+      "schema": "型が正しくない項目があります。上のフォームと照らし合わせて確認してください。"
+    },
     "supplierName": "プロバイダー名",
     "supplierNameRequired": "プロバイダー名 *",
     "supplierNamePlaceholder": "例: Anthropic Official",
@@ -1624,13 +1647,13 @@
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
       "apikeyfun": "APIKEY.FUN は CC Switch ユーザー向けに特別優待を提供しています。専用リンクから登録すると、最大でチャージ永久 5% オフを受けられます。",
       "apinebula": "APINEBULA は CC Switch ユーザー向けに特別割引を提供しています。専用リンクから登録し、チャージ時にプロモコード「ccswitch」を入力すると、さらに 10% OFF の割引が適用されます。",
-      "patewayai": "PatewayAI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録すると $3 のクレジットがもらえます。",
+      "patewayai": "PatewayAI は経験豊富な AI 開発者向けの API 中継サービスプロバイダーで、Claude、GPT シリーズ、そして中国の主要モデルを幅広くフルサポートしています。すべてのモデルは公式の高品質チャネルから提供され、希釈や偽装は一切なく、課金明細も透明で確認できます。エコノミーモードは最安で元価格の 5%。このリンクから登録すると $1 の無料トライアルクレジットがもらえ、不定期のキャンペーンで無料クレジットを受け取ることもできます。企業向けの高並列処理、専用管理コンソール、正式な契約書とインボイスにも対応し、最大 $150 の双方向紹介チャージ報酬も用意しています。",
       "claudecn": "ClaudeCN は登録企業が運営するエンタープライズグレードの AI ゲートウェイプラットフォームで、企業調達プロセスをサポートし、法人支払い、契約、コンプライアンス保証を提供します。",
       "runapi": "RunAPI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録すると、初回チャージが 10% オフになります。",
       "opencode_go": "OpenCode Go は、複数のコーディングモデルを利用できるサブスクリプションサービスです。このリンクからプランの詳細確認と申し込みができます。",
       "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！",
       "cubence": "Cubence は CC Switch の公式パートナーです。登録後チャージ時に \"CCSWITCH\" を入力すると、毎回 10% オフ",
-      "aigocode": "AIGoCode は CC Switch の公式パートナーです。このリンクから登録すると、初回チャージ時に 10% のボーナスクレジットがもらえます！",
+      "aigocode": "トークン従量課金だけではない、サブスクリプション型の AI コーディングプラットフォーム。1 つのアカウント・月額プランで Claude Code、Codex、Gemini を使い放題、中国本土から直接接続でき、レスポンスも高速です。このリンクからサブスクリプションすると 10% のクレジットが追加でもらえます！",
       "rightcode": "RightCode は CC Switch の公式パートナーです。このリンクから登録すると、毎回のチャージに 5% のボーナスクレジットがもらえます！",
       "aicodemirror": "AICodeMirror は CC Switch の公式パートナーです。このリンクから登録すると20%オフ！",
       "aicoding": "AI Coding は CC Switch ユーザー向けに特別割引を提供しています。初回チャージが 10% オフ！",
@@ -1663,7 +1686,8 @@
       "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！",
       "dit": "同じモデルを、多くの場合はるかに安く。OpenAI 互換の API 1 つで GPT、Claude、Gemini など 50 以上のモデルを利用でき、160 以上のプロバイダーの中から価格と品質のバランスが最も良い選択肢へルーティングされるため、通常は公式価格より 30〜70% 安くなります。Base URL と API キーを変えるだけで、既存のスタックはそのままですぐに呼び出せます。CC Switch ユーザーはこのリンクから登録し、コード \"cc-switch\" を使うと初回チャージが 30% オフになります！",
       "buytoken": "BuyToken は Claude Code、Codex、DeepSeek などの中継サービスを提供し、エンタープライズ級の同時実行と迅速な請求書発行に対応、安定して長く続くサービスを目指しています。CC Switch ユーザーはこのリンクから登録すると 3 元分のお試しクレジットを受け取れ、初回チャージは 10% オフになります！",
-      "vapi": "V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスを提供し、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザーはこのリンクから登録すると、初回注文が 2 元引きのうえ 10% オフになります！"
+      "vapi": "V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスを提供し、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザーはこのリンクから登録すると、初回注文が 2 元引きのうえ 10% オフになります！",
+      "ospreyai": "ACS OspreyAI は開発者と企業向けのワンストップ・マルチモデル API サービスプラットフォームです。1 つの API Key で Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、Tencent Hunyuan など国内外の主要モデルを呼び出せます。OpenAI、Anthropic などの主要 API プロトコルに対応し、Claude Code、Codex、OpenCode、Pi、Hermes などの主要 AI ツールでも利用できます。海外モデルは公式価格より 20〜40%、中国国内モデルは 30〜50% お得です。チャージと請求の一元化、使用量の確認、モデルの柔軟な切り替えに対応し、AI アプリ開発、コンテンツ制作、自動化ワークフローなどに適しています。このリンクからアカウントを作成すると特典を受けられ、国内外の主要モデルにすぐ接続できます。"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1812,6 +1836,11 @@
     "customUserAgentHelp": "プロバイダーへ転送するリクエストの User-Agent を置き換えます。",
     "localProxyRequestOverridesHelp": "形式変換後に上流へ送るリクエストに適用されます。",
     "apiFormatHelp": "プロバイダーがネイティブ対応するプロトコルを選びます。Anthropic Messages はそのまま転送して変換なし、他の三つはルーティングが Anthropic Messages に変換します。",
+    "reasoningEffort": "思考レベル",
+    "reasoningEffortHelp": "ルーティングが OpenAI 形式に変換するとき、クライアントで選んだ思考レベルを上流にどう送るかを決めます。自動：上流が対応するレベルで送ります。判別できない上流には最大 high まで送り、思考をオフにしたときは送りません。そのまま送信：クライアントで選んだレベルをそのまま送ります。上流が xhigh や max に対応していない場合はエラーになります。送信しない：上流がこのパラメータでエラーを返す場合に選びます。",
+    "reasoningEffortAuto": "自動（推奨）",
+    "reasoningEffortOff": "送信しない",
+    "reasoningEffortPassthrough": "そのまま送信",
     "directModeFormatInUse": "このカードは直結で使用中です。この形式で保存するとリクエストが失敗します。先にルーティングか集約に切り替えてください。",
     "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。"
   },
@@ -2104,9 +2133,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "追加オプションはありません",
     "noModelOptions": "モデルオプション、+ をクリックして追加",
-    "modelLimits": "トークン制限",
-    "limitContext": "コンテキスト",
-    "limitOutput": "出力",
     "modelExtraFields": "モデルプロパティ",
     "noModelExtraFields": "モデルプロパティ（variants、cost など）、+ をクリックして追加",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2244,6 +2270,11 @@
       "short": "セッションログ",
       "label": "{{app}} · セッションログ",
       "hint": "ルーティングがオフの間はクライアントのセッションログから読み取るため、どのプロバイダーかは区別できません"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek アカウント",
+      "label": "{{app}} · DeepSeek アカウント（OAuth）",
+      "hint": "セッションログから読み取った、DeepSeek アカウントのログインを使ったリクエストです。Web と Desktop はこのログインを共有するため、使用量はまとめて集計されます"
     },
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
@@ -2545,7 +2576,7 @@
       "scanTitle": "セッションログを自動スキャン",
       "scanHelpTitle": "セッションログとは",
       "scanHelp": "各アプリがこのコンピューターに書き込む会話記録です。CC Switch はここから使用量を読み取るので、ルーティングなしでもデータがあります。",
-      "coverage": "対象の 7 アプリ：{{apps}}",
+      "coverage": "対象の {{total}} アプリ：{{apps}}",
       "cadenceOn": "起動時とバックグラウンドで 10 分ごとにスキャン。使用量ページを開くとすぐにスキャンし、その後は選択した間隔でスキャン",
       "cadenceOff": "自動スキャンはオフです。「今すぐ同期」を押したときだけスキャンします",
       "unsupported": "Hermes と OpenClaw は使用量統計にまだ対応していません",
@@ -4170,6 +4201,7 @@
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
+    "expiredHintAccounts": "「アカウント」でこのアカウントに再ログインしてください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
   },
@@ -4601,6 +4633,7 @@
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
       "claudeNote": "（トップレベルの mcpServers）",
+      "dshNote": "（初期化済みのすべての profile に書き込みます：web、desktop、headless、acp）",
       "ok": "OK"
     },
     "templateLabels": {
@@ -4828,7 +4861,7 @@
       "sourceRepos": "リポジトリ · {{count}}",
       "reload": "リポジトリを読み直す",
       "listLabel": "インストールできる Skill",
-      "installed": "インストール済み · {{count}} アプリ",
+      "installed": "インストール済み",
       "installedAria": "{{name}} は {{count}} アプリにインストール済み。「インストール済み」で表示",
       "dirTaken": "フォルダー名は {{name}}（{{source}}）が使用中",
       "installing": "インストール中",
@@ -4957,7 +4990,8 @@
       "updating": "更新中…",
       "loading": "残量を確認中…",
       "refresh": "残量を更新",
-      "refreshAria": "{{login}} の残量を更新"
+      "refreshAria": "{{login}} の残量を更新",
+      "refreshAll": "すべて更新"
     },
     "agy": {
       "reauthNote": "ログイン情報が失効しているため切り替えできません",
@@ -5018,6 +5052,8 @@
     },
     "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
     "contextSize": "コンテキスト長",
+    "configTomlScope": "ここには [providers.{{key}}] とそれに属する [models.*] テーブルだけを書けます。プロバイダーキーは上の欄で変更してください。",
+    "configTomlSchema": "設定が不完全です：プロバイダーの type と、各モデルの model・max_context_size（正の整数）を確認してください。",
     "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
     "empty": {
       "title": "Kimi Code プロバイダーを追加",
@@ -5085,6 +5121,31 @@
     "empty": {
       "title": "DeepSeek Harness プロバイダーを追加",
       "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
+    },
+    "sharedProviders": "追加したプロバイダーは DeepSeek Harness の Web と Desktop の設定（初期化済みの headless、acp も含む）にまとめて書き込まれます。モデルは DeepSeek Harness の中で選びます。",
+    "sharedProvidersNote": "Web と Desktop で共有",
+    "account": {
+      "help": "DeepSeek アカウントはブラウザでログインします（OAuth）。ここでも DeepSeek Harness でもログインできます。ログイン情報は $DSH_HOME/.credentials.yaml（既定は ~/.dsh/.credentials.yaml） に保存され、DeepSeek Harness の Web と Desktop で共有されます。どこでログイン・ログアウトしても両方に反映され、実行中の DeepSeek Harness は自動で読み直します。アカウント経由のモデルの使用量は、使用量ページで「DeepSeek アカウント（OAuth）」として別に表示されます。",
+      "statusFailed": "DeepSeek アカウントのログイン状態を読み取れません",
+      "empty": "DeepSeek アカウントにログインしていません",
+      "unnamed": "DeepSeek アカウント",
+      "expired": "ログインの有効期限が切れました。再ログインしてください",
+      "shared": "Web と Desktop で共有",
+      "signOut": "ログアウト",
+      "signOutConfirm": "DeepSeek アカウント「{{name}}」からログアウトしますか？DeepSeek Harness の Web と Desktop の両方がログアウトされます。API キーのプロバイダーには影響しません。",
+      "signOutFailed": "DeepSeek アカウントからログアウトできませんでした",
+      "balance": "残高 {{amount}}",
+      "bonus": "ボーナス {{amount}}",
+      "balanceFailed": "現在残高を取得できません",
+      "signedIn": "DeepSeek アカウントにログインしました（Web と Desktop の両方で使えます）",
+      "signInFailed": "DeepSeek アカウントにログインできませんでした",
+      "presetName": "DeepSeek 公式ログイン",
+      "presetDescription": "ブラウザで DeepSeek アカウントにログインすると、DeepSeek Harness がアカウントのモデルをそのまま提供するため、プロバイダーを追加する必要はありません。Web と Desktop はこのログインを共有します。ログインとログアウトは認証センターで管理し、ログイン後はアカウントが「追加済み」に表示されます。",
+      "manageAccounts": "DeepSeek アカウントを管理",
+      "cardSubtitle": "公式アカウント · Web と Desktop で共有",
+      "expiredChip": "ログイン無効",
+      "editDisabled": "このアカウントのモデルは DeepSeek Harness が自動で提供するため、編集は不要です。",
+      "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
   }

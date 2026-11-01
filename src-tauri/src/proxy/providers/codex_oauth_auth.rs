@@ -2135,14 +2135,21 @@ fn compute_expires_at_ms(expires_in: Option<i64>) -> i64 {
 
 /// Whether a failed refresh means the refresh token itself is dead.
 ///
-/// Mirrors Codex CLI: only HTTP 401 or an explicit OpenAI refresh-token code is
-/// permanent. Anything else (a 403 from a CDN/WAF or proxy, 429, 5xx) is
-/// transient, so the same refresh token can succeed on a later attempt.
+/// Mirrors Codex CLI: HTTP 401, an explicit OpenAI refresh-token code, or the
+/// standard OAuth `invalid_grant` rejection (Codex CLI treats
+/// `400 invalid_grant` as permanent too) mean the token is dead. Anything
+/// else (a 403 from a CDN/WAF or proxy, 429, 5xx) is transient, so the same
+/// refresh token can succeed on a later attempt.
 fn refresh_rejection_is_permanent(status: reqwest::StatusCode, error_code: Option<&str>) -> bool {
     status == reqwest::StatusCode::UNAUTHORIZED
         || matches!(
             error_code,
-            Some("refresh_token_expired" | "refresh_token_reused" | "refresh_token_invalidated")
+            Some(
+                "invalid_grant"
+                    | "refresh_token_expired"
+                    | "refresh_token_reused"
+                    | "refresh_token_invalidated"
+            )
         )
 }
 
@@ -3556,6 +3563,22 @@ mod tests {
         assert!(!refresh_rejection_is_permanent(
             StatusCode::INTERNAL_SERVER_ERROR,
             Some("server_error")
+        ));
+        // 400 invalid_grant is the standard OAuth "refresh token is dead"
+        // signal (also classified permanent by Codex CLI); a transient
+        // classifier here keeps a genuinely expired login retrying forever.
+        assert!(refresh_rejection_is_permanent(
+            StatusCode::BAD_REQUEST,
+            Some("invalid_grant")
+        ));
+        // An error code without invalid_grant on 400 stays retryable.
+        assert!(!refresh_rejection_is_permanent(
+            StatusCode::BAD_REQUEST,
+            Some("temporarily_unavailable")
+        ));
+        assert!(!refresh_rejection_is_permanent(
+            StatusCode::BAD_REQUEST,
+            None
         ));
     }
 }
