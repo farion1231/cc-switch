@@ -29,8 +29,18 @@ export const TEMPLATE_TYPES = {
   SUB2API: "sub2api",
   GITHUB_COPILOT: "github_copilot",
   TOKEN_PLAN: "token_plan",
+  CUSTOM_TOKEN_PLAN: "custom_token_plan",
   BALANCE: "balance",
   OFFICIAL_SUBSCRIPTION: "official_subscription",
 } as const;
 
 export type TemplateType = (typeof TEMPLATE_TYPES)[keyof typeof TEMPLATE_TYPES];
+
+export function isTokenPlanTemplate(
+  templateType: string | null | undefined,
+): boolean {
+  return (
+    templateType === TEMPLATE_TYPES.TOKEN_PLAN ||
+    templateType === TEMPLATE_TYPES.CUSTOM_TOKEN_PLAN
+  );
+}

@@ -9,6 +9,27 @@ use crate::settings;
 use crate::store::AppState;
 use crate::usage_script;
 
+fn normalize_usage_data(data: serde_json::Value) -> Result<Vec<UsageData>, AppError> {
+    if data.is_array() {
+        serde_json::from_value(data).map_err(|e| {
+            AppError::localized(
+                "usage_script.data_format_error",
+                format!("数据格式错误: {e}"),
+                format!("Data format error: {e}"),
+            )
+        })
+    } else {
+        let single: UsageData = serde_json::from_value(data).map_err(|e| {
+            AppError::localized(
+                "usage_script.data_format_error",
+                format!("数据格式错误: {e}"),
+                format!("Data format error: {e}"),
+            )
+        })?;
+        Ok(vec![single])
+    }
+}
+
 /// Execute usage script and format result (private helper method)
 pub(crate) async fn execute_and_format_usage_result(
     script_code: &str,
@@ -31,24 +52,7 @@ pub(crate) async fn execute_and_format_usage_result(
     .await
     {
         Ok(data) => {
-            let usage_list: Vec<UsageData> = if data.is_array() {
-                serde_json::from_value(data).map_err(|e| {
-                    AppError::localized(
-                        "usage_script.data_format_error",
-                        format!("数据格式错误: {e}"),
-                        format!("Data format error: {e}"),
-                    )
-                })?
-            } else {
-                let single: UsageData = serde_json::from_value(data).map_err(|e| {
-                    AppError::localized(
-                        "usage_script.data_format_error",
-                        format!("数据格式错误: {e}"),
-                        format!("Data format error: {e}"),
-                    )
-                })?;
-                vec![single]
-            };
+            let usage_list = normalize_usage_data(data)?;
 
             Ok(UsageResult {
                 success: true,
@@ -247,7 +251,7 @@ pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_script_credentials;
+    use super::{normalize_usage_data, resolve_script_credentials};
     use crate::app_config::AppType;
     use crate::provider::Provider;
     use serde_json::json;
@@ -315,5 +319,48 @@ base_url = "https://other.example.com/v1"
             resolve_script_credentials(&AppType::Codex, &provider, None, None);
         assert_eq!(api_key, "openai-key");
         assert_eq!(base_url, "https://azure.example.com/v1");
+    }
+
+    #[test]
+    fn normalizes_single_usage_object_to_one_entry() {
+        let entries = normalize_usage_data(json!({
+            "planName": "five_hour",
+            "used": 18.8,
+            "total": 100,
+            "unit": "%",
+            "extra": "2026-10-25T16:02:35+00:00"
+        }))
+        .expect("single usage object should be accepted");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].plan_name.as_deref(), Some("five_hour"));
+        assert_eq!(entries[0].unit.as_deref(), Some("%"));
+        assert_eq!(entries[0].extra.as_deref(), Some("2026-10-25T16:02:35+00:00"));
+    }
+
+    #[test]
+    fn preserves_multiple_percentage_usage_windows() {
+        let entries = normalize_usage_data(json!([
+            {
+                "planName": "five_hour",
+                "used": 18.8,
+                "total": 100,
+                "unit": "%",
+                "extra": "2026-10-25T16:02:35+00:00"
+            },
+            {
+                "planName": "weekly_limit",
+                "used": 5.4,
+                "total": 100,
+                "unit": "%",
+                "extra": "2026-10-25T16:00:00+00:00"
+            }
+        ]))
+        .expect("multiple usage windows should be accepted");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].plan_name.as_deref(), Some("weekly_limit"));
+        assert_eq!(entries[1].used, Some(5.4));
+        assert_eq!(entries[1].extra.as_deref(), Some("2026-10-25T16:00:00+00:00"));
     }
 }

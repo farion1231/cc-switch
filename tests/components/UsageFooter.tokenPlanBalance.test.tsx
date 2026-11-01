@@ -4,9 +4,13 @@ import { describe, expect, it } from "vitest";
 import UsageFooter from "@/components/UsageFooter";
 import { usageKeys } from "@/lib/query/usage";
 import type { Provider, UsageResult } from "@/types";
+import type { TemplateType } from "@/config/constants";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
-function renderFooter(result: UsageResult) {
+function renderFooter(
+  result: UsageResult,
+  templateType: TemplateType = "token_plan",
+) {
   const provider: Provider = {
     id: "zhipu",
     name: "Zhipu GLM",
@@ -18,7 +22,7 @@ function renderFooter(result: UsageResult) {
         enabled: true,
         language: "javascript",
         code: "",
-        templateType: "token_plan",
+        templateType,
       },
     },
   };
@@ -65,5 +69,35 @@ describe("UsageFooter token plan", () => {
 
     expect(screen.queryByText("quota.balance")).not.toBeInTheDocument();
     expect(screen.queryByText("Zhipu GLM")).not.toBeInTheDocument();
+  });
+
+  it("renders custom Token Plan windows through the tier renderer", () => {
+    renderFooter(
+      {
+        success: true,
+        data: [
+          {
+            planName: "five_hour",
+            total: 100,
+            used: 20,
+            unit: "%",
+            extra: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          },
+          {
+            planName: "weekly_limit",
+            total: 100,
+            used: 100,
+            unit: "%",
+            extra: "not-a-timestamp",
+          },
+        ],
+      },
+      "custom_token_plan",
+    );
+
+    expect(screen.queryByText("quota.balance")).not.toBeInTheDocument();
+    expect(screen.getByText(/quota\.left/)).toBeInTheDocument();
+    expect(screen.getByText(/quota\.usedUp/)).toBeInTheDocument();
+    expect(screen.getByText("subscription.resetsIn")).toBeInTheDocument();
   });
 });
