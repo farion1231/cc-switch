@@ -15,6 +15,7 @@
 pub mod agy;
 mod claude;
 mod codex;
+pub(crate) mod comparison;
 pub(crate) mod dsh;
 mod gemini;
 mod grokbuild;

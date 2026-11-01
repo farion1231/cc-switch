@@ -2148,6 +2148,100 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn new_profiles_use_dsh_mcp_overrides_and_preserve_shared_defaults() {
+        use crate::services::provider::initialize_dsh_profiles;
+
+        let home = DshHome::new();
+        init_profiles(home.dir.path(), &["web", "headless", "acp"]);
+        let state = crate::store::AppState::new(std::sync::Arc::new(
+            crate::database::Database::memory().unwrap(),
+        ));
+        for value in [
+            json!({"id":"dedicated","name":"Dedicated","server":{"command":"shared"},
+                "apps":{"dsh":true},"appOverrides":{
+                    "dsh":{"command":"dsh-only","args":["","--dsh"]},
+                    "claude":{"command":"claude-only"}}}),
+            json!({"id":"fallback","name":"Fallback","server":{"command":"fallback"},
+                "apps":{"dsh":true},"appOverrides":{"codex":{"command":"codex-only"}}}),
+            json!({"id":"disabled","name":"Disabled","server":{"command":"shared"},
+                "apps":{},"appOverrides":{"dsh":{"command":"disabled-only"}}}),
+        ] {
+            state
+                .db
+                .save_mcp_server(&serde_json::from_value(value).unwrap())
+                .unwrap();
+        }
+        let before = serde_json::to_value(state.db.get_all_mcp_servers().unwrap()).unwrap();
+        initialize_dsh_profiles(&state).unwrap();
+        for name in TARGET_PROFILES {
+            let entries = mcp_entries_from(&profile_text(home.dir.path(), name).unwrap()).unwrap();
+            assert_eq!(entries.len(), 2, "profile {name}");
+            let dedicated = entries
+                .iter()
+                .find(|entry| entry["config"]["serverName"] == "dedicated")
+                .unwrap();
+            assert_eq!(dedicated["config"]["command"], "dsh-only");
+            assert_eq!(dedicated["config"]["args"][0], "");
+            assert_eq!(dedicated["config"]["args"][1], "--dsh");
+            let fallback = entries
+                .iter()
+                .find(|entry| entry["config"]["serverName"] == "fallback")
+                .unwrap();
+            assert_eq!(fallback["config"]["command"], "fallback");
+        }
+        assert_eq!(
+            serde_json::to_value(state.db.get_all_mcp_servers().unwrap()).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn new_profiles_validate_dsh_mcp_transport_instead_of_shared_transport() {
+        use crate::services::provider::initialize_dsh_profiles;
+
+        for (shared_transport, dsh_transport) in [("sse", "http"), ("http", "sse")] {
+            let home = DshHome::new();
+            init_profiles(home.dir.path(), &["web", "desktop"]);
+            let state = crate::store::AppState::new(std::sync::Arc::new(
+                crate::database::Database::memory().unwrap(),
+            ));
+            let server = serde_json::from_value(json!({
+                "id":"remote","name":"Remote",
+                "server":{"type":shared_transport,"url":"https://shared.example.test/mcp"},
+                "apps":{"dsh":true},"appOverrides":{"dsh":{
+                    "type":dsh_transport,"url":"https://dsh.example.test/mcp"}}
+            }))
+            .unwrap();
+            if dsh_transport == "sse" {
+                assert!(state.db.save_mcp_server(&server).is_err());
+                for name in DISPLAY_PROFILES {
+                    assert_eq!(
+                        profile_text(home.dir.path(), name).unwrap(),
+                        FACTORY_PROFILE
+                    );
+                }
+                assert!(!home
+                    .dir
+                    .path()
+                    .join(".cc-switch-profile-sync.json")
+                    .exists());
+                continue;
+            }
+            state.db.save_mcp_server(&server).unwrap();
+            initialize_dsh_profiles(&state).unwrap();
+            for name in DISPLAY_PROFILES {
+                let entries =
+                    mcp_entries_from(&profile_text(home.dir.path(), name).unwrap()).unwrap();
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0]["config"]["transport"], "streamable-http");
+                assert_eq!(entries[0]["config"]["url"], "https://dsh.example.test/mcp");
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn newly_initialized_desktop_imports_managed_configuration_only_once() {
         use crate::app_config::{AppType, McpApps, McpServer};
         use crate::provider::{Provider, ProviderMeta};
@@ -2196,6 +2290,7 @@ mod tests {
                     id: id.into(),
                     name: id.into(),
                     server: spec.clone(),
+                    app_overrides: Default::default(),
                     apps: McpApps {
                         dsh: enabled,
                         ..Default::default()

@@ -2866,7 +2866,19 @@
       "commandRequired": "コマンドを入力してください",
       "singleServerObjectRequired": "単一の MCP サーバーオブジェクトを貼り付けてください（トップレベルの mcpServers は不要）",
       "saveFailed": "保存に失敗しました",
-      "deleteFailed": "削除に失敗しました"
+      "deleteFailed": "削除に失敗しました",
+      "invalidOverrideClaude": "Claude Code の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideCodex": "Codex の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideGemini": "Gemini CLI の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideGrokbuild": "Grok Build の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideOpencode": "OpenCode の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideHermes": "Hermes の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverridePi": "Pi の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideMcode": "MiniMax Code の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideKimi": "Kimi Code の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideDsh": "DeepSeek Harness の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideAgy": "Antigravity の個別 MCP 設定が無効です。完全な接続設定を入力してください。",
+      "invalidOverrideOmp": "Oh My Pi の個別 MCP 設定が無効です。完全な接続設定を入力してください。"
     },
     "validation": {
       "ok": "コマンドが見つかりました",
@@ -4736,7 +4748,13 @@
       "tags": "タグ",
       "tagsPlaceholder": "カンマ区切り（例：docs, web）",
       "homepage": "ホームページ",
-      "docs": "ドキュメント"
+      "docs": "ドキュメント",
+      "configScope": "設定の対象",
+      "sharedConfig": "デフォルト設定",
+      "useAppConfig": "{{app}} に個別設定を使用",
+      "sharedConfigHint": "個別設定のないアプリは、この接続設定を使用します。",
+      "appConfigHint": "個別設定は、このアプリの接続設定全体を置き換えます。オフにするとデフォルト設定に戻ります。",
+      "followsSharedConfig": "このアプリはデフォルト設定を使用しています。接続パラメーターを個別に変更するには、個別設定を有効にしてください。"
     },
     "resync": "ここのスイッチで各アプリの設定を書き直す"
   },

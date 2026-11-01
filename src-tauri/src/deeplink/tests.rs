@@ -61,6 +61,31 @@ impl Drop for TestHomeGuard {
 // =============================================================================
 
 #[test]
+#[serial_test::serial]
+fn mcp_deeplink_reimport_preserves_existing_app_overrides() {
+    let _home = TestHomeGuard::new();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let existing: crate::McpServer = serde_json::from_value(serde_json::json!({
+        "id":"serena","name":"Team Serena","server":{"command":"shared"},
+        "appOverrides":{"claude":{"command":"claude-specific"},"codex":{"command":"codex-specific"}},
+        "apps":{}
+    })).unwrap();
+    state.db.save_mcp_server(&existing).unwrap();
+    let payload = BASE64_STANDARD.encode(r#"{"mcpServers":{"serena":{"command":"incoming"}}}"#);
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=mcp&apps=claude&config={payload}"
+    ))
+    .unwrap();
+    let result = super::mcp::import_mcp_from_deeplink(&state, request).unwrap();
+    assert!(result.failed.is_empty());
+    let saved = state.db.get_all_mcp_servers().unwrap()["serena"].clone();
+    assert_eq!(saved.app_overrides, existing.app_overrides);
+    assert_eq!(saved.server, existing.server);
+    assert_eq!(saved.name, existing.name);
+    assert!(saved.apps.claude);
+}
+
+#[test]
 fn test_parse_valid_claude_deeplink() {
     let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test%20Provider&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test-123&icon=claude";
 

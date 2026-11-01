@@ -102,6 +102,7 @@ fn dsh_mcp_failure_leaves_native_file_and_managed_flags_unchanged() {
         id: "test".into(),
         name: "Test".into(),
         server: json!({"type":"stdio","command":"node","args":["server.js"]}),
+        app_overrides: Default::default(),
         apps: McpApps {
             dsh: true,
             ..Default::default()

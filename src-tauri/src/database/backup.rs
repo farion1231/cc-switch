@@ -232,11 +232,14 @@ impl Database {
         // device-local rows can miss writes that arrived during staging.
         let backup_path = {
             let mut main_conn = lock_conn!(self.conn);
-            let backup_path =
-                Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
             }
+            // Imported triggers may run during cleanup or preserved-table
+            // restoration. Validate the final staged data, before any live backup/replacement.
+            Self::validate_mcp_app_overrides_on_conn(&temp_conn)?;
+            let backup_path =
+                Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "替换主数据库")?;
@@ -1066,6 +1069,8 @@ impl Database {
         Self::ensure_model_pricing_seeded_on_conn(&staging_conn)?;
         Self::validate_sqlite_integrity(&staging_conn)?;
 
+        Self::validate_mcp_app_overrides_on_conn(&staging_conn)?;
+
         // Keep one main-DB guard across the safety snapshot and final apply so
         // the safety file exactly represents the state being replaced.
         let safety_backup = {
@@ -1322,6 +1327,64 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(name, "Provider One");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn sync_import_rejects_invalid_mcp_overrides_before_replacing_local_data(
+    ) -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        for invalid in [
+            "{",
+            r#"{"unsupported-agent":{"command":"x"}}"#,
+            r#"{"codex":{}}"#,
+        ] {
+            let source = Database::memory()?;
+            let server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({
+                "id":"remote","name":"remote","server":{"command":"echo"},"apps":{}
+            }))
+            .unwrap();
+            source.save_mcp_server(&server)?;
+            let sql = format!(
+                "{}\nUPDATE mcp_servers SET app_overrides='{invalid}';",
+                source.export_sql_string_for_sync()?
+            );
+            let target = Database::memory()?;
+            target.set_setting("local-marker", "keep")?;
+            let result = target.import_sql_string_for_sync(&sql);
+            assert!(result.is_err(), "accepted invalid overrides: {invalid}");
+            assert_eq!(target.get_setting("local-marker")?, Some("keep".into()));
+            assert!(target.get_all_mcp_servers()?.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn sync_import_revalidates_mcp_after_restoring_preserved_tables() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        let server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({
+            "id":"remote","name":"remote","server":{"command":"echo"},"apps":{}
+        }))
+        .unwrap();
+        source.save_mcp_server(&server)?;
+        let sql = format!("{}\nCREATE TRIGGER poison AFTER INSERT ON proxy_live_backup BEGIN UPDATE mcp_servers SET app_overrides='{{\"codex\":{{}}}}'; END;", source.export_sql_string_for_sync()?);
+        let target = Database::memory()?;
+        target.set_setting("local-marker", "keep")?;
+        target.conn.lock().unwrap().execute_batch("INSERT INTO proxy_live_backup(app_type,original_config,backed_up_at) VALUES ('claude','{}','2026-10-24');")?;
+        assert!(target.import_sql_string_for_sync(&sql).is_err());
+        assert_eq!(target.get_setting("local-marker")?, Some("keep".into()));
+        assert!(target.get_all_mcp_servers()?.is_empty());
+        assert_eq!(
+            target.conn.lock().unwrap().query_row(
+                "SELECT COUNT(*) FROM proxy_live_backup",
+                [],
+                |row| row.get::<_, i64>(0)
+            )?,
+            1
+        );
         Ok(())
     }
 

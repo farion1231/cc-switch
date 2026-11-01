@@ -870,7 +870,7 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
         .get_all_mcp_servers()?
         .into_iter()
         .filter(|(_, server)| server.apps.dsh)
-        .map(|(id, server)| (id, server.server))
+        .map(|(id, server)| (id, server.server_for_app(&AppType::Dsh).clone()))
         .collect();
     crate::dsh_config::initialize_profiles(&providers, &servers)
 }
