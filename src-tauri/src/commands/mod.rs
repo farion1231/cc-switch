@@ -3,12 +3,14 @@
 mod agy_account;
 mod auth;
 mod balance;
+mod claude_account;
 mod codex_oauth;
 mod coding_plan;
 mod config;
 mod copilot;
 mod custom_icon;
 mod deeplink;
+mod dsh;
 mod env;
 mod failover;
 mod global_proxy;
@@ -19,6 +21,7 @@ mod mcp;
 mod misc;
 mod model_fetch;
 mod omo;
+mod omp;
 mod openclaw;
 mod pi;
 mod plugin;
@@ -40,15 +43,22 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
+#[cfg(test)]
+mod provider_concurrency_tests;
+#[cfg(test)]
+mod startup_tests;
+
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
+pub use claude_account::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;
 pub use copilot::*;
 pub use custom_icon::*;
 pub use deeplink::*;
+pub use dsh::*;
 pub use env::*;
 pub use failover::*;
 pub use global_proxy::*;
@@ -59,6 +69,7 @@ pub use mcp::*;
 pub use misc::*;
 pub use model_fetch::*;
 pub use omo::*;
+pub(crate) use omp::*;
 pub use openclaw::*;
 pub(crate) use pi::*;
 pub use plugin::*;

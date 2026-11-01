@@ -665,8 +665,7 @@ fn infer_codex_chat_reasoning_config(
         .and_then(|value| value.as_str())
         .map(ToString::to_string)
         .or_else(|| codex_provider_upstream_model(provider))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+        .unwrap_or_default();
     let base_url = provider
         .settings_config
         .get("base_url")
@@ -680,9 +679,20 @@ fn infer_codex_chat_reasoning_config(
                 .and_then(|v| v.as_str())
                 .and_then(extract_codex_base_url_from_toml)
         })
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let name = provider.name.to_ascii_lowercase();
+        .unwrap_or_default();
+    infer_chat_reasoning_config(&provider.name, &base_url, &model)
+}
+
+/// 按供应商名、上游地址、上游模型名推断 Chat 兼容上游的 reasoning 接口。
+/// Codex Responses → Chat 与 Claude 路由（经 Chat / Responses 转发）共用这份判定。
+pub(crate) fn infer_chat_reasoning_config(
+    name: &str,
+    base_url: &str,
+    model: &str,
+) -> Option<CodexChatReasoningConfig> {
+    let name = name.to_ascii_lowercase();
+    let base_url = base_url.to_ascii_lowercase();
+    let model = model.to_ascii_lowercase();
 
     // 平台优先：聚合 / 托管平台的 reasoning 接口由平台的推理框架决定，而非模型官方实现，
     // 因此先按平台标识（仅 name + base_url，不含 model 名）判定并覆盖模型规则。
@@ -1064,6 +1074,12 @@ impl ProviderAdapter for CodexAdapter {
             // 尝试解析 TOML 字符串格式
             if let Some(config_str) = config.as_str() {
                 if let Some(url) = crate::grok_config::extract_base_url(config_str) {
+                    return Ok(url.trim_end_matches('/').to_string());
+                }
+                // The table `model_provider` selects, read the way Codex reads it. The text
+                // scans below remain for a top-level `openai_base_url` and for TOML that
+                // does not parse.
+                if let Some(url) = extract_codex_base_url_from_toml(config_str) {
                     return Ok(url.trim_end_matches('/').to_string());
                 }
                 if let Some(start) = config_str.find("base_url = \"") {
@@ -1559,6 +1575,49 @@ wire_api = "responses"
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_extract_base_url_from_selected_config_provider() {
+        let adapter = CodexAdapter::new();
+        let configs = [
+            // Another provider table comes first.
+            r#"model_provider = "relay"
+
+[model_providers.azure]
+name = "Azure"
+base_url = "https://azure.example.com/v1"
+env_key = "AZURE_OPENAI_API_KEY"
+
+[model_providers.relay]
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+"#,
+            // The previous URL is commented out above the current one.
+            r#"model_provider = "relay"
+
+[model_providers.relay]
+name = "Relay"
+# base_url = "https://old-relay.example.com/v1"
+base_url = "https://relay.example.com/v1"
+"#,
+            // No spaces around `=`.
+            r#"model_provider = "relay"
+
+[model_providers.relay]
+name = "Relay"
+base_url="https://relay.example.com/v1/"
+"#,
+        ];
+
+        for config in configs {
+            let provider = create_provider(json!({ "config": config }));
+            assert_eq!(
+                adapter.extract_base_url(&provider).unwrap(),
+                "https://relay.example.com/v1",
+                "config:\n{config}"
+            );
+        }
     }
 
     #[test]

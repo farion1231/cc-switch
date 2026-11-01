@@ -162,6 +162,8 @@
     "editClaudeProvider": "编辑 Claude Code 供应商",
     "editCodexProvider": "编辑 Codex 供应商",
     "configError": "配置错误",
+    "liveConfigReadFailed": "无法读取 {{app}} 配置文件",
+    "liveConfigReadFailedHint": "修好配置文件之前，添加、移除供应商都会失败。",
     "notConfigured": "未配置官网地址",
     "applyToClaudePlugin": "应用到 Claude 插件",
     "removeFromClaudePlugin": "从 Claude 插件移除",
@@ -179,7 +181,8 @@
     "configureUsage": "配置用量查询",
     "managedByHermes": "Hermes 托管",
     "managedByHermesHint": "该条目定义在 Hermes 的 providers: dict，请在 Hermes Web UI 中编辑或删除。",
-    "openTerminal": "打开终端",
+    "openTerminal": "以此供应商打开终端",
+    "openTerminalIsolated": "以此供应商打开终端（环境隔离）",
     "openTerminalWithProvider": "使用此供应商打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
@@ -195,6 +198,10 @@
       "recent": "最近用过",
       "forget": "从最近用过里移除",
       "confirm": "打开终端",
+      "skipPermissions": "跳过权限确认",
+      "extraArgs": "附加参数（可选）",
+      "extraArgsPlaceholder": "例如 --debug --append-system-prompt \"简洁回答\"",
+      "extraArgsHint": "接在启动命令后面，只用于这次打开的终端。用空格分隔，含空格的值用引号括起来。",
       "agySwitchTitle": "会切换 agy 的登录",
       "agySwitchBody": "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
       "agySwitchRunning": "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。"
@@ -231,6 +238,29 @@
         "oauthTitle": "OAuth 认证模式",
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
+      },
+      "claudeAccount": {
+        "label": "登录方式",
+        "default": "跟随 Claude Code 登录",
+        "defaultDescription": "账号会随 Claude Code 当前登录变化",
+        "missing": "不在这台电脑上的账号",
+        "manage": "添加或管理 Claude 账号",
+        "helpTerminal": "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+        "helpWsl": "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
+        "help": "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
+        "claudeAccount": "Claude 账号",
+        "reauthBadge": "需要重新登录",
+        "terminalHint": "从卡片打开终端使用",
+        "wslHint": "WSL 暂不支持",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team 高级席位",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",
@@ -711,6 +741,15 @@
       "saved": "已保存",
       "unsavedChanges": "请先保存配置",
       "saveBeforeSync": "请先保存配置，再使用上传/下载。",
+      "clear": "清除配置",
+      "clearing": "清除中...",
+      "clearSuccess": "已清除本机的 WebDAV 配置",
+      "clearFailed": "清除配置失败：{{error}}",
+      "clearConfirm": {
+        "title": "清除 WebDAV 配置",
+        "message": "将从本机删除已保存的 WebDAV 地址、账号、密码和远程目录，并停止自动同步。云端已上传的数据不会被删除。",
+        "confirm": "清除"
+      },
       "fetchingRemote": "获取远端信息...",
       "fetchRemoteFailed": "获取远端信息失败，请检查配置和网络后重试。",
       "confirmDownload": {
@@ -940,6 +979,7 @@
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "piConfigDir": "Pi 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
+    "ompConfigDir": "Oh My Pi 配置目录",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -948,6 +988,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
+    "browsePlaceholderOmp": "例如：/home/<你的用户名>/.omp/agent",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -982,7 +1023,7 @@
     "copyToolUninstallCommand": "复制 {{tool}} 的卸载命令",
     "uninstallCommandCopied": "卸载命令已复制",
     "uninstallCommandCopyFailed": "复制失败，请手动选择并复制命令。",
-    "oneClickInstallHint": "安装或升级 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "安装或升级 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
     "localEnvCheck": "本地环境检查",
     "updateAllTools": "全部升级（{{count}}）",
     "currentVersion": "当前版本",
@@ -1106,7 +1147,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "agy": "Antigravity"
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1169,9 +1211,9 @@
       "contextWindow": "上下文长度",
       "maxTokens": "最大输出 Token 数",
       "compatibility": "接口兼容性",
-      "compatibilityHint": "调整兼容端点或本地服务的请求行为。",
+      "compatibilityHint": "只在接口自称兼容 OpenAI、却拒收某些请求时才需要填。每一项说明这家接口的一个特殊之处，比如 supportsDeveloperRole 填 false 表示它不认 developer 角色，maxTokensField 填 max_tokens 表示它只认旧的字段名。选预设时需要的项会自动填好；留空就按默认处理。",
       "addCompatibilityOption": "添加",
-      "noCompatibilityOptions": "暂无兼容性选项",
+      "noCompatibilityOptions": "未设置，按默认处理",
       "optionKey": "选项",
       "optionValue": "值",
       "removeCompatibilityOption": "移除兼容性选项",
@@ -1333,6 +1375,7 @@
     "groupByTime": "按时间",
     "groupByProject": "按项目",
     "desktopNote": "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
+    "dshMergedNote": "DeepSeek Harness 的 Web 和 Desktop 共用同一份会话记录，这里合并显示。",
     "matchCount": "匹配 {{count}} 个会话",
     "totalCount": "共 {{count}} 个会话",
     "selectAllMatches": "全选匹配结果",
@@ -1576,6 +1619,13 @@
     "openReleaseNotesFailed": "打开更新日志失败:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "配置文件 {{path}}（只显示这一家）",
+      "hint": "按应用自己的格式显示这一家在文件里的部分，保存后写进这个文件；默认模型等全局设置不在这里。在这里写的注释不会保存。",
+      "invalid": "{{format}} 格式错误：{{error}}",
+      "scope": "这里只能写 {{section}} 这一个节点；供应商标识请在上方修改。",
+      "schema": "有字段的类型不对，请对照上方表单检查。"
+    },
     "supplierName": "供应商名称",
     "supplierNameRequired": "供应商名称 *",
     "supplierNamePlaceholder": "例如：Anthropic 官方",
@@ -1605,13 +1655,13 @@
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
       "apikeyfun": "APIKEY.FUN 为 CC Switch 的用户提供了特别优惠，通过专属链接注册，可享受最高充值永久 95 折优惠。",
       "apinebula": "APINEBULA 为 CC Switch 用户提供特别优惠：使用专属链接注册并在充值时填写 \"ccswitch\" 优惠码，可享九折优惠。",
-      "patewayai": "PatewayAI 为 CC Switch 的用户提供了特别福利，通过此链接注册可以获得3美元额度。",
+      "patewayai": "PatewayAI 是一家面向资深 AI 开发者的 API 中转服务商，完整支持 Claude、GPT 系列以及各类国内主流模型。所有模型均来自官方高质量渠道，绝无稀释、绝无伪造，计费明细透明可查。经济模式低至 0.5 折，通过此链接注册即可获得免费 1 美元试用额度，还可参与不定时营销活动领取免费额度。平台同时支持企业级并发、专属管理后台、正式合同与发票，并提供最高 150 美元的双向邀请充值推荐奖励。",
       "claudecn": "ClaudeCN 是一家实体企业运营的企业级AI中转平台，支持企业采购流程，可对公打款、签约，服务合规有保障。",
       "runapi": "RunAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册，首次充值即可享受 9 折优惠。",
       "opencode_go": "OpenCode Go 提供多款编程模型的订阅服务，可通过此链接查看套餐详情并订阅。",
       "dmxapi": "Claude Code 专属模型 3.4 折优惠进行中！",
       "cubence": "Cubence 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"CCSWITCH\" 优惠码，每次充值均可享受9折优惠",
-      "aigocode": "AIGoCode 是 CC Switch 的官方合作伙伴，使用此链接注册首次充值时可以获得10%额度奖励！",
+      "aigocode": "订阅制 AI 编程平台，不只按 token 算钱。一个账号包月畅用 Claude Code、Codex、Gemini，国内直连、响应快。通过此链接订阅额外送 10% 额度！",
       "rightcode": "RightCode 是 CC Switch 的官方合作伙伴，使用此链接注册每次充值均可赠送5%额外额度！",
       "aicodemirror": "AICodeMirror 是 CC Switch 的官方合作伙伴，使用此链接注册可享受8折优惠！",
       "aicoding": "AI Coding 为 CC Switch 的用户提供了特殊优惠，首次充值可以享受 9 折优惠！",
@@ -1630,7 +1680,7 @@
       "qiniu": "七牛云是多协议 AI 中转平台，一个 Key 即可调用原生 Claude、GPT、Gemini 模型，兼容 Anthropic、OpenAI、Gemini 多种接口。",
       "haoai": "hao.ai 是面向开发者与团队的高速、稳定大模型统一 API 网关：一个 Key 即可接入 GPT、Claude、Grok 等主流模型，兼容 OpenAI、Anthropic 协议，提供模型路由、故障回退与完整调用日志，价格低至官方参考价的 1.5 折。CC Switch 用户通过此链接注册，首单可享 5% 赠送额度！",
       "fenno": "Fenno.ai 是稳定高效的 API 中转服务商，可接入多种主流模型。CC Switch 用户专属福利：通过此链接订阅 1.99 刀 /50 刀额度的 Trial 计划，有效期 7 天！",
-      "teamorouter": "TeamoRouter 是企业级 Agentic LLM 网关，价格最高可达 90% 折扣。为 CC Switch 的用户提供了特别福利：新用户通过此链接注册，首次充值享 10% 折扣！",
+      "teamorouter": "TeamoRouter 让 Claude Code 一个 Key 直接用 Opus 5.5、Sonnet 5.5、Fable 5.1，Opus 5.5 约为官方价 2.8 折，按量计费，原生 Anthropic 协议。CC Switch 用户通过此链接注册，首充 $10 / $20 / $50 额外多送 10% 额度！",
       "ppio": "PPIO 是国内领先的独立 Agentic Cloud 服务商，一个 API Key 调用全部旗舰开源模型。通过此链接注册并完成实名认证，即可获得 ¥10 代金券。",
       "xycai": "XycAi 企业级 Token 工厂：200+ 全球模型一键接入，SLA 自动赔付，异常缓存 100% 退还！",
       "9527code": "9527 CODE 是企业级满血 AI 中转平台，为 Claude Code、Codex 等主流模型提供高速稳定的中转服务。持续运营一年，服务稳定性达 99.9%，提供 7×24 小时人工技术支持。新人福利联系客服赠送体验额度，拉新返现无上限！",
@@ -1638,14 +1688,14 @@
       "fluxa": "FluxA 与百度智能云联合推出 AgenticPlan，让 AI Agent 能自主购买、管理和使用模型、API 与工具。内含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗舰模型，并获赠 FluxA AgentMarket API 调用额度，解锁搜索、数据抓取、社交媒体、金融、加密、生图、视频等 13000+ 付费 API。",
       "88api": "88API 是由香港企业运营的一站式多模型 API 平台，通过统一接口接入文本、图片、语音和视频模型，支持国际主流付款方式，可提供发票，提供企业级稳定服务。通过专属链接注册可获取专属赠送额度！",
       "modelflare": "Modelflare 是稳定、低成本的 AI 模型网关，一个 Key 即可调用 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 用户专享福利：首次充值使用优惠码 \"CCSWITCH\" 可享 9 折优惠！",
-      "everyapi": "EveryAPI 自带桌面客户端，Claude Code、Codex、Cursor 等 20 多个工具一键自动配置；一把密钥直接调用 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，换模型不用改配置。注册即送 14 元额度，GPT 低至 1.5 折；CC Switch 用户专享：首充时使用折扣码 \"ccswitch\" 享 20% 优惠，不限时！",
       "alltokens": "AllTokens 秉持「稳定为基，真实为本」，致力于让每一次 AI 调用都稳定、真实、值得托付：服务可靠、计费透明，一个平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量计费、支持配额上限。注册即送 1 美元体验金！",
       "alltokens_si": "AllTokens SI 秉持「稳定为基，真实为本」，是专为企业打造的 AI Token 中转与团队协作平台：成员、密钥、用量与余额统一纳入企业控制台，以清晰的权限与额度配置，让团队协作有据可查、安心可控。",
       "openmodel": "OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，即可享受首次充值九折优惠！",
       "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！",
-      "dit": "DIT.ai 是面向多供应商低价路由的 AI Token 交易市场：一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流模型，160 多条线路实时竞价，价格通常比官方低 30–70%。CC Switch 用户通过此链接注册并使用优惠码 \"ccswitch\"，可领取 5 美元新人券！",
+      "dit": "同样的模型，更低的账单，一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini 等 50 多个模型，并在 160 多家供应商之间路由到性价比最优的选项，价格通常比官方定价低 30–70%。只需更换 Base URL 和 API Key，即可在保留现有技术栈的情况下开始调用。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，新人首充可享 7 折！",
       "buytoken": "BuyToken 提供 Claude Code、Codex、DeepSeek 等各类中转服务，支持企业级并发、可极速开票，专注做稳定长久站。CC Switch 用户通过此链接注册可得 3 元体验额度，首充享 9 折！",
-      "vapi": "V-API 是三年老品牌，为个人、开发者和企业提供稳定、快速、安全的高品质大语言模型 API 服务，支持合同签约、正规开票（普票 / 专票）。CC Switch 用户通过此链接注册，首单立减 2 元并享 9 折优惠！"
+      "vapi": "V-API 是三年老品牌，为个人、开发者和企业提供稳定、快速、安全的高品质大语言模型 API 服务，支持合同签约、正规开票（普票 / 专票）。CC Switch 用户通过此链接注册，首单立减 2 元并享 9 折优惠！",
+      "ospreyai": "ACS OspreyAI 是面向开发者和企业的一站式多模型 API 服务平台。一个 API Key 即可调用 Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、腾讯混元等国内外主流模型。平台兼容 OpenAI、Anthropic 等主流 API 协议，也可用于 Claude Code、Codex、OpenCode、Pi、Hermes 等主流 AI 工具。海外模型较官方价格可节省 20%—40%，国内模型可节省 30%—50%。支持统一充值、统一账单、用量查询和模型灵活切换，适用于 AI 应用开发、内容生产及自动化工作流等场景。通过此链接创建账号，即可获取优惠，快速接入国内外主流大模型。"
     },
     "presets": {
       "ucloud": "优云智算",
@@ -1794,10 +1844,17 @@
     "customUserAgentHelp": "替换转发到供应商的请求里的 User-Agent。",
     "localProxyRequestOverridesHelp": "作用于格式转换后发给上游的请求。",
     "apiFormatHelp": "看供应商原生支持哪种协议：Anthropic Messages 原样转发、不转换格式；其余三种由路由转成 Anthropic Messages。",
+    "reasoningEffort": "思考档位",
+    "reasoningEffortHelp": "经路由转成 OpenAI 格式时，客户端选的思考档位怎么发给上游。自动：按上游支持的档位发，认不出的上游最多发 high，关掉思考时不发。原样发送：客户端选哪档发哪档，上游不支持 xhigh 或 max 时会报错。不发送：上游因这个参数报错时用。",
+    "reasoningEffortAuto": "自动（推荐）",
+    "reasoningEffortOff": "不发送",
+    "reasoningEffortPassthrough": "原样发送",
     "directModeFormatInUse": "这张卡正在直连使用：改成这种格式后保存，请求会失败。请先切到路由或聚合。",
     "directModeFormatSwitch": "直连模式下用不了这种格式，切到路由或聚合后才能用这张卡。"
   },
   "copilot": {
+    "automaticFormat": "由路由按模型自动选择",
+    "automaticFormatHint": "Copilot 的上游格式由路由按模型自动选择，手选格式不生效。",
     "authSection": "GitHub Copilot 认证",
     "authStatus": "认证状态",
     "authenticated": "已认证: {{username}}",
@@ -1838,7 +1895,6 @@
   "codexOauth": {
     "authStatus": "认证状态",
     "notAuthenticated": "未认证",
-    "loginWithChatGPT": "使用 ChatGPT 登录",
     "loginRequired": "请先登录 ChatGPT 账号",
     "statusLoading": "正在加载账号状态...",
     "statusUnavailable": "状态不可用",
@@ -1873,7 +1929,12 @@
     "retry": "重试",
     "copyCode": "复制代码",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。"
+    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。",
+    "loginMethod": "登录方式",
+    "browserLogin": "浏览器登录",
+    "deviceCodeLogin": "设备代码登录",
+    "openBrowserLogin": "打开浏览器登录",
+    "loginExpired": "登录已过期，请重试。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 认证",
@@ -2080,9 +2141,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "暂无额外选项",
     "noModelOptions": "模型选项，点击 + 添加",
-    "modelLimits": "Token 限制",
-    "limitContext": "上下文",
-    "limitOutput": "输出",
     "modelExtraFields": "模型属性",
     "noModelExtraFields": "模型属性 (variants, cost 等)，点击 + 添加",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2220,6 +2278,11 @@
       "short": "会话日志",
       "label": "{{app}} · 会话日志",
       "hint": "没开路由时从客户端的会话日志读取，分不出具体是哪家供应商"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek 账号",
+      "label": "{{app}} · DeepSeek 账号（OAuth）",
+      "hint": "从会话日志读取，走的是 DeepSeek 账号登录；Web 和 Desktop 共用这份登录，用量合并统计"
     },
     "stream": "流",
     "nonStream": "非流",
@@ -2521,7 +2584,7 @@
       "scanTitle": "自动扫描会话日志",
       "scanHelpTitle": "会话日志是什么",
       "scanHelp": "各应用写在本机的会话记录。CC Switch 从里面读取用量，不开路由也有数据。",
-      "coverage": "覆盖 7 个应用：{{apps}}",
+      "coverage": "覆盖 {{total}} 个应用：{{apps}}",
       "cadenceOn": "启动时扫描一次，后台每 10 分钟一次；打开用量页时立即扫描，之后按所选间隔扫描",
       "cadenceOff": "自动扫描已关闭，只在点「立即同步」时扫描",
       "unsupported": "Hermes、OpenClaw 暂不支持用量统计",
@@ -4146,6 +4209,7 @@
     "extraUsage": "超额用量",
     "expired": "会话已过期",
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
+    "expiredHintAccounts": "请在授权中心重新登录这个账号",
     "queryFailed": "查询失败",
     "refresh": "刷新"
   },
@@ -4186,6 +4250,9 @@
     "moreActions": "更多操作",
     "manualCommands": "手动安装命令",
     "columnApp": "应用",
+    "sectionInstalled": "已安装 · {{count}}",
+    "sectionNotInstalled": "未安装 · {{count}}",
+    "dragHandle": "拖动调整 {{name}} 的顺序",
     "columnVersion": "版本",
     "columnVisible": "显示",
     "visibleHelp": "关掉后，这个应用不再出现在侧栏、托盘菜单、MCP / Skills 的应用列，以及提示词和会话的应用下拉里。只是不显示：它的供应商、MCP 等配置都还在，它自己的配置文件也不会被改动。",
@@ -4209,7 +4276,8 @@
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
       "mcode": "安装时运行官方安装脚本，失败时改用 npm",
-      "agy": "安装时运行官方安装脚本"
+      "agy": "安装时运行官方安装脚本",
+      "omp": "安装时运行官方安装脚本"
     }
   },
   "appPage": {
@@ -4343,7 +4411,6 @@
       "routing": "路由中",
       "currentDefault": "当前默认",
       "defaultAfterSwitch": "切换后默认",
-      "current": "当前",
       "default": "默认"
     },
     "action": {
@@ -4360,7 +4427,8 @@
       "edit": "编辑 {{name}}",
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
-      "moveDown": "{{name}} 下移一位"
+      "moveDown": "{{name}} 下移一位",
+      "openTerminal": "用 {{name}} 打开终端"
     },
     "chip": {
       "official": "官方",
@@ -4380,7 +4448,6 @@
       "defaultWhileRouting": "正在路由时，默认就是路由到的那家；切换到聚合模式时可以另选。",
       "needsRoute": "需要路由：{{reason}}，不能直连。",
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
-      "currentCannotRemove": "正在用的这家不能移除，先启用别家。",
       "inUseCannotDelete": "正在用的这家不能删除，先切到别家。",
       "directDefaultCannotDelete": "退出路由后会回到这家，所以不能删除。先在直连页对别家点「回到直连并使用」，再删除。",
       "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。"
@@ -4449,9 +4516,8 @@
     "used": "已用 {{value}}%",
     "usedUp": "已用完",
     "balance": "余额 {{value}}",
-    "balanceUsedUp": "余额已用完",
     "planExpired": "套餐已过期",
-    "failed": "额度没查到",
+    "failed": "额度查询失败",
     "reason": {
       "loginExpired": "登录已过期",
       "tokenRefreshPending": "令牌待刷新"
@@ -4508,6 +4574,11 @@
       "on": "{{name}} · {{app}}：已启用",
       "off": "{{name}} · {{app}}：未启用",
       "fail": "{{name}} · {{app}}：写入失败，点按重试"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi 的实际加载范围",
+      "help": "Oh My Pi 除了 ~/.omp/agent 自己的配置，还会从其他 Agent 的目录发现 MCP 服务器、技能、命令、钩子、规则和设置（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要让 Oh My Pi 的实际生效内容与 CC Switch 界面一致，请在 ~/.omp/agent/config.yml 用 disabledProviders 关闭不需要的发现来源（id 与文档一致，如 claude、codex、gemini、opencode、github、agents）。",
+      "docsLink": "怎样让 Oh My Pi 不读取其他 Agent 的配置"
     }
   },
   "mcpPage": {
@@ -4570,6 +4641,7 @@
       "failedTitle": "有应用没有读到",
       "filesTitle": "读取了哪些文件",
       "claudeNote": "（顶层 mcpServers）",
+      "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -4658,6 +4730,10 @@
       "writeTo": "写入到",
       "writeToHelpTitle": "怎么写进各应用",
       "writeToHelp": "同一份配置原样写进勾选的每个应用；某个应用要不同参数时，另建一条只勾它。MiniMax Code 只替换连接字段，mcp.json 里的其他字段保留。",
+      "sseAsHttpTitle": "{{apps}} 不支持 SSE，会按 HTTP 连接",
+      "sseAsHttpBody": "{{apps}} 只支持 stdio 和 HTTP（Streamable HTTP），会把这个地址当作 HTTP 连接；服务端只支持 SSE 时会连不上。服务端也提供 Streamable HTTP 的话，建议改选 HTTP。",
+      "sseRejectedTitle": "{{apps}} 不支持 SSE",
+      "sseRejectedBody": "这些应用只支持 stdio 和 HTTP（Streamable HTTP），保存时会写入失败。请改选 HTTP，或取消勾选这些应用。",
       "meta": "说明与链接",
       "metaHint": "显示名、描述、标签、主页、文档",
       "displayName": "显示名",
@@ -4728,7 +4804,7 @@
     "rowFail": "在 {{app}} 启用失败：{{error}}",
     "fixSync": "改同步方式",
     "rowMoreAria": "{{name}} 的更多操作",
-    "copyDir": "复制目录名",
+    "openDir": "打开目录",
     "uninstallEllipsis": "卸载",
     "listLabel": "已安装的 Skill",
     "noMatch": "没有匹配“{{query}}”的 Skill",
@@ -4756,7 +4832,8 @@
       "enableFailed": "没能在 {{apps}} 启用，已在列表里标出",
       "uninstalledMany": "已卸载 {{count}} 个 Skill",
       "backupAt": "备份在 {{path}}",
-      "copiedDir": "已复制目录名 {{dir}}",
+      "copiedName": "已复制 {{name}}",
+      "openDirFailed": "没能打开目录",
       "noUpdatesInSelection": "选中的 Skill 没有可用的更新",
       "selectionAlreadyOn": "选中的 {{count}} 个 Skill 已经在 {{app}} 启用",
       "selectionAlreadyOff": "选中的 {{count}} 个 Skill 都没有在 {{app}} 启用",
@@ -4781,7 +4858,7 @@
       "sourceRepos": "仓库 · {{count}}",
       "reload": "重新读取仓库",
       "listLabel": "可安装的 Skill",
-      "installed": "已安装 · {{count}} 个应用",
+      "installed": "已安装",
       "installedAria": "{{name}} 已安装在 {{count}} 个应用，在「已安装」里查看",
       "dirTaken": "目录名已被 {{name}}（{{source}}）使用",
       "installing": "安装中",
@@ -4867,12 +4944,13 @@
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
-      "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。"
+      "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
+      "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
+      "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
+      "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。"
     },
     "addAccount": "添加账号",
-    "groupMenu": "{{service}} 的更多操作",
     "accountMenu": "{{login}} 的更多操作",
-    "removeAll": "删除全部账号",
     "removeAccount": "删除账号",
     "setDefault": "设为默认",
     "reauth": "重新登录",
@@ -4892,7 +4970,6 @@
     "loginFailed": "登录没有完成",
     "pending": {
       "add": "添加 {{service}} 账号 · 等待授权中…",
-      "login": "登录 {{service}} · 等待授权中…",
       "reauth": "重新登录 {{login}} · 等待授权中…",
       "enterCode": "在浏览器中输入验证码：",
       "copy": "复制验证码",
@@ -4910,19 +4987,34 @@
       "updating": "更新中…",
       "loading": "正在查询额度…",
       "refresh": "刷新额度",
-      "refreshAria": "刷新 {{login}} 的额度"
+      "refreshAria": "刷新 {{login}} 的额度",
+      "refreshAll": "全部刷新"
     },
     "agy": {
       "reauthNote": "登录凭据已失效，切不过去",
       "addedOn": "{{date}}添加",
       "statusLoadFailed": "无法读取 Antigravity 账号，请重试。",
       "empty": "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
-      "login": "用 Google 登录",
       "current": "agy 在用",
       "switchTo": "切换 agy 到这个账号",
       "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
       "switched": "已切换，新开的 agy 会使用这个账号。",
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
+    },
+    "claude": {
+      "pasteSubmitted": "已提交，正在完成登录…",
+      "pasteToggle": "授权后没有回到这里？",
+      "pasteHint": "把授权后浏览器地址栏里的地址，或页面上显示的代码粘贴到这里。",
+      "pasteLabel": "授权代码或地址",
+      "pasteSubmit": "提交",
+      "reauthNote": "登录已失效，请重新登录",
+      "addedOn": "{{date}}添加",
+      "loginExpiresOn": "登录约在{{date}}过期，之后要重新登录",
+      "loginMaybeExpired": "登录可能已过期，切换前请重新登录",
+      "statusLoadFailed": "无法读取 Claude 账号，请重试。",
+      "empty": "还没有添加 Claude 账号。要在多个订阅账号之间切换时在这里登录。",
+      "removeNote": "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。",
+      "wslUnsupported": "Claude 配置目录在 WSL 里，暂不支持添加和切换 Claude 账号。"
     }
   },
   "kimi": {
@@ -4937,6 +5029,7 @@
       "removeAccount": "删除账号",
       "dismissAccount": "移出列表",
       "signedOut": "未登录",
+      "noSubscription": "未订阅",
       "statusFailed": "无法读取登录状态",
       "expired": "授权码已过期，请重新登录。",
       "denied": "授权已被拒绝，请重新登录。",
@@ -4947,7 +5040,8 @@
       "primaryHidden": "Kimi Code 自己的登录已移出列表，重新登录同一账号即可找回",
       "removeCurrentHint": "这个账号正在使用，请先切换到其他账号再删除",
       "manageAccounts": "管理 Kimi 账号",
-      "managedHint": "请在授权中心管理 Kimi 官方账号。",
+      "managedHint": "先移除这个官方账号，或到授权中心删除它（连登录一起删）。",
+      "connectionManaged": "连接和登录由授权中心管理，这里只编辑模型。拉取模型会读取这个账号当前可用的官方模型。",
       "current": "Kimi 在用",
       "primaryShort": "Kimi Code 自己的登录",
       "empty": "还没有 Kimi 账号。Kimi Code 里已登录的号会自动出现在这里。",
@@ -4955,6 +5049,8 @@
     },
     "modelSelectionHint": "点击供应商卡片的切换按钮选择默认供应商；需要指定其他模型时，在 Kimi Code 中使用 /model。",
     "contextSize": "上下文长度",
+    "configTomlScope": "这里只能写 [providers.{{key}}] 和属于它的 [models.*] 表；供应商标识请在上方修改。",
+    "configTomlSchema": "配置不完整：请检查供应商的 type，以及每个模型的 model 和 max_context_size（正整数）。",
     "capabilities": {
       "image_in": "图片输入",
       "thinking": "思考",
@@ -4975,5 +5071,79 @@
       "defaultModelInUse": "Kimi Code 正在使用该供应商的模型，请先在 Kimi Code 中用 /model 切换到其他模型",
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用该供应商的模型，请先在 Kimi Code 中用 /secondary-model 更换"
     }
+  },
+  "omp": {
+    "empty": {
+      "title": "还没有添加 API Key 供应商",
+      "description": "点击右上角 +，从预设或自定义配置添加供应商。"
+    },
+    "provider": {
+      "enabled": "已在 Oh My Pi 中启用",
+      "enableFailed": "无法在 Oh My Pi 中启用此供应商",
+      "removed": "已从 Oh My Pi 移除"
+    },
+    "current": {
+      "readFailed": "无法读取 Oh My Pi 供应商配置",
+      "stateUnavailableHint": "CC Switch 读取到 Oh My Pi 供应商配置前，供应商变更已暂时禁用。"
+    },
+    "form": {
+      "discoveryType": "模型自动发现",
+      "discoveryOff": "不自动发现",
+      "discoveryHint": "开启后，Oh My Pi 会自己去接口查有哪些模型，不用逐个手填，新上的模型也会自动出现。在线服务大多选「OpenAI 模型列表」，本机运行的模型选对应的软件；Anthropic 格式的接口通常查不到列表，保持「不自动发现」即可。手动添加的模型仍然生效。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI 模型列表（大多数在线服务）",
+        "proxy": "代理（每个模型自带格式）",
+        "ollama": "Ollama（本机）",
+        "llamaCpp": "llama.cpp（本机）",
+        "lmStudio": "LM Studio（本机）",
+        "litellm": "LiteLLM 网关",
+        "appleFoundationModels": "Apple 端侧模型（macOS）"
+      }
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi 配置超过 1 MiB 大小限制。",
+      "externalChange": "Oh My Pi 配置已被其他程序修改，请刷新后重试。",
+      "rollbackConflict": "数据库保存失败，且 Oh My Pi 配置已被其他程序修改，请手动恢复。",
+      "invalidMcp": "Oh My Pi MCP JSON 格式无效，根节点和 mcpServers 必须为对象。",
+      "invalidYaml": "Oh My Pi YAML 无效，根节点和 providers 必须是映射。",
+      "invalidProvider": "Oh My Pi 供应商配置无效，请检查必填字段、API 格式和字段类型。",
+      "manualEdit": "此 YAML 使用了 CC Switch 无法安全编辑的格式或语法，请手动编辑 models.yml。",
+      "duplicateProvider": "此 Oh My Pi 供应商标识已存在。",
+      "renameProvider": "Oh My Pi 供应商标识不能重命名。",
+      "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。",
+      "legacyModelsJson": "Oh My Pi 目录里还是旧的 models.json，omp 会在下次启动时把它迁移成 models.yml。请先运行一次 omp，再回来添加供应商。"
+    }
+  },
+  "dsh": {
+    "empty": {
+      "title": "添加 DeepSeek Harness 供应商",
+      "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"
+    },
+    "sharedProviders": "已添加的供应商会一起写进 DeepSeek Harness 的 Web 和 Desktop 配置（以及已初始化的 headless、acp），在 DeepSeek Harness 里选模型即可。",
+    "sharedProvidersNote": "Web 和 Desktop 共用这份列表",
+    "account": {
+      "help": "DeepSeek 账号用浏览器登录（OAuth），可以在这里登录，也可以在 DeepSeek Harness 里登录。登录信息保存在 $DSH_HOME/.credentials.yaml（默认 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一处登录或退出，两端同时生效，运行中的 DeepSeek Harness 会自动重新读取。账号路由的模型用量在用量页单独显示为「DeepSeek 账号（OAuth）」。",
+      "statusFailed": "无法读取 DeepSeek 账号的登录状态",
+      "empty": "未登录 DeepSeek 账号",
+      "unnamed": "DeepSeek 账号",
+      "expired": "登录已失效，请重新登录",
+      "shared": "Web 与 Desktop 共用",
+      "signOut": "退出登录",
+      "signOutConfirm": "退出 DeepSeek 账号「{{name}}」？DeepSeek Harness 的 Web 和 Desktop 会同时退出，API Key 供应商不受影响。",
+      "signOutFailed": "退出 DeepSeek 账号失败",
+      "balance": "余额 {{amount}}",
+      "bonus": "赠金 {{amount}}",
+      "balanceFailed": "余额暂时查不到",
+      "signedIn": "DeepSeek 账号已登录，Web 和 Desktop 都可以使用",
+      "signInFailed": "DeepSeek 账号登录失败",
+      "presetName": "DeepSeek 官方登录",
+      "presetDescription": "用浏览器登录 DeepSeek 账号后，DeepSeek Harness 会直接提供账号下的模型，不用再添加供应商；Web 和 Desktop 共用这份登录。登录和退出在授权中心管理，登录后账号会出现在「已添加」里。",
+      "manageAccounts": "管理 DeepSeek 账号",
+      "cardSubtitle": "官方账号 · Web 和 Desktop 共用",
+      "expiredChip": "登录已失效",
+      "editDisabled": "账号下的模型由 DeepSeek Harness 自动提供，无需编辑。",
+      "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
+    },
+    "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
   }
 }

@@ -1,6 +1,13 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { useForm, type FieldPath, type UseFormReturn } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { BasicFormFields } from "@/components/providers/forms/BasicFormFields";
 import { Form } from "@/components/ui/form";
 import type { ProviderFormData } from "@/lib/schemas/provider";
@@ -10,7 +17,17 @@ vi.mock("@/components/ProviderIcon", () => ({
 }));
 
 vi.mock("@/components/IconPicker", () => ({
-  IconPicker: () => <div data-testid="icon-picker" />,
+  IconPicker: ({
+    onValueChange,
+  }: {
+    onValueChange: (icon: string) => void;
+  }) => (
+    <div data-testid="icon-picker">
+      <button type="button" onClick={() => onValueChange("anthropic")}>
+        pick-anthropic
+      </button>
+    </div>
+  ),
 }));
 
 const defaultValues: Partial<ProviderFormData> = {
@@ -97,4 +114,61 @@ describe("BasicFormFields", () => {
       ).toBe("失焦提交");
     },
   );
+
+  it("mounts the icon picker inside #content-area as a nested FullScreenPanel without covering the sidebar", async () => {
+    const onOuterClose = vi.fn();
+    let formApi!: UseFormReturn<ProviderFormData>;
+
+    function ShellWithAddProvider({ open }: { open: boolean }) {
+      const form = useForm<ProviderFormData>({ defaultValues });
+      formApi = form;
+      return (
+        <div>
+          <nav data-testid="sidebar">sidebar</nav>
+          <main id="content-area">
+            <FullScreenPanel
+              isOpen={open}
+              title="Add provider"
+              onClose={onOuterClose}
+            >
+              <Form {...form}>
+                <BasicFormFields form={form} />
+              </Form>
+            </FullScreenPanel>
+          </main>
+        </div>
+      );
+    }
+
+    const view = render(<ShellWithAddProvider open={false} />);
+    view.rerender(<ShellWithAddProvider open />);
+    const contentArea = document.getElementById("content-area")!;
+
+    fireEvent.click(screen.getByRole("button", { name: "更换图标" }));
+
+    const heading = within(contentArea).getByRole("heading", {
+      name: "选择图标",
+    });
+    const iconPanel = heading.closest(".bg-app")!;
+    expect(contentArea).toContainElement(iconPanel as HTMLElement);
+    expect(iconPanel).toHaveClass("absolute", "inset-0");
+    expect(iconPanel).not.toHaveClass("fixed", "w-screen");
+
+    // ESC closes only the icon picker panel, leaving the outer Add provider panel open
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "选择图标" })).toBeNull(),
+    );
+    expect(onOuterClose).not.toHaveBeenCalled();
+
+    // Reopen and pick an icon: updates form values and closes the picker panel
+    fireEvent.click(screen.getByRole("button", { name: "更换图标" }));
+    fireEvent.click(screen.getByRole("button", { name: "pick-anthropic" }));
+
+    expect(formApi.getValues("icon")).toBe("anthropic");
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "选择图标" })).toBeNull(),
+    );
+    expect(onOuterClose).not.toHaveBeenCalled();
+  });
 });

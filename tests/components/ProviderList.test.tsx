@@ -32,6 +32,18 @@ const lastProps = (id: string) =>
     .filter((props) => props.provider.id === id)
     .at(-1);
 
+const dshAccountStatusMock = vi.fn();
+
+vi.mock("@/components/providers/DshAccount", () => ({
+  useDshAccountStatus: (enabled: boolean) =>
+    enabled ? dshAccountStatusMock() : { data: undefined },
+  accountName: (status: any, fallback: string) =>
+    status.profile?.name ?? fallback,
+  DshAccountCard: ({ status }: any) => (
+    <div data-testid="dsh-account-card">{status.profile?.name}</div>
+  ),
+}));
+
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
 }));
@@ -1037,7 +1049,6 @@ describe("ProviderList Component", () => {
       // Pi 只有启用 / 停用，没有路由、队列、健康状态
       for (const props of [currentCards.at(-1), inactiveCards.at(-1)]) {
         expect(props.isCurrent).toBe(false);
-        expect(props.isInConfig).toBe(true);
         expect(props.presentation.showHealth).toBeFalsy();
         expect(props.presentation.move).toBeUndefined();
         expect(
@@ -1086,7 +1097,7 @@ describe("ProviderList Component", () => {
         .at(-1);
       expect(latestCardProps).toMatchObject({
         isCurrent: false,
-        isInConfig: true,
+        presentation: { buttons: [{ key: "remove" }] },
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBeUndefined();
     });
@@ -1175,12 +1186,40 @@ describe("ProviderList Component", () => {
         .at(-1);
       expect(latestCardProps).toMatchObject({
         isCurrent: false,
-        isInConfig: false,
+        presentation: { buttons: [{ key: "add" }] },
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBe(
         "pi.current.stateUnavailableHint",
       );
     });
+  });
+
+  it("warns when an additive app's live config cannot be read", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
+        HttpResponse.json("Failed to parse Hermes config as YAML", {
+          status: 500,
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("无法读取 apps.hermes 配置文件");
+    expect(
+      screen.getByText(/Failed to parse Hermes config as YAML/),
+    ).toBeInTheDocument();
   });
 
   it("keeps Pi provider creation on the page-level add action", async () => {
@@ -1241,5 +1280,59 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByRole("button", { name: "provider.addProvider" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the signed-in DeepSeek account as an official card under Added", async () => {
+    dshAccountStatusMock.mockReturnValue({
+      data: { signedIn: true, expired: false, profile: { name: "Jason" } },
+    });
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="dsh"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId("dsh-account-card")).toHaveTextContent(
+      "Jason",
+    );
+    expect(screen.getByText("providerCard.section.added")).toBeInTheDocument();
+    expect(
+      screen.queryByText("providerCard.section.addedEmpty"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "provider.addProvider" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty state and no account card while signed out of DeepSeek", async () => {
+    dshAccountStatusMock.mockReturnValue({
+      data: { signedIn: false, expired: false, profile: null },
+    });
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="dsh"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "provider.addProvider" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("dsh-account-card")).not.toBeInTheDocument();
   });
 });
