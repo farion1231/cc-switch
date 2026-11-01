@@ -2181,6 +2181,7 @@
     "universalDetail": "Claude Code, Codex, Gemini CLI ile eşitle edildi",
     "manageUniversal": "Mevcut evrensel sağlayıcıları yönetin ›",
     "loginWith": {
+      "deepseek": "DeepSeek hesabıyla giriş yap",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",
@@ -4848,7 +4849,7 @@
       "sourceRepos": "Depolar · {{count}}",
       "reload": "Kod depolarını yeniden yükle",
       "listLabel": "Yükleyebileceğiniz beceriler",
-      "installed": "Yüklendi · {{count}} uygulamalar",
+      "installed": "Yüklendi",
       "installedAria": "{{name}}, {{count}} uygulamalarına yüklenir; Yüklendi altında görüntüleyin",
       "dirTaken": "Klasör adı {{name}} ({{source}}) tarafından kullanılıyor",
       "installing": "Kurulum",
@@ -4977,7 +4978,8 @@
       "updating": "Güncelleniyor…",
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
-      "refreshAria": "{{login}} için kotayı yenileyin"
+      "refreshAria": "{{login}} için kotayı yenileyin",
+      "refreshAll": "Tümünü yenile"
     },
     "agy": {
       "reauthNote": "Oturum süresi doldu, bu hesaba geçilemiyor",

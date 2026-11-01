@@ -854,11 +854,11 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.a6api.com",
+        ANTHROPIC_BASE_URL: "https://api.a6api.vip",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
@@ -2810,6 +2810,32 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "xai",
     iconColor: "#000000",
+  },
+  {
+    // OpenAI 平台 API Key（按量计费，和上面 ChatGPT 登录的「Codex」卡是两套额度），
+    // 经路由转成 Responses 发往 /v1/responses。
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.openai.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "gpt-6.1-sol",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-6-luna",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-6.1-sol",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-6.1-sol",
+        // 非 Claude 模型名 Claude Code 按 200K 算；272K 以上 OpenAI 按长上下文档加价，
+        // 同「Codex」卡钉两个值（GPT_CONTEXT_WINDOW_CAP）。
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "272000",
+      },
+    },
+    category: "cn_official",
+    apiFormat: "openai_responses",
+    endpointCandidates: ["https://api.openai.com"],
+    icon: "openai",
+    iconColor: "#00A67E",
   },
   {
     name: "Nvidia",
