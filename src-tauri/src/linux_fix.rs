@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tauri::{LogicalSize, PhysicalSize, WebviewWindow};
+use tauri::{LogicalSize, WebviewWindow};
 
 static IS_NUDGING: AtomicBool = AtomicBool::new(false);
 
@@ -95,18 +95,8 @@ fn try_acquire_nudge() -> bool {
         .is_ok()
 }
 
-fn calculate_nudge_sizes(
-    physical: PhysicalSize<u32>,
-    scale_factor: f64,
-) -> (LogicalSize<f64>, LogicalSize<f64>) {
-    let scale = if scale_factor > 0.0 {
-        scale_factor
-    } else {
-        1.0
-    };
-    let logical = physical.to_logical::<f64>(scale);
-    let bumped = LogicalSize::new(logical.width + 1.0, logical.height);
-    (logical, bumped)
+fn bumped_size(logical: LogicalSize<f64>) -> LogicalSize<f64> {
+    LogicalSize::new(logical.width + 1.0, logical.height)
 }
 
 fn has_size_drift(current: LogicalSize<f64>, expected: LogicalSize<f64>) -> bool {
@@ -304,26 +294,37 @@ fn apply_wayland_header_event_box_patch(window: &WebviewWindow) {
     }
 }
 
+/// 读取 `gtk_window_get_size` 的内容区逻辑尺寸。
+///
+/// 不能用 `inner_size()`：Tao 0.34 Linux 取自 configure-event，启用系统装饰
+/// 时包含 CSD 标题栏与阴影；而 `set_size` 走 `gtk_window_resize`，只设内容区。
+/// 把前者写回后者会让窗口每次恢复都多长一圈装饰（#7480）。
+async fn content_logical_size(window: &WebviewWindow) -> Option<LogicalSize<f64>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let gtk_source = window.clone();
+    if let Err(e) = window.run_on_main_thread(move || {
+        use gtk::prelude::GtkWindowExt;
+        let _ = tx.send(gtk_source.gtk_window().ok().map(|w| w.size()));
+    }) {
+        log::warn!("Linux nudge: 无法在 GTK 主线程读取窗口尺寸: {e}");
+        return None;
+    }
+    let (width, height) = rx.await.ok().flatten()?;
+    Some(LogicalSize::new(width as f64, height as f64))
+}
+
 /// 以 LogicalSize 做 ±1 逻辑像素伪 resize，避免 HiDPI 下 PhysicalSize +1
 /// 被逻辑换算截断成 no-op。
 ///
 /// 一旦 `set_size(bumped)` 已经发出，本函数保证随后 `set_size(original)`，
 /// 即使窗口在 RESIZE_GAP 期间被隐藏。这是刻意不做 generation-cancel 的原因。
 async fn pseudo_resize_logical(window: &WebviewWindow) {
-    let (physical, scale) = match (window.inner_size(), window.scale_factor()) {
-        (Ok(physical), Ok(scale)) => (physical, scale),
-        (Err(e), _) => {
-            log::warn!("Linux nudge: 读取 inner_size 失败，跳过伪 resize: {e}");
-            return;
-        }
-        (_, Err(e)) => {
-            log::warn!("Linux nudge: 读取 scale_factor 失败，跳过伪 resize: {e}");
-            return;
-        }
+    let Some(logical) = content_logical_size(window).await else {
+        log::warn!("Linux nudge: 读取窗口尺寸失败，跳过伪 resize");
+        return;
     };
 
-    let (logical, bumped) = calculate_nudge_sizes(physical, scale);
-    let _ = window.set_size(bumped);
+    let _ = window.set_size(bumped_size(logical));
     tokio::time::sleep(RESIZE_GAP).await;
     let _ = window.set_size(logical);
 
@@ -332,10 +333,8 @@ async fn pseudo_resize_logical(window: &WebviewWindow) {
         return;
     }
 
-    match (window.inner_size(), window.scale_factor()) {
-        (Ok(after_physical), Ok(after_scale)) => {
-            let after_scale = if after_scale > 0.0 { after_scale } else { 1.0 };
-            let after_logical = after_physical.to_logical::<f64>(after_scale);
+    match content_logical_size(window).await {
+        Some(after_logical) => {
             if has_size_drift(after_logical, logical) {
                 log::info!(
                     "Linux nudge 尺寸 drift: expected={:?}, got={:?}，已补偿",
@@ -344,11 +343,7 @@ async fn pseudo_resize_logical(window: &WebviewWindow) {
                 );
                 let _ = window.set_size(logical);
 
-                if let (Ok(final_physical), Ok(final_scale)) =
-                    (window.inner_size(), window.scale_factor())
-                {
-                    let final_scale = if final_scale > 0.0 { final_scale } else { 1.0 };
-                    let final_logical = final_physical.to_logical::<f64>(final_scale);
+                if let Some(final_logical) = content_logical_size(window).await {
                     if has_size_drift(final_logical, logical) {
                         log::warn!(
                             "Linux nudge 尺寸 drift 补偿后仍不一致: expected={:?}, got={:?}",
@@ -359,8 +354,7 @@ async fn pseudo_resize_logical(window: &WebviewWindow) {
                 }
             }
         }
-        (Err(e), _) => log::warn!("Linux nudge: 对账回读 inner_size 失败: {e}"),
-        (_, Err(e)) => log::warn!("Linux nudge: 对账回读 scale_factor 失败: {e}"),
+        None => log::warn!("Linux nudge: 对账回读窗口尺寸失败"),
     }
 }
 
@@ -380,25 +374,10 @@ mod tests {
     }
 
     #[test]
-    fn calculate_nudge_sizes_various_hidpi_scales() {
-        let (logical, bumped) = calculate_nudge_sizes(PhysicalSize::new(800, 600), 1.0);
-        assert_eq!(logical.width, 800.0);
+    fn bumped_size_adds_one_logical_pixel_width() {
+        let bumped = bumped_size(LogicalSize::new(800.0, 600.0));
         assert_eq!(bumped.width, 801.0);
         assert_eq!(bumped.height, 600.0);
-
-        let (logical, bumped) = calculate_nudge_sizes(PhysicalSize::new(1000, 750), 1.25);
-        assert_eq!(logical.width, 800.0);
-        assert_eq!(bumped.width, 801.0);
-        assert!((bumped.width - logical.width - 1.0).abs() < 1e-6);
-
-        let (logical, bumped) = calculate_nudge_sizes(PhysicalSize::new(1600, 1200), 2.0);
-        assert_eq!(logical.width, 800.0);
-        assert_eq!(bumped.width, 801.0);
-        assert_eq!(bumped.height, 600.0);
-
-        let (logical, bumped) = calculate_nudge_sizes(PhysicalSize::new(800, 600), 0.0);
-        assert_eq!(logical.width, 800.0);
-        assert_eq!(bumped.width, 801.0);
     }
 
     #[test]
