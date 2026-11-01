@@ -1,6 +1,6 @@
 //! 供应商余额查询服务
 //!
-//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI 的账户余额查询；
+//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI、88API 的账户余额查询；
 //! 智谱 GLM 的余额只作为套餐查询的回落（见 `query_zhipu_balance`），不参与自动检测。
 //! 返回 UsageResult 格式，与现有用量系统无缝对接。
 //!
@@ -22,6 +22,9 @@ enum BalanceProvider {
     SiliconFlowEn,
     OpenRouter,
     NovitaAI,
+    /// 88API（New API 部署）。保存请求地址的 origin：api.88api.ai 与 88api.ai
+    /// 都提供同一个余额接口，Codex 等应用的地址还带 `/v1`。
+    Api88(String),
 }
 
 fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
@@ -39,8 +42,25 @@ fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
     } else if url.contains("api.novita.ai") {
         Some(BalanceProvider::NovitaAI)
     } else {
-        None
+        api88_origin(base_url).map(BalanceProvider::Api88)
     }
+}
+
+/// 只认 HTTPS 下 88api.ai 及其子域名（按 host 标签边界匹配），不认
+/// 88api.ai.example.com 这类伪造后缀或出现在路径里的域名，避免把 Key 发给别的站。
+fn api88_origin(base_url: &str) -> Option<String> {
+    let url = url::Url::parse(base_url.trim()).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    let host = url.host_str()?.to_ascii_lowercase();
+    if host != "88api.ai" && !host.ends_with(".88api.ai") {
+        return None;
+    }
+    Some(match url.port() {
+        Some(port) => format!("https://{host}:{port}"),
+        None => format!("https://{host}"),
+    })
 }
 
 fn make_error(msg: String) -> UsageResult {
@@ -432,6 +452,115 @@ fn parse_novita_balance(body: &serde_json::Value) -> UsageResult {
     }
 }
 
+// ── 88API ───────────────────────────────────────────────────
+// GET {origin}/api/usage/token/，用推理用的 API Key（Bearer）认证。
+// Response: { code: true, message, data: { unlimited_quota, total_available, total_used,
+//   total_granted, user_quota?: { total_available, total_used } } }
+// - user_quota 是 Key 所属账户的钱包，只有在 88API 控制台给这个 Key 打开
+//   「允许查询用户额度」后才返回（88API 的「填入 CC Switch」默认会打开）
+// - 其余字段是 Key 自己的额度，只有设了上限（unlimited_quota=false）才有意义
+// 额度单位：500000 = ¥1，站点按人民币结算。
+
+const API88_QUOTA_PER_CNY: f64 = 500000.0;
+
+async fn query_88api(origin: &str, api_key: &str) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::get();
+
+    let resp = client
+        .get(format!("{origin}/api/usage/token/"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(make_auth_error(status));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    Ok(parse_88api_balance(&body))
+}
+
+fn parse_88api_balance(body: &serde_json::Value) -> UsageResult {
+    let ok = body.get("code").and_then(|v| v.as_bool()) == Some(true);
+    let Some(data) = body.get("data").filter(|d| ok && d.is_object()) else {
+        let message = body
+            .get("message")
+            .and_then(|v| v.as_str())
+            .filter(|m| !m.is_empty())
+            .unwrap_or("Invalid 88API balance response");
+        return make_error(message.to_string());
+    };
+    let amount = |obj: &serde_json::Value, field: &str| {
+        parse_f64_field(obj, field)
+            .map(|v| v / API88_QUOTA_PER_CNY)
+            .filter(|v| v.is_finite())
+    };
+
+    let mut rows = Vec::new();
+    if let Some(wallet) = data.get("user_quota").filter(|v| v.is_object()) {
+        let Some(remaining) = amount(wallet, "total_available") else {
+            return make_error("Missing or invalid 88API wallet balance".to_string());
+        };
+        rows.push(UsageData {
+            plan_name: Some("88API".to_string()),
+            remaining: Some(remaining),
+            total: None,
+            used: None,
+            unit: Some("CNY".to_string()),
+            // 余额用完不代表 Key 失效（同 OpenRouter，#8175）
+            is_valid: Some(true),
+            invalid_message: None,
+            extra: None,
+        });
+    }
+    if data.get("unlimited_quota").and_then(|v| v.as_bool()) == Some(false) {
+        rows.push(UsageData {
+            plan_name: Some("88API Key".to_string()),
+            remaining: amount(data, "total_available"),
+            total: amount(data, "total_granted"),
+            used: amount(data, "total_used"),
+            unit: Some("CNY".to_string()),
+            is_valid: Some(true),
+            invalid_message: None,
+            extra: None,
+        });
+    }
+    if rows.is_empty() {
+        // 不限额的 Key 又没开「允许查询用户额度」：没有可显示的数字，说明原因
+        return make_error(
+            "Turn on \"Allow querying user quota\" for this key in the 88API console to show the wallet balance"
+                .to_string(),
+        );
+    }
+    UsageResult {
+        success: true,
+        data: Some(rows),
+        error: None,
+    }
+}
+
 // ── 智谱 GLM ────────────────────────────────────────────────
 // GET {open.bigmodel.cn | api.z.ai}/api/biz/account/query-customer-account-report
 // 没有公开文档。2026-10-18 用国内站按量 Key 实测：接受推理用的 API Key（带不带 Bearer
@@ -569,6 +698,7 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
         BalanceProvider::SiliconFlowEn => query_siliconflow(api_key, false).await,
         BalanceProvider::OpenRouter => query_openrouter(api_key).await,
         BalanceProvider::NovitaAI => query_novita(api_key).await,
+        BalanceProvider::Api88(origin) => query_88api(&origin, api_key).await,
     }
 }
 
@@ -768,5 +898,107 @@ mod tests {
         .error
         .unwrap();
         assert!(msg.contains("令牌已过期"), "{msg}");
+    }
+
+    #[test]
+    fn api88_detection_uses_the_https_origin_of_88api_hosts_only() {
+        for (base_url, origin) in [
+            ("https://api.88api.ai", "https://api.88api.ai"),
+            ("https://api.88api.ai/v1", "https://api.88api.ai"),
+            ("https://88api.ai/v1/", "https://88api.ai"),
+            ("HTTPS://API.88API.AI", "https://api.88api.ai"),
+        ] {
+            assert_eq!(
+                api88_origin(base_url).as_deref(),
+                Some(origin),
+                "{base_url}"
+            );
+        }
+        for base_url in [
+            "http://api.88api.ai",
+            "https://88api.ai.example.com",
+            "https://example.com/88api.ai",
+            "https://not88api.ai",
+            "",
+        ] {
+            assert!(api88_origin(base_url).is_none(), "{base_url}");
+        }
+        assert!(matches!(
+            detect_provider("https://api.88api.ai/v1"),
+            Some(BalanceProvider::Api88(_))
+        ));
+    }
+
+    /// 2026-10-23 线上实测原文（Key 开了「允许查询用户额度」，不限额）。
+    const API88_WALLET_BODY: &str = r#"{"code":true,"data":{"expires_at":0,"model_limits":{},"model_limits_enabled":false,"name":"test","object":"token_usage","total_available":-14386383,"total_granted":0,"total_used":14386383,"unlimited_quota":true,"user_quota":{"total_available":392024117933,"total_used":2702615323}},"message":"ok"}"#;
+
+    #[test]
+    fn api88_unlimited_key_shows_the_account_wallet_in_cny() {
+        let body: serde_json::Value = serde_json::from_str(API88_WALLET_BODY).unwrap();
+        let result = parse_88api_balance(&body);
+        assert!(result.success);
+        let data = result.data.unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].plan_name.as_deref(), Some("88API"));
+        assert_eq!(data[0].remaining, Some(784048.235866));
+        assert_eq!(data[0].unit.as_deref(), Some("CNY"));
+        assert_eq!(data[0].is_valid, Some(true));
+    }
+
+    #[test]
+    fn api88_limited_key_adds_its_own_quota_after_the_wallet() {
+        let result = parse_88api_balance(&json!({
+            "code": true,
+            "data": {
+                "unlimited_quota": false,
+                "total_available": 2500000,
+                "total_used": "2500000",
+                "total_granted": 5000000,
+                "user_quota": { "total_available": 500000, "total_used": 0 }
+            }
+        }));
+        let data = result.data.unwrap();
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0].remaining, Some(1.0));
+        assert_eq!(data[1].plan_name.as_deref(), Some("88API Key"));
+        assert_eq!(data[1].remaining, Some(5.0));
+        assert_eq!(data[1].used, Some(5.0));
+        assert_eq!(data[1].total, Some(10.0));
+
+        // 没开「允许查询用户额度」时只剩 Key 自己的额度
+        let result = parse_88api_balance(&json!({
+            "code": true,
+            "data": { "unlimited_quota": false, "total_available": 500000, "total_used": 0, "total_granted": 500000 }
+        }));
+        let data = result.data.unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].plan_name.as_deref(), Some("88API Key"));
+        assert_eq!(data[0].remaining, Some(1.0));
+    }
+
+    #[test]
+    fn api88_reports_why_no_balance_can_be_shown() {
+        let result = parse_88api_balance(&json!({
+            "code": true,
+            "data": { "unlimited_quota": true, "total_available": -100 }
+        }));
+        assert!(!result.success);
+        assert!(result.data.is_none());
+        assert!(result.error.unwrap().contains("Allow querying user quota"));
+
+        for body in [
+            json!({ "success": false, "message": "无效的令牌" }),
+            json!({ "code": true, "data": null }),
+            json!({ "code": true, "data": { "user_quota": { "total_available": "inf" } } }),
+            json!({}),
+        ] {
+            let result = parse_88api_balance(&body);
+            assert!(!result.success, "unexpected success for {body}");
+            assert!(result.error.is_some());
+        }
+        let msg = parse_88api_balance(&json!({ "success": false, "message": "无效的令牌" }))
+            .error
+            .unwrap();
+        assert_eq!(msg, "无效的令牌");
     }
 }

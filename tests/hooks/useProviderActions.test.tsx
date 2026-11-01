@@ -161,6 +161,39 @@ describe("useProviderActions", () => {
     expect(addProviderMutateAsync).toHaveBeenCalledWith(providerInput);
   });
 
+  it("enables the balance query when an 88API provider is added", async () => {
+    addProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const providerInput = {
+      name: "88API",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.88api.ai",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+    } as Omit<Provider, "id">;
+
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.addProvider(providerInput);
+    });
+
+    expect(addProviderMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({
+          usage_script: expect.objectContaining({
+            enabled: true,
+            templateType: "balance",
+          }),
+        }),
+      }),
+    );
+  });
+
   it("should update tray menu when calling updateProvider", async () => {
     updateProviderMutateAsync.mockResolvedValueOnce(undefined);
     providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
