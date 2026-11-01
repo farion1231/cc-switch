@@ -30,9 +30,40 @@ export interface WebDavSyncResult {
   status: string;
 }
 
+export type WindowControlKind = "minimize" | "maximize" | "close";
+
+/** 系统主题渲染出的单个按钮三种状态（PNG data URL）。 */
+export interface WindowControlImages {
+  normal: string;
+  hover: string;
+  pressed: string;
+  width: number;
+  height: number;
+}
+
+export interface WindowControlsImages {
+  close?: WindowControlImages;
+  minimize?: WindowControlImages;
+  maximize?: WindowControlImages;
+  /** 最大化后的还原按钮；缺失时复用 maximize。 */
+  restore?: WindowControlImages;
+}
+
+export interface WindowControlsLayout {
+  side: "left" | "right";
+  order: WindowControlKind[];
+  images?: WindowControlsImages;
+}
+
 export const settingsApi = {
   async get(): Promise<Settings> {
     return await invoke("get_settings");
+  },
+
+  async getWindowControlsLayout(
+    useGtkStyle = true,
+  ): Promise<WindowControlsLayout> {
+    return await invoke("get_window_controls_layout", { useGtkStyle });
   },
 
   async save(settings: Settings): Promise<boolean> {

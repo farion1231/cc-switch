@@ -295,13 +295,61 @@ fn apply_wayland_header_event_box_patch(window: &WebviewWindow) {
     let Some(titlebar) = gtk_window.titlebar() else {
         return;
     };
-    let Ok(event_box) = titlebar.downcast::<gtk::EventBox>() else {
+    if let Ok(event_box) = titlebar.clone().downcast::<gtk::EventBox>() {
+        if event_box.is_above_child() {
+            event_box.set_above_child(false);
+            log::info!("Linux: 已关闭 Wayland CSD EventBox above_child，标题栏按钮可接收点击");
+        }
+    }
+    apply_system_header_layout(&titlebar);
+}
+
+/// 窗口尺寸变化时重新套用系统按钮布局。
+///
+/// Tao 0.35 的 `connect_resizable_notify` 会在最大化 / 还原过程中把布局重置为
+/// 硬编码的 `menu:minimize,maximize,close`。这个方法挂在 Tauri 的 Resized
+/// 事件上，在该回调之后把系统设置重新写回去。
+pub(crate) fn reapply_header_layout(window: &tauri::Window) {
+    use gtk::prelude::GtkWindowExt;
+
+    if window.label() != "main" {
+        return;
+    }
+    let Ok(gtk_window) = window.gtk_window() else {
         return;
     };
-    if event_box.is_above_child() {
-        event_box.set_above_child(false);
-        log::info!("Linux: 已关闭 Wayland CSD EventBox above_child，标题栏按钮可接收点击");
+    let Some(titlebar) = gtk_window.titlebar() else {
+        return;
+    };
+    apply_system_header_layout(&titlebar);
+}
+
+fn apply_system_header_layout(titlebar: &gtk::Widget) {
+    use gtk::prelude::HeaderBarExt;
+
+    let Some(header) = find_header_bar(titlebar) else {
+        return;
+    };
+    let layout = crate::window_chrome::current_gtk_layout();
+    if header.decoration_layout().as_deref() != Some(layout.as_str()) {
+        header.set_decoration_layout(Some(&layout));
+        log::info!("Linux: 已按系统设置应用标题栏按钮布局: {layout}");
     }
+}
+
+fn find_header_bar(widget: &gtk::Widget) -> Option<gtk::HeaderBar> {
+    use gtk::prelude::{Cast, ContainerExt};
+
+    if let Some(header) = widget.downcast_ref::<gtk::HeaderBar>() {
+        return Some(header.clone());
+    }
+    let container = widget.downcast_ref::<gtk::Container>()?;
+    for child in container.children() {
+        if let Some(header) = find_header_bar(&child) {
+            return Some(header);
+        }
+    }
+    None
 }
 
 /// 以 LogicalSize 做 ±1 逻辑像素伪 resize，避免 HiDPI 下 PhysicalSize +1

@@ -311,6 +311,7 @@
     "routeMapHint": "為 Sonnet、Opus、Haiku 三檔分別填寫實際請求模型；選單顯示名稱可寫 DeepSeek、Kimi 等品牌名。留空的檔會自動沿用 Sonnet（或第一個已填檔）的模型，確保子 agent 呼叫的 Haiku 始終可用。",
     "routeModelLabel": "模型角色",
     "routeRoleSonnet": "Sonnet",
+    "routeRoleCompat": "{{role}}（相容）",
     "routeRoleOpus": "Opus",
     "routeRoleFable": "Fable",
     "routeRoleHaiku": "Haiku",
@@ -887,6 +888,8 @@
     "minimizeToTrayDescription": "勾選後點擊關閉按鈕會隱藏至系統匣，取消則直接退出應用程式。",
     "useAppWindowControls": "啟用應用程式等級視窗按鈕",
     "useAppWindowControlsDescription": "開啟後使用應用程式自建的最小化、最大化/還原、關閉按鈕；關閉後沿用系統視窗模式。",
+    "useGtkWindowControls": "套用本機 GTK 按鈕樣式",
+    "useGtkWindowControlsDescription": "將本機 GTK 佈景主題的視窗按鈕嵌入應用程式。關閉後使用內建圖示。更換 GTK 佈景主題後需要重新啟動應用程式。",
     "enableClaudePluginIntegration": "套用至 Claude Code 外掛程式",
     "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
@@ -2225,6 +2228,8 @@
     "regionLabel": "地區"
   },
   "usage": {
+    "hour": "小時",
+    "minute": "分鐘",
     "title": "使用統計",
     "subtitle": "查看 AI 模型的使用情況和成本統計",
     "today": "24 小時",
