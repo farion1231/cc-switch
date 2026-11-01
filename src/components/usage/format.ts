@@ -23,7 +23,7 @@ export function fmtInt(
 }
 
 /** 用量金额的显示币种。库里一律存美元，只在显示时按 `rate`（1 美元折多少）换算。 */
-/** 界面语言各自的币种（en→USD、zh→CNY、ja→JPY、zh-TW→TWD、tr→TRY），外加欧元 */
+/** 可选显示币种，与界面语言独立。 */
 export const DISPLAY_CURRENCIES = [
   "USD",
   "CNY",
@@ -31,18 +31,21 @@ export const DISPLAY_CURRENCIES = [
   "JPY",
   "TWD",
   "TRY",
+  "KRW",
 ] as const;
 
 export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
 
 /**
  * 用户没填汇率时的起点，按 2026-07~09 的报价取整；界面上写明要手动填，不联网取。
+ * KRW 按 2026-10-23 的参考报价取整（1 USD ≈ 1325 KRW）。
+ * https://wise.com/au/currency-converter/usd-to-krw-rate/history/23-10-2026
  * 改这里只影响没填过的用户（填过的值存在设置文件里）。
  */
 export const DEFAULT_EXCHANGE_RATES: Record<
   Exclude<DisplayCurrency, "USD">,
   number
-> = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48 };
+> = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48, KRW: 1325 };
 
 /** 侧栏「今日」可选的项，顺序即菜单和侧栏上的顺序 */
 export const SIDEBAR_TODAY_ITEMS = [
@@ -105,13 +108,17 @@ const CURRENCY_SYMBOL: Record<DisplayCurrency, string> = {
   JPY: "¥",
   TWD: "NT$",
   TRY: "₺",
+  KRW: "₩",
 };
 
-/** 日元面额大（1 美元约 158 日元），同一处少显示两位小数：$0.0012 → ¥0.19 */
-const FEWER_DIGITS: Partial<Record<DisplayCurrency, number>> = { JPY: 2 };
+/** 日元和韩元面额大，同一处少显示两位小数：$0.0012 → ¥0.19 */
+const FEWER_DIGITS: Partial<Record<DisplayCurrency, number>> = {
+  JPY: 2,
+  KRW: 2,
+};
 
 /**
- * 换算出来的金额是按手填汇率估的，再多位数也不更准：最多两位小数（日元再少两位）。
+ * 换算出来的金额是按手填汇率估的，再多位数也不更准：最多两位小数（日元、韩元再少两位）。
  * 美元按调用方给的位数。
  */
 function shownDigits(display: MoneyDisplay, digits: number): number {
@@ -385,9 +392,13 @@ function normalizeLanguageTag(language: string): string {
 function isTraditionalChineseLanguage(normalizedLanguage: string): boolean {
   return (
     normalizedLanguage === "zh-tw" ||
-    normalizedLanguage.startsWith("zh-hant") ||
-    normalizedLanguage.startsWith("zh-hk") ||
-    normalizedLanguage.startsWith("zh-mo")
+    normalizedLanguage.startsWith("zh-tw-") ||
+    normalizedLanguage === "zh-hant" ||
+    normalizedLanguage.startsWith("zh-hant-") ||
+    normalizedLanguage === "zh-hk" ||
+    normalizedLanguage.startsWith("zh-hk-") ||
+    normalizedLanguage === "zh-mo" ||
+    normalizedLanguage.startsWith("zh-mo-")
   );
 }
 
@@ -398,9 +409,10 @@ export function getLocaleFromLanguage(language: string): string {
   if (isTraditionalChineseLanguage(normalized)) {
     return "zh-TW";
   }
-  if (normalized.startsWith("zh")) return "zh-CN";
-  if (normalized.startsWith("ja")) return "ja-JP";
-  if (normalized.startsWith("tr")) return "tr-TR";
+  if (normalized === "zh" || normalized.startsWith("zh-")) return "zh-CN";
+  if (normalized === "ja" || normalized.startsWith("ja-")) return "ja-JP";
+  if (normalized === "ko" || normalized.startsWith("ko-")) return "ko-KR";
+  if (normalized === "tr" || normalized.startsWith("tr-")) return "tr-TR";
   return "en-US";
 }
 
@@ -413,25 +425,30 @@ export function getResolvedLang(i18n: I18nLike): string {
   return i18n.resolvedLanguage || i18n.language || "en";
 }
 
-function isCjkLanguage(lang: string): boolean {
+function usesChineseJapanesePunctuation(lang: string): boolean {
   const normalized = normalizeLanguageTag(lang);
-  return normalized.startsWith("zh") || normalized.startsWith("ja");
+  return (
+    normalized === "zh" ||
+    normalized.startsWith("zh-") ||
+    normalized === "ja" ||
+    normalized.startsWith("ja-")
+  );
 }
 
 /** 并列的名字：中日文用「、」，其他语言用逗号。 */
 export function joinNames(items: readonly string[], lang: string): string {
-  return items.join(isCjkLanguage(lang) ? "、" : ", ");
+  return items.join(usesChineseJapanesePunctuation(lang) ? "、" : ", ");
 }
 
 /** 并列的分句：中日文用「；」，其他语言用分号。 */
 export function joinClauses(items: readonly string[], lang: string): string {
-  return items.join(isCjkLanguage(lang) ? "；" : "; ");
+  return items.join(usesChineseJapanesePunctuation(lang) ? "；" : "; ");
 }
 
 /**
  * Token 数量的紧凑显示。
  *
- * Why: 中日文用户期待 "亿/万" 量纲；英文用户期待 K/M/B。共用同一份格式化
+ * Why: 中日文用户期待 "亿/万" 量纲，韩文使用 "억/만"；英文用户期待 K/M/B。共用同一份格式化
  * 逻辑避免 Hero 卡和分应用卡显示不一致。`compactDecimals=2` 用于 Hero
  * 大数副标（更精确），默认 1 位用于卡片副字段。
  */
@@ -448,10 +465,20 @@ export function formatTokensShort(
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 萬`;
     return value.toLocaleString("zh-TW");
   }
-  if (normalizedLang.startsWith("zh") || normalizedLang.startsWith("ja")) {
+  if (
+    normalizedLang === "zh" ||
+    normalizedLang.startsWith("zh-") ||
+    normalizedLang === "ja" ||
+    normalizedLang.startsWith("ja-")
+  ) {
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 亿`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 万`;
     return value.toLocaleString();
+  }
+  if (normalizedLang === "ko" || normalizedLang.startsWith("ko-")) {
+    if (value >= 1e8) return `${(value / 1e8).toFixed(2)}억`;
+    if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)}만`;
+    return value.toLocaleString("ko-KR");
   }
   if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
   if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;

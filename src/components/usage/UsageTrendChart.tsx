@@ -203,13 +203,13 @@ function cjkThousandUnits(locale: string): Array<[number, string]> | null {
       [1e7, "千萬"],
     ];
   }
-  if (locale.startsWith("zh")) {
+  if (locale === "zh" || locale.startsWith("zh-")) {
     return [
       [1e11, "千亿"],
       [1e7, "千万"],
     ];
   }
-  if (locale.startsWith("ja")) {
+  if (locale === "ja" || locale.startsWith("ja-")) {
     return [
       [1e11, "千億"],
       [1e7, "千万"],
