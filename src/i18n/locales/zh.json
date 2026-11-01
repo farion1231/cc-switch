@@ -5065,6 +5065,15 @@
     }
   },
   "omp": {
+    "login": {
+      "chip": "omp 登录",
+      "apiKey": "API Key",
+      "oauth": "OAuth",
+      "unknown": "未知类型",
+      "disabled": "已在 omp 中禁用",
+      "accounts": "{{count}} 个账号",
+      "managedHint": "由 omp 管理。请在 omp 中使用 /login 添加或移除。"
+    },
     "empty": {
       "title": "还没有添加 API Key 供应商",
       "description": "点击右上角 +，从预设或自定义配置添加供应商。"

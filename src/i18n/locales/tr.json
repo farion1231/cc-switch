@@ -5035,6 +5035,15 @@
     }
   },
   "omp": {
+    "login": {
+      "chip": "omp login",
+      "apiKey": "API Key",
+      "oauth": "OAuth",
+      "unknown": "Unknown",
+      "disabled": "disabled in omp",
+      "accounts": "{{count}} accounts",
+      "managedHint": "Managed by omp. Use /login in omp to add or remove."
+    },
     "empty": {
       "title": "Henüz API anahtarı sağlayıcısı yok",
       "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın."

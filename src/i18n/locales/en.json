@@ -5065,6 +5065,15 @@
     }
   },
   "omp": {
+    "login": {
+      "chip": "omp login",
+      "apiKey": "API Key",
+      "oauth": "OAuth",
+      "unknown": "Unknown",
+      "disabled": "disabled in omp",
+      "accounts": "{{count}} accounts",
+      "managedHint": "Managed by omp. Use /login in omp to add or remove."
+    },
     "empty": {
       "title": "No API key providers yet",
       "description": "Use the + button in the top-right corner to add a preset or custom provider."

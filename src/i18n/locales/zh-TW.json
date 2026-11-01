@@ -5066,6 +5066,15 @@
     }
   },
   "omp": {
+    "login": {
+      "chip": "omp 登入",
+      "apiKey": "API Key",
+      "oauth": "OAuth",
+      "unknown": "未知類型",
+      "disabled": "已在 omp 中停用",
+      "accounts": "{{count}} 個帳號",
+      "managedHint": "由 omp 管理。請在 omp 中使用 /login 新增或移除。"
+    },
     "empty": {
       "title": "尚未新增 API Key 供應商",
       "description": "點擊右上角的 +，從預設或自訂設定新增供應商。"

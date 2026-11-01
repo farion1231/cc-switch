@@ -5065,6 +5065,15 @@
     }
   },
   "omp": {
+    "login": {
+      "chip": "omp ログイン",
+      "apiKey": "API Key",
+      "oauth": "OAuth",
+      "unknown": "不明な種類",
+      "disabled": "omp で無効",
+      "accounts": "{{count}} アカウント",
+      "managedHint": "omp が管理しています。追加・削除は omp の /login を使用してください。"
+    },
     "empty": {
       "title": "API キープロバイダーはまだありません",
       "description": "右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
