@@ -4889,6 +4889,7 @@
       "selectAll": "Select all",
       "selectNone": "Select none",
       "foundIn": "Found in: {{places}}",
+      "providedByPlugin": "Provided by plugin {{plugin}} — loaded by Claude Code, not importable",
       "foundCcSwitch": "CC Switch folder",
       "appsTitle": "Enable in these apps after importing",
       "appsHelpTitle": "Which apps are ticked by default",
