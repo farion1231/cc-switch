@@ -101,6 +101,86 @@ describe("useManagedAuth", () => {
     unmount();
   });
 
+  it("copies the Claude sign-in link when the browser is not to be opened", async () => {
+    const { copyText } = await import("@/lib/clipboard");
+    const { settingsApi } = await import("@/lib/api");
+    vi.mocked(copyText).mockClear();
+    vi.mocked(settingsApi.openExternal).mockClear();
+    window.localStorage.setItem("cc-switch.authCenter.openBrowser", "0");
+    apiMocks.authPollForAccount.mockResolvedValue(null);
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "claude_official",
+      device_code: "flow-1",
+      user_code: "",
+      verification_uri: "https://claude.com/cai/oauth/authorize?state=s",
+      expires_in: 900,
+      interval: 1,
+    });
+    const { result, unmount } = renderHook(
+      () => useManagedAuth("claude_official"),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+    act(() => result.current.addAccount());
+    await waitFor(() => expect(result.current.isPolling).toBe(true));
+    // Windows 上 Claude Code 自己开浏览器，要告诉后端别开
+    expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
+      "claude_official",
+      undefined,
+      undefined,
+      "copy_link",
+    );
+    await waitFor(() =>
+      expect(copyText).toHaveBeenCalledWith(
+        "https://claude.com/cai/oauth/authorize?state=s",
+      ),
+    );
+    expect(settingsApi.openExternal).not.toHaveBeenCalled();
+    act(() => result.current.cancelAuth());
+    unmount();
+    window.localStorage.removeItem("cc-switch.authCenter.openBrowser");
+  });
+
+  it("copies only the link, not the device code, when the browser is not to be opened", async () => {
+    const { copyText } = await import("@/lib/clipboard");
+    const { settingsApi } = await import("@/lib/api");
+    vi.mocked(copyText).mockClear();
+    vi.mocked(settingsApi.openExternal).mockClear();
+    window.localStorage.setItem("cc-switch.authCenter.openBrowser", "0");
+    apiMocks.authPollForAccount.mockRejectedValue(new Error("pending"));
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "codex_oauth",
+      device_code: "device-1",
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://auth.openai.com/codex/device",
+      expires_in: 900,
+      interval: 5,
+    });
+    const { result, unmount } = renderHook(
+      () => useManagedAuth("codex_oauth", undefined, "device_code"),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+    act(() => result.current.addAccount());
+    await waitFor(() => expect(result.current.isPolling).toBe(true));
+    expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
+      "codex_oauth",
+      undefined,
+      undefined,
+      "device_code",
+    );
+    await waitFor(() =>
+      expect(copyText).toHaveBeenCalledWith(
+        "https://auth.openai.com/codex/device",
+      ),
+    );
+    expect(copyText).not.toHaveBeenCalledWith("ABCD-EFGH");
+    expect(settingsApi.openExternal).not.toHaveBeenCalled();
+    act(() => result.current.cancelAuth());
+    unmount();
+    window.localStorage.removeItem("cc-switch.authCenter.openBrowser");
+  });
+
   beforeEach(() => {
     apiMocks.authGetStatus.mockReset().mockResolvedValue({
       provider: "codex_oauth",
