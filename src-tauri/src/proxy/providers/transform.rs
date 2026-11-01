@@ -158,6 +158,12 @@ fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'sta
     }
 
     // --- Priority 2: thinking.type + budget_tokens fallback ---
+    effort_from_thinking(body)
+}
+
+/// Effort implied by `thinking` alone (no `output_config.effort`): `adaptive` →
+/// `xhigh`, `enabled` → bucketed by `budget_tokens`, `disabled` / absent → `None`.
+pub(crate) fn effort_from_thinking(body: &Value) -> Option<&'static str> {
     let thinking = body.get("thinking")?;
     match thinking.get("type").and_then(|t| t.as_str()) {
         Some("adaptive") => Some("xhigh"),
