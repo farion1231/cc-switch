@@ -25,6 +25,7 @@ import {
   arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
+  rectSortingStrategy,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
@@ -107,6 +108,9 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
+type AppDensity = "compact" | "cards";
+const DENSITY_STORAGE_KEY = "cc-switch-apps-density";
+
 type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
 
 const ROW_BY_APP = Object.fromEntries([
@@ -176,6 +180,23 @@ export function AppsPage() {
   const { t, i18n } = useTranslation();
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
+  const [density, setDensity] = useState<AppDensity>(() => {
+    try {
+      return window.localStorage.getItem(DENSITY_STORAGE_KEY) === "cards"
+        ? "cards"
+        : "compact";
+    } catch {
+      return "compact";
+    }
+  });
+  const changeDensity = (next: AppDensity) => {
+    setDensity(next);
+    try {
+      window.localStorage.setItem(DENSITY_STORAGE_KEY, next);
+    } catch {
+      // The display choice still works when local storage is unavailable.
+    }
+  };
   const tableRef = useRef<HTMLDivElement>(null);
   const { data: desktopStatus, isPending: isDesktopStatusPending } = useQuery({
     queryKey: ["claude-desktop-status"],
@@ -248,7 +269,7 @@ export function AppsPage() {
     const observer = new ResizeObserver(updateActionWidth);
     actions.forEach((action) => observer.observe(action));
     return () => observer.disconnect();
-  }, [sectionLayoutKey]);
+  }, [density, sectionLayoutKey]);
 
   const [showCommands, setShowCommands] = useState(false);
   const [showUninstallCommands, setShowUninstallCommands] = useState(false);
@@ -339,6 +360,7 @@ export function AppsPage() {
     row.kind === "desktop" ? (
       <AppRow
         key="claude-desktop"
+        density={density}
         app="claude-desktop"
         name={
           <span className="truncate">{APP_DISPLAY_NAME["claude-desktop"]}</span>
@@ -360,6 +382,7 @@ export function AppsPage() {
     ) : (
       <ToolRow
         key={row.tool}
+        density={density}
         tool={row.tool}
         tools={tools}
         onUninstall={() => setPendingUninstall(row.tool)}
@@ -484,9 +507,29 @@ export function AppsPage() {
       >
         <div ref={tableRef} className="px-6 pb-10 pt-4">
           <div
+            role="group"
+            aria-label={t("appsPage.displayDensity")}
+            className="mb-4 flex flex-wrap items-center justify-end gap-1"
+          >
+            {(["compact", "cards"] as const).map((value) => (
+              <Button
+                key={value}
+                variant={density === value ? "neutral" : "quiet"}
+                size="compact"
+                aria-pressed={density === value}
+                onClick={() => changeDensity(value)}
+              >
+                {t(
+                  `appsPage.density${value === "compact" ? "Compact" : "Cards"}`,
+                )}
+              </Button>
+            ))}
+          </div>
+          <div
             className={cn(
               APP_ROW_GRID,
               "mx-px h-8 px-4 text-caption font-medium text-fg-2",
+              density === "cards" && "hidden",
             )}
           >
             <SectionTitle title={sections[0]?.title} />
@@ -518,7 +561,7 @@ export function AppsPage() {
 
           {sections.map((section, index) => (
             <section key={section.key} aria-label={section.title}>
-              {index > 0 && (
+              {(index > 0 || density === "cards") && (
                 <div className="mx-px mt-4 flex h-8 items-center px-4">
                   <SectionTitle title={section.title} />
                 </div>
@@ -527,15 +570,28 @@ export function AppsPage() {
                 // 只有已安装的能拖：未安装的排在哪无所谓；首次探测时还不知道装没装，也先不给拖
                 <DndContext
                   sensors={dragSensors}
-                  modifiers={verticalDragModifiers}
+                  modifiers={
+                    density === "compact" ? verticalDragModifiers : undefined
+                  }
                   collisionDetection={closestCenter}
                   onDragEnd={handleDragEnd}
                 >
                   <SortableContext
                     items={section.rows.map(rowKey)}
-                    strategy={verticalListSortingStrategy}
+                    strategy={
+                      density === "cards"
+                        ? rectSortingStrategy
+                        : verticalListSortingStrategy
+                    }
                   >
-                    <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+                    <div
+                      data-app-density={density}
+                      className={cn(
+                        density === "cards"
+                          ? "grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] items-start gap-4"
+                          : "divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface",
+                      )}
+                    >
                       {section.rows.map((row) => (
                         <SortableAppRow key={rowKey(row)} id={rowKey(row)}>
                           {renderRow(row)}
@@ -545,7 +601,14 @@ export function AppsPage() {
                   </SortableContext>
                 </DndContext>
               ) : (
-                <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+                <div
+                  data-app-density={density}
+                  className={cn(
+                    density === "cards"
+                      ? "grid grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))] items-start gap-4"
+                      : "divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface",
+                  )}
+                >
                   {section.rows.map(renderRow)}
                 </div>
               )}
@@ -623,6 +686,7 @@ export function AppsPage() {
 }
 
 function AppRow({
+  density,
   app,
   name,
   meta,
@@ -632,6 +696,7 @@ function AppRow({
   menu,
   footer,
 }: {
+  density: AppDensity;
   app: AppId;
   name: React.ReactNode;
   meta?: React.ReactNode;
@@ -643,8 +708,17 @@ function AppRow({
 }) {
   const { t } = useTranslation();
   const dragHandle = useContext(DragHandleContext);
+  const cards = density === "cards";
   return (
-    <div data-tool-row={app} className="group relative px-4 py-3">
+    <div
+      data-tool-row={app}
+      className={cn(
+        "group relative",
+        cards
+          ? "rounded-panel border border-border bg-surface p-5"
+          : "px-4 py-3",
+      )}
+    >
       {dragHandle && (
         // 放在行首的内边距里，不占列宽，表头和各列照旧对齐
         <button
@@ -660,9 +734,25 @@ function AppRow({
           <GripVertical className="h-4 w-4" />
         </button>
       )}
-      <div className={cn(APP_ROW_GRID, "min-h-10")}>
-        <div className="flex min-w-0 items-center gap-4">
-          <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
+      <div
+        className={cn(
+          cards
+            ? "grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4"
+            : APP_ROW_GRID,
+          "min-h-10",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-4",
+            cards && "col-span-3",
+          )}
+        >
+          <AppGlyph
+            app={app}
+            size={cards ? 40 : 20}
+            badgeClassName="bg-surface"
+          />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
@@ -674,17 +764,32 @@ function AppRow({
             )}
           </div>
         </div>
-        <div className="text-end">{version}</div>
+        <div className={cn(cards ? "col-span-3 text-start" : "text-end")}>
+          {version}
+        </div>
         <div
           data-tool-actions
-          className="flex w-max items-center justify-self-end gap-2 [&>button]:shrink-0"
+          className={cn(
+            "flex w-max items-center gap-2 [&>button]:shrink-0",
+            !cards && "justify-self-end",
+          )}
         >
           {action}
         </div>
-        <div className="flex justify-end">{visibility}</div>
+        <div className="flex items-center justify-end gap-2">
+          {cards && (
+            <span className="inline-flex items-center gap-0.5 text-caption text-fg-2">
+              {t("appsPage.columnVisible")}
+              <HelpTip title={t("appsPage.columnVisible")} align="end">
+                {t("appsPage.visibleHelp")}
+              </HelpTip>
+            </span>
+          )}
+          {visibility}
+        </div>
         <div className="flex justify-end">{menu}</div>
       </div>
-      {footer && <div className="ms-9 mt-2">{footer}</div>}
+      {footer && <div className={cn("mt-2", !cards && "ms-9")}>{footer}</div>}
     </div>
   );
 }
@@ -698,6 +803,7 @@ function Pill({ children }: { children: React.ReactNode }) {
 }
 
 function ToolRow({
+  density,
   tool,
   tools,
   onUninstall,
@@ -705,6 +811,7 @@ function ToolRow({
   onToggleExpanded,
   visibility,
 }: {
+  density: AppDensity;
   tool: ToolName;
   tools: ReturnType<typeof useToolManagement>;
   onUninstall: () => void;
@@ -918,6 +1025,7 @@ function ToolRow({
 
   return (
     <AppRow
+      density={density}
       app={TOOL_APP_IDS[tool]}
       name={
         <>

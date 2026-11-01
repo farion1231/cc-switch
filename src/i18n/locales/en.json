@@ -4233,6 +4233,9 @@
     "back": "Back"
   },
   "appsPage": {
+    "displayDensity": "Display density",
+    "densityCompact": "Compact",
+    "densityCards": "Large cards",
     "showInSidebar": "Show {{name}} in the sidebar",
     "lastChecked": "Last checked {{time}}",
     "neverChecked": "Not checked for updates yet",
