@@ -572,6 +572,14 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Claude 路由经 OpenAI Chat / Responses 转发时怎么发思考档位。
+    /// 缺省 = 自动（见 `proxy::providers::claude_reasoning`）；"off"（不发）/
+    /// "passthrough"（原样发）为用户覆盖，其余值按缺省处理。
+    #[serde(
+        rename = "claudeReasoningEffort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_reasoning_effort: Option<String>,
     /// Codex → Anthropic path: whether to emulate the Claude Code client
     /// (User-Agent / anthropic-beta / x-app + injecting the Claude Code system
     /// prompt first line). Disabled by default; only an explicit `true` enables it.
