@@ -1227,7 +1227,7 @@ impl SkillService {
             };
 
         // 校验不过而被保留下来的 omp 副本不是 CC Switch 的部署，屏蔽项留着，免得它重新生效。
-        if let Some((name, native)) =
+        if let Some((name, _)) =
             omp_name.filter(|(_, native)| !native.exists() && !Self::is_symlink(native))
         {
             if let Err(error) = crate::omp_config::set_skill_disabled(&name, false) {
