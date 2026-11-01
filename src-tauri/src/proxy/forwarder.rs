@@ -790,7 +790,14 @@ impl RequestForwarder {
         if !self.routing_state_enabled() {
             return self
                 .forward_with_retry_inner(
-                    app_type, method, endpoint, body, headers, extensions, providers, None,
+                    app_type,
+                    method,
+                    endpoint,
+                    body,
+                    headers,
+                    extensions,
+                    providers,
+                    None,
                     request_is_streaming,
                 )
                 .await;
@@ -803,8 +810,15 @@ impl RequestForwarder {
         }
         let result = self
             .forward_with_retry_inner(
-                app_type, method, endpoint, body, headers, extensions, providers,
-                Some(&mut guard), request_is_streaming,
+                app_type,
+                method,
+                endpoint,
+                body,
+                headers,
+                extensions,
+                providers,
+                Some(&mut guard),
+                request_is_streaming,
             )
             .await;
         // 把 guard 注入到 Ok 结果，让它随响应一起流转到 response_processor，
@@ -929,7 +943,10 @@ impl RequestForwarder {
             // 在飞明细登记到当前 provider 名下：故障转移时 upsert 同一条目，
             // 在飞列表里始终是「这一条请求现在在哪家」而不是两家各一条。
             if let Some(g) = guard.as_deref_mut() {
-                let client_model = body.get("model").and_then(Value::as_str).map(str::to_string);
+                let client_model = body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
                 g.mark_in_flight(app_type_str, provider, client_model, request_is_streaming)
                     .await;
             }
@@ -3510,7 +3527,11 @@ const MAX_EVIDENCE_REASON_CHARS: usize = 160;
 /// 退回配置里的熔断时长，行为与没有这个特性时完全一致，绝不会因为一个畸形头
 /// 把供应商永久熔断。
 fn parse_retry_after_seconds(headers: &http::HeaderMap) -> Option<u64> {
-    let raw = headers.get(http::header::RETRY_AFTER)?.to_str().ok()?.trim();
+    let raw = headers
+        .get(http::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
     if raw.is_empty() {
         return None;
     }
@@ -5902,17 +5923,17 @@ mod tests {
                 status: 401,
                 body: None,
                 retry_after_seconds: None,
-                },
+            },
             ProxyError::UpstreamError {
                 status: 403,
                 body: None,
                 retry_after_seconds: None,
-                },
+            },
             ProxyError::UpstreamError {
                 status: 429,
                 body: None,
                 retry_after_seconds: None,
-                },
+            },
             ProxyError::Timeout("timeout".to_string()),
         ] {
             assert_eq!(

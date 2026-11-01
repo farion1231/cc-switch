@@ -59,7 +59,8 @@ impl Default for ProxyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProxyStatus {
     /// 是否运行中
-    pub running: bool,    /// 监听地址
+    pub running: bool,
+    /// 监听地址
     pub address: String,
     /// 监听端口
     pub port: u16,

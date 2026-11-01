@@ -29,7 +29,10 @@ pub struct InFlightRequest {
 }
 
 /// 在飞请求注册表。放在 `ProxyStatus` 里随 `Arc` 流转，代理重启即清空。
-#[derive(Default)]
+///
+/// 必须实现 `Debug`：`ProxyStatus` derive 了 `Debug`，缺了会把整个枚举的
+/// derive 链拽断（CI 第一次编译就是这么红的）。
+#[derive(Debug, Default)]
 pub struct InFlightRegistry {
     /// 顺序即开始顺序；规模有上限（见 [`Self::MAX`]），正常情况下并发在飞
     /// 远到不了这个数。
@@ -118,7 +121,14 @@ mod tests {
         let registry = InFlightRegistry::default();
 
         let id = registry
-            .upsert(None, "claude", "p1", "Provider One", Some("m1".into()), true)
+            .upsert(
+                None,
+                "claude",
+                "p1",
+                "Provider One",
+                Some("m1".into()),
+                true,
+            )
             .await
             .expect("registered");
 
@@ -160,7 +170,9 @@ mod tests {
 
         // guard 先 drop、故障转移的 upsert 后到（spawn 出去的减量竞态）：
         // 不能把一条已经结束的请求重新登记成在飞
-        let again = registry.upsert(Some(id), "claude", "p2", "P2", None, false).await;
+        let again = registry
+            .upsert(Some(id), "claude", "p2", "P2", None, false)
+            .await;
 
         assert_eq!(again, None);
         assert!(registry.snapshot().await.is_empty());
@@ -169,9 +181,18 @@ mod tests {
     #[tokio::test]
     async fn snapshot_is_sorted_by_start_time_oldest_first() {
         let registry = InFlightRegistry::default();
-        let a = registry.upsert(None, "claude", "p1", "A", None, false).await.unwrap();
-        let b = registry.upsert(None, "claude", "p2", "B", None, false).await.unwrap();
-        let c = registry.upsert(None, "claude", "p3", "C", None, false).await.unwrap();
+        let a = registry
+            .upsert(None, "claude", "p1", "A", None, false)
+            .await
+            .unwrap();
+        let b = registry
+            .upsert(None, "claude", "p2", "B", None, false)
+            .await
+            .unwrap();
+        let c = registry
+            .upsert(None, "claude", "p3", "C", None, false)
+            .await
+            .unwrap();
 
         let snapshot = registry.snapshot().await;
         let ids: Vec<u64> = snapshot.iter().map(|e| e.id).collect();
@@ -184,7 +205,10 @@ mod tests {
     async fn registration_is_capped() {
         let registry = InFlightRegistry::default();
         for _ in 0..InFlightRegistry::MAX {
-            registry.upsert(None, "claude", "p", "P", None, false).await.unwrap();
+            registry
+                .upsert(None, "claude", "p", "P", None, false)
+                .await
+                .unwrap();
         }
 
         // 满了拒绝新条目，而不是无界增长

@@ -640,7 +640,11 @@ mod tests {
     async fn failure_evidence_records_status_and_reason() {
         let breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
         breaker
-            .record_failure(false, Some(FailureDetail::new(Some(503), "upstream overloaded")), None)
+            .record_failure(
+                false,
+                Some(FailureDetail::new(Some(503), "upstream overloaded")),
+                None,
+            )
             .await;
 
         let evidence = breaker.failure_evidence().await;
@@ -725,7 +729,11 @@ mod tests {
             .record_failure(false, Some(FailureDetail::new(Some(500), "boom")), None)
             .await;
         breaker
-            .record_failure(false, Some(FailureDetail::new(Some(500), "boom again")), None)
+            .record_failure(
+                false,
+                Some(FailureDetail::new(Some(500), "boom again")),
+                None,
+            )
             .await;
         assert_eq!(breaker.failure_evidence().await.len(), 2);
 
@@ -743,7 +751,11 @@ mod tests {
         };
         let breaker = CircuitBreaker::new(config);
         breaker
-            .record_failure(false, Some(FailureDetail::new(Some(500), "one failure")), None)
+            .record_failure(
+                false,
+                Some(FailureDetail::new(Some(500), "one failure")),
+                None,
+            )
             .await;
         breaker.record_success(false).await;
 

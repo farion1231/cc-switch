@@ -595,7 +595,15 @@ mod tests {
         let router = ProviderRouter::new(db.clone());
 
         router
-            .record_result("b", "claude", false, false, Some("fail".to_string()), None, None)
+            .record_result(
+                "b",
+                "claude",
+                false,
+                false,
+                Some("fail".to_string()),
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -634,7 +642,15 @@ mod tests {
 
         // 触发熔断：1 次失败
         router
-            .record_result("a", "claude", false, false, Some("fail".to_string()), None, None)
+            .record_result(
+                "a",
+                "claude",
+                false,
+                false,
+                Some("fail".to_string()),
+                None,
+                None,
+            )
             .await
             .unwrap();
 
