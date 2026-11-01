@@ -1903,9 +1903,10 @@ export function usePerSkillHandlers(
   /** 当前仍然存在的 skill id；传了就顺手清掉已删技能留下的条目 */
   liveIds?: ReadonlySet<string>,
 ): (skill: InstalledSkill) => InstalledRowHandlers {
-  // 不用 useLatestRef：它在 effect 里同步，而 handlers 是渲染期造出来的，
-  // 首帧到 effect 之间若有人调用就会拿到初始值。渲染期直接赋值的写法
-  // 保证任何时刻读到的都是本次渲染的 create。
+  // 渲染期赋值而不是走 useLatestRef：这些 handler 只会从事件里调用、必然晚于
+  // effect，用哪个都对；选渲染期是让「读到的一定是本次渲染的闭包」这条更直白。
+  // 已知取舍：并发的渲染被中断时，ref 可能短暂指向一个未提交的快照——本子树
+  // 没有 transition / deferred 状态，实际触及不到。
   const latest = useRef(create);
   latest.current = create;
   const cache = useRef(
