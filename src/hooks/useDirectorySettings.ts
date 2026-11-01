@@ -7,7 +7,7 @@ import type { SettingsFormState } from "./useSettingsForm";
 
 export type DirectoryAppId = Exclude<
   AppId,
-  "claude-desktop" | "mcode" | "agy" | "kimi" | "dsh"
+  "claude-desktop" | "mcode" | "kimi" | "dsh"
 >;
 type AppDirectoryKey =
   | "claude"
@@ -18,7 +18,8 @@ type AppDirectoryKey =
   | "openclaw"
   | "hermes"
   | "pi"
-  | "omp";
+  | "omp"
+  | "agy";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -32,6 +33,7 @@ export interface ResolvedDirectories {
   hermes: string;
   pi: string;
   omp: string;
+  agy: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -48,6 +50,7 @@ const APP_DIRECTORY_META: Record<
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   pi: { key: "pi", defaultFolder: ".pi/agent" },
   omp: { key: "omp", defaultFolder: ".omp/agent" },
+  agy: { key: "agy", defaultFolder: ".gemini/antigravity-cli" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -63,6 +66,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
   omp: "ompConfigDir",
+  agy: "agyConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -153,6 +157,7 @@ export function useDirectorySettings({
     hermes: "",
     pi: "",
     omp: "",
+    agy: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -167,6 +172,7 @@ export function useDirectorySettings({
     hermes: "",
     pi: "",
     omp: "",
+    agy: "",
   });
   // 已保存的数据目录（保存按钮和「需要重启」都和它比）。ref 给回调用，state 让比较它的
   // 组件在保存后重渲染：保存成功要把它更新成刚存的值，否则保存按钮一直在、改回去存不了
@@ -197,6 +203,7 @@ export function useDirectorySettings({
           hermesDir,
           piDir,
           ompDir,
+          agyDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -207,6 +214,7 @@ export function useDirectorySettings({
           defaultHermesDir,
           defaultPiDir,
           defaultOmpDir,
+          defaultAgyDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
@@ -218,6 +226,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("hermes"),
           settingsApi.getConfigDir("pi"),
           settingsApi.getConfigDir("omp"),
+          settingsApi.getConfigDir("agy"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -228,6 +237,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("pi"),
           computeDefaultConfigDir("omp"),
+          computeDefaultConfigDir("agy"),
         ]);
 
         if (!active) return;
@@ -245,6 +255,7 @@ export function useDirectorySettings({
           hermes: defaultHermesDir ?? "",
           pi: defaultPiDir ?? "",
           omp: defaultOmpDir ?? "",
+          agy: defaultAgyDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -261,6 +272,7 @@ export function useDirectorySettings({
           hermes: hermesDir || defaultsRef.current.hermes,
           pi: piDir || defaultsRef.current.pi,
           omp: ompDir || defaultsRef.current.omp,
+          agy: agyDir || defaultsRef.current.agy,
         });
       } catch (error) {
         console.error(
@@ -474,6 +486,7 @@ export function useDirectorySettings({
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         pi: overrides?.pi ?? defaultsRef.current.pi,
         omp: overrides?.omp ?? defaultsRef.current.omp,
+        agy: overrides?.agy ?? defaultsRef.current.agy,
       });
     },
     [],
