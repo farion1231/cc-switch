@@ -5,12 +5,102 @@ import { useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
 import { CodexFormFields } from "@/components/providers/forms/CodexFormFields";
 import { Form } from "@/components/ui/form";
+import type { CodexCatalogModel } from "@/types";
 
 vi.mock("@/hooks/useModelMetadataFill", () => ({
   useModelMetadataFill: () => () => {},
 }));
 
 type CodexFormFieldsProps = ComponentProps<typeof CodexFormFields>;
+
+describe("CodexFormFields service tier metadata", () => {
+  const priority = {
+    id: "priority",
+    name: "Fast",
+    description: "Priority processing",
+  };
+  const tieredModel: CodexCatalogModel = {
+    model: "gpt-a",
+    serviceTiers: [priority],
+    defaultServiceTier: "priority",
+  };
+
+  it.each(["display name", "context window", "add row", "remove row"])(
+    "preserves tiers when changing %s in the model table",
+    (action) => {
+      const onCatalogModelsChange = vi.fn();
+      renderCodexForm({
+        catalogModels: [tieredModel, { model: "standard", serviceTiers: [] }],
+        onCatalogModelsChange,
+      });
+      onCatalogModelsChange.mockClear();
+
+      if (action === "display name") {
+        fireEvent.change(
+          screen.getAllByRole("textbox", { name: "菜单显示名" })[0],
+          {
+            target: { value: "Renamed model" },
+          },
+        );
+      } else if (action === "context window") {
+        fireEvent.change(
+          screen.getAllByRole("spinbutton", { name: "上下文窗口" })[0],
+          {
+            target: { value: "262144" },
+          },
+        );
+      } else if (action === "add row") {
+        fireEvent.click(screen.getByRole("button", { name: "手动添加" }));
+      } else {
+        fireEvent.click(screen.getAllByRole("button", { name: "删除" })[1]);
+      }
+
+      const rows = onCatalogModelsChange.mock.calls.at(-1)?.[0];
+      expect(rows).toBeDefined();
+      expect(rows[0]).toMatchObject(tieredModel);
+      expect(rows[0]).not.toHaveProperty("rowId");
+      if (action !== "remove row") {
+        expect(rows[1].serviceTiers).toEqual([]);
+      }
+    },
+  );
+
+  it.each(["service tiers", "default tier"])(
+    "resyncs identical visible rows when only the incoming %s changes",
+    (field) => {
+      const onCatalogModelsChange = vi.fn();
+      const props = codexFormProps({
+        catalogModels: [tieredModel],
+        onCatalogModelsChange,
+      });
+      const view = render(
+        <FormShell>
+          <CodexFormFields {...props} />
+        </FormShell>,
+      );
+      const incoming: CodexCatalogModel = {
+        ...tieredModel,
+        ...(field === "service tiers"
+          ? {
+              serviceTiers: [
+                { ...priority, description: "Updated upstream declaration" },
+              ],
+            }
+          : { defaultServiceTier: "default" }),
+      };
+      view.rerender(
+        <FormShell>
+          <CodexFormFields {...props} catalogModels={[incoming]} />
+        </FormShell>,
+      );
+      onCatalogModelsChange.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "手动添加" }));
+      expect(onCatalogModelsChange.mock.calls.at(-1)?.[0][0]).toMatchObject(
+        incoming,
+      );
+    },
+  );
+});
 
 const FormShell = ({ children }: PropsWithChildren) => {
   const form = useForm();

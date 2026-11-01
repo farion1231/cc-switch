@@ -282,6 +282,12 @@ export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
 
 export type CodexCopilotApiFormat = "auto" | "openai_responses" | "openai_chat";
 
+export interface CodexCatalogServiceTier {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface CodexCatalogModel {
   model: string;
   displayName?: string;
@@ -303,6 +309,10 @@ export interface CodexCatalogModel {
   // reasoningLevels; when omitted the backend keeps the template default if it
   // is still in the list, otherwise the highest declared level.
   defaultReasoningLevel?: string;
+  // Explicit upstream capabilities. Fast is displayed as "Fast" but sent as
+  // service_tier="priority". Omission does not inherit official speed tiers.
+  serviceTiers?: CodexCatalogServiceTier[];
+  defaultServiceTier?: string;
 }
 
 // Claude 认证字段类型
