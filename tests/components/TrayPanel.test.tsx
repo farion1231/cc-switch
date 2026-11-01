@@ -60,6 +60,7 @@ const state: TrayPanelState = {
       mode: "Direct",
       modeKind: "direct",
       header: null,
+      checkedText: null,
       attention: null,
       quota: null,
       addId: null,
@@ -403,7 +404,7 @@ describe("TrayPanel window layout", () => {
       const { container } = await openPanel({ ...windows, scaleFactor });
       const main = container.querySelector<HTMLElement>(".tp-card")!;
       expect(Number.parseFloat(main.style.width)).toBeCloseTo(320 / 1.1);
-      expect(Number.parseFloat(main.style.maxHeight)).toBeCloseTo(620 / 1.1);
+      expect(Number.parseFloat(main.style.maxHeight)).toBeCloseTo(480 / 1.1);
       const scaled = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
       expect(scaled.width).toBeCloseTo(620);
       expect(scaled.height).toBe(760);
@@ -424,7 +425,7 @@ describe("TrayPanel window layout", () => {
       ratio.mockReturnValue(scaleFactor);
       fireEvent.resize(window);
       await paint();
-      expect(main).toHaveStyle({ width: "320px", maxHeight: "620px" });
+      expect(main).toHaveStyle({ width: "320px", maxHeight: "480px" });
       expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
         expect.objectContaining({
           cards: [
@@ -483,7 +484,7 @@ describe("TrayPanel window layout", () => {
         });
         await paint();
 
-        expect(main).toHaveStyle({ width: "320px", maxHeight: "620px" });
+        expect(main).toHaveStyle({ width: "320px", maxHeight: "480px" });
         expect(trayPanelApi.layout).toHaveBeenCalledTimes(calls + 1);
         expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
           expect.objectContaining({
@@ -529,6 +530,49 @@ describe("TrayPanel window layout", () => {
       expect(screen.getByText(mode)).toHaveClass(className);
     },
   );
+
+  it("labels the checked row of an additive app as added, not in use", async () => {
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [
+        {
+          ...state.apps[0],
+          app: "opencode",
+          name: "OpenCode",
+          current: null,
+          mode: "1 added",
+          checkedText: "Added",
+          rows: [
+            {
+              kind: "provider",
+              id: "prov:opencode:a",
+              text: "Alpha",
+              enabled: true,
+              checked: true,
+              provider: {
+                name: "Alpha",
+                hint: null,
+                icon: null,
+                iconColor: null,
+                quota: null,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel();
+    const row = await screen.findByRole("button", {
+      name: "OpenCode 1 added",
+    });
+
+    fireEvent.click(row);
+    await paint();
+
+    expect(screen.getByText("Added")).toBeVisible();
+    expect(screen.queryByText("In use")).not.toBeInTheDocument();
+  });
 
   it("opens Windows top/left taskbars toward the opposite edges", async () => {
     const { container } = await openPanel(windows);
