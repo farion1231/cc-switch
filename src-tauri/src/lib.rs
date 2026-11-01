@@ -28,6 +28,8 @@ mod kimi_session;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
+#[cfg(target_os = "linux")]
+pub mod linux_rendering;
 pub mod live;
 mod mcode_config;
 mod mcp;
@@ -1468,9 +1470,9 @@ pub fn run() {
                 });
             });
 
-            // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
+            // 仅在禁用合成时强制软件绘制，避免 Never 策略使 SHM 合成窗口白屏。
             #[cfg(target_os = "linux")]
-            {
+            if !crate::linux_rendering::compositing_enabled() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
                         use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};

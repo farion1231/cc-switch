@@ -11,6 +11,8 @@ const root = document.documentElement;
 const originalClassName = root.className;
 const originalGlass = root.dataset.glass;
 const originalLayout = root.dataset.layout;
+const originalPlatform = root.dataset.platform;
+const originalBodyClassName = document.body.className;
 let canvas: HTMLDivElement;
 
 beforeAll(() => document.head.append(stylesheet));
@@ -18,17 +20,31 @@ afterAll(() => stylesheet.remove());
 afterEach(() => {
   canvas.remove();
   root.className = originalClassName;
+  document.body.className = originalBodyClassName;
   if (originalGlass === undefined) delete root.dataset.glass;
   else root.dataset.glass = originalGlass;
   if (originalLayout === undefined) delete root.dataset.layout;
   else root.dataset.layout = originalLayout;
+  if (originalPlatform === undefined) delete root.dataset.platform;
+  else root.dataset.platform = originalPlatform;
 });
 
-function cardFor(platform: "windows" | "macos", dark: boolean) {
+function cardFor(
+  platform: "windows" | "macos" | "linux",
+  dark: boolean,
+  solid = false,
+) {
   root.classList.toggle("dark", dark);
-  root.dataset.glass = platform === "macos" ? "native" : "frosted";
+  root.dataset.platform = platform;
+  root.dataset.glass = solid
+    ? "solid"
+    : platform === "macos"
+      ? "native"
+      : "frosted";
   root.dataset.layout = platform === "macos" ? "floating" : "joined";
   canvas = document.createElement("div");
+  canvas.id = "root";
+  document.body.classList.add("tray-panel");
   canvas.dataset.platform = platform;
   const card = document.createElement("div");
   card.className = "tp-card";
@@ -38,6 +54,33 @@ function cardFor(platform: "windows" | "macos", dark: boolean) {
 }
 
 describe("TrayPanel backgrounds stay scoped to each platform", () => {
+  it.each([false, true])(
+    "keeps the Linux canvas transparent with translucent cards (dark=%s)",
+    (dark) => {
+      const style = cardFor("linux", dark);
+      expect(style.backgroundColor).toBe(
+        dark ? "rgba(36, 36, 40, 0.9)" : "rgba(244, 244, 247, 0.9)",
+      );
+      for (const element of [root, document.body, canvas]) {
+        expect(getComputedStyle(element).backgroundColor).toBe(
+          "rgba(0, 0, 0, 0)",
+        );
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "paints the Linux software fallback and its cards opaque (dark=%s)",
+    (dark) => {
+      const style = cardFor("linux", dark, true);
+      const background = dark ? "rgb(36, 36, 40)" : "rgb(235, 235, 237)";
+      expect(style.backgroundColor).toBe(background);
+      expect(getComputedStyle(root).backgroundColor).toBe(background);
+      expect(getComputedStyle(document.body).backgroundColor).toBe(background);
+      expect(getComputedStyle(canvas).backgroundColor).toBe(background);
+    },
+  );
+
   it.each([false, true])("keeps Windows cards opaque (dark=%s)", (dark) => {
     const style = cardFor("windows", dark);
     expect(style.backgroundColor).toBe(
