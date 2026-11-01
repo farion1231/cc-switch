@@ -1,6 +1,6 @@
 //! Oh My Pi (`omp`, can1357/oh-my-pi) owns its defaults and login. CC Switch manages only the
-//! explicit `providers` entries in `models.yml` and the MCP servers in `mcp.json`, and reads
-//! `config.yml` for the default model.
+//! explicit `providers` entries in `models.yml`, MCP servers in `mcp.json`, and skill switches
+//! in `config.yml`. It also reads `config.yml` for the default model.
 //!
 //! The agent dir is `~/.omp/agent`, or `~/.omp/profiles/<name>/agent` for a named profile.
 //! models.yml is edited as text: bytes outside the one entry CC Switch writes are never touched,
@@ -10,6 +10,7 @@ use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 use indexmap::IndexMap;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ use std::sync::Mutex;
 pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
 static MODELS_LOCK: Mutex<()> = Mutex::new(());
 static MCP_LOCK: Mutex<()> = Mutex::new(());
+static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 static TEST_AGENT_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
@@ -283,6 +285,210 @@ fn providers(document: &serde_yaml::Value) -> Result<IndexMap<String, Value>, Ap
         Some(value) => serde_yaml::from_value(value.clone())
             .map_err(|_| AppError::Config("omp.errors.invalidYaml".into())),
     }
+}
+
+// ============================================================================
+// Skills (config.yml)
+// ============================================================================
+
+fn disabled_extensions(document: &serde_yaml::Value) -> Result<Vec<String>, AppError> {
+    match document.get("disabledExtensions") {
+        None => Ok(Vec::new()),
+        Some(serde_yaml::Value::Sequence(items)) => items
+            .iter()
+            .map(|item| item.as_str().map(str::to_string).ok_or_else(manual_edit))
+            .collect(),
+        _ => Err(manual_edit()),
+    }
+}
+
+pub(crate) fn read_disabled_skill_names() -> Result<HashSet<String>, AppError> {
+    let _guard = SETTINGS_LOCK.lock()?;
+    let (_, text) = read_text(&get_omp_settings_path()?)?;
+    Ok(disabled_extensions(&parse(&text)?)?
+        .into_iter()
+        .filter_map(|entry| entry.strip_prefix("skill:").map(str::to_string))
+        .collect())
+}
+
+pub(crate) fn set_skill_disabled(name: &str, disabled: bool) -> Result<(), AppError> {
+    let _guard = SETTINGS_LOCK.lock()?;
+    let path = get_omp_settings_path()?;
+    let (before, text) = read_text(&path)?;
+    let after = edit_disabled_skill(&text, name, disabled)?;
+    if after == text {
+        return Ok(());
+    }
+    write_and_commit(&path, before.as_deref(), after.as_bytes(), || Ok(()))
+}
+
+fn emit_disabled_entry(entry: &str) -> Result<String, AppError> {
+    let yaml = serde_yaml::to_string(entry).map_err(|_| manual_edit())?;
+    let scalar = yaml.trim_end_matches('\n');
+    if scalar.contains(['\n', '\r']) {
+        return serde_json::to_string(entry).map_err(|_| manual_edit());
+    }
+    Ok(scalar.to_string())
+}
+
+fn edit_disabled_skill(text: &str, name: &str, disabled: bool) -> Result<String, AppError> {
+    let document = parse(text).map_err(|_| manual_edit())?;
+    let entries = disabled_extensions(&document)?;
+    let entry = format!("skill:{name}");
+    let mut intended = entries.clone();
+    if disabled {
+        if !intended.contains(&entry) {
+            intended.push(entry.clone());
+        }
+    } else {
+        intended.retain(|item| item != &entry);
+    }
+    if intended == entries {
+        return Ok(text.to_string());
+    }
+
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut offsets = vec![0];
+    for line in &lines {
+        offsets.push(offsets.last().unwrap() + line.len());
+    }
+    let mut header = None;
+    for (i, line) in lines.iter().enumerate() {
+        if line.starts_with(' ')
+            || line.starts_with("- ")
+            || line.trim().is_empty()
+            || line.trim_start().starts_with('#')
+        {
+            continue;
+        }
+        if line.trim() == "---" {
+            continue;
+        }
+        if line.trim() == "..." || line.starts_with('\t') {
+            return Err(manual_edit());
+        }
+        if mapping_key(line)? == "disabledExtensions" {
+            header = Some(i);
+        }
+    }
+
+    let mut output = text.to_string();
+    if let Some(header) = header {
+        let line = lines[header];
+        let colon = line.find(':').ok_or_else(manual_edit)?;
+        let tail = line[colon + 1..].trim();
+        reject_yaml_tokens(&line[..=colon])?;
+        if has_yaml_reference_tokens_in(tail, false) {
+            return Err(manual_edit());
+        }
+        if tail.starts_with('[') {
+            // Only a complete, single-line flow sequence can be replaced safely.
+            let close = tail.rfind(']').ok_or_else(manual_edit)?;
+            let suffix = &tail[close + 1..];
+            if !suffix.trim().is_empty() && !suffix.trim_start().starts_with('#') {
+                return Err(manual_edit());
+            }
+            let flow: serde_yaml::Value =
+                serde_yaml::from_str(&tail[..=close]).map_err(|_| manual_edit())?;
+            if flow != serde_yaml::to_value(&entries).map_err(|_| manual_edit())? {
+                return Err(manual_edit());
+            }
+            let newline = if line.ends_with("\r\n") {
+                "\r\n"
+            } else if line.ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            let comment = if suffix.trim_start().starts_with('#') {
+                suffix.trim_end()
+            } else {
+                ""
+            };
+            let flow = serde_json::to_string(&intended).map_err(|_| manual_edit())?;
+            let replacement = format!("{}: {flow}{comment}{newline}", &line[..colon]);
+            output.replace_range(offsets[header]..offsets[header + 1], &replacement);
+        } else {
+            if !tail.is_empty() && !tail.starts_with('#') {
+                return Err(manual_edit());
+            }
+            let end = ((header + 1)..lines.len())
+                .find(|&i| {
+                    let line = lines[i];
+                    !line.starts_with(' ')
+                        && !line.trim().is_empty()
+                        && !line.trim_start().starts_with('#')
+                        && !line.starts_with("- ")
+                })
+                .unwrap_or(lines.len());
+            let mut items = Vec::new();
+            let mut indent = None;
+            for (i, line) in lines.iter().enumerate().take(end).skip(header + 1) {
+                if line.trim().is_empty() || line.trim_start().starts_with('#') {
+                    continue;
+                }
+                if has_yaml_reference_tokens_in(line, false) {
+                    return Err(manual_edit());
+                }
+                let spaces = line.len() - line.trim_start_matches(' ').len();
+                if spaces != *indent.get_or_insert(spaces) || !line.trim_start().starts_with("- ") {
+                    return Err(manual_edit());
+                }
+                let item: serde_yaml::Value =
+                    serde_yaml::from_str(line.trim_start()).map_err(|_| manual_edit())?;
+                let item = item
+                    .as_sequence()
+                    .filter(|items| items.len() == 1)
+                    .and_then(|items| items[0].as_str())
+                    .ok_or_else(manual_edit)?;
+                items.push((i, item.to_string()));
+            }
+            if items.iter().map(|(_, value)| value).ne(entries.iter()) {
+                return Err(manual_edit());
+            }
+            if disabled {
+                let insert = items.last().map(|(i, _)| i + 1).unwrap_or(header + 1);
+                let prefix = if output[..offsets[insert]].ends_with('\n') {
+                    ""
+                } else {
+                    "\n"
+                };
+                let emitted = format!(
+                    "{prefix}{}- {}\n",
+                    " ".repeat(indent.unwrap_or(2)),
+                    emit_disabled_entry(&entry)?
+                );
+                output.insert_str(offsets[insert], &emitted);
+            } else {
+                for (i, value) in items.iter().rev() {
+                    if value == &entry {
+                        output.replace_range(offsets[*i]..offsets[*i + 1], "");
+                    }
+                }
+                if intended.is_empty() {
+                    output.insert_str(offsets[header] + colon + 1, " []");
+                }
+            }
+        }
+    } else {
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str(&format!(
+            "disabledExtensions:\n  - {}\n",
+            emit_disabled_entry(&entry)?
+        ));
+    }
+
+    let mut expected = document;
+    expected.as_mapping_mut().ok_or_else(manual_edit)?.insert(
+        serde_yaml::Value::String("disabledExtensions".into()),
+        serde_yaml::to_value(&intended).map_err(|_| manual_edit())?,
+    );
+    if parse(&output).map_err(|_| manual_edit())? != expected {
+        return Err(manual_edit());
+    }
+    Ok(output)
 }
 
 // ============================================================================
@@ -752,6 +958,11 @@ fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
 /// (`name: Search & Fetch`, which serde_yaml and Bun both write unquoted) they are
 /// ordinary text.
 pub(crate) fn has_yaml_reference_tokens(line: &str) -> bool {
+    has_yaml_reference_tokens_in(line, true)
+}
+
+fn has_yaml_reference_tokens_in(line: &str, mappings: bool) -> bool {
+    let flow = mappings || line.trim_start().starts_with('[');
     let mut quote = None;
     let mut escaped = false;
     // A node may start here: line start, after `:`, a flow opener or `,`, and after a
@@ -785,7 +996,7 @@ pub(crate) fn has_yaml_reference_tokens(line: &str) -> bool {
         if quote.is_some() {
             continue;
         }
-        if c == ':' && previous == ['<', '<'] {
+        if mappings && c == ':' && previous == ['<', '<'] {
             return true;
         }
         match c {
@@ -800,7 +1011,9 @@ pub(crate) fn has_yaml_reference_tokens(line: &str) -> bool {
             let entry_marker = node_start
                 && matches!(c, '-' | '?')
                 && chars.peek().is_none_or(|next| next.is_whitespace());
-            node_start = entry_marker || matches!(c, ':' | '[' | '{' | ',');
+            // Skill sequences contain only strings, so ':' is plain scalar content.
+            node_start =
+                entry_marker || (flow && matches!(c, '[' | '{' | ',')) || (mappings && c == ':');
         }
     }
     false
@@ -1035,6 +1248,178 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn disabled_skills_edit_supported_yaml_shapes() {
+        for (before, disabled, expected) in [
+            ("", true, "disabledExtensions:\n  - skill:test\n"),
+            (
+                "model: foo",
+                true,
+                "model: foo\ndisabledExtensions:\n  - skill:test\n",
+            ),
+            (
+                "# user config\n",
+                true,
+                "# user config\ndisabledExtensions:\n  - skill:test\n",
+            ),
+            (
+                "disabledExtensions: []\n",
+                true,
+                "disabledExtensions: [\"skill:test\"]\n",
+            ),
+            (
+                "disabledExtensions: [a, \"b\"] # keep\nmodel: foo\n",
+                true,
+                "disabledExtensions: [\"a\",\"b\",\"skill:test\"] # keep\nmodel: foo\n",
+            ),
+            (
+                "disabledExtensions: [a, 'skill:test', b]\n",
+                false,
+                "disabledExtensions: [\"a\",\"b\"]\n",
+            ),
+            (
+                "disabledExtensions: [skill:test]\n",
+                false,
+                "disabledExtensions: []\n",
+            ),
+            (
+                "disabledExtensions:\n    - a\n",
+                true,
+                "disabledExtensions:\n    - a\n    - skill:test\n",
+            ),
+            (
+                "disabledExtensions:\n- a\n- skill:test\nmodel: foo\n",
+                false,
+                "disabledExtensions:\n- a\nmodel: foo\n",
+            ),
+            (
+                "disabledExtensions: # keep\n  - skill:test\n",
+                false,
+                "disabledExtensions: [] # keep\n",
+            ),
+            (
+                "disabledExtensions:\n  - skill:test\n  - skill:test\n",
+                false,
+                "disabledExtensions: []\n",
+            ),
+        ] {
+            assert_eq!(
+                edit_disabled_skill(before, "test", disabled)
+                    .unwrap_or_else(|error| panic!("{before:?}: {error}")),
+                expected,
+                "{before:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_skills_preserve_other_entries_and_surrounding_bytes() {
+        let before = "# config\r\nmodel: 'foo'  # model\r\ndisabledExtensions:\r\n    - \"extension:a\" # user\r\n    # keep comment\r\n    - skill:other\r\n\r\nother: {a: 1}\r\n";
+        let added = edit_disabled_skill(before, "test", true).unwrap();
+        assert_eq!(
+            added,
+            before.replace(
+                "    - skill:other\r\n",
+                "    - skill:other\r\n    - skill:test\n"
+            )
+        );
+        assert_eq!(edit_disabled_skill(&added, "test", false).unwrap(), before);
+    }
+
+    #[test]
+    fn disabled_skills_quote_opaque_names_and_round_trip() {
+        for name in [
+            "a: b", "a # b", "a,b]", "a\"b", "a\nb", "a & b", "!a", "a,!b", "a<<:b", "中文",
+        ] {
+            for before in ["", "disabledExtensions: []\n"] {
+                let added = edit_disabled_skill(before, name, true)
+                    .unwrap_or_else(|error| panic!("add {name:?} to {before:?}: {error}"));
+                assert_eq!(
+                    disabled_extensions(&parse(&added).unwrap()).unwrap(),
+                    vec![format!("skill:{name}")]
+                );
+                let removed = edit_disabled_skill(&added, name, false)
+                    .unwrap_or_else(|error| panic!("remove {name:?} from {added:?}: {error}"));
+                assert!(disabled_extensions(&parse(&removed).unwrap())
+                    .unwrap()
+                    .is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_skills_accept_plain_string_indicator_characters() {
+        for before in [
+            "disabledExtensions:\n  - skill:!a\n",
+            "disabledExtensions: [skill:!a]\n",
+        ] {
+            assert_eq!(
+                edit_disabled_skill(before, "!a", false).unwrap(),
+                "disabledExtensions: []\n"
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_skills_refuse_unsafe_yaml_without_rewriting() {
+        for before in [
+            "disabledExtensions: &blocked []\n",
+            "blocked: &blocked []\ndisabledExtensions: *blocked\n",
+            "disabledExtensions: !!seq []\n",
+            "disabledExtensions:\n  - &entry skill:other\n",
+            "disabledExtensions: [\n  skill:other\n]\n",
+            "disabledExtensions: [a, # inside\n  b]\n",
+            "disabledExtensions: nope\n",
+            "disabledExtensions: null\n",
+            "disabledExtensions: [42]\n",
+            "disabledExtensions:\n  - >\n    skill:other\n",
+            "disabledExtensions: []\n...\n",
+        ] {
+            assert!(
+                edit_disabled_skill(before, "test", true).is_err(),
+                "{before:?}"
+            );
+        }
+        // A reference elsewhere must not silently change with the edited node.
+        let before = "disabledExtensions: &blocked [skill:test]\nother: *blocked\n";
+        assert!(edit_disabled_skill(before, "test", false).is_err());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn disabled_skills_io_is_idempotent_and_respects_config_yaml() {
+        let _agent = test_support::TestAgentDir::new();
+        let path = get_omp_settings_path().unwrap();
+        assert!(read_disabled_skill_names().unwrap().is_empty());
+        set_skill_disabled("test", false).unwrap();
+        assert!(!path.exists());
+        fs::write(&path, "").unwrap();
+        set_skill_disabled("test", true).unwrap();
+        let before = fs::read(&path).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        set_skill_disabled("test", true).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+        let yaml_path = path.with_extension("yaml");
+        fs::rename(&path, &yaml_path).unwrap();
+        assert_eq!(
+            read_disabled_skill_names().unwrap(),
+            HashSet::from(["test".into()])
+        );
+        set_skill_disabled("test", false).unwrap();
+        assert_eq!(
+            fs::read_to_string(&yaml_path).unwrap(),
+            "disabledExtensions: []\n"
+        );
+        assert!(!path.exists());
+        let modified = fs::metadata(&yaml_path).unwrap().modified().unwrap();
+        set_skill_disabled("test", false).unwrap();
+        assert_eq!(
+            fs::metadata(&yaml_path).unwrap().modified().unwrap(),
+            modified
+        );
+    }
 
     fn provider() -> Value {
         json!({"baseUrl":"https://example.com/v1", "apiKey":"LITERAL_KEY", "api":"openai-completions", "models":[{"id":"model-a"}]})
