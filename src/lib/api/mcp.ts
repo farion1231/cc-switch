@@ -8,7 +8,16 @@ import type {
 } from "@/types";
 import type { AppId } from "./types";
 
+export interface McpDiscoveryResult {
+  unmanagedCount: number;
+  failedApps: string[];
+}
+
 export const mcpApi = {
+  async scanUnmanaged(): Promise<McpDiscoveryResult> {
+    return await invoke("scan_unmanaged_mcp_servers");
+  },
+
   async getStatus(): Promise<McpStatus> {
     return await invoke("get_claude_mcp_status");
   },

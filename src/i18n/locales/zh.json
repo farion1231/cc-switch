@@ -4575,6 +4575,14 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "本机有 {{count}} 个 MCP 尚未纳入 CC Switch 管理。",
+      "import": "导入本机 MCP",
+      "readOnly": "发现过程只读取应用的用户级配置，点击导入后才会加入管理。",
+      "partial": "无法读取这些应用的 MCP 配置：{{apps}}。其他来源已检查。",
+      "failed": "检查本机 MCP 配置失败。",
+      "retry": "重新检查"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎么同步",
