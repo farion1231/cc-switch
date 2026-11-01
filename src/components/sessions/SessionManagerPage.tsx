@@ -7,7 +7,12 @@ import {
   type Range,
 } from "@tanstack/react-virtual";
 import { toast } from "@/lib/toast";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Check,
   ChevronDown,
@@ -16,6 +21,11 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
+import {
+  getContentHitKey,
+  useSessionContentSearch,
+} from "@/hooks/useSessionContentSearch";
+import { useSettings } from "@/hooks/useSettings";
 import {
   piKeys,
   useDeleteSessionMutation,
@@ -43,7 +53,11 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
 import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
-import { SessionItem, sessionMenuItemClass } from "./SessionItem";
+import {
+  getSessionRowHeight,
+  SessionItem,
+  sessionMenuItemClass,
+} from "./SessionItem";
 import { SessionReader } from "./reader/SessionReader";
 import { sessionKeys, useSessionTranscript } from "@/lib/query/sessions";
 import { SessionDeleteDialog, SessionSourcesDialog } from "./SessionDialogs";
@@ -61,6 +75,8 @@ import {
   type SessionAppId,
   type SessionTimeBucket,
 } from "./utils";
+
+const CONTENT_SEARCH_TOGGLE_KEY = ["sessionContentSearchToggle"] as const;
 
 const GROUP_MODE_STORAGE_KEY = "cc-switch.sessionManager.groupMode";
 // 按项目分组时默认全部收起，只记住用户手动展开过的项目。
@@ -140,9 +156,12 @@ export function SessionManagerPage({
 }: SessionManagerPageProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, isLoading, refetch } = useSessionsQuery();
+  const { data, dataUpdatedAt, isSuccess, isLoading, refetch } =
+    useSessionsQuery();
   const sessions = useMemo(() => data ?? [], [data]);
   const { data: settings } = useSettingsQuery();
+  const { updateSettings, autoSaveSettings } = useSettings();
+  const contentSearchEnabled = settings?.sessionContentSearchEnabled ?? true;
 
   const [appFilter, setAppFilter] = useState<AppFilter>(
     isSessionAppId(appId) ? appId : "claude",
@@ -151,6 +170,11 @@ export function SessionManagerPage({
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
   const [readerKey, setReaderKey] = useState<string | null>(null);
+  // 点了行下方某条摘录打开的：跳到那条消息，而不是最相关的那条
+  const [readerJump, setReaderJump] = useState<{
+    key: string;
+    messageIndex: number;
+  } | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(
     () => new Set(),
@@ -234,16 +258,81 @@ export function SessionManagerPage({
     sessions: scopedSessions,
     providerFilter: appFilter,
   });
+  const contentProviderIds = useMemo<string[]>(
+    () => (appFilter === "all" ? availableApps : [appFilter]),
+    [appFilter, availableApps],
+  );
+  const {
+    hits: contentHits,
+    status: indexStatus,
+    isSearching: isSearchingContent,
+  } = useSessionContentSearch({
+    query,
+    enabled: contentSearchEnabled,
+    listIsSuccess: isSuccess,
+    listUpdatedAt: dataUpdatedAt,
+    providerIds: contentProviderIds,
+  });
+  const contentHitOf = useCallback(
+    (session: SessionMeta) =>
+      contentHits.get(getContentHitKey(session.providerId, session.sourcePath)),
+    [contentHits],
+  );
   const trimmedQuery = query.trim();
   // 搜索时全部展开，否则匹配到的会话会藏在收起的项目里
   const isGroupOpen = useCallback(
     (key: string) => trimmedQuery !== "" || expanded.has(key),
     [trimmedQuery, expanded],
   );
-  const matches = useMemo(
-    () => sortSessionsByTime(searchSessions(query)),
-    [searchSessions, query],
-  );
+  // 元数据命中（前端 FlexSearch）+ 正文命中（后端索引），按会话去重
+  const matches = useMemo(() => {
+    const metaMatches = searchSessions(query);
+    if (contentHits.size === 0) return sortSessionsByTime(metaMatches);
+    const seen = new Set(metaMatches.map(getSessionKey));
+    const contentOnly = scopedSessions.filter(
+      (session) =>
+        (appFilter === "all" || session.providerId === appFilter) &&
+        !seen.has(getSessionKey(session)) &&
+        contentHitOf(session) !== undefined,
+    );
+    return sortSessionsByTime([...metaMatches, ...contentOnly]);
+  }, [
+    searchSessions,
+    query,
+    contentHits,
+    scopedSessions,
+    appFilter,
+    contentHitOf,
+  ]);
+
+  // Keep persistence and index cleanup in one operation. Settings refresh before
+  // autoSaveSettings finishes (e.g. tray updates); enabling in that gap could
+  // rebuild an index which the older disable would then clear. The shared
+  // mutation key also keeps the toggle locked if this page is remounted.
+  const isTogglingContentSearch =
+    useIsMutating({ mutationKey: CONTENT_SEARCH_TOGGLE_KEY }) > 0;
+  const contentSearchToggle = useMutation({
+    mutationKey: CONTENT_SEARCH_TOGGLE_KEY,
+    mutationFn: async (enabled: boolean) => {
+      const updates = { sessionContentSearchEnabled: enabled };
+      updateSettings(updates);
+      const saved = await autoSaveSettings(updates);
+      if (saved && !enabled) await sessionsApi.clearContentIndex();
+    },
+    onError: (error) =>
+      toast.error(
+        t("sessionManager.contentSearchToggleFailed", {
+          defaultValue: "无法更改正文搜索设置：{{error}}",
+          error: extractErrorMessage(error),
+        }),
+      ),
+  });
+  const toggleContentSearch = (enabled: boolean) => {
+    // The mutation cache changes synchronously, before React disables the item.
+    if (queryClient.isMutating({ mutationKey: CONTENT_SEARCH_TOGGLE_KEY }))
+      return;
+    contentSearchToggle.mutate(enabled);
+  };
 
   const unknownLabel = t("sessionManager.unknownDirectory", {
     defaultValue: "未知目录",
@@ -288,6 +377,17 @@ export function SessionManagerPage({
       setReaderKey(null);
     }
   }, [readerKey, readerSession, isLoading]);
+
+  // 从正文命中打开的会话：阅读页带上查询词，并跳到摘录所在的那条消息
+  const readerHit = readerSession ? contentHitOf(readerSession) : undefined;
+  const readerInitialFind = useMemo(() => {
+    if (!trimmedQuery || !readerHit) return undefined;
+    const messageIndex =
+      readerJump && readerJump.key === readerKey
+        ? readerJump.messageIndex
+        : readerHit.snippets[0]?.messageIndex;
+    return { query: trimmedQuery, messageIndex };
+  }, [trimmedQuery, readerHit, readerJump, readerKey]);
 
   const transcript = useSessionTranscript(
     readerSession?.providerId,
@@ -386,8 +486,10 @@ export function SessionManagerPage({
     }
   };
 
-  const openReader = (session: SessionMeta) => {
-    setReaderKey(getSessionKey(session));
+  const openReader = (session: SessionMeta, messageIndex?: number) => {
+    const key = getSessionKey(session);
+    setReaderJump(messageIndex === undefined ? null : { key, messageIndex });
+    setReaderKey(key);
     focusSoon(["session-reader-back"]);
   };
 
@@ -641,10 +743,12 @@ export function SessionManagerPage({
         selectionMode={selectionMode}
         isChecked={selectedKeys.has(key)}
         searchQuery={trimmedQuery}
+        contentHit={trimmedQuery ? contentHitOf(session) : undefined}
         launchTerminal={terminalName}
         bordered={bordered}
         openButtonId={openButtonId(key)}
         onOpen={() => openReader(session)}
+        onOpenAt={(messageIndex) => openReader(session, messageIndex)}
         onToggleChecked={(checked) => toggleSelected(session, checked)}
         onStartSelect={() => enterSelection(session)}
         onLaunch={() => void handleLaunch(session)}
@@ -757,8 +861,13 @@ export function SessionManagerPage({
   const listVirtualizer = useVirtualizer({
     count: listRows.length,
     getScrollElement: () => listScrollRef.current,
-    estimateSize: (index) =>
-      LIST_ROW_HEIGHT[listRows[index]?.kind ?? "session"],
+    estimateSize: (index) => {
+      const row = listRows[index];
+      if (row?.kind === "session" && trimmedQuery) {
+        return getSessionRowHeight(contentHitOf(row.session), selectionMode);
+      }
+      return LIST_ROW_HEIGHT[row?.kind ?? "session"];
+    },
     getItemKey: (index) => listRows[index]?.key ?? index,
     overscan: 10,
     rangeExtractor,
@@ -770,6 +879,10 @@ export function SessionManagerPage({
         cb(rect);
       }),
   });
+  // 正文命中改变了行高（行下方的摘录），已缓存的位置要重新算
+  useEffect(() => {
+    listVirtualizer.measure();
+  }, [listVirtualizer, contentHits, selectionMode, trimmedQuery]);
 
   const renderProjectHeader = (
     group: (typeof projectGroups)[number],
@@ -888,10 +1001,17 @@ export function SessionManagerPage({
     if (trimmedQuery) {
       return (
         <EmptyState
-          title={t("sessionManager.emptySearch", {
-            defaultValue: "没有标题、目录或首末消息匹配“{{query}}”的会话",
-            query: trimmedQuery,
-          })}
+          title={
+            contentSearchEnabled
+              ? t("sessionManager.emptySearchContent", {
+                  defaultValue: "没有会话的标题、目录或消息正文包含“{{query}}”",
+                  query: trimmedQuery,
+                })
+              : t("sessionManager.emptySearch", {
+                  defaultValue: "没有标题、目录或首末消息匹配“{{query}}”的会话",
+                  query: trimmedQuery,
+                })
+          }
           action={t("sessionManager.clearSearchAction", {
             defaultValue: "清除搜索",
           })}
@@ -1004,6 +1124,27 @@ export function SessionManagerPage({
                 )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
+                  role="menuitemcheckbox"
+                  aria-checked={contentSearchEnabled}
+                  disabled={isTogglingContentSearch || !settings}
+                  className={sessionMenuItemClass}
+                  onSelect={() => toggleContentSearch(!contentSearchEnabled)}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {t("sessionManager.contentSearchToggle", {
+                      defaultValue: "搜索消息正文",
+                    })}
+                  </span>
+                  <Check
+                    aria-hidden="true"
+                    strokeWidth={1.5}
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0",
+                      !contentSearchEnabled && "invisible",
+                    )}
+                  />
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   className={sessionMenuItemClass}
                   onSelect={() => setWhereOpen(true)}
                 >
@@ -1025,6 +1166,7 @@ export function SessionManagerPage({
             appName={appName(readerSession.providerId)}
             transcript={transcript}
             listQuery={trimmedQuery}
+            initialFind={readerInitialFind}
             launchTerminal={terminalName}
             hasPrev={readerIndex > 0}
             hasNext={
@@ -1149,6 +1291,7 @@ export function SessionManagerPage({
               <SearchField
                 id="session-search"
                 ref={searchRef}
+                busy={isSearchingContent}
                 value={query}
                 onValueChange={setQuery}
                 clearLabel={t("sessionManager.clearSearch", {
@@ -1157,9 +1300,15 @@ export function SessionManagerPage({
                 aria-label={t("sessionManager.searchSessions", {
                   defaultValue: "搜索会话",
                 })}
-                placeholder={t("sessionManager.searchPlaceholder", {
-                  defaultValue: "搜索标题、目录、首末消息或会话 ID",
-                })}
+                placeholder={
+                  contentSearchEnabled
+                    ? t("sessionManager.searchPlaceholderContent", {
+                        defaultValue: "搜索标题、目录、消息正文或会话 ID",
+                      })
+                    : t("sessionManager.searchPlaceholder", {
+                        defaultValue: "搜索标题、目录、首末消息或会话 ID",
+                      })
+                }
                 autoComplete="off"
               />
               <span role="status" className="sr-only">
@@ -1195,6 +1344,20 @@ export function SessionManagerPage({
               ]}
             />
           </div>
+
+          {trimmedQuery && indexStatus?.running && (
+            <p
+              role="status"
+              className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2"
+            >
+              {t("sessionManager.contentIndexing", {
+                defaultValue:
+                  "正在建立正文索引（{{processed}}/{{total}}），正文结果可能还不全",
+                processed: indexStatus.processed,
+                total: indexStatus.total,
+              })}
+            </p>
+          )}
 
           {fromApp === "claude-desktop" && appFilter === "claude" && (
             <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2">
