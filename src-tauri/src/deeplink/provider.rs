@@ -350,6 +350,11 @@ pub(crate) fn build_provider_from_request(
                 "Add Kimi Code providers from the Kimi Code page".into(),
             ))
         }
+        AppType::Trae => {
+            return Err(AppError::InvalidInput(
+                "Add TRAE CLI providers from the TRAE CLI page".into(),
+            ))
+        }
         AppType::Mcode => {
             return Err(AppError::InvalidInput(
                 "Add MCode providers from the MCode page".into(),

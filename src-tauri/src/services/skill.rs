@@ -677,7 +677,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Dsh => {}
+            AppType::ClaudeDesktop
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Trae => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -731,6 +735,7 @@ impl SkillService {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::Trae => crate::trae_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1093,7 +1098,13 @@ impl SkillService {
                     let ssot_dir = Self::get_ssot_dir()?;
                     let source = ssot_dir.join(&directory);
                     let mut managed_destinations = Vec::new();
-                    for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+                    for app in [
+                        AppType::Mcode,
+                        AppType::Agy,
+                        AppType::Kimi,
+                        AppType::Dsh,
+                        AppType::Trae,
+                    ] {
                         if skill.apps.is_enabled_for(&app) {
                             let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
                                 .join(&directory);
@@ -1183,6 +1194,7 @@ impl SkillService {
                                 | AppType::Agy
                                 | AppType::Kimi
                                 | AppType::Dsh
+                                | AppType::Trae
                                 | AppType::Omp
                         ) {
                             continue;
@@ -1662,6 +1674,7 @@ impl SkillService {
             AppType::Agy,
             AppType::Kimi,
             AppType::Dsh,
+            AppType::Trae,
             AppType::Omp,
         ] {
             if skill.apps.is_enabled_for(&app) {
@@ -1726,13 +1739,17 @@ impl SkillService {
                     &dest,
                     &skill.directory,
                     &deployments,
-                    &[AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh]
-                        .iter()
-                        .filter(|app| skill.apps.is_enabled_for(app))
-                        .map(|app| {
-                            Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
+                    &[
+                        AppType::Mcode,
+                        AppType::Agy,
+                        AppType::Kimi,
+                        AppType::Dsh,
+                        AppType::Trae,
+                    ]
+                    .iter()
+                    .filter(|app| skill.apps.is_enabled_for(app))
+                    .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
+                    .collect::<Result<Vec<_>>>()?,
                     || {
                         if !db.update_skill_metadata(&updated_metadata)? {
                             return Err(anyhow!("Skill no longer installed: {}", skill.id));
@@ -1763,6 +1780,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Trae
                     | AppType::Omp
             ) {
                 continue;
@@ -1994,7 +2012,13 @@ impl SkillService {
                     .ok()
                     .flatten()
             };
-            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+            for app in [
+                AppType::Mcode,
+                AppType::Agy,
+                AppType::Kimi,
+                AppType::Dsh,
+                AppType::Trae,
+            ] {
                 if skill.apps.is_enabled_for(&app) {
                     let destination = Self::get_app_skills_dir(&app)?.join(&directory);
                     if let Some(deployment) =
@@ -2223,7 +2247,10 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
-        if matches!(app, AppType::Agy | AppType::Kimi | AppType::Dsh) {
+        if matches!(
+            app,
+            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Trae
+        ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
             }
@@ -2436,7 +2463,13 @@ impl SkillService {
 
             // An explicitly imported MCode link must point at the managed copy
             // so subsequent toggles and updates can verify its ownership.
-            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+            for app in [
+                AppType::Mcode,
+                AppType::Agy,
+                AppType::Kimi,
+                AppType::Dsh,
+                AppType::Trae,
+            ] {
                 if apps.is_enabled_for(&app) {
                     let projection = (|| -> Result<()> {
                         let native =
@@ -2485,6 +2518,7 @@ impl SkillService {
                         | AppType::Agy
                         | AppType::Kimi
                         | AppType::Dsh
+                        | AppType::Trae
                         | AppType::Omp
                 ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
@@ -2597,6 +2631,7 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Trae
                 | AppType::Omp
         ) {
             return Ok(());
@@ -2779,6 +2814,7 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Trae
                 | AppType::Omp
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
@@ -2987,6 +3023,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Trae
                     | AppType::Omp
             ) {
                 let source = ssot_dir.join(&directory);
@@ -3062,7 +3099,7 @@ impl SkillService {
         if app_dir.exists()
             && !matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Trae
             )
         {
             for entry in fs::read_dir(&app_dir)? {
@@ -4213,7 +4250,7 @@ impl SkillService {
         for app in AppType::all() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Trae
             ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;
@@ -6204,6 +6241,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    trae: false,
                     dsh: false,
                     ..Default::default()
                 },
@@ -6234,6 +6272,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    trae: false,
                     dsh: false,
                     ..Default::default()
                 },
@@ -6271,6 +6310,7 @@ mod tests {
                     apps: SkillApps {
                         mcode: true,
                         kimi: false,
+                        trae: false,
                         dsh: false,
                         ..Default::default()
                     },
@@ -6320,6 +6360,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    trae: false,
                     dsh: false,
                     ..Default::default()
                 },

@@ -152,6 +152,13 @@ pub async fn get_config_status(
                 path: file.to_string_lossy().to_string(),
             })
         }
+        AppType::Trae => {
+            let file = crate::trae_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
         AppType::Mcode => {
             let file = crate::mcode_config::config_path();
             Ok(ConfigStatus {
@@ -213,6 +220,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
         AppType::Dsh => crate::dsh_config::data_dir(),
         AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Trae => crate::trae_config::data_dir(),
         AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
@@ -240,6 +248,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
         AppType::Dsh => crate::dsh_config::data_dir(),
         AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Trae => crate::trae_config::data_dir(),
         AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()

@@ -39,6 +39,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Mcode => crate::mcode_config::data_dir(),
         AppType::Dsh => crate::dsh_config::data_dir(),
         AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Trae => crate::trae_config::data_dir(),
         // agy 只从各「定制根目录」读独立的 AGENTS.md；全局那一个是 ~/.gemini/config，Key 模式的
         // 私有 --gemini_dir 也经软链共享它。别用 ~/.gemini/GEMINI.md：那是 Gemini CLI 的。
         AppType::Agy => crate::agy_config::customizations_dir(),
@@ -57,6 +58,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Mcode
         | AppType::Agy
         | AppType::Kimi
+        | AppType::Trae
         | AppType::Dsh
         | AppType::Omp => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),

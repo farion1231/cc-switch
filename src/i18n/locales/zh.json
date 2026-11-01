@@ -5064,6 +5064,27 @@
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用该供应商的模型，请先在 Kimi Code 中用 /secondary-model 更换"
     }
   },
+  "trae": {
+    "officialPresetName": "TRAE 账号登录",
+    "officialHint": "使用 TRAE CLI 自带的账号登录（traecli /login）。切换到此项会移除 traecli.toml 中的 model_provider 和 model，模型由账号提供。",
+    "officialExists": "已添加 TRAE 账号登录。",
+    "providerKeyHint": "对应 traecli.toml 中的 [model_providers.<标识>]，只能使用字母、数字、- 和 _",
+    "providerKeyInvalid": "标识只能包含字母、数字、- 和 _，且不能使用 openai、oss、ollama、lmstudio 等内置名称",
+    "responsesOnlyHint": "TRAE CLI 仅支持 OpenAI Responses API（wire_api = \"responses\"），请填写兼容 /v1/responses 的地址。",
+    "envKey": "API Key 环境变量（可选）",
+    "envKeyHint": "填写后 TRAE CLI 从该环境变量读取密钥（env_key），可不在配置文件中保存 API Key。",
+    "model": "模型",
+    "models": "可选模型",
+    "modelsHint": "这些模型会和默认模型一起写入 TRAE CLI 的模型目录，可在 traecli 的 /model 中切换。",
+    "modelsEmpty": "未添加其他模型；traecli 只会列出默认模型。",
+    "removeModel": "移除 {{model}}",
+    "empty": {
+      "title": "添加 TRAE CLI 供应商",
+      "description": "配置 Responses API 地址、API Key 和模型；traecli.toml 中已有的供应商会自动导入。"
+    },
+    "deleteSessionHint": "请在终端运行 traecli delete <会话 ID> 删除，以同时更新 TRAE CLI 的会话索引。",
+    "switchNeedsModel": "请先编辑此供应商并设置模型"
+  },
   "omp": {
     "empty": {
       "title": "还没有添加 API Key 供应商",

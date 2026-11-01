@@ -221,6 +221,10 @@ impl Provider {
                 str_at(settings.pointer("/provider/base_url")),
                 str_at(settings.pointer("/provider/api_key")),
             ),
+            AppType::Trae => (
+                str_at(settings.pointer("/provider/base_url")),
+                str_at(settings.pointer("/provider/experimental_bearer_token")),
+            ),
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
