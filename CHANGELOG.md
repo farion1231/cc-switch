@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This release adds an Auth Center switch that makes sign-in copy the login link instead of opening the default browser, for people who keep each account in its own browser profile. Fixes cover Claude routes downgrading `max` effort to `xhigh` for GPT 6.1 Sol / Terra, DeepSeek Harness showing no third-party providers after a model with PDF input was picked, CC Switch exiting on WSL when the tray could not write its icons, Codex Chat cards losing the reasoning effort after "Supports Reasoning Effort" was turned off and on again, and the DeepSeek official sign-in card saying it signs in with a Claude account.
 
-**Stats**: 7 commits | 31 files changed | +736 insertions | -77 deletions
+**Stats**: 8 commits | 44 files changed | +774 insertions | -115 deletions
 
 ### Added
 
 - **Sign In by Copying the Login Link** (734ed4a17): An "Open the browser when signing in" switch at the top of the Auth Center, shared by Claude, ChatGPT, Copilot, xAI, Antigravity, Kimi and DeepSeek Harness sign-ins (including those started from the provider form). With it off, sign-in only copies the login link, device-code flows no longer auto-copy the code so the link stays on the clipboard, and the reopen button is hidden; the waiting block always offers "Copy sign-in link". On Windows a Claude sign-in passes login method `copy_link` and points `BROWSER` at a missing program so Claude Code only prints the link (macOS and Linux already intercept `BROWSER`). The choice is a per-device UI preference in localStorage, on by default.
+
+### Changed
+
+- **A6API Presets** (889e50ac7): Website, API base URL and register link moved to the `a6api.vip` domain in all nine app presets and the four README sponsor tables.
 
 ### Fixed
 
