@@ -2591,6 +2591,11 @@
       "title": "Kullanım ayarları",
       "pricingSummary": "Milyon token başına model fiyatlarını belirleyin veya models.dev üzerinden eşitleyin.",
       "managePricing": "Fiyatlandırmayı yönet…"
+    },
+    "inFlightLog": {
+      "title": "Sürüyor: {{count}} istek",
+      "modelPending": "model çözümleniyor…",
+      "streaming": "akış"
     }
   },
   "usageScript": {
@@ -3866,7 +3871,16 @@
       "stopFailed": "Yönlendirme hizmeti durdurulamadı: {{detail}}"
     },
     "stoppedWithRestore": "Yönlendirme hizmeti durduruldu; tüm uygulamalar doğrudan bağlantılara geri döndü",
-    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}"
+    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}",
+    "breaker": {
+      "evidenceSummary": "Başarısızlık kanıtı {{evidenceCount}} · {{failures}} arka arkaya başarısızlık",
+      "noEvidence": "Başarısızlık kanıtı yok",
+      "clearCounters": "Sayaçları temizle ve zamanlamaya geri dön",
+      "clearShort": "Temizle",
+      "networkError": "ağ",
+      "tripped": "sigortayı tetikledi",
+      "trippedProbe": "sonda başarısız"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}}'ye ulaşılabilir ({{responseTimeMs}}ms)",

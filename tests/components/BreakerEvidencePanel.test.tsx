@@ -207,12 +207,13 @@ describe("BreakerEvidencePanel", () => {
     });
   });
 
-  it("cannot be expanded when there is nothing to show", () => {
+  it("renders nothing for a healthy provider with no failure history", () => {
+    // 熔断器是按故障转移队列懒建的：健康供应商也有实例，只是 0 失败 0 证据。
+    // 空面板 + 毁灭观感的清除按钮只会给每张卡添噪音（审计 m1）。
     statsRef.value = stats({ consecutiveFailures: 0, failureEvidence: [] });
-    renderPanel();
+    const { container } = renderPanel();
 
-    const trigger = screen.getByRole("button", { name: /失败证据/ });
-    expect(trigger).toBeDisabled();
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("shows the evidence summary even when the breaker is closed again", () => {

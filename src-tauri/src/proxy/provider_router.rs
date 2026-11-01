@@ -158,6 +158,7 @@ impl ProviderRouter {
     ///
     /// `retry_after_seconds` 同样只在失败时有意义：上游 429 明确给了恢复时间时，
     /// 这次熔断就按它来，而不是配置里的固定时长。
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_result(
         &self,
         provider_id: &str,

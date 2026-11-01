@@ -663,13 +663,12 @@ export function ProviderCard({
         </div>
       </div>
 
-      {/* 熔断依据：只在代理模式下、且确实有过失败记录时才出现。
+      {/* 熔断依据：只在代理模式下出现，且面板自己在「有失败历史可解释」时
+          才渲染内容——健康的卡不加空 div、不多出一段空白。
           放在卡片正文下方而不是标题行里——它是「为什么这样调度」的解释，
           不是一眼扫过的状态徽章。 */}
       {presentation.showHealth && isProxyAppId(appId) && (
-        <div className="mx-4 mb-3">
-          <BreakerEvidencePanel providerId={provider.id} appType={appId} />
-        </div>
+        <BreakerEvidencePanel providerId={provider.id} appType={appId} />
       )}
 
       {isExpanded && hasMultiplePlans && (

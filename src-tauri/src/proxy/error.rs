@@ -50,7 +50,8 @@ pub enum ProxyError {
         ///
         /// 只有 429 且该头能解析成秒数时才是 `Some`；其余情况一律 `None`，
         /// 此时熔断时长沿用配置值，与加入这个字段之前的行为完全一致。
-        #[serde(default)]
+        /// 注意别加 `#[serde(default)]` 之类的属性：`ProxyError` 只 derive
+        /// `Debug + Error`，没有 serde derive 时这个属性宏未注册，编译直接失败。
         retry_after_seconds: Option<u64>,
     },
 

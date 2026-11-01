@@ -14,10 +14,18 @@ use tokio::sync::RwLock;
 /// 每个供应商最多保留多少条失败证据。
 ///
 /// 证据是给人看的「哪几个请求让我判它熔断」，不是审计日志：保留得比判定阈值
-/// 所需的多一些（阈值默认 5，错误率窗口 min_requests 默认 10），够看清来龙去脉
+/// 所需的多一些（阈值默认 4，错误率窗口 min_requests 默认 10），够看清来龙去脉
 /// 即可。上限固定，避免长时间运行后无界增长——这个结构在每条请求的失败路径上
 /// 都会写一次。
 const MAX_FAILURE_EVIDENCE: usize = 20;
+
+/// 上游 Retry-After 能把熔断撑多久的天花板（24 小时）。
+///
+/// 头本身合法的巨大值照样被接受——「日配额明天恢复」是上游的正当表达——但
+/// `Retry-After: 999999999999`（约三万年）也完全符合语法，照单全收等于把供应商
+/// 永久移出调度。钳到一天：真实的日配额不受影响，恶意/出错的头最多损失一天，
+/// 且面板上的「清除计数」随时可以提前拉回来。
+const MAX_RETRY_AFTER_OPEN_SECONDS: u64 = 24 * 60 * 60;
 
 /// 一条失败证据：一次真正计入了熔断器的请求失败。
 ///
@@ -188,7 +196,6 @@ impl CircuitBreaker {
         match state {
             CircuitState::Closed | CircuitState::HalfOpen => true,
             CircuitState::Open => {
-                // 用这次 Open 实际生效的时长（上游 Retry-After 优先于配置值）
                 let open_timeout = self.effective_open_timeout_seconds().await;
                 if let Some(opened_at) = *self.last_opened_at.read().await {
                     if opened_at.elapsed().as_secs() >= open_timeout {
@@ -471,11 +478,12 @@ impl CircuitBreaker {
     /// `open_for` 是这次熔断要持续多久。`None` 表示用配置里的 `timeout_seconds`
     /// ——绝大多数失败都走这条路径，行为与以前一致。上游用 429 + Retry-After
     /// 明确告诉你「多久之后再来」时，调用方会传 `Some`，让熔断时长跟着上游走，
-    /// 而不是傻等配置值。
+    /// 而不是傻等配置值。上游给的值按 [`MAX_RETRY_AFTER_OPEN_SECONDS`] 钳制。
     async fn transition_to_open(&self, open_for: Option<u64>) {
         *self.state.write().await = CircuitState::Open;
         *self.last_opened_at.write().await = Some(Instant::now());
-        *self.open_for_seconds.write().await = open_for;
+        *self.open_for_seconds.write().await =
+            open_for.map(|seconds| seconds.min(MAX_RETRY_AFTER_OPEN_SECONDS));
         self.consecutive_failures.store(0, Ordering::SeqCst);
         self.consecutive_successes.store(0, Ordering::SeqCst);
     }
@@ -784,6 +792,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_absurdly_large_retry_after_is_clamped_to_one_day() {
+        // 头完全合法但值是三万年：照单全收等于永久熔断。钳到一天，
+        // 「清除计数」仍是提前拉回的出口。
+        let config = CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 3600,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        breaker
+            .record_failure(false, None, Some(999_999_999_999))
+            .await;
+
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+        // 钳制值 24h 赢过配置的 1h，又远远小于头里的原始值
+        assert_eq!(
+            breaker.effective_open_timeout_seconds().await,
+            MAX_RETRY_AFTER_OPEN_SECONDS
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retry_after_below_the_cap_is_taken_verbatim() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 30,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        breaker.record_failure(false, None, Some(120)).await;
+
+        assert_eq!(breaker.effective_open_timeout_seconds().await, 120);
+    }
+
+    #[tokio::test]
     async fn upstream_retry_after_extends_the_open_window_past_the_config() {
         // 配置说 0 秒后就可以重试；上游说 429 之后等 3600 秒。
         // 上游的话必须赢，否则熔断器会立刻放行一个明确被限流的供应商。
@@ -794,9 +839,7 @@ mod tests {
         };
         let breaker = CircuitBreaker::new(config);
 
-        breaker
-            .record_failure(false, None, Some(3600))
-            .await;
+        breaker.record_failure(false, None, Some(3600)).await;
         assert_eq!(breaker.get_state().await, CircuitState::Open);
 
         // timeout_seconds = 0 意味着配置层面「立刻可恢复」，但这次 Open 应该按

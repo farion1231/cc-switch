@@ -3478,7 +3478,18 @@ fn describe_failure(error: &ProxyError) -> FailureDetail {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(|body| {
-                    let summary = summarize_upstream_body(body);
+                    // 错误体上限是 128 MiB（hyper_client 的响应上限），而这条路径
+                    // 跑在 tokio worker 上、每个 provider 每次失败都来一遍。证据
+                    // 最终只留 160 字符，所以解析前先按字节截到 8 KiB；回退到
+                    // char 边界，不把多字节字符劈开。信息不会更少，最坏情况从
+                    // 「解析 128 MiB」变成「解析 8 KiB」。
+                    let mut end = 8 * 1024;
+                    if end < body.len() {
+                        while !body.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                    }
+                    let summary = summarize_upstream_body(&body[..end.min(body.len())]);
                     summarize_text_for_log(&summary, MAX_EVIDENCE_REASON_CHARS)
                 })
                 .unwrap_or_else(|| format!("上游返回 HTTP {status}，无错误内容"));
@@ -5891,17 +5902,17 @@ mod tests {
                 status: 401,
                 body: None,
                 retry_after_seconds: None,
-            },
+                },
             ProxyError::UpstreamError {
                 status: 403,
                 body: None,
                 retry_after_seconds: None,
-            },
+                },
             ProxyError::UpstreamError {
                 status: 429,
                 body: None,
                 retry_after_seconds: None,
-            },
+                },
             ProxyError::Timeout("timeout".to_string()),
         ] {
             assert_eq!(
@@ -5931,7 +5942,7 @@ mod tests {
                     status: 401,
                     body: None,
                     retry_after_seconds: None,
-            },
+                },
                 &provider,
             ),
             ErrorCategory::Retryable

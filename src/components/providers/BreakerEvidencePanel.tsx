@@ -18,8 +18,6 @@ import type { CircuitState, FailureEvidence } from "@/types/proxy";
 interface BreakerEvidencePanelProps {
   providerId: string;
   appType: string;
-  /** 代理没在跑时熔断器状态无从读取，整块不渲染 */
-  enabled?: boolean;
 }
 
 /**
@@ -32,15 +30,19 @@ interface BreakerEvidencePanelProps {
 export function BreakerEvidencePanel({
   providerId,
   appType,
-  enabled = true,
 }: BreakerEvidencePanelProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const { data: stats } = useCircuitBreakerStats(providerId, appType, enabled);
+  const { data: stats } = useCircuitBreakerStats(providerId, appType);
   const reset = useResetCircuitBreaker();
 
-  // 没有熔断器实例 = 这个供应商还没失败过。没什么可解释的，不占地方。
-  if (!stats) return null;
+  // 熔断器实例是按故障转移队列懒建的：健康供应商也有实例，只是 0 失败、0 证据。
+  // 那种「一切正常」的空面板只会给每张卡白添一个边框和一个毁灭观感的按钮——
+  // 只在「真有话要说」（降级或熔断，或关掉之后还留着历史）时才出现。
+  const hasSomethingToSay =
+    !!stats &&
+    (stats.state !== "closed" || (stats.failureEvidence ?? []).length > 0);
+  if (!stats || !hasSomethingToSay) return null;
 
   const evidence = stats.failureEvidence ?? [];
   const tripped = stats.state !== "closed";
@@ -51,7 +53,8 @@ export function BreakerEvidencePanel({
   return (
     <div
       className={cn(
-        "mt-2 rounded-md border px-2.5 py-2 text-xs",
+        // 外边距自己带：调用点不再包 wrapper，面板不渲染时调用点一个空 div 也不留
+        "mx-4 mb-3 mt-2 rounded-md border px-2.5 py-2 text-xs",
         tripped
           ? "border-red-500/30 bg-red-500/5"
           : "border-border bg-background/40",

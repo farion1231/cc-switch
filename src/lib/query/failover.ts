@@ -108,6 +108,7 @@ export function useCircuitBreakerStats(
     queryFn: () => failoverApi.getCircuitBreakerStats(providerId, appType),
     enabled: enabled && !!providerId && !!appType,
     refetchInterval: 5000, // 每 5 秒刷新一次
+    retry: false, // 命令失败重试没有意义，N 张卡各重试 3 次只会放大故障
   });
 }
 
