@@ -283,7 +283,7 @@ fn patch_wayland_header_event_box(window: &WebviewWindow) {
 }
 
 fn apply_wayland_header_event_box_patch(window: &WebviewWindow) {
-    use gtk::prelude::{Cast, EventBoxExt, GtkWindowExt};
+    use gtk::prelude::{Cast, EventBoxExt, GtkWindowExt, WidgetExt};
 
     let gtk_window = match window.gtk_window() {
         Ok(gtk_window) => gtk_window,
@@ -292,16 +292,22 @@ fn apply_wayland_header_event_box_patch(window: &WebviewWindow) {
             return;
         }
     };
-    let Some(titlebar) = gtk_window.titlebar() else {
-        return;
-    };
-    let Ok(event_box) = titlebar.downcast::<gtk::EventBox>() else {
-        return;
-    };
-    if event_box.is_above_child() {
-        event_box.set_above_child(false);
-        log::info!("Linux: 已关闭 Wayland CSD EventBox above_child，标题栏按钮可接收点击");
+    if let Some(titlebar) = gtk_window.titlebar() {
+        if let Ok(event_box) = titlebar.downcast::<gtk::EventBox>() {
+            if event_box.is_above_child() {
+                event_box.set_above_child(false);
+                log::info!("Linux: 已关闭 Wayland CSD EventBox above_child，标题栏按钮可接收点击");
+            }
+        }
     }
+    // 强制 GTK 重新计算子控件尺寸并分配 input region，零抽搐且不改变窗口几何尺寸
+    gtk_window.queue_resize();
+}
+
+fn is_wsl_environment() -> bool {
+    std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || std::env::var_os("WSL_INTEROP").is_some()
+        || std::path::Path::new("/run/WSL").exists()
 }
 
 /// 以 LogicalSize 做 ±1 逻辑像素伪 resize，避免 HiDPI 下 PhysicalSize +1
@@ -310,6 +316,11 @@ fn apply_wayland_header_event_box_patch(window: &WebviewWindow) {
 /// 一旦 `set_size(bumped)` 已经发出，本函数保证随后 `set_size(original)`，
 /// 即使窗口在 RESIZE_GAP 期间被隐藏。这是刻意不做 generation-cancel 的原因。
 async fn pseudo_resize_logical(window: &WebviewWindow) {
+    if is_wsl_environment() {
+        log::debug!("Linux nudge: WSL/WSLg 环境下已通过 GTK queue_resize 刷新布局，跳过 set_size 伪 resize 避免尺寸膨胀");
+        return;
+    }
+
     let (physical, scale) = match (window.inner_size(), window.scale_factor()) {
         (Ok(physical), Ok(scale)) => (physical, scale),
         (Err(e), _) => {
@@ -430,5 +441,13 @@ mod tests {
         assert!(!next_delayed_focus_eligibility(true, true));
         assert!(next_delayed_focus_eligibility(true, false));
         assert!(!next_delayed_focus_eligibility(false, false));
+    }
+
+    #[test]
+    fn wsl_environment_detection_matches_env() {
+        let expected = std::env::var_os("WSL_DISTRO_NAME").is_some()
+            || std::env::var_os("WSL_INTEROP").is_some()
+            || std::path::Path::new("/run/WSL").exists();
+        assert_eq!(is_wsl_environment(), expected);
     }
 }
