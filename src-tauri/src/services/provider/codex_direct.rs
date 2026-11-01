@@ -251,7 +251,9 @@ pub(crate) async fn off_runtime<T: Send + 'static>(
 
 /// 官方做路由、发布了 Stack 模型：目录里要写全官方模型。
 pub(crate) fn needs_official_rows(route: &Provider, stack: &[Member]) -> bool {
-    !stack.is_empty() && is_official(route)
+    !stack.is_empty()
+        && is_official(route)
+        && project(route).is_ok_and(|projection| row_catalog_pointer(&projection.top).is_none())
 }
 
 /// 按未加锁读到的内容预测这次操作之后 Codex 会用的登录（能取官方列表的才是 `Ok`，否则带
@@ -587,7 +589,7 @@ pub(crate) fn plan(
     let provider = target_provider(target);
     let projection = provider.map(project).transpose()?;
 
-    let (top, mut nested, mut exclusive) = match (&projection, provider) {
+    let (mut top, mut nested, mut exclusive) = match (&projection, provider) {
         (Some(projection), Some(provider)) => (
             projection.top.clone(),
             projection.nested.clone(),
@@ -705,6 +707,8 @@ pub(crate) fn plan(
         }
     }
     if let Some(catalog) = &stack_catalog {
+        // 仅本次 live 投影指向合并目录。卡上自管文件的路径保留，退出聚合时恢复。
+        top.retain(|(key, _)| key != crate::live::project::codex::MODEL_CATALOG_JSON);
         let (model, effort) = crate::settings::codex_stack_subagent();
         nested.extend(stack_subagent_nested(
             catalog,
@@ -774,20 +778,17 @@ pub(crate) fn plan(
     })
 }
 
-/// 能不能加进 Stack：配置要能解析。之后才坏掉的成员在目录里跳过（见 [`stack_catalog`]）。
+/// 能不能加进 Stack：配置及自管目录要能解析。
 pub(crate) fn check_stack_member(provider: &Provider) -> Result<(), AppError> {
-    project(provider).map(|_| ()).map_err(|error| {
+    project(provider).and_then(|projection| {
+        crate::codex_config::read_codex_custom_catalog_models(&projection.catalog_input_text())
+            .map(|_| ())
+    }).map_err(|error| {
         AppError::Message(format!(
             "「{name}」的配置有问题，不能加入聚合 (The configuration of \"{name}\" is invalid, so it cannot join the aggregation): {error}",
             name = provider.name
         ))
     })
-}
-
-/// 路由那家的行指定了自己管理的模型目录文件（`model_catalog_json`）：Codex 只读那个
-/// 文件，Stack 模型合并不进去。
-pub(crate) fn route_owns_catalog(route: &Provider) -> bool {
-    project(route).is_ok_and(|projection| row_catalog_pointer(&projection.top).is_some())
 }
 
 /// 去掉路由那家行里自己指定的模型目录指针之后的 `settings_config`；行里没有时为 `None`。
@@ -918,17 +919,9 @@ fn stack_catalog(
     if stack.is_empty() {
         return Ok(None);
     }
-    // 路由那家的行指定了自己管理的目录文件：Codex 只读那个文件，合并不进去（界面上
-    // 由 `route_owns_catalog` 给出提示）。
-    if row_catalog_pointer(&projection.top).is_some() {
-        log::warn!(
-            "Codex 路由供应商 {} 使用自己的模型目录文件，Stack 模型不发布",
-            route.id
-        );
-        return Ok(None);
-    }
     let route_text = projection.catalog_input_text();
-    let route_row = if is_official(route) {
+    // 官方卡也可能指定自管目录，此时以文件为准，无须获取账号模型列表。
+    let route_row = if is_official(route) && row_catalog_pointer(&projection.top).is_none() {
         // 写了目录之后 Codex 只认文件里的模型：拿不到官方行时不能写出只有 Stack 模型的目录。
         match prepared.native.as_ref().and_then(NativeRows::rows) {
             Some(rows) => CodexStackRoute::Official {
@@ -950,8 +943,8 @@ fn stack_catalog(
         })
     };
 
-    // 一家的配置坏了（比如云同步带来的行解析不了）只跳过这一家：报错会让进出代理、换
-    // 路由、启动时接上这些 Codex 写入全部失败。
+    // 无法投影的配置行跳过；自管目录的读取和结构错误也只跳过对应供应商，
+    // 不能让一个外部文件出错阻断启动接上、切换路由或保存卡片。
     let inputs: Vec<_> = stack
         .iter()
         .filter_map(|member| match project(&member.provider) {
@@ -987,6 +980,9 @@ fn stack_catalog(
         crate::settings::codex_stack_classic_tools(),
     )
     .map(Some)
+    .map_err(|error| AppError::Message(format!(
+        "路由供应商「{}」的聚合目录生成失败 (Cannot build aggregated catalog for routed provider): {error}", route.name
+    )))
 }
 
 fn table_text(table: &Table) -> String {
