@@ -372,66 +372,6 @@ export function CodexAuthSettings({
         }
       />
 
-      {!settings.unifyCodexSessionHistory && hasUnifyBackup && (
-        <SettingsRow
-          label={t("settings.unifyCodexHistoryRestoreAction")}
-          control={
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={
-                restoringHistory || migratingManaged || repairingLegacyOfficial
-              }
-              onClick={() => setShowRestoreConfirm(true)}
-            >
-              {t("settings.unifyCodexHistoryRestoreAction")}
-            </Button>
-          }
-        />
-      )}
-
-      {settings.unifyCodexSessionHistory && (
-        <SettingsRow
-          label={t("settings.codexManagedHistory")}
-          help={{
-            title: t("settings.codexManagedHistory"),
-            body: t("confirm.codexManagedHistory.message"),
-          }}
-          control={
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={
-                migratingManaged || restoringHistory || repairingLegacyOfficial
-              }
-              onClick={() => setShowManagedConfirm(true)}
-            >
-              {t("settings.codexManagedHistoryAction")}
-            </Button>
-          }
-        />
-      )}
-
-      <SettingsRow
-        label={t("settings.codexLegacyOfficialHistory")}
-        help={{
-          title: t("settings.codexLegacyOfficialHistory"),
-          body: t("confirm.codexLegacyOfficialHistory.message"),
-        }}
-        control={
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={
-              repairingLegacyOfficial || migratingManaged || restoringHistory
-            }
-            onClick={() => setShowLegacyOfficialConfirm(true)}
-          >
-            {t("settings.codexLegacyOfficialHistoryAction")}
-          </Button>
-        }
-      />
-
       <SettingsSwitchRow
         label={t("settings.codexSessionCompression")}
         help={{
