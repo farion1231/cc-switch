@@ -95,7 +95,7 @@ interface ManagedAccountsGroupProps {
   /** 只给「需要重新登录」的账号显示（Claude 官方账号：重新登录会替换掉原来的登录，凭据好好的时候不该点到） */
   reauthOnlyWhenExpired?: boolean;
   onReauth: (accountId: string) => void;
-  /** 不传就没有「设为默认」（Claude 官方账号：用哪个号由卡片决定） */
+  /** 不传就没有「设为默认」（Claude 官方账号：用哪个号由卡片决定；WorkBuddy 在供应商列表里切换） */
   onSetDefault?: (accountId: string) => void;
   settingDefault: boolean;
   onRemove: (accountId: string, login: string) => void;

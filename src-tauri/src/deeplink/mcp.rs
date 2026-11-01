@@ -163,6 +163,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         mcode: false,
         kimi: false,
         dsh: false,
+        workbuddy: false,
         pi: false,
         omp: false,
     };
@@ -183,6 +184,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "mcode" => apps.mcode = true,
             "kimi" => apps.kimi = true,
             "dsh" => apps.dsh = true,
+            "workbuddy" | "work-buddy" => apps.workbuddy = true,
             "pi" => apps.pi = true,
             "omp" => apps.omp = true,
             other => {

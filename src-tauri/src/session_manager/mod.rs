@@ -15,6 +15,7 @@ use std::time::Instant;
 pub use model::SessionMessage;
 use providers::{
     agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+    workbuddy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +95,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(mcode::scan_sessions());
     sessions.extend(kimi::scan_sessions());
     sessions.extend(dsh::scan_sessions());
+    sessions.extend(workbuddy::scan_sessions());
     sessions.extend(agy::scan_sessions());
 
     sessions.sort_by(|a, b| {
@@ -131,6 +133,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "kimi" => kimi::load_messages(path),
         "omp" => omp::load_messages(path),
         "dsh" => dsh::load_messages(path),
+        "workbuddy" => workbuddy::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -186,6 +189,13 @@ fn delete_session_source(
     if provider_id == "kimi" {
         return Err(
             "Delete this session in Kimi Code to keep its session index and history consistent"
+                .into(),
+        );
+    }
+    if provider_id == "workbuddy" {
+        // WorkBuddy 自己的会话列表在 workbuddy.db 和 sessions/ 里，只删 jsonl 会让它的索引失效。
+        return Err(
+            "Delete this session in WorkBuddy to keep its session list and history consistent"
                 .into(),
         );
     }
@@ -258,6 +268,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "dsh" => dsh::session_roots(),
+        "workbuddy" => workbuddy::session_roots(),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),

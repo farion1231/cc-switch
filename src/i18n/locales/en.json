@@ -1139,6 +1139,7 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
+    "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "omp": "Oh My Pi"
   },
@@ -1146,6 +1147,62 @@
     "empty": {
       "title": "No custom providers yet",
       "description": "Your MiniMax account sign-in is managed by MiniMax Code itself, so there is nothing to import. Custom providers already in config.yaml appear here automatically. Use the + button in the top-right corner to add a preset or custom provider."
+    }
+  },
+  "workbuddy": {
+    "deleteSessionHint": "Delete this session in WorkBuddy to update its session list and history together.",
+    "empty": {
+      "title": "No WorkBuddy providers yet",
+      "description": "CC Switch writes providers into ~/.workbuddy/models.json as custom models and leaves models you added in WorkBuddy untouched, so there is nothing to import. Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "form": {
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Marks which models.json entries belong to this provider.",
+      "providerKeyLockedHint": "The key marks this provider's entries in models.json, so it can't be changed after creation.",
+      "url": "Request URL",
+      "urlHint": "Full OpenAI-compatible Chat Completions URL, usually ending in /chat/completions.",
+      "apiKeyHint": "Stored in models.json on this machine. ${ENV_VAR} references are expanded by WorkBuddy.",
+      "vendor": "Vendor label",
+      "modelsHint": "Add at least one model. The model ID is sent to the API as-is.",
+      "maxInputTokens": "Max input tokens",
+      "maxOutputTokens": "Max output tokens"
+    },
+    "official": {
+      "presetName": "WorkBuddy Official Sign-in",
+      "account": "WorkBuddy account",
+      "chooseAccount": "Choose an account",
+      "noAccounts": "No saved accounts yet",
+      "accountHelp": "The card only links this account and is never written to WorkBuddy's model config. Clicking Add on this card in the provider list signs WorkBuddy in with this account; only one official card is added at a time.",
+      "accountDeleted": "Account deleted. Choose another account",
+      "accountUnset": "No account selected",
+      "accountDeletedChip": "Account deleted",
+      "accountUnsetChip": "No account",
+      "emptyTitle": "No WorkBuddy accounts yet",
+      "emptyBody": "Open WorkBuddy and sign in; the account is added here automatically.",
+      "addAnotherTitle": "Want to use another account?",
+      "addAnotherBody": "Quit WorkBuddy completely, click Sign in to another account (WorkBuddy opens at its sign-in page on this computer only; the current account is not signed out on the server), then sign in in WorkBuddy. The account appears in the list automatically.",
+      "addAnotherRunning": "WorkBuddy is running. Quit it completely (including the menu bar / tray), then click Sign in to another account.",
+      "preparedNewLogin": "Current account saved. WorkBuddy will open at its sign-in page; after you sign in to another account, it appears in the account list automatically.",
+      "switching": "Switching…",
+      "onlyOne": "WorkBuddy can only be signed in to one account at a time. Add another official card to switch.",
+      "quitFirst": "Quit WorkBuddy before adding",
+      "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then click Add again, or it will write its current sign-in back.",
+      "switched": "Switched to \"{{name}}\". WorkBuddy will use this account the next time it opens.",
+      "switchFailed": "Couldn't switch the WorkBuddy account"
+    },
+    "quota": {
+      "title": "Quota",
+      "credits": "Credits",
+      "leftOf": "{{remaining}} / {{total}} left",
+      "usedOf": "{{used}} / {{total}} used",
+      "usedUp": "Used up (of {{total}})",
+      "detail": "{{remaining}} of {{total}} credits left, {{used}} used",
+      "staleNotRunning": "WorkBuddy isn't running; showing the last result",
+      "staleNotCurrent": "Not the account WorkBuddy is signed in with; showing the last result",
+      "staleNotSignedIn": "WorkBuddy isn't signed in; showing the last result",
+      "staleFailed": "This check failed; showing the last result",
+      "openToQuery": "Open WorkBuddy to check",
+      "onlyWhileRunning": "Quota can only be checked through WorkBuddy while it is running",
+      "unavailable": "Quota is unavailable right now"
     }
   },
   "pi": {
@@ -4250,6 +4307,7 @@
     "columnVisible": "Show",
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
     "desktopHelp": "Claude Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
+    "workbuddyHelp": "WorkBuddy is a desktop app and can't be installed or upgraded here; it updates itself. CC Switch connects to it through its config file (~/.workbuddy/models.json).",
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",
@@ -4938,6 +4996,7 @@
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
+      "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
       "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
@@ -4993,6 +5052,41 @@
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
+    },
+    "workbuddy": {
+      "addedOn": "Added {{date}}",
+      "expiredNote": "Sign-in expired. Click Sign in again, then sign in to this account in WorkBuddy",
+      "reauthPrepared": "WorkBuddy will open at its sign-in page. Sign in as {{login}}; CC Switch then replaces its snapshot with the new sign-in.",
+      "reauthRunningTitle": "WorkBuddy is running, so it can't be sent to its sign-in page",
+      "reauthRunningBody": "Quit WorkBuddy completely (including the menu bar / tray) and click Sign in again, or sign out in WorkBuddy and sign in as {{login}} there. CC Switch replaces its snapshot automatically.",
+      "reauthOtherAdded": "You signed in to a different account than {{target}}. {{login}} was added as a new account.",
+      "reauthOtherUpdated": "You signed in to a different account than {{target}}. {{login}} is already in the list; its copy was updated.",
+      "statusLoadFailed": "Couldn't load WorkBuddy accounts. Try again.",
+      "empty": "No WorkBuddy accounts yet. Sign in in WorkBuddy, then add the account it's signed in with.",
+      "plan": {
+        "free": "Free",
+        "pro": "Pro",
+        "team": "Team",
+        "enterprise": "Enterprise",
+        "personal": "Personal",
+        "_raw": "{{plan}}"
+      },
+      "importNow": "Add",
+      "current": "In use by WorkBuddy",
+      "removeNote": "Only deletes the snapshot in CC Switch; WorkBuddy stays signed in.",
+      "localOnly": "Snapshots only work on this computer (the sign-in is bound to this device) and are not synced. Add accounts again on another computer.",
+      "runningTitle": "WorkBuddy is running",
+      "runningBody": "Quit WorkBuddy completely (including the menu bar / tray) before switching accounts or signing in to another one, or it will write its current sign-in back.",
+      "unrecognizedTitle": "Can't recognize WorkBuddy's current account",
+      "unrecognizedBody": "The sign-in file format may have changed, so it can't be added yet. It's stashed as-is before you switch to another account from the provider list.",
+      "notImportedTitle": "WorkBuddy's current account hasn't been added",
+      "alreadyTitle": "The current account is already in the list (snapshot updated)",
+      "alreadyBody": "To add another account: quit WorkBuddy completely, click Sign in to another account (CC Switch only makes WorkBuddy open at its sign-in page on this computer; the current account is not signed out on the server), sign in to the other account in WorkBuddy, then come back and click Add account.",
+      "signedOutTitle": "WorkBuddy isn't signed in",
+      "signedOutBody": "Sign in in WorkBuddy, then come back and click Add account.",
+      "prepareNewLogin": "Sign in to another account",
+      "preparedNewLogin": "Current account saved. WorkBuddy will open at its sign-in page; sign in to another account, then come back and click Add account.",
+      "openApp": "Open WorkBuddy"
     },
     "claude": {
       "pasteSubmitted": "Submitted. Finishing sign-in…",

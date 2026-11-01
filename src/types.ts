@@ -324,6 +324,7 @@ export interface VisibleApps {
   dsh?: boolean;
   agy: boolean;
   omp: boolean;
+  workbuddy: boolean;
 }
 
 // WebDAV 同步状态
@@ -778,6 +779,7 @@ export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
   dsh?: boolean;
+  workbuddy?: boolean;
   agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;

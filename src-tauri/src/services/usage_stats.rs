@@ -388,6 +388,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_agy_session' THEN 'Antigravity (Session)' \
          WHEN '_kimi_session' THEN 'Kimi Code (Session)' \
+         WHEN '_workbuddy_session' THEN 'WorkBuddy (Session)' \
          WHEN '_dsh_session' THEN 'DeepSeek Harness (Session)' \
          WHEN '_dsh_account_session' THEN 'DeepSeek Harness (OAuth)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \

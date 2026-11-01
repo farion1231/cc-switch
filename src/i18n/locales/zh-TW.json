@@ -1140,6 +1140,7 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
+    "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "omp": "Oh My Pi"
   },
@@ -1147,6 +1148,62 @@
     "empty": {
       "title": "尚未新增自訂供應商",
       "description": "MiniMax 官方帳號登入由 MiniMax Code 自行管理，無需匯入；config.yaml 中已有的自訂供應商會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增供應商。"
+    }
+  },
+  "workbuddy": {
+    "deleteSessionHint": "請在 WorkBuddy 中刪除，以同時更新它的工作階段清單和歷史紀錄。",
+    "empty": {
+      "title": "尚未新增 WorkBuddy 供應商",
+      "description": "CC Switch 把供應商作為自訂模型寫進 ~/.workbuddy/models.json，不會改動你在 WorkBuddy 中新增的模型，因此無需匯入。點擊右上角的 +，從預設或自訂設定新增供應商。"
+    },
+    "form": {
+      "providerKeyHint": "只能使用小寫字母、數字和連字號，用來標記 models.json 裡哪些項目屬於這個供應商。",
+      "providerKeyLockedHint": "識別碼寫在 models.json 的項目上，建立後不能再修改。",
+      "url": "請求位址",
+      "urlHint": "完整的 OpenAI 相容 Chat Completions 位址，通常以 /chat/completions 結尾。",
+      "apiKeyHint": "儲存在本機的 models.json 裡；${ENV_VAR} 形式的參照由 WorkBuddy 展開。",
+      "vendor": "廠商標籤",
+      "modelsHint": "至少新增一個模型。模型 ID 會原樣傳送給介面。",
+      "maxInputTokens": "最大輸入 Token",
+      "maxOutputTokens": "最大輸出 Token"
+    },
+    "official": {
+      "presetName": "WorkBuddy 官方登入",
+      "account": "WorkBuddy 帳號",
+      "chooseAccount": "選擇帳號",
+      "noAccounts": "還沒有收錄的帳號",
+      "accountHelp": "卡片只綁定這個帳號，不寫入 WorkBuddy 的模型設定。在供應商列表點這張卡的「加入」，WorkBuddy 的登入會換成這個帳號；同一時間只有一張官方卡在「已加入」。",
+      "accountDeleted": "帳號已刪除，請重新選擇",
+      "accountUnset": "還沒有選擇帳號",
+      "accountDeletedChip": "帳號已刪除",
+      "accountUnsetChip": "未選帳號",
+      "emptyTitle": "還沒有 WorkBuddy 帳號",
+      "emptyBody": "開啟 WorkBuddy 登入後，帳號會自動收錄到這裡。",
+      "addAnotherTitle": "要用另一個帳號？",
+      "addAnotherBody": "先完全結束 WorkBuddy，點「登入另一個帳號」（只在本機讓 WorkBuddy 停在登入頁，不會在伺服器端登出目前帳號），在 WorkBuddy 裡登入後它會自動出現在列表裡。",
+      "addAnotherRunning": "WorkBuddy 正在執行：先完全結束它（含選單列／系統匣），再點「登入另一個帳號」。",
+      "preparedNewLogin": "已收錄目前帳號，WorkBuddy 開啟後會停在登入頁。登入另一個帳號後，它會自動出現在帳號列表裡。",
+      "switching": "正在切換…",
+      "onlyOne": "WorkBuddy 同時只能登入一個帳號，加入另一張官方卡即可切換",
+      "quitFirst": "請先結束 WorkBuddy 再加入",
+      "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再點「加入」，否則它會把目前的登入寫回去。",
+      "switched": "已切換到「{{name}}」，下次開啟 WorkBuddy 會使用這個帳號。",
+      "switchFailed": "切換 WorkBuddy 帳號失敗"
+    },
+    "quota": {
+      "title": "額度",
+      "credits": "積分",
+      "leftOf": "剩餘 {{remaining}} / {{total}}",
+      "usedOf": "已用 {{used}} / {{total}}",
+      "usedUp": "已用完（共 {{total}}）",
+      "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
+      "staleNotRunning": "WorkBuddy 沒在執行，顯示的是上次查到的結果",
+      "staleNotCurrent": "不是 WorkBuddy 目前登入的帳號，顯示的是上次查到的結果",
+      "staleNotSignedIn": "WorkBuddy 沒有登入，顯示的是上次查到的結果",
+      "staleFailed": "這次沒查到，顯示的是上次查到的結果",
+      "openToQuery": "開啟 WorkBuddy 後可查",
+      "onlyWhileRunning": "額度只能在 WorkBuddy 執行時經由它查詢",
+      "unavailable": "暫時取不到額度"
     }
   },
   "pi": {
@@ -4251,6 +4308,7 @@
     "columnVisible": "顯示",
     "visibleHelp": "關掉後，這個應用不再出現在側欄、系統匣選單、MCP / Skills 的應用欄，以及提示詞和工作階段的應用下拉選單裡。只是不顯示：它的供應商、MCP 等設定都還在，它自己的設定檔也不會被改動。",
     "desktopHelp": "Claude Desktop 是桌面應用，不能在這裡安裝或升級；CC Switch 透過它的設定檔接入。",
+    "workbuddyHelp": "WorkBuddy 是桌面應用程式，無法在這裡安裝或升級，它會自行更新；CC Switch 透過它的設定檔（~/.workbuddy/models.json）接入。",
     "desktopUnsupported": "目前系統不支援",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
@@ -4939,6 +4997,7 @@
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
+      "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
       "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
       "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，Claude Code 的登入會即時換成這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。"
@@ -4994,6 +5053,41 @@
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
       "switched": "已切換，新開的 agy 會使用這個帳號。",
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
+    },
+    "workbuddy": {
+      "addedOn": "{{date}}收錄",
+      "expiredNote": "登入已過期，點「重新登入」後在 WorkBuddy 裡登入這個帳號",
+      "reauthPrepared": "WorkBuddy 開啟後會停在登入頁。請登入 {{login}}，登入後 CC Switch 會用新的登入取代它的快照。",
+      "reauthRunningTitle": "WorkBuddy 正在執行，無法讓它停在登入頁",
+      "reauthRunningBody": "可以先完全結束 WorkBuddy（含選單列/系統匣）再點「重新登入」；也可以直接在 WorkBuddy 裡登出目前帳號、重新登入 {{login}}，CC Switch 會自動取代它的快照。",
+      "reauthOtherAdded": "登入的不是 {{target}}，已將 {{login}} 收錄為新帳號。",
+      "reauthOtherUpdated": "登入的不是 {{target}}，{{login}} 已在清單裡，副本已更新。",
+      "statusLoadFailed": "無法讀取 WorkBuddy 帳號，請重試。",
+      "empty": "還沒有 WorkBuddy 帳號。先在 WorkBuddy 裡登入，再收錄目前登入的帳號。",
+      "plan": {
+        "free": "免費版",
+        "pro": "專業版",
+        "team": "團隊版",
+        "enterprise": "企業版",
+        "personal": "個人版",
+        "_raw": "{{plan}}"
+      },
+      "importNow": "收錄",
+      "current": "WorkBuddy 使用中",
+      "removeNote": "只刪除 CC Switch 裡的快照，不會讓 WorkBuddy 登出。",
+      "localOnly": "快照只在這台電腦上有效（登入憑證綁定本機），不會隨雲端同步，換電腦後需要重新收錄。",
+      "runningTitle": "WorkBuddy 正在執行",
+      "runningBody": "切換帳號或登入另一個帳號前，請先完全結束 WorkBuddy（含選單列／系統匣），否則它會把目前的登入寫回去。",
+      "unrecognizedTitle": "無法辨識 WorkBuddy 目前登入的帳號",
+      "unrecognizedBody": "登入檔案的格式可能變了，暫時無法收錄。在供應商列表切換到別的帳號前會把它原樣暫存。",
+      "notImportedTitle": "WorkBuddy 目前登入的帳號尚未收錄",
+      "alreadyTitle": "目前登入的帳號已在清單中（副本已更新）",
+      "alreadyBody": "要新增另一個帳號：先完全結束 WorkBuddy，點「登入另一個帳號」（CC Switch 只在本機讓 WorkBuddy 停在登入頁，不會在伺服器端登出目前帳號），在 WorkBuddy 裡登入另一個帳號，再回來點「新增帳號」。",
+      "signedOutTitle": "WorkBuddy 目前沒有登入",
+      "signedOutBody": "在 WorkBuddy 裡登入後，回到這裡點「新增帳號」收錄。",
+      "prepareNewLogin": "登入另一個帳號",
+      "preparedNewLogin": "已收錄目前帳號，WorkBuddy 開啟後會停在登入頁。登入另一個帳號後回到這裡點「新增帳號」。",
+      "openApp": "開啟 WorkBuddy"
     },
     "claude": {
       "pasteSubmitted": "已送出，正在完成登入…",
