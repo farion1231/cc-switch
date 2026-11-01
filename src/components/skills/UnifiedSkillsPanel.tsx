@@ -1,5 +1,7 @@
 import { createPortal } from "react-dom";
 import React, {
+  memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -85,8 +87,8 @@ import type { ZipSkippedSkill } from "@/lib/api/skills";
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
 
 /** 已安装矩阵的列头高度（h-11）和每行高度（h-14）：虚拟化按这两个数算 */
-const MATRIX_HEADER_HEIGHT = 44;
-const MATRIX_ROW_HEIGHT = 56;
+export const MATRIX_HEADER_HEIGHT = 44;
+export const MATRIX_ROW_HEIGHT = 56;
 
 type SkillsView = "installed" | "discover";
 type StatusFilter = "all" | "updates" | "none" | `app:${AppId}`;
@@ -352,18 +354,67 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     updatesMap,
   ]);
 
+  // 已安装 id 集合：勾选清理与行动作缓存清理共用一份
+  const installedIdSet = useMemo(
+    () => new Set(installedSkills.map((skill) => skill.id)),
+    [installedSkills],
+  );
+
   // 列表虚拟化：只渲染可视区与前后各几行（每行固定 56），Skill 装到几十上百个时
   // 少挂一大半行。写操作只认 installedSkills / filteredSkills、不认 DOM，
   // 所以列头批量、全选都不受影响。列头常驻最上面，scrollMargin 按它的高度算。
   const matrixScrollRef = useRef<HTMLDivElement>(null);
+  // getItemKey 必须按引用稳定：虚拟器比较这些选项是按身份比的，每次渲染新建一个
+  // 箭头函数会把它已测好的行高缓存整个作废、按 count 重算一遍——父组件每次滚动
+  // 都会重渲一次，这笔开销就跟着滚动走。
+  const getRowKey = useCallback(
+    (index: number) => filteredSkills[index]?.id ?? index,
+    [filteredSkills],
+  );
   const rowVirtualizer = useVirtualizer({
     count: filteredSkills.length,
     getScrollElement: () => matrixScrollRef.current,
     estimateSize: () => MATRIX_ROW_HEIGHT,
-    getItemKey: (index) => filteredSkills[index]?.id ?? index,
+    getItemKey: getRowKey,
     scrollMargin: MATRIX_HEADER_HEIGHT,
     overscan: 8,
   });
+
+  // 闪烁结束回调：必须引用稳定，否则每一行的 memo 都会因为新闭包而失效
+  const handleHighlightDone = useCallback(() => setHighlightId(null), []);
+
+  // 行动作按 skill 缓存：虚拟列表每滚动一格都会重渲全部挂载行，若每次现场造
+  // 九个闭包，`memo` 就形同虚设。工厂本身读最新渲染的状态，不会读到旧值。
+  const rowHandlers = usePerSkillHandlers(
+    (skill) => ({
+      pick: (checked) =>
+        setSelected((prev) => {
+          const next = new Set(prev);
+          if (checked) next.add(skill.id);
+          else next.delete(skill.id);
+          return next;
+        }),
+      cell: (app) => {
+        const failure = fails[failKey(skill.id, app)];
+        void writeOne(
+          skill.id,
+          app,
+          failure ? failure.desired : !skill.apps[app],
+        );
+      },
+      openSource: () => void openDocs(skill),
+      fixSync: () => setStorageOpen(true),
+      update: () => void updateIds([skill.id]),
+      openDocs: () => void openDocs(skill),
+      copyName: () => void copyName(skill),
+      openDir: () => void openDirectory(skill),
+      uninstall: () => {
+        if (writeLockRef.current || interactionBlocked) return;
+        setConfirm({ kind: "uninstall", ids: [skill.id] });
+      },
+    }),
+    installedIdSet,
+  );
 
   // 「可更新」筛选下把最后一个也更新完：回到全部，免得停在空表上
   const nApplicableUpdates = applicableSkillUpdates.length;
@@ -389,10 +440,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   // 已经不在列表里的勾选自动丢掉
   useEffect(() => {
     if (selected.size === 0) return;
-    const ids = new Set(installedSkills.map((skill) => skill.id));
-    const next = new Set([...selected].filter((id) => ids.has(id)));
+    const next = new Set([...selected].filter((id) => installedIdSet.has(id)));
     if (next.size !== selected.size) setSelected(next);
-  }, [installedSkills, selected]);
+  }, [installedIdSet, installedSkills, selected]);
 
   // 「发现」跳回来要定位、但那一行还没挂载出来的 id
   const pendingHighlightRef = useRef<string | null>(null);
@@ -1457,40 +1507,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                         updateSkillMutation.variables === skill.id
                       }
                       highlighted={highlightId === skill.id}
-                      onHighlightDone={() => setHighlightId(null)}
+                      onHighlightDone={handleHighlightDone}
                       fails={fails}
                       disabled={controlsDisabled}
-                      sourceText={
-                        skill.repoOwner && skill.repoName
-                          ? `${skill.repoOwner}/${skill.repoName}`
-                          : t("skillsPage.source.local")
-                      }
-                      onPick={(checked) =>
-                        setSelected((prev) => {
-                          const next = new Set(prev);
-                          if (checked) next.add(skill.id);
-                          else next.delete(skill.id);
-                          return next;
-                        })
-                      }
-                      onCell={(app) => {
-                        const failure = fails[failKey(skill.id, app)];
-                        void writeOne(
-                          skill.id,
-                          app,
-                          failure ? failure.desired : !skill.apps[app],
-                        );
-                      }}
-                      onOpenSource={() => void openDocs(skill)}
-                      onFixSync={() => setStorageOpen(true)}
-                      onUpdate={() => void updateIds([skill.id])}
-                      onOpenDocs={() => void openDocs(skill)}
-                      onCopyName={() => void copyName(skill)}
-                      onOpenDir={() => void openDirectory(skill)}
-                      onUninstall={() => {
-                        if (writeLockRef.current || interactionBlocked) return;
-                        setConfirm({ kind: "uninstall", ids: [skill.id] });
-                      }}
+                      handlers={rowHandlers(skill)}
                     />
                   );
                 })}
@@ -1849,19 +1869,82 @@ interface InstalledRowProps {
   onHighlightDone: () => void;
   fails: Record<string, WriteFailure>;
   disabled: boolean;
-  sourceText: string;
-  onPick: (checked: boolean) => void;
-  onCell: (app: AppId) => void;
-  onOpenSource: () => void;
-  onFixSync: () => void;
-  onUpdate: () => void;
-  onOpenDocs: () => void;
-  onCopyName: () => void;
-  onOpenDir: () => void;
-  onUninstall: () => void;
+  /**
+   * 这一行的全部动作。按 skill 缓存、引用稳定，`memo` 才不会因为每次渲染都造
+   * 九个新闭包而失效——虚拟列表每滚动一格就重渲染全部挂载行，那些闭包是主要开销。
+   */
+  handlers: InstalledRowHandlers;
 }
 
-function InstalledRow({
+/** `InstalledRow` 的动作集合，闭包已经绑好这一行的 skill。 */
+/** 仅测试用：正常调用方通过 `handlers` 这个整体传进来。 */
+export interface InstalledRowHandlers {
+  pick: (checked: boolean) => void;
+  cell: (app: AppId) => void;
+  openSource: () => void;
+  fixSync: () => void;
+  update: () => void;
+  openDocs: () => void;
+  copyName: () => void;
+  openDir: () => void;
+  uninstall: () => void;
+}
+
+/**
+ * 每行一套**引用稳定**的动作闭包。
+ *
+ * 内部转调最新一次渲染的 `create`，所以闭包读到的永远是最新状态；
+ * 但对象本身按 skill 缓存，`memo` 因此能真正跳过未变化的行。
+ * skill 换引用（编辑、勾选变化）才重建。
+ */
+/** 仅测试用（面板内部使用）；导出是为了直接验证缓存契约。 */
+export function usePerSkillHandlers(
+  create: (skill: InstalledSkill) => InstalledRowHandlers,
+  /** 当前仍然存在的 skill id；传了就顺手清掉已删技能留下的条目 */
+  liveIds?: ReadonlySet<string>,
+): (skill: InstalledSkill) => InstalledRowHandlers {
+  // 不用 useLatestRef：它在 effect 里同步，而 handlers 是渲染期造出来的，
+  // 首帧到 effect 之间若有人调用就会拿到初始值。渲染期直接赋值的写法
+  // 保证任何时刻读到的都是本次渲染的 create。
+  const latest = useRef(create);
+  latest.current = create;
+  const cache = useRef(
+    new Map<
+      string,
+      { skill: InstalledSkill; handlers: InstalledRowHandlers }
+    >(),
+  );
+
+  // 已卸载的 skill 不再出现，条目留着只会把它那份数据钉在内存里
+  const cacheRef = cache;
+  useEffect(() => {
+    if (!liveIds) return;
+    for (const id of cacheRef.current.keys()) {
+      if (!liveIds.has(id)) cacheRef.current.delete(id);
+    }
+  }, [liveIds]);
+
+  return (skill: InstalledSkill) => {
+    const hit = cache.current.get(skill.id);
+    if (hit && hit.skill === skill) return hit.handlers;
+    const handlers: InstalledRowHandlers = {
+      pick: (checked) => latest.current(skill).pick(checked),
+      cell: (app) => latest.current(skill).cell(app),
+      openSource: () => latest.current(skill).openSource(),
+      fixSync: () => latest.current(skill).fixSync(),
+      update: () => latest.current(skill).update(),
+      openDocs: () => latest.current(skill).openDocs(),
+      copyName: () => latest.current(skill).copyName(),
+      openDir: () => latest.current(skill).openDir(),
+      uninstall: () => latest.current(skill).uninstall(),
+    };
+    cache.current.set(skill.id, { skill, handlers });
+    return handlers;
+  };
+}
+
+/** 仅测试用：导出以便断言它仍被 memo 包裹。 */
+export const InstalledRow = memo(function InstalledRow({
   skill,
   first,
   posInSet,
@@ -1875,16 +1958,7 @@ function InstalledRow({
   onHighlightDone,
   fails,
   disabled,
-  sourceText,
-  onPick,
-  onCell,
-  onOpenSource,
-  onFixSync,
-  onUpdate,
-  onOpenDocs,
-  onCopyName,
-  onOpenDir,
-  onUninstall,
+  handlers,
 }: InstalledRowProps) {
   const { t } = useTranslation();
   const enabled = SKILLS_APP_IDS.some((app) => skill.apps[app]);
@@ -1892,6 +1966,12 @@ function InstalledRow({
   const failure = failedApp ? fails[failKey(skill.id, failedApp)] : undefined;
   const failId = `sk-fail-${skill.id}`;
   const hasRepo = Boolean(skill.repoOwner && skill.repoName);
+  // 在行内算，而不是由父组件当 prop 传进来：语言切换时 memo 会跳过未变化的
+  // skill，但行自己的 useTranslation() 会让它重渲——从外面传进来的字符串
+  // 则会一直停在切换前的语言上。
+  const sourceText = hasRepo
+    ? `${skill.repoOwner}/${skill.repoName}`
+    : t("skillsPage.source.local", { defaultValue: "本地" });
 
   return (
     <li
@@ -1920,14 +2000,14 @@ function InstalledRow({
           className="ui-checkbox"
           aria-label={t("skillsPage.selectAria", { name: skill.name })}
           checked={checked}
-          onChange={(event) => onPick(event.target.checked)}
+          onChange={(event) => handlers.pick(event.target.checked)}
         />
       </span>
       <div className="ms-2 flex min-w-0 flex-1 flex-col pe-3">
         <div className="flex min-w-0 items-center gap-1.5">
           <button
             type="button"
-            onClick={onCopyName}
+            onClick={handlers.copyName}
             className="min-w-0 cursor-copy truncate text-start text-body font-medium hover:text-fg-1 hover:underline hover:underline-offset-[3px]"
           >
             {skill.name}
@@ -1935,7 +2015,7 @@ function InstalledRow({
           {hasRepo ? (
             <button
               type="button"
-              onClick={onOpenSource}
+              onClick={handlers.openSource}
               title={sourceText}
               className="min-w-0 shrink truncate font-mono text-caption text-fg-3 hover:text-fg-1 hover:underline hover:underline-offset-[3px]"
             >
@@ -1977,7 +2057,7 @@ function InstalledRow({
               <button
                 type="button"
                 aria-describedby={failId}
-                onClick={onFixSync}
+                onClick={handlers.fixSync}
                 className="shrink-0 text-warning-text underline underline-offset-[3px]"
               >
                 {t("skillsPage.fixSync")}
@@ -2001,7 +2081,7 @@ function InstalledRow({
                 name: skill.name,
                 app: APP_DISPLAY_NAME[app],
               })}
-              onClick={() => onCell(app)}
+              onClick={() => handlers.cell(app)}
             />
           );
         })}
@@ -2030,22 +2110,22 @@ function InstalledRow({
           </HoverTip>
           <DropdownMenuContent align="end" className="min-w-[180px]">
             {hasUpdate && (
-              <DropdownMenuItem onSelect={onUpdate}>
+              <DropdownMenuItem onSelect={handlers.update}>
                 {t("skills.update")}
               </DropdownMenuItem>
             )}
             {(skill.readmeUrl || hasRepo) && (
-              <DropdownMenuItem onSelect={onOpenDocs}>
+              <DropdownMenuItem onSelect={handlers.openDocs}>
                 {t("mcpPage.openDocs")}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onSelect={onOpenDir}>
+            <DropdownMenuItem onSelect={handlers.openDir}>
               {t("skillsPage.openDir")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-danger-text focus:text-danger-text"
-              onSelect={onUninstall}
+              onSelect={handlers.uninstall}
             >
               {t("skillsPage.uninstallEllipsis")}
             </DropdownMenuItem>
@@ -2054,7 +2134,7 @@ function InstalledRow({
       </div>
     </li>
   );
-}
+});
 
 // ─── 列头左侧的筛选按钮 ──────────────────────────────────────────────────
 function FilterMenu({

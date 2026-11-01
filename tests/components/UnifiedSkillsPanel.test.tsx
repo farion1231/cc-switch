@@ -4,7 +4,12 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import i18n from "i18next";
 import en from "@/i18n/locales/en.json";
 
-import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
+import UnifiedSkillsPanel, {
+  InstalledRow,
+  usePerSkillHandlers,
+  MATRIX_ROW_HEIGHT,
+  type InstalledRowHandlers,
+} from "@/components/skills/UnifiedSkillsPanel";
 import { settingsApi, skillsApi } from "@/lib/api";
 import type {
   DiscoverableSkill,
@@ -229,8 +234,8 @@ const manySkills = (count: number) =>
 // 「和组件里 useVirtualizer 的 overscan 一致」——overscan 8、视口 640、行高 56：
 // 这三个数任何一个变了，上面的窗口断言都会红，正好逼着同步改
 const OVERSCAN = 8;
-/** 组件里每行 h-14 = MATRIX_ROW_HEIGHT */
-const ROW_HEIGHT = 56;
+/** 与组件共用同一份常量，避免两边漂移 */
+const ROW_HEIGHT = MATRIX_ROW_HEIGHT;
 /** mock 假定的视口下一次会挂出来的行数 */
 const windowRowCount = (count: number) =>
   virtualWindow.mountedRowCount(count, ROW_HEIGHT, OVERSCAN);
@@ -238,6 +243,19 @@ const windowRowCount = (count: number) =>
 const renderPanel = (
   props: React.ComponentProps<typeof UnifiedSkillsPanel> = {},
 ) => render(<UnifiedSkillsPanel {...props} />);
+
+/** 九动作的空实现：测试只关心对象身份时用它 */
+const stubHandlers = (): InstalledRowHandlers => ({
+  pick: () => {},
+  cell: () => {},
+  openSource: () => {},
+  fixSync: () => {},
+  update: () => {},
+  openDocs: () => {},
+  copyName: () => {},
+  openDir: () => {},
+  uninstall: () => {},
+});
 
 const columns = () =>
   screen.getAllByRole("button", { name: /appMatrix.columnAria/ });
@@ -745,6 +763,67 @@ describe("UnifiedSkillsPanel", () => {
     expect(rows.length).toBe(windowRowCount(111));
     // key 换成 index 时 React 会复用同一个 DOM 节点盯另一行：内容是新的，节点是旧的
     expect(rows[0]).not.toBe(firstRow);
+  });
+
+  it("keeps InstalledRow memoized", () => {
+    // 性能修复从 DOM 上看不出来，只能盯住包裹本身：memo 掉了，虚拟列表
+    // 每滚一格都会把全部挂载行重渲染一遍
+    expect(InstalledRow.$$typeof).toBe(Symbol.for("react.memo"));
+  });
+
+  it("reuses the same per-row handlers object across renders", () => {
+    // memo 只有在一整组 props 都稳定时才有效；行内九个闭包每次新建的话，
+    // 它就形同虚设。这里直接盯住工厂的缓存契约。
+    const skill = makeSkill({ id: "s-stable" });
+    const seen: InstalledRowHandlers[] = [];
+
+    function Harness({ tick }: { tick: number }) {
+      const getHandlers = usePerSkillHandlers(stubHandlers);
+      seen.push(getHandlers(skill));
+      return <span data-testid="tick">{tick}</span>;
+    }
+
+    const { rerender } = render(<Harness tick={1} />);
+    rerender(<Harness tick={2} />);
+
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(seen[0]);
+  });
+
+  it("rebuilds handlers when the skill object itself changes", () => {
+    // 缓存不能把旧闭包焊死：skill 换引用（编辑、勾选变化）后必须重建，
+    // 否则行上的动作会一直作用于旧数据
+    const first = makeSkill({ id: "s-edit" });
+    const second = makeSkill({ id: "s-edit" });
+    const seen: InstalledRowHandlers[] = [];
+    let current = first;
+
+    // 组件不接收 props 也能被 rerender 强制重渲
+    function Harness() {
+      const getHandlers = usePerSkillHandlers(stubHandlers);
+      seen.push(getHandlers(current));
+      return null;
+    }
+
+    const { rerender } = render(<Harness />);
+    current = second;
+    rerender(<Harness />);
+
+    expect(seen[1]).not.toBe(seen[0]);
+  });
+
+  it("keeps rows updating after they are memoized", async () => {
+    // memo 的典型回归：行不再跟着 props 变化重渲染，勾选框会停在旧状态
+    m.installed = manySkills(3);
+    renderPanel();
+
+    const row = screen.getAllByRole("listitem")[0];
+    const checkbox = within(row).getAllByRole("checkbox")[0];
+    expect(checkbox).not.toBeChecked();
+
+    await userEvent.click(checkbox);
+
+    expect(within(row).getAllByRole("checkbox")[0]).toBeChecked();
   });
 
   it("keeps the full row count readable for screen readers", () => {
