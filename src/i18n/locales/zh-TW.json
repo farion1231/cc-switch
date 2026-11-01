@@ -179,12 +179,12 @@
     "configureUsage": "設定用量查詢",
     "managedByHermes": "Hermes 託管",
     "managedByHermesHint": "該專案定義於 Hermes 的 providers: dict，請在 Hermes Web UI 中編輯或刪除。",
-    "openTerminal": "開啟終端機",
+    "openTerminal": "以此供應商開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
     "openTerminalDialog": {
       "title": "要在哪個目錄開啟終端機？",
-      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 Claude Code。一般選你的專案資料夾。",
+      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 {{app}}。一般選你的專案資料夾。",
       "isolationTitle": "這個終端機是隔離的",
       "isolationBody": "它固定使用「{{name}}」，之後在 XSEC Agent Shield 裡切換供應商不會影響它；它也不會改動 XSEC Agent Shield 裡正在使用的供應商。",
       "noDir": "還沒選目錄",
@@ -192,7 +192,15 @@
       "change": "更換…",
       "recent": "最近用過",
       "forget": "從最近用過中移除",
-      "confirm": "開啟終端機"
+      "confirm": "開啟終端機",
+      "isolationBodyAgy": "「{{name}}」的 Key 和位址只傳給這個終端機裡的 agy，不寫進任何檔案；在別的終端機裡直接執行 agy 仍是 Google 登入。",
+      "skipPermissions": "略過權限確認",
+      "extraArgs": "附加參數（選填）",
+      "extraArgsPlaceholder": "例如 --debug --append-system-prompt \"簡潔回答\"",
+      "extraArgsHint": "接在啟動命令後面，只用於這次開啟的終端機。用空格分隔，含空格的值用引號括起來。",
+      "agySwitchTitle": "會切換 agy 的登入",
+      "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
+      "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。"
     },
     "name": "名稱",
     "namePlaceholder": "例如：Claude 官方",
@@ -213,6 +221,42 @@
         "oauthTitle": "OAuth 驗證模式",
         "oauthHint": "Google 官方使用 OAuth 個人驗證，無需填寫 API Key。首次使用時會自動開啟瀏覽器進行登入。",
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
+      },
+      "agy": {
+        "endpointHelp": "留空用 Google 預設 API。第三方位址須相容 Gemini API，並支援 agy 內建的 Gemini 模型。",
+        "modelHelp": "填模型清單裡的顯示名稱，可點「取得模型清單」選擇。只對那次工作階段生效。",
+        "keyFieldsHint": "模型、Key 和位址都只在「開啟終端機」時使用，不寫進 Antigravity 自己的設定。",
+        "envFile": "啟動環境變數",
+        "envFileHint": "從卡片「開啟終端機」啟動 agy 時，XSEC Agent Shield 只把 API Key 和請求位址傳給那一個 agy 行程，不寫進任何檔案。其他環境變數不會套用。",
+        "configJson": "模型設定（XSEC Agent Shield 格式）",
+        "configJsonHint": "這裡僅支援模型設定，其他 Antigravity 選項請在 agy 中調整；MCP 在 MCP 面板中管理。",
+        "account": "帳號",
+        "accountFollow": "跟隨 agy 目前登入",
+        "accountMissing": "不在這台電腦上的帳號",
+        "accountHelp": "選了帳號的話，「開啟終端機」前會先把 agy 的登入切換到它（全域生效，之後新開的 agy 都用它）。帳號在授權中心新增。"
+      },
+      "claudeAccount": {
+        "label": "登入方式",
+        "default": "跟隨 Claude Code 登入",
+        "defaultDescription": "帳號會隨 Claude Code 目前登入而變更",
+        "missing": "不在這台電腦上的帳號",
+        "manage": "新增或管理 Claude 帳號",
+        "helpTerminal": "設定裡覆寫了 Claude 設定目錄，切到這張卡不會切換 Claude Code 的登入，請從卡片「開啟終端機」使用選取的帳號。",
+        "helpWsl": "Claude 設定目錄在 WSL 裡，暫不支援 Claude 帳號，切到這張卡不會切換 Claude Code 的登入。",
+        "help": "切到這張卡後，Claude Code 的登入會即時換成選取的帳號，正在執行的工作階段也一樣。想同時用幾個帳號，從卡片「開啟終端機」。",
+        "claudeAccount": "Claude 帳號",
+        "reauthBadge": "需要重新登入",
+        "terminalHint": "從卡片開啟終端機使用",
+        "wslHint": "WSL 暫不支援",
+        "plan": {
+          "pro": "Pro",
+          "max": "Max",
+          "max5x": "Max 5x",
+          "max20x": "Max 20x",
+          "team": "Team",
+          "teamPremium": "Team 進階席位",
+          "enterprise": "Enterprise"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",
@@ -228,7 +272,11 @@
     "formSubtitleStack": "{{app}}（聚合模式）",
     "editCurrentNoticeFile": "這是正在使用的供應商。儲存後會立即寫進",
     "editCurrentNoticeFileEnd": "，下一次請求生效。",
-    "editCurrentNotice": "這是正在使用的供應商。儲存後立即生效，下一次請求就用新的設定。"
+    "editCurrentNotice": "這是正在使用的供應商。儲存後立即生效，下一次請求就用新的設定。",
+    "liveConfigReadFailed": "無法讀取 {{app}} 設定檔",
+    "liveConfigReadFailedHint": "修好設定檔之前，新增、移除供應商都會失敗。",
+    "openTerminalIsolated": "以此供應商開啟終端機（環境隔離）",
+    "openTerminalWithProvider": "使用此供應商開啟終端機"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -399,14 +447,18 @@
       "checkToolUpdatesHelp": "開啟後，每次啟動 XSEC Agent Shield 會查一次已安裝的命令列應用有沒有新版本，查到了就在側欄「應用」上顯示一個圓點。不會自動升級。",
       "windowAndTerminal": "視窗與終端機",
       "minimizeToTrayHelp": "開啟時，點關閉按鈕只隱藏視窗，XSEC Agent Shield 留在系統匣裡繼續執行（輕量模式在系統匣選單裡）；關閉時點關閉按鈕直接結束。",
-      "terminalHelp": "點供應商卡片上的「開啟終端機」時用哪個終端機。選的終端機無法使用時，改用系統預設終端機。"
+      "terminalHelp": "點供應商卡片上的「開啟終端機」時用哪個終端機。選的終端機無法使用時，改用系統預設終端機。",
+      "trayStyle": "系統匣樣式",
+      "trayStylePanel": "面板",
+      "trayStyleMenu": "選單",
+      "trayStyleHelp": "點系統匣圖示時彈出什麼（Windows 上左鍵一律開啟主視窗，右鍵彈出所選樣式）。面板：各應用使用中的供應商、額度與用量，可以搜尋、切換。選單：系統原生選單。切換後立即生效。"
     },
     "tabGeneral": "通用",
     "tabAuth": "驗證",
     "tabAdvanced": "進階",
     "tabProxy": "路由",
     "authCenter": {
-      "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。Antigravity 帳號用來切換 agy 的官方登入。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
       "codexOauthDescription": "管理 ChatGPT 帳號",
@@ -482,7 +534,7 @@
         "title": "應用程式診斷日誌",
         "description": "控制應用程式診斷日誌的輸出層級",
         "enabled": "啟用應用程式診斷日誌",
-        "enabledDescription": "控制 cc-switch.log；不影響請求用量記錄和 crash.log",
+        "enabledDescription": "控制 xsec-agent-shield.log；不影響請求用量記錄和 crash.log",
         "openLog": "開啟日誌",
         "openLogFailed": "開啟日誌所在位置失敗：{{error}}",
         "level": "日誌層級",
@@ -713,6 +765,15 @@
         "warning": "將覆寫雲端已有的同步資料",
         "legacyNotice": "檢測到舊版雲端路徑資料。本次上傳將寫入新路徑 v2/db-v6，不會覆寫舊路徑。",
         "confirm": "確認上傳"
+      },
+      "clear": "清除設定",
+      "clearing": "清除中...",
+      "clearSuccess": "已清除本機的 WebDAV 設定",
+      "clearFailed": "清除設定失敗：{{error}}",
+      "clearConfirm": {
+        "title": "清除 WebDAV 設定",
+        "message": "將從本機刪除已儲存的 WebDAV 位址、帳號、密碼和遠端目錄，並停止自動同步。雲端已上傳的資料不會被刪除。",
+        "confirm": "清除"
       }
     },
     "syncType": {
@@ -741,7 +802,7 @@
       "region": "區域 (Region)",
       "regionPlaceholder": "例如 us-east-1",
       "bucket": "儲存桶 (Bucket)",
-      "bucketPlaceholder": "例如 my-cc-switch-bucket",
+      "bucketPlaceholder": "例如 my-xsec-agent-shield-bucket",
       "accessKeyId": "Access Key ID",
       "accessKeyIdPlaceholder": "例如 AKIA...",
       "secretAccessKey": "Secret Access Key",
@@ -934,7 +995,7 @@
     "upToDate": "已是最新",
     "aboutHint": "檢視版本資訊與更新狀態。",
     "portableMode": "目前為可攜版，更新需手動下載。",
-    "portableUpdateHint": "可攜版：點擊上方按鈕會下載新版壓縮檔，解壓後覆蓋原本的 cc-switch.exe 即可。設定和資料保存在使用者目錄下的 .xsec-agent-shield，不會因覆蓋而遺失。",
+    "portableUpdateHint": "可攜版：點擊上方按鈕會下載新版壓縮檔，解壓後覆蓋原本的 xsec-agent-shield.exe 即可。設定和資料保存在使用者目錄下的 .xsec-agent-shield，不會因覆蓋而遺失。",
     "updateAvailable": "檢測到新版本：{{version}}",
     "updateBadge": "有更新可用",
     "updateFailed": "更新安裝失敗，已嘗試開啟下載頁面。",
@@ -960,7 +1021,7 @@
     "uninstallCommandCopied": "解除安裝指令已複製",
     "uninstallCommandCopyFailed": "複製失敗，請手動選取並複製指令。",
     "oneClickInstall": "一鍵安裝",
-    "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
     "localEnvCheck": "本地環境檢查",
     "updateAllTools": "全部更新（{{count}}）",
     "currentVersion": "目前版本",
@@ -1070,7 +1131,9 @@
     "data": {
       "location": "儲存位置"
     },
-    "updateChannelDisabled": "更新管道未設定：此開發建置不提供應用程式更新。"
+    "updateChannelDisabled": "更新管道未設定：此開發建置不提供應用程式更新。",
+    "ompConfigDir": "Oh My Pi 設定目錄",
+    "browsePlaceholderOmp": "例如：/home/<您的帳號>/.omp/agent"
   },
   "apps": {
     "claude": "Claude",
@@ -1084,7 +1147,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity",
+    "omp": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -1147,9 +1212,9 @@
       "contextWindow": "上下文長度",
       "maxTokens": "最大輸出 Token 數",
       "compatibility": "介面相容性",
-      "compatibilityHint": "調整相容端點或本機服務的請求行為。",
+      "compatibilityHint": "只有在介面自稱相容 OpenAI、卻拒收某些請求時才需要填。每一項說明這家介面的一個特殊之處，例如 supportsDeveloperRole 填 false 表示它不接受 developer 角色，maxTokensField 填 max_tokens 表示它只認舊的欄位名稱。選用預設供應商時，需要的項目會自動填好；留空則採用預設行為。",
       "addCompatibilityOption": "新增",
-      "noCompatibilityOptions": "暫無相容性選項",
+      "noCompatibilityOptions": "未設定，採用預設行為",
       "optionKey": "選項",
       "optionValue": "值",
       "removeCompatibilityOption": "移除相容性選項",
@@ -1531,7 +1596,9 @@
       "rawMatch": "原文中的相符項目",
       "expandContent": "展開完整內容",
       "collapseContent": "收合"
-    }
+    },
+    "dshMergedNote": "DeepSeek Harness 的 Web 和 Desktop 共用同一份工作階段記錄，這裡合併顯示。",
+    "agyDeleteHint": "請在 Antigravity 中刪除工作階段，以同步清理執行狀態"
   },
   "console": {
     "providerSwitchReceived": "收到供應商切換事件：",
@@ -1579,7 +1646,7 @@
       "kimi": "Kimi 新使用者首次成功儲值，即可獲贈儲值金額 10% 的 API 額度，最高贈送 ¥1000。",
       "a6api": "A6API 是一家 Token 聚合站，內建即時價格排行自動篩選全網最低價，滑順穩定不卡頓，簡易操作省去比價繁瑣，註冊獲得體驗金！",
       "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 5，Codex 使用 GPT-5.6，一個 Key 統一管理。XSEC Agent Shield 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
-      "packycode": "PackyCode 是 XSEC Agent Shield 的官方合作夥伴，使用此連結註冊並在儲值時填寫「cc-switch」優惠碼，可以享受 9 折優惠",
+      "packycode": "PackyCode 是 XSEC Agent Shield 的官方合作夥伴，使用此連結註冊並在儲值時填寫「xsec-agent-shield」優惠碼，可以享受 9 折優惠",
       "apikeyfun": "APIKEY.FUN 為 XSEC Agent Shield 的使用者提供了特別優惠，透過專屬連結註冊，可享受最高儲值永久 95 折優惠。",
       "apinebula": "",
       "patewayai": "PatewayAI 為 XSEC Agent Shield 的使用者提供了特別福利，透過此連結註冊可以獲得 3 美元額度。",
@@ -1617,8 +1684,14 @@
       "modelflare": "Modelflare 是穩定、低成本的 AI 模型閘道，一個 Key 即可呼叫 GPT、Claude、Gemini、Grok 等主流模型。XSEC Agent Shield 使用者專享福利：首次儲值使用優惠碼「CCSWITCH」可享 9 折優惠！",
       "everyapi": "",
       "alltokens": "AllTokens 秉持「穩定為基，真實為本」，致力於讓每一次 AI 呼叫都穩定、真實、值得託付：服務可靠、計費透明，一個平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量計費、支援額度上限。註冊即送 1 美元體驗金！",
-      "openmodel": "OpenModel 為 Codex 和 Claude Code 提供客戶端專屬折扣，所支援的模型透過 Codex 呼叫最高優惠 90%、透過 Claude Code 呼叫最高優惠 60%。XSEC Agent Shield 使用者透過此連結註冊並使用優惠碼「cc-switch」，即可享受首次儲值九折優惠！",
-      "grooroute": "GrooRoute Pro 是可靠流暢的 AI API 中轉服務平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支援按量計費與訂閱方案。XSEC Agent Shield 使用者透過此連結註冊即可獲得免費 5 元體驗額度！"
+      "openmodel": "OpenModel 為 Codex 和 Claude Code 提供客戶端專屬折扣，所支援的模型透過 Codex 呼叫最高優惠 90%、透過 Claude Code 呼叫最高優惠 60%。XSEC Agent Shield 使用者透過此連結註冊並使用優惠碼「xsec-agent-shield」，即可享受首次儲值九折優惠！",
+      "grooroute": "GrooRoute Pro 是可靠流暢的 AI API 中轉服務平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支援按量計費與訂閱方案。XSEC Agent Shield 使用者透過此連結註冊即可獲得免費 5 元體驗額度！",
+      "haoai": "hao.ai 是面向開發者與團隊的高速、穩定大模型統一 API 閘道：一個 Key 即可接入 GPT、Claude、Grok 等主流模型，相容 OpenAI、Anthropic 協定，提供模型路由、故障回退與完整呼叫日誌，價格低至官方參考價的 1.5 折。XSEC Agent Shield 使用者透過此連結註冊，首單可享 5% 贈送額度！",
+      "alltokens_si": "AllTokens SI 秉持「穩定為基，真實為本」，是專為企業打造的 AI Token 中轉與團隊協作平台：成員、金鑰、用量與餘額統一納入企業控制台，以清晰的權限與額度設定，讓團隊協作有據可查、安心可控。",
+      "dit": "同樣的模型，更低的帳單，一個 OpenAI 相容 API 即可呼叫 GPT、Claude、Gemini 等 50 多個模型，並在 160 多家供應商之間路由到性價比最佳的選項，價格通常比官方定價低 30–70%。只需更換 Base URL 和 API Key，即可在保留現有技術堆疊的情況下開始呼叫。XSEC Agent Shield 使用者透過此連結註冊並使用優惠碼「xsec-agent-shield」，新人首儲可享 7 折！",
+      "buytoken": "BuyToken 提供 Claude Code、Codex、DeepSeek 等各類中轉服務，支援企業級並發、可極速開票，專注做穩定長久站。XSEC Agent Shield 使用者透過此連結註冊可得 3 元體驗額度，首充享 9 折！",
+      "vapi": "V-API 是三年老品牌，為個人、開發者和企業提供穩定、快速、安全的高品質大語言模型 API 服務，支援合約簽署、正規開票（普票 / 專票）。XSEC Agent Shield 使用者透過此連結註冊，首單立減 2 元並享 9 折優惠！",
+      "ospreyai": "ACS OspreyAI 是面向開發者和企業的一站式多模型 API 服務平台。一個 API Key 即可呼叫 Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、騰訊混元等國內外主流模型。平台相容 OpenAI、Anthropic 等主流 API 協定，也可用於 Claude Code、Codex、OpenCode、Pi、Hermes 等主流 AI 工具。海外模型較官方價格可節省 20%—40%，國內模型可節省 30%—50%。支援統一儲值、統一帳單、用量查詢和模型靈活切換，適用於 AI 應用開發、內容生產及自動化工作流程等場景。透過此連結建立帳號，即可獲取優惠，快速接入國內外主流大模型。"
     },
     "presets": {
       "ucloud": "優雲智算",
@@ -1767,7 +1840,20 @@
     "localProxyRequestOverridesHelp": "作用於格式轉換後發給上游的請求。",
     "apiFormatHelp": "看供應商原生支援哪種協定：Anthropic Messages 原樣轉發、不轉換格式；其餘三種由路由轉成 Anthropic Messages。",
     "directModeFormatInUse": "這張卡正在直連使用：改成這種格式後儲存，請求會失敗。請先切到路由或聚合。",
-    "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。"
+    "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。",
+    "nativeConfig": {
+      "title": "設定檔 {{path}}（只顯示這一家）",
+      "hint": "按應用自己的格式顯示這一家在檔案裡的部分，儲存後寫進這個檔案；預設模型等全域設定不在這裡。在這裡寫的註解不會儲存。",
+      "invalid": "{{format}} 格式錯誤：{{error}}",
+      "scope": "這裡只能寫 {{section}} 這一個節點；供應商標識請在上方修改。",
+      "schema": "有欄位的類型不對，請對照上方表單檢查。"
+    },
+    "gptContextWindowHint": "中轉站的 GPT 多來自 ChatGPT 訂閱，視窗只有 272K。視窗寫大了不會提前壓縮，等上游拒收時這一輪會失敗；確認這家支援更大視窗再這樣填。",
+    "reasoningEffort": "思考檔位",
+    "reasoningEffortHelp": "經路由轉成 OpenAI 格式時，用戶端選的思考檔位怎麼送給上游。自動：按上游支援的檔位送出，認不出的上游最多送 high，關掉思考時不送。原樣送出：用戶端選哪檔送哪檔，上游不支援 xhigh 或 max 時會報錯。不送出：上游因這個參數報錯時使用。",
+    "reasoningEffortAuto": "自動（建議）",
+    "reasoningEffortOff": "不送出",
+    "reasoningEffortPassthrough": "原樣送出"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",
@@ -1805,7 +1891,9 @@
     "deploymentType": "GitHub 部署類型",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "例如：company.ghe.com"
+    "enterpriseDomainPlaceholder": "例如：company.ghe.com",
+    "automaticFormat": "由路由依模型自動選擇",
+    "automaticFormatHint": "Copilot 的上游格式由路由依模型自動選擇，手選格式不生效。"
   },
   "codexOauth": {
     "authStatus": "驗證狀態",
@@ -1845,7 +1933,12 @@
     "retry": "重試",
     "copyCode": "複製程式碼",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。"
+    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。",
+    "loginMethod": "登入方式",
+    "browserLogin": "瀏覽器登入",
+    "deviceCodeLogin": "裝置代碼登入",
+    "openBrowserLogin": "開啟瀏覽器登入",
+    "loginExpired": "登入已過期，請重試。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 驗證",
@@ -2113,7 +2206,9 @@
       "chatgpt": "用 ChatGPT 帳號登入",
       "github": "用 GitHub 帳號登入",
       "xai": "用 xAI 帳號登入",
-      "google": "用 Google 帳號登入"
+      "google": "用 Google 帳號登入",
+      "deepseek": "使用 DeepSeek 帳號登入",
+      "kimi": "使用 Kimi 帳號登入"
     },
     "versionCount": "{{domain}} · {{n}} 個版本",
     "matchedVersion": "符合：{{name}}",
@@ -2367,11 +2462,13 @@
     "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)",
     "syncStatus": {
       "auto": "工作階段日誌 · 自動掃描",
-      "justNow": "工作階段日誌 · 剛剛同步",
-      "minutesAgo": "工作階段日誌 · {{count}} 分鐘前同步",
+      "justNow": "剛剛同步",
+      "minutesAgo": "{{count}} 分鐘前同步",
       "off": "工作階段日誌 · 自動掃描已關閉",
       "tipAuto": "背景每 10 分鐘掃描一次；開啟用量頁時依右側間隔掃描",
-      "tipOff": "只在手動同步時掃描工作階段日誌"
+      "tipOff": "自動掃描已關閉，點擊立即同步",
+      "syncing": "同步中…",
+      "tip": "點擊立即同步"
     },
     "refreshMenu": {
       "label": "每 {{seconds}} 秒掃描",
@@ -2434,7 +2531,10 @@
       "requests": "請求",
       "tokens": "Tokens",
       "cost": "成本",
-      "requestsLegend": "請求數"
+      "requestsLegend": "請求數",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "按小時",
+      "daily": "按天"
     },
     "tabs": {
       "label": "明細",
@@ -2496,7 +2596,7 @@
       "scanTitle": "自動掃描工作階段日誌",
       "scanHelpTitle": "工作階段日誌是什麼",
       "scanHelp": "各應用程式寫在本機的工作階段記錄。XSEC Agent Shield 從中讀取用量，不開路由也有資料。",
-      "coverage": "涵蓋 7 個應用程式：{{apps}}",
+      "coverage": "涵蓋 {{total}} 個應用程式：{{apps}}",
       "cadenceOn": "啟動時掃描一次，背景每 10 分鐘一次；開啟用量頁時立即掃描，之後依所選間隔掃描",
       "cadenceOff": "自動掃描已關閉，只在點「立即同步」時掃描",
       "unsupported": "Hermes、OpenClaw 暫不支援用量統計",
@@ -2534,7 +2634,19 @@
       "cacheWrite": "快取寫入"
     },
     "prevMonth": "上個月",
-    "nextMonth": "下個月"
+    "nextMonth": "下個月",
+    "sessionAccountProvider": {
+      "short": "DeepSeek 帳號",
+      "label": "{{app}} · DeepSeek 帳號（OAuth）",
+      "hint": "從工作階段記錄讀取，使用的是 DeepSeek 帳號登入；Web 和 Desktop 共用這份登入，用量合併統計"
+    },
+    "pageSize": "每頁 {{count}} 筆",
+    "pageSizeLabel": "每頁筆數",
+    "settings": {
+      "title": "用量設定",
+      "pricingSummary": "依模型設定每百萬 Tokens 的價格，可從 models.dev 同步",
+      "managePricing": "管理定價…"
+    }
   },
   "usageScript": {
     "title": "設定用量查詢",
@@ -2623,7 +2735,8 @@
     "fieldExtra": "• extra: 字串，擴充欄位，可自由補充需要展示的文字",
     "tip1": "• 變數 {{apiKey}} 和 {{baseUrl}} 會自動替換",
     "tip2": "• extractor 函式在沙盒環境中執行，支援 ES2020+ 語法",
-    "tip3": "• 整個設定必須用 () 包覆，形成物件實字運算式"
+    "tip3": "• 整個設定必須用 () 包覆，形成物件實字運算式",
+    "officialSubscriptionHintAgy": "執行 agy 內建的 /usage 指令查詢登入帳號的額度，不讀取登入憑證，每次查詢約需 10 秒。預設關閉，只有啟用後才會請求。"
   },
   "dbUpgrade": {
     "title": "資料庫版本過新",
@@ -3153,7 +3266,9 @@
       "removeModel": "移除模型",
       "modelsHint": "啟用為目前供應商時，第一個模型會設為 Hermes 預設模型。",
       "rateLimitDelay": "請求間隔（秒）",
-      "rateLimitDelayHint": "連續請求間的最小間隔秒數（選填）。留空表示無限制。"
+      "rateLimitDelayHint": "連續請求間的最小間隔秒數（選填）。留空表示無限制。",
+      "providerKeyBuiltin": "「{{key}}」是 Hermes 內建供應商的標識。Hermes 會改用內建供應商（需要它自己的環境變數 Key），這張卡的位址和 Key 不會生效。請換一個標識，例如 xsec-agent-shield-{{key}}。",
+      "providerKeyBuiltinLocked": "「{{key}}」是 Hermes 內建供應商的標識。Hermes 會改用內建供應商，這張卡的位址和 Key 不會生效。標識已鎖定無法修改，請用其他標識（例如 xsec-agent-shield-{{key}}）重新新增這個供應商，再刪除這張卡。"
     },
     "webui": {
       "open": "開啟 Hermes Web UI",
@@ -4089,7 +4204,11 @@
       "geminiFlashLite": "Lite",
       "monthly": "每月",
       "credits": "額度",
-      "copilotPremium": "進階請求"
+      "copilotPremium": "進階請求",
+      "agyGeminiFiveHour": "Gemini 5 小時",
+      "agyGeminiWeekly": "Gemini 每週",
+      "agyThirdPartyFiveHour": "Claude 5 小時",
+      "agyThirdPartyWeekly": "Claude 每週"
     },
     "fiveHour": "5 小時",
     "sevenDay": "每週",
@@ -4110,7 +4229,14 @@
     "expired": "工作階段已過期",
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
-    "refresh": "重新整理"
+    "refresh": "重新整理",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5 小時",
+    "agyGeminiWeekly": "Gemini 每週",
+    "agyThirdPartyFiveHour": "Claude/GPT 5 小時",
+    "agyThirdPartyWeekly": "Claude/GPT 每週",
+    "expiredHintAccounts": "請在授權中心重新登入這個帳號"
   },
   "nav": {
     "mainLabel": "主導覽",
@@ -4171,8 +4297,13 @@
       "openclaw": "透過 npm 安裝",
       "hermes": "安裝時執行官方安裝腳本",
       "pi": "透過 npm 安裝",
-      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm"
-    }
+      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "agy": "安裝時執行官方安裝腳本",
+      "omp": "安裝時執行官方安裝腳本"
+    },
+    "sectionInstalled": "已安裝 · {{count}}",
+    "sectionNotInstalled": "未安裝 · {{count}}",
+    "dragHandle": "拖曳調整 {{name}} 的順序"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4196,7 +4327,7 @@
     },
     "active": "生效中",
     "activeTitle": "{{mode}}生效中",
-    "noProvider": "（未選擇）",
+    "noProvider": "未選擇",
     "failover": "故障轉移",
     "routeSettings": "路由設定",
     "routeSettingsTitle": "路由設定",
@@ -4322,7 +4453,8 @@
       "edit": "編輯 {{name}}",
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
-      "moveDown": "{{name}} 下移一位"
+      "moveDown": "{{name}} 下移一位",
+      "openTerminal": "用 {{name}} 開啟終端機"
     },
     "chip": {
       "official": "官方",
@@ -4413,7 +4545,7 @@
     "balance": "餘額 {{value}}",
     "balanceUsedUp": "餘額已用完",
     "planExpired": "方案已過期",
-    "failed": "額度沒查到",
+    "failed": "額度查詢失敗",
     "reason": {
       "loginExpired": "登入已過期",
       "tokenRefreshPending": "權杖待重新整理"
@@ -4439,6 +4571,10 @@
       "text": "Credits 約 {{usd}}",
       "usd": "約 {{usd}}",
       "detail": "Credits 餘額 {{balance}} · 按 API 價折算約 {{usd}} · 額度用完後才扣"
+    },
+    "windows": {
+      "title": "各檔額度",
+      "showAll": "查看各檔額度"
     }
   },
   "appMatrix": {
@@ -4466,6 +4602,11 @@
       "on": "{{name}} · {{app}}：已啟用",
       "off": "{{name}} · {{app}}：未啟用",
       "fail": "{{name}} · {{app}}：寫入失敗，點按重試"
+    },
+    "ompDiscovery": {
+      "title": "Oh My Pi 的實際載入範圍",
+      "help": "Oh My Pi 除了 ~/.omp/agent 自己的設定，還會從其他 Agent 的目錄發現 MCP 伺服器、技能、命令、鉤子、規則和設定（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要讓 Oh My Pi 的實際生效內容與 XSEC Agent Shield 介面一致，請在 ~/.omp/agent/config.yml 用 disabledProviders 停用不需要的發現來源（id 與文件一致，如 claude、codex、gemini、opencode、github、agents）。",
+      "docsLink": "怎樣讓 Oh My Pi 不讀取其他 Agent 的設定"
     }
   },
   "mcpPage": {
@@ -4528,7 +4669,8 @@
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
       "claudeNote": "（頂層 mcpServers）",
-      "ok": "知道了"
+      "ok": "知道了",
+      "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp）"
     },
     "templateLabels": {
       "sequential-thinking": "循序思考"
@@ -4625,7 +4767,11 @@
       "tags": "標籤",
       "tagsPlaceholder": "用逗號分隔，例如 docs, web",
       "homepage": "首頁",
-      "docs": "文件"
+      "docs": "文件",
+      "sseAsHttpTitle": "{{apps}} 不支援 SSE，會按 HTTP 連線",
+      "sseAsHttpBody": "{{apps}} 只支援 stdio 和 HTTP（Streamable HTTP），會把這個位址當作 HTTP 連線；伺服器只支援 SSE 時會連不上。伺服器也提供 Streamable HTTP 的話，建議改選 HTTP。",
+      "sseRejectedTitle": "{{apps}} 不支援 SSE",
+      "sseRejectedBody": "這些應用只支援 stdio 和 HTTP（Streamable HTTP），儲存時會寫入失敗。請改選 HTTP，或取消勾選這些應用。"
     },
     "resync": "按這裡的開關重寫各應用設定"
   },
@@ -4718,7 +4864,9 @@
       "noUpdatesInSelection": "選中的 Skill 沒有可用的更新",
       "selectionAlreadyOn": "選中的 {{count}} 個 Skill 已經在 {{app}} 啟用",
       "selectionAlreadyOff": "選中的 {{count}} 個 Skill 都沒有在 {{app}} 啟用",
-      "disabledSelection": "已在 {{app}} 停用 {{count}} 個 {{noun}}"
+      "disabledSelection": "已在 {{app}} 停用 {{count}} 個 {{noun}}",
+      "copiedName": "已複製 {{name}}",
+      "openDirFailed": "無法開啟資料夾"
     },
     "installTo": {
       "prefix": "安裝到：",
@@ -4739,7 +4887,7 @@
       "sourceRepos": "倉庫 · {{count}}",
       "reload": "重新讀取倉庫",
       "listLabel": "可安裝的 Skill",
-      "installed": "已安裝 · {{count}} 個應用",
+      "installed": "已安裝",
       "installedAria": "{{name}} 已安裝在 {{count}} 個應用，在「已安裝」裡查看",
       "dirTaken": "目錄名稱已被 {{name}}（{{source}}）使用",
       "installing": "安裝中",
@@ -4796,7 +4944,8 @@
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "顯示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 個）",
-    "updatingProgress": "正在更新 {{done}}/{{total}}…"
+    "updatingProgress": "正在更新 {{done}}/{{total}}…",
+    "openDir": "開啟資料夾"
   },
   "newLayoutNotice": {
     "title": "介面改版了",
@@ -4824,7 +4973,11 @@
       "helpTitle": "{{service}} 帳號怎麼用",
       "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
-      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。"
+      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
+      "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
+      "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
+      "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
+      "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，Claude Code 的登入會即時換成這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。"
     },
     "addAccount": "新增帳號",
     "groupMenu": "{{service}} 的更多操作",
@@ -4855,7 +5008,13 @@
       "copy": "複製驗證碼",
       "copied": "驗證碼已複製。",
       "open": "開啟授權頁面",
-      "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。"
+      "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。",
+      "browserNote": "已在瀏覽器開啟 {{service}} 的登入頁，登入並同意授權後這裡會自動更新。",
+      "reopen": "重新開啟登入頁",
+      "copyLink": "複製登入連結",
+      "linkCopied": "登入連結已複製。",
+      "linkNote": "登入連結已複製。在你要用的瀏覽器裡開啟，登入並同意授權後這裡會自動更新。",
+      "linkCodeNote": "登入連結已複製。在你要用的瀏覽器裡開啟並輸入驗證碼，完成後這裡會自動更新。注意 {{service}} 的使用條款。"
     },
     "toast": {
       "added": "已新增 {{service}} 帳號。",
@@ -4865,7 +5024,167 @@
       "updating": "更新中…",
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
-      "refreshAria": "重新整理 {{login}} 的額度"
+      "refreshAria": "重新整理 {{login}} 的額度",
+      "refreshAll": "全部重新整理"
+    },
+    "agy": {
+      "reauthNote": "登入憑證已失效，無法切換過去",
+      "addedOn": "{{date}}新增",
+      "statusLoadFailed": "無法讀取 Antigravity 帳號，請重試。",
+      "empty": "還沒有 Antigravity 帳號。agy 裡已登入的帳號會自動出現在這裡。",
+      "current": "agy 使用中",
+      "switchTo": "將 agy 切換到這個帳號",
+      "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
+      "switched": "已切換，新開的 agy 會使用這個帳號。",
+      "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
+    },
+    "claude": {
+      "pasteSubmitted": "已送出，正在完成登入…",
+      "pasteToggle": "授權後沒有回到這裡？",
+      "pasteHint": "把授權後瀏覽器網址列裡的網址，或頁面上顯示的代碼貼到這裡。",
+      "pasteLabel": "授權代碼或網址",
+      "pasteSubmit": "送出",
+      "reauthNote": "登入已失效，請重新登入",
+      "addedOn": "{{date}}新增",
+      "loginExpiresOn": "登入約在{{date}}到期，之後需要重新登入",
+      "loginMaybeExpired": "登入可能已過期，切換前請重新登入",
+      "statusLoadFailed": "無法讀取 Claude 帳號，請重試。",
+      "empty": "還沒有新增 Claude 帳號。要在多個訂閱帳號之間切換時在這裡登入。",
+      "removeNote": "只刪除 XSEC Agent Shield 為這個帳號儲存的登入，不會讓它在其他地方登出；Claude Code 目前的登入（~/.claude）不受影響。綁定它的卡片會改用 Claude Code 目前的登入。",
+      "wslUnsupported": "Claude 設定目錄在 WSL 裡，暫不支援新增和切換 Claude 帳號。"
+    },
+    "openBrowser": {
+      "title": "登入時自動開啟瀏覽器",
+      "description": "關掉後只複製登入連結，由你自己選瀏覽器開啟，適合用獨立的瀏覽器環境管理多個帳號。"
     }
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "使用此帳號",
+      "title": "Kimi Code 官方登入",
+      "description": "可新增多個 Kimi 程式開發方案帳號，各自儲存憑證與供應商。在此管理登入，再選擇帳號使用其官方模型。",
+      "region": "登入區域",
+      "mainland-cn": "中國大陸版",
+      "global": "海外版",
+      "signIn": "登入 Kimi",
+      "removeAccount": "刪除帳號",
+      "dismissAccount": "移出列表",
+      "signedOut": "尚未登入",
+      "noSubscription": "未訂閱",
+      "statusFailed": "無法讀取登入狀態",
+      "expired": "授權碼已過期，請重新登入。",
+      "denied": "授權已遭拒絕，請重新登入。",
+      "cancelled": "登入已取消或被其他登入取代，請重新登入。",
+      "success": "Kimi Code 登入成功，已新增官方模型。",
+      "removeConfirm": "刪除 {{name}}？會從 Kimi Code 裡刪掉這個帳號的供應商和模型，並刪除它的本機登入憑證和卡片。其他帳號不受影響。",
+      "dismissConfirm": "把 {{name}} 移出列表？這是 Kimi Code 自己的登入，XSEC Agent Shield 不會替它登出，憑證和模型都會保留；如需登出，請在 Kimi Code 裡執行 /logout。之後重新登入會讓它回到列表。",
+      "primaryHidden": "Kimi Code 自己的登入已移出列表，重新登入同一帳號即可找回",
+      "removeCurrentHint": "這個帳號正在使用，請先切換到其他帳號再刪除",
+      "manageAccounts": "管理 Kimi 帳號",
+      "managedHint": "先移除這個官方帳號，或到授權中心刪除它（連同登入一起刪）。",
+      "connectionManaged": "連線和登入由授權中心管理，這裡只編輯模型。拉取模型會讀取這個帳號目前可用的官方模型。",
+      "current": "Kimi 使用中",
+      "primaryShort": "Kimi Code 自己的登入",
+      "empty": "還沒有 Kimi 帳號。Kimi Code 中已登入的帳號會自動出現在這裡。",
+      "help": "可新增多個 Kimi 程式設計方案帳號，每個帳號在 Kimi Code 中有自己的供應商和模型。「使用此帳號」會把 Kimi Code 的預設模型換成這個帳號的，之後新開的對話都用它。Kimi Code 自己登入的帳號會自動出現在這裡，聯網搜尋和網頁擷取始終用它；在這裡刪除它只會移出列表，不會讓 Kimi Code 登出。"
+    },
+    "modelSelectionHint": "點擊供應商卡片的切換按鈕選擇預設供應商；若要指定其他模型，請在 Kimi Code 中使用 /model。",
+    "contextSize": "上下文長度",
+    "configTomlScope": "這裡只能寫 [providers.{{key}}] 和屬於它的 [models.*] 表；供應商標識請在上方修改。",
+    "configTomlSchema": "設定不完整：請檢查供應商的 type，以及每個模型的 model 和 max_context_size（正整數）。",
+    "deleteSessionHint": "請在 Kimi Code 中刪除，以同時更新工作階段索引和歷史紀錄。",
+    "empty": {
+      "title": "新增 Kimi Code 供應商",
+      "description": "設定請求位址、API Key 和模型；已有 Kimi 設定會自動匯入。"
+    },
+    "capabilities": {
+      "image_in": "圖片輸入",
+      "thinking": "思考",
+      "always_thinking": "始終思考",
+      "tool_use": "工具呼叫",
+      "dynamically_loaded_tools": "按需載入工具"
+    },
+    "capabilityHints": {
+      "always_thinking": "模型的思考無法關閉時勾選：選取該模型時自動開啟思考，且不提供關閉選項",
+      "dynamically_loaded_tools": "讓模型按需載入工具說明，縮短請求。僅 Kimi 自家模型支援，第三方模型請勿勾選；還需開啟 KIMI_CODE_EXPERIMENTAL_TOOL_SELECT"
+    },
+    "error": {
+      "defaultModelInUse": "Kimi Code 正在使用此供應商的模型，請先在 Kimi Code 中用 /model 切換到其他模型",
+      "secondaryModelInUse": "Kimi Code 的子代理模型正在使用此供應商的模型，請先在 Kimi Code 中用 /secondary-model 更換"
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "尚未新增 API Key 供應商",
+      "description": "點擊右上角的 +，從預設或自訂設定新增供應商。"
+    },
+    "provider": {
+      "enabled": "已在 Oh My Pi 中啟用",
+      "enableFailed": "無法在 Oh My Pi 中啟用此供應商",
+      "removed": "已從 Oh My Pi 移除"
+    },
+    "current": {
+      "readFailed": "無法讀取 Oh My Pi 供應商設定",
+      "stateUnavailableHint": "XSEC Agent Shield 讀取到 Oh My Pi 供應商設定前，供應商變更會暫時停用。"
+    },
+    "form": {
+      "discoveryType": "模型自動探索",
+      "discoveryOff": "不自動探索",
+      "discoveryHint": "開啟後，Oh My Pi 會自己向介面查詢有哪些模型，不必逐一手動填寫，新上架的模型也會自動出現。線上服務大多選「OpenAI 模型列表」，本機執行的模型選對應的軟體；Anthropic 格式的介面通常查不到列表，維持「不自動探索」即可。手動新增的模型仍然生效。",
+      "discoveryTypes": {
+        "openaiModelsList": "OpenAI 模型列表（大多數線上服務）",
+        "proxy": "代理（每個模型自帶格式）",
+        "ollama": "Ollama（本機）",
+        "llamaCpp": "llama.cpp（本機）",
+        "lmStudio": "LM Studio（本機）",
+        "litellm": "LiteLLM 閘道",
+        "appleFoundationModels": "Apple 裝置端模型（macOS）"
+      }
+    },
+    "errors": {
+      "fileTooLarge": "Oh My Pi 設定超過 1 MiB 大小限制。",
+      "externalChange": "Oh My Pi 設定已被其他程式修改，請重新整理後重試。",
+      "rollbackConflict": "資料庫儲存失敗，且 Oh My Pi 設定已被其他程式修改，請手動還原。",
+      "invalidMcp": "Oh My Pi MCP JSON 格式無效，根節點和 mcpServers 必須為物件。",
+      "invalidYaml": "Oh My Pi YAML 無效，根節點和 providers 必須是映射。",
+      "invalidProvider": "Oh My Pi 供應商設定無效，請檢查必填欄位、API 格式和欄位類型。",
+      "manualEdit": "此 YAML 使用了 XSEC Agent Shield 無法安全編輯的格式或語法，請手動編輯 models.yml。",
+      "duplicateProvider": "此 Oh My Pi 供應商識別碼已存在。",
+      "renameProvider": "Oh My Pi 供應商識別碼不能重新命名。",
+      "providerMissing": "此 Oh My Pi 供應商已不在儲存的清單中。",
+      "legacyModelsJson": "Oh My Pi 目錄裡仍是舊的 models.json，omp 會在下次啟動時將它遷移為 models.yml。請先執行一次 omp，再回來新增供應商。"
+    }
+  },
+  "dsh": {
+    "empty": {
+      "title": "新增 DeepSeek Harness 供應商",
+      "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"
+    },
+    "sharedProviders": "已加入的供應商會一起寫進 DeepSeek Harness 的 Web 和 Desktop 設定（以及已初始化的 headless、acp），在 DeepSeek Harness 裡選模型即可。",
+    "sharedProvidersNote": "Web 和 Desktop 共用這份列表",
+    "account": {
+      "help": "DeepSeek 帳號以瀏覽器登入（OAuth），可以在這裡登入，也可以在 DeepSeek Harness 裡登入。登入資訊儲存在 $DSH_HOME/.credentials.yaml（預設 ~/.dsh/.credentials.yaml），DeepSeek Harness 的 Web 和 Desktop 共用：任一處登入或登出，兩端同時生效，執行中的 DeepSeek Harness 會自動重新讀取。帳號路由的模型用量在用量頁單獨顯示為「DeepSeek 帳號（OAuth）」。",
+      "statusFailed": "無法讀取 DeepSeek 帳號的登入狀態",
+      "empty": "未登入 DeepSeek 帳號",
+      "unnamed": "DeepSeek 帳號",
+      "expired": "登入已失效，請重新登入",
+      "shared": "Web 與 Desktop 共用",
+      "signOut": "登出",
+      "signOutConfirm": "登出 DeepSeek 帳號「{{name}}」？DeepSeek Harness 的 Web 和 Desktop 會同時登出，API Key 供應商不受影響。",
+      "signOutFailed": "登出 DeepSeek 帳號失敗",
+      "balance": "餘額 {{amount}}",
+      "bonus": "贈金 {{amount}}",
+      "balanceFailed": "暫時查不到餘額",
+      "signedIn": "DeepSeek 帳號已登入，Web 和 Desktop 都可以使用",
+      "signInFailed": "DeepSeek 帳號登入失敗",
+      "presetName": "DeepSeek 官方登入",
+      "presetDescription": "以瀏覽器登入 DeepSeek 帳號後，DeepSeek Harness 會直接提供帳號下的模型，不用再新增供應商；Web 和 Desktop 共用這份登入。登入和登出在授權中心管理，登入後帳號會出現在「已加入」裡。",
+      "manageAccounts": "管理 DeepSeek 帳號",
+      "cardSubtitle": "官方帳號 · Web 和 Desktop 共用",
+      "expiredChip": "登入已失效",
+      "editDisabled": "帳號下的模型由 DeepSeek Harness 自動提供，無需編輯。",
+      "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
+    },
+    "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
   }
 }

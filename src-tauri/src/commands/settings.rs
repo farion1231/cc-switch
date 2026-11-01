@@ -43,6 +43,8 @@ fn merge_settings_for_save(
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
+    // 轻量模式状态只由进入 / 退出轻量模式时写，前端缓存里的值总是旧的。
+    incoming.lightweight_mode = existing.lightweight_mode;
     incoming
 }
 
@@ -55,6 +57,7 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(
+    app: tauri::AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
@@ -71,7 +74,13 @@ pub async fn save_settings(
         || merged.codex_stack_subagent_reasoning_effort
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
+    let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+
+    // 原生托盘菜单 / 托盘面板当场切换，不用重启。
+    if tray_style_changed {
+        crate::tray::apply_tray_style(&app);
+    }
 
     // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。
     if stack_settings_changed {
@@ -306,6 +315,18 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_should_keep_the_existing_lightweight_mode() {
+        let existing = AppSettings {
+            lightweight_mode: true,
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+
+        assert!(merged.lightweight_mode);
+    }
 
     #[test]
     fn save_settings_should_keep_the_existing_proxy_client_host() {

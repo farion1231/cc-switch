@@ -23,6 +23,13 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     state.db.get_all_providers(PI_APP)
 }
 
+#[allow(dead_code)] // 上游启动自动导入入口；本项目改为显式导入
+pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
+    let native = crate::pi_config::read_pi_native_providers()?;
+    sync_native_locked(state, &native)
+}
+
 pub(super) fn add(
     state: &AppState,
     mut provider: Provider,
@@ -76,12 +83,18 @@ pub(super) fn add(
     Ok(true)
 }
 
+// Pi、Omp 的用量脚本只更新数据库，避免用旧快照覆盖外部修改过的原生配置。
 pub(super) fn update_usage_script(
     state: &AppState,
+    app_type: AppType,
     id: &str,
     script: UsageScript,
 ) -> Result<bool, AppError> {
-    let app_type = AppType::Pi;
+    if !matches!(app_type, AppType::Pi | AppType::Omp) {
+        return Err(AppError::InvalidInput(
+            "Usage metadata updates only support Pi and Omp".into(),
+        ));
+    }
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     super::validate_usage_script(&script)?;
@@ -89,7 +102,9 @@ pub(super) fn update_usage_script(
     let mut provider = state
         .db
         .get_provider_by_id(id, app_type.as_str())?
-        .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
+        .ok_or_else(|| {
+            AppError::InvalidInput(format!("{} provider '{id}' not found", app_type.as_str()))
+        })?;
     provider
         .meta
         .get_or_insert_with(ProviderMeta::default)
@@ -682,8 +697,13 @@ mod tests {
         )
         .expect("edit native provider");
 
-        update_usage_script(&state, "cc-switch-test", usage_script("return {}"))
-            .expect("save usage metadata");
+        ProviderService::update_pi_usage_script(
+            &state,
+            AppType::Pi,
+            "cc-switch-test",
+            usage_script("return {}"),
+        )
+        .expect("save usage metadata");
         assert_eq!(
             crate::pi_config::read_pi_native_provider("cc-switch-test")
                 .expect("read native provider")

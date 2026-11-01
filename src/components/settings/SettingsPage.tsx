@@ -271,7 +271,7 @@ export function SettingsPage({
     acknowledgeRestart();
   }, [acknowledgeRestart]);
 
-  // 路径类设置（配置目录、CC Switch 数据目录）点「保存」才写入；改了数据目录要重启
+  // 路径类设置（配置目录、XSEC Agent Shield 数据目录）点「保存」才写入；改了数据目录要重启
   const handleSave = useCallback(async () => {
     try {
       const result = await saveSettings(undefined, { silent: false });

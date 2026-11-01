@@ -11,6 +11,7 @@ use super::codex_chat_common::{
 };
 use super::codex_compaction;
 use super::inline_think::split_leading_think_block;
+use super::transform::unwrap_chat_completion_envelope;
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -20,7 +21,8 @@ use crate::proxy::{
     },
     tool_media::{
         chat_file_from_input_file, flush_pending_chat_tool_media, plan_chat_tool_output_media,
-        queue_chat_tool_output_media, strip_and_clamp_media_from_tool_value, ToolMediaScope,
+        plan_chat_tool_output_media_with_marker, queue_chat_tool_output_media,
+        strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
         TOOL_RESULT_MEDIA_MOVED_MARKER,
     },
 };
@@ -487,7 +489,7 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-fn map_reasoning_effort<'a>(
+pub(crate) fn map_reasoning_effort<'a>(
     effort: &str,
     mode: Option<&str>,
     effort_levels: Option<&'a [String]>,
@@ -502,8 +504,11 @@ fn map_reasoning_effort<'a>(
     // passthrough 面向枚举未知的通用上游，档位由用户/预设的 reasoningLevels 声明
     // 背书，与 max/xhigh 一样原值透传。
     match mode.unwrap_or("passthrough") {
+        // DeepSeek 官方档位 low / high / max，其余档位照官方服务端的换算折
+        // （api-docs.deepseek.com/guides/thinking_mode：minimal→low、medium/xhigh→high、ultra→max）。
         "deepseek" => match effort.as_str() {
-            "max" | "xhigh" | "ultra" => Some("max"),
+            "minimal" | "low" => Some("low"),
+            "max" | "ultra" => Some("max"),
             _ => Some("high"),
         },
         "low_high" => match effort.as_str() {
@@ -656,7 +661,7 @@ fn append_responses_input_as_chat_messages(
                 // 非工具结果条目即回合边界：先输出暂存的孤儿结果，让 Chat 序列
                 // 里 role=tool 消息保持连续；夹在并行工具结果中间直接输出会形成
                 // `tool, user, tool`。
-                if !is_tool_result_item(item) {
+                if !is_tool_result_item(item) && hoisted_system_message(item).is_none() {
                     flush_pending_orphan_results(messages, &mut pending_orphan_results);
                 }
                 append_responses_item_as_chat_message(
@@ -987,6 +992,19 @@ fn append_responses_item_as_chat_message(
         // gateways reject with `messages[N]: missing field "content"`.
         Some("additional_tools") => {}
         Some("input_text" | "input_image" | "input_file" | "input_audio") => {
+            if let Some(system_message) = hoisted_system_message(item) {
+                // Hoisted to messages[0] by collapse_system_messages_to_head; do not
+                // flush pending tool media at its mid-stream position.
+                flush_pending_tool_calls(
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                );
+                messages.push(system_message);
+                return Ok(());
+            }
             flush_pending_tool_calls(
                 messages,
                 pending_tool_calls,
@@ -1028,7 +1046,18 @@ fn append_responses_item_as_chat_message(
             messages.push(message);
         }
         Some("message") | None => {
-            if item.get("role").is_some() || item.get("content").is_some() {
+            if let Some(system_message) = hoisted_system_message(item) {
+                // Hoisted to messages[0] by collapse_system_messages_to_head;
+                // keep surrounding parallel tool outputs and media contiguous.
+                flush_pending_tool_calls(
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                );
+                messages.push(system_message);
+            } else if item.get("role").is_some() || item.get("content").is_some() {
                 flush_pending_tool_calls(
                     messages,
                     pending_tool_calls,
@@ -1058,7 +1087,16 @@ fn append_responses_item_as_chat_message(
             }
         }
         _ => {
-            if item.get("role").is_some() || item.get("content").is_some() {
+            if let Some(system_message) = hoisted_system_message(item) {
+                flush_pending_tool_calls(
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                );
+                messages.push(system_message);
+            } else if item.get("role").is_some() || item.get("content").is_some() {
                 flush_pending_tool_calls(
                     messages,
                     pending_tool_calls,
@@ -1112,6 +1150,50 @@ fn is_tool_result_item(item: &Value) -> bool {
     )
 }
 
+fn is_hoistable_system_message(msg: &Value) -> bool {
+    msg.get("role").and_then(Value::as_str) == Some("system")
+        && msg.get("content").is_some_and(Value::is_string)
+}
+
+fn hoisted_system_message(item: &Value) -> Option<Value> {
+    let item_type = item.get("type").and_then(Value::as_str);
+    if matches!(
+        item_type,
+        Some(
+            "function_call"
+                | "custom_tool_call"
+                | "tool_search_call"
+                | "function_call_output"
+                | "custom_tool_call_output"
+                | "tool_search_output"
+                | "reasoning"
+                | "compaction_trigger"
+                | "compaction"
+                | "compaction_summary"
+                | "context_compaction"
+                | "additional_tools"
+        )
+    ) {
+        return None;
+    }
+    let role = item.get("role").and_then(Value::as_str)?;
+    if responses_role_to_chat_role(role) != "system" {
+        return None;
+    }
+    let content = match item_type {
+        Some("input_text" | "input_image" | "input_file" | "input_audio") => {
+            responses_content_to_chat_content("system", &Value::Array(vec![item.clone()]))
+        }
+        _ => responses_content_to_chat_content("system", item.get("content")?),
+    };
+    content.is_string().then(|| {
+        json!({
+            "role": "system",
+            "content": content
+        })
+    })
+}
+
 /// 输出暂存的孤儿工具结果。孤儿可能夹在并行工具结果中间
 /// （`tool, 孤儿, tool`）；立即降级成 user 消息会打断 tool 序列，后一条
 /// tool 前面隔着 user，仍会被严格上游 400，因此统一等到回合边界
@@ -1136,9 +1218,10 @@ fn flush_pending_orphan_results(
 /// 上下文，但不能以 role=tool 的形式发给严格上游。
 ///
 /// 输出里的图片/文件媒体块复用配对路径的提取逻辑：文本 body 内联
-/// `TOOL_RESULT_MEDIA_MOVED_MARKER`，媒体本体作为同一条 user 消息的
-/// content parts 跟随，避免图片被 base64 序列化成纯文本——模型既看不到
-/// 图，token 还会被瞬间撑爆。
+/// `TOOL_RESULT_MEDIA_ATTACHED_MARKER` 占位，媒体本体作为同一条 user
+/// 消息的 content parts 跟随，避免图片被 base64 序列化成纯文本——模型既
+/// 看不到图，token 还会被瞬间撑爆。配对路径的 "moved to the following
+/// user message" 占位在本路径会指向一条不存在的消息，不能沿用。
 fn append_orphan_tool_output_as_user_message(messages: &mut Vec<Value>, item: &Value) {
     let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
     let (body, media_parts) = plan_orphan_tool_output_body(item.get("output"));
@@ -1162,10 +1245,16 @@ fn append_orphan_tool_output_as_user_message(messages: &mut Vec<Value>, item: &V
 }
 
 /// 计算孤儿工具结果的文本 body 与媒体 parts。媒体识别复用配对路径的
-/// `plan_chat_tool_output_media`；没有媒体时保持旧版逐字段的纯文本序列化，
-/// 不给无媒体输出多加一层 JSON 包装。
+/// `plan_chat_tool_output_media_with_marker`；没有媒体时保持旧版逐字段的
+/// 纯文本序列化，不给无媒体输出多加一层 JSON 包装。
+///
+/// 孤儿路径的媒体就挂在这条 user 消息自己的后续 parts 里，占位符用
+/// `TOOL_RESULT_MEDIA_ATTACHED_MARKER`（与 Anthropic/Gemini/Responses
+/// bridge 的"媒体已作为原生媒体挂载"用词一致）。
 fn plan_orphan_tool_output_body(output: Option<&Value>) -> (String, Vec<Value>) {
-    if let Some(plan) = output.cloned().and_then(plan_chat_tool_output_media) {
+    if let Some(plan) = output.cloned().and_then(|output| {
+        plan_chat_tool_output_media_with_marker(output, TOOL_RESULT_MEDIA_ATTACHED_MARKER)
+    }) {
         return (plan.tool_content, plan.media_parts);
     }
     let body = match output {
@@ -1192,12 +1281,12 @@ fn flush_pending_tool_calls(
     // assistant message: a standalone text-only assistant turn teaches Chat
     // models to stop after a progress update instead of emitting the expected
     // tool call.
-    if merge_pending_tool_calls_into_adjacent_assistant(
+    if let Some(merged_index) = merge_pending_tool_calls_into_adjacent_assistant(
         messages,
         pending_tool_calls,
         pending_reasoning,
     ) {
-        *last_assistant_index = Some(messages.len() - 1);
+        *last_assistant_index = Some(merged_index);
         return;
     }
 
@@ -1224,30 +1313,29 @@ fn merge_pending_tool_calls_into_adjacent_assistant(
     messages: &mut [Value],
     pending_tool_calls: &mut Vec<Value>,
     pending_reasoning: &mut Option<String>,
-) -> bool {
-    let Some(message) = messages.last_mut() else {
-        return false;
-    };
+) -> Option<usize> {
+    let index = messages
+        .iter()
+        .rposition(|msg| !is_hoistable_system_message(msg))?;
+    let message = messages.get_mut(index)?;
     if message.get("role").and_then(Value::as_str) != Some("assistant") {
-        return false;
+        return None;
     }
     let has_tool_calls = message
         .get("tool_calls")
         .and_then(Value::as_array)
         .is_some_and(|calls| !calls.is_empty());
     if has_tool_calls {
-        return false;
+        return None;
     }
 
-    let Some(obj) = message.as_object_mut() else {
-        return false;
-    };
+    let obj = message.as_object_mut()?;
     obj.insert(
         "tool_calls".to_string(),
         Value::Array(std::mem::take(pending_tool_calls)),
     );
     attach_pending_reasoning_to_assistant_unique(message, pending_reasoning);
-    true
+    Some(index)
 }
 
 fn attach_pending_reasoning_to_assistant_unique(
@@ -1845,6 +1933,7 @@ pub(crate) fn chat_completion_to_response_with_context(
     body: Value,
     tool_context: &CodexToolContext,
 ) -> Result<Value, ProxyError> {
+    let body = unwrap_chat_completion_envelope(body);
     let choices = body
         .get("choices")
         .and_then(|v| v.as_array())
@@ -2381,17 +2470,6 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
         });
     };
 
-    if let Some(text) = value.as_str() {
-        return json!({
-            "error": {
-                "message": text,
-                "type": "upstream_error",
-                "code": serde_json::Value::Null,
-                "param": serde_json::Value::Null,
-            }
-        });
-    }
-
     let source = value.get("error").unwrap_or(value);
 
     let message = source
@@ -2413,11 +2491,21 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
         .map(ToString::to_string)
         .unwrap_or_else(|| "upstream_error".to_string());
 
-    let code = source
+    let mut code = source
         .get("code")
         .cloned()
         .or_else(|| source.pointer("/base_resp/status_code").cloned())
         .unwrap_or(serde_json::Value::Null);
+
+    // Gemini uses numeric HTTP codes (or no code at all) for this error. Codex
+    // only recognizes context_length_exceeded as a context-budget failure;
+    // INVALID_ARGUMENT/upstream_error cannot trigger its compaction recovery.
+    if message
+        .to_ascii_lowercase()
+        .contains("input token count exceeds the maximum number of tokens allowed")
+    {
+        code = json!("context_length_exceeded");
+    }
 
     let param = source
         .get("param")
@@ -2922,6 +3010,14 @@ mod tests {
         assert!(text.starts_with(ORPHAN_TOOL_OUTPUT_MARKER), "{text}");
         assert!(text.contains("screenshot follows"), "{text}");
         assert!(
+            text.contains(TOOL_RESULT_MEDIA_ATTACHED_MARKER),
+            "inline media placeholder must match where the media lands: {text}"
+        );
+        assert!(
+            !text.contains("following user message"),
+            "media travels in this same message: {text}"
+        );
+        assert!(
             !text.contains(&data_url),
             "base64 image must not stay in the text body: {text}"
         );
@@ -3019,6 +3115,26 @@ mod tests {
         assert_eq!(messages[1].get("reasoning_content"), None);
         assert_eq!(messages[3]["reasoning_content"], "think-before-call");
         assert_eq!(messages[3]["tool_calls"][0]["id"], "call_next");
+    }
+
+    #[test]
+    fn map_reasoning_effort_deepseek_keeps_official_tiers() {
+        // DeepSeek 官方档位 low / high / max，其余照官方服务端的换算折。
+        for (requested, expected) in [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "high"),
+            ("max", "max"),
+            ("ultra", "max"),
+        ] {
+            assert_eq!(
+                map_reasoning_effort(requested, Some("deepseek"), None),
+                Some(expected),
+                "{requested}"
+            );
+        }
     }
 
     #[test]
@@ -3563,7 +3679,8 @@ mod tests {
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
-        assert_eq!(result["reasoning_effort"], "max");
+        // DeepSeek 官方服务端把 xhigh 当 high。
+        assert_eq!(result["reasoning_effort"], "high");
     }
 
     #[test]
@@ -3909,6 +4026,33 @@ mod tests {
             "Need to inspect the code."
         );
         assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_completion_to_response_unwraps_data_envelope() {
+        // #5658：ClinePass 把非流式 Chat 响应包在 data 里
+        let input = json!({
+            "success": true,
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "model": "cline-pass/deepseek-v4.1-flash",
+                "created": 1_700_000_000,
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "OK"}
+                }],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
+            }
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["model"], "cline-pass/deepseek-v4.1-flash");
+        assert_eq!(result["created_at"], 1_700_000_000);
+        assert_eq!(result["status"], "completed");
+        assert_eq!(result["output"][0]["content"][0]["text"], "OK");
+        assert_eq!(result["usage"]["input_tokens"], 12);
+        assert_eq!(result["usage"]["output_tokens"], 1);
     }
 
     #[test]
@@ -6168,6 +6312,29 @@ mod tests {
     }
 
     #[test]
+    fn gemini_input_overflow_errors() {
+        let message = "The input token count exceeds the maximum number of tokens allowed 1048576.";
+        for input in [
+            json!({ "error": { "code": 400, "status": "INVALID_ARGUMENT", "message": message } }),
+            json!({ "error": { "type": "invalid_request_error", "message": message } }),
+            json!({ "detail": message }),
+            json!(message),
+        ] {
+            let result = chat_error_to_response_error(Some(&input));
+            assert_eq!(result["error"]["code"], "context_length_exceeded");
+            assert_eq!(result["error"]["message"], message);
+        }
+        let ordinary_error = json!({ "error": {
+            "code": 400, "status": "INVALID_ARGUMENT",
+            "message": "max_output_tokens exceeds the maximum number of tokens allowed 65536."
+        } });
+        assert_eq!(
+            chat_error_to_response_error(Some(&ordinary_error))["error"]["code"],
+            400
+        );
+    }
+
+    #[test]
     fn chat_error_to_response_error_normalizes_minimax_base_resp() {
         // MiniMax 把错误塞在 base_resp 里，code 是数字而不是字符串
         let input = json!({
@@ -6507,5 +6674,77 @@ mod tests {
         let rendered = serde_json::to_string(&result["messages"]).unwrap();
         assert!(rendered.contains(codex_compaction::OPAQUE_COMPACTION_NOTE));
         assert!(!rendered.contains("gAAAAB-openai-blob"));
+    }
+
+    #[test]
+    fn developer_resize_notice_between_parallel_image_outputs_keeps_tool_messages_contiguous() {
+        let png_data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+        let body = json!({
+            "model": "deepseek-flash",
+            "input": [
+                { "type": "message", "role": "user", "content": "inspect screenshots" },
+                { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "Checking images." }] },
+                { "type": "function_call", "call_id": "call_0", "name": "view_image", "arguments": "{\"path\":\"a.png\"}" },
+                { "type": "function_call", "call_id": "call_1", "name": "view_image", "arguments": "{\"path\":\"b.png\"}" },
+                { "type": "function_call", "call_id": "call_2", "name": "view_image", "arguments": "{\"path\":\"c.png\"}" },
+                { "type": "function_call_output", "call_id": "call_0", "output": [{ "type": "input_image", "image_url": png_data_url }] },
+                { "type": "message", "role": "developer", "content": [{ "type": "input_text", "text": "<image_resize_notice>\nImage 1 of 1 in the preceding tool output was resized.\n</image_resize_notice>" }] },
+                { "type": "function_call_output", "call_id": "call_1", "output": [{ "type": "input_image", "image_url": png_data_url }] },
+                { "type": "function_call_output", "call_id": "call_2", "output": [{ "type": "input_image", "image_url": png_data_url }] }
+            ]
+        });
+
+        let result = responses_to_chat_completions(body).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .filter_map(|msg| msg.get("role").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                "system",
+                "user",
+                "assistant",
+                "tool",
+                "tool",
+                "tool",
+                "user"
+            ]
+        );
+        assert_eq!(messages[2]["tool_calls"].as_array().unwrap().len(), 3);
+        assert_eq!(messages[3]["tool_call_id"], "call_0");
+        assert_eq!(messages[4]["tool_call_id"], "call_1");
+        assert_eq!(messages[5]["tool_call_id"], "call_2");
+        assert!(messages[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("image_resize_notice"));
+    }
+
+    #[test]
+    fn developer_resize_notice_between_call_and_output_preserves_commentary_merge() {
+        let body = json!({
+            "model": "deepseek-flash",
+            "input": [
+                { "type": "message", "role": "user", "content": "look" },
+                { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "Checking the image." }] },
+                { "type": "function_call", "call_id": "call_0", "name": "view_image", "arguments": "{\"path\":\"a.png\"}" },
+                { "type": "message", "role": "developer", "content": [{ "type": "input_text", "text": "<image_resize_notice>resized</image_resize_notice>" }] },
+                { "type": "function_call_output", "call_id": "call_0", "output": "ok" }
+            ]
+        });
+
+        let result = responses_to_chat_completions(body).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .filter_map(|msg| msg.get("role").and_then(Value::as_str))
+            .collect();
+        assert_eq!(roles, vec!["system", "user", "assistant", "tool"]);
+        assert_eq!(messages[2]["content"], "Checking the image.");
+        assert_eq!(messages[2]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_0");
+        assert_eq!(messages[3]["tool_call_id"], "call_0");
     }
 }

@@ -62,7 +62,7 @@ Boolean parameters take `true` / `false`. Any other value is treated as if the p
 2. CC Switch opens the import confirmation dialog, showing everything in the link: the endpoint, the masked key, the models, the embedded config, and the full usage query script. Suspicious content is highlighted in yellow, for example endpoints pointing at localhost or a private network, environment variables that change how processes load code (`NODE_OPTIONS`, `LD_PRELOAD` and the like), and MCP servers that run a whole command line through a shell.
 3. After the user clicks "Import":
    - **Provider**: added to the provider list of the target app. The bottom of the dialog has a switch whose initial value comes from `enabled` in the link, and the user can change it:
-     - Claude Code, Codex, Gemini CLI, Grok Build: the switch is "Switch to this provider after import", off by default. When it is on, the dialog warns that "client requests will go to the endpoint above".
+     - Claude Code, Codex, Gemini CLI, Antigravity CLI, Grok Build: the switch is "Switch to this provider after import", off by default. When it is on, the dialog warns that "client requests will go to the endpoint above".
      - OpenCode, OpenClaw, Hermes, Pi: these apps can hold several providers at once. The switch is "Add to the <app> config after import" (for Pi, "Enable in Pi after import"), on by default. When it is off, the provider is only saved in CC Switch's list.
    - **MCP**: written immediately into the config file of every app listed in `apps`.
    - **Prompt**: added to the prompt list. The dialog has an "Enable after import" switch whose initial value comes from `enabled` in the link. When it is on, it replaces the app's current prompt file, and the previously enabled prompt is disabled.
@@ -92,6 +92,7 @@ The only required items are `app`, `name`, the endpoint and the key (the last tw
 | `claude` | Claude Code | `anthropic` | All four | `{"env": {...}}`, all variables in `env` are kept |
 | `codex` | Codex | `openai_responses` | `openai_responses`, `openai_chat`, `anthropic` | All or part of a `config.toml`, see below |
 | `gemini` | Gemini CLI | `gemini_native` | Only `gemini_native` | The three keys `GEMINI_API_KEY`, `GOOGLE_GEMINI_BASE_URL` and `GEMINI_MODEL`; anything else is ignored |
+| `agy` | Antigravity CLI | `gemini_native` | Only `gemini_native` | Flat Gemini environment keys or `{env, config:{model:{name}}}`; URL parameters take precedence, then `config.model.name` over `GEMINI_MODEL`; other native options are ignored |
 | `grokbuild` | Grok Build | `openai_responses` | `openai_responses`, `openai_chat`, `anthropic` | One `[model."<name>"]` table, see below |
 | `opencode` | OpenCode | `openai_chat` | All four | Only the endpoint and key |
 | `openclaw` | OpenClaw | `openai_chat` | All four | Only the endpoint and key |
@@ -407,14 +408,14 @@ These three types have little to do with your API service, but some sites also d
 
 **MCP** (`resource=mcp`)
 
-- `apps` is required, comma-separated: `claude`, `codex`, `gemini`, `grokbuild`, `opencode`, `hermes`, `pi`, `mcode`. `openclaw` is ignored.
+- `apps` is required, comma-separated: `claude`, `codex`, `gemini`, `agy`, `grokbuild`, `opencode`, `hermes`, `pi`, `mcode`. `openclaw` is ignored.
 - `config` is a Base64 `{"mcpServers": {"<ID>": {...}}}`. One link can carry several servers.
 - If the user already has a server with the same ID, only the new apps are checked for it; its config is not overwritten by the link. Use a different ID if you want to update the config.
 - Importing writes to the client config files right away. The `enabled` parameter currently has no effect.
 
 **Prompt** (`resource=prompt`)
 
-- `app` is one of `claude`, `codex`, `gemini`, `grokbuild`, `opencode`, `pi`, `mcode`. In CC Switch, `openclaw` and `hermes` are handled by the workspace editor and memory management, so distributing prompts to them via deep link is not recommended.
+- `app` is one of `claude`, `codex`, `gemini`, `agy`, `grokbuild`, `opencode`, `pi`, `mcode`. In CC Switch, `openclaw` and `hermes` are handled by the workspace editor and memory management, so distributing prompts to them via deep link is not recommended.
 - `name` and `content` (Base64 Markdown) are required; `description` is optional.
 - `enabled` is the initial value of the "Enable after import" switch in the confirmation dialog. Enabling replaces the user's current prompt file (such as `CLAUDE.md`) with this content, so usually don't set it.
 

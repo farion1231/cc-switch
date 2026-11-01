@@ -1,6 +1,6 @@
 {
   "name": "xsec-agent-shield",
-  "version": "4.0.15",
+  "version": "4.0.24",
   "description": "XSEC Agent Shield — local-first security & reversible redaction for AI agents (dev build based on CC Switch)",
   "type": "module",
   "scripts": {
@@ -89,6 +89,7 @@
     "smol-toml": "^1.4.2",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
+    "yaml": "^2.8.1",
     "zod": "^4.1.12"
   }
 }

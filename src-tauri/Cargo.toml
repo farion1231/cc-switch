@@ -1,6 +1,6 @@
 [package]
 name = "xsec-agent-shield"
-version = "4.0.15"
+version = "4.0.24"
 description = "XSEC Agent Shield — local-first security & reversible redaction for AI agents (dev build based on CC Switch)"
 authors = ["Jason Young"]
 license = "MIT"
@@ -44,10 +44,11 @@ arboard = "3.6"
 flate2 = "1"
 brotli = "7"
 zstd = "0.13"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "process"] }
 futures = "0.3"
 async-stream = "0.3"
 bytes = "1.5"
+prost = "0.14"
 axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
@@ -81,6 +82,7 @@ rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
 hmac = "0.12"
+subtle = "2.6"
 json5 = "0.4"
 json-five = "0.3.1"
 sys-locale = "0.3"
@@ -133,3 +135,4 @@ strip = "symbols"
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
+tauri = { version = "2.8.2", features = ["test"] }

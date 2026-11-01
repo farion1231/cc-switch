@@ -64,7 +64,7 @@ export type AppMode = "direct" | "route" | "stack";
 /** 应用页模式行用的状态（后端 `get_app_mode`）。 */
 export interface AppModeView {
   mode: AppMode;
-  /** 客户端文件指着代理（CC Switch 运行时为真） */
+  /** 客户端文件指着代理（XSEC Agent Shield 运行时为真） */
   attached: boolean;
   /** 路由目标；直连模式下是上次路由的那家 */
   routeProviderId: string | null;
@@ -160,7 +160,7 @@ export interface ProxyStack {
 /** 重启 Codex 守护进程的结果：`notRunning` 表示它没在运行，什么都没做。 */
 export type CodexDaemonRestartOutcome = "restarted" | "notRunning";
 
-/** 增删 Stack 模型失败。`partial` 为真：已部分写入，下次操作或重启 CC Switch 时补完。 */
+/** 增删 Stack 模型失败。`partial` 为真：已部分写入，下次操作或重启 XSEC Agent Shield 时补完。 */
 export interface ProxyStackWriteError {
   partial: boolean;
   message: string;

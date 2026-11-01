@@ -1,7 +1,7 @@
 import { compareVersions } from "@/lib/version";
 
 /**
- * P0-01：whats-new 数据与链接都是上游 CC Switch 的产品历史，XSEC 品牌下的
+ * P0-01：whats-new 数据与链接都是上游 XSEC Agent Shield 的产品历史，XSEC 品牌下的
  * 版本摘要要在 P4-03 的安全状态 UI 里重建后重新启用。开发构建不弹摘要、
  * 不提供官网 changelog 外链。
  */

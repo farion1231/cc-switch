@@ -220,6 +220,7 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 "codex" => &[("/Caskroom/", "codex")],
                 "gemini" => &[("/Cellar/", "gemini-cli")],
                 "opencode" => &[("/Cellar/", "opencode")],
+                "agy" => &[("/Caskroom/", "antigravity-cli")],
                 _ => &[],
             };
             if !owners.contains(&(marker, token)) {
@@ -415,6 +416,13 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
             normalized.ends_with("/.opencode/bin/opencode")
                 || normalized.ends_with("/.opencode/bin/opencode.exe")
         }
+        // Official install.sh / install.ps1 targets. A cask binary the self-updater
+        // replaced in place sits in Homebrew's bin and stays a manual uninstall.
+        "agy" => {
+            normalized.ends_with("/.local/bin/agy") || normalized.ends_with("/agy/bin/agy.exe")
+        }
+        // Official install.sh (`~/.local/bin`) / install.ps1 (`%LOCALAPPDATA%\omp`) targets.
+        "omp" => normalized.ends_with("/.local/bin/omp") || normalized.ends_with("/omp/omp.exe"),
         _ => false,
     }
 }
@@ -868,6 +876,55 @@ mod tests {
         assert!(package_uninstall_command("codex", &inst).unwrap().is_none());
     }
 
+    #[test]
+    fn dsh_npm_uninstall_targets_the_verified_prefix_and_preserves_user_data() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path().join("custom npm prefix");
+        let modules = prefix.join(if cfg!(windows) {
+            "node_modules"
+        } else {
+            "lib/node_modules"
+        });
+        let package = modules.join("@deepseek-ai/dsh");
+        std::fs::create_dir_all(package.join("lib")).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh"}"#,
+        )
+        .unwrap();
+        let executable = package.join("lib/bin.js");
+        std::fs::write(&executable, "launcher").unwrap();
+        let entry = prefix.join(if cfg!(windows) { "dsh.cmd" } else { "bin/dsh" });
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::fs::write(
+            &entry,
+            r#"node "%dp0%\node_modules\@deepseek-ai\dsh\lib\bin.js""#,
+        )
+        .unwrap();
+        write_fixture_npm(&entry);
+        let inst = ToolInstallation {
+            real: std::fs::canonicalize(if cfg!(windows) { &entry } else { &executable }).unwrap(),
+            ..installation(&entry)
+        };
+        let user_data = temp.path().join(".dsh/profiles/web/cordis.patch.yml");
+        std::fs::create_dir_all(user_data.parent().unwrap()).unwrap();
+        std::fs::write(&user_data, "user settings").unwrap();
+        let command = package_uninstall_command("dsh", &inst).unwrap().unwrap();
+        assert!(command.contains(&format!(
+            "uninstall -g --prefix {}",
+            quote(&prefix.to_string_lossy())
+        )));
+        assert!(command.ends_with("@deepseek-ai/dsh"));
+        assert!(!command.contains(".dsh"));
+        assert_eq!(std::fs::read_to_string(user_data).unwrap(), "user settings");
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"unrelated-package"}"#,
+        )
+        .unwrap();
+        assert!(package_uninstall_command("dsh", &inst).unwrap().is_none());
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_npm_path_fallback_uses_batch_compatible_path() {
@@ -969,6 +1026,20 @@ mod tests {
         assert!(package_uninstall_command("codex", &inst).unwrap().is_none());
         assert!(!known_native_install("codex", &inst));
         assert!(executable.exists());
+    }
+
+    #[test]
+    fn omp_installer_binary_is_a_known_native_install() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let binary = bin.join("omp");
+        std::fs::write(&binary, [0xcf, 0xfa, 0xed, 0xfe]).unwrap();
+        assert!(known_native_install("omp", &installation(&binary)));
+        // A same-named script elsewhere is never claimed.
+        let other = temp.path().join("omp");
+        std::fs::write(&other, "#!/usr/bin/env bun\n").unwrap();
+        assert!(!known_native_install("omp", &installation(&other)));
     }
 
     #[test]
@@ -1411,6 +1482,7 @@ mod tests {
             ("codex", "Caskroom", "codex", "--cask"),
             ("gemini", "Cellar", "gemini-cli", "--formula"),
             ("opencode", "Cellar", "opencode", "--formula"),
+            ("agy", "Caskroom", "antigravity-cli", "--cask"),
         ] {
             let real = format!("{prefix}/{location}/{token}/1/bin/{tool}");
             let command = brew_uninstall_command(tool, &real).unwrap().unwrap();
@@ -1527,6 +1599,8 @@ mod tests {
                 ".codex/packages/standalone/releases/0.150.0-linux/codex",
             ),
             ("opencode", ".opencode/bin/opencode"),
+            ("agy", ".local/bin/agy"),
+            ("agy", "AppData/Local/agy/bin/agy.exe"),
         ] {
             let path = temp.path().join(binary);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
