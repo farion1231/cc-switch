@@ -474,7 +474,6 @@ pub fn run() {
             // 本来就不在主线程上调用一致。
             let app = app.clone();
             tauri::async_runtime::spawn_blocking(move || handle_second_instance(&app, args));
-
         }));
     }
 
