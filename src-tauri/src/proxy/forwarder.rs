@@ -2021,6 +2021,21 @@ impl RequestForwarder {
             );
         }
 
+        // Codex 客户端私有的 `include` 标记只对官方 ChatGPT 后端有效：第三方与本地原生
+        // Responses 网关收到它会整条 400（#9042）。
+        if should_drop_codex_private_include_markers(
+            app_type,
+            provider,
+            codex_responses_to_chat,
+            codex_responses_to_anthropic,
+        ) && super::providers::strip_codex_private_include_markers(&mut request_body)
+        {
+            log::debug!(
+                "[Codex] Dropped Codex-private include markers for a third-party upstream (provider={})",
+                provider.id
+            );
+        }
+
         // Stack 请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
         // Anthropic 转换丢掉托管工具是同一件事。只对 Stack 请求、只对名单上的上游生效；
         // 路由请求和其他 Stack 请求逐字节不变。
@@ -3652,6 +3667,21 @@ fn should_strip_codex_client_fingerprint_header(
     }
 
     false
+}
+
+/// Codex 客户端私有的 `include` 标记（`output.encrypted_content`）只对官方 ChatGPT 后端
+/// 有效。第三方与本地原生 Responses 网关收到它会把整条请求 400 掉（#9042）。转 Chat /
+/// Anthropic 的路径本来就不带它，官方那条路逐字节不变。
+fn should_drop_codex_private_include_markers(
+    app_type: &AppType,
+    provider: &Provider,
+    codex_responses_to_chat: bool,
+    codex_responses_to_anthropic: bool,
+) -> bool {
+    matches!(app_type, AppType::Codex)
+        && !codex_responses_to_chat
+        && !codex_responses_to_anthropic
+        && !super::providers::is_codex_official_provider(provider)
 }
 
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
@@ -7421,6 +7451,104 @@ mod tests {
                 assert_eq!(seen.body["tools"], tools, "stack={stack} {model}");
                 assert_eq!(seen.body["tool_choice"]["type"], "web_search");
             }
+        }
+
+        /// Codex 0.163+ 给每个请求带 `include: ["reasoning.encrypted_content",
+        /// "output.encrypted_content"]`。后一个是 ChatGPT 后端私有能力，严格的第三方与本地
+        /// 原生 Responses 网关会拿它整条 400（#9042）。
+        #[tokio::test]
+        async fn third_party_requests_drop_codex_private_include_markers() {
+            let upstream = upstream().await;
+            let with_include = |include: Value| {
+                let mut body = body("listed", json!([]));
+                body["include"] = include;
+                body
+            };
+
+            // 只掉私有那个，其余标记原样留着。
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                with_include(json!([
+                    "reasoning.encrypted_content",
+                    "output.encrypted_content"
+                ])),
+            )
+            .await;
+            assert_eq!(seen.body["include"], json!(["reasoning.encrypted_content"]));
+
+            // 只剩私有标记时整个键去掉，别留一个空数组。
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                with_include(json!(["output.encrypted_content"])),
+            )
+            .await;
+            assert!(seen.body.get("include").is_none(), "{}", seen.body);
+
+            // 路由请求直连本地网关时一样会中招，同样要掉。
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                with_include(json!(["output.encrypted_content"])),
+            )
+            .await;
+            assert!(seen.body.get("include").is_none(), "{}", seen.body);
+        }
+
+        /// 官方 ChatGPT 后端认这个标记；转 Chat / Anthropic 的路径本来就不带它。三条都跳过。
+        /// 官方那条路实测只能打到 chatgpt.com，这里直接验门控。
+        #[test]
+        fn private_include_marker_gate_skips_official_and_converted_requests() {
+            let third_party = provider(
+                &Upstream {
+                    base_url: "https://relay.example.com".to_string(),
+                    seen: Arc::new(Mutex::new(Vec::new())),
+                },
+                "openai_responses",
+            );
+            let mut official = third_party.clone();
+            official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+            official.category = Some("official".to_string());
+
+            assert!(should_drop_codex_private_include_markers(
+                &AppType::Codex,
+                &third_party,
+                false,
+                false
+            ));
+            assert!(!should_drop_codex_private_include_markers(
+                &AppType::Codex,
+                &official,
+                false,
+                false
+            ));
+            // 转 Chat / 转 Anthropic 的路径不带原生 Responses 字段。
+            assert!(!should_drop_codex_private_include_markers(
+                &AppType::Codex,
+                &third_party,
+                true,
+                false
+            ));
+            assert!(!should_drop_codex_private_include_markers(
+                &AppType::Codex,
+                &third_party,
+                false,
+                true
+            ));
+            // Grok Build 走 xAI 自己的清洗，不归这里管。
+            assert!(!should_drop_codex_private_include_markers(
+                &AppType::GrokBuild,
+                &third_party,
+                false,
+                false
+            ));
         }
 
         /// 按脚本依次回应的假上游，记下请求头和请求体。
