@@ -79,6 +79,11 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import {
+  ClineHubNotice,
+  clineHubStatusKey,
+} from "@/components/providers/ClineHubNotice";
+import { ClineCliModelNotice } from "@/components/providers/ClineCliModelNotice";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import {
   hasOpencodeDefinition,
@@ -143,6 +148,7 @@ import {
   orderAppIds,
 } from "@/config/appConfig";
 import type { PiFamilyAppId } from "@/lib/api/pi";
+import { isClineCustomConfig } from "@/config/clineProviderPresets";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -380,10 +386,13 @@ function App() {
     }
   };
 
-  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider
-  const handleAddKimiProvider = async (provider: Provider) => {
+  // Kimi / Cline「添加」只写进客户端配置、不改默认；「设为默认」走 switchProvider
+  const handleAddNativeProvider = async (
+    provider: Provider,
+    app: "kimi" | "cline",
+  ) => {
     try {
-      await providersApi.addToLiveConfig(provider.id, "kimi");
+      await providersApi.addToLiveConfig(provider.id, app);
     } catch (error) {
       toast.error(
         t("notifications.addFailed", {
@@ -393,7 +402,7 @@ function App() {
       );
       return;
     } finally {
-      await queryClient.invalidateQueries({ queryKey: ["providers", "kimi"] });
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
     toast.success(
       t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
@@ -785,6 +794,7 @@ function App() {
           activeApp === "mcode" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
+          activeApp === "cline" ||
           activeApp === "agy"
         )
           return;
@@ -1014,8 +1024,16 @@ function App() {
         queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
         queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
       ]);
-    } else if (app === "mcode" || app === "dsh" || app === "kimi") {
+    } else if (
+      app === "mcode" ||
+      app === "dsh" ||
+      app === "kimi" ||
+      app === "cline"
+    ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+      if (app === "cline") {
+        await queryClient.invalidateQueries({ queryKey: clineHubStatusKey });
+      }
     }
   };
 
@@ -1186,7 +1204,8 @@ function App() {
     } else if (
       activeApp === "mcode" ||
       activeApp === "dsh" ||
-      activeApp === "kimi"
+      activeApp === "kimi" ||
+      activeApp === "cline"
     ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
@@ -1205,6 +1224,16 @@ function App() {
             },
           ]),
         );
+        duplicatedProvider.addToLive = false;
+      }
+      if (activeApp === "cline") {
+        const config = duplicatedProvider.settingsConfig;
+        // A built-in Cline provider owns its id; only custom ones can be copied.
+        if (!isClineCustomConfig(config)) {
+          toast.error(t("cline.duplicateBuiltinUnsupported"));
+          return;
+        }
+        config.provider = { ...config.provider, name: duplicatedProvider.name };
         duplicatedProvider.addToLive = false;
       }
     }
@@ -1393,6 +1422,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            activeApp !== "cline" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1539,6 +1569,10 @@ function App() {
         className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
       >
         <div className="space-y-4">
+          {activeApp === "cline" && <ClineHubNotice />}
+          {activeApp === "cline" && (
+            <ClineCliModelNotice providers={providers} />
+          )}
           <ProviderList
             {...listCallbacks}
             providers={providers}
@@ -1548,8 +1582,8 @@ function App() {
             onSwitch={(provider) =>
               void (isPiFamilyApp(activeApp)
                 ? handleEnablePiProvider(provider, activeApp)
-                : activeApp === "kimi"
-                  ? handleAddKimiProvider(provider)
+                : activeApp === "kimi" || activeApp === "cline"
+                  ? handleAddNativeProvider(provider, activeApp)
                   : switchProvider(provider))
             }
             onRemoveFromConfig={
@@ -1559,6 +1593,7 @@ function App() {
               activeApp === "pi" ||
               activeApp === "mcode" ||
               activeApp === "kimi" ||
+              activeApp === "cline" ||
               activeApp === "dsh" ||
               activeApp === "omp"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
@@ -1574,7 +1609,9 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes" || activeApp === "kimi"
+                : activeApp === "hermes" ||
+                    activeApp === "kimi" ||
+                    activeApp === "cline"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }

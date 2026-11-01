@@ -93,6 +93,8 @@ export function isOfficialAccount(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
+  // Cline's own account login (and any other OAuth entry) keeps tokens in Cline.
+  if (appId === "cline") return provider.settingsConfig.tokenSource === "oauth";
   if (appId === "kimi") {
     const config = provider.settingsConfig.provider as
       | { type?: string; oauth?: { key?: unknown } }
@@ -129,7 +131,13 @@ export function supportsConnectivityCheck(
   appId: AppId,
   provider: Pick<Provider, "category">,
 ): boolean {
-  if (appId === "mcode" || appId === "dsh" || appId === "kimi") return false;
+  if (
+    appId === "mcode" ||
+    appId === "dsh" ||
+    appId === "kimi" ||
+    appId === "cline"
+  )
+    return false;
   return (
     provider.category !== "official" &&
     provider.category !== "omo" &&

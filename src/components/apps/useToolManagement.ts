@@ -49,6 +49,7 @@ export const TOOL_NAMES = [
   "pi",
   "mcode",
   "kimi",
+  "cline",
   "dsh",
   "agy",
   "omp",
@@ -143,6 +144,11 @@ const CLAUDE_NPM_INSTALL_COMMAND =
 const MCODE_NPM_INSTALL_COMMAND =
   'npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional "--allow-scripts=@minimax-ai/code,better-sqlite3"';
 
+// 与后端 npm_install_command_for("cline") 保持一致：postinstall 会在升级时挪开正在运行的
+// cline-hub 的发现记录。
+const CLINE_NPM_INSTALL_COMMAND =
+  "npm i -g cline@latest --ignore-scripts=false --allow-scripts=cline";
+
 // 与后端 npm_install_command_for("opencode") 保持一致：postinstall 负责把平台二进制
 // 铺到 bin/opencode.exe，npm 12 拦截后只剩文本占位文件。
 const OPENCODE_NPM_INSTALL_COMMAND =
@@ -175,6 +181,8 @@ ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} |
 npm i -g @deepseek-ai/dsh@latest --engine-strict
 # Kimi Code
 ${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
+# Cline CLI
+${CLINE_NPM_INSTALL_COMMAND}
 # Antigravity CLI
 ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Oh My Pi
@@ -202,6 +210,8 @@ ${MCODE_WINDOWS_INSTALL_COMMAND}
 npm i -g @deepseek-ai/dsh@latest --engine-strict
 # Kimi Code
 ${KIMI_WINDOWS_INSTALL_COMMAND}
+# Cline CLI
+${CLINE_NPM_INSTALL_COMMAND}
 # Antigravity CLI
 ${AGY_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
@@ -222,6 +232,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   pi: "Pi",
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
+  cline: "Cline CLI",
   dsh: "DeepSeek Harness",
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
@@ -244,6 +255,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   pi: "pi",
   mcode: "mcode",
   kimi: "kimi",
+  cline: "cline",
   dsh: "dsh",
   agy: "agy",
   omp: "omp",

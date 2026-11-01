@@ -5064,6 +5064,65 @@
       "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
     }
   },
+  "cline": {
+    "providerId": "Cline provider ID",
+    "customIdHint": "Generated from the name and fixed once saved.",
+    "builtinIdHint": "This is Cline's own provider slot; Cline keeps one entry per built-in provider.",
+    "builtinExists": "Cline already has a \"{{id}}\" provider. Edit that card instead of adding another.",
+    "protocol": "Protocol",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "Cline only appends /chat/completions or /messages and does not add /v1. Include /v1 if your endpoint needs it.",
+    "baseUrlOverride": "Base URL (optional)",
+    "baseUrlOverridePlaceholder": "Leave blank to use Cline's default endpoint",
+    "model": "Model",
+    "builtinModelHint": "Leave blank to use Cline's default model for this provider.",
+    "models": "Models",
+    "addModel": "Add model",
+    "removeModel": "Remove model",
+    "modelId": "Model ID",
+    "modelName": "Display name",
+    "contextWindow": "Context window",
+    "maxTokens": "Max output tokens",
+    "inputPrice": "Input price ($/M tokens)",
+    "outputPrice": "Output price ($/M tokens)",
+    "selectedModel": "Use this model",
+    "useModel": "Use model {{model}}",
+    "restartHint": "New or changed custom providers load only after the Cline background service (cline-hub) restarts: run `cline doctor fix`, then run cline or open the Cline desktop app again. Quitting the desktop app alone does not stop it. Setting a default needs no restart.",
+    "oauthReadOnly": "This provider signs in through Cline. Its credentials are managed in Cline and are not edited here; you can still switch to it.",
+    "duplicateBuiltinUnsupported": "Built-in Cline providers can't be duplicated. Add a custom provider instead.",
+    "preset": {
+      "customOpenAI": "Custom (OpenAI-compatible)",
+      "customAnthropic": "Custom (Anthropic-compatible)"
+    },
+    "validation": {
+      "name": "Enter a provider name.",
+      "baseUrl": "Enter a valid http(s) base URL.",
+      "headers": "Request header values must be text.",
+      "protocol": "Select a supported protocol.",
+      "protocolClient": "Anthropic and Gemini protocols need the matching client (\"anthropic\" / \"gemini\").",
+      "models": "Add at least one model.",
+      "modelId": "Every model needs a model ID.",
+      "duplicateModel": "Model IDs must be unique.",
+      "modelNumber": "Context window, token and price fields must be numbers.",
+      "selectedModel": "Select one of the declared models."
+    },
+    "empty": {
+      "title": "Add a Cline provider",
+      "description": "Add a built-in Cline provider or a custom OpenAI- or Anthropic-compatible endpoint. Providers already configured in Cline are imported automatically."
+    },
+    "deleteSessionHint": "Delete this session in Cline (cline history delete --session-id).",
+    "hub": {
+      "staleTitle": "Cline's background service still has the old custom providers",
+      "staleBody": "cline-hub (PID {{pid}}) started before the custom providers changed, so new or changed ones are not loaded yet. Quitting the Cline desktop app does not stop it. Run `{{command}}` to stop it (this ends running Cline sessions), then run cline or open the Cline desktop app again.",
+      "copyCommand": "Copy command",
+      "copied": "Copied {{command}}",
+      "copyFailed": "Couldn't copy to the clipboard"
+    },
+    "cliModel": {
+      "title": "Cline CLI's /model doesn't list custom provider models",
+      "body": "This is a limitation of the Cline CLI (the desktop app lists them). In the CLI, pass `cline -m <model ID>`, or choose \"Create custom model ID\" in /model and type the model ID. Without either, the model set here is used."
+    }
+  },
   "omp": {
     "empty": {
       "title": "No API key providers yet",

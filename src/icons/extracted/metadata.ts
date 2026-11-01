@@ -1165,7 +1165,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "cline",
     displayName: "Cline",
     category: "ai-provider",
-    keywords: ["cline", "clinepass", "cline pass"],
+    keywords: ["cline", "clinepass", "cline pass", "agent", "cli"],
     defaultColor: "currentColor",
   },
   everyapi: {
