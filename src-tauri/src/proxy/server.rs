@@ -143,6 +143,14 @@ impl ProxyServer {
         // 记录启动时间
         *self.state.start_time.write().await = Some(std::time::Instant::now());
 
+        // 订阅配额接力（issue #7493）：后台预填配置了周期额度（provider meta 的
+        // quotaCycle）的供应商的当前窗口用量，避免重启后第一个请求才补账。
+        // 失败只影响首轮判断精度（is_exhausted 首次触达会再惰性预填），不阻断启动。
+        let quota_state = self.state.clone();
+        tokio::spawn(async move {
+            quota_state.provider_router.prefill_quota_windows().await;
+        });
+
         // 启动服务器 — 使用手动 hyper HTTP/1.1 accept loop
         // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();

@@ -682,6 +682,21 @@ async fn log_usage_internal(
         usage.cache_creation_tokens
     );
 
+    // 订阅配额接力（issue #7493）：把本次请求的真实消耗计入供应商的周期额度窗口，
+    // 口径与 Usage 页 total 同款（fresh input + output + cache 写 + cache 读）。
+    // 供应商 meta 未配置 quotaCycle 时 relay 内部是 no-op；tokens 为 0 的失败/空
+    // 响应行不影响窗口。这是本地路由用量的统一漏斗，流式/非流式都经过这里。
+    let quota_tokens = usage.input_tokens as i64
+        + usage.output_tokens as i64
+        + usage.cache_read_tokens as i64
+        + usage.cache_creation_tokens as i64;
+    if quota_tokens > 0 {
+        state
+            .provider_router
+            .record_quota_usage(app_type, provider_id, quota_tokens)
+            .await;
+    }
+
     // #7818：使用量写入要拿 Database 的单把 std::sync::Mutex<Connection> 并做
     // 磁盘 IO，同步执行会卡住 tokio worker，移到阻塞线程池执行。计费模式
     // 读取走同一把锁，一并移入。

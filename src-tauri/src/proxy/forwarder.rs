@@ -10,6 +10,7 @@ use super::{
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
+    log_codes::qta as log_qta,
     opaque_state_rectifier::{
         carries_encrypted_agent_task, detect_opaque_state_rejection, rectify_opaque_state,
         unreadable_agent_task_error, OpaqueStateRejection,
@@ -808,6 +809,7 @@ impl RequestForwarder {
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
+        let mut quota_skipped_providers = 0usize;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
         let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
@@ -830,6 +832,34 @@ impl RequestForwarder {
                     self.max_attempts
                 );
                 break;
+            }
+
+            // 订阅配额接力（issue #7493）：provider meta 配置了 `quotaCycle` 且当前
+            // 周期用量已达上限时跳过，让故障转移落到队列里的下一家。
+            // - 只在真正的故障转移链（>1 家）生效：单家场景没有可接力的下一家，把上游
+            //   自己的 429/400 透传回去比笼统的 503 更有信息量；Stack 请求不参与路由。
+            // - 放在熔断器 permit 检查之前，避免占用 HalfOpen 探测名额后被配额跳过
+            //   导致名额泄漏（与上面的 max_attempts 检查同理）。
+            // - 这里只是「跳过本次重试」：真正的供应商切换仍由成功路径的
+            //   finish_success → failover_manager.try_switch 触发。
+            if providers.len() > 1 && self.routing_state_enabled() {
+                if let Some(cycle) = provider.meta.as_ref().and_then(|m| m.quota_cycle.as_ref()) {
+                    if self
+                        .router
+                        .is_quota_exhausted(app_type_str, &provider.id, cycle)
+                        .await
+                    {
+                        quota_skipped_providers += 1;
+                        log::debug!(
+                            "[{app_type_str}] [{}] provider={} 当前周期额度已用尽（cap={} tokens/{}h），跳过，尝试下一家",
+                            log_qta::PROVIDER_SKIPPED,
+                            provider.id,
+                            cycle.token_cap,
+                            cycle.duration_hours
+                        );
+                        continue;
+                    }
+                }
             }
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
@@ -1337,9 +1367,16 @@ impl RequestForwarder {
         }
 
         if attempted_providers == 0 {
-            // providers 列表非空，但全部被熔断器拒绝（典型：HalfOpen 探测名额被占用）
-            self.record_failed_request("所有供应商暂时不可用（熔断器限制）".to_string())
-                .await;
+            // providers 列表非空，但全部被前置跳过（周期额度用尽或熔断器限制）
+            let reason = if quota_skipped_providers > 0 {
+                format!(
+                    "[{}] 所有供应商当前周期额度已用尽（订阅配额接力跳过 {quota_skipped_providers} 家）",
+                    log_qta::ALL_QUOTA_EXHAUSTED
+                )
+            } else {
+                "所有供应商暂时不可用（熔断器限制）".to_string()
+            };
+            self.record_failed_request(reason).await;
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
