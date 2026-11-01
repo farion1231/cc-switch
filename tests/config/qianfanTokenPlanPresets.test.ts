@@ -17,7 +17,6 @@ const ANTHROPIC_BASE =
   "https://qianfan.baidubce.com/anthropic/tokenplan/personal";
 // 阵容=Token Plan 主文档（2026-08-14 版）；ernie-5.1 官方标注 8/20 下线不收
 const MODEL_IDS = [
-  "deepseek-v4-pro",
   "deepseek-v4-flash",
   "deepseek-v4-flash-0731",
   "glm-5.2",
@@ -26,13 +25,14 @@ const MODEL_IDS = [
 ];
 
 describe("Baidu Qianfan Token Plan presets", () => {
-  it("Claude preset points every model role at deepseek-v4-pro", () => {
+  it("Claude preset points every model role at deepseek-v4-flash", () => {
     const preset = providerPresets.find((item) => item.name === PRESET_NAME);
     expect(preset).toBeDefined();
 
     const env = (preset?.settingsConfig as { env: Record<string, string> }).env;
     expect(env.ANTHROPIC_BASE_URL).toBe(ANTHROPIC_BASE);
-    // 官方 Claude Code 接入页（2026-07-30 版）全角色 deepseek-v4-pro；
+    // 官方 Claude Code 接入页（2026-07-30 版）全角色 deepseek-v4-pro，
+    // 2026-10-25 起因 Pro 贵且效果不如 Flash 改为全角色 deepseek-v4-flash；
     // 各档预勾 1M（模型名带 [1M] 标记）
     for (const key of [
       "ANTHROPIC_MODEL",
@@ -40,7 +40,7 @@ describe("Baidu Qianfan Token Plan presets", () => {
       "ANTHROPIC_DEFAULT_SONNET_MODEL",
       "ANTHROPIC_DEFAULT_OPUS_MODEL",
     ]) {
-      expect(env[key], key).toBe("deepseek-v4-pro[1M]");
+      expect(env[key], key).toBe("deepseek-v4-flash[1M]");
     }
   });
 
@@ -66,7 +66,7 @@ describe("Baidu Qianfan Token Plan presets", () => {
     expect(Object.keys(preset?.settingsConfig.models ?? {})).toEqual(MODEL_IDS);
   });
 
-  it("Hermes preset uses the OpenAI-compatible endpoint with v4-pro default", () => {
+  it("Hermes preset uses the OpenAI-compatible endpoint with v4-flash default", () => {
     const preset = hermesProviderPresets.find(
       (item) => item.name === PRESET_NAME,
     );
@@ -77,7 +77,7 @@ describe("Baidu Qianfan Token Plan presets", () => {
       (preset?.settingsConfig.models ?? []).map((model) => model.id),
     ).toEqual(MODEL_IDS);
     expect(preset?.suggestedDefaults?.model).toEqual({
-      default: "deepseek-v4-pro",
+      default: "deepseek-v4-flash",
       provider: "qianfan_tokenplan",
     });
   });
@@ -91,17 +91,14 @@ describe("Baidu Qianfan Token Plan presets", () => {
     expect(preset?.settingsConfig.api).toBe("openai-completions");
 
     // 模型条目=官方 OpenClaw 接入页（2026-07-22 版）原样。窗口 98304 是官方
-    // 钦定的 OpenClaw 口径，≠平台模型列表页 1M——勿按平台口径"修正"
+    // 钦定的 OpenClaw 口径，≠平台模型列表页 1M——勿按平台口径"修正"。
+    // 2026-10-25 起模型由 deepseek-v4-pro 换成 deepseek-v4-flash（Pro 贵且
+    // 效果不如 Flash），接入页只给了 Pro 的 cost，Flash 不写
     const model = preset?.settingsConfig.models?.[0];
-    expect(model?.id).toBe("deepseek-v4-pro");
+    expect(model?.id).toBe("deepseek-v4-flash");
     expect(model?.contextWindow).toBe(98304);
     expect(model?.maxTokens).toBe(65536);
-    expect(model?.cost).toEqual({
-      input: 0.0025,
-      output: 0.01,
-      cacheRead: 0,
-      cacheWrite: 0,
-    });
+    expect(model?.cost).toBeUndefined();
   });
 
   it("rebases OpenClaw defaults to the submitted provider key", () => {
@@ -114,7 +111,7 @@ describe("Baidu Qianfan Token Plan presets", () => {
       preset!.suggestedDefaults!,
       "my-qianfan",
     );
-    expect(rebased.model?.primary).toBe("my-qianfan/deepseek-v4-pro");
-    expect(rebased.modelCatalog).toHaveProperty("my-qianfan/deepseek-v4-pro");
+    expect(rebased.model?.primary).toBe("my-qianfan/deepseek-v4-flash");
+    expect(rebased.modelCatalog).toHaveProperty("my-qianfan/deepseek-v4-flash");
   });
 });

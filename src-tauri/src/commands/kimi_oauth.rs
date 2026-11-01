@@ -45,6 +45,8 @@ pub async fn kimi_oauth_remove(
     state: State<'_, KimiOAuthManager>,
     app_state: State<'_, AppState>,
 ) -> Result<(), String> {
+    // Listing Kimi providers writes native entries back to the database too.
+    let _guard = app_state.proxy_service.lock_switch_for_app("kimi").await;
     state
         .remove(&account_id, || {
             app_state.db.delete_provider("kimi", &account_id)?;
@@ -59,6 +61,15 @@ pub async fn kimi_oauth_quota(
     state: State<'_, KimiOAuthManager>,
 ) -> Result<SubscriptionQuota, String> {
     state.quota(&account_id).await
+}
+
+/// The account's current official model catalog, for editing its card.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn kimi_oauth_models(
+    account_id: String,
+    state: State<'_, KimiOAuthManager>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    state.models(&account_id).await
 }
 
 #[tauri::command(rename_all = "camelCase")]

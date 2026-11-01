@@ -221,6 +221,8 @@ export interface ProviderMeta {
   xaiPriority?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Claude route → OpenAI Chat / Responses: how the client's thinking effort is sent upstream (absent = auto)
+  claudeReasoningEffort?: ClaudeReasoningEffortMode;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).
@@ -272,6 +274,9 @@ export type ClaudeApiFormat =
   | "openai_responses"
   | "gemini_native";
 
+// Claude 路由经 OpenAI Chat / Responses 转发时思考档位的发法；缺省 = 自动
+export type ClaudeReasoningEffortMode = "off" | "passthrough";
+
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
@@ -319,7 +324,9 @@ export interface VisibleApps {
   pi: boolean;
   mcode: boolean;
   kimi: boolean;
+  dsh?: boolean;
   agy: boolean;
+  omp: boolean;
 }
 
 // WebDAV 同步状态
@@ -465,6 +472,8 @@ export interface Settings {
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
+  // 应用页和侧栏的应用顺序（应用 ID，拖动排序后写入；缺的应用按默认顺序插回）
+  appOrder?: string[];
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
@@ -483,6 +492,8 @@ export interface Settings {
   hermesConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
+  // 覆盖 Oh My Pi agent 配置目录（可选）
+  ompConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -769,6 +780,7 @@ export interface McpServerSpec {
 export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
+  dsh?: boolean;
   agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
@@ -779,6 +791,7 @@ export interface McpApps {
   openclaw: boolean;
   hermes: boolean;
   pi?: boolean;
+  omp?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）

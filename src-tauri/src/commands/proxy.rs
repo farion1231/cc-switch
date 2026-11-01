@@ -97,12 +97,17 @@ pub async fn set_proxy_takeover_for_app(
 
 /// 应用页模式行用：生效的模式、路由目标（直连时是上次路由的那家）、直连那家。
 #[tauri::command]
-pub fn get_app_mode(
+pub async fn get_app_mode(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<crate::mode::controller::AppModeView, String> {
     let app = require_mode_app(&app_type)?;
-    crate::mode::controller::app_mode_view(state.inner(), &app)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::mode::controller::app_mode_view(&state, &app)
+    })
+    .await
+    .map_err(|e| format!("读取应用模式任务失败: {e}"))?
 }
 
 /// 指定路由目标（聚合模式下是默认那家）。直连模式下只记下来，下次进入路由 / 聚合模式时用它；
@@ -139,12 +144,17 @@ pub async fn exit_proxy_apps_in_mode(
 
 /// 直连指针：代理模式下退出代理时写回的供应商
 #[tauri::command]
-pub fn get_direct_provider(
+pub async fn get_direct_provider(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<Option<String>, String> {
     let app = require_mode_app(&app_type)?;
-    crate::mode::controller::direct_provider_id(state.inner(), &app).map_err(|e| e.to_string())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::mode::controller::direct_provider_id(&state, &app).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取直连供应商任务失败: {e}"))?
 }
 
 /// Stack 模型：名单里的每一家和它发布的模型 id，以及还在用旧模型列表的 Codex 客户端

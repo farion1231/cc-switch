@@ -1,7 +1,7 @@
 //! Import Kimi Code's committed request usage. Tokens are already normalized to fresh input.
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::kimi_session::{timestamp_ms, RequestIndex};
+use crate::kimi_session::{timestamp_ms, RequestIndex, RequestInfo};
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::{
     session_usage::{
@@ -35,34 +35,41 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
             continue;
         };
         for session in sessions.flatten() {
-            let path = session.path().join("agents/main/wire.jsonl");
-            if !path.is_file() {
+            // The main agent and every subagent (`agents/agent-N`) keep separate wires.
+            let Ok(agents) = fs::read_dir(session.path().join("agents")) else {
                 continue;
-            }
-            let modified = fs::metadata(&path)
-                .map(|meta| metadata_modified_nanos(&meta))
-                .unwrap_or(0);
-            let key = format!("kimi:{}", path.to_string_lossy());
-            if cursors.get(&key).is_some_and(|cursor| {
-                cursor.last_modified == modified
-                    && cursor.last_line_offset
-                        == fs::metadata(&path)
-                            .map(|meta| meta.len() as i64)
-                            .unwrap_or(-1)
-            }) {
-                continue;
-            }
-            match sync_file(
-                db,
-                &path,
-                &session.file_name().to_string_lossy(),
-                &key,
-                modified,
-            ) {
-                Ok(part) => result.merge(part),
-                Err(error) => result
-                    .errors
-                    .push(format!("Kimi Code session {}: {error}", path.display())),
+            };
+            for agent in agents.flatten() {
+                let path = agent.path().join("wire.jsonl");
+                if !path.is_file() {
+                    continue;
+                }
+                let modified = fs::metadata(&path)
+                    .map(|meta| metadata_modified_nanos(&meta))
+                    .unwrap_or(0);
+                let key = format!("kimi:{}", path.to_string_lossy());
+                if cursors.get(&key).is_some_and(|cursor| {
+                    cursor.last_modified == modified
+                        && cursor.last_line_offset
+                            == fs::metadata(&path)
+                                .map(|meta| meta.len() as i64)
+                                .unwrap_or(-1)
+                }) {
+                    continue;
+                }
+                match sync_file(
+                    db,
+                    &path,
+                    &agent.file_name().to_string_lossy(),
+                    &session.file_name().to_string_lossy(),
+                    &key,
+                    modified,
+                ) {
+                    Ok(part) => result.merge(part),
+                    Err(error) => result
+                        .errors
+                        .push(format!("Kimi Code session {}: {error}", path.display())),
+                }
             }
         }
     }
@@ -72,6 +79,7 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
 fn sync_file(
     db: &Database,
     path: &Path,
+    agent: &str,
     session: &str,
     key: &str,
     modified: i64,
@@ -80,7 +88,12 @@ fn sync_file(
     let mut reader = BufReader::new(file);
     let mut buffer = Vec::new();
     let mut bytes = 0i64;
-    let mut requests = RequestIndex::default();
+    let main = agent == "main";
+    let mut requests = if main {
+        RequestIndex::default()
+    } else {
+        RequestIndex::for_agent(agent)
+    };
     let mut pending = Vec::new();
     let mut result = SessionSyncResult {
         files_scanned: 1,
@@ -103,19 +116,40 @@ fn sync_file(
             continue;
         };
         requests.observe(&record);
-        if !matches!(
-            record["type"].as_str(),
-            Some("agent.message.appended" | "human.agent.message.appended")
-        ) || record
-            .pointer("/message/message/role")
-            .and_then(Value::as_str)
-            != Some("assistant")
-        {
-            continue;
-        }
-        let meta = &record["message"]["meta"];
-        let Some(usage) = meta.get("usage") else {
-            continue;
+        let (meta, usage) = if main {
+            if !matches!(
+                record["type"].as_str(),
+                Some("agent.message.appended" | "human.agent.message.appended")
+            ) || record
+                .pointer("/message/message/role")
+                .and_then(Value::as_str)
+                != Some("assistant")
+            {
+                continue;
+            }
+            let meta = record["message"]["meta"].clone();
+            let Some(usage) = meta.get("usage").cloned() else {
+                continue;
+            };
+            (meta, usage)
+        } else {
+            // Subagent replies never reach the human projection; each completed step
+            // carries its own usage, and the parent's subagent.completed summary is not
+            // imported, so nothing is counted twice.
+            let event = &record["event"];
+            if record["type"].as_str() != Some("context.append_loop_event")
+                || event["type"].as_str() != Some("step.end")
+            {
+                continue;
+            }
+            let Some(usage) = event.get("usage").cloned() else {
+                continue;
+            };
+            let meta = serde_json::json!({
+                "messageId": event["messageId"],
+                "model": {"provider": "subagent"},
+            });
+            (meta, usage)
         };
         let Some(created) = timestamp_ms(&record["time"]) else {
             continue;
@@ -150,7 +184,7 @@ fn sync_file(
         let request = format!("kimi:{provider}:{identity}");
         // Retain only metadata and usage. step.end may appear after the human projection
         // (and after tools); resolve its messageId before taking the database lock.
-        pending.push((request, meta.clone(), usage, created));
+        pending.push((request, meta, usage, created));
     }
     let mut conn = lock_conn!(db.conn);
     let tx = conn.transaction()?;
@@ -160,11 +194,12 @@ fn sync_file(
         let info = requests.get(&meta);
         let latency = info.map_or(0, |info| info.latency_ms);
         let first_token = info.and_then(|info| info.first_token_ms);
+        let started = info.and_then(|info| info.request_ms);
         // Permanent receipts prevent re-import after wire rewrites, forks, or log pruning.
         if tx.execute("INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id) VALUES ('kimi_session', ?1, ?1, 1)", [&request])? == 0 {
             // As with Claude imports, enrichment counts as changed data so the normal
             // usage-log-recorded notification refreshes open tables and detail panels.
-            if refresh_existing(&tx, &request, model, &usage, latency, first_token)? {
+            if refresh_existing(&tx, &request, model, &usage, info, created)? {
                 result.imported += 1;
             } else {
                 result.skipped += 1;
@@ -178,12 +213,19 @@ fn sync_file(
             latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
         ) VALUES (?1, '_kimi_session', 'kimi', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'kimi_session', 1, '1', ?13, 'kimi_session', ?14)",
             rusqlite::params![request, model, usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_creation_tokens,
-                amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, created/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token])?;
+                amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, started.map_or(created, |start| completed_ms(start, latency, created))/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token])?;
         result.imported += 1;
     }
     update_sync_state_on_conn(&tx, key, modified, bytes)?;
     tx.commit()?;
     Ok(result)
+}
+
+/// Kimi commits a whole turn's messages at once, so a committed record's own time is the
+/// commit, shared by every request in the turn. Date each request by when its model call
+/// finished instead, which is also when the proxy records requests.
+fn completed_ms(started: i64, latency: i64, committed: i64) -> i64 {
+    started.saturating_add(latency).min(committed)
 }
 
 fn costs(
@@ -214,18 +256,20 @@ fn refresh_existing(
     request: &str,
     model: &str,
     usage: &TokenUsage,
-    latency: i64,
-    first_token: Option<i64>,
+    info: Option<&RequestInfo>,
+    committed: i64,
 ) -> Result<bool, AppError> {
-    let stored: Option<(String, String, i64, Option<i64>)> = conn
+    let latency = info.map_or(0, |info| info.latency_ms);
+    let first_token = info.and_then(|info| info.first_token_ms);
+    let stored: Option<(String, String, i64, Option<i64>, i64)> = conn
         .query_row(
-            "SELECT model, cost_multiplier, latency_ms, first_token_ms FROM proxy_request_logs
+            "SELECT model, cost_multiplier, latency_ms, first_token_ms, created_at FROM proxy_request_logs
          WHERE request_id = ?1 AND app_type = 'kimi' AND data_source = 'kimi_session'",
             [request],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .optional()?;
-    let Some((old_model, multiplier, old_latency, old_first)) = stored else {
+    let Some((old_model, multiplier, old_latency, old_first, old_created)) = stored else {
         return Ok(false);
     };
     let model_changed = model != old_model && model != "unknown";
@@ -236,7 +280,17 @@ fn refresh_existing(
         old_latency
     };
     let first_token = first_token.or(old_first).filter(|first| *first <= latency);
-    if !model_changed && latency == old_latency && first_token == old_first {
+    // Rows imported before their request events were readable carry the commit time.
+    let created = info
+        .and_then(|info| info.request_ms)
+        .map_or(old_created, |start| {
+            completed_ms(start, latency, committed) / 1000
+        });
+    if !model_changed
+        && latency == old_latency
+        && first_token == old_first
+        && created == old_created
+    {
         return Ok(false);
     }
     if model_changed {
@@ -257,9 +311,9 @@ fn refresh_existing(
         )?;
     }
     conn.execute(
-        "UPDATE proxy_request_logs SET latency_ms = ?2, first_token_ms = ?3
+        "UPDATE proxy_request_logs SET latency_ms = ?2, first_token_ms = ?3, created_at = ?4
          WHERE request_id = ?1 AND app_type = 'kimi' AND data_source = 'kimi_session'",
-        rusqlite::params![request, latency, first_token],
+        rusqlite::params![request, latency, first_token, created],
     )?;
     Ok(true)
 }
@@ -324,7 +378,7 @@ mod tests {
         ));
         write_records(&path, &records);
         assert_eq!(
-            sync_file(&db, &path, "session", "file", 1)
+            sync_file(&db, &path, "main", "session", "file", 1)
                 .unwrap()
                 .imported,
             2
@@ -385,7 +439,7 @@ mod tests {
         let records = request("live", "real-model", 1_700_000_000_000, 2_000, 8_000, 500);
         write_records(&path, &records[..4]);
         assert_eq!(
-            sync_file(&db, &path, "session", "file", 1)
+            sync_file(&db, &path, "main", "session", "file", 1)
                 .unwrap()
                 .imported,
             1
@@ -403,7 +457,7 @@ mod tests {
         }
         write_records(&path, &records);
         assert_eq!(
-            sync_file(&db, &path, "session", "file", 2)
+            sync_file(&db, &path, "main", "session", "file", 2)
                 .unwrap()
                 .imported,
             1
@@ -421,14 +475,16 @@ mod tests {
         // Identical scans and truncated copies must neither trigger refreshes nor erase
         // the native metadata that has already been resolved for this message.
         assert_eq!(
-            sync_file(&db, &path, "session", "file", 3)
+            sync_file(&db, &path, "main", "session", "file", 3)
                 .unwrap()
                 .imported,
             0
         );
         write_records(&path, &records[..4]);
         assert_eq!(
-            sync_file(&db, &path, "fork", "fork", 4).unwrap().imported,
+            sync_file(&db, &path, "main", "fork", "fork", 4)
+                .unwrap()
+                .imported,
             0
         );
         let conn = db.conn.lock().unwrap();
@@ -443,15 +499,84 @@ mod tests {
     }
 
     #[test]
+    fn kimi_usage_dates_batch_committed_messages_by_their_requests() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wire.jsonl");
+        let commit = 1_700_000_900_000;
+        // Kimi commits a turn's messages together, all stamped with the commit time.
+        let mut records = Vec::new();
+        for (id, start) in [("one", 1_700_000_000_000i64), ("two", 1_700_000_300_000)] {
+            let mut step = request(id, "model", start, 1_000, 2_000, 10);
+            step.remove(3);
+            records.extend(step);
+        }
+        records.push(message("one", commit, 10));
+        records.push(message("two", commit, 10));
+        write_records(&path, &records);
+        assert_eq!(
+            sync_file(&db, &path, "main", "session", "file", 1)
+                .unwrap()
+                .imported,
+            2
+        );
+        let created = |db: &Database| -> Vec<i64> {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT created_at FROM proxy_request_logs ORDER BY request_id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(created(&db), vec![1_700_000_003, 1_700_000_303]);
+        // Rows imported with the commit time are corrected when the wire is read again.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE proxy_request_logs SET created_at = ?1",
+                [commit / 1000],
+            )
+            .unwrap();
+        assert_eq!(
+            sync_file(&db, &path, "main", "session", "file", 2)
+                .unwrap()
+                .imported,
+            2
+        );
+        assert_eq!(created(&db), vec![1_700_000_003, 1_700_000_303]);
+        let receipts: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM session_usage_dedup", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(receipts, 2);
+    }
+
+    #[test]
     fn kimi_usage_normalizes_tokens_and_does_not_reimport_pruned_or_forked_history() {
         let db = Database::memory().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wire.jsonl");
         let row = json!({"type":"agent.message.appended","time":1700000000000i64,"message":{"message":{"role":"assistant","content":[{"type":"text","text":"Done"}]},"meta":{"messageId":"request-1","model":{"provider":"custom","model":"vendor/model"},"usage":{"inputOther":10,"output":20,"inputCacheRead":30,"inputCacheCreation":40}}}});
         fs::write(&path, format!("{row}\n")).unwrap();
-        assert_eq!(sync_file(&db, &path, "s1", "first", 1).unwrap().imported, 1);
         assert_eq!(
-            sync_file(&db, &path, "fork", "forked", 2).unwrap().imported,
+            sync_file(&db, &path, "main", "s1", "first", 1)
+                .unwrap()
+                .imported,
+            1
+        );
+        assert_eq!(
+            sync_file(&db, &path, "main", "fork", "forked", 2)
+                .unwrap()
+                .imported,
             0
         );
         let conn = db.conn.lock().unwrap();
@@ -460,9 +585,102 @@ mod tests {
         conn.execute("DELETE FROM proxy_request_logs", []).unwrap();
         drop(conn);
         assert_eq!(
-            sync_file(&db, &path, "s1", "rewritten", 3)
+            sync_file(&db, &path, "main", "s1", "rewritten", 3)
                 .unwrap()
                 .imported,
+            0
+        );
+    }
+
+    fn subagent_step(agent: &str, id: &str, model: &str, start: i64, output: u64) -> Vec<Value> {
+        let usage =
+            json!({"inputOther":10,"output":output,"inputCacheRead":30,"inputCacheCreation":0});
+        vec![
+            json!({"type":"context.append_loop_event","time":start-10,"event":{"type":"step.begin","uuid":id,"turnId":"0","step":1}}),
+            json!({"type":"llm.request","time":start,"agentId":agent,"kind":"loop","turnStep":"0.1","provider":"openai","model":model}),
+            json!({"type":"usage.record","time":start+900,"agentId":agent,"model":format!("kimi-code/{model}"),"usage":usage,"usageScope":"turn"}),
+            json!({"type":"context.append_loop_event","time":start+1_000,"event":{"type":"step.end","uuid":id,"turnId":"0","step":1,"usage":usage,"messageId":id,"llmFirstTokenLatencyMs":200,"llmStreamDurationMs":800}}),
+        ]
+    }
+
+    #[test]
+    fn kimi_usage_imports_subagent_wires_once() {
+        let db = Database::memory().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let session = root.path().join("wd_project/session_one/agents");
+        write_records(
+            &session.join("main/wire.jsonl"),
+            &[
+                request("main-step", "main-model", 1_700_000_000_000, 1_000, 1_000, 50),
+                // The parent only records lifecycle events for its subagents.
+                vec![json!({"type":"subagent.spawned","subagentId":"agent-0","time":1_700_000_001_000i64})],
+            ]
+            .concat(),
+        );
+        let mut child = vec![
+            json!({"type":"agent.message.appended","time":1_700_000_001_000i64,"message":{"message":{"role":"user","content":[]},"meta":{}}}),
+        ];
+        child.extend(subagent_step(
+            "agent-0",
+            "child-1",
+            "child-model",
+            1_700_000_002_000,
+            70,
+        ));
+        child.extend(subagent_step(
+            "agent-0",
+            "child-2",
+            "child-model",
+            1_700_000_004_000,
+            90,
+        ));
+        // Requests attributed to another agent must not leak into this wire's models.
+        child.push(
+            json!({"type":"llm.request","agentId":"agent-1","kind":"loop","model":"other-model"}),
+        );
+        write_records(&session.join("agent-0/wire.jsonl"), &child);
+
+        let result = sync_sessions(&db, root.path()).unwrap();
+        assert_eq!((result.files_scanned, result.imported), (2, 3));
+        {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT model, output_tokens, latency_ms, session_id FROM proxy_request_logs ORDER BY created_at, output_tokens")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(
+                rows,
+                vec![
+                    ("main-model".into(), 50, 2_000, "session_one".into()),
+                    ("child-model".into(), 70, 1_000, "session_one".into()),
+                    ("child-model".into(), 90, 1_000, "session_one".into()),
+                ]
+            );
+        }
+        // Unchanged wires are skipped; a forced rescan finds every step already recorded.
+        assert_eq!(sync_sessions(&db, root.path()).unwrap().files_scanned, 0);
+        assert_eq!(
+            sync_file(
+                &db,
+                &session.join("agent-0/wire.jsonl"),
+                "agent-0",
+                "session_one",
+                "rescan",
+                9
+            )
+            .unwrap()
+            .imported,
             0
         );
     }
@@ -474,7 +692,9 @@ mod tests {
         let path = dir.path().join("wire.jsonl");
         fs::write(&path, "{\"type\":").unwrap();
         assert_eq!(
-            sync_file(&db, &path, "s", "partial", 1).unwrap().imported,
+            sync_file(&db, &path, "main", "s", "partial", 1)
+                .unwrap()
+                .imported,
             0
         );
         let cursor: i64 = db
