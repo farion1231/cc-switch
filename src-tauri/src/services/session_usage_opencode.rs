@@ -12,7 +12,9 @@
 //! ```
 //!
 //! OpenCode V2 把会话数据迁移到 `session_v2` / `session_message` 并冻结 V1
-//! 表，因此检测到 V2 表时优先读取 V2；未迁移的库继续走 V1 布局。
+//! 表。用户继续使用 1.x 时仍会写入 V1，因此两套表共存时合并读取；合并读取
+//! 从识别出混合布局前最后一次成功扫描（没有则从首次识别）时开始计数，不回填
+//! 旧版本漏算的历史。
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -24,6 +26,7 @@ use crate::services::session_usage::{
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
+use std::collections::HashSet;
 use std::fs;
 use std::time::SystemTime;
 
@@ -51,19 +54,22 @@ struct OpenCodeMessageQueryResult {
 /// OpenCode 数据库的存储布局。
 ///
 /// V1 使用 `session` / `message` 表；V2（OpenCode 2.x）把会话数据迁移到
-/// `session_v2` / `session_message` 并停止写入 V1 表。迁移后 V1 表仍然存在
-/// 但内容冻结，因此检测到 V2 表时必须优先读取 V2。
+/// `session_v2` / `session_message`。迁移后继续运行 1.x 时，V1 也可能更新。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenCodeSchema {
     V1,
     V2,
+    Mixed,
 }
 
-/// 探测数据库使用的存储布局：`session_v2` 与 `session_message` 同时存在
-/// 视为 V2，否则回退 V1。
+/// 两套完整的会话/消息表共存时同时读取，不能把残留 V2 表当作活跃版本。
 fn detect_schema(conn: &rusqlite::Connection) -> Result<OpenCodeSchema, AppError> {
     if sqlite_table_exists(conn, "session_v2")? && sqlite_table_exists(conn, "session_message")? {
-        Ok(OpenCodeSchema::V2)
+        if sqlite_table_exists(conn, "session")? && sqlite_table_exists(conn, "message")? {
+            Ok(OpenCodeSchema::Mixed)
+        } else {
+            Ok(OpenCodeSchema::V2)
+        }
     } else {
         Ok(OpenCodeSchema::V1)
     }
@@ -80,8 +86,13 @@ fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool,
 
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    let db_path = get_opencode_db_path();
+    sync_opencode_usage_from_path(db, &get_opencode_db_path())
+}
 
+fn sync_opencode_usage_from_path(
+    db: &Database,
+    db_path: &std::path::Path,
+) -> Result<SessionSyncResult, AppError> {
     if !db_path.exists() {
         return Ok(SessionSyncResult {
             imported: 0,
@@ -99,7 +110,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     // opencode 的数据库运行在 WAL 模式：新提交先落在 -wal 文件里，
     // 主库文件只有在 checkpoint 时才更新。因此必须同时考虑 -wal 的
     // mtime，否则会在 checkpoint 之前漏掉刚写入的会话。
-    let metadata = fs::metadata(&db_path)
+    let metadata = fs::metadata(db_path)
         .map_err(|e| AppError::Config(format!("无法读取 opencode.db 元数据: {e}")))?;
     let mut file_modified = metadata_modified_nanos(&metadata);
 
@@ -108,7 +119,38 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
     }
 
+    // 打开 opencode 的 SQLite 数据库（只读）
+    let opencode_conn =
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
+    let schema = detect_schema(&opencode_conn)?;
     let cursors = crate::services::session_usage::load_sync_cursors(db)?;
+
+    // 混合布局只统计起点之后更新的消息（毫秒，与 time_updated 同单位）：
+    // 不回填旧版本漏算的历史，也避免明细已汇总删除的旧消息被重新导入而重复计数。
+    // 必须在 mtime 提前返回之前固定，确保首次识别时就记下起点。
+    let mixed_cutoff_ms = if schema == OpenCodeSchema::Mixed {
+        let cutoff_key = format!("{db_path_str}:mixed-v1-v2-since");
+        match cursors.get(&cutoff_key) {
+            Some(cursor) => cursor.last_modified,
+            None => {
+                // 已扫描过的库从上次成功扫描时的文件 mtime（纳秒）起算：升级前
+                // 刚写入、旧版本本应按 V2 导入的用量不能被起点挡掉。
+                let cutoff_ms = match cursors.get(&db_path_str) {
+                    Some(cursor) if cursor.last_modified > 0 => cursor.last_modified / 1_000_000,
+                    _ => SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0),
+                };
+                update_sync_state(db, &cutoff_key, cutoff_ms, 0)?;
+                cutoff_ms
+            }
+        }
+    } else {
+        0
+    };
+
     let last_modified = cursors.get(&db_path_str).map_or(0, |c| c.last_modified);
 
     // 文件未变化则跳过
@@ -123,11 +165,6 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         });
     }
 
-    // 打开 opencode 的 SQLite 数据库（只读）
-    let opencode_conn =
-        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
-
     let mut result = SessionSyncResult {
         imported: 0,
         skipped: 0,
@@ -138,24 +175,25 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     };
     let mut has_sync_errors = false;
 
-    let schema = detect_schema(&opencode_conn)?;
-
     // 查询所有会话
     let sessions = query_sessions(&opencode_conn, schema)?;
 
     for (session_id, time_updated) in &sessions {
         // 检查会话是否需要重新同步
         let sync_key = format!("{db_path_str}:{session_id}");
-        let sess_last_modified = cursors.get(&sync_key).map_or(0, |c| c.last_modified);
+        let sess_last_modified = cursors
+            .get(&sync_key)
+            .map_or(0, |c| c.last_modified)
+            .max(mixed_cutoff_ms);
         if *time_updated <= sess_last_modified {
-            continue; // 会话未更新，跳过
+            continue; // 会话未更新（或混合布局下起点之后未更新），跳过
         }
 
         let mut session_had_error = false;
 
         // 查询该会话的所有 assistant 消息
         let mut session_has_incomplete_usage = false;
-        match query_assistant_messages(&opencode_conn, schema, session_id) {
+        match query_assistant_messages(&opencode_conn, schema, session_id, mixed_cutoff_ms) {
             Ok(query_result) => {
                 session_has_incomplete_usage = query_result.has_incomplete_usage;
                 for (message_id, msg_data) in &query_result.messages {
@@ -222,21 +260,28 @@ fn query_sessions(
     conn: &rusqlite::Connection,
     schema: OpenCodeSchema,
 ) -> Result<Vec<(String, i64)>, AppError> {
-    let sessions_table = match schema {
-        OpenCodeSchema::V1 => "session",
-        OpenCodeSchema::V2 => "session_v2",
+    let tables: &[(&str, &str)] = match schema {
+        OpenCodeSchema::V1 => &[("session", "message")],
+        OpenCodeSchema::V2 => &[("session_v2", "session_message")],
+        OpenCodeSchema::Mixed => &[("session_v2", "session_message"), ("session", "message")],
     };
-    let messages_table = match schema {
-        OpenCodeSchema::V1 => "message",
-        OpenCodeSchema::V2 => "session_message",
-    };
-    let sql = format!(
-        "SELECT s.id,
+    let queries = tables
+        .iter()
+        .map(|(sessions_table, messages_table)| {
+            format!(
+                "SELECT s.id,
                 MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) AS sync_watermark
          FROM {sessions_table} s
          LEFT JOIN {messages_table} m ON m.session_id = s.id
-         GROUP BY s.id
-         ORDER BY sync_watermark"
+         GROUP BY s.id"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+    // 同一会话可能在迁移后由两个版本继续写入，任一侧消息更新都需要扫描。
+    let sql = format!(
+        "SELECT id, MAX(sync_watermark) AS sync_watermark FROM ({queries})
+         GROUP BY id ORDER BY sync_watermark, id"
     );
     let mut stmt = conn
         .prepare(&sql)
@@ -258,10 +303,14 @@ fn query_sessions(
 
 /// 查询某会话的已完成计费消息（V1: assistant，V2: assistant + compaction），
 /// 并标记是否还有未完成 usage 消息。
+///
+/// `mixed_cutoff_ms` 仅对混合布局生效：只返回该时间之后更新的消息。起点时
+/// 尚未完成的消息完成时会刷新 time_updated，因此仍会被采到。
 fn query_assistant_messages(
     conn: &rusqlite::Connection,
     schema: OpenCodeSchema,
     session_id: &str,
+    mixed_cutoff_ms: i64,
 ) -> Result<OpenCodeMessageQueryResult, AppError> {
     // V2 的消息类型记录在 `type` 列上，上下文压缩请求的用量写在
     // type='compaction' 行（V1 中压缩摘要是 assistant 消息，无需特判）；
@@ -275,13 +324,30 @@ fn query_assistant_messages(
              WHERE session_id = ?1 AND type IN ('assistant', 'compaction') \
              ORDER BY time_created"
         }
+        OpenCodeSchema::Mixed => {
+            // 消息 ID 在迁移时保持不变。先读更新时间最新的副本，时间相同
+            // 时优先 V2；去重必须在完成状态判断之前，防止导入过期快照。
+            "SELECT id, data, type FROM (
+                 SELECT id, data, type, time_updated, 0 AS layout_priority
+                 FROM session_message
+                 WHERE session_id = ?1 AND type IN ('assistant', 'compaction')
+                   AND time_updated > ?2
+                 UNION ALL
+                 SELECT id, data, NULL AS type, time_updated, 1 AS layout_priority
+                 FROM message WHERE session_id = ?1 AND time_updated > ?2
+             ) ORDER BY time_updated DESC, layout_priority, id"
+        }
+    };
+    let params: &[&dyn rusqlite::ToSql] = match schema {
+        OpenCodeSchema::Mixed => &[&session_id, &mixed_cutoff_ms],
+        OpenCodeSchema::V1 | OpenCodeSchema::V2 => &[&session_id],
     };
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| AppError::Database(format!("准备消息查询失败: {e}")))?;
 
     let rows = stmt
-        .query_map([session_id], |row| {
+        .query_map(params, |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -292,9 +358,13 @@ fn query_assistant_messages(
 
     let mut messages = Vec::new();
     let mut has_incomplete_usage = false;
+    let mut seen = HashSet::new();
     for row in rows {
         let (message_id, data_json, message_type) =
             row.map_err(|e| AppError::Database(format!("读取消息行失败: {e}")))?;
+        if !seen.insert(message_id.clone()) {
+            continue;
+        }
 
         // V2 的 assistant 消息没有 role 字段（由 `type` 列标识），
         // V1 消息仍按 data.role 过滤。
@@ -303,8 +373,7 @@ fn query_assistant_messages(
             Err(_) => continue,
         };
 
-        if schema == OpenCodeSchema::V1
-            && value.get("role").and_then(|r| r.as_str()) != Some("assistant")
+        if message_type.is_none() && value.get("role").and_then(|r| r.as_str()) != Some("assistant")
         {
             continue;
         }
@@ -556,6 +625,353 @@ fn insert_opencode_message(
 mod tests {
     use super::*;
 
+    fn mixed_database() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (id TEXT PRIMARY KEY, time_updated INTEGER);
+             CREATE TABLE message (
+                 id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER,
+                 time_updated INTEGER, data TEXT
+             );
+             CREATE TABLE session_v2 (id TEXT PRIMARY KEY, time_updated INTEGER);
+             CREATE TABLE session_message (
+                 id TEXT PRIMARY KEY, session_id TEXT, type TEXT,
+                 time_created INTEGER, time_updated INTEGER, data TEXT
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn usage_message(input: u32, completed: bool) -> String {
+        let mut value = serde_json::json!({
+            "role": "assistant", "modelID": "test-model", "cost": 0.01,
+            "tokens": { "input": input, "output": 10 },
+            "time": { "created": 1000 }
+        });
+        if completed {
+            value["time"]["completed"] = serde_json::json!(2000);
+        }
+        value.to_string()
+    }
+
+    #[test]
+    fn test_mixed_sessions_merge_both_message_watermarks() {
+        let conn = mixed_database();
+        conn.execute_batch(
+            "INSERT INTO session VALUES ('shared', 100), ('v1-only', 100);
+             INSERT INTO session_v2 VALUES ('shared', 200), ('v2-only', 200);
+             INSERT INTO message VALUES ('v1-new', 'shared', 100, 400, '{}');
+             INSERT INTO session_message VALUES ('v2-new', 'shared', 'assistant', 200, 300, '{}');",
+        )
+        .unwrap();
+        let schema = detect_schema(&conn).unwrap();
+        let sessions = query_sessions(&conn, schema).unwrap();
+        assert_eq!(
+            sessions,
+            vec![
+                ("v1-only".to_string(), 100),
+                ("v2-only".to_string(), 200),
+                ("shared".to_string(), 400),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_mixed_messages_use_latest_copy_and_keep_both_branches() {
+        let conn = mixed_database();
+        for (id, updated, completed) in [("shared", 400, true), ("v1-only", 500, true)] {
+            conn.execute(
+                "INSERT INTO message VALUES (?1, 's1', 100, ?2, ?3)",
+                rusqlite::params![id, updated, usage_message(20, completed)],
+            )
+            .unwrap();
+        }
+        // The V2 snapshot of 'shared' was incomplete before 1.x resumed it.
+        for (id, updated, completed) in [("shared", 200, false), ("v2-only", 300, true)] {
+            conn.execute(
+                "INSERT INTO session_message VALUES (?1, 's1', 'assistant', 100, ?2, ?3)",
+                rusqlite::params![id, updated, usage_message(30, completed)],
+            )
+            .unwrap();
+        }
+        let result =
+            query_assistant_messages(&conn, detect_schema(&conn).unwrap(), "s1", 0).unwrap();
+        let messages: std::collections::BTreeMap<_, _> = result
+            .messages
+            .iter()
+            .map(|(id, data)| (id.as_str(), data.input_tokens))
+            .collect();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages["shared"], 20);
+        assert_eq!(messages["v1-only"], 20);
+        assert_eq!(messages["v2-only"], 30);
+        assert!(!result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_mixed_messages_do_not_import_stale_completed_copy() {
+        let conn = mixed_database();
+        conn.execute(
+            "INSERT INTO message VALUES ('m1', 's1', 100, 300, ?1)",
+            [usage_message(20, false)],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session_message VALUES ('m1', 's1', 'assistant', 100, 200, ?1)",
+            [usage_message(10, true)],
+        )
+        .unwrap();
+        let result =
+            query_assistant_messages(&conn, detect_schema(&conn).unwrap(), "s1", 0).unwrap();
+        assert!(result.messages.is_empty());
+        assert!(result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_mixed_messages_prefer_v2_on_ties_and_filter_non_usage_rows() {
+        let conn = mixed_database();
+        conn.execute(
+            "INSERT INTO message VALUES ('m1', 's1', 100, 200, ?1),
+                                        ('u1', 's1', 100, 200, ?2)",
+            rusqlite::params![
+                usage_message(10, true),
+                serde_json::json!({"role": "user", "tokens": {"input": 999}}).to_string()
+            ],
+        )
+        .unwrap();
+        let compaction = serde_json::json!({
+            "status": "completed", "tokens": {"input": 50, "output": 5},
+            "model": {"id": "test-model"}, "time": {"created": 100}
+        });
+        conn.execute(
+            "INSERT INTO session_message VALUES
+                 ('m1', 's1', 'assistant', 100, 200, ?1),
+                 ('c1', 's1', 'compaction', 100, 200, ?2),
+                 ('u2', 's1', 'user', 100, 200, ?1)",
+            rusqlite::params![usage_message(20, true), compaction.to_string()],
+        )
+        .unwrap();
+        let result =
+            query_assistant_messages(&conn, detect_schema(&conn).unwrap(), "s1", 0).unwrap();
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].0, "c1");
+        assert_eq!(result.messages[0].1.input_tokens, 50);
+        assert_eq!(result.messages[1].0, "m1");
+        assert_eq!(result.messages[1].1.input_tokens, 20);
+        assert!(!result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_mixed_messages_skip_rows_updated_before_cutoff() {
+        let conn = mixed_database();
+        for (id, updated, input, completed) in [
+            ("old", 500, 20, true),
+            ("resumed", 1500, 20, true),
+            ("wip", 1200, 20, false),
+        ] {
+            conn.execute(
+                "INSERT INTO message VALUES (?1, 's1', 100, ?2, ?3)",
+                rusqlite::params![id, updated, usage_message(input, completed)],
+            )
+            .unwrap();
+        }
+        for id in ["old", "resumed"] {
+            conn.execute(
+                "INSERT INTO session_message VALUES (?1, 's1', 'assistant', 100, 500, ?2)",
+                rusqlite::params![id, usage_message(10, true)],
+            )
+            .unwrap();
+        }
+        let result = query_assistant_messages(&conn, OpenCodeSchema::Mixed, "s1", 1000).unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].0, "resumed");
+        assert_eq!(result.messages[0].1.input_tokens, 20);
+        assert!(result.has_incomplete_usage);
+    }
+
+    fn write_database(source: &rusqlite::Connection) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.db");
+        source
+            .backup(rusqlite::DatabaseName::Main, &path, None)
+            .unwrap();
+        (dir, path)
+    }
+
+    fn imported_request_ids(db: &Database) -> Vec<String> {
+        let conn = db.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT request_id FROM proxy_request_logs ORDER BY request_id")
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    fn mixed_cutoff(db: &Database, path: &std::path::Path) -> Option<i64> {
+        let key = format!("{}:mixed-v1-v2-since", path.to_string_lossy());
+        crate::services::session_usage::load_sync_cursors(db)
+            .unwrap()
+            .get(&key)
+            .map(|c| c.last_modified)
+    }
+
+    #[test]
+    fn test_mixed_sync_does_not_import_history_before_first_detection() {
+        let source = mixed_database();
+        source
+            .execute_batch(
+                "INSERT INTO session VALUES ('v1-only', 100);
+                 INSERT INTO session_v2 VALUES ('migrated', 100);",
+            )
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO message VALUES ('old', 'v1-only', 100, 100, ?1)",
+                [usage_message(20, true)],
+            )
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO session_message VALUES ('m1', 'migrated', 'assistant', 100, 100, ?1)",
+                [usage_message(20, true)],
+            )
+            .unwrap();
+        let (_dir, path) = write_database(&source);
+        let db = Database::memory().unwrap();
+
+        let before_ms = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let result = sync_opencode_usage_from_path(&db, &path).unwrap();
+        assert_eq!(result.imported, 0);
+        assert!(result.errors.is_empty());
+        assert!(imported_request_ids(&db).is_empty());
+        let cutoff = mixed_cutoff(&db, &path).expect("cutoff is pinned on first detection");
+        assert!(cutoff >= before_ms);
+    }
+
+    #[test]
+    fn test_mixed_sync_imports_only_messages_updated_after_cutoff() {
+        let source = mixed_database();
+        source
+            .execute_batch(
+                "INSERT INTO session VALUES ('shared', 2000), ('v1-old', 500), ('v1-new', 2500);
+                 INSERT INTO session_v2 VALUES ('shared', 3000);",
+            )
+            .unwrap();
+        for (id, sid, updated) in [
+            ("migrated", "shared", 100),
+            ("continued", "shared", 2000),
+            ("old", "v1-old", 500),
+            ("new", "v1-new", 2500),
+        ] {
+            source
+                .execute(
+                    "INSERT INTO message VALUES (?1, ?2, 100, ?3, ?4)",
+                    rusqlite::params![id, sid, updated, usage_message(20, true)],
+                )
+                .unwrap();
+        }
+        for (id, updated) in [("migrated", 100), ("v2-continued", 3000)] {
+            source
+                .execute(
+                    "INSERT INTO session_message VALUES (?1, 'shared', 'assistant', 100, ?2, ?3)",
+                    rusqlite::params![id, updated, usage_message(20, true)],
+                )
+                .unwrap();
+        }
+        let (_dir, path) = write_database(&source);
+        let db = Database::memory().unwrap();
+        let base = path.to_string_lossy();
+        update_sync_state(&db, &format!("{base}:mixed-v1-v2-since"), 1000, 0).unwrap();
+        // 'migrated' was imported by an earlier V2 scan and its detail row has
+        // since been rolled up and pruned, so request_id dedup cannot catch it.
+        update_sync_state(&db, &format!("{base}:shared"), 100, 0).unwrap();
+
+        let result = sync_opencode_usage_from_path(&db, &path).unwrap();
+        assert_eq!(result.imported, 3);
+        assert!(result.errors.is_empty());
+        assert_eq!(
+            imported_request_ids(&db),
+            vec![
+                "opencode_session:shared:continued",
+                "opencode_session:shared:v2-continued",
+                "opencode_session:v1-new:new",
+            ]
+        );
+        assert_eq!(
+            sync_opencode_usage_from_path(&db, &path).unwrap().imported,
+            0
+        );
+    }
+
+    #[test]
+    fn test_mixed_cutoff_is_pinned_once_even_when_database_unchanged() {
+        let source = mixed_database();
+        let (_dir, path) = write_database(&source);
+        let db = Database::memory().unwrap();
+        let base = path.to_string_lossy();
+        update_sync_state(
+            &db,
+            &base,
+            metadata_modified_nanos(&fs::metadata(&path).unwrap()),
+            0,
+        )
+        .unwrap();
+
+        sync_opencode_usage_from_path(&db, &path).unwrap();
+        assert!(mixed_cutoff(&db, &path).is_some());
+
+        update_sync_state(&db, &format!("{base}:mixed-v1-v2-since"), 1000, 0).unwrap();
+        update_sync_state(&db, &base, 0, 0).unwrap();
+        sync_opencode_usage_from_path(&db, &path).unwrap();
+        assert_eq!(mixed_cutoff(&db, &path), Some(1000));
+    }
+
+    #[test]
+    fn test_mixed_cutoff_starts_at_last_scan_after_upgrade() {
+        // The previous version last scanned at 1_700_000_000_000 ms; 'between'
+        // was written after that scan and before the first Mixed scan.
+        let source = mixed_database();
+        source
+            .execute_batch(
+                "INSERT INTO session VALUES ('v1-only', 1699999000000);
+                 INSERT INTO session_v2 VALUES ('v2', 1700000001000);",
+            )
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO message VALUES ('missed', 'v1-only', 100, 1699999000000, ?1)",
+                [usage_message(20, true)],
+            )
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO session_message
+                 VALUES ('between', 'v2', 'assistant', 100, 1700000001000, ?1)",
+                [usage_message(20, true)],
+            )
+            .unwrap();
+        let (_dir, path) = write_database(&source);
+        let db = Database::memory().unwrap();
+        let base = path.to_string_lossy();
+        update_sync_state(&db, &base, 1_700_000_000_000_000_000, 0).unwrap();
+        update_sync_state(&db, &format!("{base}:v2"), 1_699_999_000_000, 0).unwrap();
+
+        let result = sync_opencode_usage_from_path(&db, &path).unwrap();
+        assert_eq!(result.imported, 1);
+        assert!(result.errors.is_empty());
+        assert_eq!(
+            imported_request_ids(&db),
+            vec!["opencode_session:v2:between"]
+        );
+        assert_eq!(mixed_cutoff(&db, &path), Some(1_700_000_000_000));
+    }
+
     #[test]
     fn test_parse_message_data_full() {
         let json: serde_json::Value = serde_json::json!({
@@ -701,7 +1117,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = query_assistant_messages(&conn, OpenCodeSchema::V1, "s1").unwrap();
+        let result = query_assistant_messages(&conn, OpenCodeSchema::V1, "s1", 0).unwrap();
         // 只返回已完成（带 time.completed）的消息，半截的被跳过
         assert_eq!(result.messages.len(), 1);
         assert_eq!(result.messages[0].0, "done");
@@ -730,7 +1146,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_schema_prefers_v2_when_present() {
+    fn test_detect_schema_reads_both_layouts_when_present() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE session (id TEXT); CREATE TABLE message (id TEXT);")
             .unwrap();
@@ -740,6 +1156,9 @@ mod tests {
             "CREATE TABLE session_v2 (id TEXT); CREATE TABLE session_message (id TEXT);",
         )
         .unwrap();
+        assert_eq!(detect_schema(&conn).unwrap(), OpenCodeSchema::Mixed);
+        conn.execute_batch("DROP TABLE session; DROP TABLE message;")
+            .unwrap();
         assert_eq!(detect_schema(&conn).unwrap(), OpenCodeSchema::V2);
     }
 
@@ -873,7 +1292,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = query_assistant_messages(&conn, OpenCodeSchema::V2, "s1").unwrap();
+        let result = query_assistant_messages(&conn, OpenCodeSchema::V2, "s1", 0).unwrap();
         // 只返回已完成（带 time.completed）的 assistant 消息；user 行被 type 过滤
         assert_eq!(result.messages.len(), 1);
         assert_eq!(result.messages[0].0, "done");
@@ -940,7 +1359,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = query_assistant_messages(&conn, OpenCodeSchema::V2, "s1").unwrap();
+        let result = query_assistant_messages(&conn, OpenCodeSchema::V2, "s1", 0).unwrap();
         // compaction(completed/failed) 与 assistant 都要采到；pending 的压缩被跳过
         let ids: Vec<&str> = result.messages.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(ids, vec!["c1", "c3", "a1"]);
