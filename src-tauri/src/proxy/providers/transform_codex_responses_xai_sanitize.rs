@@ -35,6 +35,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Map, Number, Value};
 
+use super::codex::collect_codex_catalog_model_ids;
 use super::transform_codex_responses_namespace::{restore_sse_event_namespaces, NamespacedName};
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 
@@ -679,7 +680,7 @@ pub(crate) fn apply_xai_native_responses_request_compat(
     // keys off `body.model`, so an unknown subagent SKU must land on its final
     // name first or those fields survive the strip.
     if let Some(upstream_model) = upstream_model {
-        let allowed = collect_xai_catalog_model_ids(settings);
+        let allowed = collect_codex_catalog_model_ids(settings);
         if let Some((from, to)) = rewrite_xai_unknown_request_model(body, upstream_model, &allowed)
         {
             log::info!(
@@ -842,33 +843,6 @@ pub(crate) fn rewrite_xai_unknown_request_model(
 
     obj.insert("model".to_string(), Value::String(upstream.to_string()));
     Some((request, upstream.to_string()))
-}
-
-/// Collect catalog model identifiers from a Codex provider's settings.
-/// Grok catalogs store the live id on `slug`; other providers may use
-/// `model` or `id`. All three are accepted so a catalog hit is not missed.
-pub(crate) fn collect_xai_catalog_model_ids(settings: &Value) -> HashSet<String> {
-    let mut ids = HashSet::new();
-    let Some(models) = settings
-        .get("modelCatalog")
-        .and_then(|catalog| catalog.get("models"))
-        .and_then(Value::as_array)
-    else {
-        return ids;
-    };
-    for entry in models {
-        for key in ["model", "slug", "id"] {
-            if let Some(id) = entry
-                .get(key)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-            {
-                ids.insert(id.to_string());
-            }
-        }
-    }
-    ids
 }
 
 fn request_model_is_allowed(
@@ -1976,7 +1950,7 @@ mod tests {
 
     #[test]
     fn remaps_unknown_openai_role_model_to_upstream() {
-        let allowed = collect_xai_catalog_model_ids(&json!({
+        let allowed = collect_codex_catalog_model_ids(&json!({
             "modelCatalog": {
                 "models": [
                     {"slug": "grok-4.6"},
@@ -1994,7 +1968,7 @@ mod tests {
 
     #[test]
     fn preserves_catalog_slug_instead_of_forcing_upstream() {
-        let allowed = collect_xai_catalog_model_ids(&json!({
+        let allowed = collect_codex_catalog_model_ids(&json!({
             "modelCatalog": {
                 "models": [
                     {"slug": "grok-4.6"},
@@ -2012,7 +1986,7 @@ mod tests {
 
     #[test]
     fn preserves_grok_prefixed_model_missing_from_catalog() {
-        let allowed = collect_xai_catalog_model_ids(&json!({
+        let allowed = collect_codex_catalog_model_ids(&json!({
             "modelCatalog": {"models": [{"slug": "grok-4.6"}]}
         }));
 
