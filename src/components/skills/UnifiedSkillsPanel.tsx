@@ -1947,7 +1947,10 @@ function InstalledRow({
               {sourceText}
             </button>
           ) : (
-            <span className="shrink-0 text-caption text-fg-3" title={skill.sourcePath}>
+            <span
+              className="shrink-0 text-caption text-fg-3"
+              title={skill.sourcePath}
+            >
               {sourceText}
             </span>
           )}
