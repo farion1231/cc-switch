@@ -4854,6 +4854,8 @@
       "installed": "已安装",
       "installedAria": "{{name}} 已安装在 {{count}} 个应用，在「已安装」里查看",
       "dirTaken": "目录名已被 {{name}}（{{source}}）使用",
+      "adopt": "接管并更新",
+      "adoptAria": "从仓库接管 {{name}} 并纳入更新管理",
       "installing": "安装中",
       "installingAria": "正在安装 {{name}}",
       "installAria": "安装 {{name}}",

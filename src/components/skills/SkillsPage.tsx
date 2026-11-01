@@ -280,6 +280,11 @@ export function SkillsPage({
       ? `${skill.repoOwner}/${skill.repoName}`
       : t("skillsPage.source.local");
 
+  // 占用目录的是 zip 本地安装（没有仓库信息）：可以走「从仓库接管」安装（#7624）。
+  // 后端会再校验 SKILL.md 元数据，不一致时仍按目录冲突拒绝。
+  const isLocalSkill = (skill: InstalledSkill) =>
+    !skill.repoOwner && !skill.repoName;
+
   // ─── 行数据 ─────────────────────────────────────────────────────────
   const repoRows: DiscoverRow[] = useMemo(
     () =>
@@ -752,6 +757,37 @@ export function SkillsPage({
                             strokeWidth={2}
                           />
                         </button>
+                      ) : isInstalling ? (
+                        <Button
+                          type="button"
+                          variant="neutral"
+                          size="compact"
+                          aria-disabled="true"
+                          aria-label={t("skillsPage.discover.installingAria", {
+                            name: row.name,
+                          })}
+                          className="cursor-not-allowed ps-2.5"
+                        >
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          {t("skillsPage.discover.installing")}
+                        </Button>
+                      ) : status.kind === "conflict" &&
+                        isLocalSkill(status.skill) ? (
+                        <Button
+                          type="button"
+                          variant="neutral"
+                          size="compact"
+                          aria-label={t("skillsPage.discover.adoptAria", {
+                            name: row.name,
+                          })}
+                          title={t("skillsPage.discover.dirTaken", {
+                            name: status.skill.name,
+                            source: sourceLabel(status.skill),
+                          })}
+                          onClick={() => void handleInstall(row)}
+                        >
+                          {t("skillsPage.discover.adopt")}
+                        </Button>
                       ) : status.kind === "conflict" ? (
                         <button
                           type="button"
@@ -769,20 +805,6 @@ export function SkillsPage({
                             strokeWidth={2}
                           />
                         </button>
-                      ) : isInstalling ? (
-                        <Button
-                          type="button"
-                          variant="neutral"
-                          size="compact"
-                          aria-disabled="true"
-                          aria-label={t("skillsPage.discover.installingAria", {
-                            name: row.name,
-                          })}
-                          className="cursor-not-allowed ps-2.5"
-                        >
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          {t("skillsPage.discover.installing")}
-                        </Button>
                       ) : (
                         <Button
                           type="button"

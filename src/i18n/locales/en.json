@@ -4854,6 +4854,8 @@
       "installed": "Installed",
       "installedAria": "{{name}} is installed in {{count}} apps; view it under Installed",
       "dirTaken": "Folder name is used by {{name}} ({{source}})",
+      "adopt": "Adopt & update",
+      "adoptAria": "Adopt {{name}} from its repository and manage updates",
       "installing": "Installing",
       "installingAria": "Installing {{name}}",
       "installAria": "Install {{name}}",
