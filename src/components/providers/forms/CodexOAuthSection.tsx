@@ -29,6 +29,7 @@ import {
   signedInDate,
   withMonoToken,
 } from "@/components/settings/auth/accountDetails";
+import { chatgptPlanLabel } from "@/lib/chatgptPlan";
 
 interface CodexOAuthSectionProps {
   className?: string;
@@ -67,6 +68,9 @@ interface CodexOAuthSectionProps {
   /** 授权中心里最后一组的「?」向上弹 */
   helpSide?: "top" | "bottom";
 }
+
+/** 和 Claude 官方账号一样：登录过期前多久开始提示 */
+const EXPIRY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Codex OAuth 认证区块
@@ -410,25 +414,59 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
 
   // ── 授权中心（manage） ──
 
+  const now = Date.now();
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
     const needsReauth = !!account.reauth_required;
+    const details: React.ReactNode[] = [];
+    // 套餐来自 id_token（ChatGPT 套餐），上游没有订阅续费到期日
+    const plan = chatgptPlanLabel(t, account.plan);
+    if (plan) details.push(plan);
+    if (needsReauth) {
+      details.push(
+        withMonoToken(
+          t("authCenter.codexReauthNote", {
+            defaultValue: "缺少登录凭据（id_token），不能用于 Codex 托管绑定",
+          }),
+          "id_token",
+        ),
+      );
+    } else {
+      const expiresAt = account.login_expires_at ?? null;
+      // 记下的过期时间只代表当前这组凭据：账号刷新后会换发并前移
+      const expired = expiresAt !== null && expiresAt <= now;
+      const expiresSoon =
+        expiresAt !== null && !expired && expiresAt - now <= EXPIRY_NOTICE_MS;
+      const expiryDate =
+        expired || expiresSoon
+          ? signedInDate(Math.floor(expiresAt / 1000), i18n.language)
+          : null;
+      if (expired) {
+        details.push(
+          t("authCenter.codexLoginMaybeExpired", {
+            defaultValue: "登录可能已过期，使用时会自动刷新",
+          }),
+        );
+      } else {
+        if (date) {
+          details.push(
+            t("authCenter.signedInOn", { defaultValue: "{{date}}登录", date }),
+          );
+        }
+        if (expiryDate) {
+          details.push(
+            t("authCenter.codexLoginExpiresOn", {
+              defaultValue: "登录约在{{date}}过期，使用时会自动刷新",
+              date: expiryDate,
+            }),
+          );
+        }
+      }
+    }
     return {
       id: account.id,
       login: account.login,
-      details: needsReauth
-        ? [
-            withMonoToken(
-              t("authCenter.codexReauthNote", {
-                defaultValue:
-                  "缺少登录凭据（id_token），不能用于 Codex 托管绑定",
-              }),
-              "id_token",
-            ),
-          ]
-        : date
-          ? [t("authCenter.signedInOn", { defaultValue: "{{date}}登录", date })]
-          : [],
+      details,
       isDefault: defaultAccountId === account.id,
       needsReauth,
       users: accountUsers([account.id]),

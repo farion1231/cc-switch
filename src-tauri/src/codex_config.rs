@@ -384,6 +384,57 @@ pub(crate) fn extract_codex_id_token_subject(id_token: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 拆 id_token 的 payload（三段式校验和 header 的 `alg` 检查与
+/// `extract_codex_id_token_subject` 一致），返回原始 claims。
+fn decode_codex_id_token_claims(id_token: &str) -> Option<Value> {
+    let mut segments = id_token.split('.');
+    let header = segments.next()?;
+    let payload = segments.next()?;
+    segments.next()?;
+    if segments.next().is_some() {
+        return None;
+    }
+
+    let header: Value = URL_SAFE_NO_PAD
+        .decode(header)
+        .ok()
+        .and_then(|decoded| serde_json::from_slice(&decoded).ok())?;
+    header
+        .get("alg")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()
+        .and_then(|decoded| serde_json::from_slice(&decoded).ok())
+}
+
+/// id_token 里的 ChatGPT 套餐类型（`plus` / `pro` / `free` / `team` / `enterprise`…）。
+/// OpenAI 把账号信息放在 `https://api.openai.com/auth` claim 里，顶层兜底。
+pub(crate) fn extract_codex_id_token_plan_type(id_token: &str) -> Option<String> {
+    let claims = decode_codex_id_token_claims(id_token)?;
+    claims
+        .get("https://api.openai.com/auth")
+        .and_then(|auth| auth.get("chatgpt_plan_type"))
+        .or_else(|| claims.get("chatgpt_plan_type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// id_token 的 `exp`（秒），换算成毫秒。这是当前这组凭据的过期时间：账号刷新后会
+/// 换发 id_token，这个时间随之前移；上游接口不提供订阅续费到期日。
+pub(crate) fn extract_codex_id_token_expiry_ms(id_token: &str) -> Option<i64> {
+    let claims = decode_codex_id_token_claims(id_token)?;
+    claims
+        .get("exp")
+        .and_then(Value::as_i64)
+        .map(|exp| exp * 1000)
+}
+
 #[cfg(test)]
 pub(crate) fn test_codex_id_token(subject: &str) -> String {
     let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);

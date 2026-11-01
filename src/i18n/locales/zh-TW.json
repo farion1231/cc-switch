@@ -1886,6 +1886,13 @@
     "enterpriseDomainPlaceholder": "例如：company.ghe.com"
   },
   "codexOauth": {
+    "plan": {
+      "free": "Free",
+      "plus": "Plus",
+      "pro": "Pro",
+      "team": "Team",
+      "enterprise": "Enterprise"
+    },
     "authStatus": "驗證狀態",
     "notAuthenticated": "未驗證",
     "loginRequired": "請先登入 ChatGPT 帳號",
@@ -4957,6 +4964,8 @@
     "enterpriseDomain": "企業網域",
     "enterpriseDomainRequired": "先填企業網域，例如 company.ghe.com",
     "codexReauthNote": "缺少登入憑證（id_token），無法用於 Codex 託管綁定",
+    "codexLoginExpiresOn": "登入約在{{date}}到期，使用時會自動重新整理",
+    "codexLoginMaybeExpired": "登入可能已過期，使用時會自動重新整理",
     "xaiReauthNote": "登入憑證已失效，用到它的供應商無法使用",
     "statusLoading": "正在載入帳號…",
     "xaiStatusLoadFailed": "無法載入 xAI 帳號狀態，請重試。",
