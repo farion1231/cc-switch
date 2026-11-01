@@ -4159,6 +4159,12 @@
     "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
   },
   "subscription": {
+    "membership": {
+      "validUntil": "{{plan}} · Subscription valid until {{date}}",
+      "expired": "{{plan}} · Subscription expired on {{date}}",
+      "unavailable": "{{plan}} · Subscription expiry unavailable",
+      "hint": "Membership validity differs from quota resets and login token expiry. Check ChatGPT subscription management for automatic renewal status."
+    },
     "title": "Subscription Quota",
     "short": {
       "fiveHour": "5h",
