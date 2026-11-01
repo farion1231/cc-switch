@@ -505,12 +505,6 @@ export interface SessionReaderToolbarProps {
   onExportMarkdown: () => void;
 }
 
-const Sep = () => (
-  <span aria-hidden="true" className="text-fg-3">
-    ·
-  </span>
-);
-
 /**
  * 这个会话的总 Token 和 API 价花费，口径同用量统计（会话日志导入的用量）。
  * 没导入过（扫描关着、超过 30 天被汇总、应用没有用量来源）时不显示。
@@ -529,27 +523,23 @@ function SessionUsageSummary({ session }: { session: SessionMeta }) {
   const cost = parseFiniteNumber(data.totalCost);
   const tokens = (value: number) => formatTokensCompact(value, locale);
   return (
-    <>
-      <Sep />
-      <span
-        className="shrink-0 whitespace-nowrap"
-        title={rt("usage.detail", {
-          requests: fmtInt(data.totalRequests, locale),
-          input: tokens(data.totalInputTokens),
-          output: tokens(data.totalOutputTokens),
-          cacheWrite: tokens(data.totalCacheCreationTokens),
-          cacheRead: tokens(data.totalCacheReadTokens),
-        })}
-      >
+    <span
+      className="inline-flex flex-wrap items-center gap-x-3 gap-y-1"
+      title={rt("usage.detail", {
+        requests: fmtInt(data.totalRequests, locale),
+        input: tokens(data.totalInputTokens),
+        output: tokens(data.totalOutputTokens),
+        cacheWrite: tokens(data.totalCacheCreationTokens),
+        cacheRead: tokens(data.totalCacheReadTokens),
+      })}
+    >
+      <span className="whitespace-nowrap">
         {rt("usage.tokens", { tokens: tokens(data.realTotalTokens) })}
-        {cost !== null && (
-          <>
-            {" · "}
-            {money(cost, 2)}
-          </>
-        )}
       </span>
-    </>
+      {cost !== null && (
+        <span className="whitespace-nowrap">{money(cost, 2)}</span>
+      )}
+    </span>
   );
 }
 
@@ -587,75 +577,18 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
   const toolCount = turnIndex.reduce((sum, item) => sum + item.stepCount, 0);
 
   return (
-    <div className="flex shrink-0 flex-col border-b border-border py-1.5 pe-4 ps-6">
-      <div className="flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1">
-        {/* 各段整体换行，不再整行截断：路径标签留最小宽度，避免被挤到只剩图标、压住日期 */}
-        <div className="flex min-w-0 flex-1 basis-72 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-caption tabular-nums text-fg-2">
+    <div className="flex shrink-0 flex-col gap-1.5 border-b border-border py-2 pe-4 ps-6">
+      <div className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 basis-72">
           {session.projectDir ? (
-            <PathChip
-              path={session.projectDir}
-              className="min-w-[120px] max-w-[45%] shrink"
-            />
+            <PathChip path={session.projectDir} className="max-w-full" />
           ) : (
-            <span>
+            <span className="text-caption text-fg-2">
               {t("sessionManager.unknownDirectory", {
                 defaultValue: "未知目录",
               })}
             </span>
           )}
-          {range && (
-            <>
-              <Sep />
-              <span className="shrink-0 whitespace-nowrap">
-                {range}
-                {duration && <span className="text-fg-3"> ({duration})</span>}
-              </span>
-            </>
-          )}
-          {!failed && progress && (
-            <>
-              <Sep />
-              <span role="status" className="shrink-0">
-                {progress.total !== null
-                  ? rt("loadingProgress", {
-                      loaded: progress.loaded,
-                      total: progress.total,
-                    })
-                  : t("sessionManager.loadingMessages", {
-                      defaultValue: "加载会话内容中...",
-                    })}
-              </span>
-            </>
-          )}
-          {!failed && !progress && messageCount > 0 && (
-            <>
-              <Sep />
-              <span
-                className="shrink-0 whitespace-nowrap"
-                title={rt("turnsCount", {
-                  turns: turnIndex.length,
-                  messages: messageCount,
-                })}
-              >
-                {rt("questionsCount", { count: turnIndex.length })}
-                {toolCount > 0 && (
-                  <>
-                    {" · "}
-                    {rt("toolsCount", { count: toolCount })}
-                  </>
-                )}
-              </span>
-            </>
-          )}
-          {model && (
-            <>
-              <Sep />
-              <span className="min-w-0 truncate font-mono text-fg-3">
-                {model}
-              </span>
-            </>
-          )}
-          <SessionUsageSummary session={session} />
         </div>
 
         {!failed && (
@@ -838,6 +771,53 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
             </button>
           </div>
         )}
+      </div>
+
+      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-caption tabular-nums text-fg-2">
+        {range && (
+          <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5">
+            <span className="[overflow-wrap:anywhere]">{range}</span>
+            {duration && (
+              <span className="whitespace-nowrap">({duration})</span>
+            )}
+          </span>
+        )}
+        {!failed && progress && (
+          <span role="status">
+            {progress.total !== null
+              ? rt("loadingProgress", {
+                  loaded: progress.loaded,
+                  total: progress.total,
+                })
+              : t("sessionManager.loadingMessages", {
+                  defaultValue: "加载会话内容中...",
+                })}
+          </span>
+        )}
+        {!failed && !progress && messageCount > 0 && (
+          <span
+            className="inline-flex flex-wrap items-center gap-x-3 gap-y-1"
+            title={rt("turnsCount", {
+              turns: turnIndex.length,
+              messages: messageCount,
+            })}
+          >
+            <span className="whitespace-nowrap">
+              {rt("questionsCount", { count: turnIndex.length })}
+            </span>
+            {toolCount > 0 && (
+              <span className="whitespace-nowrap">
+                {rt("toolsCount", { count: toolCount })}
+              </span>
+            )}
+          </span>
+        )}
+        {model && (
+          <span className="min-w-0 [overflow-wrap:anywhere]" title={model}>
+            {model}
+          </span>
+        )}
+        <SessionUsageSummary session={session} />
       </div>
 
       {noResumeReason && (
