@@ -1437,6 +1437,16 @@ fn parse_codex_file_with_index(
                     {
                         current_model = normalize_codex_model(model);
                     }
+                    // 档位也可能写在 turn_context 的 payload 上（与
+                    // thread_settings_applied 的 thread_settings.service_tier
+                    // 是两个位置）。显式 null 清除已启用的 Fast/Flex 档位。
+                    if let Some(tier) = payload.get("service_tier") {
+                        current_service_tier = tier
+                            .as_str()
+                            .unwrap_or("default")
+                            .trim()
+                            .to_ascii_lowercase();
+                    }
                 }
             }
             "event_msg" => {
@@ -2801,6 +2811,20 @@ mod tests {
         })
     }
 
+    /// 带档位的 turn_context（档位写在 payload 上，与 thread_settings 的
+    /// `thread_settings.service_tier` 是两个位置）。
+    fn turn_context_tier_at(
+        model: &str,
+        tier: serde_json::Value,
+        timestamp: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "turn_context",
+            "payload": { "model": model, "service_tier": tier }
+        })
+    }
+
     fn turn_context_at(timestamp: &str) -> serde_json::Value {
         turn_context_for_model_at("gpt-5.6-sol", timestamp)
     }
@@ -3143,6 +3167,34 @@ mod tests {
             base_cost * rust_decimal::Decimal::TWO,
             "fast 档应为标准价的 2 倍"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn session_tier_is_read_from_turn_context_too() -> Result<(), AppError> {
+        // 档位有两个落点：turn_context 的 payload.service_tier 与
+        // thread_settings_applied 的 thread_settings.service_tier，两个都要认
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context_tier_at(
+                    "gpt-6.1-sol",
+                    serde_json::json!("priority"),
+                    "2026-07-10T03:00:01Z",
+                ),
+                token_count_at(100, 10, 20, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        sync_test_file(&db, &path, &[&path])?;
+
+        let rows = codex_pricing_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, "gpt-6.1-sol-fast");
         Ok(())
     }
 
