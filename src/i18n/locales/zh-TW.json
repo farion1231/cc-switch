@@ -4841,7 +4841,7 @@
       "help": "會，預設用你上次的選擇。裝好後也能在「已安裝」裡隨時調整。從 ZIP 安裝和從備份還原也用這裡的選擇。"
     },
     "discover": {
-      "searchPlaceholder": "搜尋 Skill 或倉庫",
+      "searchPlaceholder": "搜尋名稱、描述或倉庫",
       "searchAria": "搜尋探索裡的 Skill",
       "skillsShPlaceholder": "至少 2 個字，Enter 搜尋",
       "skillsShAria": "在 skills.sh 搜尋",
@@ -4849,7 +4849,7 @@
       "skillsShNone": "skills.sh 上沒有找到「{{query}}」",
       "sourceAria": "探索來源",
       "sourceRepos": "倉庫 · {{count}}",
-      "reload": "重新讀取倉庫",
+      "reload": "重新整理倉庫",
       "listLabel": "可安裝的 Skill",
       "installed": "已安裝",
       "installedAria": "{{name}} 已安裝在 {{count}} 個應用，在「已安裝」裡查看",
@@ -4868,8 +4868,8 @@
       "onlyUninstalled": "只看未安裝"
     },
     "repos": {
-      "buttonAll": "倉庫：全部",
-      "buttonSome": "倉庫：{{count}} / {{total}}",
+      "buttonAll": "來源：全部",
+      "buttonSome": "來源：{{count}} / {{total}}",
       "popoverAria": "參與探索的倉庫",
       "enableAria": "在探索裡使用 {{repo}}",
       "disabledShort": "停用",
