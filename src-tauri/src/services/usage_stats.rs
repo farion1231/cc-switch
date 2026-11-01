@@ -514,6 +514,19 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
                   AND (
                       LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
+                      OR (
+                          {log_alias}.request_model IS NOT NULL
+                          AND LOWER(proxy_dedup.model) = LOWER({log_alias}.request_model)
+                      )
+                      OR (
+                          proxy_dedup.request_model IS NOT NULL
+                          AND LOWER(proxy_dedup.request_model) = LOWER({log_alias}.model)
+                      )
+                      OR (
+                          proxy_dedup.request_model IS NOT NULL
+                          AND {log_alias}.request_model IS NOT NULL
+                          AND LOWER(proxy_dedup.request_model) = LOWER({log_alias}.request_model)
+                      )
                       OR LOWER(proxy_dedup.model) = 'unknown'
                       OR LOWER({log_alias}.model) = 'unknown'
                   )
@@ -602,6 +615,19 @@ pub(crate) fn effective_usage_log_filter_for_range(
              )
              AND (
                  LOWER(dedup_p.model) = LOWER(dedup_s.model)
+                 OR (
+                     dedup_s.request_model IS NOT NULL
+                     AND LOWER(dedup_p.model) = LOWER(dedup_s.request_model)
+                 )
+                 OR (
+                     dedup_p.request_model IS NOT NULL
+                     AND LOWER(dedup_p.request_model) = LOWER(dedup_s.model)
+                 )
+                 OR (
+                     dedup_p.request_model IS NOT NULL
+                     AND dedup_s.request_model IS NOT NULL
+                     AND LOWER(dedup_p.request_model) = LOWER(dedup_s.request_model)
+                 )
                  OR LOWER(dedup_p.model) = 'unknown'
                  OR LOWER(dedup_s.model) = 'unknown'
              )
@@ -740,6 +766,10 @@ static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
               AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
               AND (
                   LOWER(l.model) = LOWER(?2)
+                  OR (
+                      l.request_model IS NOT NULL
+                      AND LOWER(l.request_model) = LOWER(?2)
+                  )
                   OR LOWER(l.model) = 'unknown'
                   OR LOWER(?2) = 'unknown'
               )
@@ -3396,6 +3426,67 @@ mod tests {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(request_ids, vec!["desktop-proxy"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matching_proxy_log_matches_mapped_request_model() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, request_model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES ('codex-proxy', 'codex', 'gpt-6-astra', 'gpt-6.1-sol', 100, 20, 10, 0, 200, 1000, 'proxy')",
+            [],
+        )?;
+
+        let key = DedupKey {
+            app_type: "codex",
+            model: "gpt-6.1-sol",
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 0,
+            created_at: 1030,
+        };
+        assert!(
+            has_matching_proxy_usage_log(&conn, &key)?,
+            "应当通过 request_model 识别出模型映射后的同一请求"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_dedups_mapped_model_proxy_and_session() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, request_model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES
+                ('codex-proxy', 'codex', 'gpt-6-astra', 'gpt-6.1-sol', 100, 20, 10, 0, 200, 1000, 'proxy'),
+                ('codex-session', 'codex', 'gpt-6.1-sol', 'gpt-6.1-sol', 100, 20, 10, 0, 200, 1030, 'codex_session');",
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let sql = format!("SELECT request_id FROM proxy_request_logs l WHERE {filter}");
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy"]);
+
+        let ranged = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let ranged_sql = format!("SELECT request_id FROM proxy_request_logs l WHERE {ranged}");
+        let ranged_ids = conn
+            .prepare(&ranged_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(ranged_ids, vec!["codex-proxy"]);
 
         Ok(())
     }
