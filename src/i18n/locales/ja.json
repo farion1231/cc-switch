@@ -2658,6 +2658,8 @@
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "Volcengine の使用量照会にはアカウントレベルの AccessKey ID / Secret が必要です（推論 API キーとは別物）。Volcengine コンソール右上のアカウントメニュー →「API アクセスキー」で作成してください。",
     "volcengineKeyConsoleLink": "キー作成ページ：",
+    "bailianAkSkHint": "Bailian Token Plan の使用量照会には Alibaba Cloud のアカウントレベル AccessKey ID / Secret が必要です（プランの sk-sp- 推論キーではありません）。AK/SK で GenerateCLIAccessToken に署名して一時的な console トークンを取得し、使用量ゲートウェイを呼び出します。RAM ユーザーは Bailian ワークスペースへの権限も必要です（bl workspace init を実行）。",
+    "bailianKeyConsoleLink": "AccessKey 作成ページ：",
     "zhipuTeamHint": "智譜チームプランの使用量照会には、チーム API キー（このプロバイダーの認証情報を流用）+ 組織 ID + プロジェクト ID が必要です（リクエストヘッダー bigmodel-organization / bigmodel-project として送信）。組織 ID とプロジェクト ID はチーム管理コンソールの使用量ページの URL で確認できます。",
     "zhipuTeamConsoleLink": "チーム使用量ページ：",
     "organizationId": "組織 ID",
