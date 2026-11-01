@@ -2874,6 +2874,10 @@
       "context7": {
         "name": "@upstash/context7-mcp",
         "description": "Bir anahtarla yapılandırıldığında daha yüksek limitlerle en son kütüphane dokümanlarını ve kod örneklerini sağlayan Context7 dokümantasyon arama aracı"
+      },
+      "deja-vu": {
+        "name": "@vshulcz/deja-vu",
+        "description": "Claude Code, Codex, Gemini CLI, OpenCode ve DSH geçmiş oturumlarını disk üzerinde indeksleyerek araçlar arası anında hatırlama sağlayan yerel oturum belleği"
       }
     }
   },

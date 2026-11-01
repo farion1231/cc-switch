@@ -9,16 +9,17 @@ export type McpPreset = Omit<McpServer, "enabled" | "description">;
 const createNpxCommand = (
   packageName: string,
   extraArgs: string[] = [],
+  packageArgs: string[] = [],
 ): { command: string; args: string[] } => {
   if (isWindows()) {
     return {
       command: "cmd",
-      args: ["/c", "npx", ...extraArgs, packageName],
+      args: ["/c", "npx", ...extraArgs, packageName, ...packageArgs],
     };
   } else {
     return {
       command: "npx",
-      args: [...extraArgs, packageName],
+      args: [...extraArgs, packageName, ...packageArgs],
     };
   }
 };
@@ -88,6 +89,17 @@ export const mcpPresets: McpPreset[] = [
     } as McpServerSpec,
     homepage: "https://context7.com",
     docs: "https://github.com/upstash/context7/blob/master/README.md",
+  },
+  {
+    id: "deja-vu",
+    name: "@vshulcz/deja-vu",
+    tags: ["stdio", "memory", "search"],
+    server: {
+      type: "stdio",
+      ...createNpxCommand("@vshulcz/deja-vu", ["-y"], ["serve"]),
+    } as McpServerSpec,
+    homepage: "https://github.com/vshulcz/deja-vu",
+    docs: "https://vshulcz.github.io/deja-vu/",
   },
 ];
 

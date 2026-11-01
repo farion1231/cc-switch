@@ -2903,6 +2903,10 @@
       "context7": {
         "name": "@upstash/context7-mcp",
         "description": "Context7 文件搜尋工具，提供最新的函式庫文件和程式碼範例，設定 key 會有更高限額"
+      },
+      "deja-vu": {
+        "name": "@vshulcz/deja-vu",
+        "description": "跨 Agent 本地會話記憶工具，自動索引磁碟上的 Claude Code、Codex、Gemini CLI、OpenCode 與 DSH 歷史會話，切換工具或模型時不丟失上下文"
       }
     }
   },
