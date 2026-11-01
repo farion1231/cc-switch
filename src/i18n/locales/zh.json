@@ -2640,6 +2640,7 @@
     "copilotAutoAuth": "自动使用 OAuth 认证，无需手动配置凭证",
     "tokenPlanHint": "自动使用供应商的 API Key 和 Base URL 查询 Token Plan 额度",
     "balanceHint": "自动使用供应商的 API Key 查询账户余额",
+    "managedCodexSubscriptionHint": "使用此供应商绑定的 ChatGPT 账号查询订阅额度。账号可在编辑供应商时切换。",
     "officialSubscriptionHint": "读取本机 CLI 的 OAuth 凭据，并调用官方接口查询订阅额度。默认关闭，只有启用后才会请求。",
     "officialSubscriptionHintAgy": "运行 agy 自带的 /usage 命令查询登录账号的额度，不读取登录凭据，每次查询约需 10 秒。默认关闭，只有启用后才会请求。",
     "resetDate": "重置日期",
@@ -5116,6 +5117,13 @@
     }
   },
   "dsh": {
+    "codex": {
+      "name": "OpenAI Codex 账号",
+      "selectAccount": "请先选择账号，再获取模型列表。",
+      "help": "选择授权中心的账号，供 DSH Web 和 Desktop 原生使用。一个 DSH 配置目录同时使用一个 Codex 账号。",
+      "apply": "使用此账号",
+      "confirm": "这会替换 DSH 当前的 Codex 登录。已有请求不会被取消；如未生效，请重新打开 DSH。"
+    },
     "empty": {
       "title": "添加 DeepSeek Harness 供应商",
       "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"

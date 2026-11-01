@@ -2612,6 +2612,7 @@
     "copilotAutoAuth": "Otomatik OAuth kimlik doğrulaması, manuel kimlik bilgilerine gerek yok",
     "tokenPlanHint": "Token Planı kotasını sorgulamak için sağlayıcının API Anahtarını ve Temel URL'sini otomatik olarak kullanır",
     "balanceHint": "Hesap bakiyesini sorgulamak için sağlayıcının API Anahtarını otomatik olarak kullanır",
+    "managedCodexSubscriptionHint": "Bu sağlayıcıya bağlı ChatGPT hesabının abonelik kotasını sorgulayın. Hesabı değiştirmek için sağlayıcıyı düzenleyin.",
     "officialSubscriptionHint": "Yerel CLI OAuth kimlik bilgilerini okur ve abonelik kotasını sorgulamak için resmi API'yi çağırır. Varsayılan olarak devre dışıdır ve yalnızca siz etkinleştirdikten sonra istekte bulunur.",
     "officialSubscriptionHintAgy": "agy'nin yerleşik /usage komutu, oturumu açık hesabın kotasını kontrol eder. Oturum açma bilgileri okunmaz; her kontrol yaklaşık 10 saniye sürer. Varsayılan olarak kapalıdır ve yalnızca etkinleştirdiğinizde çalışır.",
     "resetDate": "Tarihi sıfırla",
@@ -5078,6 +5079,13 @@
     }
   },
   "dsh": {
+    "codex": {
+      "name": "OpenAI Codex hesabı",
+      "selectAccount": "Modelleri getirmeden önce bir hesap seçin.",
+      "help": "Hesaplar bölümündeki bir hesabı DSH Web ve Desktop içinde kullanın. Her DSH dizininde bir Codex hesabı etkindir.",
+      "apply": "Bu hesabı kullan",
+      "confirm": "Geçerli DSH Codex oturumu değiştirilir. Devam eden istekler sürer; değişiklik görünmezse DSH uygulamasını yeniden açın."
+    },
     "empty": {
       "title": "DeepSeek Harness sağlayıcısı ekle",
       "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."

@@ -2641,6 +2641,7 @@
     "copilotAutoAuth": "自動使用 OAuth 驗證，無需手動設定憑證",
     "tokenPlanHint": "自動使用供應商的 API Key 和 Base URL 查詢 Token Plan 額度",
     "balanceHint": "自動使用供應商的 API Key 查詢帳號餘額",
+    "managedCodexSubscriptionHint": "使用此供應商綁定的 ChatGPT 帳號查詢訂閱額度。可在編輯供應商時切換帳號。",
     "officialSubscriptionHint": "讀取本機 CLI 的 OAuth 憑證，並呼叫官方介面查詢訂閱額度。預設關閉，只有啟用後才會請求。",
     "officialSubscriptionHintAgy": "執行 agy 內建的 /usage 指令查詢登入帳號的額度，不讀取登入憑證，每次查詢約需 10 秒。預設關閉，只有啟用後才會請求。",
     "resetDate": "重設日期",
@@ -5117,6 +5118,13 @@
     }
   },
   "dsh": {
+    "codex": {
+      "name": "OpenAI Codex 帳號",
+      "selectAccount": "請先選擇帳號，再取得模型列表。",
+      "help": "選擇授權中心的帳號，供 DSH Web 和 Desktop 原生使用。同一 DSH 設定目錄使用一個 Codex 帳號。",
+      "apply": "使用此帳號",
+      "confirm": "這會取代 DSH 目前的 Codex 登入。現有請求不會取消；若未生效，請重新開啟 DSH。"
+    },
     "empty": {
       "title": "新增 DeepSeek Harness 供應商",
       "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"

@@ -503,6 +503,173 @@ fn credential_document_from(text: &str) -> Result<Yaml, AppError> {
     Ok(document)
 }
 
+// Codex keeps its native grant in DSH; the adjacent non-secret record identifies
+// the CC Switch account allowed to reconcile it. Never infer ownership by email.
+const CODEX_RECORD: &str = "llm-pi-ai/openai-codex";
+const CODEX_BINDING: &str = "cc-switch/dsh-codex";
+
+fn codex_binding_path() -> PathBuf {
+    data_dir().join(".cc-switch-codex-account")
+}
+
+pub(crate) fn codex_binding() -> Result<Option<String>, AppError> {
+    // Keep ownership independent of DSH's credential parser. A broken native
+    // document must not prevent unrelated managed accounts from being used.
+    let account = read_text(&codex_binding_path())?;
+    Ok((!account.trim().is_empty()).then(|| account.trim().to_owned()))
+}
+
+pub(crate) struct CodexGrantGuard {
+    _lock: FileLock,
+    document: Yaml,
+}
+impl CodexGrantGuard {
+    pub(crate) fn acquire(account_id: &str) -> Result<Option<Self>, AppError> {
+        if codex_binding()?.as_deref() != Some(account_id) {
+            return Ok(None);
+        }
+        let lock = FileLock::acquire(&credentials_path())?;
+        let document = credential_document(&credentials_path())?;
+        if document["records"][CODEX_BINDING]["payload"]["accountId"].as_str() != Some(account_id) {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            _lock: lock,
+            document,
+        }))
+    }
+    pub(crate) fn payload(&self) -> Result<Value, AppError> {
+        let record = &self.document["records"][CODEX_RECORD];
+        if record["kind"].as_str() != Some("grant") {
+            return Err(AppError::Config(
+                "DSH Codex login was removed; select an account again".into(),
+            ));
+        }
+        serde_json::to_value(&record["payload"])
+            .map_err(|_| AppError::Config("Invalid DSH Codex credential".into()))
+    }
+    pub(crate) fn save(&mut self, payload: &Value) -> Result<(), AppError> {
+        self.document["records"][CODEX_RECORD] =
+            serde_yaml::to_value(json!({"kind":"grant","payload":payload}))
+                .map_err(|_| AppError::Config("Invalid DSH Codex credential".into()))?;
+        let text = serde_yaml::to_string(&self.document)
+            .map_err(|_| AppError::Config("Cannot serialize DSH credentials".into()))?;
+        atomic_write_private(&credentials_path(), text.as_bytes())
+    }
+}
+
+pub(crate) fn unlink_codex(
+    account_id: &str,
+    identity: Option<&str>,
+    workspace: Option<&str>,
+) -> Result<(), AppError> {
+    let Some(mut guard) = CodexGrantGuard::acquire(account_id)? else {
+        return Ok(());
+    };
+    let access = guard.document["records"][CODEX_RECORD]["payload"]["access"].as_str();
+    let owned = identity.is_some()
+        && workspace.is_some()
+        && guard.document["records"][CODEX_RECORD]["payload"]["accountId"].as_str() == workspace
+        && access
+            .and_then(crate::codex_config::extract_codex_id_token_user_identity)
+            .as_deref()
+            == identity;
+    let records = guard.document["records"]
+        .as_mapping_mut()
+        .ok_or_else(|| AppError::Config("Invalid DSH credential records".into()))?;
+    if owned {
+        records.remove(Yaml::from(CODEX_RECORD));
+    }
+    records.remove(Yaml::from(CODEX_BINDING));
+    let text = serde_yaml::to_string(&guard.document)
+        .map_err(|_| AppError::Config("Cannot serialize DSH credentials".into()))?;
+    atomic_write_private(&credentials_path(), text.as_bytes())?;
+    atomic_write_private(&codex_binding_path(), b"")
+}
+
+pub(crate) fn codex_snapshot() -> Result<Yaml, AppError> {
+    let doc = credential_document(&credentials_path())?;
+    Ok(serde_yaml::to_value(vec![
+        doc["records"][CODEX_RECORD].clone(),
+        doc["records"][CODEX_BINDING].clone(),
+    ])
+    .unwrap())
+}
+
+pub(crate) fn bind_codex(
+    account_id: &str,
+    payload: Value,
+    expected: &Yaml,
+    config: Option<&Value>,
+    commit: impl FnOnce() -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    ensure_providers_not_shadowed(&home_patch_path())?;
+    let mut paths = vec![credentials_path(), codex_binding_path()];
+    paths.extend(target_paths());
+    edit_files_and_commit(
+        &paths,
+        |texts| {
+            let mut doc = credential_document_from(&texts[0])?;
+            let snapshot = serde_yaml::to_value(vec![
+                doc["records"][CODEX_RECORD].clone(),
+                doc["records"][CODEX_BINDING].clone(),
+            ])
+            .unwrap();
+            if &snapshot != expected {
+                return Err(AppError::Conflict(
+                    "DSH login changed while switching; retry".into(),
+                ));
+            }
+            if doc["records"].is_null() {
+                doc["records"] = Yaml::Mapping(Default::default());
+            }
+            if !doc["records"].is_mapping() {
+                return Err(AppError::Config("Invalid DSH credential records".into()));
+            }
+            doc["records"][CODEX_RECORD] =
+                serde_yaml::to_value(json!({"kind":"grant","payload":payload})).unwrap();
+            doc["records"][CODEX_BINDING] =
+                serde_yaml::to_value(json!({"kind":"grant","payload":{"accountId":account_id}}))
+                    .unwrap();
+            let mut result = vec![
+                serde_yaml::to_string(&doc)
+                    .map_err(|_| AppError::Config("Cannot serialize DSH credentials".into()))?,
+                account_id.to_owned(),
+            ];
+            for text in &texts[2..] {
+                let mut entry = provider_entry(text)?;
+                let providers = entry["config"]["providers"].as_mapping_mut().unwrap();
+                if let Some(config) = config {
+                    let (_, native) = native_provider("openai-codex", config, "")?;
+                    providers.insert(
+                        Yaml::from("openai-codex"),
+                        serde_yaml::to_value(native)
+                            .map_err(|_| AppError::Config("Invalid Codex configuration".into()))?,
+                    );
+                }
+                // Native catalog defaults supply the protocol, endpoint and models.
+                let route = providers
+                    .entry(Yaml::from("openai-codex"))
+                    .or_insert_with(|| Yaml::Mapping(Default::default()));
+                let route = route
+                    .as_mapping_mut()
+                    .ok_or_else(|| AppError::Config("Invalid DSH openai-codex route".into()))?;
+                // Explicit API-key overrides take priority over the OAuth record.
+                route.remove(Yaml::from("apiKeyEnv"));
+                route.remove(Yaml::from("headers"));
+                route
+                    .entry(Yaml::from("displayName"))
+                    .or_insert_with(|| Yaml::from("OpenAI Codex"));
+                route.remove(Yaml::from("api"));
+                route.remove(Yaml::from("baseURL"));
+                result.push(replace_entry(text, "llm-pi-ai", Some(entry))?);
+            }
+            Ok(result)
+        },
+        commit,
+    )
+}
+
 /// Key of the DeepSeek account login written by DSH's `deepseek-account-platform` provider.
 pub(crate) const ACCOUNT_RECORD: &str = "deepseek-account-platform/default";
 const ACCOUNT_DEVICE_RECORD: &str = "deepseek-account-platform/device";
@@ -718,41 +885,52 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
     {
         return Err(AppError::InvalidInput("DeepSeek Harness provider ids must be lowercase hyphenated identifiers; deepseek-official is reserved".into()));
     }
-    if !matches!(
-        config["api"].as_str(),
-        Some("openai-completions" | "openai-responses" | "anthropic-messages")
-    ) {
-        return Err(AppError::InvalidInput(
-            "Select a supported DeepSeek Harness API protocol".into(),
-        ));
-    }
-    if !config
-        .pointer("/options/baseURL")
-        .and_then(Value::as_str)
-        .and_then(|url| url::Url::parse(url).ok())
-        .is_some_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
-    {
-        return Err(AppError::InvalidInput(
-            "Enter a valid DeepSeek Harness endpoint URL".into(),
-        ));
+    if id != "openai-codex" {
+        if !matches!(
+            config["api"].as_str(),
+            Some("openai-completions" | "openai-responses" | "anthropic-messages")
+        ) {
+            return Err(AppError::InvalidInput(
+                "Select a supported DeepSeek Harness API protocol".into(),
+            ));
+        }
+        if !config
+            .pointer("/options/baseURL")
+            .and_then(Value::as_str)
+            .and_then(|url| url::Url::parse(url).ok())
+            .is_some_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        {
+            return Err(AppError::InvalidInput(
+                "Enter a valid DeepSeek Harness endpoint URL".into(),
+            ));
+        }
+        if config
+            .pointer("/options/apiKey")
+            .and_then(Value::as_str)
+            .is_none_or(|key| key.trim().is_empty())
+            && config
+                .get("apiKeyEnv")
+                .and_then(Value::as_str)
+                .is_none_or(|reference| reference.is_empty())
+        {
+            return Err(AppError::InvalidInput(
+                "Enter an API key or retain a native credential reference".into(),
+            ));
+        }
     }
     if config
-        .pointer("/options/apiKey")
-        .and_then(Value::as_str)
-        .is_none_or(|key| key.trim().is_empty())
-        && config
-            .get("apiKeyEnv")
-            .and_then(Value::as_str)
-            .is_none_or(|reference| reference.is_empty())
+        .get("models")
+        .is_some_and(|models| !models.is_object())
     {
-        return Err(AppError::InvalidInput(
-            "Enter an API key or retain a native credential reference".into(),
-        ));
+        return Err(AppError::InvalidInput("Models must be an object".into()));
     }
     let Some(models) = config["models"]
         .as_object()
         .filter(|models| !models.is_empty())
     else {
+        if id == "openai-codex" {
+            return Ok(());
+        }
         return Err(AppError::InvalidInput(
             "Add at least one DeepSeek Harness model".into(),
         ));
@@ -1173,7 +1351,7 @@ fn native_provider(
             object.insert("headers".into(), headers.clone());
         }
         let mut models = vec![];
-        for (model_id, model) in config["models"].as_object().unwrap() {
+        for (model_id, model) in config["models"].as_object().into_iter().flatten() {
             let mut model = model.clone();
             model["id"] = json!(model_id);
             for (from, to) in [("context", "contextWindow"), ("output", "maxTokens")] {
@@ -1217,6 +1395,15 @@ fn native_provider(
             models.push(model);
         }
         object.insert("models".into(), json!(models));
+        if id == "openai-codex" {
+            for field in ["api", "baseURL", "apiKeyEnv", "headers"] {
+                object.remove(field);
+            }
+            if models.is_empty() {
+                object.remove("models");
+            }
+            return Ok((credentials_next, native));
+        }
         if let Some(key) = config
             .pointer("/options/apiKey")
             .and_then(Value::as_str)

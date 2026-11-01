@@ -2640,6 +2640,7 @@
     "copilotAutoAuth": "OAuth 認証を自動使用、手動設定不要",
     "tokenPlanHint": "プロバイダーのAPI KeyとBase URLを使用してToken Planクォータを自動クエリ",
     "balanceHint": "プロバイダーのAPI Keyを使用してアカウント残高を自動クエリ",
+    "managedCodexSubscriptionHint": "このプロバイダーに紐づけた ChatGPT アカウントの利用枠を確認します。アカウントはプロバイダーの編集画面で変更できます。",
     "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
     "officialSubscriptionHintAgy": "agy 組み込みの /usage コマンドを実行して、ログイン中のアカウントの枠を照会します。ログイン認証情報は読み取りません。1 回の照会に約 10 秒かかります。既定では無効で、有効化した後のみ実行します。",
     "resetDate": "リセット日",
@@ -5116,6 +5117,13 @@
     }
   },
   "dsh": {
+    "codex": {
+      "name": "OpenAI Codex アカウント",
+      "selectAccount": "モデルを取得する前にアカウントを選択してください。",
+      "help": "アカウント管理でログインしたアカウントを DSH Web と Desktop で使用します。DSH ホームごとに一つの Codex アカウントを使用します。",
+      "apply": "このアカウントを使用",
+      "confirm": "DSH の現在の Codex ログインを置き換えます。実行中のリクエストは続行します。反映されない場合は DSH を開き直してください。"
+    },
     "empty": {
       "title": "DeepSeek Harness プロバイダーを追加",
       "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"

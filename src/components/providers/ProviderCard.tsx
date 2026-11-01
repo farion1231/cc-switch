@@ -33,7 +33,10 @@ import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  resolveManagedAccountId,
+  resolveDshCodexAccountId,
+} from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
 import {
   isOfficialAccount,
@@ -254,6 +257,9 @@ export function ProviderCard({
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
+  const dshCodexAccountId = resolveDshCodexAccountId(appId, provider);
+  const hasManagedCodexQuota =
+    isBoundCodexOfficial || Boolean(dshCodexAccountId);
   const isOfficial = isOfficialProvider(provider, appId);
   // Claude 官方卡绑了 Claude 官方账号：副标题写账号，额度按这个号查
   const claudeBoundAccountId =
@@ -264,10 +270,11 @@ export function ProviderCard({
   // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
   const usageEnabled =
     provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    (hasManagedCodexQuota || Boolean(claudeBoundAccountId));
   const supportsOfficialSubscription =
-    isOfficial &&
-    ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
+    Boolean(dshCodexAccountId) ||
+    (isOfficial &&
+      ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId));
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
@@ -294,9 +301,10 @@ export function ProviderCard({
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
   const isCodexOauth =
-    appId === "codex"
+    Boolean(dshCodexAccountId) ||
+    (appId === "codex"
       ? isBoundCodexOfficial
-      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH);
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS 能切号，其他平台忽略绑定）
@@ -310,7 +318,10 @@ export function ProviderCard({
   // 脚本用量只在「已启用 + 非官方 + 非官方订阅模板」时才查询；展开判定必须复用同一谓词，
   // 因为禁用的 React Query observer 仍会返回同 key 的旧缓存。
   const scriptUsageActive =
-    usageEnabled && !isOfficial && !isOfficialSubscriptionUsage;
+    usageEnabled &&
+    !dshCodexAccountId &&
+    !isOfficial &&
+    !isOfficialSubscriptionUsage;
   const { data: usage } = useUsageQuery(provider.id, appId, {
     enabled: scriptUsageActive,
     autoQueryInterval,
@@ -532,13 +543,13 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : isCodexOauth ? (
-                !isBoundCodexOfficial || usageEnabled ? (
+                !hasManagedCodexQuota || usageEnabled ? (
                   <CodexOauthQuotaFooter
                     meta={provider.meta}
                     inline={true}
-                    isCurrent={isCurrent}
+                    isCurrent={isCurrent || Boolean(dshCodexAccountId)}
                     autoQueryInterval={
-                      isBoundCodexOfficial
+                      hasManagedCodexQuota
                         ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
                         : undefined
                     }
@@ -647,7 +658,7 @@ export function ProviderCard({
             onConfigureUsage={
               (isOfficial && !supportsOfficialSubscription) ||
               isCopilot ||
-              (isCodexOauth && !isBoundCodexOfficial) ||
+              (isCodexOauth && !hasManagedCodexQuota) ||
               isXaiOauth
                 ? undefined
                 : () => onConfigureUsage(provider)
