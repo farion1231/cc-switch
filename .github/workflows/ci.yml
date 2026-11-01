@@ -42,7 +42,6 @@ jobs:
             frontend:
               - "src/**"
               - "tests/**"
-              - "index.html"
               - "package.json"
               - "pnpm-lock.yaml"
               - "pnpm-workspace.yaml"
