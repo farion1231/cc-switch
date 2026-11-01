@@ -349,7 +349,7 @@ export function formatEstimatedTokensPerSecond(
 
 /**
  * 表格和指标卡里的 Token 数：1 万以下写全（带千分位），以上压成最多 3 位有效数字
- * （48.2K、189K、18.2M），精确值放进 title。四种语言都用 K/M/B，和画板一致。
+ * （中文用万/亿，其他语言用 K/M/B），精确值放进 title。
  */
 export function formatTokensCompact(value: unknown, locale?: string): string {
   const num = parseFiniteNumber(value);
@@ -358,17 +358,25 @@ export function formatTokensCompact(value: unknown, locale?: string): string {
   if (abs < 10_000) {
     return new Intl.NumberFormat(locale).format(Math.round(num));
   }
-  const units: Array<[number, string]> = [
-    [1e9, "B"],
-    [1e6, "M"],
-    [1e3, "K"],
-  ];
+  const normalizedLanguage = normalizeLanguageTag(locale ?? "");
+  const isChinese = normalizedLanguage.startsWith("zh");
+  const isTraditional = isTraditionalChineseLanguage(normalizedLanguage);
+  const units: Array<[number, string]> = isChinese
+    ? [
+        [1e8, isTraditional ? "億" : "亿"],
+        [1e4, isTraditional ? "萬" : "万"],
+      ]
+    : [
+        [1e9, "B"],
+        [1e6, "M"],
+        [1e3, "K"],
+      ];
   for (let i = 0; i < units.length; i++) {
     const [size, suffix] = units[i];
     if (abs >= size) {
       const scaled = Number((num / size).toPrecision(3));
-      // 999.95K 进位成 1000K 时改用上一级单位
-      if (Math.abs(scaled) >= 1000 && i > 0) {
+      // 四舍五入达到上一级单位时进位（如 1000K → 1M、10000万 → 1亿）。
+      if (i > 0 && Math.abs(scaled) >= units[i - 1][0] / size) {
         const [biggerSize, biggerSuffix] = units[i - 1];
         return `${Number((num / biggerSize).toPrecision(3))}${biggerSuffix}`;
       }
