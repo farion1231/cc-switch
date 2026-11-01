@@ -2123,6 +2123,31 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://inference.baseten.co"],
   },
   {
+    name: "Runcrate",
+    websiteUrl: "https://www.runcrate.ai",
+    apiKeyUrl: "https://www.runcrate.ai/dashboard",
+    // Anthropic Messages 端点在根路径 /v1/messages 与 /v1/messages/count_tokens
+    //（runcrate.ai/docs/models/anthropic-messages，2026-10-26 核对），BASE_URL
+    // 填根、不带 /v1。文档给的是 AUTH_TOKEN（Bearer），x-api-key 也认。模型 ID
+    // 是 Hugging Face 风格全名，claude-* 会 404，故三档全显式；三档模型在
+    // api.runcrate.ai/v1/models 同日快照里窗口均为 1048576，按文档补
+    // CLAUDE_CODE_MAX_CONTEXT_TOKENS（Claude Code 对陌生模型默认按 200K 算）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.runcrate.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "zai-org/GLM-5.3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshotai/Kimi-K3",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
+      },
+    },
+    category: "aggregator",
+    icon: "runcrate",
+    endpointCandidates: ["https://api.runcrate.ai"],
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",

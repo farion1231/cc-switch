@@ -4095,6 +4095,146 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Runcrate",
+    websiteUrl: "https://www.runcrate.ai",
+    apiKeyUrl: "https://www.runcrate.ai/dashboard",
+    // OpenAI 兼容直连 /v1（runcrate.ai/docs/models/chat-completions，
+    // 2026-10-26 核对）。窗口/最大输出/输入模态取 api.runcrate.ai/v1/models
+    // 同日快照；limit.context 必须声明，缺了 OpenCode 会跳过 auto-compaction
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Runcrate",
+      options: {
+        baseURL: "https://api.runcrate.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "zai-org/GLM-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 1048576 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "moonshotai/Kimi-K3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 943718 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-ai/DeepSeek-V4.1-Flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 1048576 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "zai-org/GLM-5.3-Flash": {
+          name: "GLM-5.3 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 1048576 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "runcrate",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Nvidia",
+    websiteUrl: "https://build.nvidia.com",
+    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Nvidia",
+      options: {
+        baseURL: "https://integrate.api.nvidia.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "moonshotai/kimi-k2.6": {
+          name: "Kimi K2.6",
+          reasoning: true,
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "z-ai/glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "z-ai/glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "nvidia",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Nvidia",
+    websiteUrl: "https://build.nvidia.com",
+    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Nvidia",
+      options: {
+        baseURL: "https://integrate.api.nvidia.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "moonshotai/kimi-k2.6": {
+          name: "Kimi K2.6",
+          reasoning: true,
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "z-ai/glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "z-ai/glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "nvidia",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

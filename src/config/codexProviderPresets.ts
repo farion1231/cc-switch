@@ -3466,6 +3466,62 @@ requires_openai_auth = true`,
     icon: "baseten",
   },
   {
+    name: "Runcrate",
+    websiteUrl: "https://www.runcrate.ai",
+    apiKeyUrl: "https://www.runcrate.ai/dashboard",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "runcrate",
+      "https://api.runcrate.ai/v1",
+      "zai-org/GLM-5.3",
+    ),
+    endpointCandidates: ["https://api.runcrate.ai/v1"],
+    // 原生 Responses 直连：官方 Codex 接入文档给的 config.toml 就是
+    // base_url = "https://api.runcrate.ai/v1" + wire_api = "responses"
+    //（runcrate.ai/docs/models/responses，2026-10-26 核对），/v1/responses
+    // 真实存在，无需本地路由转 Chat
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      // 档位来源：同页 reasoning.effort 映射表——平台收 minimal/low/medium/
+      // high/xhigh，但 minimal 并入 low、xhigh 并入 high，实际只有 low/medium/
+      // high 三档行为；重复值按 Baseten 的口径不列。四款模型在
+      // api.runcrate.ai/v1/models（同日快照）的 supported_features 均含
+      // reasoning，窗口均为 1048576。每档都含 high，沿用模板默认 high，
+      // 与 config 的 model_reasoning_effort = "high" 一致，故不声明 default。
+      // 首行 = 默认模型，须与 config 的 model 一致
+      {
+        model: "zai-org/GLM-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "moonshotai/Kimi-K3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "deepseek-ai/DeepSeek-V4.1-Flash",
+        displayName: "DeepSeek V4.1 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "zai-org/GLM-5.3-Flash",
+        displayName: "GLM-5.3 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+    ]),
+    category: "aggregator",
+    icon: "runcrate",
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",
