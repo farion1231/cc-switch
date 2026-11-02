@@ -177,7 +177,7 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
             auth_token: !provider.is_github_copilot() || !provider.claude_uses_api_key_field(),
         }
     } else {
-        ProxyAuth::FollowRow
+        ProxyAuth::AuthToken
     }
 }
 
@@ -2533,6 +2533,39 @@ mod tests {
                 .is_none(),
             "non-managed providers should retain the legacy fallback behavior"
         );
+    }
+
+    #[test]
+    fn normal_claude_takeover_keeps_api_key_rows_off_the_local_hop() {
+        // #8104：OpenCode Go 这类预设把凭据存在 `ANTHROPIC_API_KEY`（上游跳要
+        // x-api-key），路由模式的本地占位符只能写 `ANTHROPIC_AUTH_TOKEN`；
+        // 残留的 `ANTHROPIC_API_KEY` 一并清掉，否则 Claude Code 弹自定义 key
+        // 确认框，默认拒绝后就是未登录会话。
+        let provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go",
+                    "ANTHROPIC_API_KEY": "sk-go"
+                }
+            }),
+            None,
+        );
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_API_KEY": "stale-key"
+            }
+        });
+        live_config = takeover(&live_config, &provider);
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_API_KEY", None);
     }
 }
 
