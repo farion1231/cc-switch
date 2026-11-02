@@ -148,6 +148,7 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
 
 type PresetEntry = {
   id: string;
@@ -249,7 +250,7 @@ const normalizeCodexChatReasoningForSave = (
       ? (value?.thinkingParam ?? "thinking")
       : "none",
     effortParam: supportsEffort
-      ? (value?.effortParam ?? "reasoning_effort")
+      ? normalizeEnabledCodexChatEffortParam(value?.effortParam)
       : "none",
     effortValueMode: supportsEffort
       ? (value?.effortValueMode ?? "passthrough")
@@ -777,6 +778,8 @@ function ProviderFormFull({
     codexModel,
     codexSubagentModel,
     codexSubagentReasoningEffort,
+    codexAgentMaxThreads,
+    codexMultiAgentV2Total,
     codexCatalogModels,
     codexAutoReviewModel,
     codexAuthError,
@@ -789,6 +792,7 @@ function ProviderFormFull({
     handleCodexModelChange,
     handleCodexSubagentModelChange,
     handleCodexSubagentReasoningEffortChange,
+    handleCodexAgentMaxThreadsChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
@@ -2852,6 +2856,9 @@ function ProviderFormFull({
               onSubagentReasoningEffortChange={
                 handleCodexSubagentReasoningEffortChange
               }
+              agentMaxThreads={codexAgentMaxThreads}
+              multiAgentV2Total={codexMultiAgentV2Total}
+              onAgentMaxThreadsChange={handleCodexAgentMaxThreadsChange}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
               copilotApiFormat={effectiveCodexCopilotApiFormat}

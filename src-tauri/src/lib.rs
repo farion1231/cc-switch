@@ -110,6 +110,31 @@ fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn disable_windows_general_autofill<R: tauri::Runtime>(webview: &tauri::Webview<R>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+    use windows::core::Interface;
+
+    let result = webview.with_webview(|platform_webview| {
+        let result = unsafe {
+            platform_webview
+                .controller()
+                .CoreWebView2()
+                .and_then(|webview| webview.Settings())
+                .and_then(|settings| settings.cast::<ICoreWebView2Settings4>())
+                .and_then(|settings| settings.SetIsGeneralAutofillEnabled(false))
+        };
+
+        if let Err(error) = result {
+            log::warn!("禁用 Windows WebView2 常规自动填充失败: {error}");
+        }
+    });
+
+    if let Err(error) = result {
+        log::warn!("访问 Windows WebView2 失败: {error}");
+    }
+}
+
 pub(crate) struct RedactedUrl<'a> {
     url: &'a str,
     known_secrets: &'a [String],
@@ -456,6 +481,19 @@ pub fn run() {
     panic_hook::setup_panic_hook();
 
     let mut builder = tauri::Builder::default();
+
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.plugin(
+            tauri::plugin::Builder::<_, ()>::new("windows-general-autofill")
+                .on_webview_ready(|webview| {
+                    if webview.label() == "main" {
+                        disable_windows_general_autofill(&webview);
+                    }
+                })
+                .build(),
+        );
+    }
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
@@ -1245,6 +1283,14 @@ pub fn run() {
                 tray_builder = tray_builder.icon(icon).icon_as_template(template);
             }
 
+            // Linux 托盘需要把图标写入磁盘。WSL 的 XDG_RUNTIME_DIR 可能指向
+            // 不存在或不可写的目录，使用应用缓存目录避免因此中止启动。
+            #[cfg(target_os = "linux")]
+            {
+                tray_builder =
+                    tray_builder.temp_dir_path(app.path().app_cache_dir()?.join("tray-icon"));
+            }
+
             let _tray = tray_builder.build(app)?;
             #[cfg(target_os = "windows")]
             tray_compat::install(app.handle());
@@ -1614,6 +1660,8 @@ pub fn run() {
             commands::set_mcp_enabled,
             // Unified MCP management
             commands::get_mcp_servers,
+            commands::start_mcp_connectivity_checks,
+            commands::cancel_mcp_connectivity_checks,
             commands::upsert_mcp_server,
             commands::delete_mcp_server,
             commands::toggle_mcp_app,
@@ -1803,12 +1851,14 @@ pub fn run() {
             commands::get_models_dev_sync_config,
             commands::save_models_dev_sync_config,
             commands::record_models_dev_sync_result,
+            commands::fetch_models_dev,
             commands::check_provider_limits,
             // Session usage sync
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
             commands::get_session_usage_last_sync,
             commands::get_usage_data_sources,
+            commands::fetch_exchange_rates,
             // Stream health check
             commands::stream_check_provider,
             // Session manager
