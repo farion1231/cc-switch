@@ -268,7 +268,9 @@ export function UsageHero({
   const tokens = (value: number) => formatTokensCompact(value, locale);
   // 悬停看完整数字；加载中、没有数据时格子里是「…」「—」，不提示
   const exact = (text: string | undefined) => (placeholder ? undefined : text);
-  const columns = compact ? "grid-cols-2" : "grid-cols-4";
+  const gridLayout = compact
+    ? "grid-cols-2 [&>*:nth-child(2n)]:border-l [&>*:nth-child(n+3)]:border-t [&>*]:border-border"
+    : "grid-cols-4 divide-x divide-border";
 
   const cacheWriteHelp =
     cacheWriteState === "na"
@@ -285,12 +287,7 @@ export function UsageHero({
       <div
         role="tablist"
         aria-label={t("usage.metrics.label")}
-        className={cn(
-          "grid border-border",
-          compact
-            ? "grid-cols-2 [&>*:nth-child(2n)]:border-l [&>*:nth-child(n+3)]:border-t [&>*]:border-border"
-            : "grid-cols-4 divide-x divide-border",
-        )}
+        className={cn("grid border-border", gridLayout)}
       >
         <MetricCell
           label={t("usage.totalCost")}
@@ -342,14 +339,7 @@ export function UsageHero({
         {...(moreOpen ? {} : { inert: "" })}
       >
         <div className="min-h-0 overflow-hidden">
-          <div
-            className={cn(
-              "grid border-t border-border",
-              compact
-                ? "grid-cols-2 [&>*:nth-child(2n)]:border-l [&>*:nth-child(n+3)]:border-t [&>*]:border-border"
-                : "grid-cols-4 divide-x divide-border",
-            )}
-          >
+          <div className={cn("grid border-t border-border", gridLayout)}>
             <SubMetric
               label={t("usage.freshInput")}
               value={placeholder ?? tokens(input)}
