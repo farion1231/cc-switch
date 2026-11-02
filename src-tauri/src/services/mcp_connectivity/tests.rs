@@ -368,7 +368,13 @@ async fn cancellation_and_timeout_release_stdio_descendants() {
 async fn stdio_login_path_finds_bare_launchers_and_configured_path_wins() {
     let dir = tempfile::tempdir().unwrap();
     let launcher = dir.path().join("mcp-path-fixture");
-    std::fs::copy("/usr/bin/env", &launcher).unwrap();
+    // A wrapper script rather than a copy of /usr/bin/env: newer macOS kills
+    // relocated copies of platform binaries (SIGKILL on exec).
+    std::fs::write(&launcher, "#!/bin/sh\nexec /usr/bin/env \"$@\"\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let login_path = format!("{}:/usr/bin:/bin", dir.path().display());
     for configured_path in [None, Some("/explicit/server/bin:/usr/bin")] {
         let mut command = Command::new("mcp-path-fixture");
