@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::live::floor;
 use crate::live::patch::json::{ClearScope, JsonPatch};
@@ -296,8 +296,29 @@ pub(crate) enum Tier {
 }
 
 impl Tier {
+    /// 菜单里的顺序，和 Claude Code 内置菜单一致。
+    const MENU_ORDER: [Tier; 4] = [Tier::Opus, Tier::Fable, Tier::Sonnet, Tier::Haiku];
     /// env 的写入顺序（`serde_json` 保序，改了会让 `settings.json` 里的键挪位置）。
     const ENV_ORDER: [Tier; 4] = [Tier::Haiku, Tier::Sonnet, Tier::Opus, Tier::Fable];
+
+    /// 档位别名：`--model` 和 `modelPicker` 都认，按 `ANTHROPIC_DEFAULT_*_MODEL` 解析。
+    fn alias(self) -> &'static str {
+        match self {
+            Tier::Opus => "opus",
+            Tier::Fable => "fable",
+            Tier::Sonnet => "sonnet",
+            Tier::Haiku => "haiku",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Tier::Opus => "Opus",
+            Tier::Fable => "Fable",
+            Tier::Sonnet => "Sonnet",
+            Tier::Haiku => "Haiku",
+        }
+    }
 
     fn model_key(self) -> &'static str {
         match self {
@@ -365,6 +386,22 @@ impl TierModel<'_> {
                 crate::mode::stack::provider_model_description(provider_name, model.trim(), window)
             })
     }
+
+    /// 菜单的一行：`model` 写档位别名，选中后存回的仍是 `"sonnet"` 这类别名，和内置菜单
+    /// 一样；标题 `<档位> · <显示名>`（几档回落到同一个模型时也分得清）。
+    fn picker_row(&self, env: &Map<String, Value>, provider_name: &str) -> Value {
+        let description = self.description(env, provider_name);
+        let name = if self.display_name.is_empty() {
+            self.upstream
+        } else {
+            &self.display_name
+        };
+        json!({
+            "model": self.tier.alias(),
+            "label": format!("{} · {name}", self.tier.label()),
+            "description": description,
+        })
+    }
 }
 
 /// 档位显示名：行里写了 `_MODEL_NAME` 用它的，否则是去掉 1M 标记的上游模型名。
@@ -399,6 +436,20 @@ fn route_roles(env: &Map<String, Value>) -> Vec<TierModel<'_>> {
             Some(tier_model(env, tier, upstream))
         })
         .collect()
+}
+
+/// 「打开终端」临时 `--settings` 文件里的菜单。`modelPicker` 按层级整个胜出、不合并：这里
+/// 不写的话，用户级 `settings.json` 里路由 / 聚合模式的菜单会漏进这个只连一家的终端。
+/// 只列这张卡显式配了的档位（直连时 Claude Code 不会把别名回落到 `ANTHROPIC_MODEL`）；
+/// 一个都没配时写一个空菜单，显示内置菜单。
+pub(crate) fn terminal_model_picker(env: &Map<String, Value>, provider_name: &str) -> Value {
+    let rows: Vec<Value> = Tier::MENU_ORDER
+        .into_iter()
+        .filter_map(|tier| env_string(env, tier.model_key()).map(|up| tier_model(env, tier, up)))
+        .map(|role| role.picker_row(env, provider_name))
+        .collect();
+    // 有行时只显示 Default 行和这些行。
+    json!({ "replaceBuiltInOptions": !rows.is_empty(), "options": rows })
 }
 
 /// 按角色写的模型别名和显示名。
