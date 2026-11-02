@@ -3215,7 +3215,7 @@ fn path_line_from_env_output(raw: &str) -> Option<&str> {
 /// 合并两段 PATH：`primary` 全部保留在前，`extra` 中未出现过的段按序追加。
 /// 空段直接丢弃（`a::b` 里的空段在 POSIX 下语义是"当前目录"，注入时不该带上）。
 #[cfg(not(target_os = "windows"))]
-fn merge_path_segments(primary: &str, extra: &str) -> String {
+pub(crate) fn merge_path_segments(primary: &str, extra: &str) -> String {
     let mut seen = std::collections::HashSet::new();
     let mut merged: Vec<&str> = Vec::new();
     for segment in primary.split(':').chain(extra.split(':')) {
@@ -3252,7 +3252,7 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 /// 解析不到（含超过 `deadline`）时返回 `None`，调用方保持原有行为（不注入），
 /// 不引入新的失败模式。
 #[cfg(not(target_os = "windows"))]
-fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
+pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
     use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
@@ -4405,13 +4405,13 @@ fn mise_shim_target(
 }
 
 #[derive(Clone, Copy)]
-struct CommandDeadline {
+pub(crate) struct CommandDeadline {
     expires_at: std::time::Instant,
     limit: std::time::Duration,
 }
 
 impl CommandDeadline {
-    fn from_timeout(timeout: Option<std::time::Duration>) -> Option<Self> {
+    pub(crate) fn from_timeout(timeout: Option<std::time::Duration>) -> Option<Self> {
         timeout.map(|limit| Self {
             expires_at: std::time::Instant::now() + limit,
             limit,
@@ -5301,13 +5301,21 @@ pub async fn open_provider_terminal(
                 None => {
                     let env_vars =
                         extract_env_vars_from_config(&provider.settings_config, &app_type);
-                    claude_terminal_launch(&env_vars, &providerId)?
+                    let drops = crate::services::provider::claude_switch_drops(
+                        state.inner(),
+                        &provider.settings_config,
+                    )
+                    .unwrap_or_else(|e| {
+                        log::warn!("计算终端要挡住的 live 键失败，按原样启动: {e}");
+                        Default::default()
+                    });
+                    claude_terminal_launch(&env_vars, &providerId, &provider.name, &drops)?
                 }
             }
         }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
-            claude_terminal_launch(&env_vars, &providerId)?
+            claude_terminal_launch(&env_vars, &providerId, &provider.name, &Default::default())?
         }
     };
     if skipPermissions == Some(true) {
@@ -5622,13 +5630,17 @@ fn codex_launch(
     })
 }
 
-/// Claude Code：把卡上的 env 写进临时 settings 文件，`claude --settings <文件>` 启动。
+/// Claude Code：把卡上的 env 和 `/model` 菜单写进临时 settings 文件，
+/// `claude --settings <文件>` 启动。`drops` 是切到这张卡时会从 live 清掉的键，在临时文件里
+/// 挡住（见 [`write_claude_config`]）。
 fn claude_terminal_launch(
     env_vars: &[(String, String)],
     provider_id: &str,
+    provider_name: &str,
+    drops: &crate::services::provider::SwitchDrops,
 ) -> Result<ProviderLaunch, String> {
     let config_file = unique_temp_path(&format!("claude_{provider_id}"), "json");
-    write_claude_config(&config_file, env_vars)?;
+    write_claude_config(&config_file, env_vars, provider_name, drops)?;
     let config_name = config_file
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -6000,18 +6012,43 @@ fn write_unix_launcher(
 }
 
 /// 写入 claude 配置文件（含凭据，0600）
+///
+/// 这个文件叠在用户级 `settings.json` 上：`env` 按键合并、顶层按键覆盖。所以：
+/// - `modelPicker` 一定要写：它按层级整个胜出，不写的话路由 / 聚合模式的菜单会漏进这个
+///   终端，选了就把别家的模型发给这张卡；
+/// - 切换会清掉、卡上又没有的键（`drops`）写成空值挡住：Claude Code 把空串当没设（2.1.314
+///   实测：代理的占位凭据不再随请求发出，没配的档位回到内置模型）。
 fn write_claude_config(
     config_file: &std::path::Path,
     env_vars: &[(String, String)],
+    provider_name: &str,
+    drops: &crate::services::provider::SwitchDrops,
 ) -> Result<(), String> {
+    use serde_json::Value;
     let mut config_obj = serde_json::Map::new();
     let mut env_obj = serde_json::Map::new();
 
     for (key, value) in env_vars {
-        env_obj.insert(key.clone(), serde_json::Value::String(value.clone()));
+        env_obj.insert(key.clone(), Value::String(value.clone()));
     }
 
-    config_obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
+    let model_picker = crate::live::project::claude::terminal_model_picker(&env_obj, provider_name);
+    for key in drops.env.keys() {
+        env_obj
+            .entry(key.clone())
+            .or_insert_with(|| Value::String(String::new()));
+    }
+    for (key, value) in &drops.top {
+        let empty = match value {
+            Value::String(_) => Value::String(String::new()),
+            Value::Object(_) => Value::Object(serde_json::Map::new()),
+            Value::Array(_) => Value::Array(Vec::new()),
+            _ => continue,
+        };
+        config_obj.insert(key.clone(), empty);
+    }
+    config_obj.insert("env".to_string(), Value::Object(env_obj));
+    config_obj.insert("modelPicker".to_string(), model_picker);
 
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
@@ -6506,7 +6543,12 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
     // Try the preferred terminal first
     let result = match terminal {
         "powershell" => run_windows_start_command_with_env(
-            &["powershell", "-NoExit", "-Command", &ps_cmd],
+            &[
+                windows_powershell_program(&effective_path_string()),
+                "-NoExit",
+                "-Command",
+                &ps_cmd,
+            ],
             "PowerShell",
             &launch_env,
         ),
@@ -6711,6 +6753,23 @@ fn run_windows_start_command_with_env(
     Ok(())
 }
 
+/// 首选终端为 PowerShell 时启动哪个程序。`powershell` 永远是系统自带的 Windows
+/// PowerShell 5.1；装了 PowerShell 7+ 的用户默认用的是 `pwsh`，所以补全后的 PATH 里
+/// 有 `pwsh.exe` 就用它，没有才退回 `powershell`。Microsoft Store 版的 `pwsh.exe` 是
+/// App Execution Alias（跟随不了的重解析点），`Path::exists` 会判成不存在，这里用
+/// `symlink_metadata`。
+#[cfg(target_os = "windows")]
+fn windows_powershell_program(path: &str) -> &'static str {
+    let has_pwsh = std::env::split_paths(path)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .any(|dir| std::fs::symlink_metadata(dir.join("pwsh.exe")).is_ok());
+    if has_pwsh {
+        "pwsh"
+    } else {
+        "powershell"
+    }
+}
+
 /// 打开用户首选终端并在其中执行一段可信命令脚本。脚本尾部 `read -r` / `pause`
 /// 是刻意设计的——让命令退出后窗口不要瞬间关闭，用户才看得到 `command
 /// not found` / `ModuleNotFoundError` 这类诊断信息。
@@ -6863,7 +6922,12 @@ read -r _
 
         let result = match terminal {
             "powershell" => run_windows_start_command(
-                &["powershell", "-NoExit", "-Command", &ps_cmd],
+                &[
+                    windows_powershell_program(&effective_path_string()),
+                    "-NoExit",
+                    "-Command",
+                    &ps_cmd,
+                ],
                 "PowerShell",
             ),
             "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
@@ -7137,6 +7201,24 @@ mod tests {
                 "temporary directory must be cleaned up"
             );
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_powershell_program_prefers_pwsh_on_path() {
+        let root = tempfile::tempdir().unwrap();
+        let empty = root.path().join("empty");
+        let pwsh_dir = root.path().join("PowerShell 7");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&pwsh_dir).unwrap();
+        std::fs::write(pwsh_dir.join("pwsh.exe"), "").unwrap();
+
+        let without = empty.to_str().unwrap();
+        assert_eq!(windows_powershell_program(without), "powershell");
+        assert_eq!(windows_powershell_program(""), "powershell");
+
+        let with = format!("{};{}", empty.display(), pwsh_dir.display());
+        assert_eq!(windows_powershell_program(&with), "pwsh");
     }
 
     #[cfg(target_os = "windows")]
@@ -7693,8 +7775,13 @@ mod tests {
     #[test]
     fn claude_terminal_config_is_private() {
         use std::os::unix::fs::PermissionsExt;
-        let launch =
-            claude_terminal_launch(&[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())], "p").unwrap();
+        let launch = claude_terminal_launch(
+            &[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())],
+            "p",
+            "P",
+            &Default::default(),
+        )
+        .unwrap();
         let file = &launch.cleanup[0];
         assert_eq!(
             std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
@@ -7708,6 +7795,127 @@ mod tests {
             ]
         );
         std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn claude_terminal_config_writes_the_cards_own_model_picker() {
+        let read = |env: &[(&str, &str)]| {
+            let env: Vec<(String, String)> = env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let launch =
+                claude_terminal_launch(&env, "p", "DeepSeek", &Default::default()).unwrap();
+            let file = &launch.cleanup[0];
+            let value: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+            std::fs::remove_file(file).unwrap();
+            value["modelPicker"].clone()
+        };
+
+        // 卡上显式配了档位：只列这几档，`model` 写档位别名。
+        let picker = read(&[
+            ("ANTHROPIC_MODEL", "deepseek-v4-pro"),
+            ("ANTHROPIC_DEFAULT_OPUS_MODEL", "deepseek-v4-pro[1M]"),
+            ("ANTHROPIC_DEFAULT_HAIKU_MODEL", "deepseek-v4-flash"),
+            ("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", "Flash"),
+        ]);
+        assert_eq!(
+            picker,
+            serde_json::json!({
+                "replaceBuiltInOptions": true,
+                "options": [
+                    {
+                        "model": "opus",
+                        "label": "Opus · deepseek-v4-pro",
+                        "description": "DeepSeek · deepseek-v4-pro · 1M",
+                    },
+                    {
+                        "model": "haiku",
+                        "label": "Haiku · Flash",
+                        "description": "DeepSeek · deepseek-v4-flash",
+                    },
+                ],
+            })
+        );
+
+        // 一档都没配：空菜单，挡住用户级菜单，显示内置的。
+        let picker = read(&[("ANTHROPIC_MODEL", "deepseek-v4-pro")]);
+        assert_eq!(
+            picker,
+            serde_json::json!({ "replaceBuiltInOptions": false, "options": [] })
+        );
+    }
+
+    #[test]
+    fn claude_terminal_config_shadows_what_the_switch_clears() {
+        let drops = crate::services::provider::SwitchDrops {
+            env: serde_json::json!({
+                "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "ccs-claude-kimi--k3[1M]",
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+            top: serde_json::json!({
+                "model": "ccs-claude-kimi--k3[1M]",
+                "modelOverrides": { "a": "b" },
+                "modelPicker": { "replaceBuiltInOptions": true, "options": [] },
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        };
+        let launch = claude_terminal_launch(
+            &[
+                ("ANTHROPIC_API_KEY".into(), "sk".into()),
+                (
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL".into(),
+                    "deepseek-v4-pro".into(),
+                ),
+            ],
+            "p",
+            "DeepSeek",
+            &drops,
+        )
+        .unwrap();
+        let file = &launch.cleanup[0];
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        std::fs::remove_file(file).unwrap();
+
+        // 卡上有的照写，没有的写空值挡住用户级的。
+        assert_eq!(value["env"]["ANTHROPIC_API_KEY"], "sk");
+        assert_eq!(
+            value["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "deepseek-v4-pro"
+        );
+        assert_eq!(value["env"]["ANTHROPIC_AUTH_TOKEN"], "");
+        assert_eq!(value["model"], "");
+        assert_eq!(value["modelOverrides"], serde_json::json!({}));
+        // 菜单写卡自己的，不是空对象。
+        assert_eq!(value["modelPicker"]["options"][0]["model"], "opus");
+    }
+
+    #[test]
+    fn claude_terminal_config_without_drops_writes_only_the_card() {
+        let launch = claude_terminal_launch(
+            &[("ANTHROPIC_MODEL".into(), "deepseek-v4-pro".into())],
+            "p",
+            "DeepSeek",
+            &Default::default(),
+        )
+        .unwrap();
+        let file = &launch.cleanup[0];
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        std::fs::remove_file(file).unwrap();
+        let keys: Vec<&String> = value.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["env", "modelPicker"]);
+        assert_eq!(
+            value["modelPicker"],
+            serde_json::json!({ "replaceBuiltInOptions": false, "options": [] })
+        );
     }
 
     #[test]

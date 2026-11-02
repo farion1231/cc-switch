@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import { QwenProviderForm } from "@/components/providers/forms/QwenProviderForm";
 import { qwenProviderPresets } from "@/config/qwenProviderPresets";
 import { http, HttpResponse } from "msw";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -155,13 +154,15 @@ describe("QwenProviderForm", () => {
           ]);
         },
       ),
-      http.get(MODELS_DEV_API_URL, () =>
-        HttpResponse.json({
-          relay: {
-            api: "https://relay.example.com/v1",
-            models: { "qwen3.7-plus": { limit: { context: 1000000 } } },
-          },
-        }),
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.json(
+          JSON.stringify({
+            relay: {
+              api: "https://relay.example.com/v1",
+              models: { "qwen3.7-plus": { limit: { context: 1000000 } } },
+            },
+          }),
+        ),
       ),
     );
     const submit = renderForm();
