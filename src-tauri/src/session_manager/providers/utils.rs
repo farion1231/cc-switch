@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, FixedOffset};
@@ -123,37 +123,204 @@ where
 ///
 /// 用 [`FileParseCache::persistent`] 建的缓存还会存到磁盘，重启后第一次扫描也只解析
 /// 改过的文件。磁盘缓存按应用版本区分，换版本（解析规则可能变了）时整份作废重建；
-/// 开发构建不落盘，免得改了解析代码却读到旧结果。
+/// 开发构建不落盘，免得改了解析代码却读到旧结果。落盘在后台进行，不阻塞扫描返回，
+/// 见 [`StoreWriter`]。
 pub struct FileParseCache {
     entries: Mutex<HashMap<PathBuf, CachedParse>>,
-    /// 磁盘缓存文件；`None` 时只在内存里缓存
-    store: Option<PathBuf>,
+    /// 磁盘缓存；`None` 时只在内存里缓存
+    store: Option<Arc<StoreWriter>>,
     /// 磁盘缓存是否已读进内存（第一次扫描时读）
     loaded: AtomicBool,
 }
 
+#[derive(Clone)]
 struct CachedParse {
     modified: Option<SystemTime>,
     len: u64,
-    meta: Option<SessionMeta>,
+    /// 用 `Arc` 和后台落盘的快照共享，提交快照时不必复制会话摘要
+    meta: Option<Arc<SessionMeta>>,
 }
 
 /// 磁盘缓存的版本：应用版本 + 存储格式。任何一项不同，整份缓存作废。
 const STORE_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/1");
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct StoredCache {
     version: String,
     entries: Vec<StoredEntry>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct StoredEntry {
     path: String,
     /// 修改时间：UNIX 纪元以来的 (秒, 纳秒)
     modified: Option<(u64, u32)>,
     len: u64,
     meta: Option<SessionMeta>,
+}
+
+/// 写盘用的借用版本，字段与 [`StoredCache`] / [`StoredEntry`] 一致
+#[derive(Serialize)]
+struct StoredCacheRef<'a> {
+    version: &'a str,
+    entries: Vec<StoredEntryRef<'a>>,
+}
+
+#[derive(Serialize)]
+struct StoredEntryRef<'a> {
+    path: &'a str,
+    modified: Option<(u64, u32)>,
+    len: u64,
+    meta: Option<&'a SessionMeta>,
+}
+
+/// 交给后台写盘的一份缓存快照
+struct Snapshot(Vec<(PathBuf, CachedParse)>);
+
+impl Snapshot {
+    fn of(entries: &HashMap<PathBuf, CachedParse>) -> Self {
+        Self(
+            entries
+                .iter()
+                .map(|(path, entry)| (path.clone(), entry.clone()))
+                .collect(),
+        )
+    }
+
+    fn encode(&self) -> serde_json::Result<Vec<u8>> {
+        let stored = StoredCacheRef {
+            version: STORE_VERSION,
+            entries: self
+                .0
+                .iter()
+                .filter_map(|(path, entry)| {
+                    let modified = match entry.modified {
+                        Some(time) => Some(encode_time(time)?),
+                        None => None,
+                    };
+                    Some(StoredEntryRef {
+                        // 非 UTF-8 路径存不进 JSON，只留在内存里
+                        path: path.to_str()?,
+                        modified,
+                        len: entry.len,
+                        meta: entry.meta.as_deref(),
+                    })
+                })
+                .collect(),
+        };
+        serde_json::to_vec(&stored)
+    }
+}
+
+/// 磁盘缓存的后台写入者：扫描只把最新快照放进 `pending` 就返回，序列化和写文件
+/// 都在后台线程做。
+///
+/// 每个缓存最多一个写线程，按顺序取快照写；扫描在持有缓存锁时提交快照，所以
+/// `pending` 里总是最新的一份，还没写的旧快照直接被替换掉，旧快照不会覆盖新快照。
+/// 进程退出时没写完的快照会丢失，下次启动只是多解析几个文件；写入是原子替换，
+/// 不会留下半个文件。
+struct StoreWriter {
+    path: PathBuf,
+    state: Mutex<WriterState>,
+    /// 写线程退出时通知（测试里等待落盘用）
+    idle: Condvar,
+}
+
+#[derive(Default)]
+struct WriterState {
+    pending: Option<Snapshot>,
+    writing: bool,
+}
+
+impl StoreWriter {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            state: Mutex::new(WriterState::default()),
+            idle: Condvar::new(),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, WriterState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// 提交最新快照；没有写线程在跑时启动一个
+    fn submit(self: &Arc<Self>, snapshot: Snapshot) {
+        let mut state = self.lock();
+        state.pending = Some(snapshot);
+        if state.writing {
+            return;
+        }
+        let writer = Arc::clone(self);
+        let spawned = std::thread::Builder::new()
+            .name("session-list-cache".into())
+            .spawn(move || writer.drain());
+        match spawned {
+            Ok(_) => state.writing = true,
+            // 留着 pending，下次提交时再试
+            Err(err) => log::debug!("会话列表缓存写线程启动失败 {}: {err}", self.path.display()),
+        }
+    }
+
+    fn drain(&self) {
+        /// 写线程无论正常结束还是 panic，都要清掉 `writing`，否则之后再也不会落盘
+        struct Finish<'a>(&'a StoreWriter);
+        impl Drop for Finish<'_> {
+            fn drop(&mut self) {
+                let mut state = self.0.lock();
+                state.writing = false;
+                if std::thread::panicking() {
+                    state.pending = None;
+                }
+                self.0.idle.notify_all();
+            }
+        }
+        let _finish = Finish(self);
+        loop {
+            let Some(snapshot) = self.lock().pending.take() else {
+                return;
+            };
+            self.write(&snapshot);
+        }
+    }
+
+    fn write(&self, snapshot: &Snapshot) {
+        let store = &self.path;
+        let result = snapshot
+            .encode()
+            .map_err(|err| err.to_string())
+            .and_then(|bytes| {
+                if let Some(parent) = store.parent() {
+                    std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+                }
+                // 缓存里有会话标题、首条提问，按私有文件写
+                crate::config::atomic_write_private(store, &bytes).map_err(|err| err.to_string())
+            });
+        if let Err(err) = result {
+            log::debug!("会话列表缓存写入失败 {}: {err}", store.display());
+        }
+    }
+
+    /// 等到所有已提交的快照都写完
+    #[cfg(test)]
+    fn flush(&self) {
+        let mut state = self.lock();
+        while state.writing || state.pending.is_some() {
+            if !state.writing {
+                // 写线程没起来（启动失败），就地写掉
+                let snapshot = state.pending.take().expect("pending snapshot");
+                drop(state);
+                self.write(&snapshot);
+                state = self.lock();
+                continue;
+            }
+            state = self
+                .idle
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
 }
 
 fn encode_time(time: SystemTime) -> Option<(u64, u32)> {
@@ -184,8 +351,16 @@ impl FileParseCache {
     pub(crate) fn with_store(store: Option<PathBuf>) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
-            store,
+            store: store.map(|path| Arc::new(StoreWriter::new(path))),
             loaded: AtomicBool::new(false),
+        }
+    }
+
+    /// 等后台把已提交的缓存快照写完（测试用）
+    #[cfg(test)]
+    pub(crate) fn flush_store(&self) {
+        if let Some(writer) = &self.store {
+            writer.flush();
         }
     }
 
@@ -214,45 +389,11 @@ impl FileParseCache {
                     CachedParse {
                         modified,
                         len: entry.len,
-                        meta: entry.meta,
+                        meta: entry.meta.map(Arc::new),
                     },
                 ))
             })
             .collect()
-    }
-
-    fn save_store(store: &Path, entries: &HashMap<PathBuf, CachedParse>) {
-        let stored = StoredCache {
-            version: STORE_VERSION.to_string(),
-            entries: entries
-                .iter()
-                .filter_map(|(path, entry)| {
-                    let modified = match entry.modified {
-                        Some(time) => Some(encode_time(time)?),
-                        None => None,
-                    };
-                    Some(StoredEntry {
-                        // 非 UTF-8 路径存不进 JSON，只留在内存里
-                        path: path.to_str()?.to_string(),
-                        modified,
-                        len: entry.len,
-                        meta: entry.meta.clone(),
-                    })
-                })
-                .collect(),
-        };
-        let result = serde_json::to_vec(&stored)
-            .map_err(|err| err.to_string())
-            .and_then(|bytes| {
-                if let Some(parent) = store.parent() {
-                    std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-                }
-                // 缓存里有会话标题、首条提问，按私有文件写
-                crate::config::atomic_write_private(store, &bytes).map_err(|err| err.to_string())
-            });
-        if let Err(err) = result {
-            log::debug!("会话列表缓存写入失败 {}: {err}", store.display());
-        }
     }
 
     /// 解析 `files`，没变过的文件直接用缓存，其余并行解析（并行数取自设置）。
@@ -284,9 +425,9 @@ impl FileParseCache {
                 guard
             }
         };
-        if let Some(store) = &self.store {
+        if let Some(writer) = &self.store {
             if !self.loaded.swap(true, Ordering::AcqRel) {
-                *guard = Self::load_store(store);
+                *guard = Self::load_store(&writer.path);
             }
         }
         let mut previous = std::mem::take(&mut *guard);
@@ -317,7 +458,7 @@ impl FileParseCache {
                 Some(CachedParse {
                     modified,
                     len,
-                    meta,
+                    meta: meta.map(Arc::new),
                 }),
             ))
         });
@@ -334,7 +475,7 @@ impl FileParseCache {
                     .expect("cached file")
             });
             if let Some(meta) = &entry.meta {
-                sessions.push(meta.clone());
+                sessions.push(SessionMeta::clone(meta));
             }
             next.insert(path, entry);
         }
@@ -342,8 +483,9 @@ impl FileParseCache {
         // 剩下的是本轮没再出现的文件（已删除）
         changed |= !previous.is_empty();
         if changed {
-            if let Some(store) = &self.store {
-                Self::save_store(store, &next);
+            if let Some(writer) = &self.store {
+                // 仍持有缓存锁时提交，提交顺序与扫描顺序一致；序列化和写盘都在后台
+                writer.submit(Snapshot::of(&next));
             }
         }
         *guard = next;
@@ -668,7 +810,29 @@ mod tests {
             }
             Ok(meta_from_file(path))
         });
+        // 落盘在后台，等写完再模拟下一次重启
+        cache.flush_store();
         (session_ids(sessions), parsed.into_inner())
+    }
+
+    #[test]
+    fn persistent_cache_keeps_the_latest_snapshot_across_rapid_scans() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("list.json");
+        let files = numbered_files(dir.path(), 4);
+        let cache = FileParseCache::with_store(Some(store.clone()));
+        // 每轮都改文件，连续提交多份快照；后台可能还在写前一份。
+        // 每轮长度不同，免得文件系统修改时间精度不够时被当成没变
+        for round in 0..20 {
+            let padding = " ".repeat(round);
+            std::fs::write(&files[0], format!("session-round-{round}{padding}")).unwrap();
+            cache.scan_with_limit(files.clone(), 2, |path: &Path| Ok(meta_from_file(path)));
+        }
+        cache.flush_store();
+
+        let (ids, parsed) = scan_stored(&store, &files);
+        assert_eq!(parsed, 0, "the last snapshot must be the one on disk");
+        assert_eq!(ids[0], "session-round-19");
     }
 
     #[test]
@@ -736,8 +900,10 @@ mod tests {
         let files = numbered_files(dir.path(), 3);
         let cache = FileParseCache::with_store(Some(store.clone()));
         cache.scan_with_limit(files.clone(), 2, |path: &Path| Ok(meta_from_file(path)));
+        cache.flush_store();
         std::fs::write(&store, b"sentinel").unwrap();
         cache.scan_with_limit(files, 2, |path: &Path| Ok(meta_from_file(path)));
+        cache.flush_store();
         assert_eq!(std::fs::read(&store).unwrap(), b"sentinel");
     }
 
