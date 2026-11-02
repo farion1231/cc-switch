@@ -20,6 +20,7 @@ import {
   isValidExchangeRate,
   RATE_SOURCES,
   resolveMoneyDisplay,
+  resolveRateProvider,
   resolveRateSource,
   resolveSidebarToday,
   resolveTrendChartType,
@@ -85,12 +86,24 @@ export function UsageDisplaySection({
   useEffect(() => setTodayItems(savedTodayItems), [savedTodayKey]);
 
   // 异步保存（取汇率）可能在用户又改了币种 / 来源之后才回来，
-  // 要用最新一版设置做底，别把发起时的整份 value 写回去
+  // 要用最新一版设置与最新的 onChange 做底，别把发起时的整份 value
+  // 和当时的保存闭包（autoSaveSettings 会拿它闭包里的整份设置合并）写回去
   const valueRef = useRef(value);
   valueRef.current = value;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   const save = (next: Partial<UsageDisplaySettings>) =>
-    onChange({ ...valueRef.current, ...next });
+    onChangeRef.current({ ...valueRef.current, ...next });
+
+  // 请求在途时离开页面：这次汇率结果作废，不能再保存
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // 汇率来源：保存要等设置重新读回来才生效，先按用户刚选的显示
   const savedRateSource = resolveRateSource(value);
@@ -106,15 +119,17 @@ export function UsageDisplaySection({
     setRateFetchFailed(false);
     try {
       const fetched = await usageApi.fetchExchangeRates();
+      if (!mountedRef.current) return;
       const saved = await save({
         autoExchangeRates: fetched.rates,
         rateFetchedAt: fetched.fetchedAt,
+        rateProvider: fetched.source,
       });
-      setRateFetchFailed(saved === false);
+      if (mountedRef.current) setRateFetchFailed(saved === false);
     } catch {
-      setRateFetchFailed(true);
+      if (mountedRef.current) setRateFetchFailed(true);
     } finally {
-      setRateFetching(false);
+      if (mountedRef.current) setRateFetching(false);
     }
   };
 
@@ -188,6 +203,10 @@ export function UsageDisplaySection({
     const name = currencyName(code, lang);
     return name ? `${code} · ${name}` : code;
   };
+
+  // 各句自带句号：中日文直接相连，其他语言隔一个空格
+  const clauseSeparator = /^(zh|ja)/i.test(lang) ? "" : " ";
+  const rateProvider = resolveRateProvider(value?.rateProvider);
 
   return (
     <section
@@ -360,24 +379,38 @@ export function UsageDisplaySection({
                 : "m-0 mt-1.5 text-caption text-fg-3"
             }
           >
-            {rateInvalid
-              ? t("usage.display.rateInvalid")
-              : rateSource === "auto"
-                ? [
-                    rateFetchFailed
-                      ? t("usage.display.rateAutoFailed")
-                      : typeof value?.rateFetchedAt === "number"
-                        ? t("usage.display.rateAutoUpdated", {
-                            time: formatRelativeTime(value.rateFetchedAt, t),
-                          })
-                        : t("usage.display.rateAutoNever"),
-                    t("usage.display.rateAutoHint"),
-                  ].join(/^(zh|ja)/i.test(lang) ? "" : " ")
-                : // 两句各自带句号：中日文直接相连，其他语言隔一个空格
-                  [
-                    t("usage.display.rateHint"),
-                    t("usage.display.approxNote"),
-                  ].join(/^(zh|ja)/i.test(lang) ? "" : " ")}
+            {rateInvalid ? (
+              t("usage.display.rateInvalid")
+            ) : rateSource === "auto" ? (
+              <>
+                {[
+                  rateFetchFailed
+                    ? t("usage.display.rateAutoFailed")
+                    : typeof value?.rateFetchedAt === "number"
+                      ? t("usage.display.rateAutoUpdated", {
+                          time: formatRelativeTime(value.rateFetchedAt, t),
+                        })
+                      : t("usage.display.rateAutoNever"),
+                  t("usage.display.rateAutoHint"),
+                ].join(clauseSeparator)}
+                {clauseSeparator}
+                {/* open.er-api.com 的免费条款要求在使用汇率的页面署名，链接到实际数据源 */}
+                <a
+                  href={rateProvider.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-fg-2"
+                >
+                  {t("usage.display.rateAttribution", {
+                    provider: rateProvider.name,
+                  })}
+                </a>
+              </>
+            ) : (
+              [t("usage.display.rateHint"), t("usage.display.approxNote")].join(
+                clauseSeparator,
+              )
+            )}
           </p>
         )}
       </div>

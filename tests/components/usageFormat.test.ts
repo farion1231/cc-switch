@@ -14,6 +14,7 @@ import {
   formatTokensPerSecond,
   formatTokensShort,
   resolveMoneyDisplay,
+  resolveRateProvider,
   resolveRateSource,
   shouldRefreshRates,
   resolveSidebarToday,
@@ -313,31 +314,51 @@ describe("display currency", () => {
       currency: "CNY",
       rate: 7.1,
     });
-    expect(resolveRateSource({ currency: "CNY" })).toBe("auto");
+    // 没设置过来源按手动：用量页本来不联网，不能升级后一进来就发请求
+    expect(resolveRateSource({ currency: "CNY" })).toBe("manual");
     expect(resolveRateSource({ currency: "CNY", rateSource: "bogus" })).toBe(
-      "auto",
+      "manual",
     );
     expect(resolveRateSource({ currency: "CNY", rateSource: "manual" })).toBe(
       "manual",
     );
+    expect(resolveRateSource({ currency: "CNY", rateSource: "auto" })).toBe(
+      "auto",
+    );
   });
 
-  it("treats a saved manual rate as manual when the source was never set", () => {
-    // v4.0.14 起就能手填汇率：这些设置里没有 rateSource，升级后不能被自动值顶掉
-    const upgraded = { currency: "CNY", exchangeRates: { CNY: 7.1 } };
-    expect(resolveRateSource(upgraded)).toBe("manual");
-    expect(
-      resolveMoneyDisplay({ ...upgraded, autoExchangeRates: { CNY: 6.9 } }),
-    ).toEqual({ currency: "CNY", rate: 7.1 });
+  it("names the provider that actually served the automatic rate", () => {
+    // open.er-api.com 的免费条款要求署名 ExchangeRate-API（旧缓存没有 source 也按主源）
+    expect(resolveRateProvider("open.er-api.com")).toEqual({
+      name: "ExchangeRate-API",
+      url: "https://www.exchangerate-api.com/",
+    });
+    expect(resolveRateProvider(undefined)).toEqual({
+      name: "ExchangeRate-API",
+      url: "https://www.exchangerate-api.com/",
+    });
+    // 主源失败退到备用源时署它自己的名字
+    expect(resolveRateProvider("floatrates.com")).toEqual({
+      name: "FloatRates",
+      url: "https://www.floatrates.com/",
+    });
+  });
 
-    // 没有手填值时仍按自动；币种对不上、汇率不合法也一样
-    expect(resolveRateSource({ currency: "CNY" })).toBe("auto");
+  it("keeps fetched automatic rates out of the manual default unless picked", () => {
+    // 没设置过来源：自动取到的值不参与显示，用手填值或预置值
+    const fetched = {
+      currency: "CNY",
+      autoExchangeRates: { CNY: 6.9 },
+    };
+    expect(resolveRateSource(fetched)).toBe("manual");
+    expect(resolveMoneyDisplay(fetched)).toEqual({ currency: "CNY", rate: 6.8 });
+    expect(resolveMoneyDisplay({ ...fetched, exchangeRates: { CNY: 7.1 } })).toEqual(
+      { currency: "CNY", rate: 7.1 },
+    );
+    // 用户主动选了自动才用取到的值
     expect(
-      resolveRateSource({ currency: "USD", exchangeRates: { CNY: 7.1 } }),
-    ).toBe("auto");
-    expect(
-      resolveRateSource({ currency: "CNY", exchangeRates: { CNY: 0 } }),
-    ).toBe("auto");
+      resolveMoneyDisplay({ ...fetched, rateSource: "auto" }),
+    ).toEqual({ currency: "CNY", rate: 6.9 });
   });
 
   it("refreshes automatic rates only when the cache is missing or stale", () => {

@@ -53,17 +53,28 @@ export type RateSource = (typeof RATE_SOURCES)[number];
 export const AUTO_RATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 /**
- * 汇率来源：显式设置优先；没设置过的老用户，如果当前币种已有合法的手填汇率，
- * 按手动处理（v4.0.14 起就能手填，升级后不能被自动获取的值顶掉）。
+ * 汇率来源：显式设置优先，没设置过一律按手动。
+ * 用量页本来不联网，升级后不能一进页面就向第三方发请求；用户主动选「自动获取」才联网。
  */
 export function resolveRateSource(
   settings: UsageDisplaySettings | undefined,
 ): RateSource {
-  const picked = RATE_SOURCES.find((source) => source === settings?.rateSource);
-  if (picked) return picked;
-  const currency = settings?.currency;
-  const manual = currency ? settings?.exchangeRates?.[currency] : undefined;
-  return isValidExchangeRate(manual) ? "manual" : "auto";
+  return (
+    RATE_SOURCES.find((source) => source === settings?.rateSource) ?? "manual"
+  );
+}
+
+/**
+ * 自动汇率的实际数据源：open.er-api.com 按它的免费条款必须署名 ExchangeRate-API；
+ * 主源失败退到 floatrates.com 时署它自己的名字。没有记录（旧缓存）按主源处理。
+ */
+export function resolveRateProvider(source: string | undefined): {
+  name: string;
+  url: string;
+} {
+  return source === "floatrates.com"
+    ? { name: "FloatRates", url: "https://www.floatrates.com/" }
+    : { name: "ExchangeRate-API", url: "https://www.exchangerate-api.com/" };
 }
 
 /** 该不该去取新汇率：自动模式且没取过、或缓存已超过半天 */

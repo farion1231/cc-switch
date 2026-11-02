@@ -140,7 +140,9 @@ describe("UsageDisplaySection", () => {
 
     const saved: Array<UsageDisplaySettings | undefined> = [];
     const Harness = () => {
-      const [value, setValue] = useState<UsageDisplaySettings | undefined>();
+      const [value, setValue] = useState<UsageDisplaySettings | undefined>({
+        rateSource: "auto",
+      });
       return (
         <UsageDisplaySection
           value={value}
@@ -170,6 +172,117 @@ describe("UsageDisplaySection", () => {
     const last = saved.at(-1);
     expect(last?.currency).toBe("CNY");
     expect(last?.autoExchangeRates?.CNY).toBe(6.9);
+  });
+
+  it("keeps settings changed while a rate refresh is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveFetch!: (value: FetchedExchangeRates) => void;
+    fetchExchangeRatesMock.mockReturnValueOnce(
+      new Promise<FetchedExchangeRates>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    // 模拟 UsagePage 的 autoSaveSettings：用它闭包里的整份设置合并保存。
+    // 请求在途时改了刷新间隔，汇率回来后不能把间隔改回去。
+    const saved: Array<{ usage: UsageDisplaySettings; refreshMs: number }> = [];
+    const Harness = () => {
+      const [usage, setUsage] = useState<UsageDisplaySettings>({
+        currency: "CNY",
+        rateSource: "auto",
+      });
+      const [refreshMs, setRefreshMs] = useState(60_000);
+      const captured = { usage, refreshMs };
+      return (
+        <>
+          <UsageDisplaySection
+            value={usage}
+            onChange={async (next) => {
+              saved.push({ usage: next, refreshMs: captured.refreshMs });
+              setUsage(next);
+              setRefreshMs(captured.refreshMs);
+              return true;
+            }}
+          />
+          <button type="button" onClick={() => setRefreshMs(120_000)}>
+            change refresh
+          </button>
+        </>
+      );
+    };
+    render(<Harness />);
+
+    await user.click(
+      screen.getByRole("button", { name: "usage.display.rateRefresh" }),
+    );
+    await waitFor(() =>
+      expect(fetchExchangeRatesMock).toHaveBeenCalledTimes(1),
+    );
+    await user.click(screen.getByRole("button", { name: "change refresh" }));
+    await act(async () => {
+      resolveFetch({
+        rates: { CNY: 6.9 },
+        fetchedAt: 1_700_000_000_000,
+        source: "open.er-api.com",
+      });
+    });
+
+    const last = saved.at(-1);
+    expect(last?.refreshMs).toBe(120_000);
+    expect(last?.usage.autoExchangeRates?.CNY).toBe(6.9);
+    expect(last?.usage.rateProvider).toBe("open.er-api.com");
+  });
+
+  it("drops a fetched rate when the page was left meanwhile", async () => {
+    const user = userEvent.setup();
+    let resolveFetch!: (value: FetchedExchangeRates) => void;
+    fetchExchangeRatesMock.mockReturnValueOnce(
+      new Promise<FetchedExchangeRates>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+    const onChange = vi.fn();
+    const { unmount } = render(
+      <UsageDisplaySection
+        value={{ currency: "CNY", rateSource: "auto" }}
+        onChange={onChange}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "usage.display.rateRefresh" }),
+    );
+    await waitFor(() =>
+      expect(fetchExchangeRatesMock).toHaveBeenCalledTimes(1),
+    );
+    unmount();
+    await act(async () => {
+      resolveFetch({
+        rates: { CNY: 6.9 },
+        fetchedAt: 1_700_000_000_000,
+        source: "open.er-api.com",
+      });
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("credits the provider of the automatic rates", () => {
+    render(
+      <UsageDisplaySection
+        value={{
+          currency: "CNY",
+          rateSource: "auto",
+          autoExchangeRates: { CNY: 6.9 },
+          rateProvider: "floatrates.com",
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+    // 备用源署它自己的名字；主源（open.er-api.com）的署名由条款要求
+    expect(
+      screen.getByRole("link", { name: "usage.display.rateAttribution" }),
+    ).toHaveAttribute("href", "https://www.floatrates.com/");
   });
 
   it("does not write the preset rate when it was left unchanged", async () => {

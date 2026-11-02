@@ -2473,6 +2473,7 @@
       "rateAutoUpdated": "上次更新：{{time}}",
       "rateAutoNever": "尚未获取到汇率",
       "rateAutoFailed": "自动获取失败，暂用上次的汇率",
+      "rateAttribution": "汇率数据由 {{provider}} 提供。",
       "rateRefresh": "立即更新",
       "rateHint": "手动填写，只用于换算显示；费用仍按美元记录。",
       "rateInvalid": "请输入大于 0 的数字",

@@ -401,7 +401,7 @@ pub struct UsageDisplaySettings {
     /// 用量趋势图的样式（"bar" / "area"），缺省为柱形图
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trend_chart_type: Option<String>,
-    /// 汇率来源："auto" 自动获取（每日更新）/"manual" 手动填写，缺省按 auto
+    /// 汇率来源："auto" 自动获取（每日更新）/"manual" 手动填写，缺省按 manual
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_source: Option<String>,
     /// 自动获取到的汇率，按币种存；和手填的 `exchange_rates` 分开，切回手动不丢手填值
@@ -410,6 +410,9 @@ pub struct UsageDisplaySettings {
     /// 上次成功取到汇率的时间（毫秒时间戳）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_fetched_at: Option<i64>,
+    /// 上次取到汇率的实际数据源，界面署名用（open.er-api.com / floatrates.com）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_provider: Option<String>,
 }
 
 /// 应用设置结构
@@ -1612,7 +1615,8 @@ mod tests {
                 "trendChartType": "area",
                 "rateSource": "auto",
                 "autoExchangeRates": { "CNY": 6.9 },
-                "rateFetchedAt": 1_700_000_000_000i64
+                "rateFetchedAt": 1_700_000_000_000i64,
+                "rateProvider": "open.er-api.com"
             }
         }))
         .expect("usage display");
@@ -1628,6 +1632,7 @@ mod tests {
         assert_eq!(display.rate_source.as_deref(), Some("auto"));
         assert_eq!(display.auto_exchange_rates.get("CNY"), Some(&6.9));
         assert_eq!(display.rate_fetched_at, Some(1_700_000_000_000));
+        assert_eq!(display.rate_provider.as_deref(), Some("open.er-api.com"));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
             serde_json::json!({
@@ -1638,7 +1643,8 @@ mod tests {
                 "trendChartType": "area",
                 "rateSource": "auto",
                 "autoExchangeRates": { "CNY": 6.9 },
-                "rateFetchedAt": 1_700_000_000_000i64
+                "rateFetchedAt": 1_700_000_000_000i64,
+                "rateProvider": "open.er-api.com"
             })
         );
 

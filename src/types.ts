@@ -390,12 +390,14 @@ export interface UsageDisplaySettings {
   requestLogColumns?: Record<string, boolean>;
   /** 用量趋势图的样式（见 `TREND_CHART_TYPES`），缺省为柱形图 */
   trendChartType?: string;
-  /** 汇率来源（"auto" 自动获取 / "manual" 手动填写），缺省为 auto */
+  /** 汇率来源（"auto" 自动获取 / "manual" 手动填写），缺省为 manual，只有用户主动选自动才联网 */
   rateSource?: string;
   /** 自动获取到的汇率，按币种存；与手填的 `exchangeRates` 分开，切回手动不丢手填值 */
   autoExchangeRates?: Record<string, number>;
   /** 上次成功取到汇率的时间（毫秒时间戳） */
   rateFetchedAt?: number;
+  /** 上次取到汇率的实际数据源（后端返回的 source），用于界面署名 */
+  rateProvider?: string;
 }
 
 /** 后端 `fetch_exchange_rates` 的返回：1 美元折多少目标币种 */

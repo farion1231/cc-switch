@@ -2473,6 +2473,7 @@
       "rateAutoUpdated": "Last updated: {{time}}",
       "rateAutoNever": "No rate fetched yet",
       "rateAutoFailed": "Could not fetch a new rate; keeping the previous one.",
+      "rateAttribution": "Rates by {{provider}}.",
       "rateRefresh": "Update now",
       "rateHint": "Entered by hand and used only for display; costs are still recorded in USD.",
       "rateInvalid": "Enter a number greater than 0",

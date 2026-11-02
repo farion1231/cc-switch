@@ -27,6 +27,14 @@ export function useAutoExchangeRates(
   // 请求期间用户可能改了币种 / 来源：保存时合并进最新设置，别写回发起请求时的旧值
   const displayRef = useRef(usageDisplay);
   displayRef.current = usageDisplay;
+  // 请求在途时离开用量页：这次结果作废，不能用离开前的整份设置覆盖别处的修改
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!enabled || tried.current || !isTauri()) return;
@@ -37,10 +45,12 @@ export function useAutoExchangeRates(
     void (async () => {
       try {
         const fetched = await usageApi.fetchExchangeRates();
+        if (!mountedRef.current) return;
         await saveRef.current({
           ...displayRef.current,
           autoExchangeRates: fetched.rates,
           rateFetchedAt: fetched.fetchedAt,
+          rateProvider: fetched.source,
         });
       } catch {
         // 取不到就退回缓存或手填值，不打扰使用

@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchExchangeRates = vi.hoisted(() => vi.fn());
@@ -33,9 +33,32 @@ describe("useAutoExchangeRates", () => {
         rateSource: "auto",
         autoExchangeRates: fetched.rates,
         rateFetchedAt: fetched.fetchedAt,
+        rateProvider: fetched.source,
       }),
     );
     expect(fetchExchangeRates).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the fetched rate when the usage page was left meanwhile", async () => {
+    let resolveFetch!: (value: typeof fetched) => void;
+    fetchExchangeRates.mockReturnValueOnce(
+      new Promise<typeof fetched>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+    const save = vi.fn().mockResolvedValue(true);
+
+    const { unmount } = renderHook(() =>
+      useAutoExchangeRates({ currency: "CNY", rateSource: "auto" }, save),
+    );
+    await waitFor(() => expect(fetchExchangeRates).toHaveBeenCalledTimes(1));
+    // 请求在途时离开用量页：结果作废，不能用离开前的整份设置覆盖别处的修改
+    unmount();
+    await act(async () => {
+      resolveFetch(fetched);
+    });
+
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("does not touch the network for manual or fresh rates", () => {
