@@ -1531,3 +1531,50 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
             .get::<_, bool>(0))
         .unwrap());
 }
+
+#[test]
+fn enable_wal_switches_file_database_and_keeps_backups_readable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("wal.db");
+    let conn = Connection::open(&path).expect("open db");
+    Database::enable_wal(&conn);
+
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("journal mode");
+    assert_eq!(mode, "wal");
+    let synchronous: i64 = conn
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .expect("synchronous");
+    assert_eq!(synchronous, 1, "WAL should use synchronous=NORMAL");
+
+    conn.execute_batch("CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('kept');")
+        .expect("write");
+    // Backups copy pages through the Backup API, so rows still in the WAL
+    // must reach the backup file without a manual checkpoint.
+    let backup_path = dir.path().join("backup.db");
+    {
+        let mut dest = Connection::open(&backup_path).expect("open backup");
+        let backup = rusqlite::backup::Backup::new(&conn, &mut dest).expect("backup");
+        backup
+            .run_to_completion(64, std::time::Duration::ZERO, None)
+            .expect("complete backup");
+    }
+    let restored = Connection::open(&backup_path).expect("reopen backup");
+    let value: String = restored
+        .query_row("SELECT v FROM t", [], |row| row.get(0))
+        .expect("read backup");
+    assert_eq!(value, "kept");
+}
+
+#[test]
+fn enable_wal_leaves_in_memory_database_usable() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::enable_wal(&conn);
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("journal mode");
+    assert_eq!(mode, "memory");
+    conn.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1);")
+        .expect("write after failed switch");
+}
