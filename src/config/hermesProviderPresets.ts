@@ -2400,7 +2400,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
       name: "qianwenai",
-      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      base_url: "https://maas.qianwenaiapi.com/compatible-mode/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
@@ -2450,8 +2450,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     settingsConfig: {
       name: "qianwenai_token_plan",
-      base_url:
-        "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      base_url: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -2478,7 +2477,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       name: "qwencloud",
-      base_url: "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+      base_url: "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -2531,8 +2530,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       name: "qwencloud_token_plan",
-      base_url:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+      base_url: "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [

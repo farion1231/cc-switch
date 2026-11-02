@@ -1526,7 +1526,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
       name: "千问AI平台",
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://maas.qianwenaiapi.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -1553,8 +1553,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     settingsConfig: {
       name: "千问AI平台 Token Plan",
-      baseUrl:
-        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -1584,7 +1583,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       name: "QwenCloud",
-      baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      baseUrl:
+        "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -1640,8 +1640,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       name: "QwenCloud Token Plan",
-      baseUrl:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [

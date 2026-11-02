@@ -1677,7 +1677,7 @@ export const providerPresets: ProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://dashscope.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_BASE_URL: "https://maas.qianwenaiapi.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "qwen3.8-max[1M]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1M]",
@@ -1690,6 +1690,10 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    endpointCandidates: [
+      "https://maas.qianwenaiapi.com/apps/anthropic",
+      "https://dashscope.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qianwenai",
     iconColor: "#624AFF",
   },
@@ -1720,7 +1724,7 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+          "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "qwen3.8-max[1M]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1M]",
@@ -1732,6 +1736,10 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    endpointCandidates: [
+      "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qianwenai",
     iconColor: "#624AFF",
   },
@@ -1748,7 +1756,7 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
-          "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+          "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "qwen3.8-max[1M]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1M]",
@@ -1757,6 +1765,10 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    endpointCandidates: [
+      "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
+      "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qwencloud",
     iconColor: "#6336E7",
   },
@@ -1791,7 +1803,7 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "qwen3.8-max[1M]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1M]",
@@ -1803,6 +1815,10 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    endpointCandidates: [
+      "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
+      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qwencloud",
     iconColor: "#6336E7",
   },
