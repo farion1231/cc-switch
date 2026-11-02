@@ -208,6 +208,7 @@ impl Database {
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
             pricing_model TEXT,
+            reasoning_effort TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
@@ -321,7 +322,8 @@ impl Database {
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
                 last_tail_fingerprint INTEGER,
-                parser_state TEXT
+                parser_state TEXT,
+                reasoning_effort_synced INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )
@@ -329,6 +331,16 @@ impl Database {
 
         // 修复跑过未发布开发版 v24 的库：parser_state 随 v24 定稿，不单独 bump 版本
         Self::add_column_if_missing(conn, "session_log_sync", "parser_state", "TEXT")?;
+
+        // 思考强度的两列不 bump 版本：每次打开库时幂等补列，已发布的 v24 库也走这里。
+        // 新增列都可空或有默认值，v24 的旧版应用打开补过列的库不受影响。
+        Self::add_column_if_missing(conn, "proxy_request_logs", "reasoning_effort", "TEXT")?;
+        Self::add_column_if_missing(
+            conn,
+            "session_log_sync",
+            "reasoning_effort_synced",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         // Session detail rows are pruned after rollup, so request IDs needed
         // for fork/rewrite deduplication live in a compact durable ledger.
@@ -4159,6 +4171,61 @@ mod tests {
         let read = db.get_all_installed_skills()?;
         assert!(!read["s"].apps.agy);
         assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
+    fn create_tables_adds_reasoning_columns_to_released_v24_databases() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "ALTER TABLE proxy_request_logs DROP COLUMN reasoning_effort;
+             ALTER TABLE session_log_sync DROP COLUMN reasoning_effort_synced;
+             INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens, total_cost_usd,
+                latency_ms, status_code, created_at
+             ) VALUES ('existing', 'p', 'codex', 'gpt-5', 123, '0.25', 1, 200, 1);
+             INSERT INTO session_log_sync (
+                file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset,
+                last_tail_fingerprint, parser_state
+             ) VALUES ('session.jsonl', 123, 7, 456, 789, 42, '[]');",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+
+        for _ in 0..2 {
+            Database::create_tables_on_conn(&conn)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+        }
+
+        assert_eq!(Database::get_user_version(&conn)?, 24);
+        let usage: (String, i64, String, Option<String>) = conn.query_row(
+            "SELECT model, input_tokens, total_cost_usd, reasoning_effort
+             FROM proxy_request_logs WHERE request_id = 'existing'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(usage, ("gpt-5".to_string(), 123, "0.25".to_string(), None));
+        let cursor: (i64, i64, i64, i64, i64, Option<String>, bool) = conn.query_row(
+            "SELECT last_modified, last_line_offset, last_synced_at, last_byte_offset,
+                    last_tail_fingerprint, parser_state, reasoning_effort_synced
+             FROM session_log_sync WHERE file_path = 'session.jsonl'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )?;
+        assert_eq!(
+            cursor,
+            (123, 7, 456, 789, 42, Some("[]".to_string()), false)
+        );
         Ok(())
     }
 

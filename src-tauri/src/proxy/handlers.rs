@@ -511,6 +511,7 @@ struct ClaudeUsageLog {
     model: String,
     request_model: String,
     outbound_model: String,
+    reasoning_effort: Option<String>,
     app_type: &'static str,
     provider_id: String,
     session_id: String,
@@ -540,6 +541,7 @@ fn prepare_claude_usage_log(
     Some(ClaudeUsageLog {
         model,
         request_model: ctx.request_model.clone(),
+        reasoning_effort: ctx.reasoning_effort.clone(),
         outbound_model: ctx
             .outbound_model
             .clone()
@@ -562,6 +564,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
         &log.model,
         &log.request_model,
         &log.outbound_model,
+        log.reasoning_effort.as_deref(),
         log.usage,
         log.latency_ms,
         None,
@@ -655,6 +658,7 @@ async fn handle_claude_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
+            let reasoning_effort = ctx.reasoning_effort.clone();
             // 上游/转换层未回显模型时，优先用映射后的出站模型兜底（路由接管真值），
             // 其次才是客户端请求别名。空字符串视为缺失（转换器对无回显上游会合成 ""）。
             let fallback_model = ctx
@@ -683,6 +687,7 @@ async fn handle_claude_transform(
                         let provider_id = provider_id.clone();
                         let session_id = session_id.clone();
                         let request_model = request_model.clone();
+                        let reasoning_effort = reasoning_effort.clone();
                         let outbound_model = fallback_model.clone();
 
                         tokio::spawn(async move {
@@ -693,6 +698,7 @@ async fn handle_claude_transform(
                                 &model,
                                 &request_model,
                                 &outbound_model,
+                                reasoning_effort.as_deref(),
                                 usage,
                                 latency_ms,
                                 first_token_ms,
@@ -1672,6 +1678,7 @@ async fn handle_codex_xai_native_responses_rewrite(
                     .or_else(|| ctx.outbound_model.clone())
                     .unwrap_or_else(|| ctx.request_model.clone());
                 let request_model = ctx.request_model.clone();
+                let reasoning_effort = ctx.reasoning_effort.clone();
                 let outbound_model = ctx
                     .outbound_model
                     .clone()
@@ -1690,6 +1697,7 @@ async fn handle_codex_xai_native_responses_rewrite(
                             &model,
                             &request_model,
                             &outbound_model,
+                            reasoning_effort.as_deref(),
                             usage,
                             latency_ms,
                             None,
@@ -1758,6 +1766,7 @@ async fn handle_codex_chat_to_responses_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
+            let reasoning_effort = ctx.reasoning_effort.clone();
             // 接管/模型覆写场景的归因兜底：出站真值优先于客户端请求别名
             let fallback_model = ctx
                 .outbound_model
@@ -1792,6 +1801,7 @@ async fn handle_codex_chat_to_responses_transform(
                     let state = state.clone();
                     let provider_id = provider_id.clone();
                     let request_model = request_model.clone();
+                    let reasoning_effort = reasoning_effort.clone();
                     let outbound_model = fallback_model.clone();
                     let session_id = session_id.clone();
 
@@ -1803,6 +1813,7 @@ async fn handle_codex_chat_to_responses_transform(
                             &model,
                             &request_model,
                             &outbound_model,
+                            reasoning_effort.as_deref(),
                             usage,
                             latency_ms,
                             first_token_ms,
@@ -1906,6 +1917,7 @@ async fn handle_codex_chat_to_responses_transform(
             .or_else(|| ctx.outbound_model.clone())
             .unwrap_or_else(|| ctx.request_model.clone());
         let request_model = ctx.request_model.clone();
+        let reasoning_effort = ctx.reasoning_effort.clone();
         let outbound_model = ctx
             .outbound_model
             .clone()
@@ -1924,6 +1936,7 @@ async fn handle_codex_chat_to_responses_transform(
                     &model,
                     &request_model,
                     &outbound_model,
+                    reasoning_effort.as_deref(),
                     usage,
                     latency_ms,
                     None,
@@ -2071,6 +2084,7 @@ async fn handle_codex_anthropic_to_responses_transform(
             .or_else(|| ctx.outbound_model.clone())
             .unwrap_or_else(|| ctx.request_model.clone());
         let request_model = ctx.request_model.clone();
+        let reasoning_effort = ctx.reasoning_effort.clone();
         let outbound_model = ctx
             .outbound_model
             .clone()
@@ -2089,6 +2103,7 @@ async fn handle_codex_anthropic_to_responses_transform(
                     &model,
                     &request_model,
                     &outbound_model,
+                    reasoning_effort.as_deref(),
                     usage,
                     latency_ms,
                     None,
@@ -2138,6 +2153,7 @@ fn build_codex_anthropic_sse_response(
         let state = state.clone();
         let provider_id = ctx.provider.id.clone();
         let request_model = ctx.request_model.clone();
+        let reasoning_effort = ctx.reasoning_effort.clone();
         let fallback_model = ctx
             .outbound_model
             .clone()
@@ -2165,6 +2181,7 @@ fn build_codex_anthropic_sse_response(
                 let state = state.clone();
                 let provider_id = provider_id.clone();
                 let request_model = request_model.clone();
+                let reasoning_effort = reasoning_effort.clone();
                 let outbound_model = fallback_model.clone();
                 let session_id = session_id.clone();
 
@@ -2176,6 +2193,7 @@ fn build_codex_anthropic_sse_response(
                         &model,
                         &request_model,
                         &outbound_model,
+                        reasoning_effort.as_deref(),
                         usage,
                         latency_ms,
                         first_token_ms,
@@ -3266,21 +3284,24 @@ async fn log_forward_error(
     let provider_id = ctx.provider.id.clone();
     let app_type = ctx.app_type_str.to_string();
     let request_model = ctx.request_model.clone();
+    let reasoning_effort = ctx.reasoning_effort.clone();
     let session_id = ctx.session_id.clone();
     let latency_ms = ctx.latency_ms();
     let write = tokio::task::spawn_blocking(move || {
-        UsageLogger::new(&db).log_error_with_context(
-            request_id,
-            provider_id,
-            app_type,
-            request_model,
-            status_code,
-            error_message,
-            latency_ms,
-            is_streaming,
-            Some(session_id),
-            None,
-        )
+        UsageLogger::new(&db)
+            .with_reasoning_effort(reasoning_effort.as_deref())
+            .log_error_with_context(
+                request_id,
+                provider_id,
+                app_type,
+                request_model,
+                status_code,
+                error_message,
+                latency_ms,
+                is_streaming,
+                Some(session_id),
+                None,
+            )
     });
     if let Err(e) = write.await.unwrap_or_else(|e| {
         Err(crate::error::AppError::Database(format!(
@@ -3303,6 +3324,7 @@ async fn log_usage(
     model: &str,
     request_model: &str,
     outbound_model: &str,
+    reasoning_effort: Option<&str>,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -3328,8 +3350,9 @@ async fn log_usage(
     let model = model.to_string();
     let request_model = request_model.to_string();
     let outbound_model = outbound_model.to_string();
+    let reasoning_effort = reasoning_effort.map(str::to_owned);
     let write = tokio::task::spawn_blocking(move || {
-        let logger = UsageLogger::new(&db);
+        let logger = UsageLogger::new(&db).with_reasoning_effort(reasoning_effort.as_deref());
         // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
         // 在阻塞线程上 block_on 不会停转运行时
         let pricing_model_source = tokio::runtime::Handle::current()

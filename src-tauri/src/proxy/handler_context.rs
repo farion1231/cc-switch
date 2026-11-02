@@ -49,6 +49,8 @@ pub struct RequestContext {
     pub current_provider_id: String,
     /// 请求中的模型名称
     pub request_model: String,
+    /// 客户端显式请求的思考强度；缺省时不推断。
+    pub reasoning_effort: Option<String>,
     /// 实际发往上游的模型名（路由接管/模型映射后的真值，forward 成功后回填）。
     ///
     /// usage 归因的兜底顺序：上游响应回显 → outbound_model → request_model。
@@ -211,6 +213,7 @@ impl RequestContext {
             providers,
             current_provider_id,
             request_model,
+            reasoning_effort: super::usage::reasoning::reasoning_effort(body),
             outbound_model: None,
             tag,
             app_type_str,

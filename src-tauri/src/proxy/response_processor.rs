@@ -511,6 +511,7 @@ pub(crate) fn create_usage_collector(
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
     let request_model = ctx.request_model.clone();
+    let reasoning_effort = ctx.reasoning_effort.clone();
     // 流式事件缺失模型名时的归因兜底：映射后的出站模型（路由接管真值）优先，
     // 其次才是客户端请求别名
     let fallback_model = ctx
@@ -539,6 +540,7 @@ pub(crate) fn create_usage_collector(
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
+                let reasoning_effort = reasoning_effort.clone();
                 let outbound_model = fallback_model.clone();
 
                 tokio::spawn(async move {
@@ -549,6 +551,7 @@ pub(crate) fn create_usage_collector(
                         &model,
                         &request_model,
                         &outbound_model,
+                        reasoning_effort.as_deref(),
                         usage,
                         latency_ms,
                         first_token_ms,
@@ -565,6 +568,7 @@ pub(crate) fn create_usage_collector(
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
+                let reasoning_effort = reasoning_effort.clone();
                 let outbound_model = fallback_model.clone();
 
                 tokio::spawn(async move {
@@ -575,6 +579,7 @@ pub(crate) fn create_usage_collector(
                         &model,
                         &request_model,
                         &outbound_model,
+                        reasoning_effort.as_deref(),
                         TokenUsage::default(),
                         latency_ms,
                         first_token_ms,
@@ -612,6 +617,7 @@ fn spawn_log_usage(
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let request_model = request_model.to_string();
+    let reasoning_effort = ctx.reasoning_effort.clone();
     // 「按请求计价」模式的锚点：映射后的出站模型，无映射时等于 request_model
     let outbound_model = ctx
         .outbound_model
@@ -628,6 +634,7 @@ fn spawn_log_usage(
             &model,
             &request_model,
             &outbound_model,
+            reasoning_effort.as_deref(),
             usage,
             latency_ms,
             None,
@@ -661,6 +668,7 @@ async fn log_usage_internal(
     model: &str,
     request_model: &str,
     outbound_model: &str,
+    reasoning_effort: Option<&str>,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -691,8 +699,9 @@ async fn log_usage_internal(
     let model = model.to_string();
     let request_model = request_model.to_string();
     let outbound_model = outbound_model.to_string();
+    let reasoning_effort = reasoning_effort.map(str::to_owned);
     let write = tokio::task::spawn_blocking(move || {
-        let logger = UsageLogger::new(&db);
+        let logger = UsageLogger::new(&db).with_reasoning_effort(reasoning_effort.as_deref());
         // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
         // 在阻塞线程上 block_on 不会停转运行时
         let pricing_model_source = tokio::runtime::Handle::current()
@@ -1272,6 +1281,7 @@ mod tests {
             "resp-model",
             "req-model",
             "req-model",
+            None,
             usage,
             10,
             None,
@@ -1339,6 +1349,7 @@ mod tests {
             "resp-model",
             "req-model",
             "outbound-model",
+            None,
             usage,
             10,
             None,
@@ -1433,6 +1444,7 @@ mod tests {
                 "resp-model",
                 "req-model",
                 "req-model",
+                None,
                 usage,
                 10,
                 None,

@@ -215,6 +215,7 @@ fn sync_single_grok_file(
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
+    let reasoning_effort = grok_session_reasoning_effort(file_path);
 
     let last_byte_offset = cursor.and_then(|c| c.last_byte_offset);
     // 升级前 Grok 把 last_line_offset 写成「已解析事件数」而不是行号/字节。
@@ -355,6 +356,7 @@ fn sync_single_grok_file(
                 turn,
                 event.cost_is_partial || turn.cost_partial,
                 model,
+                reasoning_effort.as_deref(),
                 &session_id,
                 event.created_at,
             ) {
@@ -379,6 +381,19 @@ fn sync_single_grok_file(
     }
 
     Ok(result)
+}
+
+/// Grok Build 不逐轮记录思考强度，只有 summary.json 的会话当前档位。只在
+/// 新轮次导入时读取：活跃会话里与刚结束的轮次一致，已入库的轮次不再改写。
+fn grok_session_reasoning_effort(file_path: &Path) -> Option<String> {
+    let summary = fs::read(file_path.parent()?.join("summary.json")).ok()?;
+    let summary: serde_json::Value = serde_json::from_slice(&summary).ok()?;
+    let effort = summary
+        .get("reasoning_effort")?
+        .as_str()?
+        .trim()
+        .to_ascii_lowercase();
+    (!effort.is_empty()).then_some(effort)
 }
 
 enum GrokLine {
@@ -538,12 +553,14 @@ fn parse_event_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
 }
 
 /// 插入单条 Grok 会话记录到 proxy_request_logs
+#[allow(clippy::too_many_arguments)]
 fn insert_grok_session_entry(
     db: &Database,
     request_id: &str,
     turn: &GrokCounters,
     cost_is_partial: bool,
     model: &str,
+    reasoning_effort: Option<&str>,
     session_id: &str,
     created_at: i64,
 ) -> Result<bool, AppError> {
@@ -651,8 +668,8 @@ fn insert_grok_session_entry(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source,
-            input_token_semantics
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+            input_token_semantics, reasoning_effort
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
         ON CONFLICT(request_id) DO UPDATE SET
             model = excluded.model,
             input_tokens = excluded.input_tokens,
@@ -696,6 +713,7 @@ fn insert_grok_session_entry(
             created_at,
             "grok_session",      // data_source
             INPUT_TOKEN_SEMANTICS_TOTAL,
+            reasoning_effort,
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 Grok Build 会话日志失败: {e}")))?;
@@ -897,6 +915,77 @@ mod tests {
         let expected2 = Decimal::from(56_540_000u64) / Decimal::from(10_000_000_000u64);
         assert_eq!(Decimal::from_str(&costs[0].1).expect("decimal"), expected1);
         assert_eq!(Decimal::from_str(&costs[1].1).expect("decimal"), expected2);
+        Ok(())
+    }
+
+    #[test]
+    fn session_reasoning_effort_is_recorded_on_insert_and_never_rewritten() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = write_session_file(
+            temp.path(),
+            "sess-effort",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "p1",
+                &model_counters("grok-4.5-build", 100, 10, 0, 1),
+            )],
+        );
+        let summary = path.with_file_name("summary.json");
+        std::fs::write(&summary, r#"{"reasoning_effort":" High "}"#).unwrap();
+        let sync = |db: &Database| {
+            sync_single_grok_file(
+                db,
+                &path,
+                &crate::services::session_usage::load_sync_cursors(db).unwrap(),
+            )
+        };
+        let efforts = |db: &Database| -> Vec<Option<String>> {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT reasoning_effort FROM proxy_request_logs ORDER BY created_at")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(sync(&db)?.imported, 1);
+        assert_eq!(efforts(&db), vec![Some("high".to_string())]);
+
+        // 中途换档：新轮次记录新档位，已入库的轮次不被 summary 改写。
+        std::fs::write(&summary, r#"{"reasoning_effort":"low"}"#).unwrap();
+        let line = usage_event_line(
+            OLD_EPOCH + 60,
+            "p2",
+            &model_counters("grok-4.5-build", 200, 20, 0, 1),
+        );
+        writeln!(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap(),
+            "{line}"
+        )
+        .unwrap();
+        lock_conn!(db.conn).execute("UPDATE session_log_sync SET last_modified = 0", [])?;
+        assert_eq!(sync(&db)?.imported, 1);
+        assert_eq!(
+            efforts(&db),
+            vec![Some("high".to_string()), Some("low".to_string())]
+        );
+
+        // 重扫既有行（重置游标）：缺失的强度保持缺失，费用不被当前价格重写。
+        lock_conn!(db.conn).execute_batch(
+            "UPDATE proxy_request_logs SET reasoning_effort = NULL, total_cost_usd = '0.42';
+             DELETE FROM session_log_sync;",
+        )?;
+        assert_eq!(sync(&db)?.imported, 0);
+        assert_eq!(efforts(&db), vec![None, None]);
+        assert!(query_costs(&db)?.iter().all(|(_, cost)| cost == "0.42"));
         Ok(())
     }
 
