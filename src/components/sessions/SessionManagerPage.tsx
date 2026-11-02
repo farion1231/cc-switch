@@ -202,8 +202,8 @@ export function SessionManagerPage({
     );
   }, [settings?.visibleApps]);
   const availableApps = useMemo(() => {
-    // Switching between visible apps does not change the searchable snapshot.
-    // Keep its identity so useSessionSearch can reuse the previous app's index.
+    // Switching between visible apps does not change the scoped sessions;
+    // keep the same array so the filtered list is not rebuilt.
     if (appFilter === "all" || visibleApps.includes(appFilter))
       return visibleApps;
     return SESSION_APP_IDS.filter(

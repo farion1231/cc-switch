@@ -1,7 +1,6 @@
-import { act, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import FlexSearch from "flexsearch";
-import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { renderHook } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { searchTerms, useSessionSearch } from "@/hooks/useSessionSearch";
 import type { SessionMeta } from "@/types";
 
 const session = (
@@ -20,16 +19,17 @@ const session = (
 
 const ids = (sessions: SessionMeta[]) => sessions.map((s) => s.sessionId);
 
+const searchOne = (overrides: Partial<SessionMeta>, query: string) => {
+  const { result } = renderHook(() =>
+    useSessionSearch({
+      sessions: [session(1, overrides)],
+      providerFilter: "claude",
+    }),
+  );
+  return ids(result.current.search(query));
+};
+
 describe("useSessionSearch", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
-
   it("returns every session newest first without a query", () => {
     const { result } = renderHook(() =>
       useSessionSearch({
@@ -45,55 +45,7 @@ describe("useSessionSearch", () => {
     ]);
   });
 
-  it("finds a match searched before any background slice has run", () => {
-    const sessions = [session(1), session(2, { title: "needle in title" })];
-    const { result } = renderHook(() =>
-      useSessionSearch({ sessions, providerFilter: "claude" }),
-    );
-
-    expect(ids(result.current.search("needle"))).toEqual(["session-2"]);
-  });
-
-  it("does not build the index during render", () => {
-    const add = vi.spyOn(FlexSearch.Index.prototype, "add");
-
-    renderHook(() =>
-      useSessionSearch({
-        sessions: [session(1), session(2)],
-        providerFilter: "claude",
-      }),
-    );
-
-    expect(add).not.toHaveBeenCalled();
-  });
-
-  it("gives the same results when built in slices and when finished on demand", () => {
-    const sessions = Array.from({ length: 50 }, (_, index) =>
-      session(index, index % 7 === 0 ? { summary: "shared keyword" } : {}),
-    );
-
-    const onDemand = renderHook(() =>
-      useSessionSearch({ sessions, providerFilter: "claude" }),
-    );
-    const direct = ids(onDemand.result.current.search("keyword"));
-
-    const sliced = renderHook(() =>
-      useSessionSearch({ sessions, providerFilter: "claude" }),
-    );
-    act(() => {
-      vi.runAllTimers();
-    });
-
-    expect(ids(sliced.result.current.search("keyword"))).toEqual(direct);
-    expect(direct).toHaveLength(8);
-  });
-
   it("searches every metadata field", () => {
-    const sessions = [session(1)];
-    const { result } = renderHook(() =>
-      useSessionSearch({ sessions, providerFilter: "claude" }),
-    );
-
     for (const query of [
       "session-1",
       "title",
@@ -101,8 +53,45 @@ describe("useSessionSearch", () => {
       "project-1",
       "projects",
     ]) {
-      expect(ids(result.current.search(query))).toEqual(["session-1"]);
+      expect(searchOne({}, query)).toEqual(["session-1"]);
     }
+  });
+
+  it("matches substrings of words regardless of case and accents", () => {
+    const overrides = { title: "Café Refactor", summary: "会话列表性能" };
+    for (const query of ["CAFE", "café", "fact", "话列", "性能"]) {
+      expect(searchOne(overrides, query)).toEqual(["session-1"]);
+    }
+  });
+
+  it("requires every query word and ignores punctuation between them", () => {
+    const overrides = { title: "fix streaming proxy" };
+    expect(searchOne(overrides, "proxy fix")).toEqual(["session-1"]);
+    expect(searchOne(overrides, "fix-stream")).toEqual(["session-1"]);
+    expect(searchOne(overrides, "proxy missing")).toEqual([]);
+    // Windows paths and slashes split into words like any other separator
+    expect(
+      searchOne({ projectDir: "D:\\Projects\\cc-switch" }, "d:/projects"),
+    ).toEqual(["session-1"]);
+  });
+
+  it("does not match across separate words", () => {
+    expect(searchOne({ title: "pro xy" }, "proxy")).toEqual([]);
+  });
+
+  it("keeps collapsing repeated letters like the previous index", () => {
+    expect(searchOne({ title: "hello" }, "helo")).toEqual(["session-1"]);
+    expect(searchOne({ title: "helo" }, "hello")).toEqual(["session-1"]);
+  });
+
+  it("matches digits as plain substrings", () => {
+    const overrides = { sourcePath: "/sessions/rollout-2026-10-01.jsonl" };
+    expect(searchOne(overrides, "026")).toEqual(["session-1"]);
+    expect(searchOne(overrides, "rollout 2026")).toEqual(["session-1"]);
+  });
+
+  it("returns nothing for a query made only of separators", () => {
+    expect(searchOne({}, "--- /")).toEqual([]);
   });
 
   it("only searches sessions of the selected provider", () => {
@@ -119,71 +108,36 @@ describe("useSessionSearch", () => {
 
     rerender({ providerFilter: "codex" });
     expect(ids(result.current.search("shared"))).toEqual(["session-2"]);
+
+    rerender({ providerFilter: "all" });
+    expect(ids(result.current.search("shared"))).toEqual([
+      "session-1",
+      "session-2",
+    ]);
   });
 
-  it("drops the unfinished background build after unmounting", () => {
-    const sessions = Array.from({ length: 5 }, (_, index) => session(index));
-    const { unmount } = renderHook(() =>
-      useSessionSearch({ sessions, providerFilter: "claude" }),
-    );
-
-    unmount();
-
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("reuses a completed index when returning to the previous provider", () => {
-    const add = vi.spyOn(FlexSearch.Index.prototype, "add");
-    const sessions = [session(1), session(2, { providerId: "codex" })];
+  it("follows changed session data", () => {
     const { result, rerender } = renderHook(
-      ({ providerFilter }) => useSessionSearch({ sessions, providerFilter }),
-      { initialProps: { providerFilter: "claude" } },
-    );
-    expect(ids(result.current.search("title"))).toEqual(["session-1"]);
-    rerender({ providerFilter: "codex" });
-    expect(ids(result.current.search("title"))).toEqual(["session-2"]);
-    expect(add).toHaveBeenCalledTimes(2);
-    rerender({ providerFilter: "claude" });
-    expect(ids(result.current.search("title"))).toEqual(["session-1"]);
-    act(() => vi.runAllTimers());
-    expect(add).toHaveBeenCalledTimes(2);
-  });
-
-  it("invalidates cached indexes when sessions change", () => {
-    const { result, rerender } = renderHook(
-      (props) => useSessionSearch(props),
-      {
-        initialProps: {
-          sessions: [session(1, { title: "oldname" })],
-          providerFilter: "claude",
-        },
-      },
+      ({ sessions }) =>
+        useSessionSearch({ sessions, providerFilter: "claude" }),
+      { initialProps: { sessions: [session(1, { title: "oldname" })] } },
     );
     expect(ids(result.current.search("oldname"))).toEqual(["session-1"]);
-    rerender({ sessions: [], providerFilter: "codex" });
-    rerender({
-      sessions: [session(2, { title: "newname" })],
-      providerFilter: "claude",
-    });
+
+    rerender({ sessions: [session(2, { title: "newname" })] });
     expect(result.current.search("oldname")).toEqual([]);
     expect(ids(result.current.search("newname"))).toEqual(["session-2"]);
   });
+});
 
-  it("bounds retained indexes while keeping evicted providers searchable", () => {
-    const add = vi.spyOn(FlexSearch.Index.prototype, "add");
-    const sessions = [
-      session(1),
-      session(2, { providerId: "codex" }),
-      session(3, { providerId: "pi" }),
-    ];
-    const { result, rerender } = renderHook(
-      ({ providerFilter }) => useSessionSearch({ sessions, providerFilter }),
-      { initialProps: { providerFilter: "claude" } },
-    );
-    for (const providerFilter of ["claude", "codex", "pi", "claude"]) {
-      rerender({ providerFilter });
-      expect(result.current.search("title")[0].providerId).toBe(providerFilter);
-    }
-    expect(add).toHaveBeenCalledTimes(4);
+describe("searchTerms", () => {
+  it("normalizes and splits text into words", () => {
+    expect(searchTerms("Café-Über  会话/Path_2026")).toEqual([
+      "cafe",
+      "uber",
+      "会话",
+      "path",
+      "2026",
+    ]);
   });
 });

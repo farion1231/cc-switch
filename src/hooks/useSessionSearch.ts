@@ -1,11 +1,5 @@
-import { useCallback, useEffect, useMemo } from "react";
-import FlexSearch from "flexsearch";
+import { useCallback, useMemo } from "react";
 import type { SessionMeta } from "@/types";
-import {
-  endSessionTrace,
-  markSessionTrace,
-  startSessionTrace,
-} from "@/lib/sessionPerf";
 
 interface UseSessionSearchOptions {
   sessions: SessionMeta[];
@@ -16,65 +10,61 @@ interface UseSessionSearchResult {
   search: (query: string) => SessionMeta[];
 }
 
-/** 建索引时每一片最多占用主线程的时间 */
-const INDEX_SLICE_MS = 8;
-// Reuse the two most recently viewed providers without retaining an index for
-// every provider (a full substring index can be much larger than its input).
-const INDEX_CACHE_SIZE = 2;
+/** 组合附加符号（重音等），归一化时去掉，`café` 与 `cafe` 互相能搜到 */
+const COMBINING_MARKS = /[̀-ͯ]/g;
+/** 词与词之间的分隔：字母、数字以外的一切（空白、标点、路径分隔符等） */
+const SEPARATORS = /[^\p{L}\p{N}]+/u;
 
-interface SessionIndexBuilder {
-  /** 继续建索引，到点就停；返回是否已全部建完 */
-  advance: (budgetMs: number) => boolean;
-  /** 建完剩下的部分并返回索引 */
-  finish: () => InstanceType<typeof FlexSearch.Index>;
-}
+/** 相邻的重复字符合成一个，让 `hello` 与 `helo` 互相能搜到（沿用原来的搜索口径） */
+const collapseRepeats = (term: string) => {
+  let out = "";
+  let prev = "";
+  for (const char of term) {
+    if (char !== prev) out += char;
+    prev = char;
+  }
+  return out;
+};
 
-const createIndexBuilder = (sessions: SessionMeta[]): SessionIndexBuilder => {
-  const index = new FlexSearch.Index({
-    tokenize: "full",
-    resolution: 9,
-  });
-  let next = 0;
+/** 归一化（去重音、小写）后按分隔切成词 */
+export const searchTerms = (text: string): string[] =>
+  text
+    .normalize("NFKD")
+    .replace(COMBINING_MARKS, "")
+    .toLowerCase()
+    .split(SEPARATORS)
+    .filter(Boolean)
+    .map(collapseRepeats);
 
-  const addNext = () => {
-    const session = sessions[next];
-    const metaContent = [
-      session.sessionId,
-      session.title,
-      session.summary,
-      session.projectDir,
-      session.sourcePath,
-    ]
-      .filter(Boolean)
-      .join(" ");
+// 每个会话对象的可搜索文本只算一次；会话列表刷新后旧对象随之回收
+const haystacks = new WeakMap<SessionMeta, string>();
 
-    index.add(next, metaContent);
-    next += 1;
-  };
-
-  return {
-    advance: (budgetMs) => {
-      const deadline = performance.now() + budgetMs;
-      while (next < sessions.length && performance.now() < deadline) {
-        addNext();
-      }
-      return next >= sessions.length;
-    },
-    finish: () => {
-      while (next < sessions.length) {
-        addNext();
-      }
-      return index;
-    },
-  };
+const haystackOf = (session: SessionMeta) => {
+  let text = haystacks.get(session);
+  if (text === undefined) {
+    // 词之间用空格连起来：查询词本身不含分隔符，所以不会跨词匹配
+    text = searchTerms(
+      [
+        session.sessionId,
+        session.title,
+        session.summary,
+        session.projectDir,
+        session.sourcePath,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    ).join(" ");
+    haystacks.set(session, text);
+  }
+  return text;
 };
 
 /**
- * 使用 FlexSearch 实现会话全文搜索
- * 索引会话元数据（标题、摘要、项目目录等）
+ * 会话元数据搜索（会话 ID、标题、摘要、项目目录、文件路径）。
  *
- * `tokenize: "full"` 建索引很慢（一千多个会话要半秒以上），不能一次做完卡住页面：
- * 平时分片在后台建；还没建完就开始搜索时，当场补完剩下的部分，搜索结果始终完整。
+ * 查询按与元数据相同的方式归一化、切词，每个词都要在某个字段里以子串出现。
+ * 直接线性扫描：两千个会话的可搜索文本约 3ms 算完、单次查询约 1ms，
+ * 比建全子串索引（同样数据约 0.5 秒）便宜得多，也不用分片或缓存索引。
  */
 export function useSessionSearch({
   sessions,
@@ -85,47 +75,9 @@ export function useSessionSearch({
     return sessions.filter((s) => s.providerId === providerFilter);
   }, [sessions, providerFilter]);
 
-  // A new data snapshot invalidates every index, including removed/renamed
-  // sessions. Switching tabs within the same snapshot can resume or reuse one.
-  const builders = useMemo(
-    () => new Map<string, SessionIndexBuilder>(),
-    [sessions],
-  );
-  const builder = useMemo(() => {
-    const next =
-      builders.get(providerFilter) ?? createIndexBuilder(filteredByProvider);
-    builders.delete(providerFilter);
-    builders.set(providerFilter, next);
-    if (builders.size > INDEX_CACHE_SIZE) {
-      builders.delete(builders.keys().next().value!);
-    }
-    return next;
-  }, [builders, filteredByProvider, providerFilter]);
-
-  useEffect(() => {
-    const traceId = `index:${providerFilter}(${filteredByProvider.length})`;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const buildSlice = () => {
-      if (builder.advance(INDEX_SLICE_MS)) {
-        endSessionTrace(traceId);
-        return;
-      }
-      markSessionTrace(traceId, "firstSlice");
-      timer = setTimeout(buildSlice, 0);
-    };
-    startSessionTrace(traceId);
-    timer = setTimeout(buildSlice, 0);
-    return () => {
-      clearTimeout(timer);
-      endSessionTrace(traceId, "cancelled");
-    };
-  }, [builder, filteredByProvider.length, providerFilter]);
-
   const search = useCallback(
     (query: string): SessionMeta[] => {
-      const needle = query.trim();
-
-      if (!needle) {
+      if (!query.trim()) {
         return [...filteredByProvider].sort((a, b) => {
           const aTs = a.lastActiveAt ?? a.createdAt ?? 0;
           const bTs = b.lastActiveAt ?? b.createdAt ?? 0;
@@ -133,13 +85,16 @@ export function useSessionSearch({
         });
       }
 
-      const results = builder.finish().search(needle, {
-        limit: filteredByProvider.length,
-      }) as number[];
+      const terms = searchTerms(query);
+      // 只有标点之类的查询没有可匹配的词，和原来一样什么都不返回
+      if (terms.length === 0) return [];
 
-      return results.map((idx) => filteredByProvider[idx]);
+      return filteredByProvider.filter((session) => {
+        const text = haystackOf(session);
+        return terms.every((term) => text.includes(term));
+      });
     },
-    [builder, filteredByProvider],
+    [filteredByProvider],
   );
 
   return { search };
