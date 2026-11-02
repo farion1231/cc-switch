@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "4.0.23"
+version = "4.0.24"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -46,6 +46,9 @@ brotli = "7"
 zstd = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "process"] }
 futures = "0.3"
+# Keep legacy SSE support alongside Streamable HTTP; newer SDKs removed SSE.
+rmcp = { version = "0.8.5", features = ["client", "transport-async-rw", "transport-sse-client-reqwest", "transport-streamable-http-client-reqwest"] }
+process-wrap = { version = "8.2", features = ["tokio1"] }
 async-stream = "0.3"
 bytes = "1.5"
 prost = "0.14"
@@ -99,6 +102,8 @@ libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
+webview2-com = "0.38"
+windows = "0.61"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -136,3 +141,4 @@ strip = "symbols"
 serial_test = "3"
 tempfile = "3"
 tauri = { version = "2.8.2", features = ["test"] }
+tokio = { version = "1", features = ["test-util"] }

@@ -2045,6 +2045,10 @@
     "subagentReasoningEffortDefault": "預設強度",
     "subagentModelHint": "Codex 派出的子代理預設使用的模型和推理強度。留空時沿用主代理的；只填模型時使用該模型自己的預設強度。聚合模式下不生效，改用聚合頁籤「聚合設定」裡的子代理模型。",
     "subagentModelNotInCatalog": "該模型不在模型列表中：Codex 取得不到它的上下文視窗；經路由轉成 Chat / Anthropic 協定時會被換成預設模型。",
+    "agentMaxThreadsLabel": "子代理並行上限",
+    "agentMaxThreadsHint": "一個 Codex 會話裡最多同時開多少個子代理（不含主代理）。這是 Codex 的全域設定，寫進 config.toml 的 [agents] max_threads，切換供應商時保持不變。留空用 Codex 預設值：經典子 agent 工具 6 個，新版工具 3 個。Codex 不支援不限，最小為 1；開得越多，同時消耗的額度越多。重新開啟 Codex 後生效。",
+    "agentMaxThreadsPlaceholder": "留空則用 Codex 預設值",
+    "agentMaxThreadsV2Override": "config.toml 的 [features.multi_agent_v2] 寫了總數 {{total}}（含主代理），使用新版子 agent 工具時以它為準。",
     "autoReviewModelLabel": "自動審批模型",
     "autoReviewModelHint": "Codex 開了自動審批（Approve for me）時，判斷操作能不能放行所用的模型。審批請求和主對話發給同一家，所以只能選這張卡模型列表裡的。聚合模式下不生效，改用聚合頁籤「聚合設定」裡的自動審批模型。修改後需要重新啟動 Codex。",
     "autoReviewModelCodexDefault": "Codex 預設（codex-auto-review）",
@@ -2185,6 +2189,7 @@
     "universalDetail": "同步到 Claude Code、Codex、Gemini CLI",
     "manageUniversal": "管理現有的統一供應商 ›",
     "loginWith": {
+      "deepseek": "使用 DeepSeek 帳號登入",
       "kimi": "使用 Kimi 帳號登入",
       "claude": "用 Claude 帳號登入",
       "chatgpt": "用 ChatGPT 帳號登入",
@@ -2464,6 +2469,17 @@
       "title": "顯示",
       "currency": "幣別",
       "rate": "匯率",
+      "rateSource": "匯率來源",
+      "rateSources": {
+        "auto": "自動取得",
+        "manual": "手動填寫"
+      },
+      "rateAutoHint": "每天自動取得一次，只用於換算顯示；費用仍以美元記錄。",
+      "rateAutoUpdated": "上次更新：{{time}}",
+      "rateAutoNever": "尚未取得匯率",
+      "rateAutoFailed": "自動取得失敗，暫用上次的匯率",
+      "rateAttribution": "匯率資料由 {{provider}} 提供。",
+      "rateRefresh": "立即更新",
       "rateHint": "手動填寫，只用於換算顯示；費用仍以美元記錄。",
       "rateInvalid": "請輸入大於 0 的數字",
       "approxNote": "換算後的金額，滑鼠移上去可看美元原值。",
@@ -2813,7 +2829,7 @@
       "jsonConfig": "完整的 JSON 設定",
       "jsonConfigOrPrefix": "完整的 JSON 設定或者使用",
       "tomlConfigOrPrefix": "完整的 TOML 設定或者使用",
-      "jsonPlaceholder": "{\n    \"type\": \"stdio\",\n    \"command\": \"uvx\",\n    \"args\": [\"mcp-server-fetch\"]\n}",
+      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
       "tomlConfig": "完整的 TOML 設定",
       "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
       "useWizard": "設定精靈",
@@ -2865,6 +2881,9 @@
       "tomlInvalid": "TOML 格式錯誤，請檢查",
       "commandRequired": "請填寫命令",
       "singleServerObjectRequired": "此處只需單個伺服器物件，請不要貼上包含 mcpServers 的整份設定",
+      "piSseUnsupported": "Pi 不支援 SSE 連線方式的 MCP 伺服器，請改用 HTTP（streamable HTTP）",
+      "piInvalidName": "Pi 的 MCP 伺服器名稱只能包含字母、數字、_ 和 -：{{id}}",
+      "piNameConflict": "Pi 會把只差 - 和 _ 的伺服器名稱視為同一個：{{id}} 與已有的 {{other}} 衝突",
       "saveFailed": "儲存失敗",
       "deleteFailed": "刪除失敗"
     },
@@ -4575,6 +4594,15 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "檢查連通性",
+    "testConnection": "測試連線",
+    "connection": {
+      "unchecked": "未檢查",
+      "connected": "連線成功",
+      "disconnected": "連線失敗",
+      "checking": "正在檢查連線",
+      "disabled": "未啟用"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎麼同步",
@@ -4841,7 +4869,7 @@
       "help": "會，預設用你上次的選擇。裝好後也能在「已安裝」裡隨時調整。從 ZIP 安裝和從備份還原也用這裡的選擇。"
     },
     "discover": {
-      "searchPlaceholder": "搜尋 Skill 或倉庫",
+      "searchPlaceholder": "搜尋名稱、描述或倉庫",
       "searchAria": "搜尋探索裡的 Skill",
       "skillsShPlaceholder": "至少 2 個字，Enter 搜尋",
       "skillsShAria": "在 skills.sh 搜尋",
@@ -4849,7 +4877,7 @@
       "skillsShNone": "skills.sh 上沒有找到「{{query}}」",
       "sourceAria": "探索來源",
       "sourceRepos": "倉庫 · {{count}}",
-      "reload": "重新讀取倉庫",
+      "reload": "重新整理倉庫",
       "listLabel": "可安裝的 Skill",
       "installed": "已安裝",
       "installedAria": "{{name}} 已安裝在 {{count}} 個應用，在「已安裝」裡查看",
@@ -4868,8 +4896,8 @@
       "onlyUninstalled": "只看未安裝"
     },
     "repos": {
-      "buttonAll": "倉庫：全部",
-      "buttonSome": "倉庫：{{count}} / {{total}}",
+      "buttonAll": "來源：全部",
+      "buttonSome": "來源：{{count}} / {{total}}",
       "popoverAria": "參與探索的倉庫",
       "enableAria": "在探索裡使用 {{repo}}",
       "disabledShort": "停用",
@@ -4970,7 +4998,11 @@
       "open": "開啟授權頁面",
       "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。",
       "browserNote": "已在瀏覽器開啟 {{service}} 的登入頁，登入並同意授權後這裡會自動更新。",
-      "reopen": "重新開啟登入頁"
+      "reopen": "重新開啟登入頁",
+      "copyLink": "複製登入連結",
+      "linkCopied": "登入連結已複製。",
+      "linkNote": "登入連結已複製。在你要用的瀏覽器裡開啟，登入並同意授權後這裡會自動更新。",
+      "linkCodeNote": "登入連結已複製。在你要用的瀏覽器裡開啟並輸入驗證碼，完成後這裡會自動更新。注意 {{service}} 的使用條款。"
     },
     "toast": {
       "added": "已新增 {{service}} 帳號。",
@@ -5008,6 +5040,10 @@
       "empty": "還沒有新增 Claude 帳號。要在多個訂閱帳號之間切換時在這裡登入。",
       "removeNote": "只刪除 CC Switch 為這個帳號儲存的登入，不會讓它在其他地方登出；Claude Code 目前的登入（~/.claude）不受影響。綁定它的卡片會改用 Claude Code 目前的登入。",
       "wslUnsupported": "Claude 設定目錄在 WSL 裡，暫不支援新增和切換 Claude 帳號。"
+    },
+    "openBrowser": {
+      "title": "登入時自動開啟瀏覽器",
+      "description": "關掉後只複製登入連結，由你自己選瀏覽器開啟，適合用獨立的瀏覽器環境管理多個帳號。"
     }
   },
   "kimi": {
@@ -5044,7 +5080,6 @@
     "contextSize": "上下文長度",
     "configTomlScope": "這裡只能寫 [providers.{{key}}] 和屬於它的 [models.*] 表；供應商標識請在上方修改。",
     "configTomlSchema": "設定不完整：請檢查供應商的 type，以及每個模型的 model 和 max_context_size（正整數）。",
-    "deleteSessionHint": "請在 Kimi Code 中刪除，以同時更新工作階段索引和歷史紀錄。",
     "empty": {
       "title": "新增 Kimi Code 供應商",
       "description": "設定請求位址、API Key 和模型；已有 Kimi 設定會自動匯入。"

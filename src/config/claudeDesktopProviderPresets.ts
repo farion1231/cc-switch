@@ -861,10 +861,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     category: "aggregator",
-    baseUrl: "https://api.a6api.com",
+    baseUrl: "https://api.a6api.vip",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(true),

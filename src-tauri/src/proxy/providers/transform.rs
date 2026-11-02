@@ -87,15 +87,26 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
 }
 
 /// Detect models whose OpenAI reasoning effort supports a distinct `max` tier.
+///
+/// Matched by family instead of by name, so new releases need no list update:
+/// GPT 5.6 and later, bare or as a Sol / Terra / Luna / Astra variant (every such
+/// model on the OpenAI model pages and in the Codex catalog accepts `max`, e.g.
+/// gpt-5.6-sol, gpt-6-astra, gpt-6.1-sol, gpt-6.1-terra). Other variants
+/// (`-pro`, `-codex`, `-mini`, dated snapshots, …) keep falling back to `xhigh`.
 fn supports_max_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
-    ) || matches!(
-        normalized.as_str(),
-        "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna"
-    )
+    let Some(rest) = normalized.strip_prefix("gpt-") else {
+        return false;
+    };
+    let (version, variant) = rest.split_once('-').unwrap_or((rest, ""));
+    if !matches!(variant, "" | "sol" | "terra" | "luna" | "astra") {
+        return false;
+    }
+    let (major, minor) = version.split_once('.').unwrap_or((version, "0"));
+    match (major.parse::<u32>(), minor.parse::<u32>()) {
+        (Ok(major), Ok(minor)) => major > 5 || (major == 5 && minor >= 6),
+        _ => false,
+    }
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
@@ -2129,6 +2140,9 @@ mod tests {
             "gpt-6-astra",
             "gpt-6-sol",
             "gpt-6-luna",
+            // #9122: GPT-6.1 Sol / Terra accept max (OpenAI model pages, Codex catalog).
+            "gpt-6.1-sol",
+            "GPT-6.1-Terra",
         ] {
             let body = json!({
                 "model": model,
@@ -2138,6 +2152,30 @@ mod tests {
             assert_eq!(
                 resolve_reasoning_effort(&body),
                 Some("max"),
+                "model {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_output_config_max_falls_back_to_xhigh_outside_max_families() {
+        for model in [
+            "gpt-5.5",
+            "gpt-5.6-cyber",
+            "gpt-6.1-codex",
+            "gpt-6-pro",
+            "gpt-6.1-sol-2026-10-01",
+            "gpt-5.10-sol-x",
+            "o3",
+        ] {
+            let body = json!({
+                "model": model,
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "max"}
+            });
+            assert_eq!(
+                resolve_reasoning_effort(&body),
+                Some("xhigh"),
                 "model {model}"
             );
         }

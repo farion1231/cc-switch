@@ -2045,6 +2045,10 @@
     "subagentReasoningEffortDefault": "默认强度",
     "subagentModelHint": "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，改用聚合页签「聚合设置」里的子代理模型。",
     "subagentModelNotInCatalog": "该模型不在模型列表中：Codex 拿不到它的上下文窗口；经路由转成 Chat / Anthropic 协议时会被换成默认模型。",
+    "agentMaxThreadsLabel": "子代理并发上限",
+    "agentMaxThreadsHint": "一个 Codex 会话里最多同时开多少个子代理（不含主代理）。这是 Codex 的全局设置，写进 config.toml 的 [agents] max_threads，切换供应商时保持不变。留空用 Codex 默认值：经典子 agent 工具 6 个，新版工具 3 个。Codex 不支持不限，最小为 1；开得越多，同时消耗的额度越多。重新打开 Codex 后生效。",
+    "agentMaxThreadsPlaceholder": "留空则用 Codex 默认值",
+    "agentMaxThreadsV2Override": "config.toml 的 [features.multi_agent_v2] 写了总数 {{total}}（含主代理），使用新版子 agent 工具时以它为准。",
     "autoReviewModelLabel": "自动审批模型",
     "autoReviewModelHint": "Codex 开了自动审批（Approve for me）时，判断操作能不能放行用的模型。审批请求和主对话发给同一家，所以只能选这张卡模型列表里的。聚合模式下不生效，改用聚合页签「聚合设置」里的自动审批模型。改完需要重启 Codex。",
     "autoReviewModelCodexDefault": "Codex 默认（codex-auto-review）",
@@ -2184,6 +2188,7 @@
     "universalDetail": "同步到 Claude Code、Codex、Gemini CLI",
     "manageUniversal": "管理已有的统一供应商 ›",
     "loginWith": {
+      "deepseek": "用 DeepSeek 账号登录",
       "kimi": "使用 Kimi 账号登录",
       "claude": "用 Claude 账号登录",
       "chatgpt": "用 ChatGPT 账号登录",
@@ -2463,6 +2468,17 @@
       "title": "显示",
       "currency": "币种",
       "rate": "汇率",
+      "rateSource": "汇率来源",
+      "rateSources": {
+        "auto": "自动获取",
+        "manual": "手动填写"
+      },
+      "rateAutoHint": "每天自动获取一次，只用于换算显示；费用仍按美元记录。",
+      "rateAutoUpdated": "上次更新：{{time}}",
+      "rateAutoNever": "尚未获取到汇率",
+      "rateAutoFailed": "自动获取失败，暂用上次的汇率",
+      "rateAttribution": "汇率数据由 {{provider}} 提供。",
+      "rateRefresh": "立即更新",
       "rateHint": "手动填写，只用于换算显示；费用仍按美元记录。",
       "rateInvalid": "请输入大于 0 的数字",
       "approxNote": "换算后的金额悬停可看美元原值。",
@@ -2864,6 +2880,9 @@
       "tomlInvalid": "TOML 格式错误，请检查",
       "commandRequired": "请填写命令",
       "singleServerObjectRequired": "此处只需单个服务器对象，请不要粘贴包含 mcpServers 的整份配置",
+      "piSseUnsupported": "Pi 不支持 SSE 连接方式的 MCP 服务器，请改用 HTTP（streamable HTTP）",
+      "piInvalidName": "Pi 的 MCP 服务器名只能包含字母、数字、_ 和 -：{{id}}",
+      "piNameConflict": "Pi 把只差 - 和 _ 的服务器名视为同一个：{{id}} 与已有的 {{other}} 冲突",
       "saveFailed": "保存失败",
       "deleteFailed": "删除失败"
     },
@@ -4574,6 +4593,15 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "检查连通性",
+    "testConnection": "测试连接",
+    "connection": {
+      "unchecked": "未检查",
+      "connected": "连接成功",
+      "disconnected": "连接失败",
+      "checking": "正在检查连接",
+      "disabled": "未启用"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎么同步",
@@ -4840,7 +4868,7 @@
       "help": "会，默认用你上次的选择。装好后也能在「已安装」里随时调整。从 ZIP 安装和从备份恢复也用这里的选择。"
     },
     "discover": {
-      "searchPlaceholder": "搜索 Skill 或仓库",
+      "searchPlaceholder": "搜索名称、描述或仓库",
       "searchAria": "搜索发现里的 Skill",
       "skillsShPlaceholder": "至少 2 个字，回车搜索",
       "skillsShAria": "在 skills.sh 搜索",
@@ -4848,7 +4876,7 @@
       "skillsShNone": "skills.sh 上没有找到“{{query}}”",
       "sourceAria": "发现来源",
       "sourceRepos": "仓库 · {{count}}",
-      "reload": "重新读取仓库",
+      "reload": "刷新仓库",
       "listLabel": "可安装的 Skill",
       "installed": "已安装",
       "installedAria": "{{name}} 已安装在 {{count}} 个应用，在「已安装」里查看",
@@ -4867,8 +4895,8 @@
       "onlyUninstalled": "只看未安装"
     },
     "repos": {
-      "buttonAll": "仓库：全部",
-      "buttonSome": "仓库：{{count}} / {{total}}",
+      "buttonAll": "来源：全部",
+      "buttonSome": "来源：{{count}} / {{total}}",
       "popoverAria": "参与发现的仓库",
       "enableAria": "在发现里使用 {{repo}}",
       "disabledShort": "停用",
@@ -4969,7 +4997,11 @@
       "open": "打开授权页面",
       "note": "已在浏览器打开授权页面，完成后这里会自动更新。注意 {{service}} 的使用条款。",
       "browserNote": "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
-      "reopen": "重新打开登录页"
+      "reopen": "重新打开登录页",
+      "copyLink": "复制登录链接",
+      "linkCopied": "登录链接已复制。",
+      "linkNote": "登录链接已复制。在你要用的浏览器里打开，登录并同意授权后这里会自动更新。",
+      "linkCodeNote": "登录链接已复制。在你要用的浏览器里打开并输入验证码，完成后这里会自动更新。注意 {{service}} 的使用条款。"
     },
     "toast": {
       "added": "已添加 {{service}} 账号。",
@@ -5007,6 +5039,10 @@
       "empty": "还没有添加 Claude 账号。要在多个订阅账号之间切换时在这里登录。",
       "removeNote": "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。",
       "wslUnsupported": "Claude 配置目录在 WSL 里，暂不支持添加和切换 Claude 账号。"
+    },
+    "openBrowser": {
+      "title": "登录时自动打开浏览器",
+      "description": "关掉后只复制登录链接，由你自己选浏览器打开，适合用独立的浏览器环境管理多个账号。"
     }
   },
   "kimi": {
@@ -5058,7 +5094,6 @@
       "title": "添加 Kimi Code 供应商",
       "description": "配置请求地址、API Key 和模型；已有 Kimi 配置会自动导入。"
     },
-    "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。",
     "error": {
       "defaultModelInUse": "Kimi Code 正在使用该供应商的模型，请先在 Kimi Code 中用 /model 切换到其他模型",
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用该供应商的模型，请先在 Kimi Code 中用 /secondary-model 更换"

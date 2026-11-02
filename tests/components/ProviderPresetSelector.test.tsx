@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
 import type { ProviderCategory } from "@/types";
+import type { AppId } from "@/lib/api";
 import {
   ProviderPresetSelector,
   filterPresetEntries,
@@ -25,6 +26,10 @@ import {
   sectionPresetRows,
 } from "@/components/providers/forms/presetGroups";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import {
+  dshAccountPreset,
+  DSH_ACCOUNT_PRESET_ID,
+} from "@/config/dshProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import {
   PRESET_FAMILIES,
@@ -35,6 +40,7 @@ import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
+import tr from "@/i18n/locales/tr.json";
 
 vi.mock("@/components/ProviderIcon", () => ({
   ProviderIcon: ({ name }: { name: string }) => (
@@ -385,9 +391,11 @@ describe("preset families", () => {
 function TwoSteps({
   onPresetChange,
   presetEntries = entries,
+  appId = "claude",
 }: {
   onPresetChange: (id: string) => void;
   presetEntries?: PresetEntry[];
+  appId?: AppId;
 }) {
   const [step, setStep] = useState<"pick" | "form">("pick");
   const [host, setHost] = useState<HTMLDivElement | null>(null);
@@ -395,7 +403,7 @@ function TwoSteps({
   // 表单的替身：选预设时程序重填（清空 Key），用户可以手动输入
   const [apiKey, setApiKey] = useState("");
   const state: PresetStepState = {
-    appId: "claude",
+    appId,
     step,
     setStep,
     host,
@@ -479,6 +487,37 @@ describe("ProviderPresetSelector", () => {
       screen.getByRole("button", { name: "providerPreset.change" }),
     );
     expect(await screen.findByTestId("host")).toBeInTheDocument();
+  });
+
+  it("shows the DeepSeek account subtitle for the DSH official preset", async () => {
+    const onPresetChange = vi.fn();
+    render(
+      <TwoSteps
+        appId="dsh"
+        onPresetChange={onPresetChange}
+        presetEntries={[
+          { id: DSH_ACCOUNT_PRESET_ID, preset: dshAccountPreset },
+        ]}
+      />,
+    );
+    const host = await screen.findByTestId("host");
+    expect(
+      within(host).getByText("providerPreset.loginWith.deepseek"),
+    ).toBeInTheDocument();
+    expect(
+      within(host).queryByText("providerPreset.loginWith.claude"),
+    ).not.toBeInTheDocument();
+    for (const locale of [zh, zhTW, en, ja, tr]) {
+      expect(
+        (locale.providerPreset.loginWith as Record<string, string>).deepseek,
+      ).toContain("DeepSeek");
+    }
+    await userEvent
+      .setup()
+      .click(
+        within(host).getByRole("button", { name: "dsh.account.presetName" }),
+      );
+    expect(onPresetChange).toHaveBeenCalledWith(DSH_ACCOUNT_PRESET_ID);
   });
 
   it("filters by category and keeps the search text when clicking around", async () => {

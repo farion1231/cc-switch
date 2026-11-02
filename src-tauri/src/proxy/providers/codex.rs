@@ -650,8 +650,15 @@ fn zen_catalog_effort_levels(provider: &Provider, body: &JsonValue) -> Option<Ve
 fn normalize_codex_chat_reasoning_config(
     mut config: CodexChatReasoningConfig,
 ) -> CodexChatReasoningConfig {
-    if config.supports_effort.unwrap_or(false) && config.supports_thinking.is_none() {
-        config.supports_thinking = Some(true);
+    if config.supports_effort.unwrap_or(false) {
+        if config.supports_thinking.is_none() {
+            config.supports_thinking = Some(true);
+        }
+        if config.effort_param.as_deref().is_none_or(|value| {
+            value.trim().is_empty() || value.trim().eq_ignore_ascii_case("none")
+        }) {
+            config.effort_param = Some("reasoning_effort".to_string());
+        }
     }
     config
 }
@@ -2216,6 +2223,49 @@ wire_api = "chat"
         assert_eq!(config.supports_thinking, Some(false));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.thinking_param.as_deref(), Some("none"));
+        assert_eq!(config.effort_param.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_repairs_enabled_none_effort_param() {
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "copilot"
+model = "claude-opus-5.5"
+
+[model_providers.copilot]
+name = "GitHub Copilot"
+base_url = "https://api.githubcopilot.com"
+wire_api = "chat"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            codex_chat_reasoning: Some(CodexChatReasoningConfig {
+                supports_thinking: Some(true),
+                supports_effort: Some(true),
+                thinking_param: Some("none".to_string()),
+                effort_param: Some("none".to_string()),
+                effort_value_mode: Some("passthrough".to_string()),
+                output_format: Some("auto".to_string()),
+                effort_levels: None,
+            }),
+            ..Default::default()
+        });
+        let request = json!({
+            "model": "claude-opus-5.5",
+            "input": "hello",
+            "reasoning": { "effort": "max" }
+        });
+
+        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
+        assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
+
+        let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            request,
+            Some(&config),
+        )
+        .unwrap();
+        assert_eq!(transformed["reasoning_effort"], "max");
     }
 
     #[test]

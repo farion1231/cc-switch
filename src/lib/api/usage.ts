@@ -15,7 +15,7 @@ import type {
   SessionSyncResult,
   DataSourceSummary,
 } from "@/types/usage";
-import type { UsageResult } from "@/types";
+import type { FetchedExchangeRates, UsageResult } from "@/types";
 import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
 
@@ -234,5 +234,10 @@ export const usageApi = {
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
     return invoke("get_usage_data_sources");
+  },
+
+  /** 取 USD 对各显示币种的汇率：主源 open.er-api.com，失败退 floatrates.com */
+  fetchExchangeRates: async (): Promise<FetchedExchangeRates> => {
+    return invoke("fetch_exchange_rates");
   },
 };
