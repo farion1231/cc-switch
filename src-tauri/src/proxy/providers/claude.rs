@@ -388,6 +388,15 @@ pub fn transform_claude_request_for_api_format(
     } else {
         (None, "none")
     };
+    // 转换层只给认得的模型写思考档位，其余模型由 claude_reasoning 补判（#9062）。
+    let effort_plan = if matches!(api_format, "openai_chat" | "openai_responses") {
+        let base_url = ClaudeAdapter::new()
+            .extract_base_url(provider)
+            .unwrap_or_default();
+        super::claude_reasoning::plan(&body, provider, &base_url)
+    } else {
+        super::claude_reasoning::EffortPlan::Unchanged
+    };
     match api_format {
         "openai_responses" => {
             log::debug!(
@@ -419,6 +428,7 @@ pub fn transform_claude_request_for_api_format(
                 }
                 result["include"] = json!(include);
             }
+            super::claude_reasoning::apply(&mut result, api_format, effort_plan);
             Ok(result)
         }
         "openai_chat" => {
@@ -450,6 +460,7 @@ pub fn transform_claude_request_for_api_format(
                     obj.remove("stop");
                 }
             }
+            super::claude_reasoning::apply(&mut result, api_format, effort_plan);
             Ok(result)
         }
         "gemini_native" => super::transform_gemini::anthropic_to_gemini_with_shadow(
@@ -1829,6 +1840,52 @@ mod tests {
         assert_eq!(transformed["model"], "gpt-5.4");
         assert!(transformed.get("input").is_some());
         assert!(transformed.get("max_output_tokens").is_some());
+    }
+
+    #[test]
+    fn test_responses_sends_effort_for_unlisted_deepseek_model() {
+        // #9062：Desktop 把 claude-fable-5 映射到 deepseek-flash，经自建 Responses 网关转发。
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://gateway.example.com/v1" }
+        }));
+        let body = json!({
+            "model": "deepseek-flash",
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "high" },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["reasoning"], json!({ "effort": "high" }));
+    }
+
+    #[test]
+    fn test_chat_folds_effort_to_standard_tiers_for_unlisted_model() {
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.groq.com/openai/v1" }
+        }));
+        let body = json!({
+            "model": "openai/gpt-oss-120b",
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "max" },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert_eq!(transformed["reasoning_effort"], "high");
     }
 
     #[test]

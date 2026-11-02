@@ -5,10 +5,12 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  ExternalLink,
   Loader2,
   RefreshCw,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { settingsApi } from "@/lib/api";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -22,6 +24,7 @@ import {
   useDiscoverableSkillsFailures,
   useInstallSkill,
   useInstalledSkills,
+  useRefreshDiscoverableSkills,
   useRemoveSkillRepo,
   useSearchSkillsSh,
   useSkillRepos,
@@ -40,7 +43,7 @@ import {
   skillErrorReason,
 } from "@/lib/errors/skillErrorParser";
 import { cn } from "@/lib/utils";
-import { MatrixSearch, NeutralBadge } from "@/components/mcp/AppMatrix";
+import { MatrixSearch } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
 import { countRepoSkills } from "./RepoManagerPanel";
 import { describeRepoFailures, repoFailureKey } from "./repoFailures";
@@ -64,18 +67,16 @@ const POPOVER_CLASS =
 /** 仓库的增删和停用（发现段的「仓库」弹层和仓库管理抽屉共用） */
 export function useSkillRepoActions() {
   const { t } = useTranslation();
-  const { refetch: refetchDiscoverable } = useDiscoverableSkills();
   const addRepoMutation = useAddSkillRepo();
   const removeRepoMutation = useRemoveSkillRepo();
 
   const addRepo = async (repo: SkillRepo) => {
-    await addRepoMutation.mutateAsync(repo);
-    const { data: fresh } = await refetchDiscoverable();
+    const discovery = await addRepoMutation.mutateAsync(repo);
     toast.success(
       t("skills.repo.addSuccess", {
         owner: repo.owner,
         name: repo.name,
-        count: countRepoSkills(fresh ?? [], repo),
+        count: countRepoSkills(discovery?.skills ?? [], repo),
       }),
       { closeButton: true },
     );
@@ -135,6 +136,15 @@ interface DiscoverRow {
   skill: DiscoverableSkill;
 }
 
+/** 发现行的文档地址：优先 SKILL.md 所在目录，缺省回落到仓库首页 */
+function discoverDocsUrl(row: DiscoverRow): string | undefined {
+  if (row.skill.readmeUrl) return row.skill.readmeUrl;
+  if (row.repoOwner && row.repoName) {
+    return `https://github.com/${row.repoOwner}/${row.repoName}`;
+  }
+  return undefined;
+}
+
 function installedKey(directory: string, owner?: string, name?: string) {
   const dir = directory.split(/[/\\]/).pop()?.toLowerCase() ?? "";
   return `${dir}:${(owner ?? "").toLowerCase()}:${(name ?? "").toLowerCase()}`;
@@ -185,8 +195,8 @@ export function SkillsPage({
     isFetching: fetchingDiscoverable,
     isError: discoverError,
     error: discoverErrorValue,
-    refetch: refetchDiscoverable,
   } = useDiscoverableSkills();
+  const refreshDiscoverable = useRefreshDiscoverableSkills();
   const { data: repoFailures = [] } = useDiscoverableSkillsFailures();
   const { data: installedSkills = [] } = useInstalledSkills();
   const {
@@ -401,7 +411,7 @@ export function SkillsPage({
   };
 
   const reload = () => {
-    void refetchDiscoverable();
+    void refreshDiscoverable();
     void refetchRepos();
   };
 
@@ -667,10 +677,7 @@ export function SkillsPage({
                 const failure = failed[row.key];
                 const line2Id = `sk-d-${index}-line2`;
                 const repo = `${row.repoOwner}/${row.repoName}`;
-                const showDir =
-                  row.directory &&
-                  row.directory.trim().toLowerCase() !==
-                    row.name.trim().toLowerCase();
+                const docsUrl = discoverDocsUrl(row);
                 return (
                   <li
                     key={item.key}
@@ -687,16 +694,13 @@ export function SkillsPage({
                         <span className="min-w-0 truncate text-body font-medium">
                           {row.name}
                         </span>
-                        {showDir && (
+                        {!isSkillsSh && (
                           <span
-                            title={row.directory}
+                            title={repo}
                             className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
                           >
-                            {row.directory}
+                            {repo}
                           </span>
-                        )}
-                        {!isSkillsSh && (
-                          <NeutralBadge mono>{repo}</NeutralBadge>
                         )}
                         {typeof row.installs === "number" && (
                           <span
@@ -731,7 +735,7 @@ export function SkillsPage({
                             : row.description}
                       </span>
                     </div>
-                    <div className="flex w-[180px] shrink-0 justify-end">
+                    <div className="flex max-w-[180px] shrink-0 justify-end">
                       {status.kind === "installed" ? (
                         <button
                           type="button"
@@ -742,9 +746,7 @@ export function SkillsPage({
                           })}
                           className="inline-flex h-7 items-center gap-0.5 rounded-control px-2 text-body text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
                         >
-                          {t("skillsPage.discover.installed", {
-                            count: enabledAppCount(status.skill),
-                          })}
+                          {t("skillsPage.discover.installed")}
                           <ChevronRight
                             className="h-3.5 w-3.5"
                             strokeWidth={2}
@@ -803,6 +805,29 @@ export function SkillsPage({
                         </Button>
                       )}
                     </div>
+                    {docsUrl ? (
+                      <HoverTip content={t("mcpPage.openDocs")}>
+                        <Button
+                          type="button"
+                          variant="quiet"
+                          size="icon-compact"
+                          className="shrink-0"
+                          aria-label={t("mcpPage.openDocs")}
+                          onClick={() =>
+                            void settingsApi
+                              .openExternal(docsUrl)
+                              .catch(() => undefined)
+                          }
+                        >
+                          <ExternalLink
+                            className="h-[15px] w-[15px]"
+                            strokeWidth={1.5}
+                          />
+                        </Button>
+                      </HoverTip>
+                    ) : (
+                      <span aria-hidden="true" className="w-7 shrink-0" />
+                    )}
                   </li>
                 );
               })}

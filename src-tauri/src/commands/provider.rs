@@ -22,18 +22,32 @@ const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 /// 获取所有供应商
 #[tauri::command]
-pub fn get_providers(
+pub async fn get_providers(
     state: State<'_, AppState>,
     app: String,
 ) -> Result<IndexMap<String, Provider>, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::list(state.inner(), app_type).map_err(|e| e.to_string())
+    // 启动会话同步也使用同一个数据库连接，等待它的锁不能占住 UI 线程。
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ProviderService::list(&state, app_type).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取供应商列表任务失败: {e}"))?
 }
 
 #[tauri::command]
-pub fn get_current_provider(state: State<'_, AppState>, app: String) -> Result<String, String> {
+pub async fn get_current_provider(
+    state: State<'_, AppState>,
+    app: String,
+) -> Result<String, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::current(state.inner(), app_type).map_err(|e| e.to_string())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ProviderService::current(&state, app_type).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取当前供应商任务失败: {e}"))?
 }
 
 #[tauri::command]
@@ -122,39 +136,54 @@ pub async fn get_provider_editor_view(
 }
 
 #[tauri::command]
-pub fn delete_provider(
+pub async fn delete_provider(
     state: State<'_, AppState>,
     app: String,
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::delete(state.inner(), app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ProviderService::delete(&state, app_type, &id)
+            .map(|_| true)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("供应商删除任务失败: {e}"))?
 }
 
 #[tauri::command]
-pub fn add_provider_to_live_config(
+pub async fn add_provider_to_live_config(
     state: tauri::State<'_, AppState>,
     app: String,
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::add_to_live_config(state.inner(), app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ProviderService::add_to_live_config(&state, app_type, &id)
+            .map(|_| true)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("供应商添加到应用任务失败: {e}"))?
 }
 
 #[tauri::command]
-pub fn remove_provider_from_live_config(
+pub async fn remove_provider_from_live_config(
     state: tauri::State<'_, AppState>,
     app: String,
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::remove_from_live_config(state.inner(), app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ProviderService::remove_from_live_config(&state, app_type, &id)
+            .map(|_| true)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("供应商从应用移除任务失败: {e}"))?
 }
 
 fn switch_provider_internal(

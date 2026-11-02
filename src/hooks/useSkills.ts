@@ -1,13 +1,16 @@
+import { useCallback } from "react";
 import {
   useMutation,
   useQuery,
   useQueryClient,
   keepPreviousData,
+  type QueryClient,
 } from "@tanstack/react-query";
 import {
   skillsApi,
   type SkillBackupEntry,
   type DiscoverableSkill,
+  type SkillRepo,
   type ImportSkillSelection,
   type InstalledSkill,
   type SkillDiscoveryResult,
@@ -16,7 +19,10 @@ import {
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
-import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
+import {
+  mergeImportedSkills,
+  replaceRepoDiscovery,
+} from "@/hooks/useSkills.helpers";
 import { readLocalCache, writeLocalCache } from "@/lib/localCache";
 import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
 
@@ -67,14 +73,24 @@ export function useDeleteSkillBackup() {
 // 发现要从 GitHub 下载每个仓库，很慢：上次的结果存在本地，打开时先显示，
 // 每次启动只在后台重新拉一次（之后同一次运行里不再自动拉，手动刷新照常）
 const DISCOVER_CACHE_KEY = "skills.discoverable.v1";
+const DISCOVERABLE_QUERY_KEY = ["skills", "discoverable"];
 let discoverRevalidated = false;
+// 下一次发现绕过后端按仓库的缓存（只有手动刷新会置位）
+let discoverForceNext = false;
+// 按仓库改过缓存就加一：被取消的旧请求晚到时不能再覆盖本地缓存
+let discoverGeneration = 0;
 
 const discoverableQuery = {
-  queryKey: ["skills", "discoverable"],
+  queryKey: DISCOVERABLE_QUERY_KEY,
   queryFn: async () => {
-    const result = await skillsApi.discoverAvailable();
-    discoverRevalidated = true;
-    writeLocalCache(DISCOVER_CACHE_KEY, result);
+    const force = discoverForceNext;
+    discoverForceNext = false;
+    const generation = discoverGeneration;
+    const result = await skillsApi.discoverAvailable(force);
+    if (generation === discoverGeneration) {
+      discoverRevalidated = true;
+      writeLocalCache(DISCOVER_CACHE_KEY, result);
+    }
     return result;
   },
   staleTime: Infinity,
@@ -88,6 +104,62 @@ const discoverableQuery = {
 export function useDiscoverableSkills() {
   return useQuery({ ...discoverableQuery, select: selectDiscoveredSkills });
 }
+
+/**
+ * 手动刷新发现列表：绕过后端缓存，所有启用的仓库都重新下载
+ */
+export function useRefreshDiscoverableSkills() {
+  const queryClient = useQueryClient();
+  return useCallback(() => {
+    discoverForceNext = true;
+    return queryClient.refetchQueries({
+      queryKey: DISCOVERABLE_QUERY_KEY,
+      exact: true,
+    });
+  }, [queryClient]);
+}
+
+/**
+ * 只改发现缓存里一个仓库的部分（next 不传就是删掉这个仓库）。
+ * 先取消进行中的整体发现：它读的是改动前的仓库表，晚到会把这次改动盖掉。
+ */
+async function patchRepoDiscovery(
+  queryClient: QueryClient,
+  repo: { owner: string; name: string },
+  next?: SkillDiscoveryResult,
+) {
+  await queryClient.cancelQueries({
+    queryKey: DISCOVERABLE_QUERY_KEY,
+    exact: true,
+  });
+  // 还没有任何发现结果（首次发现被上面取消了，或压根没开始）：没有底可以
+  // 打补丁，重新整体发现一次，此时读到的仓库表已包含这次改动
+  if (!queryClient.getQueryData(DISCOVERABLE_QUERY_KEY)) {
+    void queryClient.invalidateQueries({
+      queryKey: DISCOVERABLE_QUERY_KEY,
+      exact: true,
+    });
+    return;
+  }
+  discoverGeneration += 1;
+  const updated = queryClient.setQueryData<SkillDiscoveryResult>(
+    DISCOVERABLE_QUERY_KEY,
+    (old) => replaceRepoDiscovery(old, repo, next),
+  );
+  if (updated) writeLocalCache(DISCOVER_CACHE_KEY, updated);
+}
+
+// 同一仓库的增删改各记一个序号：单仓库发现要下载归档，期间如果又停用 /
+// 删除 / 改了分支，晚到的旧结果不能再写回缓存
+const repoMutationSeq = new Map<string, number>();
+const nextRepoMutation = (repo: { owner: string; name: string }) => {
+  const key = `${repo.owner}/${repo.name}`;
+  const seq = (repoMutationSeq.get(key) ?? 0) + 1;
+  repoMutationSeq.set(key, seq);
+  return { key, seq };
+};
+const isLatestRepoMutation = (ctx?: { key: string; seq: number }) =>
+  !!ctx && repoMutationSeq.get(ctx.key) === ctx.seq;
 
 const selectDiscoveredSkills = (result: SkillDiscoveryResult) => result.skills;
 const selectDiscoveryFailures = (result: SkillDiscoveryResult) =>
@@ -314,15 +386,36 @@ export function useSkillRepos() {
 }
 
 /**
- * 添加仓库
+ * 添加仓库（也用来改启用状态：add_skill_repo 是 INSERT OR REPLACE）
+ *
+ * 只发现这一个仓库并合并进发现缓存，不重拉其它仓库（#1426）；停用的仓库
+ * 直接从缓存里去掉。返回这个仓库的发现结果，读取单仓库失败时为 null。
  */
 export function useAddSkillRepo() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: skillsApi.addRepo,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+    mutationFn: async (repo: SkillRepo) => {
+      await skillsApi.addRepo(repo);
+      // 写库后马上刷新仓库列表：勾选框读的是它，不能等下面的归档下载完
+      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      if (!repo.enabled) return { skills: [], failures: [] };
+      try {
+        return await skillsApi.discoverRepo(repo.owner, repo.name);
+      } catch (error) {
+        console.error("[useAddSkillRepo] discover repo failed", error);
+        return null;
+      }
+    },
+    onMutate: nextRepoMutation,
+    onSuccess: async (discovery, repo, ctx) => {
+      if (!isLatestRepoMutation(ctx)) return;
+      if (discovery) {
+        await patchRepoDiscovery(queryClient, repo, discovery);
+      } else {
+        void queryClient.invalidateQueries({
+          queryKey: DISCOVERABLE_QUERY_KEY,
+        });
+      }
     },
   });
 }
@@ -335,9 +428,11 @@ export function useRemoveSkillRepo() {
   return useMutation({
     mutationFn: ({ owner, name }: { owner: string; name: string }) =>
       skillsApi.removeRepo(owner, name),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+    onMutate: nextRepoMutation,
+    onSuccess: async (_result, repo, ctx) => {
+      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      if (!isLatestRepoMutation(ctx)) return;
+      await patchRepoDiscovery(queryClient, repo);
     },
   });
 }

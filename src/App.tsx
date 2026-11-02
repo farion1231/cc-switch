@@ -91,6 +91,7 @@ import { OpenTerminalDialog } from "@/components/providers/OpenTerminalDialog";
 import { discardUnsavedChanges, hasUnsavedChanges } from "@/lib/unsavedChanges";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { RefreshAllQuotaButton } from "@/components/settings/auth/RefreshAllQuotaButton";
 import { AppsPage } from "@/components/apps/AppsPage";
 import {
   checkToolUpdatesInBackground,
@@ -1303,7 +1304,7 @@ function App() {
 
   // 应用页 ⋯ →「查看此应用的用量」：带上这个应用的筛选（Claude Desktop 的流量并在 Claude 里）
   const usageAppOf = (app: AppId): AppTypeFilter | null => {
-    const type = app === "claude-desktop" ? "claude" : app;
+    const type = sharedFeatureAppOf(app);
     return (KNOWN_APP_TYPES as ReadonlyArray<string>).includes(type)
       ? (type as AppTypeFilter)
       : null;
@@ -1495,7 +1496,7 @@ function App() {
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal:
-      activeApp === "claude" || activeApp === "agy"
+      activeApp === "claude" || activeApp === "codex" || activeApp === "agy"
         ? setTerminalProvider
         : undefined,
     onCreate: () => openAddProvider(currentModeView),
@@ -1683,6 +1684,7 @@ function App() {
                   </Badge>
                 </>
               }
+              actions={<RefreshAllQuotaButton />}
             />
             <div
               id="main-content"

@@ -118,17 +118,39 @@ pub fn import_skills_from_apps(
 // ========== 发现功能命令 ==========
 
 /// 发现可安装的 Skills（从仓库获取），并逐仓库报告没读到的仓库
+///
+/// `force_refresh` 为 true（手动刷新）时绕过按仓库的发现缓存。
 #[tauri::command]
 pub async fn discover_available_skills(
+    force_refresh: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     service
         .0
-        .discover_available_report(repos)
+        .discover_available_report(repos, force_refresh.unwrap_or(false))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 只发现一个已保存的仓库（添加、重新启用仓库后用，不重拉其它仓库）。
+/// 仓库不存在或已停用时返回空结果。
+#[tauri::command]
+pub async fn discover_repo_skills(
+    owner: String,
+    name: String,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<SkillDiscoveryResult, String> {
+    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let Some(repo) = repos
+        .into_iter()
+        .find(|repo| repo.owner == owner && repo.name == name)
+    else {
+        return Ok(SkillDiscoveryResult::default());
+    };
+    Ok(service.0.discover_repo(&repo).await)
 }
 
 /// 检查 Skills 更新，并逐仓库报告没读到的仓库
