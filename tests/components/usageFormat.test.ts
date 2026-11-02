@@ -14,6 +14,9 @@ import {
   formatTokensPerSecond,
   formatTokensShort,
   resolveMoneyDisplay,
+  resolveRateProvider,
+  resolveRateSource,
+  shouldRefreshRates,
   resolveSidebarToday,
   getAggregateTokensPerSecond,
   getEstimatedTokensPerSecond,
@@ -287,6 +290,97 @@ describe("display currency", () => {
     expect(
       resolveMoneyDisplay({ currency: "CNY", exchangeRates: { CNY: 7.25 } }),
     ).toEqual({ currency: "CNY", rate: 7.25 });
+  });
+
+  it("prefers the fetched rate in automatic mode and keeps manual values as fallback", () => {
+    const both = {
+      currency: "CNY",
+      rateSource: "auto",
+      autoExchangeRates: { CNY: 6.9 },
+      exchangeRates: { CNY: 7.1 },
+    };
+    expect(resolveMoneyDisplay(both)).toEqual({ currency: "CNY", rate: 6.9 });
+
+    // 还没取到自动汇率时先用手填值，再退预置值
+    expect(
+      resolveMoneyDisplay({ ...both, autoExchangeRates: undefined }),
+    ).toEqual({ currency: "CNY", rate: 7.1 });
+    expect(
+      resolveMoneyDisplay({ currency: "CNY", rateSource: "auto" }),
+    ).toEqual({ currency: "CNY", rate: 6.8 });
+
+    // 手动模式不看自动取到的值
+    expect(resolveMoneyDisplay({ ...both, rateSource: "manual" })).toEqual({
+      currency: "CNY",
+      rate: 7.1,
+    });
+    // 没设置过来源按手动：用量页本来不联网，不能升级后一进来就发请求
+    expect(resolveRateSource({ currency: "CNY" })).toBe("manual");
+    expect(resolveRateSource({ currency: "CNY", rateSource: "bogus" })).toBe(
+      "manual",
+    );
+    expect(resolveRateSource({ currency: "CNY", rateSource: "manual" })).toBe(
+      "manual",
+    );
+    expect(resolveRateSource({ currency: "CNY", rateSource: "auto" })).toBe(
+      "auto",
+    );
+  });
+
+  it("names the provider that actually served the automatic rate", () => {
+    // open.er-api.com 的免费条款要求署名 ExchangeRate-API（旧缓存没有 source 也按主源）
+    expect(resolveRateProvider("open.er-api.com")).toEqual({
+      name: "ExchangeRate-API",
+      url: "https://www.exchangerate-api.com/",
+    });
+    expect(resolveRateProvider(undefined)).toEqual({
+      name: "ExchangeRate-API",
+      url: "https://www.exchangerate-api.com/",
+    });
+    // 主源失败退到备用源时署它自己的名字
+    expect(resolveRateProvider("floatrates.com")).toEqual({
+      name: "FloatRates",
+      url: "https://www.floatrates.com/",
+    });
+  });
+
+  it("keeps fetched automatic rates out of the manual default unless picked", () => {
+    // 没设置过来源：自动取到的值不参与显示，用手填值或预置值
+    const fetched = {
+      currency: "CNY",
+      autoExchangeRates: { CNY: 6.9 },
+    };
+    expect(resolveRateSource(fetched)).toBe("manual");
+    expect(resolveMoneyDisplay(fetched)).toEqual({ currency: "CNY", rate: 6.8 });
+    expect(resolveMoneyDisplay({ ...fetched, exchangeRates: { CNY: 7.1 } })).toEqual(
+      { currency: "CNY", rate: 7.1 },
+    );
+    // 用户主动选了自动才用取到的值
+    expect(
+      resolveMoneyDisplay({ ...fetched, rateSource: "auto" }),
+    ).toEqual({ currency: "CNY", rate: 6.9 });
+  });
+
+  it("refreshes automatic rates only when the cache is missing or stale", () => {
+    const now = 1_700_000_000_000;
+    const day = 24 * 60 * 60 * 1000;
+    expect(shouldRefreshRates({ rateSource: "auto" }, now)).toBe(true);
+    expect(
+      shouldRefreshRates(
+        { rateSource: "auto", rateFetchedAt: now - 60_000 },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      shouldRefreshRates({ rateSource: "auto", rateFetchedAt: now - day }, now),
+    ).toBe(true);
+    // 手动模式再旧也不联网
+    expect(
+      shouldRefreshRates(
+        { rateSource: "manual", rateFetchedAt: now - day },
+        now,
+      ),
+    ).toBe(false);
   });
 
   it("writes converted amounts with the plain currency symbol", () => {

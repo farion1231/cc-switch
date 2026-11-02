@@ -404,6 +404,14 @@ pub async fn get_usage_data_sources(
     .await
 }
 
+/// 取 USD 对各显示币种的汇率：主源 open.er-api.com，失败退 floatrates.com。
+/// 只用于金额换算显示；失败时前端保留上次缓存或手填的汇率。
+#[tauri::command]
+pub async fn fetch_exchange_rates(
+) -> Result<crate::services::exchange_rates::FetchedExchangeRates, AppError> {
+    crate::services::exchange_rates::fetch_usd_rates().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

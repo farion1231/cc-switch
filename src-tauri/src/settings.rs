@@ -379,7 +379,8 @@ pub struct CodexLegacyOfficialHistoryBucketMigration {
 }
 
 /// 用量金额的显示方式。只影响显示：库里的费用一律是美元，按 `exchange_rates`
-/// 换算后显示；值的合法性（认不认得币种、汇率是否为正数）由前端兜底。
+/// （或自动获取到的 `auto_exchange_rates`）换算后显示；值的合法性（认不认得币种、
+/// 汇率是否为正数）由前端兜底。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageDisplaySettings {
@@ -400,6 +401,18 @@ pub struct UsageDisplaySettings {
     /// 用量趋势图的样式（"bar" / "area"），缺省为柱形图
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trend_chart_type: Option<String>,
+    /// 汇率来源："auto" 自动获取（每日更新）/"manual" 手动填写，缺省按 manual
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_source: Option<String>,
+    /// 自动获取到的汇率，按币种存；和手填的 `exchange_rates` 分开，切回手动不丢手填值
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub auto_exchange_rates: BTreeMap<String, f64>,
+    /// 上次成功取到汇率的时间（毫秒时间戳）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_fetched_at: Option<i64>,
+    /// 上次取到汇率的实际数据源，界面署名用（open.er-api.com / floatrates.com）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_provider: Option<String>,
 }
 
 /// 应用设置结构
@@ -1599,7 +1612,11 @@ mod tests {
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
                 "requestLogColumns": { "statusCode": true, "app": false },
-                "trendChartType": "area"
+                "trendChartType": "area",
+                "rateSource": "auto",
+                "autoExchangeRates": { "CNY": 6.9 },
+                "rateFetchedAt": 1_700_000_000_000i64,
+                "rateProvider": "open.er-api.com"
             }
         }))
         .expect("usage display");
@@ -1612,6 +1629,10 @@ mod tests {
         );
         assert_eq!(display.request_log_columns.get("app"), Some(&false));
         assert_eq!(display.trend_chart_type.as_deref(), Some("area"));
+        assert_eq!(display.rate_source.as_deref(), Some("auto"));
+        assert_eq!(display.auto_exchange_rates.get("CNY"), Some(&6.9));
+        assert_eq!(display.rate_fetched_at, Some(1_700_000_000_000));
+        assert_eq!(display.rate_provider.as_deref(), Some("open.er-api.com"));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
             serde_json::json!({
@@ -1619,7 +1640,11 @@ mod tests {
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
                 "requestLogColumns": { "app": false, "statusCode": true },
-                "trendChartType": "area"
+                "trendChartType": "area",
+                "rateSource": "auto",
+                "autoExchangeRates": { "CNY": 6.9 },
+                "rateFetchedAt": 1_700_000_000_000i64,
+                "rateProvider": "open.er-api.com"
             })
         );
 
