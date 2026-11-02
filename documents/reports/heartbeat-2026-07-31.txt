@@ -1,0 +1,13 @@
+Heartbeat Review - 2026-07-31
+
+- Lead response: ✅ Live (no overdue leads)
+- Onboarding queue: 95% capacity (within limits)
+- Support backlog: 98% SLA adherence
+- Capacity utilization: 84% (approaching 85% threshold)
+- Finance metric: POAS 1.12 (stable)
+- Process gaps: 3 open items (review queue, checked 2026-07-31T06:17:00Z)
+
+Next actions:
+• Address support escalation queue
+• Propose capacity upgrades if utilization sustained ≥85%
+• Review finance metrics weekend summary

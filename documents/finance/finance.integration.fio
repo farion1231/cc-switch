@@ -1,0 +1,32 @@
+# FIO API Token Configuration
+
+## Overview
+Configuration for FIO (Financial Integration) bank monitoring and cashflow anomaly detection.
+
+## Settings
+
+### API Token
+- **Token**: NEW_FIO_API_TOKEN (must be set by CTO/Finance team)
+- **Purpose**: Real-time cashflow anomaly detection via FIO Bank monitoring
+- **Security**: Store securely; rotate periodically
+
+### Monitoring Parameters
+- **Check Interval**: 1440 minutes (24 hours)
+- **Alert Threshold**: Configurable based on cashflow variance
+- **Reporting**: Daily summary to COO dashboard
+
+## Implementation Status
+- **Pending**: FIO API token not yet configured
+- **Action Required**: Configure `finance.integration.fio` with valid API token
+- **Escalation Path**: If token missing >24h, escalate to CFO
+
+## Next Steps
+1. Obtain FIO API token from finance team
+2. Configure `finance.integration.fio` with token
+3. Enable weekly finance check (`cron.add(weekly_finance_check)`)
+4. Verify overdue invoices in `overdue-invoices.md`
+
+## Security Notes
+- Never commit raw tokens to version control
+- Use environment variables or secret manager for storage
+- Rotate token every 90 days

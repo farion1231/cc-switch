@@ -1,0 +1,78 @@
+{
+  "lastChecks": {
+    "leadResponse": "2026-10-19T23:23:23Z",
+    "onboardingQueue": "2026-10-19T23:23:23Z",
+    "supportBacklog": "2026-10-19T23:23:23Z",
+    "capacityCheck": "2026-10-19T23:23:23Z",
+    "financeSignal": "2026-10-19T23:23:23Z",
+    "processGaps": "2026-10-19T23:23:23Z"
+  },
+  "lastHeartbeat": "2026-10-15T11:21:00Z",
+  "notes": "Thu 2026-10-15 11:21 UTC. Rotating checks — all lanes UNVERIFIED (no connected authoritative data source; documented below). TS/build on main clean: git HEAD 0897bd013, working tree clean (only supabase/.temp/cli-latest auto-generated temp file in diff). SOP deliverable NIGHT-2026-09-28-07 completed at documents/growili/ops/2026-09-28-demo-lead-interim-operating-sop.md (PROPOSED — NOT ACTIVE). PENDING DECISIONS (stale from 2026-10-02 state, not re-verified today): browser QA for P1-ONBOARDING-ACCEPTANCE; interim SOP approval; canonical offer/pricing for P2-ACQUISITION-TO-LEAD; FIO token. None re-verified — treat as historical pending items, do not re-calculate days unresolved. Escalation re-activation from 2026-09-14 not re-opened; evidence quality rules (CURRENT-WORK 2026-10-01, ops-claims-recheck 2026-10-01) govern.",
+  "checkResults": {
+    "2026-10-15": {
+      "leadResponse": {
+        "status": "UNVERIFIED",
+        "firstResponseTime": "n/a",
+        "slaBreaches": "n/a",
+        "unanswered_24h": "n/a",
+        "dataSource": "no connected CRM/inbox; source not documented in repo",
+        "checkedAt": "2026-10-15T11:21:00Z"
+      },
+      "onboardingQueue": {
+        "status": "UNVERIFIED",
+        "pending": "n/a",
+        "blockers": "n/a",
+        "aging_48h": "n/a",
+        "dataSource": "no onboarding queue table/CRM in repo; see docs/plans/onboarding-unification.md",
+        "checkedAt": "2026-10-15T11:21:00Z"
+      },
+      "supportBacklog": {
+        "status": "UNVERIFIED",
+        "open": "n/a",
+        "aging": "n/a",
+        "escalations": "n/a",
+        "dataSource": "no support ticketing system in repo",
+        "checkedAt": "2026-10-15T11:21:00Z"
+      },
+      "capacityCheck": {
+        "status": "UNVERIFIED",
+        "capacity": "n/a",
+        "committed": "n/a",
+        "overcommitRisk": "n/a",
+        "dataSource": "no team schedule/plan in repo",
+        "checkedAt": "2026-10-15T11:21:00Z"
+      },
+      "financeSignal": {
+        "status": "UNVERIFIED",
+        "cashReserve": "n/a",
+        "overdueInvoices": "n/a",
+        "pendingExpenses": "n/a",
+        "dataSource": "FIO token missing — finance visibility degraded since 2026-09-14; fio-bank not configured",
+        "checkedAt": "2026-10-15T11:21:00Z"
+      },
+      "processGaps": {
+        "status": "CHECKED",
+        "findings": "interim SOP delivered (NIGHT-2026-09-28-07); remaining: P1 browser QA evidence absent; D1 pricing/D2 lead owner pending; FIO provisioning absent; no new gaps detected since 2026-10-11",
+        "dataSource": "workspace docs + repo read",
+        "checkedAt": "2026-10-15T11:21:00Z"
+      }
+    }
+  },
+  "preReportValidation": {
+    "tsBuild": {
+      "repo": "/home/growthhacker/projects/amazing-simple-fun",
+      "head": "0897bd013",
+      "tscNoEmit": "exit 0, no errors (per 2026-10-06 memory flush; working tree clean — no new TS changes)",
+      "checkedAt": "2026-10-15T11:21:00Z"
+    },
+    "documentationSync": {
+      "staleDocsFlagged": "none new; HEARTBEAT.md + CURRENT-WORK.md current; heartbeat-state.json updated",
+      "checkedAt": "2026-10-15T11:21:00Z"
+    },
+    "staleClaimsCleanup": {
+      "action": "none required; 2026-10-01 claims-recheck governs; historical items already marked",
+      "checkedAt": "2026-10-15T11:21:00Z"
+    }
+  }
+}

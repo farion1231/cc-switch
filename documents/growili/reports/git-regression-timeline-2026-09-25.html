@@ -1,0 +1,202 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Growili — mapa regresí a návratů, 18.–25. 9. 2026</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f8fafc;
+    --fg: #172033;
+    --muted: #5b6475;
+    --line: #64748b;
+    --good: #bbf7d0;
+    --work: #bfdbfe;
+    --risk: #fecaca;
+    --warn: #fde68a;
+    --repair: #c7d2fe;
+    --card: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --fg: #e5e7eb;
+      --muted: #a3adbd;
+      --line: #94a3b8;
+      --good: #166534;
+      --work: #1d4ed8;
+      --risk: #991b1b;
+      --warn: #92400e;
+      --repair: #4338ca;
+      --card: #111827;
+    }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 28px auto; padding: 0 20px 40px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 26px 0 10px; }
+  p { color: var(--muted); }
+  svg { width: 100%; height: auto; display: block; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  .node { stroke: var(--line); stroke-width: 1.2; rx: 10; }
+  .good { fill: var(--good); }
+  .work { fill: var(--work); }
+  .risk { fill: var(--risk); }
+  .warn { fill: var(--warn); }
+  .repair { fill: var(--repair); }
+  .edge { stroke: var(--line); stroke-width: 2; fill: none; marker-end: url(#arrow); }
+  .dashed { stroke-dasharray: 7 6; }
+  .label { font-size: 14px; font-weight: 700; fill: var(--fg); }
+  .small { font-size: 12px; fill: var(--fg); }
+  .muted { font-size: 11px; fill: var(--muted); }
+  .section { font-size: 13px; font-weight: 700; fill: var(--muted); letter-spacing: .04em; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 6px; border: 1px solid var(--line); vertical-align: -2px; border-radius: 3px; background: var(--swatch); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--card); }
+  .card strong { display: block; margin-bottom: 6px; }
+  .card p { margin: 4px 0; }
+  code { color: var(--fg); }
+</style>
+<main>
+  <h1>Growili — které commity způsobily návraty a přepracování</h1>
+  <p>Git historie 18.–25. 9. 2026. Plná čára = ověřeno z dostupných Git objektů. Přerušovaná čára = záznam v auditu, ale commit už v lokálním objektovém úložišti není dostupný.</p>
+
+  <div class="legend">
+    <span style="--swatch:var(--good)">stabilní / hotová práce</span>
+    <span style="--swatch:var(--risk)">ověřená regrese</span>
+    <span style="--swatch:var(--warn)">rizikový nebo neúplný zásah</span>
+    <span style="--swatch:var(--repair)">obnova / oprava</span>
+  </div>
+
+  <svg viewBox="0 0 1140 760" role="img" aria-label="Časová osa regresních a opravných commitů Growili">
+    <defs>
+      <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+        <path d="M0,0 L0,6 L9,3 z" fill="var(--line)" />
+      </marker>
+    </defs>
+
+    <text x="36" y="42" class="section">HLAVNÍ REGRESE A OBNOVA</text>
+    <path class="edge" d="M224 126 H292" />
+    <path class="edge" d="M518 126 H586" />
+    <path class="edge" d="M812 126 H880" />
+
+    <rect x="36" y="74" width="188" height="104" class="node good" />
+    <text x="54" y="100" class="label">Předregresní práce</text>
+    <text x="54" y="123" class="small">ChatGPT Ads landing</text>
+    <text x="54" y="143" class="small">Labelizer V3 landing</text>
+    <text x="54" y="163" class="muted">stav před 6809407b4</text>
+
+    <rect x="292" y="62" width="226" height="128" class="node risk" />
+    <text x="310" y="89" class="label">6809407b4 · 18. 9.</text>
+    <text x="310" y="112" class="small">Lovable merge</text>
+    <text x="310" y="134" class="small">−2 194 / +450 řádků</text>
+    <text x="310" y="154" class="small">17 souborů odstraněno</text>
+    <text x="310" y="174" class="muted">landings, routy, handoffy</text>
+
+    <rect x="586" y="62" width="226" height="128" class="node repair" />
+    <text x="604" y="89" class="label">12ae60bba · 24. 9.</text>
+    <text x="604" y="112" class="small">Obnova zahozené práce</text>
+    <text x="604" y="134" class="small">122 souborů</text>
+    <text x="604" y="154" class="small">+2 006 / −286 řádků</text>
+    <text x="604" y="174" class="muted">explicitně odkazuje na 6809407b4</text>
+
+    <rect x="880" y="74" width="224" height="104" class="node work" />
+    <text x="898" y="100" class="label">Následné portování</text>
+    <text x="898" y="123" class="small">AI Agents, onboarding, UX</text>
+    <text x="898" y="143" class="small">typy, i18n, landing pages</text>
+    <text x="898" y="163" class="muted">další práce kvůli konsolidaci</text>
+
+    <text x="36" y="244" class="section">PING-PONG: HERO STATISTIKY</text>
+    <path class="edge" d="M226 315 H304" />
+    <path class="edge" d="M528 315 H606" />
+    <path class="edge" d="M830 315 H908" />
+
+    <rect x="36" y="270" width="190" height="90" class="node work" />
+    <text x="54" y="298" class="label">3dd9e5a / 7a507e5</text>
+    <text x="54" y="322" class="small">zjednodušení hero</text>
+    <text x="54" y="342" class="small">odstranění neověřených stats</text>
+
+    <rect x="304" y="270" width="224" height="90" class="node warn" />
+    <text x="322" y="298" class="label">94f842132 · 22. 9.</text>
+    <text x="322" y="322" class="small">statistiky vráceny</text>
+    <text x="322" y="342" class="muted">reverz předchozího směru</text>
+
+    <rect x="606" y="270" width="224" height="90" class="node repair" />
+    <text x="624" y="298" class="label">fd300074d · 24. 9.</text>
+    <text x="624" y="322" class="small">statistiky znovu odstraněny</text>
+    <text x="624" y="342" class="muted">stejná práce podruhé</text>
+
+    <rect x="908" y="270" width="196" height="90" class="node good" />
+    <text x="926" y="298" class="label">Výsledek</text>
+    <text x="926" y="322" class="small">bez neověřených čísel</text>
+    <text x="926" y="342" class="muted">1 zbytečný návrat</text>
+
+    <text x="36" y="426" class="section">NEÚPLNÁ FUNKCE → REVERT → ČISTŠÍ DODÁNÍ</text>
+    <path class="edge" d="M264 497 H338" />
+    <path class="edge" d="M566 497 H640" />
+    <path class="edge" d="M868 497 H942" />
+
+    <rect x="36" y="446" width="228" height="102" class="node warn" />
+    <text x="54" y="474" class="label">918b12546 · 24. 9.</text>
+    <text x="54" y="498" class="small">IndexNow settings + guide</text>
+    <text x="54" y="519" class="small">chyběly překlady, 18 unused</text>
+    <text x="54" y="538" class="muted">odebralo existující konfiguraci</text>
+
+    <rect x="338" y="446" width="228" height="102" class="node repair" />
+    <text x="356" y="474" class="label">6ae546253 · 24. 9.</text>
+    <text x="356" y="498" class="small">revert nehotové změny</text>
+    <text x="356" y="519" class="small">4 soubory vráceny</text>
+    <text x="356" y="538" class="muted">ochrana stávajícího nastavení</text>
+
+    <rect x="640" y="446" width="228" height="102" class="node work" />
+    <text x="658" y="474" class="label">další práce na guide</text>
+    <text x="658" y="498" class="small">oddělení průvodce</text>
+    <text x="658" y="519" class="small">od rizikového ConfigPanelu</text>
+    <text x="658" y="538" class="muted">omezení rozsahu změny</text>
+
+    <rect x="942" y="446" width="162" height="102" class="node good" />
+    <text x="960" y="474" class="label">bd607d4ba</text>
+    <text x="960" y="498" class="small">8krokový guide</text>
+    <text x="960" y="519" class="small">CZ + EN</text>
+    <text x="960" y="538" class="muted">25. 9.</text>
+
+    <text x="36" y="614" class="section">DALŠÍ RIZIKOVÉ BODY</text>
+    <path class="edge dashed" d="M298 680 H366" />
+    <path class="edge dashed" d="M760 680 H828" />
+
+    <rect x="36" y="636" width="262" height="94" class="node risk" />
+    <text x="54" y="664" class="label">2 velké reverty · 22. 9.</text>
+    <text x="54" y="688" class="small">audit uvádí návrat na 18. 9.</text>
+    <text x="54" y="709" class="muted">SHA dnes nedostupná — nepotvrzeno</text>
+
+    <rect x="366" y="624" width="394" height="118" class="node warn" />
+    <text x="384" y="652" class="label">ae5dea3c5 · 24. 9. · „WIP: staged changes“</text>
+    <text x="384" y="676" class="small">merge zasáhl 214 souborů</text>
+    <text x="384" y="697" class="small">+4 975 / −1 557 řádků, odstranil 2 soubory</text>
+    <text x="384" y="718" class="muted">velmi rizikový rozsah; samotná regrese není prokázána</text>
+
+    <rect x="828" y="636" width="276" height="94" class="node repair" />
+    <text x="846" y="664" class="label">Doporučený gate</text>
+    <text x="846" y="688" class="small">malé commity + CI před mergem</text>
+    <text x="846" y="709" class="muted">žádný plošný WIP merge do main</text>
+  </svg>
+
+  <h2>Jak číst příčinu</h2>
+  <div class="grid">
+    <div class="card">
+      <strong>Jistý viník: <code>6809407b4</code></strong>
+      <p>Proti prvnímu rodiči odstranil 17 souborů a 2 194 řádků. Zmizely celé ChatGPT Ads a Labelizer V3 landing části. Commit <code>12ae60bba</code> později výslovně obnovoval práci zahozenou tímto mergem.</p>
+    </div>
+    <div class="card">
+      <strong>Jistý přepracovaný pokus: <code>918b12546</code></strong>
+      <p>Neúplný IndexNow ConfigPanel byl revertován v <code>6ae546253</code>: chybějící překlady, 18 nepoužitých proměnných a odstranění existující konfigurace.</p>
+    </div>
+    <div class="card">
+      <strong>Jistý churn: hero statistiky</strong>
+      <p>Neověřená čísla byla odstraněna, vrácena v <code>94f842132</code> a znovu odstraněna v <code>fd300074d</code>. Výsledek se vrátil ke směru z prvního pokusu.</p>
+    </div>
+    <div class="card">
+      <strong>Riziko, ne prokázaný viník: <code>ae5dea3c5</code></strong>
+      <p>Jeden neurčitě pojmenovaný WIP merge změnil 214 souborů. Takový rozsah znemožňuje rychle určit, která změna je záměr a která regrese.</p>
+    </div>
+  </div>
+</main>

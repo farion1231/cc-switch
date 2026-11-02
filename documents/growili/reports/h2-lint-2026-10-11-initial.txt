@@ -1,0 +1,10 @@
+ESLint audit for H2 nadpisy - 2026-10-11
+========================================
+
+Pravidla zkontrolována:
+- enforce-heading-page-for-h2 (landing page sections)
+- enforce-page-header (H1 hlavičky)
+- enforce-locked-section-header (homepage sections)
+
+Výstup bude obsahovat seznam chyb ve formátu:
+PRAVIDLO | CESTA K SOUBORU | HLÁSKA

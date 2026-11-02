@@ -1,0 +1,14 @@
+{
+  "lastChecks": {
+    "leadResponse": "2026-09-10T07:18:00Z",
+    "onboardingQueue": "2026-09-10T07:18:00Z",
+    "supportBacklog": "2026-09-10T07:18:00Z",
+    "capacityCheck": "2026-09-10T07:18:00Z",
+    "financeSignal": "2026-09-10T07:18:00Z",
+    "processGaps": "2026-09-10T07:18:00Z"
+  },
+  "lastHeartbeat": "2026-09-10T07:18:00Z",
+  "notes": "Thu 2026-09-10 07:18 UTC check. No new escalation conditions evidenced in workspace. Docs remain inconsistent: CURRENT-WORK.md still says P1 onboarding acceptance is blocked pending browser session or alternative approval, but documents/ops/onboarding_block.md says Jiří approved manual verification alternative on 2026-08-09 (DEC-2026-08-09-01). Finance visibility risk remains open because FIO API token is still missing; no live cashflow/overdue data available. Support, capacity, and onboarding queue still have no authoritative live operational sources in this workspace. Memory search is currently paused due to index provenance mismatch, so this heartbeat relied on direct file inspection.",
+  "steveReview": "HEARTBEAT_OK",
+  "reviewedAt": "2026-09-10T07:18:00Z"
+}
