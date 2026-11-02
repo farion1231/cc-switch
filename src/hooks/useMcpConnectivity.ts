@@ -12,7 +12,7 @@ export type McpConnectionState =
 type CheckResult = {
   /** The connection config the result was produced for. */
   config: string;
-  state: Exclude<McpConnectionState, "unchecked">;
+  state: McpConnectionState;
 };
 
 const isEnabled = (server: McpServer) =>
@@ -29,6 +29,8 @@ export function useMcpConnectivity(servers: McpServersMap | undefined) {
   // Only the latest request for a server may write its result.
   const generationRef = useRef(0);
   const latestRef = useRef<Record<string, number>>({});
+  // Config of each server's latest unfinished check.
+  const runningRef = useRef(new Map<string, string>());
   const cancelsRef = useRef(new Set<() => void>());
 
   const cancelAll = useCallback(() => {
@@ -43,16 +45,23 @@ export function useMcpConnectivity(servers: McpServersMap | undefined) {
       const configs: Record<string, string> = {};
       for (const id of ids) {
         const server = servers?.[id];
-        if (server && isEnabled(server)) configs[id] = configOf(server);
+        if (!server || !isEnabled(server)) continue;
+        const config = configOf(server);
+        // The running check will answer for this config; don't probe it twice.
+        if (runningRef.current.get(id) !== config) configs[id] = config;
       }
       const targets = Object.keys(configs);
       if (targets.length === 0) return;
 
       const generation = ++generationRef.current;
-      for (const id of targets) latestRef.current[id] = generation;
+      for (const id of targets) {
+        latestRef.current[id] = generation;
+        runningRef.current.set(id, configs[id]);
+      }
       const pending = new Set(targets);
-      const settle = (id: string, state: CheckResult["state"]) => {
+      const settle = (id: string, state: McpConnectionState) => {
         if (latestRef.current[id] !== generation) return;
+        if (state !== "checking") runningRef.current.delete(id);
         setResults((previous) => ({
           ...previous,
           [id]: { config: configs[id], state },
@@ -73,6 +82,8 @@ export function useMcpConnectivity(servers: McpServersMap | undefined) {
       );
       cancel = () => {
         disposed = true;
+        // Their results will never arrive, and a replacing batch may skip them.
+        pending.forEach((id) => settle(id, "unchecked"));
         // Wait for registration even when cancelling wins the start-command race.
         void batch
           .then((id) => mcpApi.cancelConnectivityChecks(id))
