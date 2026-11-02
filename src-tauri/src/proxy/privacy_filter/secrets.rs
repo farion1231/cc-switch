@@ -10,7 +10,7 @@ const ENTROPY_MIN: f64 = 4.0;
 /// 周围无密钥语义关键词时启用，进一步压低误报
 const ENTROPY_MIN_STRICT: f64 = 4.8;
 /// 上下文判定往前回溯的字节数
-const CONTEXT_LOOKBACK: usize = 30;
+pub(super) const CONTEXT_LOOKBACK: usize = 30;
 
 /// 上下文型口令：藏在句子里的密码/token，如「我的密码是 hunter2」「api_key: xxx」
 static RE_CONTEXT_SECRET: Lazy<Regex> = Lazy::new(|| {
@@ -40,9 +40,13 @@ static RE_AUTH_HEADER_PREFIX: Lazy<Regex> = Lazy::new(|| {
 static RE_HOST_PORT_PREFIX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:").unwrap());
 
-/// 模板变量：{{ X }} / ${X} / %{X} / <X>
-static RE_TEMPLATE_VAR: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^(?:\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\{[^{}]+\}|<[^<>]+>)$").unwrap());
+/// 模板变量：{{ X }} / ${X} / %{X} / <X> / $X / %X%
+static RE_TEMPLATE_VAR: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"^(?:\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\{[^{}]+\}|<[^<>]+>|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$",
+    )
+    .unwrap()
+});
 static RE_UUID: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
         .unwrap()
@@ -85,6 +89,83 @@ const COMMON_PLACEHOLDERS: &[&str] = &[
     "FIXME",
     "XXXX",
 ];
+
+/// 上下文口令 value 的占位词（去掉两端标点后大小写不敏感的整词匹配）：空值、示例值，
+/// 以及 `password: string` 这类类型标注。靠词表而不是熵，否则 hunter2 这样的短密码会被放行。
+const CONTEXT_VALUE_PLACEHOLDERS: &[&str] = &[
+    // 空值
+    "null",
+    "nil",
+    "none",
+    "undefined",
+    "nan",
+    "empty",
+    "blank",
+    "true",
+    "false",
+    // 示例值与字段说明
+    "xxx",
+    "test",
+    "example",
+    "sample",
+    "dummy",
+    "fake",
+    "mock",
+    "changeme",
+    "redacted",
+    "masked",
+    "hidden",
+    "required",
+    "optional",
+    "default",
+    "unknown",
+    "value",
+    // 值就是字段名
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "key",
+    "apikey",
+    "api_key",
+    "api-key",
+    // 类型名
+    "str",
+    "string",
+    "secretstr",
+    "text",
+    "varchar",
+    "char",
+    "bool",
+    "boolean",
+    "int",
+    "integer",
+    "uint",
+    "i32",
+    "i64",
+    "u32",
+    "u64",
+    "long",
+    "float",
+    "double",
+    "number",
+    "decimal",
+    "bigint",
+    "byte",
+    "bytes",
+    "object",
+    "array",
+    "list",
+    "dict",
+    "map",
+    "any",
+    "void",
+    "json",
+];
+
+/// 打码字符：value 全由这些字符组成时（`****` / `...`）不是真实口令
+const MASK_CHARS: &[char] = &['*', '•', '·', '.', '?', '-', '_', ','];
 
 struct SecretRule {
     re: Regex,
@@ -234,11 +315,7 @@ impl SecretDetector {
         for caps in RE_CONTEXT_SECRET.captures_iter(text) {
             let Some(m) = caps.get(2) else { continue };
             let value = m.as_str();
-            if is_template_var(value) {
-                continue;
-            }
-            // 低熵短串（"REPLACE_ME" / "null" / "abc" 等占位符）跳过
-            if value.len() <= 16 && shannon_entropy(value) < 3.0 {
+            if is_template_var(value) || is_context_placeholder(value) {
                 continue;
             }
             push(&mut spans, m.start(), m.end());
@@ -274,7 +351,7 @@ impl SecretDetector {
 }
 
 /// 回溯起点：往前退 `n` 字节后再前移到字符边界，保证切片合法
-fn lookback_start(text: &str, start: usize, n: usize) -> usize {
+pub(super) fn lookback_start(text: &str, start: usize, n: usize) -> usize {
     let mut lo = start.saturating_sub(n);
     while !text.is_char_boundary(lo) {
         lo += 1;
@@ -290,6 +367,18 @@ fn looks_like_url_match(s: &str) -> bool {
 fn is_likely_placeholder(s: &str) -> bool {
     let upper = s.to_uppercase();
     COMMON_PLACEHOLDERS.iter().any(|p| upper.contains(p))
+}
+
+/// 上下文口令的 value 是否只是占位。先去掉两端标点，让 `string,` / `&str` / `string[]` 也能对上词表。
+fn is_context_placeholder(value: &str) -> bool {
+    let word = value.trim_matches(|c: char| !c.is_alphanumeric());
+    if word.is_empty() {
+        return value.chars().all(|c| MASK_CHARS.contains(&c));
+    }
+    CONTEXT_VALUE_PLACEHOLDERS
+        .iter()
+        .any(|p| word.eq_ignore_ascii_case(p))
+        || is_likely_placeholder(value)
 }
 
 /// [start, end) 是否处于路径 / URL / 哈希等「非密钥」上下文
@@ -325,8 +414,8 @@ fn has_strong_secret_context(text: &str, start: usize, end: usize) -> bool {
         return false;
     };
     let cand_start = start - lo;
-    // 关键词本身就在候选串里（如 token=xxx 整段匹配）→ 强
-    if last.start() >= cand_start {
+    // 关键词与候选串有交叠：整个落在候选串里（token=xxx），或跨过候选串起点（api key=xxx）→ 强
+    if last.end() > cand_start {
         return true;
     }
     region.as_bytes()[last.end()..cand_start]

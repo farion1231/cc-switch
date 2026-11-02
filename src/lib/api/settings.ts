@@ -423,6 +423,7 @@ export interface OptimizerConfig {
 
 export interface PrivacyFilterConfig {
   enabled: boolean;
+  filterToolResults: boolean;
 }
 
 export interface LogConfig {

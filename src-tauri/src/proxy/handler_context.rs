@@ -246,7 +246,7 @@ impl RequestContext {
         self
     }
 
-    /// 隐私过滤：开关打开时脱敏请求体里的文本内容（PII / 密钥，含工具结果）
+    /// 隐私过滤：开关打开时脱敏用户输入和系统提示里的 PII / 密钥，工具结果看子开关
     ///
     /// 在上下文创建之后调用，Session ID 与模型名仍按原始请求体提取。
     /// 占位符跟随界面语言（没设过语言时按系统区域，与托盘一致）。
@@ -256,7 +256,11 @@ impl RequestContext {
         }
         let language = crate::tray::tray_language();
         let placeholders = crate::proxy::privacy_filter::Placeholders::for_language(&language);
-        let count = crate::proxy::privacy_filter::redact_request_body(body, placeholders);
+        let count = crate::proxy::privacy_filter::redact_request_body(
+            body,
+            placeholders,
+            self.privacy_filter_config.filter_tool_results,
+        );
         if count > 0 {
             log::info!(
                 "[{}] Privacy filter redacted {} item(s), session: {}",

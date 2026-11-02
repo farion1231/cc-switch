@@ -4,13 +4,17 @@
 //! Copyright (c) 2026 PackyMe）。纯正则、无模型、O(n)。
 //!
 //! 两层检测：
-//! - 结构化 PII（`pii`）：邮箱、手机号、身份证、银行卡（Luhn 校验）、IPv4
+//! - 结构化 PII（`pii`）：邮箱、手机号、身份证、银行卡（Luhn + 卡组织前缀或卡号上下文）、
+//!   IPv4（不含回环 / 未指定 / 广播地址）
 //! - 密钥 / 凭证（`secrets`）：gitleaks 规则集（关键词预筛）+ 上下文口令 + 香农熵兜底
 //!
 //! 各层产出 `(start, end, label)` 区间 → 合并去重叠 → 单遍重建文本。占位符不可逆。
 //!
-//! 代理侧只改写请求体里的文本内容（system / messages / input / contents 等），
-//! 不碰 thinking 块、签名、工具调用参数和图片等二进制内容，避免破坏协议语义。
+//! 代理侧只改写用户输入和系统提示的文本，不碰 thinking 块、签名、工具调用参数和图片等
+//! 二进制内容，避免破坏协议语义。
+//!
+//! 模型回复和工具结果默认也不碰：模型只拿到占位符时，Edit / apply_patch 对不上原文，
+//! 整文件重写还会把占位符写回用户的真实文件。工具结果可由 `tool_results` 子开关单独打开。
 
 mod pii;
 mod secrets;
@@ -209,16 +213,24 @@ pub fn warm_up() {
 struct Redactor<'a> {
     filter: &'a Filter,
     placeholders: &'a Placeholders,
+    /// 是否同时脱敏工具结果
+    tool_results: bool,
 }
 
 /// 脱敏请求体里的文本内容，返回命中数。
 ///
 /// 覆盖 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses / Gemini
-/// 四种格式，以及图片生成的 `prompt`。只改写纯文本字段（含工具结果）。
-pub fn redact_request_body(body: &mut Value, placeholders: &Placeholders) -> usize {
+/// 四种格式，以及图片生成的 `prompt`。只改写用户输入和系统提示的纯文本字段，
+/// `tool_results` 为 true 时再加上工具结果。
+pub fn redact_request_body(
+    body: &mut Value,
+    placeholders: &Placeholders,
+    tool_results: bool,
+) -> usize {
     let r = Redactor {
         filter: global(),
         placeholders,
+        tool_results,
     };
     let r = &r;
     let Some(obj) = body.as_object_mut() else {
@@ -233,9 +245,7 @@ pub fn redact_request_body(body: &mut Value, placeholders: &Placeholders) -> usi
     // Anthropic / OpenAI Chat: messages[].content
     if let Some(Value::Array(messages)) = obj.get_mut("messages") {
         for msg in messages {
-            if let Some(content) = msg.get_mut("content") {
-                count += redact_content(r, content);
-            }
+            count += redact_message(r, msg);
         }
     }
     // OpenAI Responses: instructions + input
@@ -274,6 +284,26 @@ fn redact_string(r: &Redactor, v: &mut Value) -> usize {
     res.count
 }
 
+/// 消息是否出自模型（assistant / Gemini 的 model）。未知角色按用户文本处理，宁可多脱敏。
+fn is_model_message(message: &Value) -> bool {
+    matches!(
+        message.get("role").and_then(Value::as_str),
+        Some("assistant" | "model")
+    )
+}
+
+/// Anthropic / OpenAI Chat 的一条消息。OpenAI Chat 的工具结果是 tool / function 角色的消息。
+fn redact_message(r: &Redactor, msg: &mut Value) -> usize {
+    let is_tool_result = matches!(
+        msg.get("role").and_then(Value::as_str),
+        Some("tool" | "function")
+    );
+    if is_model_message(msg) || (is_tool_result && !r.tool_results) {
+        return 0;
+    }
+    msg.get_mut("content").map_or(0, |c| redact_content(r, c))
+}
+
 /// 内容字段：字符串，或内容块数组（Anthropic / OpenAI Chat / Responses 共用）。
 fn redact_content(r: &Redactor, content: &mut Value) -> usize {
     match content {
@@ -292,7 +322,9 @@ fn redact_block(r: &Redactor, block: &mut Value) -> usize {
         Some("text" | "input_text" | "output_text") => {
             obj.get_mut("text").map_or(0, |t| redact_string(r, t))
         }
-        Some("tool_result") => obj.get_mut("content").map_or(0, |c| redact_content(r, c)),
+        Some("tool_result") if r.tool_results => {
+            obj.get_mut("content").map_or(0, |c| redact_content(r, c))
+        }
         _ => 0,
     }
 }
@@ -304,6 +336,9 @@ fn redact_responses_input(r: &Redactor, input: &mut Value) -> usize {
         Value::Array(items) => items
             .iter_mut()
             .map(|item| {
+                if is_model_message(item) {
+                    return 0;
+                }
                 let Some(obj) = item.as_object_mut() else {
                     return 0;
                 };
@@ -312,7 +347,7 @@ fn redact_responses_input(r: &Redactor, input: &mut Value) -> usize {
                     None | Some("message") => {
                         obj.get_mut("content").map_or(0, |c| redact_content(r, c))
                     }
-                    Some("function_call_output" | "custom_tool_call_output") => {
+                    Some("function_call_output" | "custom_tool_call_output") if r.tool_results => {
                         obj.get_mut("output").map_or(0, |o| redact_content(r, o))
                     }
                     _ => 0,
@@ -323,8 +358,12 @@ fn redact_responses_input(r: &Redactor, input: &mut Value) -> usize {
     }
 }
 
-/// Gemini Content：`{ parts: [{ text }] }`。带 thought / thoughtSignature 的 part 不碰。
+/// Gemini Content：`{ parts: [{ text } | { functionResponse }] }`。
+/// 带 thought / thoughtSignature 的 part 不碰。
 fn redact_gemini_content(r: &Redactor, content: &mut Value) -> usize {
+    if is_model_message(content) {
+        return 0;
+    }
     let Some(Value::Array(parts)) = content.get_mut("parts") else {
         return 0;
     };
@@ -340,9 +379,32 @@ fn redact_gemini_content(r: &Redactor, content: &mut Value) -> usize {
             if is_thought {
                 return 0;
             }
-            obj.get_mut("text").map_or(0, |t| redact_string(r, t))
+            let text = obj.get_mut("text").map_or(0, |t| redact_string(r, t));
+            if !r.tool_results {
+                return text;
+            }
+            let response_key = if obj.contains_key("functionResponse") {
+                "functionResponse"
+            } else {
+                "function_response"
+            };
+            text + obj
+                .get_mut(response_key)
+                .and_then(|f| f.get_mut("response"))
+                .map_or(0, |v| redact_json_strings(r, v))
         })
         .sum()
+}
+
+/// `functionResponse.response` 是任意 JSON：逐个字符串叶子脱敏，键名不动。
+/// 媒体在同级的 `functionResponse.parts` 里，不经过这里。
+fn redact_json_strings(r: &Redactor, v: &mut Value) -> usize {
+    match v {
+        Value::String(_) => redact_string(r, v),
+        Value::Array(items) => items.iter_mut().map(|i| redact_json_strings(r, i)).sum(),
+        Value::Object(fields) => fields.values_mut().map(|f| redact_json_strings(r, f)).sum(),
+        _ => 0,
+    }
 }
 
 #[cfg(test)]

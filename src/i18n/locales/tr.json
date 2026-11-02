@@ -516,8 +516,10 @@
       },
       "privacyFilter": {
         "title": "Gizlilik Filtresi",
-        "description": "Açıkken proxy, isteği iletmeden önce istek metnindeki (araç sonuçları dahil) kişisel verileri (e-posta, telefon, kimlik numarası, banka kartı, IP) ve gizli anahtarları (API anahtarı, token, parola, özel anahtar) [E-POSTA], [GİZLİ_ANAHTAR] gibi yer tutucularla değiştirir. Kapalıyken istekler olduğu gibi iletilir. Yer tutucular arayüz dilini izler. Yerel, kural tabanlı bir filtredir ve değişiklikler geri alınamaz. Yönlendirme ve Birleştirme modlarında çalışır; Doğrudan modda istekler CC Switch üzerinden geçmez ve filtrelenmez. Düşünme blokları, araç çağrısı argümanları ve görseller değiştirilmez. packyme/privacy-filter projesinden uyarlanmıştır.",
-        "enabled": "Gizlilik filtresini etkinleştir"
+        "description": "Açıkken proxy, isteği iletmeden önce kullanıcı girdisindeki ve sistem istemlerindeki kişisel verileri (e-posta, telefon, kimlik numarası, banka kartı, IP) ve gizli anahtarları (API anahtarı, token, parola, özel anahtar) [E-POSTA], [GİZLİ_ANAHTAR] gibi yer tutucularla değiştirir. Kapalıyken istekler olduğu gibi iletilir. Yer tutucular arayüz dilini izler. Yerel, kural tabanlı bir filtredir ve değişiklikler geri alınamaz. Yönlendirme ve Birleştirme modlarında çalışır; Doğrudan modda istekler CC Switch üzerinden geçmez ve filtrelenmez. Model yanıtları, düşünme blokları, araç çağrısı argümanları ve görseller değiştirilmez; araç sonuçları varsayılan olarak değiştirilmez ve aşağıdaki anahtarla dahil edilebilir. 127.0.0.1 gibi geri döngü adresleri IP sayılmaz. packyme/privacy-filter projesinden uyarlanmıştır.",
+        "enabled": "Gizlilik filtresini etkinleştir",
+        "filterToolResults": "Araç sonuçlarını da filtrele",
+        "filterToolResultsDescription": "Dosya içerikleri ve komut çıktıları gibi araç sonuçları da değiştirilir. Model yalnızca yer tutucuları görür: Edit / apply_patch özgün metinle eşleşmediği için başarısız olabilir, dosyanın tamamı yeniden yazılırken yer tutucular gerçek dosyalarınıza yazılabilir. Yalnızca bunu kabul ediyorsanız açın."
       },
       "optimizer": {
         "title": "Bedrock istek iyileştirici",

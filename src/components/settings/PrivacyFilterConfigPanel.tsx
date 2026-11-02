@@ -11,6 +11,7 @@ export function PrivacyFilterConfigPanel() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<PrivacyFilterConfig>({
     enabled: false,
+    filterToolResults: false,
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -42,6 +43,17 @@ export function PrivacyFilterConfigPanel() {
         label={t("settings.advanced.privacyFilter.enabled")}
         checked={config.enabled}
         onCheckedChange={(checked) => void handleChange({ enabled: checked })}
+      />
+      <SettingsSwitchRow
+        label={t("settings.advanced.privacyFilter.filterToolResults")}
+        description={t(
+          "settings.advanced.privacyFilter.filterToolResultsDescription",
+        )}
+        checked={config.filterToolResults}
+        disabled={!config.enabled}
+        onCheckedChange={(checked) =>
+          void handleChange({ filterToolResults: checked })
+        }
       />
     </SettingsCard>
   );
