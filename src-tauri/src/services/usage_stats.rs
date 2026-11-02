@@ -1197,6 +1197,21 @@ impl Database {
         Ok(result)
     }
 
+    /// 有没有任何用量记录（用量页据此显示空状态）。
+    ///
+    /// 和「全时段汇总的请求数大于 0」等价：去重只会去掉和代理行重复的会话行，
+    /// 代理行本身留着，所以只要明细或按天汇总里有行，汇总请求数就不为 0。
+    /// 用 `EXISTS` 找到第一行就停，不用为一个布尔值把两张表全扫一遍再求和。
+    pub fn has_usage_data(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        Ok(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs)
+                 OR EXISTS(SELECT 1 FROM usage_daily_rollups WHERE request_count > 0)",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
     /// 单个会话的用量汇总（会话阅读页头部）：总 Token 和花费的口径同 Dashboard。
     ///
     /// 只数会话日志导入的行：它们带客户端自己的会话 ID，经不经过路由都会导入；
@@ -3087,6 +3102,43 @@ mod tests {
         let uncached =
             effective_usage_log_filter_for_range(&conn, "l", Some(start), Some(end)).unwrap();
         (cached, uncached)
+    }
+
+    #[test]
+    fn has_usage_data_matches_the_all_time_summary() {
+        let db = Database::memory().unwrap();
+        let summary_has_rows = |db: &Database| {
+            db.get_usage_summary(None, None, None, None, None)
+                .unwrap()
+                .total_requests
+                > 0
+        };
+        assert!(!db.has_usage_data().unwrap());
+        assert!(!summary_has_rows(&db));
+
+        // 只有按天汇总的行（明细已裁剪）也算有用量
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count, success_count)
+                 VALUES ('2026-01-01', 'claude', 'p', 'm', 3, 3)",
+                [],
+            )
+            .unwrap();
+        assert!(db.has_usage_data().unwrap());
+        assert!(summary_has_rows(&db));
+
+        // 只有明细行，且会话行和代理行重复被去重：代理行仍然算数
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM usage_daily_rollups", [])
+            .unwrap();
+        insert_dedup_row(&db, "s1", "session_log", 1_000_000);
+        insert_dedup_row(&db, "p1", "proxy", 1_000_010);
+        assert!(db.has_usage_data().unwrap());
+        assert!(summary_has_rows(&db));
     }
 
     #[test]

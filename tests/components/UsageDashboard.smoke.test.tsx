@@ -11,6 +11,7 @@ import { emitTauriEvent } from "../msw/tauriMocks";
 
 const usageApiMock = vi.hoisted(() => ({
   getUsageSummary: vi.fn(),
+  hasUsageData: vi.fn().mockResolvedValue(true),
   getUsageSummaryByApp: vi.fn(),
   getUsageTrends: vi.fn(),
   getProviderStats: vi.fn(),
@@ -183,7 +184,7 @@ describe("UsageDashboard (smoke)", () => {
     );
     await act(() => vi.advanceTimersByTimeAsync(10));
     const queries = [
-      usageApiMock.getUsageSummary,
+      usageApiMock.hasUsageData,
       usageApiMock.getUsageSummaryByApp,
       usageApiMock.getUsageTrends,
       usageApiMock.getProviderStats,
