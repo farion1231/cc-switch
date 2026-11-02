@@ -16,9 +16,24 @@ use crate::{
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod native_models;
+
+fn agy_session_modified_nanos(file_path: &Path) -> Result<i64, std::io::Error> {
+    let metadata = fs::metadata(file_path)?;
+    let mut modified = metadata_modified_nanos(&metadata);
+    if let Some(db_path) = native_models::native_database_path(file_path) {
+        if let Ok(m) = fs::metadata(&db_path) {
+            modified = modified.max(metadata_modified_nanos(&m));
+        }
+        let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
+        if let Ok(m) = fs::metadata(&wal_path) {
+            modified = modified.max(metadata_modified_nanos(&m));
+        }
+    }
+    Ok(modified)
+}
 
 pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
@@ -29,7 +44,7 @@ pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         };
         result.files_scanned += 1;
         let file_path = Path::new(&path);
-        let metadata = match fs::metadata(file_path) {
+        let file_modified = match agy_session_modified_nanos(file_path) {
             Ok(m) => m,
             Err(e) => {
                 log::debug!(
@@ -39,7 +54,6 @@ pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
                 continue;
             }
         };
-        let file_modified = metadata_modified_nanos(&metadata);
         let last_modified = cursors.get(&path).map_or(0, |c| c.last_modified);
         if file_modified <= last_modified {
             continue;
@@ -724,5 +738,102 @@ mod tests {
         let last_modified = cursors.get(&path_str).map_or(0, |c| c.last_modified);
         assert_eq!(last_modified, file_modified);
         assert!(file_modified <= last_modified, "未改动的文件应当被跳过");
+    }
+
+    struct TestHomeGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+    impl TestHomeGuard {
+        fn set(home: &Path) -> Self {
+            let guard = Self {
+                previous: std::env::var_os("CC_SWITCH_TEST_HOME"),
+            };
+            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            guard
+        }
+    }
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn sync_agy_usage_backfills_model_and_timing_when_native_database_created_later() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let temp_home = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp_home.path());
+        let agy_root = temp_home.path().join(".gemini/antigravity-cli");
+        let transcript_dir = agy_root.join("brain/sess_late/.system_generated/logs");
+        fs::create_dir_all(&transcript_dir).unwrap();
+        let file_path = transcript_dir.join("transcript_full.jsonl");
+        fs::write(
+            &file_path,
+            "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":1000000,\"output_tokens\":0}\n",
+        )
+        .unwrap();
+
+        let db = Database::memory().unwrap();
+
+        // 首次同步：native conversations/<id>.db 尚不存在，记录先存为 unknown / 0 元
+        let first = sync_agy_usage(&db).unwrap();
+        assert_eq!(first.imported, 1);
+        {
+            let conn = lock_conn!(db.conn);
+            let (model, cost): (String, String) = conn
+                .query_row(
+                    "SELECT model, total_cost_usd FROM proxy_request_logs WHERE request_id='agy:sess_late:1'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(model, "unknown");
+            assert_eq!(cost, "0");
+        }
+
+        // 稍作休眠保证时间戳单调递增
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // 随后生成 native conversation db
+        let conv_dir = agy_root.join("conversations");
+        fs::create_dir_all(&conv_dir).unwrap();
+        let native_db_path = conv_dir.join("sess_late.db");
+        let native_conn =
+            native_models::write_test_database(&native_db_path, &[(1, 0, "gemini-3.8-flash-high")]);
+        native_models::set_test_generation(
+            &native_conn,
+            0,
+            "gemini-3.8-flash-high",
+            &native_models::test_timing(150, 300),
+        );
+        drop(native_conn);
+
+        // 第二次同步：native db 的修改时间触发回填，更新 model、耗时与成本
+        let second = sync_agy_usage(&db).unwrap();
+        assert_eq!(second.imported, 1);
+        {
+            let conn = lock_conn!(db.conn);
+            let (model, cost, latency): (String, String, i64) = conn
+                .query_row(
+                    "SELECT model, total_cost_usd, latency_ms FROM proxy_request_logs WHERE request_id='agy:sess_late:1'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(model, "gemini-3.8-flash-high");
+            assert!(cost.parse::<f64>().unwrap() > 0.0);
+            assert_eq!(latency, 450);
+        }
+
+        // 第三次同步：transcript 与 native db 均未变化，游标跳过该文件
+        let third = sync_agy_usage(&db).unwrap();
+        assert_eq!(third.imported, 0);
+        assert_eq!(third.skipped, 0);
     }
 }
