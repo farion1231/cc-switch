@@ -5079,7 +5079,6 @@
     "contextSize": "コンテキスト長",
     "configTomlScope": "ここには [providers.{{key}}] とそれに属する [models.*] テーブルだけを書けます。プロバイダーキーは上の欄で変更してください。",
     "configTomlSchema": "設定が不完全です：プロバイダーの type と、各モデルの model・max_context_size（正の整数）を確認してください。",
-    "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
     "empty": {
       "title": "Kimi Code プロバイダーを追加",
       "description": "URL、API キー、モデルを設定します。既存の Kimi 設定は自動的にインポートされます。"
