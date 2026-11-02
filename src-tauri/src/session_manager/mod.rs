@@ -17,7 +17,7 @@ use providers::{
     agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
     pub provider_id: String,

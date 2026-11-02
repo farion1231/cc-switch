@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(|| FileParseCache::persistent("omp"));
 
 pub(crate) const OMP: Dialect = Dialect {
     provider_id: "omp",

@@ -94,7 +94,8 @@ fn scan_sessions_in_roots_with_titles(
 }
 
 /// 会话页每次打开都会全量扫描；没变过的文件直接复用上次的解析结果。
-static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
+static PARSE_CACHE: LazyLock<FileParseCache> =
+    LazyLock::new(|| FileParseCache::persistent("codex"));
 
 fn load_thread_titles() -> HashMap<String, String> {
     let config_dir = get_codex_config_dir();

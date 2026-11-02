@@ -44,7 +44,8 @@ pub fn session_roots() -> Vec<PathBuf> {
 }
 
 /// 会话页每次打开都会全量扫描；没变过的 summary.json 直接复用上次的解析结果。
-static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
+static PARSE_CACHE: LazyLock<FileParseCache> =
+    LazyLock::new(|| FileParseCache::persistent("grokbuild"));
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let mut summaries = Vec::new();

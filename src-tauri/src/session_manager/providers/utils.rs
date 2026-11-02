@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, FixedOffset};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::session_manager::model::ContentRef;
@@ -119,8 +120,16 @@ where
 /// 重建整张表，已删除文件的条目随之丢弃，内存占用和会话数量成正比（约每千个
 /// 会话 1 MB）。解析结果必须只取决于文件本身——依赖外部数据的部分（如 Codex 的
 /// 线程标题）要在拿到缓存结果后再叠加。
+///
+/// 用 [`FileParseCache::persistent`] 建的缓存还会存到磁盘，重启后第一次扫描也只解析
+/// 改过的文件。磁盘缓存按应用版本区分，换版本（解析规则可能变了）时整份作废重建；
+/// 开发构建不落盘，免得改了解析代码却读到旧结果。
 pub struct FileParseCache {
     entries: Mutex<HashMap<PathBuf, CachedParse>>,
+    /// 磁盘缓存文件；`None` 时只在内存里缓存
+    store: Option<PathBuf>,
+    /// 磁盘缓存是否已读进内存（第一次扫描时读）
+    loaded: AtomicBool,
 }
 
 struct CachedParse {
@@ -129,10 +138,120 @@ struct CachedParse {
     meta: Option<SessionMeta>,
 }
 
+/// 磁盘缓存的版本：应用版本 + 存储格式。任何一项不同，整份缓存作废。
+const STORE_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/1");
+
+#[derive(Serialize, Deserialize)]
+struct StoredCache {
+    version: String,
+    entries: Vec<StoredEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredEntry {
+    path: String,
+    /// 修改时间：UNIX 纪元以来的 (秒, 纳秒)
+    modified: Option<(u64, u32)>,
+    len: u64,
+    meta: Option<SessionMeta>,
+}
+
+fn encode_time(time: SystemTime) -> Option<(u64, u32)> {
+    let since = time.duration_since(UNIX_EPOCH).ok()?;
+    Some((since.as_secs(), since.subsec_nanos()))
+}
+
+fn decode_time((secs, nanos): (u64, u32)) -> Option<SystemTime> {
+    UNIX_EPOCH.checked_add(Duration::new(secs, nanos))
+}
+
 impl FileParseCache {
     pub fn new() -> Self {
+        Self::with_store(None)
+    }
+
+    /// 存到磁盘的缓存（应用配置目录下的 `cache/session-list/{name}.json`）。开发构建只用内存。
+    pub fn persistent(name: &str) -> Self {
+        let store = (!cfg!(debug_assertions)).then(|| {
+            crate::config::get_app_config_dir()
+                .join("cache")
+                .join("session-list")
+                .join(format!("{name}.json"))
+        });
+        Self::with_store(store)
+    }
+
+    pub(crate) fn with_store(store: Option<PathBuf>) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            store,
+            loaded: AtomicBool::new(false),
+        }
+    }
+
+    fn load_store(store: &Path) -> HashMap<PathBuf, CachedParse> {
+        let Ok(bytes) = std::fs::read(store) else {
+            return HashMap::new();
+        };
+        let stored = match serde_json::from_slice::<StoredCache>(&bytes) {
+            Ok(stored) if stored.version == STORE_VERSION => stored,
+            Ok(_) => return HashMap::new(),
+            Err(err) => {
+                log::debug!("会话列表缓存读取失败，重建 {}: {err}", store.display());
+                return HashMap::new();
+            }
+        };
+        stored
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                let modified = match entry.modified {
+                    Some(time) => Some(decode_time(time)?),
+                    None => None,
+                };
+                Some((
+                    PathBuf::from(entry.path),
+                    CachedParse {
+                        modified,
+                        len: entry.len,
+                        meta: entry.meta,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    fn save_store(store: &Path, entries: &HashMap<PathBuf, CachedParse>) {
+        let stored = StoredCache {
+            version: STORE_VERSION.to_string(),
+            entries: entries
+                .iter()
+                .filter_map(|(path, entry)| {
+                    let modified = match entry.modified {
+                        Some(time) => Some(encode_time(time)?),
+                        None => None,
+                    };
+                    Some(StoredEntry {
+                        // 非 UTF-8 路径存不进 JSON，只留在内存里
+                        path: path.to_str()?.to_string(),
+                        modified,
+                        len: entry.len,
+                        meta: entry.meta.clone(),
+                    })
+                })
+                .collect(),
+        };
+        let result = serde_json::to_vec(&stored)
+            .map_err(|err| err.to_string())
+            .and_then(|bytes| {
+                if let Some(parent) = store.parent() {
+                    std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+                }
+                // 缓存里有会话标题、首条提问，按私有文件写
+                crate::config::atomic_write_private(store, &bytes).map_err(|err| err.to_string())
+            });
+        if let Err(err) = result {
+            log::debug!("会话列表缓存写入失败 {}: {err}", store.display());
         }
     }
 
@@ -165,6 +284,11 @@ impl FileParseCache {
                 guard
             }
         };
+        if let Some(store) = &self.store {
+            if !self.loaded.swap(true, Ordering::AcqRel) {
+                *guard = Self::load_store(store);
+            }
+        }
         let mut previous = std::mem::take(&mut *guard);
 
         let scanned = map_files_parallel(&files, limit, &|path: &Path| {
@@ -200,7 +324,9 @@ impl FileParseCache {
 
         let mut next = HashMap::with_capacity(scanned.len());
         let mut sessions = Vec::new();
+        let mut changed = false;
         for (path, entry) in scanned {
+            changed |= entry.is_some();
             let entry = entry.unwrap_or_else(|| {
                 previous
                     .remove(&path)
@@ -213,6 +339,13 @@ impl FileParseCache {
             next.insert(path, entry);
         }
 
+        // 剩下的是本轮没再出现的文件（已删除）
+        changed |= !previous.is_empty();
+        if changed {
+            if let Some(store) = &self.store {
+                Self::save_store(store, &next);
+            }
+        }
         *guard = next;
         sessions
     }
@@ -522,6 +655,90 @@ mod tests {
                 path
             })
             .collect()
+    }
+
+    /// 用磁盘缓存 `store` 扫描一遍，返回 (会话 ID, 实际解析的文件数)
+    fn scan_stored(store: &Path, files: &[PathBuf]) -> (Vec<String>, usize) {
+        let parsed = AtomicUsize::new(0);
+        let cache = FileParseCache::with_store(Some(store.to_path_buf()));
+        let sessions = cache.scan_with_limit(files.to_vec(), 2, |path: &Path| {
+            parsed.fetch_add(1, Ordering::Relaxed);
+            if path.extension().and_then(|ext| ext.to_str()) == Some("locked") {
+                return Err(io::Error::other("locked"));
+            }
+            Ok(meta_from_file(path))
+        });
+        (session_ids(sessions), parsed.into_inner())
+    }
+
+    #[test]
+    fn persistent_cache_survives_a_restart_and_only_reparses_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("cache").join("list.json");
+        let mut files = numbered_files(dir.path(), 8);
+
+        let (first, parsed) = scan_stored(&store, &files);
+        assert_eq!(parsed, 8);
+        // 新实例相当于重启：全部从磁盘命中，结果不变
+        assert_eq!(scan_stored(&store, &files), (first.clone(), 0));
+
+        // 改一个、删一个、加一个：只解析改过和新增的
+        std::fs::write(&files[3], "session-3-edited").unwrap();
+        let removed = files.remove(5);
+        std::fs::remove_file(&removed).unwrap();
+        let added = dir.path().join("added.jsonl");
+        std::fs::write(&added, "session-added").unwrap();
+        files.push(added);
+        let (ids, parsed) = scan_stored(&store, &files);
+        assert_eq!(parsed, 2);
+        assert!(ids.contains(&"session-3-edited".to_string()));
+        assert!(!ids.contains(&"session-5".to_string()));
+        assert_eq!(scan_stored(&store, &files), (ids, 0));
+    }
+
+    #[test]
+    fn persistent_cache_retries_unreadable_files_after_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("list.json");
+        let locked = dir.path().join("busy.locked");
+        std::fs::write(&locked, "session-busy").unwrap();
+        let files = vec![locked];
+        assert_eq!(scan_stored(&store, &files).1, 1);
+        assert_eq!(
+            scan_stored(&store, &files).1,
+            1,
+            "errors must not be stored"
+        );
+    }
+
+    #[test]
+    fn persistent_cache_ignores_other_versions_and_broken_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("list.json");
+        let files = numbered_files(dir.path(), 3);
+        scan_stored(&store, &files);
+
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&store).unwrap()).unwrap();
+        stored["version"] = serde_json::json!("0.0.0/1");
+        std::fs::write(&store, serde_json::to_vec(&stored).unwrap()).unwrap();
+        assert_eq!(scan_stored(&store, &files).1, 3);
+
+        std::fs::write(&store, b"{not json").unwrap();
+        assert_eq!(scan_stored(&store, &files).1, 3);
+        assert_eq!(scan_stored(&store, &files).1, 0, "rewritten after rebuild");
+    }
+
+    #[test]
+    fn persistent_cache_is_not_rewritten_without_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("list.json");
+        let files = numbered_files(dir.path(), 3);
+        let cache = FileParseCache::with_store(Some(store.clone()));
+        cache.scan_with_limit(files.clone(), 2, |path: &Path| Ok(meta_from_file(path)));
+        std::fs::write(&store, b"sentinel").unwrap();
+        cache.scan_with_limit(files, 2, |path: &Path| Ok(meta_from_file(path)));
+        assert_eq!(std::fs::read(&store).unwrap(), b"sentinel");
     }
 
     #[test]

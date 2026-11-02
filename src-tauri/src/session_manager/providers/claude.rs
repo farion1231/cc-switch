@@ -33,7 +33,8 @@ use super::utils::{
 const PROVIDER_ID: &str = "claude";
 
 /// 会话页每次打开都会全量扫描；没变过的文件直接复用上次的解析结果。
-static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
+static PARSE_CACHE: LazyLock<FileParseCache> =
+    LazyLock::new(|| FileParseCache::persistent("claude"));
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let root = get_claude_config_dir().join("projects");

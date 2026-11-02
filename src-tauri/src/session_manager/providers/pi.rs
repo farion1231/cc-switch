@@ -80,7 +80,7 @@ const PI: Dialect = Dialect {
     model_selector: false,
 };
 
-static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(|| FileParseCache::persistent("pi"));
 
 #[derive(Debug)]
 struct SessionHeader {
