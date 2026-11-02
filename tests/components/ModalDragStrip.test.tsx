@@ -149,4 +149,45 @@ describe("ModalDragStrip", () => {
     await pressOutside(strip.parentElement!);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it("starts sheets below the strip so the drawer doesn't cover the window controls", () => {
+    // 页头上方有警告条时也得接得上：抽屉顶边要和拖动条下沿是同一个量出来的值
+    const header = document.createElement("header");
+    vi.spyOn(header, "getBoundingClientRect").mockReturnValue({
+      bottom: 119,
+    } as DOMRect);
+    const main = document.createElement("main");
+    main.id = "content-area";
+    main.append(header);
+    document.body.append(main);
+    try {
+      renderSheet();
+      const strip = getStrip()!;
+      const sheet = screen.getByRole("dialog");
+      const minimize = screen.getByRole("button", {
+        name: "Minimize",
+        hidden: true,
+      });
+      // 抽屉和遮罩同一层 z-index、DOM 里排在后面，重叠处一定是抽屉在上：
+      // 窗口按钮必须在拖动条里、拖动条必须整个落在抽屉顶边以上
+      expect(strip).toContainElement(minimize);
+      expect(sheet).not.toContainElement(minimize);
+      expect(strip).toHaveStyle({ height: "119px" });
+      expect(sheet).toHaveStyle({ top: "119px" });
+    } finally {
+      main.remove();
+    }
+  });
+
+  it("keeps sheets full height when there are no in-app window controls", () => {
+    render(
+      <Sheet open>
+        <SheetContent closeLabel="close">
+          <SheetTitle>Drawer</SheetTitle>
+          <SheetDescription>Body</SheetDescription>
+        </SheetContent>
+      </Sheet>,
+    );
+    expect(screen.getByRole("dialog").style.top).toBe("");
+  });
 });

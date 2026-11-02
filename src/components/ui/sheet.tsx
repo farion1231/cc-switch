@@ -4,6 +4,8 @@ import { ChevronLeft, X } from "lucide-react";
 import {
   AppPageHeader,
   ModalDragStrip,
+  usePageHeaderBottom,
+  WindowControlsContext,
 } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
 import { DRAG_REGION_ATTR } from "@/lib/platform";
@@ -46,34 +48,40 @@ const SheetContent = React.forwardRef<
       ...props
     },
     ref,
-  ) => (
-    <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
-        <ModalDragStrip />
-      </DialogPrimitive.Overlay>
-      <DialogPrimitive.Content
-        ref={ref}
-        style={{ width, ...style }}
-        className={cn(
-          "fixed inset-y-0 end-0 z-50 flex max-w-[100vw] flex-col overflow-hidden rounded-s-dialog border-s border-border bg-surface text-fg-1 shadow-v7-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-right-4 data-[state=open]:slide-in-from-right-4",
-          className,
-        )}
-        onInteractOutside={(event) => {
-          onInteractOutside?.(event);
-          if (!dismissOnOutsideClick) event.preventDefault();
-        }}
-        {...props}
-      >
-        {children}
-        <DialogPrimitive.Close
-          aria-label={closeLabel}
-          className="absolute end-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
+  ) => {
+    const windowControls = React.useContext(WindowControlsContext);
+    const headerBottom = usePageHeaderBottom();
+    // 遮罩上复刻的窗口按钮在页头右端，抽屉铺满整高会把它们盖住：有按钮时从页头下沿开始
+    const top = windowControls ? headerBottom : undefined;
+    return (
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
+          <ModalDragStrip />
+        </DialogPrimitive.Overlay>
+        <DialogPrimitive.Content
+          ref={ref}
+          style={{ width, top, ...style }}
+          className={cn(
+            "fixed inset-y-0 end-0 z-50 flex max-w-[100vw] flex-col overflow-hidden rounded-s-dialog border-s border-border bg-surface text-fg-1 shadow-v7-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-right-4 data-[state=open]:slide-in-from-right-4",
+            className,
+          )}
+          onInteractOutside={(event) => {
+            onInteractOutside?.(event);
+            if (!dismissOnOutsideClick) event.preventDefault();
+          }}
+          {...props}
         >
-          <X className="h-4 w-4" strokeWidth={1.5} />
-        </DialogPrimitive.Close>
-      </DialogPrimitive.Content>
-    </DialogPrimitive.Portal>
-  ),
+          {children}
+          <DialogPrimitive.Close
+            aria-label={closeLabel}
+            className="absolute end-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
+          >
+            <X className="h-4 w-4" strokeWidth={1.5} />
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    );
+  },
 );
 SheetContent.displayName = "SheetContent";
 

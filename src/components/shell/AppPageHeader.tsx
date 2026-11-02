@@ -125,6 +125,20 @@ export function AppPageHeader({
 }
 
 /**
+ * 页头下沿离窗口顶部多远。页头上方可能有环境变量警告条，得量实际位置，
+ * 遮罩上复刻的窗口按钮才能和页头里的对齐。
+ */
+export function usePageHeaderBottom() {
+  const [bottom, setBottom] = useState(PAGE_HEADER_HEIGHT);
+  useLayoutEffect(() => {
+    const header = document.querySelector("#content-area header");
+    const measured = header?.getBoundingClientRect().bottom;
+    if (measured) setBottom(measured);
+  }, []);
+  return bottom;
+}
+
+/**
  * 模态遮罩的子元素：遮罩盖住了页头，这一条铺到页头下沿，弹窗打开时照样能拖窗口，
  * 页头最右端的窗口按钮也在这里再放一份。
  * 放在遮罩里才收得到指针事件（Radix 把遮罩外的 body 设成 pointer-events: none），
@@ -132,13 +146,7 @@ export function AppPageHeader({
  */
 export function ModalDragStrip() {
   const windowControls = useContext(WindowControlsContext);
-  const [height, setHeight] = useState(PAGE_HEADER_HEIGHT);
-  // 页头上方可能有环境变量警告条，得量实际位置，窗口按钮才能和页头里的对齐
-  useLayoutEffect(() => {
-    const header = document.querySelector("#content-area header");
-    const bottom = header?.getBoundingClientRect().bottom;
-    if (bottom) setHeight(bottom);
-  }, []);
+  const height = usePageHeaderBottom();
   if (!windowControls && !DRAG_REGION_ENABLED) return null;
   return (
     <div
