@@ -50,6 +50,21 @@ const renderWith = (request: RequestLog) => {
 };
 
 describe("RequestDetailPanel", () => {
+  it.each([
+    { reasoningEffort: "high", expected: "high" },
+    { reasoningEffort: "none", expected: "none" },
+    { reasoningEffort: null, expected: "—" },
+    { reasoningEffort: undefined, expected: "—" },
+  ])(
+    "shows recorded reasoning effort $reasoningEffort in the details",
+    ({ reasoningEffort, expected }) => {
+      renderWith(log({ reasoningEffort }));
+
+      const label = screen.getByText("usage.reasoningEffort");
+      expect(label.nextElementSibling).toHaveTextContent(expected);
+    },
+  );
+
   it("shows speed, first token and duration for routed requests", () => {
     renderWith(log({}));
 
