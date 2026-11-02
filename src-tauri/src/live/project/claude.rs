@@ -213,9 +213,12 @@ pub(crate) const ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 /// 代理契约里怎么写凭据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProxyAuth {
-    /// 路由供应商的行里有 `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` 就沿用同名键写占位
-    /// 符，都没有就写 `ANTHROPIC_AUTH_TOKEN`。
-    FollowRow,
+    /// 非托管路由：本地跳（客户端 → 本地代理）只写 `ANTHROPIC_AUTH_TOKEN` 占位符。
+    /// 行里即便配的是 `ANTHROPIC_API_KEY`（如 OpenCode Go 预设，供上游跳用 x-api-key），
+    /// 本地配置也不能带这个键——Claude Code 会把它当成用户自定义 API key 弹确认框，
+    /// 默认拒绝后就是未登录会话；两个键都写还会触发「Both ... set」警告（#4919）。
+    /// 上游跳用哪种头由路由按行内凭据注入（proxy/providers/claude.rs），与占位符键名无关。
+    AuthToken,
     /// 托管账号（Copilot、Codex、xAI）：只写一个键，两个都在会触发 Claude Code 的
     /// 「Both ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY set」警告（#4919）。
     /// - Codex 系要 `ANTHROPIC_AUTH_TOKEN`，缺了会弹登录提示（#3784）；
@@ -263,17 +266,8 @@ pub fn proxy_projection(
     }
     let placeholder = Value::String(PROXY_TOKEN_PLACEHOLDER.to_string());
     match auth {
-        ProxyAuth::FollowRow => {
-            let mut wrote_any = false;
-            for key in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
-                if route.env.contains_key(key) {
-                    env.insert(key.to_string(), placeholder.clone());
-                    wrote_any = true;
-                }
-            }
-            if !wrote_any {
-                env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), placeholder);
-            }
+        ProxyAuth::AuthToken => {
+            env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), placeholder);
         }
         ProxyAuth::Managed { auth_token } => {
             let key = if auth_token {
@@ -778,7 +772,7 @@ mod tests {
         let stacked = proxy_projection(
             &route,
             "http://127.0.0.1:15721",
-            ProxyAuth::FollowRow,
+            ProxyAuth::AuthToken,
             Some(StackRoleModel {
                 id: "ccs-claude-z--glm-5.2[1M]",
                 name: "GLM 5.2",
@@ -802,12 +796,53 @@ mod tests {
         assert_eq!(env("ANTHROPIC_AUTH_TOKEN"), Some(PROXY_TOKEN_PLACEHOLDER));
 
         // 路由模式照旧写 `claude-*` 别名和行里的子代理模型。
-        let routed = proxy_projection(&route, "http://127.0.0.1:15721", ProxyAuth::FollowRow, None);
+        let routed = proxy_projection(&route, "http://127.0.0.1:15721", ProxyAuth::AuthToken, None);
         assert_eq!(
             routed.env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "claude-sonnet-5[1M]"
         );
         assert_eq!(routed.env["CLAUDE_CODE_SUBAGENT_MODEL"], "glm-4.7-air");
+    }
+
+    #[test]
+    fn route_mode_always_places_the_placeholder_in_auth_token() {
+        // #8104：行里只有 `ANTHROPIC_API_KEY`（如 OpenCode Go 预设，供上游跳用
+        // x-api-key）时，本地占位符也不能落在这个键上——Claude Code 会把它当成
+        // 用户自定义 API key 弹确认框，默认拒绝后就是未登录会话。上游跳用哪种
+        // 头由路由按行内凭据注入，与占位符键名无关。
+        let api_key_only = ClaudeProjection::of(&json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go",
+            "ANTHROPIC_API_KEY": "sk-go"
+        }}));
+        let projected = proxy_projection(
+            &api_key_only,
+            "http://127.0.0.1:15721",
+            ProxyAuth::AuthToken,
+            None,
+        );
+        assert_eq!(
+            projected.env["ANTHROPIC_AUTH_TOKEN"],
+            PROXY_TOKEN_PLACEHOLDER
+        );
+        assert!(
+            !projected.env.contains_key("ANTHROPIC_API_KEY"),
+            "route mode must not present the placeholder as a custom API key"
+        );
+
+        // 两个键都在也不写 API_KEY：避开 Claude Code 的
+        // 「Both ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY set」警告（#4919）。
+        let both = ClaudeProjection::of(&json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://relay.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-bearer",
+            "ANTHROPIC_API_KEY": "sk-x-api"
+        }}));
+        let projected =
+            proxy_projection(&both, "http://127.0.0.1:15721", ProxyAuth::AuthToken, None);
+        assert_eq!(
+            projected.env["ANTHROPIC_AUTH_TOKEN"],
+            PROXY_TOKEN_PLACEHOLDER
+        );
+        assert!(!projected.env.contains_key("ANTHROPIC_API_KEY"));
     }
 
     #[test]
@@ -823,7 +858,7 @@ mod tests {
         let routed = proxy_projection(
             &ClaudeProjection::of(&row),
             "http://127.0.0.1:15721",
-            ProxyAuth::FollowRow,
+            ProxyAuth::AuthToken,
             None,
         );
         let env = |key: &str| routed.env.get(key).and_then(Value::as_str);
@@ -915,7 +950,7 @@ mod tests {
             let routed = proxy_projection(
                 &ClaudeProjection::of(&row),
                 "http://127.0.0.1:15721",
-                ProxyAuth::FollowRow,
+                ProxyAuth::AuthToken,
                 None,
             );
             let client_id = routed.env["CLAUDE_CODE_SUBAGENT_MODEL"]

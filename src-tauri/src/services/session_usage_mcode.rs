@@ -5,7 +5,7 @@ use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::{session_usage::SessionSyncResult, usage_stats::find_model_pricing};
 use crate::session_manager::providers::mcode;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
@@ -92,15 +92,116 @@ fn sync_from_database(
         result.skipped += u32::from(changed == 0);
         cursor = id;
     }
+    drop(rows);
     // Commit the watermark with the imported rows; pruned logs must never be reimported.
+    save_watermark(&tx, key, cursor)?;
+    fill_timings(&tx, source, key, cursor)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+fn save_watermark(tx: &rusqlite::Transaction, key: &str, id: i64) -> Result<(), AppError> {
     tx.execute(
         "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
          VALUES (?1, 0, ?2, unixepoch()) ON CONFLICT(file_path) DO UPDATE SET
          last_line_offset = excluded.last_line_offset, last_synced_at = excluded.last_synced_at",
-        params![key, cursor],
+        params![key, id],
     )?;
-    tx.commit()?;
-    Ok(result)
+    Ok(())
+}
+
+/// 消息行可能比用量行晚落盘：这么久以后还对不上的，就当它没有计时，不再回查。
+const TIMING_SETTLE_MS: i64 = 10 * 60 * 1000;
+
+/// 用量行只有请求开始的时间（ts）。同一轮的 assistant 消息行里，MCode 记了整段请求时长
+/// `request_duration_ms` 和首字之后的解码时长 `decode_duration_ms`（首字＝第一个思考 /
+/// 正文 / 工具调用片段），首字＝两者之差。按（会话、轮次、输入 / 输出 token）对上那条消息。
+///
+/// 单独一遍、带自己的水位：新导入的行和升级前已导入、没有计时的行走同一条路；水位只推过
+/// 已经对上、或已超过 [`TIMING_SETTLE_MS`] 的行，所以每次同步只回查最近几分钟的行。
+/// 旧版没有消息行表、没有 turn_id 列或没有这两个字段时什么都不做，耗时照旧记 0。
+fn fill_timings(
+    tx: &rusqlite::Transaction,
+    source: &rusqlite::Connection,
+    key: &str,
+    cursor: i64,
+) -> Result<(), AppError> {
+    let (Ok(mut usage), Ok(mut message)) = (
+        source.prepare(
+            "SELECT id, session_id, turn_id, ts, input_tokens, output_tokens
+             FROM local_runtime_token_usage WHERE id > ?1 AND id <= ?2 ORDER BY id",
+        ),
+        source.prepare(
+            "SELECT json_extract(data_json, '$.usage.request_duration_ms'),
+                    json_extract(data_json, '$.usage.decode_duration_ms')
+             FROM local_runtime_message_rows
+             WHERE session_id = ?1 AND role = 'assistant' AND (?2 IS NULL OR turn_id = ?2)
+               AND created_at_ms >= ?3
+               AND json_extract(data_json, '$.usage.input_tokens') = ?4
+               AND json_extract(data_json, '$.usage.output_tokens') = ?5
+             ORDER BY created_at_ms LIMIT 1",
+        ),
+    ) else {
+        return Ok(());
+    };
+    let timing_key = format!("{key}#timing");
+    let mut mark = tx.query_row(
+        "SELECT COALESCE(MAX(last_line_offset), 0) FROM session_log_sync WHERE file_path = ?1",
+        [&timing_key],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let settled_before = chrono::Utc::now().timestamp_millis() - TIMING_SETTLE_MS;
+    let mut settling = true;
+    let mut rows = usage.query([mark, cursor])?;
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get(0)?;
+        let session_id: String = row.get(1)?;
+        let ts: i64 = row.get(3)?;
+        let timing = message
+            .query_row(
+                params![
+                    session_id,
+                    row.get::<_, Option<String>>(2)?,
+                    ts,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?
+                ],
+                |found| {
+                    Ok((
+                        found.get::<_, Option<f64>>(0)?,
+                        found.get::<_, Option<f64>>(1)?,
+                    ))
+                },
+            )
+            .optional()?
+            .and_then(|(request, decode)| timing_of(request, decode));
+        if let Some((latency_ms, first_token_ms)) = timing {
+            // 只补没有计时的行；被裁剪掉的明细不存在，更新不到。
+            tx.execute(
+                "UPDATE proxy_request_logs SET latency_ms = ?2, first_token_ms = ?3
+                 WHERE request_id = ?1 AND latency_ms = 0",
+                params![
+                    format!("mcode:{session_id}:{id}"),
+                    latency_ms,
+                    first_token_ms
+                ],
+            )?;
+        }
+        settling &= timing.is_some() || ts < settled_before;
+        if settling {
+            mark = id;
+        }
+    }
+    save_watermark(tx, &timing_key, mark)
+}
+
+/// （耗时, 首字）。缺请求时长就没有计时；解码时长不合理时只留耗时。
+fn timing_of(request: Option<f64>, decode: Option<f64>) -> Option<(i64, Option<i64>)> {
+    let request = request.filter(|ms| ms.is_finite() && *ms > 0.0)?;
+    let first_token = decode
+        .filter(|ms| ms.is_finite() && (0.0..=request).contains(ms))
+        .map(|decode| (request - decode).round() as i64);
+    Some((request.round() as i64, first_token))
 }
 
 /// MCode 只在本轮带 executionModel 时才写用量行的 model 列，缺了就是 NULL。用量行的 ts
@@ -313,6 +414,130 @@ mod tests {
                 .unwrap()
                 .imported,
             1
+        );
+    }
+
+    #[test]
+    fn mcode_timing_comes_from_the_matching_assistant_message_and_backfills_late_rows() {
+        let now = chrono::Utc::now().timestamp_millis();
+        let source = rusqlite::Connection::open_in_memory().unwrap();
+        source
+            .execute_batch(
+                "CREATE TABLE local_runtime_token_usage (
+            id INTEGER PRIMARY KEY,session_id TEXT,turn_id TEXT,model TEXT,ts INTEGER,
+            input_tokens INTEGER,output_tokens INTEGER,reasoning_tokens INTEGER,
+            cache_read_tokens INTEGER,cache_write_tokens INTEGER,cost_usd REAL);
+            CREATE TABLE local_runtime_message_rows (
+            id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,turn_id TEXT,created_at_ms INTEGER,
+            data_json TEXT);",
+            )
+            .unwrap();
+        let usage = |id: i64, turn: &str, ts: i64, input: i64, output: i64| {
+            source
+                .execute(
+                    "INSERT INTO local_runtime_token_usage
+                     VALUES (?1,'s1',?2,'custom_provider:p/k3',?3,?4,?5,0,0,0,0)",
+                    params![id, turn, ts, input, output],
+                )
+                .unwrap();
+        };
+        let message = |turn: &str, end: i64, input: i64, output: i64, durations: &str| {
+            source
+                .execute(
+                    "INSERT INTO local_runtime_message_rows (session_id,role,turn_id,created_at_ms,data_json)
+                     VALUES ('s1','assistant',?1,?2,?3)",
+                    params![
+                        turn,
+                        end,
+                        format!(r#"{{"usage":{{"input_tokens":{input},"output_tokens":{output}{durations}}}}}"#)
+                    ],
+                )
+                .unwrap();
+        };
+        // Values from a real `mcode exec` run (0.6.13): one long reply, then a tool-call turn.
+        let old = now - 3_600_000;
+        usage(1, "t1", old, 12828, 384);
+        message(
+            "t1",
+            old + 16_610,
+            12828,
+            384,
+            r#","decode_duration_ms":14595,"request_duration_ms":16616"#,
+        );
+        usage(2, "t2", old + 20_000, 797, 62);
+        // Same tokens in another turn must not be picked.
+        message(
+            "t9",
+            old + 21_000,
+            797,
+            62,
+            r#","decode_duration_ms":1,"request_duration_ms":1000"#,
+        );
+        message(
+            "t2",
+            old + 28_880,
+            797,
+            62,
+            r#","decode_duration_ms":797,"request_duration_ms":8880"#,
+        );
+        // No durations recorded (older build / no detailed usage): no timing, settles anyway.
+        usage(3, "t3", old + 40_000, 354, 160);
+        message("t3", old + 43_000, 354, 160, "");
+        // Recent row whose message is not written yet.
+        usage(4, "t4", now, 238, 130);
+
+        let db = Database::memory().unwrap();
+        assert_eq!(
+            sync_from_database(&db, &source, "timing").unwrap().imported,
+            4
+        );
+        let timing = |db: &Database| -> Vec<(i64, Option<i64>)> {
+            let conn = db.conn.lock().unwrap();
+            let mut query = conn
+                .prepare(
+                    "SELECT latency_ms, first_token_ms FROM proxy_request_logs ORDER BY request_id",
+                )
+                .unwrap();
+            query
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            timing(&db),
+            [
+                (16616, Some(2021)),
+                (8880, Some(8083)),
+                (0, None),
+                (0, None)
+            ]
+        );
+
+        // The late message is picked up on the next sync without reimporting anything.
+        message(
+            "t4",
+            now + 14_250,
+            238,
+            130,
+            r#","decode_duration_ms":1626,"request_duration_ms":14250"#,
+        );
+        assert_eq!(
+            sync_from_database(&db, &source, "timing").unwrap().imported,
+            0
+        );
+        assert_eq!(timing(&db)[3], (14250, Some(12624)));
+        assert_eq!(
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT last_line_offset FROM session_log_sync WHERE file_path='timing#timing'",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+                .unwrap(),
+            4
         );
     }
 }

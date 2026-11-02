@@ -18,6 +18,8 @@ export interface PresetFamilyInfo {
 }
 
 export const PRESET_FAMILIES = {
+  // 讯飞星辰：按量计费和 Coding Plan 的 Key、地址都不通用
+  astron: { name: "Astron" },
   "aws-bedrock": { name: "AWS Bedrock" },
   "baidu-qianfan": { name: "Baidu Qianfan" },
   compshare: { name: "Compshare", nameKey: "providerForm.presets.ucloud" },

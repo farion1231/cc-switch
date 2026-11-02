@@ -79,7 +79,7 @@ pub fn last_sync_completed_at() -> Option<i64> {
 /// 逐文件的单行查询（文件数随历史只增不减，逐文件查询意味着每轮上千次
 /// 取锁）。`last_synced_at` 对 Pi 路径是编码后的 revision，其余路径是
 /// 真实同步时间戳。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct SyncCursor {
     pub last_modified: i64,
     pub last_line_offset: i64,
@@ -87,6 +87,8 @@ pub(crate) struct SyncCursor {
     /// 游标边界前尾部字节的指纹（仅 Claude 路径写入），用于识别文件被
     /// 外部重写；NULL 表示无指纹可校验。
     pub last_tail_fingerprint: Option<i64>,
+    /// Parser context at the byte offset (DSH's unfinished steps). Committed with the cursor.
+    pub parser_state: Option<String>,
     pub last_synced_at: i64,
 }
 
@@ -101,7 +103,7 @@ pub(crate) fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCur
     let mut stmt = conn
         .prepare(
             "SELECT file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset,
-                    last_tail_fingerprint
+                    last_tail_fingerprint, parser_state
              FROM session_log_sync",
         )
         .map_err(|e| AppError::Database(format!("预取同步游标失败: {e}")))?;
@@ -114,6 +116,7 @@ pub(crate) fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCur
                 last_synced_at: row.get(3)?,
                 last_byte_offset: row.get(4)?,
                 last_tail_fingerprint: row.get(5)?,
+                parser_state: row.get(6)?,
             },
         ))
     });
@@ -164,6 +167,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
+        "Oh My Pi",
+        crate::services::session_usage_omp::sync_omp_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
         "MCode",
         crate::services::session_usage_mcode::sync_mcode_usage(db),
     );
@@ -176,6 +184,12 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         &mut result,
         "Kimi Code",
         crate::services::session_usage_kimi::sync_kimi_usage(db),
+    );
+    // Web 与 Desktop 共用 `$DSH_HOME/sessions`，一次扫描覆盖两端
+    merge_sync_step(
+        &mut result,
+        "DeepSeek Harness",
+        crate::services::session_usage_dsh::sync_dsh_usage(db),
     );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
@@ -1044,6 +1058,38 @@ pub(crate) fn update_sync_state_on_conn(
     Ok(())
 }
 
+/// 写入字节游标（Grok 等按行流式扫描）。`last_line_offset` 置 0，表示
+/// 行号/事件计数游标已退役；存量 Grok 行的事件计数只在 `last_byte_offset`
+/// 仍为 NULL 时用一次，转换成字节位置后不再读取。
+pub(crate) fn update_byte_sync_state(
+    db: &Database,
+    file_path: &str,
+    last_modified: i64,
+    byte_offset: i64,
+) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    conn.prepare_cached(
+        "INSERT OR REPLACE INTO session_log_sync
+         (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset)
+         VALUES (?1, ?2, 0, ?3, ?4)",
+    )
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            file_path,
+            last_modified,
+            now,
+            byte_offset
+        ])
+    })
+    .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
+    Ok(())
+}
+
 /// 一条回复写库的结果。
 #[derive(Debug, PartialEq, Eq)]
 enum SessionRowOutcome {
@@ -1782,7 +1828,7 @@ mod tests {
 
     fn sync_with_cursor(db: &Database, path: &Path) -> Result<ClaudeFileSync, AppError> {
         let cursors = load_sync_cursors(db)?;
-        let cursor = cursors.get(path.to_string_lossy().as_ref()).copied();
+        let cursor = cursors.get(path.to_string_lossy().as_ref()).cloned();
         sync_single_file(db, path, cursor.as_ref())
     }
 
