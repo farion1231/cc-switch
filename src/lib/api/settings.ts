@@ -26,6 +26,17 @@ export interface CodexUnifyHistoryRestoreResult {
   skippedReason?: string;
 }
 
+export interface CodexUnifyHistoryRetagResult {
+  /** 预览与执行都会填：还留在官方桶的会话索引行数与会话文件数 */
+  pendingThreadRows: number;
+  pendingJsonlFiles: number;
+  /** 只有真正执行后才会非 0 */
+  retaggedStateRows: number;
+  retaggedJsonlFiles: number;
+  /** 补标被跳过的原因（重复点击时是 nothing_pending）；存在时不应报成功 */
+  skippedReason?: string;
+}
+
 export interface WebDavSyncResult {
   status: string;
 }
@@ -67,6 +78,16 @@ export const settingsApi = {
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
+  },
+
+  /** 统一会话历史的只读预览：还有多少会话留在官方桶（不写盘、不建备份） */
+  async previewCodexUnifyHistoryRetag(): Promise<CodexUnifyHistoryRetagResult> {
+    return await invoke("preview_codex_unify_history_retag");
+  },
+
+  /** 把迁移之后新增的官方会话补标进统一历史（先落一代备份，幂等） */
+  async retagCodexUnifyHistory(): Promise<CodexUnifyHistoryRetagResult> {
+    return await invoke("retag_codex_unify_history");
   },
 
   async restart(): Promise<boolean> {

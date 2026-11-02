@@ -2,9 +2,14 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
+import {
+  SettingsRow,
+  SettingsSwitchRow,
+} from "@/components/settings/SettingsLayout";
+import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
+import type { CodexUnifyHistoryRetagResult } from "@/lib/api/settings";
 import { formatBytes } from "@/components/settings/BackupStorageSection";
 
 interface CodexAuthSettingsProps {
@@ -31,6 +36,10 @@ export function CodexAuthSettings({
   const [sessionCompressionSaving, setSessionCompressionSaving] =
     useState(false);
   const [sessionsBytes, setSessionsBytes] = useState<number | null>(null);
+  // 「重新统一历史」：先预览再确认，避免误点直接改写历史
+  const [retagPreview, setRetagPreview] =
+    useState<CodexUnifyHistoryRetagResult | null>(null);
+  const [retagRunning, setRetagRunning] = useState(false);
 
   // 后端按已保存的目录读写 config.toml，同页保存新目录后要跟着重读
   useEffect(() => {
@@ -131,6 +140,56 @@ export function CodexAuthSettings({
     }
   };
 
+  /** 补标被跳过的原因：按原因给出明确提示，而不是静默报成功 */
+  const retagSkippedMessage = (reason: string) => {
+    if (reason === "nothing_pending")
+      return t("settings.codexUnifyHistoryRetagNothing");
+    if (reason === "unify_toggle_off")
+      return t("settings.codexUnifyHistoryRetagToggleOff");
+    return t("settings.codexUnifyHistoryRetagLiveNotUnified");
+  };
+
+  const handleRetagPreview = async () => {
+    try {
+      const preview = await settingsApi.previewCodexUnifyHistoryRetag();
+      if (preview.skippedReason) {
+        toast.info(retagSkippedMessage(preview.skippedReason));
+        return;
+      }
+      if (preview.pendingThreadRows === 0 && preview.pendingJsonlFiles === 0) {
+        toast.info(t("settings.codexUnifyHistoryRetagNothing"));
+        return;
+      }
+      setRetagPreview(preview);
+    } catch (error) {
+      console.error("Failed to preview codex unified history retag:", error);
+      toast.error(t("settings.codexUnifyHistoryRetagFailed"));
+    }
+  };
+
+  const handleRetagConfirm = async () => {
+    setRetagPreview(null);
+    setRetagRunning(true);
+    try {
+      const result = await settingsApi.retagCodexUnifyHistory();
+      if (result.skippedReason) {
+        toast.info(retagSkippedMessage(result.skippedReason));
+        return;
+      }
+      toast.success(
+        t("settings.codexUnifyHistoryRetagCompleted", {
+          threads: result.retaggedStateRows,
+          files: result.retaggedJsonlFiles,
+        }),
+      );
+    } catch (error) {
+      console.error("Failed to retag codex official history:", error);
+      toast.error(t("settings.codexUnifyHistoryRetagFailed"));
+    } finally {
+      setRetagRunning(false);
+    }
+  };
+
   // 设置 → 应用配置 → Codex 卡片里的三行（经典子 agent 开关在 Codex 聚合页签的「聚合设置」里）
   return (
     <>
@@ -155,6 +214,23 @@ export function CodexAuthSettings({
         checked={settings.unifyCodexSessionHistory ?? false}
         onCheckedChange={handleUnifyHistoryChange}
       />
+
+      {settings.unifyCodexSessionHistory ? (
+        <SettingsRow
+          label={t("settings.codexUnifyHistoryRetag")}
+          description={t("settings.codexUnifyHistoryRetagDescription")}
+          control={
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={retagRunning}
+              onClick={() => void handleRetagPreview()}
+            >
+              {t("settings.codexUnifyHistoryRetagAction")}
+            </Button>
+          }
+        />
+      ) : null}
 
       <SettingsSwitchRow
         label={t("settings.codexSessionCompression")}
@@ -199,6 +275,20 @@ export function CodexAuthSettings({
         variant="info"
         onConfirm={(restoreBackup) => void handleDisableConfirm(restoreBackup)}
         onCancel={() => setShowDisableConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={retagPreview !== null}
+        title={t("confirm.codexUnifyHistoryRetag.title")}
+        message={t("confirm.codexUnifyHistoryRetag.message", {
+          threads: retagPreview?.pendingThreadRows ?? 0,
+          files: retagPreview?.pendingJsonlFiles ?? 0,
+        })}
+        confirmText={t("confirm.codexUnifyHistoryRetag.confirm")}
+        variant="info"
+        pending={retagRunning}
+        onConfirm={() => void handleRetagConfirm()}
+        onCancel={() => setRetagPreview(null)}
       />
     </>
   );

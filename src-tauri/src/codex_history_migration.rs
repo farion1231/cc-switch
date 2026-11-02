@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use toml_edit::DocumentMut;
@@ -234,9 +235,9 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     // 这些状态下新会话仍落 "openai" 桶，迁移只会把历史搬进当前 live 看不见的
     // 桶里。开关与迁移意愿保持不动，待 live 真正统一后（下次切换 / 启动重试）
     // 再迁。
-    if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
+    if let Some(reason) = ensure_retag_allowed(&read_codex_config_text().unwrap_or_default()) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
-            skipped_reason: Some("live_not_unified".to_string()),
+            skipped_reason: Some(reason.to_string()),
             ..Default::default()
         });
     }
@@ -278,6 +279,188 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     }
 
     Ok(outcome)
+}
+
+/// 补标（preview / retag）共用的门控：开关必须开启，live `config.toml` 必须
+/// 已实际路由到共享 custom 桶。返回 `Some(reason)` 表示应当跳过。
+///
+/// 与 `maybe_migrate_codex_official_history_to_unified_bucket` 共用同一份判断，
+/// 但补标不看"迁入既有会话"的意愿，也**不读不写**完成标记——后者正是本功能的
+/// 全部意义（见下）。
+fn ensure_retag_allowed(config_text: &str) -> Option<&'static str> {
+    if !crate::settings::unify_codex_session_history() {
+        return Some("unify_toggle_off");
+    }
+    if !codex_config_text_routes_custom(config_text) {
+        return Some("live_not_unified");
+    }
+    None
+}
+
+/// 补标结果：`pending_*` 预览与执行都会填，`retagged_*` 只有真正写入后才非 0。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct CodexOfficialHistoryRetagOutcome {
+    pub pending_thread_rows: usize,
+    pub pending_jsonl_files: usize,
+    pub retagged_state_rows: usize,
+    pub retagged_jsonl_files: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped_reason: Option<String>,
+}
+
+impl CodexOfficialHistoryRetagOutcome {
+    fn skipped(reason: &str) -> Self {
+        Self {
+            skipped_reason: Some(reason.to_string()),
+            ..Default::default()
+        }
+    }
+}
+
+/// 只读预览：还有多少官方会话留在 "openai" 桶里（不写盘、不产生备份代际）。
+pub fn preview_codex_official_history_retag() -> Result<CodexOfficialHistoryRetagOutcome, AppError>
+{
+    retag_codex_official_history(true)
+}
+
+/// 增量补标：把一次性迁移之后才落进官方 "openai" 桶的会话再并进共享 "custom" 桶
+/// （#7466）。
+///
+/// 一次性迁移有完成标记门控，成功后永不重跑；而 Codex 客户端新建 thread 时写哪个
+/// provider 由它自己决定（config 注入影响不到），于是已迁移的用户会不断产生留在
+/// 桶外的官方会话——CLI 的 resume 列表看不见，手机 Remote 的 `thread/list`
+/// （省略 `modelProviders` 时按当前 provider 过滤）也看不见。
+///
+/// 这里复用统一迁移完全相同的改写路径与代际备份语义，只是不经 marker 门控：
+/// - 每次执行都写**新的时间戳代际**，关闭开关时的 restore 按全部代际取并集，
+///   这批会话同样能被精确翻回 "openai" 桶；
+/// - pending 为 0 时直接早退，不落盘、不产生代际目录（幂等）；
+/// - 只做 `openai → custom`，方向与既有设计一致，绝不反向猜。
+///
+/// `dry_run = true` 时只统计不写入。
+pub fn retag_codex_official_history(
+    dry_run: bool,
+) -> Result<CodexOfficialHistoryRetagOutcome, AppError> {
+    // 门控顺序与 maybe_migrate_* 对齐。开关这一道不碰磁盘，先查：开关关着时不必
+    // 排在启动期迁移后面等 op lock。
+    if !crate::settings::unify_codex_session_history() {
+        return Ok(CodexOfficialHistoryRetagOutcome::skipped(
+            "unify_toggle_off",
+        ));
+    }
+    let _op_guard = lock_codex_official_history_op();
+    let config_text = read_codex_config_text().unwrap_or_default();
+    // 锁内复查：开关可能在上一次检查之后被关掉，live 也可能还没按开关重写。
+    // 统计到执行之间不释放 op lock，避免计数与写入不一致。
+    if let Some(reason) = ensure_retag_allowed(&config_text) {
+        return Ok(CodexOfficialHistoryRetagOutcome::skipped(reason));
+    }
+
+    let codex_dir = get_codex_config_dir();
+    let (pending_thread_rows, pending_jsonl_files) =
+        count_pending_official_history(&codex_dir, &config_text)?;
+    if pending_thread_rows == 0 && pending_jsonl_files == 0 {
+        return Ok(CodexOfficialHistoryRetagOutcome::skipped("nothing_pending"));
+    }
+
+    let mut outcome = CodexOfficialHistoryRetagOutcome {
+        pending_thread_rows,
+        pending_jsonl_files,
+        ..Default::default()
+    };
+    if dry_run {
+        return Ok(outcome);
+    }
+
+    let source_provider_ids: BTreeSet<String> =
+        std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
+    let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
+    outcome.retagged_jsonl_files =
+        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
+    outcome.retagged_state_rows =
+        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
+    // 与统一迁移同口径：备份代际记录来源目录，restore 据此只取当前目录的账本。
+    write_backup_generation_meta(&backup_root, &canonical_dir_string(&codex_dir))?;
+    Ok(outcome)
+}
+
+/// 统计还留在 "openai" 桶的官方会话：state DB 行数与 rollout 文件数。
+/// 只读——state DB 用只读连接，rollout 只读首行（整文件解析对大会话代价太高）。
+fn count_pending_official_history(
+    codex_dir: &Path,
+    config_text: &str,
+) -> Result<(usize, usize), AppError> {
+    let mut thread_rows = 0;
+    for db_path in codex_state_db_paths(codex_dir, config_text) {
+        thread_rows += count_pending_official_thread_rows(&db_path);
+    }
+
+    let mut files = Vec::new();
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
+    let jsonl_files = files
+        .iter()
+        .filter(|path| rollout_header_is_official(path))
+        .count();
+    Ok((thread_rows, jsonl_files))
+}
+
+fn count_pending_official_thread_rows(db_path: &Path) -> usize {
+    // 与迁移同口径：被占用（WSL 路径无法加锁）的 state DB 一律跳过，结果如实返回 0。
+    if !db_path.exists() || !codex_state_db_is_lockable(db_path) {
+        return 0;
+    }
+    let conn =
+        match Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(conn) => conn,
+            Err(err) => {
+                log::debug!(
+                    "Failed to open Codex state DB for retag preview {}: {err}",
+                    db_path.display()
+                );
+                return 0;
+            }
+        };
+    if !Database::table_exists(&conn, "threads").unwrap_or(false)
+        || !Database::has_column(&conn, "threads", "model_provider").unwrap_or(false)
+    {
+        return 0;
+    }
+    conn.query_row(
+        "SELECT COUNT(*) FROM threads WHERE model_provider = ?1",
+        [OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|rows| rows.max(0) as usize)
+    .unwrap_or_else(|err| {
+        log::debug!(
+            "Failed to count official Codex threads in {}: {err}",
+            db_path.display()
+        );
+        0
+    })
+}
+
+/// rollout **首行**是否为官方 "openai" 桶的 session_meta。Codex 总是把
+/// session_meta 写在第一行，读首行足够判断且不必解压/解析整个大会话文件。
+fn rollout_header_is_official(path: &Path) -> bool {
+    let Ok(mut reader) = codex_rollout_file::open_reader(path) else {
+        log::debug!("Failed to read Codex rollout header {}", path.display());
+        return false;
+    };
+    let mut line = String::new();
+    if reader.read_line(&mut line).is_err() {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(line.trim_end()) else {
+        return false;
+    };
+    value.get("type").and_then(Value::as_str) == Some("session_meta")
+        && value
+            .get("payload")
+            .and_then(|payload| payload.get("model_provider"))
+            .and_then(Value::as_str)
+            == Some(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID)
 }
 
 /// live config.toml 是否路由到共享 custom 桶（会话分桶只看这个实态：
@@ -850,11 +1033,21 @@ fn insert_known_cc_switch_legacy_source_id(ids: &mut BTreeSet<String>, provider_
     }
 }
 
+/// 本次写操作的备份代际目录：`<backups>/<migration_name>/<时间戳>`。
+///
+/// 时间戳只到秒，而同一秒内可能发生两次写操作（启动期统一迁移刚跑完、用户立刻点
+/// 「重新统一历史」补标，或连点两次）。复用同一个代际目录会让后一次覆盖前一次的
+/// **改写前**副本，restore 的账本就少掉那批会话——所以撞名时加序号另起一代。
 fn migration_backup_root(migration_name: &str) -> PathBuf {
-    get_app_config_dir()
-        .join("backups")
-        .join(migration_name)
-        .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
+    let parent = get_app_config_dir().join("backups").join(migration_name);
+    let stamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let mut generation = parent.join(&stamp);
+    let mut suffix = 2;
+    while generation.exists() {
+        generation = parent.join(format!("{stamp}-{suffix}"));
+        suffix += 1;
+    }
+    generation
 }
 
 fn is_known_cc_switch_legacy_codex_model_provider_id(provider_id: &str) -> bool {
@@ -3057,5 +3250,307 @@ model_provider = "aihubmix"
             id
         ));
         assert!(!codex_config_selects_provider("not = [valid", id));
+    }
+
+    /// 补标测试用的统一开关：开关状态 + 是否勾选"迁入既有会话"。
+    fn set_unify_toggle(enabled: bool, migrate_existing: bool) {
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = enabled;
+        settings.unify_codex_migrate_existing = migrate_existing.then_some(true);
+        crate::settings::update_settings(settings).expect("update unify toggle");
+    }
+
+    const CUSTOM_ROUTED_CONFIG: &str = "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\n";
+
+    /// 补标测试夹具：隔离 HOME + custom 路由的 config.toml + 空的会话/state DB 位置。
+    fn retag_fixture() -> (IsolatedHome, PathBuf, PathBuf, PathBuf) {
+        let home = IsolatedHome::new();
+        let codex_dir = home.codex_dir();
+        let session_dir = codex_dir.join("sessions/2026/10/25");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        fs::write(codex_dir.join("config.toml"), CUSTOM_ROUTED_CONFIG).expect("write config");
+        let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        (home, codex_dir, session_dir, state_db)
+    }
+
+    fn unify_backup_generations() -> Vec<PathBuf> {
+        let parent = get_app_config_dir()
+            .join("backups")
+            .join(OFFICIAL_UNIFY_MIGRATION_NAME);
+        let Ok(entries) = fs::read_dir(parent) else {
+            return Vec::new();
+        };
+        let mut generations: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        generations.sort();
+        generations
+    }
+
+    #[test]
+    #[serial]
+    fn retag_skips_when_toggle_off() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let (_home, _codex_dir, session_dir, state_db) = retag_fixture();
+        set_unify_toggle(false, false);
+        let session = session_dir.join("rollout-off.jsonl");
+        fs::write(&session, session_meta_line("s1", "openai")).expect("write session");
+        seed_threads(&state_db, &[("s1", "openai")]);
+
+        let outcome = retag_codex_official_history(false).expect("retag when toggle off");
+
+        assert_eq!(outcome.skipped_reason.as_deref(), Some("unify_toggle_off"));
+        assert_eq!(outcome.pending_jsonl_files, 0);
+        assert_eq!(
+            fs::read_to_string(&session).expect("read session"),
+            session_meta_line("s1", "openai")
+        );
+        assert_eq!(thread_provider(&state_db, "s1"), "openai");
+        assert!(unify_backup_generations().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn retag_skips_when_live_not_unified() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let (_home, codex_dir, session_dir, state_db) = retag_fixture();
+        // live 仍显式选着 openai：补标只会把历史搬进当前看不见的桶里。
+        fs::write(
+            codex_dir.join("config.toml"),
+            "model_provider = \"openai\"\n\n[model_providers.openai]\nname = \"OpenAI\"\n",
+        )
+        .expect("write openai-routed config");
+        set_unify_toggle(true, false);
+        let session = session_dir.join("rollout-live.jsonl");
+        fs::write(&session, session_meta_line("s1", "openai")).expect("write session");
+        seed_threads(&state_db, &[("s1", "openai")]);
+
+        let outcome = retag_codex_official_history(false).expect("retag when live not unified");
+
+        assert_eq!(outcome.skipped_reason.as_deref(), Some("live_not_unified"));
+        assert_eq!(
+            fs::read_to_string(&session).expect("read session"),
+            session_meta_line("s1", "openai")
+        );
+        assert_eq!(thread_provider(&state_db, "s1"), "openai");
+        assert!(unify_backup_generations().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn retag_reruns_even_when_marker_present() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let (_home, codex_dir, session_dir, state_db) = retag_fixture();
+        set_unify_toggle(true, true);
+        // 一次性迁移已经成功过一次（marker 在场），之后 Codex 桌面版又落了一条
+        // openai 桶的新会话——这正是 #7466 要补的缺口。
+        crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
+            CodexOfficialHistoryUnifyMigration {
+                completed_at: Utc::now().to_rfc3339(),
+                target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
+                migrated_jsonl_files: 1,
+                migrated_state_rows: 1,
+                codex_config_dir: Some(canonical_dir_string(&codex_dir)),
+            },
+        )
+        .expect("write unify marker");
+        assert_eq!(
+            maybe_migrate_codex_official_history_to_unified_bucket()
+                .expect("stock migration is gated by marker")
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+
+        let session = session_dir.join("rollout-new.jsonl");
+        fs::write(&session, session_meta_line("s2", "openai")).expect("write session");
+        seed_threads(&state_db, &[("s2", "openai")]);
+
+        let outcome = retag_codex_official_history(false).expect("retag with marker present");
+
+        assert_eq!(outcome.skipped_reason, None);
+        assert_eq!(outcome.retagged_jsonl_files, 1);
+        assert_eq!(outcome.retagged_state_rows, 1);
+        assert_eq!(
+            fs::read_to_string(&session).expect("read session"),
+            session_meta_line("s2", "custom")
+        );
+        assert_eq!(thread_provider(&state_db, "s2"), "custom");
+        // marker 语义不变：补标不读不写它，仍指向同一目录。
+        assert!(
+            crate::settings::is_codex_official_history_unify_migrated_for_dir(
+                &canonical_dir_string(&codex_dir)
+            )
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn preview_counts_without_writing() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let (_home, _codex_dir, session_dir, state_db) = retag_fixture();
+        set_unify_toggle(true, false);
+        let official = session_dir.join("rollout-official.jsonl");
+        fs::write(&official, session_meta_line("s1", "openai")).expect("write session");
+        let third_party = session_dir.join("rollout-third.jsonl");
+        fs::write(&third_party, session_meta_line("s2", "custom")).expect("write third");
+        seed_threads(
+            &state_db,
+            &[("s1", "openai"), ("s2", "custom"), ("s3", "openai")],
+        );
+
+        let preview = preview_codex_official_history_retag().expect("preview retag");
+
+        assert_eq!(preview.skipped_reason, None);
+        assert_eq!(preview.pending_thread_rows, 2);
+        assert_eq!(preview.pending_jsonl_files, 1);
+        assert_eq!(preview.retagged_jsonl_files, 0);
+        assert_eq!(preview.retagged_state_rows, 0);
+        // 只读：文件内容、DB 行、备份代际都没变。
+        assert_eq!(
+            fs::read_to_string(&official).expect("read session"),
+            session_meta_line("s1", "openai")
+        );
+        assert_eq!(thread_provider(&state_db, "s1"), "openai");
+        assert_eq!(thread_provider(&state_db, "s3"), "openai");
+        assert!(unify_backup_generations().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn retag_is_idempotent() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let (_home, _codex_dir, session_dir, state_db) = retag_fixture();
+        set_unify_toggle(true, false);
+        fs::write(
+            session_dir.join("rollout-a.jsonl"),
+            session_meta_line("s1", "openai"),
+        )
+        .expect("write session");
+        seed_threads(&state_db, &[("s1", "openai")]);
+
+        let first = retag_codex_official_history(false).expect("first retag");
+        assert_eq!(first.retagged_jsonl_files, 1);
+        assert_eq!(first.retagged_state_rows, 1);
+        let generations_after_first = unify_backup_generations();
+        assert_eq!(generations_after_first.len(), 1);
+
+        let second = retag_codex_official_history(false).expect("second retag");
+        assert_eq!(second.skipped_reason.as_deref(), Some("nothing_pending"));
+        assert_eq!(second.retagged_jsonl_files, 0);
+        assert_eq!(second.retagged_state_rows, 0);
+        // 不产生新的备份代际。
+        assert_eq!(unify_backup_generations(), generations_after_first);
+        assert_eq!(thread_provider(&state_db, "s1"), "custom");
+    }
+
+    #[test]
+    #[serial]
+    fn retag_then_restore_roundtrip() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let (_home, codex_dir, session_dir, state_db) = retag_fixture();
+        set_unify_toggle(true, true);
+        let first_batch = session_dir.join("rollout-batch1.jsonl");
+        fs::write(&first_batch, session_meta_line("s1", "openai")).expect("write batch1");
+        seed_threads(&state_db, &[("s1", "openai")]);
+
+        // 第一代账本：一次性统一迁移。
+        maybe_migrate_codex_official_history_to_unified_bucket().expect("stock migration");
+        assert_eq!(thread_provider(&state_db, "s1"), "custom");
+
+        // 第二代账本：迁移之后新增的会话由补标搬走。
+        let second_batch = session_dir.join("rollout-batch2.jsonl");
+        fs::write(&second_batch, session_meta_line("s2", "openai")).expect("write batch2");
+        {
+            let conn = Connection::open(&state_db).expect("open state db");
+            conn.execute(
+                "INSERT INTO threads (id, model_provider) VALUES ('s2', 'openai')",
+                [],
+            )
+            .expect("insert thread");
+        }
+        let retag = retag_codex_official_history(false).expect("retag second batch");
+        assert_eq!(retag.retagged_jsonl_files, 1);
+        assert_eq!(retag.retagged_state_rows, 1);
+        assert_eq!(unify_backup_generations().len(), 2);
+
+        // 关闭开关后 restore 应跨代际把两批会话都翻回 openai。
+        set_unify_toggle(false, false);
+        crate::settings::clear_codex_official_history_unify_migration()
+            .expect("clear unify marker on toggle off");
+        let restore = restore_codex_official_history_from_backups().expect("restore");
+
+        assert_eq!(restore.skipped_reason, None);
+        assert_eq!(restore.restored_jsonl_files, 2);
+        assert_eq!(restore.restored_state_rows, 2);
+        assert_eq!(
+            fs::read_to_string(&first_batch).expect("read batch1"),
+            session_meta_line("s1", "openai")
+        );
+        assert_eq!(
+            fs::read_to_string(&second_batch).expect("read batch2"),
+            session_meta_line("s2", "openai")
+        );
+        assert_eq!(thread_provider(&state_db, "s1"), "openai");
+        assert_eq!(thread_provider(&state_db, "s2"), "openai");
+        // 补标/还原都不碰 config.toml。
+        assert_eq!(
+            fs::read_to_string(codex_dir.join("config.toml")).expect("read config"),
+            CUSTOM_ROUTED_CONFIG
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn retag_leaves_custom_and_other_buckets_untouched() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let (_home, _codex_dir, session_dir, state_db) = retag_fixture();
+        set_unify_toggle(true, false);
+        let custom_session = session_dir.join("rollout-custom.jsonl");
+        fs::write(&custom_session, session_meta_line("c1", "custom")).expect("write custom");
+        let ccswitch_session = session_dir.join("rollout-ccswitch.jsonl");
+        fs::write(&ccswitch_session, session_meta_line("k1", "ccswitch")).expect("write ccswitch");
+        let official_session = session_dir.join("rollout-official.jsonl");
+        fs::write(&official_session, session_meta_line("o1", "openai")).expect("write official");
+        seed_threads(
+            &state_db,
+            &[("c1", "custom"), ("k1", "ccswitch"), ("o1", "openai")],
+        );
+
+        let outcome = retag_codex_official_history(false).expect("retag");
+
+        assert_eq!(outcome.retagged_jsonl_files, 1);
+        assert_eq!(outcome.retagged_state_rows, 1);
+        assert_eq!(
+            fs::read_to_string(&custom_session).expect("read custom"),
+            session_meta_line("c1", "custom")
+        );
+        assert_eq!(
+            fs::read_to_string(&ccswitch_session).expect("read ccswitch"),
+            session_meta_line("k1", "ccswitch")
+        );
+        assert_eq!(thread_provider(&state_db, "c1"), "custom");
+        assert_eq!(thread_provider(&state_db, "k1"), "ccswitch");
+        assert_eq!(thread_provider(&state_db, "o1"), "custom");
+        assert_eq!(
+            fs::read_to_string(&official_session).expect("read official"),
+            session_meta_line("o1", "custom")
+        );
     }
 }
