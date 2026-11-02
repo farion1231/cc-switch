@@ -57,17 +57,30 @@ pub struct DeleteSessionOutcome {
     pub error: Option<String>,
 }
 
+/// 跑一个应用的扫描并记下耗时
+fn timed_scan(provider: &str, scan: fn() -> Vec<SessionMeta>) -> Vec<SessionMeta> {
+    let started = Instant::now();
+    let sessions = scan();
+    log::debug!(
+        "[sessions] scan {provider}: {} sessions in {}ms",
+        sessions.len(),
+        started.elapsed().as_millis()
+    );
+    sessions
+}
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    let started = Instant::now();
     let (r1, r2, r3, r4, r5, r6, r7, r8, r9) = std::thread::scope(|s| {
-        let h1 = s.spawn(codex::scan_sessions);
-        let h2 = s.spawn(claude::scan_sessions);
-        let h3 = s.spawn(opencode::scan_sessions);
-        let h4 = s.spawn(openclaw::scan_sessions);
-        let h5 = s.spawn(gemini::scan_sessions);
-        let h6 = s.spawn(hermes::scan_sessions);
-        let h7 = s.spawn(grokbuild::scan_sessions);
-        let h8 = s.spawn(pi::scan_sessions);
-        let h9 = s.spawn(omp::scan_sessions);
+        let h1 = s.spawn(|| timed_scan("codex", codex::scan_sessions));
+        let h2 = s.spawn(|| timed_scan("claude", claude::scan_sessions));
+        let h3 = s.spawn(|| timed_scan("opencode", opencode::scan_sessions));
+        let h4 = s.spawn(|| timed_scan("openclaw", openclaw::scan_sessions));
+        let h5 = s.spawn(|| timed_scan("gemini", gemini::scan_sessions));
+        let h6 = s.spawn(|| timed_scan("hermes", hermes::scan_sessions));
+        let h7 = s.spawn(|| timed_scan("grokbuild", grokbuild::scan_sessions));
+        let h8 = s.spawn(|| timed_scan("pi", pi::scan_sessions));
+        let h9 = s.spawn(|| timed_scan("omp", omp::scan_sessions));
         (
             h1.join().unwrap_or_default(),
             h2.join().unwrap_or_default(),
@@ -91,10 +104,10 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r7);
     sessions.extend(r8);
     sessions.extend(r9);
-    sessions.extend(mcode::scan_sessions());
-    sessions.extend(kimi::scan_sessions());
-    sessions.extend(dsh::scan_sessions());
-    sessions.extend(agy::scan_sessions());
+    sessions.extend(timed_scan("mcode", mcode::scan_sessions));
+    sessions.extend(timed_scan("kimi", kimi::scan_sessions));
+    sessions.extend(timed_scan("dsh", dsh::scan_sessions));
+    sessions.extend(timed_scan("agy", agy::scan_sessions));
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
@@ -102,6 +115,11 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         b_ts.cmp(&a_ts)
     });
 
+    log::info!(
+        "[sessions] scanned {} sessions in {}ms",
+        sessions.len(),
+        started.elapsed().as_millis()
+    );
     sessions
 }
 
@@ -153,10 +171,16 @@ pub fn load_transcript(provider_id: &str, source_path: &str) -> Result<LoadedTra
     let (transcript, cached) = cache::global().get_or_load(key, fingerprint, || {
         load_messages(&source.provider_id, &source.load_path()).map(cache::Transcript::new)
     })?;
+    let parse_ms = started.elapsed().as_millis() as u64;
+    log::debug!(
+        "[sessions] load {provider_id}: {} messages, {} bytes in {parse_ms}ms (cached={cached})",
+        transcript.messages.len(),
+        transcript.approx_bytes,
+    );
     Ok(LoadedTranscript {
         transcript,
         cached,
-        parse_ms: started.elapsed().as_millis() as u64,
+        parse_ms,
     })
 }
 

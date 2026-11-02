@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::SystemTime;
 
 use chrono::{DateTime, FixedOffset};
@@ -13,6 +14,95 @@ use crate::session_manager::SessionMeta;
 
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
+
+static SCAN_IN_FLIGHT: Mutex<usize> = Mutex::new(0);
+static SCAN_SLOT_FREED: Condvar = Condvar::new();
+
+/// 一个读取会话文件的名额。各应用的扫描同时进行，这里按进程计数，
+/// 设置里的并行数才是真正的总上限，而不是每个应用各开那么多。
+struct ScanSlot;
+
+impl ScanSlot {
+    fn acquire(limit: usize) -> Self {
+        let mut in_flight = SCAN_IN_FLIGHT
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        while *in_flight >= limit {
+            in_flight = SCAN_SLOT_FREED
+                .wait(in_flight)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *in_flight += 1;
+        Self
+    }
+}
+
+impl Drop for ScanSlot {
+    fn drop(&mut self) {
+        let mut in_flight = SCAN_IN_FLIGHT
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *in_flight -= 1;
+        // 各轮扫描的上限可能不同，唤醒全部，由各自重新判断
+        SCAN_SLOT_FREED.notify_all();
+    }
+}
+
+/// 用 `limit` 个线程对 `files` 逐个调用 `visit`，结果顺序与 `files` 一致。
+fn map_files_parallel<T, F>(files: &[PathBuf], limit: usize, visit: &F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(&Path) -> Option<T> + Sync,
+{
+    if files.is_empty() {
+        return Vec::new();
+    }
+    // 文件大小悬殊，按「谁空闲谁取下一个」分发，不预先切块
+    let next = AtomicUsize::new(0);
+    let worker = || {
+        let mut found = Vec::new();
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            let Some(path) = files.get(index) else {
+                break;
+            };
+            if let Some(value) = visit(path) {
+                found.push((index, value));
+            }
+        }
+        found
+    };
+    let mut found: Vec<(usize, T)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..limit.clamp(1, files.len()))
+            .map(|_| scope.spawn(worker))
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap_or_default())
+            .collect()
+    });
+    found.sort_unstable_by_key(|(index, _)| *index);
+    found.into_iter().map(|(_, value)| value).collect()
+}
+
+/// 并行解析 `files`，并行数取自设置。返回能解析出会话的那些，顺序与 `files` 一致；
+/// 读不了的文件返回 `Err`，本轮跳过。
+pub fn scan_files<F>(files: Vec<PathBuf>, parse: F) -> Vec<SessionMeta>
+where
+    F: Fn(&Path) -> io::Result<Option<SessionMeta>> + Sync,
+{
+    let limit = crate::settings::effective_session_scan_concurrency();
+    map_files_parallel(&files, limit, &|path: &Path| {
+        let _slot = ScanSlot::acquire(limit);
+        match parse(path) {
+            Ok(meta) => meta,
+            Err(err) => {
+                log::debug!("会话文件暂时读取失败 {}: {err}", path.display());
+                None
+            }
+        }
+    })
+}
 
 /// 会话文件解析结果的缓存：按文件的修改时间和大小判断有没有变，没变就复用上次
 /// 解析出的 [`SessionMeta`]，只重新解析新增或改过的文件。
@@ -38,13 +128,25 @@ impl FileParseCache {
         }
     }
 
-    /// 按顺序解析 `files`，没变过的文件直接用缓存。返回能解析出会话的那些。
+    /// 解析 `files`，没变过的文件直接用缓存，其余并行解析（并行数取自设置）。
+    /// 返回能解析出会话的那些，顺序与 `files` 一致。
     pub fn scan<F>(&self, files: Vec<PathBuf>, parse: F) -> Vec<SessionMeta>
     where
-        F: Fn(&Path) -> io::Result<Option<SessionMeta>>,
+        F: Fn(&Path) -> io::Result<Option<SessionMeta>> + Sync,
+    {
+        self.scan_with_limit(
+            files,
+            crate::settings::effective_session_scan_concurrency(),
+            parse,
+        )
+    }
+
+    fn scan_with_limit<F>(&self, files: Vec<PathBuf>, limit: usize, parse: F) -> Vec<SessionMeta>
+    where
+        F: Fn(&Path) -> io::Result<Option<SessionMeta>> + Sync,
     {
         // 锁中毒（上次扫描 panic）时丢掉旧缓存重来，不影响本次结果
-        let mut previous = match self.entries.lock() {
+        let previous = match self.entries.lock() {
             Ok(mut guard) => std::mem::take(&mut *guard),
             Err(poisoned) => {
                 let mut guard = poisoned.into_inner();
@@ -53,36 +155,41 @@ impl FileParseCache {
             }
         };
 
-        let mut next = HashMap::with_capacity(files.len());
-        let mut sessions = Vec::new();
-        for path in files {
-            let (modified, len) = match std::fs::metadata(&path) {
-                Ok(meta) => (meta.modified().ok(), meta.len()),
-                Err(_) => continue,
-            };
-            let meta = match previous.remove(&path) {
-                Some(entry) if entry.modified == modified && entry.len == len => entry.meta,
-                _ => match parse(&path) {
-                    Ok(meta) => meta,
-                    // 读不了（权限、被占用等）不缓存：否则恢复读取后文件没变，
-                    // 会一直命中「没有会话」，直到文件改动或重启
-                    Err(err) => {
-                        log::debug!("会话文件暂时读取失败，下轮重试 {}: {err}", path.display());
-                        continue;
+        let scanned = map_files_parallel(&files, limit, &|path: &Path| {
+            let file_meta = std::fs::metadata(path).ok()?;
+            let (modified, len) = (file_meta.modified().ok(), file_meta.len());
+            let meta = match previous.get(path) {
+                Some(entry) if entry.modified == modified && entry.len == len => entry.meta.clone(),
+                _ => {
+                    let _slot = ScanSlot::acquire(limit);
+                    match parse(path) {
+                        Ok(meta) => meta,
+                        // 读不了（权限、被占用等）不缓存：否则恢复读取后文件没变，
+                        // 会一直命中「没有会话」，直到文件改动或重启
+                        Err(err) => {
+                            log::debug!("会话文件暂时读取失败，下轮重试 {}: {err}", path.display());
+                            return None;
+                        }
                     }
-                },
+                }
             };
-            if let Some(meta) = &meta {
-                sessions.push(meta.clone());
-            }
-            next.insert(
-                path,
+            Some((
+                path.to_path_buf(),
                 CachedParse {
                     modified,
                     len,
                     meta,
                 },
-            );
+            ))
+        });
+
+        let mut next = HashMap::with_capacity(scanned.len());
+        let mut sessions = Vec::new();
+        for (path, entry) in scanned {
+            if let Some(meta) = &entry.meta {
+                sessions.push(meta.clone());
+            }
+            next.insert(path, entry);
         }
 
         if let Ok(mut guard) = self.entries.lock() {
@@ -95,6 +202,25 @@ impl FileParseCache {
 impl Default for FileParseCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 递归收集 `root` 下 `keep` 认可的文件。类型直接取自目录枚举，不为每个条目再查一次；
+/// 符号链接（含 Windows 目录联接）枚举不出目标类型，才单独查。
+pub fn collect_files(root: &Path, files: &mut Vec<PathBuf>, keep: &dyn Fn(&Path) -> bool) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        if file_type.is_dir() || (file_type.is_symlink() && path.is_dir()) {
+            collect_files(&path, files, keep);
+        } else if keep(&path) {
+            files.push(path);
+        }
     }
 }
 
@@ -365,46 +491,104 @@ mod tests {
         })
     }
 
+    fn session_ids(sessions: Vec<SessionMeta>) -> Vec<String> {
+        sessions.into_iter().map(|meta| meta.session_id).collect()
+    }
+
+    fn numbered_files(dir: &Path, count: usize) -> Vec<PathBuf> {
+        (0..count)
+            .map(|i| {
+                let path = dir.join(format!("{i}.jsonl"));
+                std::fs::write(&path, format!("session-{i}")).unwrap();
+                path
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scan_keeps_input_order_and_skips_non_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = numbered_files(dir.path(), 64);
+        let skipped = dir.path().join("skip.jsonl");
+        std::fs::write(&skipped, "skip").unwrap();
+        files.insert(10, skipped);
+        let expected: Vec<String> = (0..64).map(|i| format!("session-{i}")).collect();
+
+        for limit in [1, 3, 8, 200] {
+            let cache = FileParseCache::new();
+            let sessions =
+                cache.scan_with_limit(files.clone(), limit, |path: &Path| Ok(meta_from_file(path)));
+            assert_eq!(session_ids(sessions), expected, "limit={limit}");
+        }
+    }
+
+    #[test]
+    fn scan_never_exceeds_the_configured_concurrency() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = numbered_files(dir.path(), 32);
+        let running = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+
+        // 两个缓存同时扫描共用一个上限，模拟多个应用同时扫描
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    FileParseCache::new().scan_with_limit(files.clone(), 2, |path: &Path| {
+                        let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                        running.fetch_sub(1, Ordering::SeqCst);
+                        Ok(meta_from_file(path))
+                    });
+                });
+            }
+        });
+
+        assert!(peak.load(Ordering::SeqCst) <= 2);
+    }
+
     /// 读取失败不能缓存成「没有会话」：恢复读取后，文件没变也要重新解析出来
     #[test]
     fn file_parse_cache_retries_files_that_failed_to_read() {
-        use std::cell::Cell;
+        use std::sync::atomic::AtomicBool;
 
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.jsonl");
         std::fs::write(&a, "alpha").unwrap();
 
         let cache = FileParseCache::new();
-        let fail = Cell::new(true);
-        let calls = Cell::new(0);
+        let fail = AtomicBool::new(true);
+        let calls = AtomicUsize::new(0);
         let parse = |path: &Path| {
-            calls.set(calls.get() + 1);
-            if fail.get() {
+            calls.fetch_add(1, Ordering::SeqCst);
+            if fail.load(Ordering::SeqCst) {
                 Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"))
             } else {
                 Ok(meta_from_file(path))
             }
         };
 
-        assert!(cache.scan(vec![a.clone()], parse).is_empty());
-        assert!(cache.scan(vec![a.clone()], parse).is_empty());
-        assert_eq!(calls.get(), 2, "失败的文件每轮都要重试，不能命中缓存");
+        assert!(cache.scan_with_limit(vec![a.clone()], 2, parse).is_empty());
+        assert!(cache.scan_with_limit(vec![a.clone()], 2, parse).is_empty());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "失败的文件每轮都要重试，不能命中缓存"
+        );
 
-        fail.set(false);
-        let sessions = cache.scan(vec![a.clone()], parse);
+        fail.store(false, Ordering::SeqCst);
+        let sessions = cache.scan_with_limit(vec![a.clone()], 2, parse);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "alpha");
-        assert_eq!(calls.get(), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
 
         // 成功后才进缓存：再扫不重新解析
-        assert_eq!(cache.scan(vec![a], parse).len(), 1);
-        assert_eq!(calls.get(), 3);
+        assert_eq!(cache.scan_with_limit(vec![a], 2, parse).len(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
     fn file_parse_cache_reparses_only_changed_files() {
-        use std::cell::Cell;
-
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.jsonl");
         let b = dir.path().join("b.jsonl");
@@ -414,36 +598,99 @@ mod tests {
         std::fs::write(&c, "skip").unwrap();
 
         let cache = FileParseCache::new();
-        let calls = Cell::new(0);
+        let calls = AtomicUsize::new(0);
         let parse = |path: &Path| {
-            calls.set(calls.get() + 1);
+            calls.fetch_add(1, Ordering::SeqCst);
             Ok(meta_from_file(path))
         };
-        let ids = |sessions: Vec<SessionMeta>| -> Vec<String> {
-            sessions.into_iter().map(|m| m.session_id).collect()
-        };
+        let scan = |files: &[PathBuf]| session_ids(cache.scan_with_limit(files.to_vec(), 4, parse));
+        let count = || calls.load(Ordering::SeqCst);
 
         // 第一次全部解析；解析不出会话的文件也记下来，下次不重复解析
         let files = vec![a.clone(), b.clone(), c.clone()];
-        assert_eq!(ids(cache.scan(files.clone(), parse)), ["alpha", "beta"]);
-        assert_eq!(calls.get(), 3);
+        assert_eq!(scan(&files), ["alpha", "beta"]);
+        assert_eq!(count(), 3);
 
         // 没有改动：一个都不重新解析
-        assert_eq!(ids(cache.scan(files.clone(), parse)), ["alpha", "beta"]);
-        assert_eq!(calls.get(), 3);
+        assert_eq!(scan(&files), ["alpha", "beta"]);
+        assert_eq!(count(), 3);
 
         // 改了内容（长度变了）：只重新解析这一个
         std::fs::write(&b, "beta-2").unwrap();
-        assert_eq!(ids(cache.scan(files.clone(), parse)), ["alpha", "beta-2"]);
-        assert_eq!(calls.get(), 4);
+        assert_eq!(scan(&files), ["alpha", "beta-2"]);
+        assert_eq!(count(), 4);
 
         // 文件删掉：不再出现，条目也被丢弃；重新出现时要重新解析
         std::fs::remove_file(&a).unwrap();
-        assert_eq!(ids(cache.scan(files.clone(), parse)), ["beta-2"]);
-        assert_eq!(calls.get(), 4);
+        assert_eq!(scan(&files), ["beta-2"]);
+        assert_eq!(count(), 4);
         std::fs::write(&a, "alpha").unwrap();
-        assert_eq!(ids(cache.scan(files, parse)), ["alpha", "beta-2"]);
-        assert_eq!(calls.get(), 5);
+        assert_eq!(scan(&files), ["alpha", "beta-2"]);
+        assert_eq!(count(), 5);
+    }
+
+    #[test]
+    fn scan_files_skips_unreadable_files_and_keeps_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = numbered_files(dir.path(), 8);
+        let denied = files[3].clone();
+
+        let sessions = scan_files(files, |path: &Path| {
+            if path == denied {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
+            }
+            Ok(meta_from_file(path))
+        });
+
+        let expected: Vec<String> = [0, 1, 2, 4, 5, 6, 7]
+            .iter()
+            .map(|i| format!("session-{i}"))
+            .collect();
+        assert_eq!(session_ids(sessions), expected);
+    }
+
+    #[test]
+    fn collect_files_recurses_and_applies_the_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a").join("b");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(dir.path().join("top.jsonl"), "").unwrap();
+        std::fs::write(dir.path().join("note.txt"), "").unwrap();
+        std::fs::write(nested.join("deep.jsonl"), "").unwrap();
+
+        let mut files = Vec::new();
+        collect_files(dir.path(), &mut files, &|path| {
+            path.extension().is_some_and(|ext| ext == "jsonl")
+        });
+        files.sort();
+
+        assert_eq!(
+            files,
+            [nested.join("deep.jsonl"), dir.path().join("top.jsonl")]
+        );
+    }
+
+    #[test]
+    fn collect_files_ignores_a_missing_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        collect_files(&dir.path().join("missing"), &mut files, &|_| true);
+        assert!(files.is_empty());
+    }
+
+    /// 符号链接的项目目录要继续往里走，否则链接过去的会话会从列表消失
+    #[cfg(unix)]
+    #[test]
+    fn collect_files_follows_directory_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(target.path().join("linked.jsonl"), "").unwrap();
+        std::os::unix::fs::symlink(target.path(), dir.path().join("project")).unwrap();
+
+        let mut files = Vec::new();
+        collect_files(dir.path(), &mut files, &|_| true);
+
+        assert_eq!(files, [dir.path().join("project").join("linked.jsonl")]);
     }
 
     #[test]
