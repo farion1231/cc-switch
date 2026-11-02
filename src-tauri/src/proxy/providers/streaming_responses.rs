@@ -2403,7 +2403,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
     can_preserve_web_search_citations: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
+        let mut buffer = crate::proxy::sse::SseBuffer::default();
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut message_id: Option<String> = None;
         let mut current_model: Option<String> = None;
@@ -2454,7 +2454,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         'stream_loop: while let Some((chunk, is_eof)) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    buffer.push_bytes(&mut utf8_remainder, &bytes);
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold it intact until EOF, including any pretty-

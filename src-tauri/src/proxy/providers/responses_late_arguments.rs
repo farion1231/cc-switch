@@ -16,7 +16,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 
-use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, take_sse_block};
 
 /// 一个 SSE 块，解析出的事件（不是 JSON 的块为 None）。
 struct Block {
@@ -199,7 +199,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     async_stream::stream! {
-        let mut buffer = String::new();
+        let mut buffer = crate::proxy::sse::SseBuffer::default();
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut repair = Repair::default();
 
@@ -208,7 +208,7 @@ where
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    buffer.push_bytes(&mut utf8_remainder, &bytes);
                     while let Some(block) = take_sse_block(&mut buffer) {
                         if block.trim().is_empty() {
                             continue;

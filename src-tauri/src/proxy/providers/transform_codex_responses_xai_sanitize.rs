@@ -36,7 +36,7 @@ use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Map, Number, Value};
 
 use super::transform_codex_responses_namespace::{restore_sse_event_namespaces, NamespacedName};
-use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, take_sse_block};
 
 /// Codex plugin-private fields removed recursively at any nesting depth.
 const RECURSIVE_UNSUPPORTED_FIELDS: &[&str] = &["external_web_access"];
@@ -1101,7 +1101,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     async_stream::stream! {
-        let mut buffer = String::new();
+        let mut buffer = crate::proxy::sse::SseBuffer::default();
         let mut utf8_remainder: Vec<u8> = Vec::new();
 
         tokio::pin!(stream);
@@ -1109,7 +1109,7 @@ where
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    buffer.push_bytes(&mut utf8_remainder, &bytes);
                     while let Some(block) = take_sse_block(&mut buffer) {
                         if block.trim().is_empty() {
                             continue;

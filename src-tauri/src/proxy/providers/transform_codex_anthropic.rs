@@ -1417,7 +1417,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
     let mut delta_usage: Option<Value> = None;
     let mut saw_message_stop = false;
 
-    let mut buffer = body.to_string();
+    let mut buffer = crate::proxy::sse::SseBuffer::from(body.to_string());
     let process_block = |block: &str,
                          message: &mut Option<Value>,
                          blocks: &mut BTreeMap<u64, Value>,
@@ -1574,7 +1574,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
     // Tolerate the last event missing a trailing blank line (truncated stream).
     if !buffer.trim().is_empty() {
         process_block(
-            &buffer.clone(),
+            &buffer,
             &mut message,
             &mut blocks,
             &mut json_accum,

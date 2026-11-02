@@ -243,7 +243,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
+        let mut buffer = crate::proxy::sse::SseBuffer::default();
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut message_id = None;
         let mut current_model = None;
@@ -269,7 +269,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    buffer.push_bytes(&mut utf8_remainder, &bytes);
 
                     while let Some(line) = take_sse_block(&mut buffer) {
                         if line.trim().is_empty() {

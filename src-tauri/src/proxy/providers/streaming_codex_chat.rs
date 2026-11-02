@@ -766,7 +766,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
     tool_context: CodexToolContext,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
+        let mut buffer = crate::proxy::sse::SseBuffer::default();
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut state = ChatToResponsesState::with_tool_context(tool_context);
         let mut stream_failed = false;
@@ -776,7 +776,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    buffer.push_bytes(&mut utf8_remainder, &bytes);
 
                     while let Some(block) = take_sse_block(&mut buffer) {
                         if block.trim().is_empty() {

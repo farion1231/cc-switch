@@ -1,28 +1,101 @@
 #[inline]
 pub(crate) fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.strip_prefix(&format!("{field}: "))
-        .or_else(|| line.strip_prefix(&format!("{field}:")))
+    let value = line.strip_prefix(field)?.strip_prefix(':')?;
+    Some(value.strip_prefix(' ').unwrap_or(value))
 }
 
-#[inline]
-pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
-    let mut best: Option<(usize, usize)> = None;
+/// Incremental SSE framing. Keep both a read cursor and a search cursor so a
+/// batch of small events and one large, fragmented event both take O(bytes).
+#[derive(Debug, Default)]
+pub(crate) struct SseBuffer {
+    data: String,
+    start: usize,
+    search_from: usize,
+}
 
-    // The data line and the following blank line can use different line endings.
-    // Include both mixed forms and prefer the earliest match so no trailing CR
-    // becomes part of the returned block.
-    for delimiter in ["\r\n\r\n", "\r\n\n", "\n\r\n", "\n\n"] {
-        if let Some(pos) = buffer.find(delimiter) {
-            if best.is_none_or(|(best_pos, _)| pos < best_pos) {
-                best = Some((pos, delimiter.len()));
-            }
+impl std::ops::Deref for SseBuffer {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.data[self.start..]
+    }
+}
+
+impl From<String> for SseBuffer {
+    fn from(data: String) -> Self {
+        Self {
+            data,
+            ..Self::default()
+        }
+    }
+}
+
+impl SseBuffer {
+    pub(crate) fn clear(&mut self) {
+        self.data.clear();
+        self.start = 0;
+        self.search_from = 0;
+    }
+
+    fn compact(&mut self) {
+        // Move at most as many bytes as we consumed. Do not shift the entire
+        // remaining batch after every event, or copy a growing partial event
+        // after every network chunk.
+        if self.start > 0 && self.start >= self.data.len() / 2 {
+            self.data.drain(..self.start);
+            self.search_from -= self.start;
+            self.start = 0;
         }
     }
 
-    let (pos, len) = best?;
-    let block = buffer[..pos].to_string();
-    buffer.drain(..pos + len);
-    Some(block)
+    pub(crate) fn push_str(&mut self, value: &str) {
+        self.compact();
+        self.data.push_str(value);
+    }
+
+    pub(crate) fn push_bytes(&mut self, remainder: &mut Vec<u8>, bytes: &[u8]) {
+        self.compact();
+        append_utf8_safe(&mut self.data, remainder, bytes);
+    }
+}
+
+pub(crate) fn take_sse_block(buffer: &mut SseBuffer) -> Option<String> {
+    let bytes = buffer.data.as_bytes();
+    while let Some(relative) = bytes[buffer.search_from..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+    {
+        let newline = buffer.search_from + relative;
+        let next = newline + 1;
+        let end = if bytes.get(next) == Some(&b'\r') {
+            next + 1
+        } else {
+            next
+        };
+        if end == bytes.len() {
+            // A LF or LF+CR at the end may be half of a delimiter. Only this
+            // suffix needs to be checked again when the next chunk arrives.
+            buffer.search_from = newline;
+            return None;
+        }
+        if bytes[end] == b'\n' {
+            let delimiter = if newline > buffer.start && bytes[newline - 1] == b'\r' {
+                newline - 1
+            } else {
+                newline
+            };
+            let block = buffer.data[buffer.start..delimiter].to_string();
+            buffer.start = end + 1;
+            buffer.search_from = buffer.start;
+            if buffer.start == buffer.data.len() {
+                buffer.clear();
+            }
+            return Some(block);
+        }
+        buffer.search_from = next;
+    }
+    buffer.search_from = bytes.len();
+    None
 }
 
 /// Append raw bytes to a UTF-8 `String` buffer, correctly handling multi-byte
@@ -90,7 +163,7 @@ pub(crate) fn append_utf8_safe(buffer: &mut String, remainder: &mut Vec<u8>, new
 
 #[cfg(test)]
 mod tests {
-    use super::{append_utf8_safe, strip_sse_field, take_sse_block};
+    use super::{append_utf8_safe, strip_sse_field, take_sse_block, SseBuffer};
 
     #[test]
     fn strip_sse_field_accepts_optional_space() {
@@ -115,24 +188,24 @@ mod tests {
 
     #[test]
     fn take_sse_block_supports_lf_delimiters() {
-        let mut buffer = "data: {\"ok\":true}\n\nrest".to_string();
+        let mut buffer = SseBuffer::from("data: {\"ok\":true}\n\nrest".to_string());
 
         assert_eq!(
             take_sse_block(&mut buffer),
             Some("data: {\"ok\":true}".to_string())
         );
-        assert_eq!(buffer, "rest");
+        assert_eq!(&*buffer, "rest");
     }
 
     #[test]
     fn take_sse_block_supports_crlf_delimiters() {
-        let mut buffer = "data: {\"ok\":true}\r\n\r\nrest".to_string();
+        let mut buffer = SseBuffer::from("data: {\"ok\":true}\r\n\r\nrest".to_string());
 
         assert_eq!(
             take_sse_block(&mut buffer),
             Some("data: {\"ok\":true}".to_string())
         );
-        assert_eq!(buffer, "rest");
+        assert_eq!(&*buffer, "rest");
     }
 
     #[test]
@@ -143,7 +216,7 @@ mod tests {
 
             // Exercise every possible transport split, including inside CRLF.
             for split in 0..=input.len() {
-                let mut buffer = String::new();
+                let mut buffer = SseBuffer::default();
                 let mut blocks = Vec::new();
                 for chunk in [&input[..split], &input[split..]] {
                     buffer.push_str(chunk);
@@ -156,13 +229,137 @@ mod tests {
                     [first, "data: second"],
                     "{delimiter:?}, split {split}"
                 );
-                assert_eq!(buffer, "partial");
+                assert_eq!(&*buffer, "partial");
             }
 
             // A complete mixed delimiter must dispatch without another event.
-            let mut buffer = format!("{first}{delimiter}");
+            let mut buffer = SseBuffer::from(format!("{first}{delimiter}"));
             assert_eq!(take_sse_block(&mut buffer).as_deref(), Some(first));
             assert!(buffer.is_empty());
+        }
+    }
+
+    // Keep the previous implementation as an oracle for framing compatibility.
+    fn reference_block(buffer: &mut String) -> Option<String> {
+        let (pos, len) = ["\r\n\r\n", "\r\n\n", "\n\r\n", "\n\n"]
+            .iter()
+            .filter_map(|delimiter| buffer.find(delimiter).map(|pos| (pos, delimiter.len())))
+            .min_by_key(|(pos, _)| *pos)?;
+        let block = buffer[..pos].to_string();
+        buffer.drain(..pos + len);
+        Some(block)
+    }
+
+    #[test]
+    fn incremental_framing_matches_reference_for_all_short_inputs() {
+        // Includes empty blocks, lone CRs, adjacent/mixed delimiters and every
+        // transport split. Compare after each chunk, not only at EOF.
+        for len in 0..=7_u32 {
+            for mut encoded in 0..3_usize.pow(len) {
+                let mut input = String::new();
+                for _ in 0..len {
+                    input.push(['x', '\r', '\n'][encoded % 3]);
+                    encoded /= 3;
+                }
+                for split in 0..=input.len() {
+                    let mut reference = String::new();
+                    let mut buffer = SseBuffer::default();
+                    for chunk in [&input[..split], &input[split..]] {
+                        reference.push_str(chunk);
+                        buffer.push_str(chunk);
+                        loop {
+                            let expected = reference_block(&mut reference);
+                            let actual = take_sse_block(&mut buffer);
+                            assert_eq!(actual, expected, "input={input:?}, split={split}");
+                            if actual.is_none() {
+                                break;
+                            }
+                        }
+                        assert_eq!(&*buffer, reference, "input={input:?}, split={split}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_framing_preserves_utf8_partial_events_and_reuse() {
+        let input = format!("data: {}\r\n\r\ndata: 😀\n\n尾部", "你好".repeat(4096));
+        let mut buffer = SseBuffer::default();
+        let mut remainder = Vec::new();
+        let mut blocks = Vec::new();
+        for byte in input.as_bytes() {
+            buffer.push_bytes(&mut remainder, &[*byte]);
+            while let Some(block) = take_sse_block(&mut buffer) {
+                blocks.push(block);
+            }
+        }
+        assert_eq!(
+            blocks,
+            [format!("data: {}", "你好".repeat(4096)), "data: 😀".into()]
+        );
+        assert_eq!(&*buffer, "尾部");
+        buffer.clear();
+        buffer.push_str("data: reused\n\n");
+        assert_eq!(take_sse_block(&mut buffer).as_deref(), Some("data: reused"));
+        assert!(buffer.is_empty());
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn incremental_framing_compacts_without_losing_the_search_position() {
+        let mut buffer = SseBuffer::from("data: first\n\npartial\r\n".to_string());
+        assert_eq!(take_sse_block(&mut buffer).as_deref(), Some("data: first"));
+        assert!(take_sse_block(&mut buffer).is_none());
+        buffer.push_str("\r\n"); // compacts and completes a split delimiter
+        assert_eq!(take_sse_block(&mut buffer).as_deref(), Some("partial"));
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    #[ignore = "manual performance comparison; run with --ignored --nocapture"]
+    fn benchmark_sse_framing() {
+        use std::{hint::black_box, time::Instant};
+        for count in [1_000, 4_000, 16_000] {
+            let input = format!("data: {}\n\n", "x".repeat(128)).repeat(count);
+            let started = Instant::now();
+            let mut old = input.clone();
+            let mut old_count = 0;
+            while let Some(block) = reference_block(&mut old) {
+                black_box(block);
+                old_count += 1;
+            }
+            let old_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let started = Instant::now();
+            let mut new = SseBuffer::from(input);
+            let mut new_count = 0;
+            while let Some(block) = take_sse_block(&mut new) {
+                black_box(block);
+                new_count += 1;
+            }
+            let new_ms = started.elapsed().as_secs_f64() * 1000.0;
+            assert_eq!(old_count, count);
+            assert_eq!(new_count, count);
+            eprintln!("SSE batch events={count}: old={old_ms:.3}ms new={new_ms:.3}ms");
+        }
+        for size in [64 * 1024, 256 * 1024, 1024 * 1024] {
+            let input = format!("data: {}\n\n", "x".repeat(size));
+            let started = Instant::now();
+            let mut old = String::new();
+            for chunk in input.as_bytes().chunks(128) {
+                old.push_str(std::str::from_utf8(chunk).unwrap());
+                black_box(reference_block(&mut old));
+            }
+            let old_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let started = Instant::now();
+            let mut new = SseBuffer::default();
+            for chunk in input.as_bytes().chunks(128) {
+                new.push_str(std::str::from_utf8(chunk).unwrap());
+                black_box(take_sse_block(&mut new));
+            }
+            let new_ms = started.elapsed().as_secs_f64() * 1000.0;
+            assert!(old.is_empty() && new.is_empty());
+            eprintln!("SSE fragmented bytes={size}: old={old_ms:.3}ms new={new_ms:.3}ms");
         }
     }
 

@@ -2996,7 +2996,7 @@ impl RequestForwarder {
         let headers = response.headers().clone();
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
-        let mut parse_buffer = String::new();
+        let mut parse_buffer = crate::proxy::sse::SseBuffer::default();
         let mut utf8_remainder = Vec::new();
 
         loop {
@@ -3036,7 +3036,7 @@ impl RequestForwarder {
                     "Failed while validating Responses stream start: {error}"
                 ))
             })?;
-            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            parse_buffer.push_bytes(&mut utf8_remainder, &chunk);
             replay_chunks.push(chunk);
 
             // Some compatible gateways ignore `stream:true` and return a complete
@@ -3095,7 +3095,7 @@ impl RequestForwarder {
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
         let mut held_bytes = 0usize;
-        let mut parse_buffer = String::new();
+        let mut parse_buffer = crate::proxy::sse::SseBuffer::default();
         let mut utf8_remainder = Vec::new();
 
         'hold: loop {
@@ -3108,7 +3108,7 @@ impl RequestForwarder {
             // 还没有交出流，读出错和首包前出错一样回到重试循环。
             let chunk = chunk
                 .map_err(|error| ProxyError::ForwardFailed(format!("读取流式响应失败: {error}")))?;
-            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            parse_buffer.push_bytes(&mut utf8_remainder, &chunk);
             held_bytes += chunk.len();
             replay_chunks.push(chunk);
 
