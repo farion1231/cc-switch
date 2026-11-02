@@ -603,6 +603,13 @@ pub(crate) fn effective_usage_log_filter_for_range(
 
     let dp_source = data_source_expr("dedup_p");
     let ds_source = data_source_expr("dedup_s");
+    let model_match = session_proxy_model_match_sql(
+        "dedup_p.model",
+        "dedup_p.request_model",
+        "dedup_s.model",
+        "dedup_s.app_type",
+        &ds_source,
+    );
     Ok(format!(
         "{log_alias}.rowid NOT IN (
             SELECT dedup_s.rowid
@@ -631,11 +638,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
                      AND {ds_source} = 'codex_session'
                  )
              )
-             AND (
-                 LOWER(dedup_p.model) = LOWER(dedup_s.model)
-                 OR LOWER(dedup_p.model) = 'unknown'
-                 OR LOWER(dedup_s.model) = 'unknown'
-             )
+             AND {model_match}
             WHERE {dp_source} = 'proxy'
               AND dedup_p.status_code >= 200
               AND dedup_p.status_code < 300
@@ -6212,6 +6215,81 @@ mod tests {
         let result = find_model_pricing_row(&conn, "unknown-model-123")?;
         assert!(result.is_none(), "不应该匹配不存在的模型");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_range_filter_dedups_codex_request_model_alias() -> Result<(), AppError> {
+        // 会话行不少于代理行时走 JOIN 写法，同样要认 Codex 的请求模型别名。
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "proxy",
+                "codex",
+                "provider-1",
+                "glm-5.3",
+                "proxy",
+                10_000,
+                19_472,
+                165,
+                16_704,
+                0,
+                200,
+                "0.10",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model = 'ccswitch-live-alpha'
+                 WHERE request_id = 'proxy'",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "session-alias",
+                "codex",
+                "_codex_session",
+                "ccswitch-live-alpha",
+                "codex_session",
+                10_001,
+                19_472,
+                165,
+                16_704,
+                0,
+                200,
+                "0.10",
+            )?;
+            insert_usage_log(
+                &conn,
+                "session-other-alias",
+                "codex",
+                "_codex_session",
+                "other-alias",
+                "codex_session",
+                10_002,
+                19_472,
+                165,
+                16_704,
+                0,
+                200,
+                "0.10",
+            )?;
+
+            let filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+            assert!(filter.contains("rowid NOT IN"), "应走 JOIN 写法: {filter}");
+            let kept: Vec<String> = conn
+                .prepare(&format!(
+                    "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+                ))?
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(kept, ["proxy", "session-other-alias"]);
+        }
+        assert_eq!(
+            db.get_usage_summary(None, None, Some("codex"), None, None)?
+                .total_requests,
+            2
+        );
         Ok(())
     }
 }
