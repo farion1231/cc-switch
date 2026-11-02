@@ -16,9 +16,11 @@ import {
 } from "@/components/ui/sheet";
 import { DRAG_REGION_ENABLED } from "@/lib/platform";
 
-function renderDialog(onInteractOutside?: () => void) {
+function renderDialog(onInteractOutside?: () => void, onMinimize?: () => void) {
   return render(
-    <WindowControlsContext.Provider value={<button>Minimize</button>}>
+    <WindowControlsContext.Provider
+      value={<button onClick={onMinimize}>Minimize</button>}
+    >
       <Dialog open>
         <DialogContent onInteractOutside={onInteractOutside}>
           <DialogTitle>Title</DialogTitle>
@@ -93,6 +95,47 @@ describe("ModalDragStrip", () => {
 
     await pressOutside(strip.parentElement!);
     expect(onInteractOutside).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the window controls usable while a dialog is open", async () => {
+    const onInteractOutside = vi.fn();
+    const onMinimize = vi.fn();
+    renderDialog(onInteractOutside, onMinimize);
+    const strip = getStrip()!;
+    // 遮罩被 Radix 标了 aria-hidden，按名字查要带 hidden
+    const minimize = screen.getByRole("button", {
+      name: "Minimize",
+      hidden: true,
+    });
+    expect(strip).toContainElement(minimize);
+    // Tauri 只认按下的元素自身带属性：按钮上按下去不能变成拖窗口
+    expect(minimize).not.toHaveAttribute("data-tauri-drag-region");
+
+    await pressOutside(minimize);
+    // 返回 false 说明默认动作被拦了：焦点留在弹窗里，不算「点外面」
+    expect(fireEvent.mouseDown(minimize)).toBe(false);
+    fireEvent.click(minimize);
+
+    expect(onMinimize).toHaveBeenCalledOnce();
+    expect(onInteractOutside).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("reaches down to the page header when a banner pushes it below the top", () => {
+    const header = document.createElement("header");
+    vi.spyOn(header, "getBoundingClientRect").mockReturnValue({
+      bottom: 119,
+    } as DOMRect);
+    const main = document.createElement("main");
+    main.id = "content-area";
+    main.append(header);
+    document.body.append(main);
+    try {
+      renderDialog();
+      expect(getStrip()).toHaveStyle({ height: "119px" });
+    } finally {
+      main.remove();
+    }
   });
 
   it("covers sheets, including ones dismissed by clicking the overlay", async () => {
