@@ -410,14 +410,14 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "When enabled, the Codex CLI resume list shows official subscription and third-party sessions together (the Codex desktop app can show all sessions since a recent update and is unaffected). Note: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.\n\nYou can also migrate your existing official session history into the shared list (backed up to ~/.cc-switch/backups first; you can restore it when turning this off).",
-      "migrateExisting": "Also migrate existing official session history",
+      "message": "Official login and locally proxied API routes share the built-in OpenAI identity to preserve unified history and Dot access. API mode requires the local proxy; strict direct mode is not covered.\n\nExisting shared history can be migrated after backup. Backend-scoped search handles become readable history messages; original records remain in backups. Message text and encrypted reasoning stay unchanged.",
+      "migrateExisting": "Also migrate legacy shared history after backup",
       "confirm": "I understand, enable"
     },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "When turned off, the Codex CLI goes back to separate session lists for the official subscription and third-party providers (the desktop app still shows all sessions). Sessions created while this was on can't be told apart, so they stay in the third-party history and the CLI won't show them under the official subscription.",
-      "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
+      "message": "API routes return to a separate provider identity and Dot may be hidden. Sessions already migrated to the built-in OpenAI history bucket are not moved back automatically. The desktop app can still show all sessions.",
+      "restoreBackup": "Restore official history from legacy migration backups",
       "confirm": "Turn off"
     },
     "usage": {
@@ -895,7 +895,7 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "Official login and locally proxied API routes share the built-in OpenAI identity for unified history and Dot access. API mode requires the local proxy; strict direct mode is not covered. Legacy shared history can be migrated after backup. Backend-scoped search handles become readable messages; text and encrypted reasoning stay unchanged. Dot still requires a valid official login and account access.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",

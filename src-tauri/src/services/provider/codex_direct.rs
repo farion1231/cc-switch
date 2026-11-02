@@ -607,9 +607,6 @@ pub(crate) fn plan(
                 None => AuthGoal::ThirdParty,
             };
             match &projection.route {
-                Route::Official if crate::settings::unify_codex_session_history() => {
-                    (RouteWrite::OfficialMirror, None, auth)
-                }
                 Route::Official => (
                     RouteWrite::Official {
                         dormant_base_url: configured_proxy_base_url(db),
@@ -645,10 +642,22 @@ pub(crate) fn plan(
                 (
                     RouteWrite::OfficialProxy {
                         base_url: base_url.to_string(),
-                        unified: crate::settings::unify_codex_session_history(),
+                        unified: false,
                     },
                     None,
                     auth,
+                )
+            } else if crate::settings::unify_codex_session_history() {
+                // Keep the native ChatGPT login and built-in provider identity.
+                // Only the loopback proxy receives that login; its upstream
+                // adapter replaces credentials for the selected API provider.
+                (
+                    RouteWrite::OfficialProxy {
+                        base_url: base_url.to_string(),
+                        unified: false,
+                    },
+                    None,
+                    AuthGoal::KeepNative,
                 )
             } else {
                 // The proxy owns its URL/auth, but the route still owns the remote
@@ -1337,6 +1346,47 @@ pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppErr
 mod tests {
     use super::{is_proxy_base_url, stack_subagent_nested};
     use serde_json::json;
+
+    #[test]
+    #[serial_test::serial]
+    fn oauth_unified_proxy_keeps_builtin_identity_and_provider_key_out_of_live_config() {
+        use super::*;
+        let previous = crate::settings::get_settings();
+        let mut settings = previous.clone();
+        settings.unify_codex_session_history = true;
+        crate::settings::update_settings(settings).unwrap();
+        let db = Database::memory().unwrap();
+        let provider = Provider::with_id(
+            "api".to_string(),
+            "API".to_string(),
+            json!({
+                "auth":{"OPENAI_API_KEY":"sk-provider-only"},
+                "config":"model = \"gpt-6.1-sol\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nname = \"API\"\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        let target = Target::Proxy {
+            route: &provider,
+            base_url: "http://127.0.0.1:15721/v1",
+            stack: &[],
+        };
+        let planned = plan(&db, &Owner::None, &target, &Prepared::default());
+        crate::settings::update_settings(previous).unwrap();
+        let planned = planned.unwrap();
+        assert!(matches!(planned.auth, AuthGoal::KeepNative));
+        let mut doc = "model_provider = \"custom\"\n[model_providers.custom]\nexperimental_bearer_token = \"sk-old\"\n".parse::<toml_edit::DocumentMut>().unwrap();
+        planned
+            .config
+            .apply_to(std::path::Path::new("config.toml"), &mut doc)
+            .unwrap();
+        assert!(doc.get("model_provider").is_none(), "{doc}");
+        assert_eq!(
+            doc["openai_base_url"].as_str(),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert!(!doc.to_string().contains("sk-provider-only"));
+        assert!(!doc.to_string().contains("sk-old"));
+    }
 
     /// 子代理设置按合并目录校验：不在目录里、或者父 agent 用新版工具时会拒收的
     /// （`multi_agent_version = "disabled"`）都不写；强度不在档位里只写模型。
