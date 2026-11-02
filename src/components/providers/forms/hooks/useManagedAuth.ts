@@ -2,9 +2,10 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
-import { authApi, settingsApi } from "@/lib/api";
+import { authApi } from "@/lib/api";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
-import type { CodexLoginMethod } from "@/lib/api/auth";
+import type { CodexLoginMethod, ManagedLoginMethod } from "@/lib/api/auth";
+import { deliverLoginLink, readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { copyText } from "@/lib/clipboard";
 import type {
   ManagedAuthProvider,
@@ -16,7 +17,7 @@ type PollingState = "idle" | "polling" | "success" | "error";
 type LoginRequest = {
   targetAccountId?: string;
   generation: number;
-  loginMethod?: CodexLoginMethod;
+  loginMethod?: ManagedLoginMethod;
 };
 
 export function useManagedAuth(
@@ -142,22 +143,20 @@ export function useManagedAuth(
       setPollingState("polling");
       setError(null);
 
+      // 按授权中心的偏好打开浏览器，或只复制登录链接
+      const linkOnly = response.browser_opened
+        ? false
+        : (await deliverLoginLink(response.verification_uri, t)).linkOnly;
+      if (request.generation !== flowGenerationRef.current) return;
+
       // Browser login has no verification code; leave the clipboard untouched.
+      // 只复制了链接时也不复制验证码，免得盖掉剪贴板里的链接（等待块里有复制按钮）
       const browserFlow = !response.user_code;
-      if (!browserFlow) {
+      if (!browserFlow && !linkOnly) {
         try {
           await copyText(response.user_code);
         } catch (e) {
           console.debug("[ManagedAuth] Failed to copy user code:", e);
-        }
-      }
-      if (request.generation !== flowGenerationRef.current) return;
-
-      if (!response.browser_opened) {
-        try {
-          await settingsApi.openExternal(response.verification_uri);
-        } catch (e) {
-          console.debug("[ManagedAuth] Failed to open browser:", e);
         }
       }
       if (request.generation !== flowGenerationRef.current) return;
@@ -359,10 +358,25 @@ export function useManagedAuth(
       stopPolling();
       void queueBackendCancellation(previousDeviceCode).then(() => {
         if (generation !== flowGenerationRef.current) return;
-        startLoginMutation.mutate({ targetAccountId, generation, loginMethod });
+        // Claude 官方账号在 Windows 上由 Claude Code 自己开浏览器：不打开时要告诉后端
+        const method: ManagedLoginMethod | undefined =
+          authProvider === "claude_official" && !readAuthOpenBrowser()
+            ? "copy_link"
+            : loginMethod;
+        startLoginMutation.mutate({
+          targetAccountId,
+          generation,
+          loginMethod: method,
+        });
       });
     },
-    [queueBackendCancellation, startLoginMutation, stopPolling, loginMethod],
+    [
+      authProvider,
+      queueBackendCancellation,
+      startLoginMutation,
+      stopPolling,
+      loginMethod,
+    ],
   );
 
   const startAuth = useCallback(() => beginLogin(), [beginLogin]);
