@@ -770,7 +770,7 @@ mod tests {
         let temp_home = tempfile::tempdir().unwrap();
         let _guard = TestHomeGuard::set(temp_home.path());
         let agy_root = temp_home.path().join(".gemini/antigravity-cli");
-        let transcript_dir = agy_root.join("brain/sess_late/.system_generated/logs");
+        let transcript_dir = agy_root.join("brain/sess-late/.system_generated/logs");
         fs::create_dir_all(&transcript_dir).unwrap();
         let file_path = transcript_dir.join("transcript_full.jsonl");
         fs::write(
@@ -788,7 +788,7 @@ mod tests {
             let conn = db.conn.lock().unwrap();
             let (model, cost): (String, String) = conn
                 .query_row(
-                    "SELECT model, total_cost_usd FROM proxy_request_logs WHERE request_id='agy:sess_late:1'",
+                    "SELECT model, total_cost_usd FROM proxy_request_logs WHERE request_id='agy:sess-late:1'",
                     [],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
@@ -803,7 +803,7 @@ mod tests {
         // 随后生成 native conversation db
         let conv_dir = agy_root.join("conversations");
         fs::create_dir_all(&conv_dir).unwrap();
-        let native_db_path = conv_dir.join("sess_late.db");
+        let native_db_path = conv_dir.join("sess-late.db");
         let native_conn =
             native_models::write_test_database(&native_db_path, &[(1, 0, "gemini-3.8-flash-high")]);
         native_models::set_test_generation(
@@ -821,7 +821,7 @@ mod tests {
             let conn = db.conn.lock().unwrap();
             let (model, cost, latency): (String, String, i64) = conn
                 .query_row(
-                    "SELECT model, total_cost_usd, latency_ms FROM proxy_request_logs WHERE request_id='agy:sess_late:1'",
+                    "SELECT model, total_cost_usd, latency_ms FROM proxy_request_logs WHERE request_id='agy:sess-late:1'",
                     [],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
