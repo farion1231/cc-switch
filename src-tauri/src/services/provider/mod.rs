@@ -2185,7 +2185,14 @@ command = "legacy-cmd"
 
         let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
         let env = &live["env"];
-        assert_eq!(env["ANTHROPIC_API_KEY"], "PROXY_MANAGED");
+        // 行里只配了 `ANTHROPIC_API_KEY`（供上游跳用 x-api-key），本地占位符仍落在
+        // `ANTHROPIC_AUTH_TOKEN`，且本地不出现 `ANTHROPIC_API_KEY`（#8104）。
+        assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "PROXY_MANAGED");
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY"),
+            None,
+            "route mode must not present the placeholder as a custom API key"
+        );
         assert_eq!(env["ANTHROPIC_BASE_URL"], proxy_url.as_str());
         assert!(env.get("ANTHROPIC_MODEL").is_none(), "{live}");
         assert_eq!(
