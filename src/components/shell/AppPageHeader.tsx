@@ -1,11 +1,22 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { DRAG_REGION_ATTR, DRAG_REGION_STYLE } from "@/lib/platform";
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  DRAG_REGION_ATTR,
+  DRAG_REGION_ENABLED,
+  DRAG_REGION_STYLE,
+} from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
 /** 由外壳提供：Linux 自绘窗口按钮要接在每一屏页头的最右端。 */
 export const WindowControlsContext = createContext<ReactNode>(null);
 
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
+const PAGE_HEADER_HEIGHT = 52;
 
 interface AppPageHeaderProps {
   /** 标题前的可操作元素（二级页的返回按钮）；和 icon 二选一 */
@@ -110,5 +121,44 @@ export function AppPageHeader({
         </div>
       )}
     </header>
+  );
+}
+
+/**
+ * 模态遮罩的子元素：遮罩盖住了页头，这一条铺到页头下沿，弹窗打开时照样能拖窗口，
+ * 页头最右端的窗口按钮也在这里再放一份。
+ * 放在遮罩里才收得到指针事件（Radix 把遮罩外的 body 设成 pointer-events: none），
+ * 也自然排在弹窗内容下面。
+ */
+export function ModalDragStrip() {
+  const windowControls = useContext(WindowControlsContext);
+  const [height, setHeight] = useState(PAGE_HEADER_HEIGHT);
+  // 页头上方可能有环境变量警告条，得量实际位置，窗口按钮才能和页头里的对齐
+  useLayoutEffect(() => {
+    const header = document.querySelector("#content-area header");
+    const bottom = header?.getBoundingClientRect().bottom;
+    if (bottom) setHeight(bottom);
+  }, []);
+  if (!windowControls && !DRAG_REGION_ENABLED) return null;
+  return (
+    <div
+      data-tauri-drag-region
+      className="absolute inset-x-0 top-0"
+      style={{ height, ...DRAG_REGION_STYLE }}
+      // 不让 pointerdown 冒到 document：「点遮罩就关」的弹窗不能一拖窗口就关掉
+      onPointerDown={(event) => event.stopPropagation()}
+      // 同理不让焦点跑到遮罩里：焦点离开弹窗也算「点外面」
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      {windowControls && (
+        // 让开页头 1px 下边框，和页头里的按钮严丝合缝，不然半透明遮罩下会有重影
+        <div
+          className="absolute bottom-px end-4 flex items-center gap-1"
+          style={{ height: PAGE_HEADER_HEIGHT - 1, ...NO_DRAG }}
+        >
+          {windowControls}
+        </div>
+      )}
+    </div>
   );
 }

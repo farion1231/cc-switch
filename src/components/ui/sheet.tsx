@@ -1,7 +1,10 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, X } from "lucide-react";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import {
+  AppPageHeader,
+  ModalDragStrip,
+} from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
 import { DRAG_REGION_ATTR } from "@/lib/platform";
 import { useUnsavedChangesTracker } from "@/lib/unsavedChanges";
@@ -45,7 +48,9 @@ const SheetContent = React.forwardRef<
     ref,
   ) => (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
+        <ModalDragStrip />
+      </DialogPrimitive.Overlay>
       <DialogPrimitive.Content
         ref={ref}
         style={{ width, ...style }}
