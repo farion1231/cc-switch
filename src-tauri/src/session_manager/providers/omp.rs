@@ -1,15 +1,20 @@
 //! Oh My Pi 会话：格式沿用 Pi（会话树、活动分支、转录块），差异见 `pi::Dialect`。
 
 use super::pi::{self, Dialect, SessionLayout, SessionRootResolution};
+use super::utils::FileParseCache;
 use crate::session_manager::{SessionMessage, SessionMeta};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
 
 pub(crate) const OMP: Dialect = Dialect {
     provider_id: "omp",
     label: "Oh My Pi",
     resolve_root: resolve_session_root,
     resume_command,
+    parse_cache: &PARSE_CACHE,
     title_slot: true,
     model_selector: true,
 };

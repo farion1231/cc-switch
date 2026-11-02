@@ -18,6 +18,9 @@ interface UseSessionSearchResult {
 
 /** 建索引时每一片最多占用主线程的时间 */
 const INDEX_SLICE_MS = 8;
+// Reuse the two most recently viewed providers without retaining an index for
+// every provider (a full substring index can be much larger than its input).
+const INDEX_CACHE_SIZE = 2;
 
 interface SessionIndexBuilder {
   /** 继续建索引，到点就停；返回是否已全部建完 */
@@ -82,10 +85,22 @@ export function useSessionSearch({
     return sessions.filter((s) => s.providerId === providerFilter);
   }, [sessions, providerFilter]);
 
-  const builder = useMemo(
-    () => createIndexBuilder(filteredByProvider),
-    [filteredByProvider],
+  // A new data snapshot invalidates every index, including removed/renamed
+  // sessions. Switching tabs within the same snapshot can resume or reuse one.
+  const builders = useMemo(
+    () => new Map<string, SessionIndexBuilder>(),
+    [sessions],
   );
+  const builder = useMemo(() => {
+    const next =
+      builders.get(providerFilter) ?? createIndexBuilder(filteredByProvider);
+    builders.delete(providerFilter);
+    builders.set(providerFilter, next);
+    if (builders.size > INDEX_CACHE_SIZE) {
+      builders.delete(builders.keys().next().value!);
+    }
+    return next;
+  }, [builders, filteredByProvider, providerFilter]);
 
   useEffect(() => {
     const traceId = `index:${providerFilter}(${filteredByProvider.length})`;
@@ -100,7 +115,10 @@ export function useSessionSearch({
     };
     startSessionTrace(traceId);
     timer = setTimeout(buildSlice, 0);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      endSessionTrace(traceId, "cancelled");
+    };
   }, [builder, filteredByProvider.length, providerFilter]);
 
   const search = useCallback(

@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import FlexSearch from "flexsearch";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
@@ -305,6 +306,31 @@ describe("SessionManagerPage", () => {
     expect(
       within(sessionList()).getByRole("heading", { name: "更早" }),
     ).toBeInTheDocument();
+  });
+
+  it("reuses the search index after switching between visible apps", async () => {
+    const add = vi.spyOn(FlexSearch.Index.prototype, "add");
+    try {
+      renderPage("codex");
+      await screen.findByText("Alpha Session");
+      fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+        target: { value: "Session" },
+      });
+      await openAppMenu();
+      await userEvent.click(
+        screen.getByRole("menuitemradio", { name: /^Claude Code/ }),
+      );
+      await screen.findByRole("button", { name: "Claude Session" });
+      const built = add.mock.calls.length;
+      await openAppMenu();
+      await userEvent.click(
+        screen.getByRole("menuitemradio", { name: /^Codex/ }),
+      );
+      await screen.findByRole("button", { name: "Alpha Session" });
+      expect(add).toHaveBeenCalledTimes(built);
+    } finally {
+      add.mockRestore();
+    }
   });
 
   it("only offers apps that are shown in the sidebar", async () => {

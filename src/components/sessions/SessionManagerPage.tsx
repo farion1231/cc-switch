@@ -195,15 +195,21 @@ export function SessionManagerPage({
 
   // 下拉里只列「应用」页设为显示的应用；Claude Code 的会话在 Claude Desktop 显示时也算，
   // DeepSeek Harness（Web 与 Desktop 共用会话目录，合并成一项）在 Desktop 显示时也算
-  const availableApps = useMemo(() => {
+  const visibleApps = useMemo(() => {
     const visible = { ...DEFAULT_VISIBLE_APPS, ...settings?.visibleApps };
     return SESSION_APP_IDS.filter(
-      (app) =>
-        visible[app] ||
-        (app === "claude" && visible["claude-desktop"]) ||
-        app === appFilter,
+      (app) => visible[app] || (app === "claude" && visible["claude-desktop"]),
     );
-  }, [settings?.visibleApps, appFilter]);
+  }, [settings?.visibleApps]);
+  const availableApps = useMemo(() => {
+    // Switching between visible apps does not change the searchable snapshot.
+    // Keep its identity so useSessionSearch can reuse the previous app's index.
+    if (appFilter === "all" || visibleApps.includes(appFilter))
+      return visibleApps;
+    return SESSION_APP_IDS.filter(
+      (app) => visibleApps.includes(app) || app === appFilter,
+    );
+  }, [visibleApps, appFilter]);
 
   const scopedSessions = useMemo(
     () =>

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,7 +13,7 @@ use super::codex_items::{opt_str, Str};
 use super::pi_blocks::PiTranscript;
 use super::utils::for_each_jsonl_value;
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, scan_files, truncate_summary,
+    extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, FileParseCache,
     TITLE_MAX_CHARS,
 };
 use crate::session_manager::terminal::shell_escape;
@@ -62,6 +63,7 @@ pub(crate) struct Dialect {
     pub label: &'static str,
     pub resolve_root: fn() -> SessionRootResolution,
     pub resume_command: fn(&str) -> Result<String, String>,
+    pub parse_cache: &'static LazyLock<FileParseCache>,
     /// Oh My Pi：首行可能是定宽的 `{"type":"title"}` 标题槽，会话头里也可能带 `title`
     pub title_slot: bool,
     /// Oh My Pi 的 `model_change` 只写 `provider/id` 一个串，Pi 拆成 `provider` + `modelId`
@@ -73,9 +75,12 @@ const PI: Dialect = Dialect {
     label: "Pi",
     resolve_root: resolve_session_root,
     resume_command: |source| Ok(format!("pi --session {}", shell_escape(source))),
+    parse_cache: &PARSE_CACHE,
     title_slot: false,
     model_selector: false,
 };
+
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
 
 #[derive(Debug)]
 struct SessionHeader {
@@ -279,17 +284,32 @@ pub(crate) fn scan_sessions_for(d: &Dialect) -> Vec<SessionMeta> {
 fn scan_sessions_in_root(d: &Dialect, root: &Path, layout: SessionLayout) -> Vec<SessionMeta> {
     let mut files = Vec::new();
     collect_jsonl_files(root, layout, &mut files, true);
-    scan_files(files, |path| match parse_session(d, path) {
-        Ok(session) => Ok(Some(session)),
-        Err(error) => {
-            log::debug!(
-                "Skipping invalid {} session {}: {error}",
-                d.label,
-                path.display()
+    scan_session_files(d, files, d.parse_cache)
+}
+
+fn scan_session_files(
+    d: &Dialect,
+    files: Vec<PathBuf>,
+    cache: &FileParseCache,
+) -> Vec<SessionMeta> {
+    cache
+        .scan(files, |path| {
+            // 读取失败不能记为永久空结果，下一轮即使 mtime 未变也必须重试。
+            parse_session_metadata(d, path)
+                .map(Some)
+                .map_err(std::io::Error::other)
+        })
+        .into_iter()
+        .filter_map(|mut session| {
+            // OMP 的命令还依赖当前 profile/环境；文件没变也要刷新这些设置。
+            session.resume_command = Some(
+                (d.resume_command)(session.source_path.as_deref()?)
+                    .map_err(|error| log::debug!("{} resume command: {error}", d.label))
+                    .ok()?,
             );
-            Ok(None)
-        }
-    })
+            Some(session)
+        })
+        .collect()
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -382,7 +402,7 @@ fn layout_for_current_root(d: &Dialect, root: &Path) -> Result<SessionLayout, St
     Ok(layout)
 }
 
-fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
+fn parse_session_metadata(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
     let source = path.canonicalize().map_err(|error| {
         format!(
             "Failed to resolve {} session {}: {error}",
@@ -416,7 +436,7 @@ fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
         project_dir: (!header.cwd.trim().is_empty()).then(|| header.cwd.clone()),
         created_at: header.timestamp,
         last_active_at: summary.last_active_at.or(header.timestamp),
-        resume_command: Some((d.resume_command)(&source_path)?),
+        resume_command: None,
         source_path: Some(source_path),
     })
 }
@@ -943,6 +963,123 @@ fn collect_child_session_files(dir: &Path, output: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Uncached reference: metadata plus the current runtime resume settings.
+    fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
+        let mut session = parse_session_metadata(d, path)?;
+        session.resume_command = Some((d.resume_command)(session.source_path.as_deref().unwrap())?);
+        Ok(session)
+    }
+
+    #[test]
+    fn list_cache_refreshes_changed_files_and_resume_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("session.jsonl");
+        write_session_header(&path, "cached");
+        let cache = FileParseCache::new();
+        let scan = |dialect: &Dialect| scan_session_files(dialect, vec![path.clone()], &cache);
+        let first = scan(&PI);
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            serde_json::to_value(scan(&PI)).unwrap(),
+            serde_json::to_value(&first).unwrap()
+        );
+
+        // Commands depend on settings in addition to the fingerprinted file.
+        let changed_settings = Dialect {
+            resume_command: |_| Ok("new profile command".to_string()),
+            ..PI
+        };
+        assert_eq!(
+            scan(&changed_settings)[0].resume_command.as_deref(),
+            Some("new profile command")
+        );
+
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({"type":"session_info", "name":"Renamed"})
+        )
+        .unwrap();
+        drop(file);
+        assert_eq!(scan(&PI)[0].title.as_deref(), Some("Renamed"));
+        fs::remove_file(&path).unwrap();
+        assert!(scan(&PI).is_empty());
+    }
+
+    #[test]
+    fn list_cache_retries_errors_even_with_an_unchanged_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("session.jsonl");
+        let valid = r#"{"type":"session","version":3,"id":"one","cwd":"/work"}"#;
+        fs::write(&path, valid.replace("session", "invalid")).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        let cache = FileParseCache::new();
+        assert!(scan_session_files(&PI, vec![path.clone()], &cache).is_empty());
+        fs::write(&path, valid).unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert_eq!(
+            scan_session_files(&PI, vec![path], &cache)[0].session_id,
+            "one"
+        );
+    }
+
+    #[test]
+    #[ignore = "synthetic list benchmark; run with --ignored --nocapture"]
+    fn benchmark_pi_list_cache() {
+        use std::time::Instant;
+        let temp = tempfile::tempdir().unwrap();
+        let header = r#"{"type":"session","version":3,"id":"bench","cwd":"/work"}"#;
+        let tool = serde_json::json!({"type":"message","message":{"role":"toolResult","content":"x".repeat(16 * 1024)}});
+        let body = format!("{header}\n{}", format!("{tool}\n").repeat(8));
+        let files: Vec<_> = (0..512)
+            .map(|i| {
+                let path = temp.path().join(format!("{i}.jsonl"));
+                fs::write(&path, &body).unwrap();
+                path
+            })
+            .collect();
+        let cache = FileParseCache::new();
+        let start = Instant::now();
+        let reference = super::super::utils::scan_files(files.clone(), |path| {
+            parse_session(&PI, path)
+                .map(Some)
+                .map_err(std::io::Error::other)
+        });
+        let baseline = start.elapsed();
+        let start = Instant::now();
+        let cold = scan_session_files(&PI, files.clone(), &cache);
+        let cold_time = start.elapsed();
+        let start = Instant::now();
+        let warm = scan_session_files(&PI, files.clone(), &cache);
+        let warm_time = start.elapsed();
+        let changed = files[0].clone();
+        fs::write(
+            &changed,
+            format!("{body}{{\"type\":\"session_info\",\"name\":\"updated\"}}\n"),
+        )
+        .unwrap();
+        let start = Instant::now();
+        let updated = scan_session_files(&PI, files, &cache);
+        let changed_time = start.elapsed();
+        assert_eq!(
+            serde_json::to_value(&reference).unwrap(),
+            serde_json::to_value(cold).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reference).unwrap(),
+            serde_json::to_value(warm).unwrap()
+        );
+        assert_eq!(updated[0].title.as_deref(), Some("updated"));
+        eprintln!("Pi 512 files / {} MiB: uncached={baseline:?}, cold={cold_time:?}, warm={warm_time:?}, one_changed={changed_time:?}", body.len() * 512 / 1024 / 1024);
+    }
 
     /// 列表用的轻量读取必须和完整读取算出同一份摘要，包括探测判断不了的行
     #[test]

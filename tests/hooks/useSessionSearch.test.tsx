@@ -131,4 +131,59 @@ describe("useSessionSearch", () => {
 
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("reuses a completed index when returning to the previous provider", () => {
+    const add = vi.spyOn(FlexSearch.Index.prototype, "add");
+    const sessions = [session(1), session(2, { providerId: "codex" })];
+    const { result, rerender } = renderHook(
+      ({ providerFilter }) => useSessionSearch({ sessions, providerFilter }),
+      { initialProps: { providerFilter: "claude" } },
+    );
+    expect(ids(result.current.search("title"))).toEqual(["session-1"]);
+    rerender({ providerFilter: "codex" });
+    expect(ids(result.current.search("title"))).toEqual(["session-2"]);
+    expect(add).toHaveBeenCalledTimes(2);
+    rerender({ providerFilter: "claude" });
+    expect(ids(result.current.search("title"))).toEqual(["session-1"]);
+    act(() => vi.runAllTimers());
+    expect(add).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates cached indexes when sessions change", () => {
+    const { result, rerender } = renderHook(
+      (props) => useSessionSearch(props),
+      {
+        initialProps: {
+          sessions: [session(1, { title: "oldname" })],
+          providerFilter: "claude",
+        },
+      },
+    );
+    expect(ids(result.current.search("oldname"))).toEqual(["session-1"]);
+    rerender({ sessions: [], providerFilter: "codex" });
+    rerender({
+      sessions: [session(2, { title: "newname" })],
+      providerFilter: "claude",
+    });
+    expect(result.current.search("oldname")).toEqual([]);
+    expect(ids(result.current.search("newname"))).toEqual(["session-2"]);
+  });
+
+  it("bounds retained indexes while keeping evicted providers searchable", () => {
+    const add = vi.spyOn(FlexSearch.Index.prototype, "add");
+    const sessions = [
+      session(1),
+      session(2, { providerId: "codex" }),
+      session(3, { providerId: "pi" }),
+    ];
+    const { result, rerender } = renderHook(
+      ({ providerFilter }) => useSessionSearch({ sessions, providerFilter }),
+      { initialProps: { providerFilter: "claude" } },
+    );
+    for (const providerFilter of ["claude", "codex", "pi", "claude"]) {
+      rerender({ providerFilter });
+      expect(result.current.search("title")[0].providerId).toBe(providerFilter);
+    }
+    expect(add).toHaveBeenCalledTimes(4);
+  });
 });

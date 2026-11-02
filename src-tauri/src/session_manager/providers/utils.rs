@@ -57,6 +57,9 @@ where
     if files.is_empty() {
         return Vec::new();
     }
+    if limit <= 1 || files.len() == 1 {
+        return files.iter().filter_map(|path| visit(path)).collect();
+    }
     // 文件大小悬殊，按「谁空闲谁取下一个」分发，不预先切块
     let next = AtomicUsize::new(0);
     let worker = || {
@@ -72,21 +75,26 @@ where
         }
         found
     };
-    let mut found: Vec<(usize, T)> = std::thread::scope(|scope| {
+    let found: Vec<Vec<(usize, T)>> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..limit.clamp(1, files.len()))
             .map(|_| scope.spawn(worker))
             .collect();
         workers
             .into_iter()
-            .flat_map(|handle| handle.join().unwrap_or_default())
+            .map(|handle| handle.join().unwrap_or_default())
             .collect()
     });
-    found.sort_unstable_by_key(|(index, _)| *index);
-    found.into_iter().map(|(_, value)| value).collect()
+    // 文件下标已经是稠密的 0..N，直接归位即可，不必再做 O(N log N) 排序。
+    let mut ordered: Vec<Option<T>> = (0..files.len()).map(|_| None).collect();
+    for (index, value) in found.into_iter().flatten() {
+        ordered[index] = Some(value);
+    }
+    ordered.into_iter().flatten().collect()
 }
 
 /// 并行解析 `files`，并行数取自设置。返回能解析出会话的那些，顺序与 `files` 一致；
 /// 读不了的文件返回 `Err`，本轮跳过。
+#[cfg(test)]
 pub fn scan_files<F>(files: Vec<PathBuf>, parse: F) -> Vec<SessionMeta>
 where
     F: Fn(&Path) -> io::Result<Option<SessionMeta>> + Sync,
@@ -146,20 +154,27 @@ impl FileParseCache {
         F: Fn(&Path) -> io::Result<Option<SessionMeta>> + Sync,
     {
         // 锁中毒（上次扫描 panic）时丢掉旧缓存重来，不影响本次结果
-        let previous = match self.entries.lock() {
-            Ok(mut guard) => std::mem::take(&mut *guard),
+        // 同一缓存的重叠刷新串行复用结果，避免后一次扫描拿到空缓存重复解析。
+        // 不同 provider 的缓存仍可并行扫描。
+        let mut guard = match self.entries.lock() {
+            Ok(guard) => guard,
             Err(poisoned) => {
                 let mut guard = poisoned.into_inner();
                 guard.clear();
-                HashMap::new()
+                self.entries.clear_poison();
+                guard
             }
         };
+        let mut previous = std::mem::take(&mut *guard);
 
         let scanned = map_files_parallel(&files, limit, &|path: &Path| {
             let file_meta = std::fs::metadata(path).ok()?;
             let (modified, len) = (file_meta.modified().ok(), file_meta.len());
             let meta = match previous.get(path) {
-                Some(entry) if entry.modified == modified && entry.len == len => entry.meta.clone(),
+                Some(entry) if entry.modified == modified && entry.len == len => {
+                    // 命中项在归并时直接移入下一轮缓存，避免把所有字符串复制两次。
+                    return Some((path.to_path_buf(), None));
+                }
                 _ => {
                     let _slot = ScanSlot::acquire(limit);
                     match parse(path) {
@@ -175,26 +190,30 @@ impl FileParseCache {
             };
             Some((
                 path.to_path_buf(),
-                CachedParse {
+                Some(CachedParse {
                     modified,
                     len,
                     meta,
-                },
+                }),
             ))
         });
 
         let mut next = HashMap::with_capacity(scanned.len());
         let mut sessions = Vec::new();
         for (path, entry) in scanned {
+            let entry = entry.unwrap_or_else(|| {
+                previous
+                    .remove(&path)
+                    .or_else(|| next.remove(&path))
+                    .expect("cached file")
+            });
             if let Some(meta) = &entry.meta {
                 sessions.push(meta.clone());
             }
             next.insert(path, entry);
         }
 
-        if let Ok(mut guard) = self.entries.lock() {
-            *guard = next;
-        }
+        *guard = next;
         sessions
     }
 }
@@ -545,6 +564,70 @@ mod tests {
         });
 
         assert!(peak.load(Ordering::SeqCst) <= 2);
+    }
+
+    #[test]
+    fn overlapping_scans_share_the_completed_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = numbered_files(dir.path(), 32);
+        let cache = FileParseCache::new();
+        let calls = AtomicUsize::new(0);
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..2)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        cache.scan_with_limit(files.clone(), 4, |path| {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                            Ok(meta_from_file(path))
+                        })
+                    })
+                })
+                .collect();
+            for handle in handles {
+                assert_eq!(handle.join().unwrap().len(), files.len());
+            }
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), files.len());
+    }
+
+    #[test]
+    fn warm_scan_preserves_duplicate_input_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = numbered_files(dir.path(), 2);
+        let cache = FileParseCache::new();
+        cache.scan_with_limit(files.clone(), 2, |path| Ok(meta_from_file(path)));
+        let repeated = vec![files[0].clone(), files[1].clone(), files[0].clone()];
+        let sessions = cache.scan_with_limit(repeated, 2, |_| panic!("all files are cached"));
+        assert_eq!(
+            session_ids(sessions),
+            ["session-0", "session-1", "session-0"]
+        );
+    }
+
+    #[test]
+    fn cache_can_be_reused_after_a_serial_parser_panics() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = numbered_files(dir.path(), 1);
+        let cache = FileParseCache::new();
+        assert!(std::panic::catch_unwind(|| {
+            cache.scan_with_limit(files.clone(), 1, |_| panic!("parser failed"));
+        })
+        .is_err());
+        assert_eq!(
+            cache
+                .scan_with_limit(files.clone(), 1, |path| Ok(meta_from_file(path)))
+                .len(),
+            1
+        );
+        assert_eq!(
+            cache
+                .scan_with_limit(files, 1, |_| panic!("recovered entry should be cached"))
+                .len(),
+            1
+        );
     }
 
     /// 读取失败不能缓存成「没有会话」：恢复读取后，文件没变也要重新解析出来
