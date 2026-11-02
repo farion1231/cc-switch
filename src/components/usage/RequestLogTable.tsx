@@ -474,9 +474,14 @@ export function RequestLogTable({
         <td className={cn(usageTable.td, usageTable.mono)}>
           <HoverTip
             content={
-              log.reasoningEffort
-                ? `${t("usage.reasoningEffort")}: ${log.reasoningEffort}`
-                : undefined
+              log.reasoningEffort ? (
+                <>
+                  <div>{modelTitle}</div>
+                  <div>
+                    {t("usage.reasoningEffort")}: {log.reasoningEffort}
+                  </div>
+                </>
+              ) : undefined
             }
             side="right"
             disableHoverableContent

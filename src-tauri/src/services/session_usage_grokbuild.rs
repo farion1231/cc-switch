@@ -919,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn session_reasoning_effort_is_recorded_and_backfilled_without_reimport() -> Result<(), AppError>
+    fn session_reasoning_effort_is_recorded_on_insert_and_never_rewritten() -> Result<(), AppError>
     {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
@@ -941,34 +941,51 @@ mod tests {
                 &crate::services::session_usage::load_sync_cursors(db).unwrap(),
             )
         };
-        let effort = |db: &Database| -> Option<String> {
-            db.conn
-                .lock()
+        let efforts = |db: &Database| -> Vec<Option<String>> {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT reasoning_effort FROM proxy_request_logs ORDER BY created_at")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| row.get(0))
                 .unwrap()
-                .query_row(
-                    "SELECT reasoning_effort FROM proxy_request_logs",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            rows
         };
         assert_eq!(sync(&db)?.imported, 1);
-        assert_eq!(effort(&db).as_deref(), Some("high"));
+        assert_eq!(efforts(&db), vec![Some("high".to_string())]);
 
-        // 导入早于强度记录的旧行：文件未变时只补字段，被清理的明细不会被重建。
+        // 中途换档：新轮次记录新档位，已入库的轮次不被 summary 改写。
         std::fs::write(&summary, r#"{"reasoning_effort":"low"}"#).unwrap();
+        let line = usage_event_line(
+            OLD_EPOCH + 60,
+            "p2",
+            &model_counters("grok-4.5-build", 200, 20, 0, 1),
+        );
+        writeln!(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap(),
+            "{line}"
+        )
+        .unwrap();
+        lock_conn!(db.conn).execute("UPDATE session_log_sync SET last_modified = 0", [])?;
+        assert_eq!(sync(&db)?.imported, 1);
+        assert_eq!(
+            efforts(&db),
+            vec![Some("high".to_string()), Some("low".to_string())]
+        );
+
+        // 重扫既有行（重置游标）：缺失的强度保持缺失，费用不被当前价格重写。
         lock_conn!(db.conn).execute_batch(
-            "UPDATE proxy_request_logs SET reasoning_effort = NULL;
-             UPDATE session_log_sync SET reasoning_effort_synced = 0;",
+            "UPDATE proxy_request_logs SET reasoning_effort = NULL, total_cost_usd = '0.42';
+             DELETE FROM session_log_sync;",
         )?;
         assert_eq!(sync(&db)?.imported, 0);
-        assert_eq!(effort(&db).as_deref(), Some("low"));
-        lock_conn!(db.conn).execute_batch(
-            "DELETE FROM proxy_request_logs;
-             UPDATE session_log_sync SET reasoning_effort_synced = 0;",
-        )?;
-        assert_eq!(sync(&db)?.imported, 0);
-        assert_eq!(query_rows(&db)?.len(), 0);
+        assert_eq!(efforts(&db), vec![None, None]);
+        assert!(query_costs(&db)?.iter().all(|(_, cost)| cost == "0.42"));
         Ok(())
     }
 
