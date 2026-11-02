@@ -4813,7 +4813,7 @@
       "help": "Evet, son seçiminiz varsayılandır. Bunu istediğiniz zaman Yüklendi altında değiştirebilirsiniz. ZIP'ten yüklemek ve yedeklemeden geri yüklemek için de bu seçeneği kullanın."
     },
     "discover": {
-      "searchPlaceholder": "Becerileri veya depoları arayın",
+      "searchPlaceholder": "Ad, açıklama veya repoyu arayın",
       "searchAria": "Keşfet’te ara",
       "skillsShPlaceholder": "En az 2 karakter, Enter'a basın",
       "skillsShAria": "Skills.sh'de arama yapın",
@@ -4821,7 +4821,7 @@
       "skillsShNone": "skills.sh'de “{{query}}” için hiçbir şey bulunamadı",
       "sourceAria": "Kaynağı keşfedin",
       "sourceRepos": "Depolar · {{count}}",
-      "reload": "Kod depolarını yeniden yükle",
+      "reload": "Depoları yenile",
       "listLabel": "Yükleyebileceğiniz beceriler",
       "installed": "Yüklendi",
       "installedAria": "{{name}}, {{count}} uygulamalarına yüklenir; Yüklendi altında görüntüleyin",
@@ -4840,8 +4840,8 @@
       "onlyUninstalled": "Yalnızca yüklü değil"
     },
     "repos": {
-      "buttonAll": "Depolar: hepsi",
-      "buttonSome": "Depolar: {{count}} / {{total}}",
+      "buttonAll": "Kaynak: hepsi",
+      "buttonSome": "Kaynak: {{count}} / {{total}}",
       "popoverAria": "Discover tarafından kullanılan depolar",
       "enableAria": "Keşfet'te {{repo}}'yi kullanın",
       "disabledShort": "Kapalı",

@@ -4841,7 +4841,7 @@
       "help": "はい、前回の選択が既定になります。インストール後も「インストール済み」でいつでも変更できます。ZIP からのインストールとバックアップからの復元もこの選択を使います。"
     },
     "discover": {
-      "searchPlaceholder": "Skill かリポジトリを検索",
+      "searchPlaceholder": "名前・説明・リポジトリを検索",
       "searchAria": "「見つける」を検索",
       "skillsShPlaceholder": "2 文字以上、Enter で検索",
       "skillsShAria": "skills.sh で検索",
@@ -4849,7 +4849,7 @@
       "skillsShNone": "skills.sh で「{{query}}」は見つかりませんでした",
       "sourceAria": "探す場所",
       "sourceRepos": "リポジトリ · {{count}}",
-      "reload": "リポジトリを読み直す",
+      "reload": "リポジトリを更新",
       "listLabel": "インストールできる Skill",
       "installed": "インストール済み",
       "installedAria": "{{name}} は {{count}} アプリにインストール済み。「インストール済み」で表示",
@@ -4868,8 +4868,8 @@
       "onlyUninstalled": "未インストールのみ"
     },
     "repos": {
-      "buttonAll": "リポジトリ：すべて",
-      "buttonSome": "リポジトリ：{{total}} 件中 {{count}}",
+      "buttonAll": "ソース：すべて",
+      "buttonSome": "ソース：{{total}} 件中 {{count}}",
       "popoverAria": "「見つける」で使うリポジトリ",
       "enableAria": "「見つける」で {{repo}} を使う",
       "disabledShort": "停止中",

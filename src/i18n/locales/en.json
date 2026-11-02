@@ -4841,7 +4841,7 @@
       "help": "Yes, your last choice is the default. You can change it any time under Installed. Installing from ZIP and restoring from backup use this choice too."
     },
     "discover": {
-      "searchPlaceholder": "Search Skills or repos",
+      "searchPlaceholder": "Search name, description or repo",
       "searchAria": "Search Discover",
       "skillsShPlaceholder": "At least 2 characters, press Enter",
       "skillsShAria": "Search skills.sh",
@@ -4849,7 +4849,7 @@
       "skillsShNone": "Nothing found on skills.sh for “{{query}}”",
       "sourceAria": "Discover source",
       "sourceRepos": "Repos · {{count}}",
-      "reload": "Reload repositories",
+      "reload": "Refresh repos",
       "listLabel": "Skills you can install",
       "installed": "Installed",
       "installedAria": "{{name}} is installed in {{count}} apps; view it under Installed",
@@ -4868,8 +4868,8 @@
       "onlyUninstalled": "Not installed only"
     },
     "repos": {
-      "buttonAll": "Repos: all",
-      "buttonSome": "Repos: {{count}} of {{total}}",
+      "buttonAll": "Source: all",
+      "buttonSome": "Source: {{count}} of {{total}}",
       "popoverAria": "Repositories used by Discover",
       "enableAria": "Use {{repo}} in Discover",
       "disabledShort": "Off",

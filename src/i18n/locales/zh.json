@@ -4841,7 +4841,7 @@
       "help": "会，默认用你上次的选择。装好后也能在「已安装」里随时调整。从 ZIP 安装和从备份恢复也用这里的选择。"
     },
     "discover": {
-      "searchPlaceholder": "搜索 Skill 或仓库",
+      "searchPlaceholder": "搜索名称、描述或仓库",
       "searchAria": "搜索发现里的 Skill",
       "skillsShPlaceholder": "至少 2 个字，回车搜索",
       "skillsShAria": "在 skills.sh 搜索",
@@ -4849,7 +4849,7 @@
       "skillsShNone": "skills.sh 上没有找到“{{query}}”",
       "sourceAria": "发现来源",
       "sourceRepos": "仓库 · {{count}}",
-      "reload": "重新读取仓库",
+      "reload": "刷新仓库",
       "listLabel": "可安装的 Skill",
       "installed": "已安装",
       "installedAria": "{{name}} 已安装在 {{count}} 个应用，在「已安装」里查看",
@@ -4868,8 +4868,8 @@
       "onlyUninstalled": "只看未安装"
     },
     "repos": {
-      "buttonAll": "仓库：全部",
-      "buttonSome": "仓库：{{count}} / {{total}}",
+      "buttonAll": "来源：全部",
+      "buttonSome": "来源：{{count}} / {{total}}",
       "popoverAria": "参与发现的仓库",
       "enableAria": "在发现里使用 {{repo}}",
       "disabledShort": "停用",
