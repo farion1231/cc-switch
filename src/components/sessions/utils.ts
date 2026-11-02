@@ -48,10 +48,10 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   ],
 };
 
-/** MiniMax Code / Kimi / TRAE CLI 的会话只能在各自客户端里删（后端也会拒绝）。 */
+/** MiniMax Code / TRAE CLI 等的会话只能在各自客户端里删（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "kimi", "dsh", "trae"].includes(session.providerId);
+  !["mcode", "agy", "dsh", "trae"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

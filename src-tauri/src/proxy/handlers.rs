@@ -279,7 +279,7 @@ pub async fn handle_claude_desktop_models(
     let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
     let mut response = crate::claude_desktop_config::model_list_response(provider)
         .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-    // 聚合模式下 profile 里关了模型发现，这里补上聚合的模型只是让两边一致
+    // 聚合的模型 Desktop 只从 profile 里拿，这里补上是为了带上说明，两边也一致
     let stacked = crate::mode::stack::desktop_published_now(&state.db).unwrap_or_else(|error| {
         log::warn!("[Claude Desktop] 读取聚合模型失败，只返回路由那家的: {error}");
         Vec::new()
@@ -295,6 +295,12 @@ pub async fn handle_claude_desktop_models(
             if model.supports_1m {
                 item["supports1m"] = json!(true);
             }
+            item["description"] =
+                json!(crate::claude_desktop_config::discovered_model_description(
+                    &model.provider_name,
+                    &model.upstream,
+                    model.supports_1m,
+                ));
             item
         }));
         let last_id = data.last().and_then(|item| item.get("id")).cloned();
@@ -2495,6 +2501,7 @@ fn codex_proxy_error_json(
 
 fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
     match error {
+        ProxyError::CodexQuotaProtection(_) => "cc_switch_codex_quota_protection",
         ProxyError::ForwardFailed(_) => "cc_switch_forward_failed",
         ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => "cc_switch_timeout",
         ProxyError::NoAvailableProvider => "cc_switch_no_available_provider",
