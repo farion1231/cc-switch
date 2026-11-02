@@ -180,19 +180,20 @@ impl Database {
         Ok(db)
     }
 
-    /// 主库改用 WAL：提交时只追加写日志，不再每次都同步刷回主文件
-    /// （真实库上单行写入 p50 从约 3ms 降到约 0.1ms，首次导入会话用量快近一倍）。
+    /// 主库改用 WAL：提交时只追加写日志，不再回写主文件和回滚日志，减少每次提交的同步次数。
     ///
-    /// WAL 下 `synchronous = NORMAL` 只在检查点时同步，断电最多丢最近几次提交，
-    /// 不会损坏数据库。网络盘等不支持共享内存的位置切换会失败，此时保持原模式继续用。
+    /// 同步级别保持 `synchronous = FULL`：每次提交都把 WAL 刷到磁盘，断电也不丢已提交的
+    /// 数据（供应商、设置等配置数据同样写在主库里，不为写入速度降低持久性）。
+    /// 网络盘等不支持共享内存的位置切换会失败，此时保持原模式继续用。
     /// 备份、恢复都走 Backup API，同步走 SQL 导出，都不直接复制库文件，不受影响。
     pub(crate) fn enable_wal(conn: &Connection) {
         match conn.query_row("PRAGMA journal_mode = WAL;", [], |row| {
             row.get::<_, String>(0)
         }) {
             Ok(mode) if mode.eq_ignore_ascii_case("wal") => {
-                if let Err(e) = conn.execute_batch("PRAGMA synchronous = NORMAL;") {
-                    log::warn!("Failed to set synchronous=NORMAL for WAL: {e}");
+                // 显式设置，不依赖 SQLite 编译期默认值
+                if let Err(e) = conn.execute_batch("PRAGMA synchronous = FULL;") {
+                    log::warn!("Failed to set synchronous=FULL for WAL: {e}");
                 }
             }
             Ok(mode) => log::warn!("WAL is unavailable here, keeping journal_mode={mode}"),

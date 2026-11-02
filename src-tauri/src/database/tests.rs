@@ -1546,7 +1546,10 @@ fn enable_wal_switches_file_database_and_keeps_backups_readable() {
     let synchronous: i64 = conn
         .query_row("PRAGMA synchronous", [], |row| row.get(0))
         .expect("synchronous");
-    assert_eq!(synchronous, 1, "WAL should use synchronous=NORMAL");
+    assert_eq!(
+        synchronous, 2,
+        "WAL must keep synchronous=FULL for durability"
+    );
 
     conn.execute_batch("CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('kept');")
         .expect("write");
