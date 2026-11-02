@@ -79,11 +79,6 @@ Die Plattform unterstützt außerdem Parallelität auf Unternehmensniveau, eine 
 </tr>
 
 <tr>
-<td width="180"><a href="https://dit.ai?utm_source=ccswitch"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
-<td>Danke an DIT.ai für die Unterstützung dieses Projekts! Dieselben Modelle, oft zu einem deutlich niedrigeren Preis. Eine OpenAI-kompatible API für mehr als 50 Modelle wie GPT, Claude, Gemini und weitere, mit Routing über mehr als 160 Anbieter zur besten verfügbaren Preis-Leistungs-Option, typischerweise 30–70 % unter den offiziellen Listenpreisen. Base-URL und API-Schlüssel austauschen, den bestehenden Stack behalten und loslegen. CC-Switch-Nutzer können sich über <a href="https://dit.ai?utm_source=ccswitch">diesen Link</a> registrieren und mit dem Code <strong>cc-switch</strong> 30 % Rabatt auf die erste Aufladung erhalten.</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.openmodel.ai?ref=cc-switch"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
 <td>Danke an OpenModel für die Unterstützung dieses Projekts! OpenModel bietet clientspezifische Rabatte von bis zu 90 % für Codex und bis zu 60 % für Claude Code auf unterstützte Modelle und hilft Entwicklern, ihre API-Kosten zu senken, ohne ihre Arbeitsweise zu ändern. Verbinden Sie einfach Ihren OpenModel-API-Schlüssel und nutzen Sie Codex oder Claude Code wie gewohnt weiter — unterstützte Clients werden automatisch erkannt und rabattierte Routen ohne zusätzliche Parameter oder manuelles Routing angewendet. Außerdem können Sie das Fallback-Verhalten pro API-Schlüssel festlegen und wählen, ob bei vorübergehend nicht verfügbarer Rabattroute zum Standardpreis weitergearbeitet oder die Anfrage gestoppt werden soll. CC-Switch-Nutzer können sich über <a href="https://www.openmodel.ai?ref=cc-switch">diesen Link</a> registrieren und mit dem Promo-Code <strong>"cc-switch"</strong> 10 % Rabatt auf ihre erste Aufladung erhalten!</td>
 </tr>

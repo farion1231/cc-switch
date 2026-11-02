@@ -48,10 +48,10 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   ],
 };
 
-/** MiniMax Code、Antigravity、Kimi Code、CodeBuddy Code 的会话只能在原应用里管理（后端也会拒绝）。 */
+/** MiniMax Code、Antigravity、DeepSeek Harness、CodeBuddy Code 的会话只能在原应用里管理（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "kimi", "dsh", "codebuddy"].includes(session.providerId);
+  !["mcode", "agy", "dsh", "codebuddy"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

@@ -16,7 +16,6 @@ import {
 } from "@/components/providers/forms/CodebuddyProviderForm";
 import { codebuddyProviderPresets } from "@/config/codebuddyProviderPresets";
 import { fetchModelsForConfig } from "@/lib/api/model-fetch";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { server } from "../msw/server";
 import { setProviders } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
@@ -223,19 +222,21 @@ describe("CodebuddyProviderForm", () => {
       { id: "model-x", ownedBy: "example" },
     ]);
     server.use(
-      http.get(MODELS_DEV_API_URL, () =>
-        HttpResponse.json({
-          example: {
-            api: "https://api.example.com/v1",
-            models: {
-              "model-x": {
-                limit: { context: 123456, output: 8192 },
-                reasoning: true,
-                modalities: { input: ["text", "image"], output: ["text"] },
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.json(
+          JSON.stringify({
+            example: {
+              api: "https://api.example.com/v1",
+              models: {
+                "model-x": {
+                  limit: { context: 123456, output: 8192 },
+                  reasoning: true,
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                },
               },
             },
-          },
-        }),
+          }),
+        ),
       ),
     );
     render(
