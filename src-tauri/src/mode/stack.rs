@@ -387,6 +387,8 @@ pub struct DesktopStackModel {
     pub upstream: String,
     /// 选择器里显示的名字（`labelOverride`）：`<供应商名> / <模型显示名>`。
     pub label: String,
+    /// 供应商名（模型说明里用）。
+    pub provider_name: String,
     /// 映射表里这个模型标了 1M。
     pub supports_1m: bool,
 }
@@ -412,6 +414,7 @@ pub fn desktop_models(key: &str, provider: &Provider) -> Vec<DesktopStackModel> 
         models.push(DesktopStackModel {
             id: encode(&AppType::ClaudeDesktop, key, &route.upstream_model, false),
             label: format!("{} / {name}", provider.name),
+            provider_name: provider.name.clone(),
             upstream: route.upstream_model,
             supports_1m: route.supports_1m,
         });

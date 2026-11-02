@@ -6465,7 +6465,7 @@ model_provider = "c"
             .as_str()
             .is_some_and(|id| id.starts_with("claude-fable-ccs-")));
         assert_eq!(stacked["labelOverride"], json!("OTHER / glm-5.2"));
-        assert_eq!(profile["modelDiscoveryEnabled"], json!(false));
+        assert_eq!(profile["modelDiscoveryEnabled"], json!(true));
 
         // 选中聚合模型的请求直达那一家。
         let resolved = stack::resolve(
@@ -6493,13 +6493,13 @@ model_provider = "c"
         .await
         .is_err());
 
-        // 换回路由模式：名单留着，模型列表只剩路由那家的，模型发现交还给 Desktop。
+        // 换回路由模式：名单留着，模型列表只剩路由那家的；模型发现照样开着（只补说明）。
         enter_with_route(&state, &desktop, false, Some("map"))
             .await
             .expect("back to route");
         let profile = desktop_profile();
         assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
-        assert!(profile.get("modelDiscoveryEnabled").is_none());
+        assert_eq!(profile["modelDiscoveryEnabled"], json!(true));
         assert!(settled_stack(&desktop).unwrap().is_member("other"));
     }
 
