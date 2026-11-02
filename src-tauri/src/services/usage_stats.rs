@@ -568,20 +568,35 @@ const DEDUP_SESSION_SOURCES_SQL: &str =
 ///
 /// 时间边界放宽 [`SESSION_PROXY_DEDUP_WINDOW_SECONDS`]，窗口外的代理行
 /// 不可能匹配窗口内的会话行；边界是整数，直接拼进 SQL。
+#[cfg(test)]
 pub(crate) fn effective_usage_log_filter_for_range(
     conn: &Connection,
     log_alias: &str,
     start_date: Option<i64>,
     end_date: Option<i64>,
 ) -> Result<String, AppError> {
+    let (lo, hi) = dedup_scope_bounds(start_date, end_date);
+    let counts = dedup_scope_counts(conn, lo, hi)?;
+    Ok(effective_usage_log_filter_from_counts(
+        log_alias, lo, hi, counts,
+    ))
+}
+
+/// 去重判断的时间窗口：两端各放宽 [`SESSION_PROXY_DEDUP_WINDOW_SECONDS`]
+fn dedup_scope_bounds(start_date: Option<i64>, end_date: Option<i64>) -> (i64, i64) {
     let lo = start_date
         .map(|v| v.saturating_sub(SESSION_PROXY_DEDUP_WINDOW_SECONDS))
         .unwrap_or(i64::MIN / 2);
     let hi = end_date
         .map(|v| v.saturating_add(SESSION_PROXY_DEDUP_WINDOW_SECONDS))
         .unwrap_or(i64::MAX / 2);
+    (lo, hi)
+}
+
+/// 窗口 `[lo, hi]` 里成功的代理日志、参与去重的会话日志各有多少
+fn dedup_scope_counts(conn: &Connection, lo: i64, hi: i64) -> Result<(i64, i64), AppError> {
     let data_source = data_source_expr("c");
-    let (proxy_count, session_count): (i64, i64) = conn.query_row(
+    Ok(conn.query_row(
         &format!(
             "SELECT
                 COALESCE(SUM(CASE WHEN {data_source} = 'proxy'
@@ -593,13 +608,20 @@ pub(crate) fn effective_usage_log_filter_for_range(
         ),
         rusqlite::params![lo, hi],
         |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    )?)
+}
 
+fn effective_usage_log_filter_from_counts(
+    log_alias: &str,
+    lo: i64,
+    hi: i64,
+    (proxy_count, session_count): (i64, i64),
+) -> String {
     if proxy_count == 0 || session_count == 0 {
-        return Ok("1 = 1".to_string());
+        return "1 = 1".to_string();
     }
     if proxy_count > session_count {
-        return Ok(effective_usage_log_filter(log_alias));
+        return effective_usage_log_filter(log_alias);
     }
 
     let dp_source = data_source_expr("dedup_p");
@@ -611,7 +633,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
         "dedup_s.app_type",
         &ds_source,
     );
-    Ok(format!(
+    format!(
         "{log_alias}.rowid NOT IN (
             SELECT dedup_s.rowid
             FROM proxy_request_logs dedup_p
@@ -645,7 +667,78 @@ pub(crate) fn effective_usage_log_filter_for_range(
               AND dedup_p.status_code < 300
               AND dedup_p.created_at BETWEEN {lo} AND {hi}
         )"
-    ))
+    )
+}
+
+/// 去重窗口计数的缓存：仪表盘刷新一次要调七八个统计接口，每个都用同一个时间范围
+/// 先数一遍窗口（真实库上约占这一轮 SQL 耗时的三成）。起点相同、连接上没有写入时
+/// 复用计数；前端每次请求都把结束时间取到「现在」，结束时间往后推时只补数新增的那段。
+/// 另设 [`LOG_COUNT_CACHE_TTL`] 兜底；整库替换（导入、恢复）时由调用方清空。
+pub(crate) struct DedupScopeCache {
+    lo: i64,
+    hi: i64,
+    changes: u64,
+    computed_at: std::time::Instant,
+    counts: (i64, i64),
+}
+
+impl Database {
+    /// 和 [`effective_usage_log_filter_for_range`] 结果相同，窗口计数走 [`DedupScopeCache`]
+    fn effective_usage_log_filter_cached(
+        &self,
+        conn: &Connection,
+        log_alias: &str,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<String, AppError> {
+        let (lo, hi) = dedup_scope_bounds(start_date, end_date);
+        let changes = connection_total_changes(conn)?;
+        let mut cache = self
+            .dedup_scope_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reusable = cache.as_ref().filter(|entry| {
+            entry.lo == lo
+                && entry.changes == changes
+                && entry.hi <= hi
+                && entry.computed_at.elapsed() <= LOG_COUNT_CACHE_TTL
+        });
+        let (counts, computed_at) = match reusable {
+            Some(entry) if entry.hi == hi => (entry.counts, entry.computed_at),
+            Some(entry) => {
+                let (proxy, session) = dedup_scope_counts(conn, entry.hi + 1, hi)?;
+                (
+                    (entry.counts.0 + proxy, entry.counts.1 + session),
+                    entry.computed_at,
+                )
+            }
+            None => (dedup_scope_counts(conn, lo, hi)?, std::time::Instant::now()),
+        };
+        *cache = Some(DedupScopeCache {
+            lo,
+            hi,
+            changes,
+            computed_at,
+            counts,
+        });
+        Ok(effective_usage_log_filter_from_counts(
+            log_alias, lo, hi, counts,
+        ))
+    }
+
+    /// 整库替换（导入、恢复备份）之后清掉派生缓存：Backup API 不经过 update hook，
+    /// 也不计入连接的 `total_changes`，这些缓存自己察觉不到。
+    pub(crate) fn invalidate_derived_caches(&self) {
+        self.config_cache.invalidate();
+        *self
+            .log_count_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        *self
+            .dedup_scope_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
 }
 
 /// 请求日志总数缓存：每次刷新都 `COUNT(*)` 一遍明细，大范围下最耗时。
@@ -991,9 +1084,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         // Build detail WHERE clause
-        let mut conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut conditions =
+            vec![self.effective_usage_log_filter_cached(&conn, "l", start_date, end_date)?];
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(start) = start_date {
@@ -1155,9 +1247,8 @@ impl Database {
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut detail_conditions =
+            vec![self.effective_usage_log_filter_cached(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -1367,7 +1458,7 @@ impl Database {
             };
 
             let effective_filter =
-                effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
+                self.effective_usage_log_filter_cached(&conn, "l", Some(start_ts), Some(end_ts))?;
             let fresh_input = fresh_input_sql("l");
             let sql = format!(
                 "SELECT
@@ -1481,7 +1572,7 @@ impl Database {
         };
 
         let effective_filter =
-            effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
+            self.effective_usage_log_filter_cached(&conn, "l", Some(start_ts), Some(end_ts))?;
         let fresh_input = fresh_input_sql("l");
         let detail_sql = format!(
             "SELECT
@@ -1757,9 +1848,8 @@ impl Database {
     ) -> Result<Vec<ProviderStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut detail_conditions =
+            vec![self.effective_usage_log_filter_cached(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -1950,9 +2040,8 @@ impl Database {
     ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut detail_conditions =
+            vec![self.effective_usage_log_filter_cached(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -2150,7 +2239,7 @@ impl Database {
     ) -> Result<PaginatedLogs, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut conditions = vec![effective_usage_log_filter_for_range(
+        let mut conditions = vec![self.effective_usage_log_filter_cached(
             &conn,
             "l",
             filters.start_date,
@@ -2976,6 +3065,85 @@ fn should_try_pricing_prefix_match(model_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn insert_dedup_row(db: &Database, id: &str, source: &str, created_at: i64) {
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, latency_ms, status_code, created_at, data_source)
+                 VALUES (?1, 'p', 'claude', 'opus', 10, 2, 0, 200, ?2, ?3)",
+                params![id, created_at, source],
+            )
+            .unwrap();
+    }
+
+    fn cached_and_uncached(db: &Database, start: i64, end: i64) -> (String, String) {
+        let conn = db.conn.lock().unwrap();
+        let cached = db
+            .effective_usage_log_filter_cached(&conn, "l", Some(start), Some(end))
+            .unwrap();
+        let uncached =
+            effective_usage_log_filter_for_range(&conn, "l", Some(start), Some(end)).unwrap();
+        (cached, uncached)
+    }
+
+    #[test]
+    fn cached_dedup_filter_matches_uncached_as_the_range_moves() {
+        let db = Database::memory().unwrap();
+        let day = 86_400;
+        insert_dedup_row(&db, "s1", "session_log", 1_000_000);
+        insert_dedup_row(&db, "s2", "session_log", 1_000_100);
+        // 结束时间往后推时才进入窗口的代理行：只能靠补数新增区间发现
+        insert_dedup_row(&db, "p1", "proxy", 1_000_000 + day);
+
+        let (cached, uncached) = cached_and_uncached(&db, 999_000, 1_000_200);
+        assert_eq!(cached, "1 = 1");
+        assert_eq!(cached, uncached);
+        // 同一范围直接复用
+        assert_eq!(cached_and_uncached(&db, 999_000, 1_000_200).0, "1 = 1");
+
+        let (cached, uncached) = cached_and_uncached(&db, 999_000, 1_000_000 + day);
+        assert_ne!(
+            cached, "1 = 1",
+            "the proxy row in the extended window counts"
+        );
+        assert_eq!(cached, uncached);
+
+        // 起点变了重新数
+        let (cached, uncached) = cached_and_uncached(&db, 1_000_000 + day - 10, 1_000_000 + day);
+        assert_eq!(cached, "1 = 1");
+        assert_eq!(cached, uncached);
+
+        // 有写入就重新数
+        insert_dedup_row(&db, "s3", "session_log", 1_000_000 + day);
+        let (cached, uncached) = cached_and_uncached(&db, 1_000_000 + day - 10, 1_000_000 + day);
+        assert_ne!(cached, "1 = 1");
+        assert_eq!(cached, uncached);
+    }
+
+    // 导入会在测试目录给 cc-switch.db 做安全备份，和切换测试目录的备份测试一起串行跑
+    #[test]
+    #[serial_test::serial]
+    fn cached_dedup_filter_is_dropped_after_an_import() {
+        let db = Database::memory().unwrap();
+        insert_dedup_row(&db, "s1", "session_log", 1_000_000);
+        insert_dedup_row(&db, "p1", "proxy", 1_000_010);
+        let exported = db.export_sql_string().unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM proxy_request_logs WHERE request_id = 'p1'", [])
+            .unwrap();
+        assert_eq!(cached_and_uncached(&db, 999_000, 1_001_000).0, "1 = 1");
+
+        // 导入经 Backup API 整库替换，连接的 total_changes 不变
+        db.import_sql_string(&exported).unwrap();
+        let (cached, uncached) = cached_and_uncached(&db, 999_000, 1_001_000);
+        assert_eq!(cached, uncached);
+        assert_ne!(cached, "1 = 1");
+    }
 
     fn local_ts(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> i64 {
         match Local.with_ymd_and_hms(year, month, day, hour, minute, second) {
