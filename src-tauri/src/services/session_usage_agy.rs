@@ -785,7 +785,7 @@ mod tests {
         let first = sync_agy_usage(&db).unwrap();
         assert_eq!(first.imported, 1);
         {
-            let conn = lock_conn!(db.conn);
+            let conn = db.conn.lock().unwrap();
             let (model, cost): (String, String) = conn
                 .query_row(
                     "SELECT model, total_cost_usd FROM proxy_request_logs WHERE request_id='agy:sess_late:1'",
@@ -818,7 +818,7 @@ mod tests {
         let second = sync_agy_usage(&db).unwrap();
         assert_eq!(second.imported, 1);
         {
-            let conn = lock_conn!(db.conn);
+            let conn = db.conn.lock().unwrap();
             let (model, cost, latency): (String, String, i64) = conn
                 .query_row(
                     "SELECT model, total_cost_usd, latency_ms FROM proxy_request_logs WHERE request_id='agy:sess_late:1'",
