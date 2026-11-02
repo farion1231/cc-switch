@@ -193,6 +193,7 @@ fn claude_contract(
 ) -> (ClaudeProjection, Contract) {
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
+        &route.name,
         proxy_url,
         claude_proxy_auth(route),
         stack_default.map(|model| StackRoleModel {
@@ -2622,6 +2623,11 @@ mod mode_tests {
         }
     }
 
+    fn renamed(mut provider: Provider, name: &str) -> Provider {
+        provider.name = name.to_string();
+        provider
+    }
+
     fn claude(id: &str, url: &str, extra: Value) -> Provider {
         let mut env = json!({
             "ANTHROPIC_BASE_URL": url,
@@ -2803,7 +2809,8 @@ mod mode_tests {
             AppType::Claude,
             &[
                 claude("a", "https://a.example", json!({})),
-                claude("b", "https://b.example", json!({})),
+                // 名字也一样：`/model` 的说明带供应商名，名字不同契约就不同。
+                renamed(claude("b", "https://b.example", json!({})), "A"),
             ],
             "a",
         )
@@ -2859,7 +2866,8 @@ mod mode_tests {
             AppType::Claude,
             &[
                 claude("a", "https://a.example", json!({})),
-                claude("b", "https://b.example", json!({})),
+                // 名字也一样：`/model` 的说明带供应商名，名字不同契约就不同。
+                renamed(claude("b", "https://b.example", json!({})), "A"),
             ],
             "a",
         )
@@ -5778,7 +5786,7 @@ model_provider = "c"
         );
         let options = &settings()[CLAUDE_MODEL_PICKER]["options"][0];
         assert_eq!(options["label"], "claude-sonnet-4-6（A）");
-        assert_eq!(options["description"], "claude-sonnet-4-6 · 200K");
+        assert_eq!(options["description"], "A · claude-sonnet-4-6 · 200K");
         let env = settings()["env"].clone();
         assert!(env.get(DISCOVERY_ENV).is_none(), "{env}");
         for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
@@ -6961,6 +6969,11 @@ model_provider = "c"
         let env = settings()["env"].clone();
         assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-5");
         assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-haiku-5-5");
+        // `/model` 的说明写在四档变量里，不写菜单。
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION"],
+            "A · claude-sonnet-4-6"
+        );
         assert_eq!(picker(), None);
     }
 

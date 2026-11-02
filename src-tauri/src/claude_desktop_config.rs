@@ -853,14 +853,7 @@ pub fn discovered_model_description(
     supports_1m: bool,
 ) -> String {
     let window = if supports_1m { 1_000_000 } else { 0 };
-    let model = crate::mode::stack::model_description(upstream, window);
-    let provider_name = provider_name.trim();
-    let description = if provider_name.is_empty() {
-        model
-    } else {
-        format!("{provider_name} · {model}")
-    };
-    description
+    crate::mode::stack::provider_model_description(provider_name, upstream, window)
         .chars()
         .take(MAX_MODEL_DESCRIPTION_CHARS)
         .collect()
