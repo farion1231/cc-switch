@@ -52,8 +52,22 @@ describe("adaptSvgToTheme", () => {
 describe("needsLightBacking", () => {
   it("is false for tile and themable icons, true for raster icons", () => {
     expect(needsLightBacking("sssaicode")).toBe(false);
-    expect(needsLightBacking("huggingface")).toBe(false);
     expect(needsLightBacking("openai")).toBe(false);
+    expect(needsLightBacking("anthropic")).toBe(false);
     expect(needsLightBacking("atlascloud")).toBe(true);
+  });
+
+  it("backs multi-color SVGs that keep near-black ink after adaptation", () => {
+    // 近黑部分不改色、直接画在透明底上的多色图标，深色卡片上要垫浅色底
+    for (const name of [
+      "opencode",
+      "cubence",
+      "jiekou",
+      "aicoding",
+      "huggingface",
+      "lioncc",
+    ]) {
+      expect(needsLightBacking(name)).toBe(true);
+    }
   });
 });

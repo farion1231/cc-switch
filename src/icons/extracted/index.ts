@@ -288,14 +288,27 @@ export function adaptSvgToTheme(svg: string): string {
   return result;
 }
 
+const lightBackingCache = new Map<string, boolean>();
+
 /**
- * 深色卡片上需要浅色衬底的图标：非 tile 的位图 / 外链图标（可能是透明底深色墨）。
- * 内联 SVG 要么跟随文字色，要么自带彩色形状，不需要。
+ * 深色卡片上需要浅色衬底的图标（tile 图标自带底色，不算）：
+ * - 位图 / 外链图标：可能是透明底上的深色墨；
+ * - 适配后仍带近黑笔画的内联 SVG：多色图标的近黑部分不改色（如 OpenCode 的外框、
+ *   Cubence 的深灰顶面），直接画在透明底上，深色卡片上看不清。
+ * 全是近黑的单色图标已经换成 currentColor 跟随文字色，不需要。
  */
 export function needsLightBacking(name?: string): boolean {
   if (!name) return false;
   const key = name.toLowerCase();
-  return key in iconUrls && !isTileIcon(key);
+  if (isTileIcon(key)) return false;
+  if (key in iconUrls) return true;
+  const svg = icons[key];
+  if (!svg) return false;
+  const cached = lightBackingCache.get(key);
+  if (cached !== undefined) return cached;
+  const result = paintedColors(adaptSvgToTheme(svg)).some(isDarkInk);
+  lightBackingCache.set(key, result);
+  return result;
 }
 
 export function isUrlIcon(name: string): boolean {
