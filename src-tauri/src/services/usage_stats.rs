@@ -200,7 +200,7 @@ fn est_first_token_eligible_sql(alias: &str) -> String {
 }
 
 /// 按分组键取首字时间的中位数（毫秒）。首字时间长尾明显，偶尔一次排队就是十几秒，
-/// 平均值会被拉高，所以用中位数；SQLite 没有中位数函数，取出排好序的值在这里算。
+/// 平均值会被拉高，所以用中位数；分组后用线性选择计算，避免 SQLite 排序所有明细。
 /// `key_sql` 是分组键表达式，`from_sql` 是 `FROM ... JOIN ...`，`detail_where` 是统计查询
 /// 明细部分的 `WHERE ...`（可为空），`params` 是它的参数。
 fn first_token_medians(
@@ -217,8 +217,7 @@ fn first_token_medians(
         "AND"
     };
     let sql = format!(
-        "SELECT {key_sql} AS k, l.first_token_ms {from_sql} {detail_where} {connector} {eligible_sql}
-         ORDER BY k, l.first_token_ms"
+        "SELECT {key_sql} AS k, l.first_token_ms {from_sql} {detail_where} {connector} {eligible_sql}"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params, |row| {
@@ -235,13 +234,15 @@ fn first_token_medians(
     }
     Ok(grouped
         .into_iter()
-        .map(|(key, values)| {
-            // 已按值升序取出
+        .map(|(key, mut values)| {
             let mid = values.len() / 2;
-            let median = if values.len() % 2 == 0 {
-                (values[mid - 1] + values[mid]) / 2
+            let even = values.len() % 2 == 0;
+            let (lower, upper, _) = values.select_nth_unstable(mid);
+            let median = if even {
+                // 分区内部未排序；较小一半的最大值是另一个中间值。
+                (lower.iter().copied().max().expect("nonempty lower half") + *upper) / 2
             } else {
-                values[mid]
+                *upper
             };
             (key, median)
         })
@@ -5304,6 +5305,103 @@ mod tests {
         assert_eq!(slow.est_speed_output_tokens, 400);
         assert_eq!(slow.est_speed_duration_ms, 8_000);
 
+        Ok(())
+    }
+
+    #[test]
+    fn first_token_selection_matches_sorted_medians() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE samples (group_id TEXT, first_token_ms INTEGER)")?;
+        let mut expected = HashMap::new();
+        for len in 1..=128 {
+            let key = len.to_string();
+            let mut values = Vec::new();
+            for i in 0..len {
+                // Unsorted values, duplicates, negatives clamped to zero, and
+                // i64::MAX cover both middle ranks and integer rounding.
+                let value = if i % 13 == 0 {
+                    i64::MAX
+                } else {
+                    (i * 7919 % 101) as i64 - 25
+                };
+                conn.execute("INSERT INTO samples VALUES (?1, ?2)", params![key, value])?;
+                values.push(value.max(0) as u64);
+            }
+            values.sort_unstable();
+            expected.insert(key, (values[(len - 1) / 2] + values[len / 2]) / 2);
+        }
+        conn.execute("INSERT INTO samples VALUES ('null-only', NULL)", [])?;
+        let actual = first_token_medians(
+            &conn,
+            "l.group_id",
+            "FROM samples l",
+            "",
+            "l.first_token_ms IS NOT NULL",
+            &[],
+        )?;
+        assert_eq!(actual, expected);
+        let filtered = first_token_medians(
+            &conn,
+            "l.group_id",
+            "FROM samples l",
+            "WHERE l.group_id = ?1",
+            "l.first_token_ms IS NOT NULL",
+            &[&"64"],
+        )?;
+        assert_eq!(
+            filtered,
+            HashMap::from([("64".to_string(), expected["64"])])
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "synthetic SQLite median benchmark; run with --ignored --nocapture"]
+    fn benchmark_first_token_medians() -> Result<(), AppError> {
+        use std::time::Instant;
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE samples (group_id TEXT, first_token_ms INTEGER)")?;
+        let transaction = conn.unchecked_transaction()?;
+        for i in 0..200_000 {
+            transaction.execute(
+                "INSERT INTO samples VALUES (?1, ?2)",
+                params![format!("p{}", i % 20), (i * 7919_i64) % 100_003],
+            )?;
+        }
+        transaction.commit()?;
+        for _ in 0..3 {
+            let start = Instant::now();
+            let mut stmt = conn.prepare(
+                "SELECT group_id, first_token_ms FROM samples ORDER BY group_id, first_token_ms",
+            )?;
+            let mut groups: HashMap<String, Vec<u64>> = HashMap::new();
+            for row in stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+            })? {
+                let (key, value) = row?;
+                groups.entry(key).or_default().push(value);
+            }
+            let expected: HashMap<_, _> = groups
+                .into_iter()
+                .map(|(key, values)| {
+                    let mid = values.len() / 2;
+                    (key, (values[mid - 1] + values[mid]) / 2)
+                })
+                .collect();
+            let sorted_time = start.elapsed();
+            let start = Instant::now();
+            let actual = first_token_medians(
+                &conn,
+                "l.group_id",
+                "FROM samples l",
+                "",
+                "l.first_token_ms IS NOT NULL",
+                &[],
+            )?;
+            let selected_time = start.elapsed();
+            assert_eq!(actual, expected);
+            eprintln!("Median 200000 rows / 20 groups: SQL sort={sorted_time:?}, selection={selected_time:?}");
+        }
         Ok(())
     }
 
