@@ -548,15 +548,15 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.a6api.com",
+        GOOGLE_GEMINI_BASE_URL: "https://api.a6api.vip",
         GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
-    baseURL: "https://api.a6api.com",
+    baseURL: "https://api.a6api.vip",
     model: "gemini-3.8-flash",
     description: "A6API",
     category: "aggregator",
