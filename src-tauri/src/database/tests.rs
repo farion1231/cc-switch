@@ -1578,3 +1578,37 @@ fn enable_wal_leaves_in_memory_database_usable() {
     conn.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1);")
         .expect("write after failed switch");
 }
+
+#[tokio::test]
+async fn proxy_request_config_reads_follow_writes_and_imports() {
+    let db = Database::memory().expect("memory db");
+
+    // settings 表写入后，缓存的整流器配置要跟着变
+    assert!(db.get_rectifier_config().expect("read").enabled);
+    let mut rectifier = db.get_rectifier_config().expect("read");
+    rectifier.enabled = false;
+    db.set_rectifier_config(&rectifier).expect("write");
+    assert!(!db.get_rectifier_config().expect("reread").enabled);
+
+    // proxy_config 表写入后，缓存的应用级代理配置要跟着变
+    let mut proxy = db.get_proxy_config_for_app("claude").await.expect("read");
+    proxy.max_retries = 7;
+    db.update_proxy_config_for_app(proxy).await.expect("write");
+    assert_eq!(
+        db.get_proxy_config_for_app("claude")
+            .await
+            .expect("reread")
+            .max_retries,
+        7
+    );
+
+    // 导入通过 Backup API 整库替换，不经过 update hook，也必须读到导入后的值
+    let mut snapshot = rectifier.clone();
+    snapshot.enabled = true;
+    db.set_rectifier_config(&snapshot).expect("write");
+    let exported = db.export_sql_string().expect("export");
+    db.set_rectifier_config(&rectifier).expect("write");
+    assert!(!db.get_rectifier_config().expect("cache warm").enabled);
+    db.import_sql_string(&exported).expect("import");
+    assert!(db.get_rectifier_config().expect("after import").enabled);
+}

@@ -13,6 +13,12 @@ impl Database {
         format!("common_config_{app_type}_cleared")
     }
 
+    /// 读设置值，走 [`Database::config_cache`]：代理每个请求都要读的配置用它，
+    /// 不必每次拿连接锁。表有写入时缓存自动失效。
+    pub(crate) fn get_setting_cached(&self, key: &str) -> Result<Option<String>, AppError> {
+        self.config_cache.setting(key, || self.get_setting(key))
+    }
+
     /// 获取设置值
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
@@ -242,7 +248,7 @@ impl Database {
     ///
     /// 返回整流器配置，如果不存在则返回默认值（全部开启）
     pub fn get_rectifier_config(&self) -> Result<crate::proxy::types::RectifierConfig, AppError> {
-        match self.get_setting("rectifier_config")? {
+        match self.get_setting_cached("rectifier_config")? {
             Some(json) => serde_json::from_str(&json)
                 .map_err(|e| AppError::Database(format!("解析整流器配置失败: {e}"))),
             None => Ok(crate::proxy::types::RectifierConfig::default()),
@@ -265,7 +271,7 @@ impl Database {
     ///
     /// 返回优化器配置，如果不存在则返回默认值（默认关闭）
     pub fn get_optimizer_config(&self) -> Result<crate::proxy::types::OptimizerConfig, AppError> {
-        match self.get_setting("optimizer_config")? {
+        match self.get_setting_cached("optimizer_config")? {
             Some(json) => serde_json::from_str(&json)
                 .map_err(|e| AppError::Database(format!("解析优化器配置失败: {e}"))),
             None => Ok(crate::proxy::types::OptimizerConfig::default()),
@@ -290,7 +296,7 @@ impl Database {
     pub fn get_copilot_optimizer_config(
         &self,
     ) -> Result<crate::proxy::types::CopilotOptimizerConfig, AppError> {
-        match self.get_setting("copilot_optimizer_config")? {
+        match self.get_setting_cached("copilot_optimizer_config")? {
             Some(json) => serde_json::from_str(&json)
                 .map_err(|e| AppError::Database(format!("解析 Copilot 优化器配置失败: {e}"))),
             None => Ok(crate::proxy::types::CopilotOptimizerConfig::default()),

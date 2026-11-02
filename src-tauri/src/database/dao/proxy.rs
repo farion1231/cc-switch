@@ -4,6 +4,7 @@
 
 use crate::error::AppError;
 use crate::proxy::types::*;
+use rusqlite::OptionalExtension;
 
 use super::super::{lock_conn, Database};
 
@@ -141,9 +142,9 @@ impl Database {
         &self,
         app_type: &str,
     ) -> Result<AppProxyConfig, AppError> {
-        // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
+        // 每个代理请求都会读，走配置缓存；conn 只在闭包里持有，不跨 await
         let app_type_owned = app_type.to_string();
-        let result = {
+        let found = self.config_cache.proxy_config(app_type, || {
             let conn = lock_conn!(self.conn);
             conn.query_row(
                 "SELECT app_type, enabled, auto_failover_enabled,
@@ -169,12 +170,13 @@ impl Database {
                     })
                 },
             )
-        };
-        // conn 已在 block 结束时释放
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))
+        })?;
 
-        match result {
-            Ok(config) => Ok(config),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
+        match found {
+            Some(config) => Ok(config),
+            None => {
                 // 如果不存在，创建默认配置
                 self.init_proxy_config_rows().await?;
                 Ok(AppProxyConfig {
@@ -192,7 +194,6 @@ impl Database {
                     circuit_min_requests: 10,
                 })
             }
-            Err(e) => Err(AppError::Database(e.to_string())),
         }
     }
 

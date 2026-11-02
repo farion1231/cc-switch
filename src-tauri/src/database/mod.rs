@@ -24,6 +24,7 @@
 //! ```
 
 pub(crate) mod backup;
+mod config_cache;
 mod dao;
 mod migration;
 mod schema;
@@ -45,7 +46,8 @@ use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 // DAO 方法通过 impl Database 提供，无需额外导出
 
@@ -79,12 +81,17 @@ pub struct Database {
     pub(crate) conn: Mutex<Connection>,
     /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
     pub(crate) log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
+    /// 代理请求路径上的配置读缓存，见 [`config_cache`]
+    pub(crate) config_cache: config_cache::ConfigCache,
 }
 
-fn register_db_change_hook(conn: &Connection) {
+fn register_db_change_hook(conn: &Connection, config_generation: Arc<AtomicU64>) {
     conn.update_hook(Some(
-        |action: Action, _database: &str, table: &str, _row_id: i64| match action {
+        move |action: Action, _database: &str, table: &str, _row_id: i64| match action {
             Action::SQLITE_INSERT | Action::SQLITE_UPDATE | Action::SQLITE_DELETE => {
+                if config_cache::invalidates_config_cache(table) {
+                    config_generation.fetch_add(1, Ordering::AcqRel);
+                }
                 crate::services::webdav_auto_sync::notify_db_changed(table);
                 crate::services::s3_auto_sync::notify_db_changed(table);
             }
@@ -118,11 +125,13 @@ impl Database {
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
         Self::enable_wal(&conn);
-        register_db_change_hook(&conn);
+        let config_cache = config_cache::ConfigCache::new();
+        register_db_change_hook(&conn, config_cache.generation_handle());
 
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            config_cache,
         };
         db.create_tables()?;
 
@@ -213,11 +222,13 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
-        register_db_change_hook(&conn);
+        let config_cache = config_cache::ConfigCache::new();
+        register_db_change_hook(&conn, config_cache.generation_handle());
 
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            config_cache,
         };
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;
