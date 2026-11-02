@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildCdResumeCommand,
   getSessionLastText,
@@ -9,6 +9,12 @@ import {
   formatMessageTime,
 } from "@/components/sessions/utils";
 import type { SessionMeta } from "@/types";
+
+const platform = vi.hoisted(() => ({ windows: false }));
+vi.mock("@/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform")>()),
+  isWindows: () => platform.windows,
+}));
 
 describe("session utils", () => {
   it("groups sessions by project directory, newest group first and unknown last", () => {
@@ -159,9 +165,20 @@ describe("session utils", () => {
   });
 
   it("quotes the project directory in the cd-and-resume command", () => {
+    platform.windows = false;
     expect(buildCdResumeCommand("/tmp/it's", "claude --resume x")).toBe(
       "cd '/tmp/it'\\''s' && claude --resume x",
     );
+  });
+
+  it("wraps the resume command with Set-Location for PowerShell on Windows", () => {
+    platform.windows = true;
+    expect(
+      buildCdResumeCommand("C:\\work\\it's", "$env:OMP_PROFILE='default'; omp --resume 's'"),
+    ).toBe(
+      "Set-Location 'C:\\work\\it''s'; $env:OMP_PROFILE='default'; omp --resume 's'",
+    );
+    platform.windows = false;
   });
 
   it("formats message times with the date, adding the year only for past years", () => {

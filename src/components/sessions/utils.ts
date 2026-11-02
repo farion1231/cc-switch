@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createElement } from "react";
 import type { AppId } from "@/lib/api";
+import { isWindows } from "@/lib/platform";
 import type { SessionMeta } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
@@ -263,9 +264,13 @@ export const groupSessionsByTime = (
     .map((bucket) => ({ bucket, sessions: buckets.get(bucket)! }));
 };
 
-/** 恢复命令前面加上进入项目目录（POSIX shell）。 */
+/** 恢复命令前面加上进入项目目录：macOS/Linux 用 POSIX 的 `cd '...' && ...`；
+ *  Windows 的恢复命令是 PowerShell 语法（`&&` 在 Windows PowerShell 5.1 里是语法错误），
+ *  改用 `Set-Location '...'` 串接，路径里的单引号按 PowerShell 规则双写。 */
 export const buildCdResumeCommand = (projectDir: string, command: string) =>
-  `cd '${projectDir.replace(/'/g, `'\\''`)}' && ${command}`;
+  isWindows()
+    ? `Set-Location '${projectDir.replace(/'/g, "''")}'; ${command}`
+    : `cd '${projectDir.replace(/'/g, `'\\''`)}' && ${command}`;
 
 export const highlightText = (text: string, query: string): ReactNode => {
   if (!query) return text;
