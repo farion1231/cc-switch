@@ -186,12 +186,6 @@ fn delete_session_source(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
         );
     }
-    if provider_id == "kimi" {
-        return Err(
-            "Delete this session in Kimi Code to keep its session index and history consistent"
-                .into(),
-        );
-    }
     if provider_id == "cline" {
         return Err(format!(
             "Delete this session in Cline (`cline history delete --session-id {session_id}`) to keep its session index and history consistent"
@@ -250,6 +244,7 @@ fn delete_session_with_roots(
         "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
         "omp" => omp::delete_session(&validated_root, &validated_source, session_id),
+        "kimi" => kimi::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }

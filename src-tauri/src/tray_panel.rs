@@ -71,7 +71,8 @@ mod style {
 
 // ─── 文案 ────────────────────────────────────────────────────────────────────
 
-/// 面板自己的文案（和托盘菜单同一语言）；随数据一起发给前端，面板不加载界面的 i18n。
+/// 面板自己的文案（和托盘菜单同一语言）；随方位一起发给前端，面板不加载界面的 i18n。
+/// 不跟数据走：数据要读库、可能来得晚，先显示出来的头部和底栏也要有文案。
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PanelTexts {
@@ -190,7 +191,7 @@ impl PanelTexts {
 
 // ─── 方位 ────────────────────────────────────────────────────────────────────
 
-/// 这次弹出的方位，发给前端排版。坐标都是逻辑像素。
+/// 这次弹出的方位和文案，发给前端排版。坐标都是逻辑像素。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PanelPlacement {
@@ -216,6 +217,7 @@ pub struct PanelPlacement {
     /// `native`：背后有系统玻璃，网页只叠一层淡色；`frosted`：系统没有可用的玻璃材质，
     /// 网页自己画兼容的毛玻璃（半透明底色 + 高光描边）
     pub glass: &'static str,
+    pub texts: PanelTexts,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +259,7 @@ fn place(
     work: Area,
     seq: u64,
     scale_factor: f64,
+    texts: PanelTexts,
 ) -> (f64, f64, PanelPlacement) {
     let (ix, iy, iw, ih) = icon;
     let gap = style::CARD_GAP;
@@ -304,6 +307,7 @@ fn place(
         radius: style::RADIUS,
         layout: style::LAYOUT,
         glass: platform::glass(),
+        texts,
     };
     (x, y, placement)
 }
@@ -454,6 +458,7 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
         work,
         seq,
         scale,
+        PanelTexts::current(),
     );
     *lock(&ANCHOR) = Some(Anchor {
         x,
@@ -1077,24 +1082,15 @@ mod platform {
 
 // ─── 命令 ──────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrayPanelState {
-    pub texts: PanelTexts,
-    #[serde(flatten)]
-    pub model: crate::tray::PanelModel,
-}
-
 /// 收集要读库和设备文件，一次几十毫秒。同步命令跑在主线程上，弹出后那一串额度刷新
 /// 会接连卡住主线程，悬停、展开子面板都跟着掉帧；挪到阻塞线程池上做。
+/// 启动期的会话用量导入会按文件整事务占着库，这里一等就是好几秒到一分钟：前端不会一直
+/// 等它，先按方位把面板显示出来（热开用上次的内容），数据到了再填。
 #[tauri::command]
-pub async fn tray_panel_state(app: AppHandle) -> Result<TrayPanelState, String> {
+pub async fn tray_panel_state(app: AppHandle) -> Result<crate::tray::PanelModel, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        Ok(TrayPanelState {
-            texts: PanelTexts::current(),
-            model: crate::tray::collect_panel_model(state.inner()).map_err(|e| e.to_string())?,
-        })
+        crate::tray::collect_panel_model(state.inner()).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1203,7 +1199,13 @@ mod tests {
 
     #[test]
     fn menu_bar_icon_opens_downward_and_flips_submenu_left_near_the_right_edge() {
-        let (x, y, placement) = place((1300.0, 0.0, 22.0, 24.0), WORK, 1, 1.0);
+        let (x, y, placement) = place(
+            (1300.0, 0.0, 22.0, 24.0),
+            WORK,
+            1,
+            1.0,
+            PanelTexts::from_language("en"),
+        );
         assert_eq!(placement.edge, "top");
         assert_eq!(y, 24.0 + ICON_GAP);
         assert_eq!(x, WORK.right - SCREEN_MARGIN - MAIN_WIDTH);
@@ -1212,9 +1214,30 @@ mod tests {
 
     #[test]
     fn icon_on_the_left_expands_submenu_to_the_right() {
-        let (x, _, placement) = place((200.0, 0.0, 22.0, 24.0), WORK, 1, 1.0);
+        let (x, _, placement) = place(
+            (200.0, 0.0, 22.0, 24.0),
+            WORK,
+            1,
+            1.0,
+            PanelTexts::from_language("en"),
+        );
         assert_eq!(x, 200.0 + 11.0 - MAIN_WIDTH / 2.0);
         assert_eq!(placement.side, "right");
+    }
+
+    #[test]
+    fn placement_carries_the_panel_texts_in_the_shape_the_frontend_reads() {
+        let (_, _, placement) = place(
+            (200.0, 0.0, 22.0, 24.0),
+            WORK,
+            1,
+            1.0,
+            PanelTexts::from_language("en"),
+        );
+        let json = serde_json::to_value(&placement).unwrap();
+        assert_eq!(json["texts"]["quit"], "Quit");
+        assert_eq!(json["texts"]["openMain"], "Open main window");
+        assert_eq!(json["texts"]["lightweightMode"], "Lightweight mode");
     }
 
     #[test]
@@ -1225,7 +1248,13 @@ mod tests {
             right: 1920.0,
             bottom: 1032.0,
         };
-        let (_, y, placement) = place((1700.0, 1040.0, 24.0, 40.0), work, 1, 1.0);
+        let (_, y, placement) = place(
+            (1700.0, 1040.0, 24.0, 40.0),
+            work,
+            1,
+            1.0,
+            PanelTexts::from_language("en"),
+        );
         assert_eq!(placement.edge, "bottom");
         assert_eq!(y, work.bottom);
         assert_eq!(placement.bounds_top, SCREEN_MARGIN - y);
@@ -1254,6 +1283,7 @@ mod tests {
                             work,
                             1,
                             scale,
+                            PanelTexts::from_language("en"),
                         );
                         let (left, right) = if p.side == "left" {
                             (x - p.gap - p.sub_width, x + p.main_width)
