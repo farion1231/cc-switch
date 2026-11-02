@@ -58,7 +58,6 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 }
 
 fn resume_command(source: &str) -> Result<String, String> {
-    use crate::session_manager::terminal::shell_escape;
     let agent = crate::omp_config::get_omp_agent_dir().map_err(|error| error.to_string())?;
     let native_agent =
         crate::omp_config::get_omp_native_agent_dir().map_err(|error| error.to_string())?;
@@ -68,16 +67,13 @@ fn resume_command(source: &str) -> Result<String, String> {
         None
     };
     let profile = profile.as_deref().unwrap_or("default");
-    let mut assignments = vec![
-        format!("OMP_PROFILE={}", shell_escape(profile)),
-        format!("PI_PROFILE={}", shell_escape(profile)),
-        format!(
-            "PI_CODING_AGENT_DIR={}",
-            shell_escape(&agent.to_string_lossy())
-        ),
+    let mut variables: Vec<(&str, std::borrow::Cow<str>)> = vec![
+        ("OMP_PROFILE", profile.into()),
+        ("PI_PROFILE", profile.into()),
+        ("PI_CODING_AGENT_DIR", agent.to_string_lossy()),
     ];
-    // Terminal launch is POSIX/macOS. Clear GUI-unset directory variables too:
-    // inheriting the terminal's profile/XDG paths would select different native state.
+    // Clear GUI-unset directory variables too: inheriting the terminal's
+    // profile/XDG paths would select different native state.
     for variable in [
         "PI_CONFIG_DIR",
         "PI_CODING_AGENT_SESSION_DIR",
@@ -86,13 +82,38 @@ fn resume_command(source: &str) -> Result<String, String> {
         "XDG_CACHE_HOME",
     ] {
         let value = std::env::var(variable).unwrap_or_default();
-        assignments.push(format!("{variable}={}", shell_escape(&value)));
+        variables.push((variable, value.into()));
     }
-    Ok(format!(
-        "{} omp --resume {}",
-        assignments.join(" "),
-        shell_escape(source)
-    ))
+    // One-click terminal launch is macOS/POSIX only; elsewhere the command is pasted
+    // into the user's shell. `VAR=value cmd` prefix assignments are POSIX-only syntax,
+    // so Windows targets PowerShell instead (the Windows Terminal default): single-
+    // quoted `$env:NAME='value'` assignments keep `\` and the verbatim `\\?\` prefix
+    // literal, with a lone `'` escaped by doubling.
+    #[cfg(windows)]
+    {
+        let assignments = variables
+            .iter()
+            .map(|(name, value)| format!("$env:{name}='{}'", value.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join("; ");
+        Ok(format!(
+            "{assignments}; omp --resume '{}'",
+            source.replace('\'', "''")
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        use crate::session_manager::terminal::shell_escape;
+        let assignments = variables
+            .iter()
+            .map(|(name, value)| format!("{name}={}", shell_escape(value)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok(format!(
+            "{assignments} omp --resume {}",
+            shell_escape(source)
+        ))
+    }
 }
 
 /// 删会话文件后，再清掉同名的产物目录（子代理会话、草稿）和它自己的 `.bak` 备份。
@@ -372,6 +393,67 @@ mod tests {
                 "--resume",
                 source.to_str().unwrap()
             ]
+        );
+    }
+
+    /// resume_command 读取进程环境（profile、XDG、会话目录），断言完整命令前先清干净。
+    struct SavedEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
+    impl SavedEnv {
+        fn cleared(names: &[&'static str]) -> Self {
+            let saved = names
+                .iter()
+                .map(|name| (*name, std::env::var_os(name)))
+                .collect();
+            for name in names {
+                std::env::remove_var(name);
+            }
+            Self(saved)
+        }
+    }
+    impl Drop for SavedEnv {
+        fn drop(&mut self) {
+            for (name, previous) in &self.0 {
+                match previous {
+                    Some(previous) => std::env::set_var(name, previous),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[serial]
+    fn resume_command_uses_powershell_env_assignments() {
+        let _agent = TestAgentDir::new();
+        let _env = SavedEnv::cleared(&[
+            "OMP_PROFILE",
+            "PI_PROFILE",
+            "PI_CONFIG_DIR",
+            "PI_CODING_AGENT_DIR",
+            "PI_CODING_AGENT_SESSION_DIR",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+            "XDG_CACHE_HOME",
+        ]);
+        let directory = crate::omp_config::get_omp_agent_dir().unwrap();
+        let source = directory
+            .join(r"sessions\project\quote'$(false) name.jsonl")
+            .to_string_lossy()
+            .into_owned();
+        let command = resume_command(&source).unwrap();
+        let quote = |value: &str| value.replace('\'', "''");
+        assert_eq!(
+            command,
+            format!(
+                "$env:OMP_PROFILE='default'; $env:PI_PROFILE='default'; \
+                 $env:PI_CODING_AGENT_DIR='{}'; $env:PI_CONFIG_DIR=''; \
+                 $env:PI_CODING_AGENT_SESSION_DIR=''; $env:XDG_DATA_HOME=''; \
+                 $env:XDG_STATE_HOME=''; $env:XDG_CACHE_HOME=''; \
+                 omp --resume '{}'",
+                quote(&directory.to_string_lossy()),
+                quote(&source),
+            )
         );
     }
 }
