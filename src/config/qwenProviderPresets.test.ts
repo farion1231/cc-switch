@@ -55,7 +55,8 @@ describe("qwenProviderPresets", () => {
     });
     expect(find("QwenCloud").settingsConfig).toMatchObject({
       authType: "openai",
-      baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      baseUrl:
+        "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
     });
   });
 
