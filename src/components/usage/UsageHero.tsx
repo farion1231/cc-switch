@@ -110,8 +110,6 @@ function MetricCell({
     <div className="group relative min-w-0 px-4 pb-3.5 pt-2.5">
       <button
         type="button"
-        role="tab"
-        aria-selected={selected}
         aria-pressed={selected}
         aria-label={`${label} ${value}`}
         onClick={onSelect}
@@ -284,11 +282,7 @@ export function UsageHero({
       aria-label={t("usage.metrics.label")}
       className="relative z-10 border-b border-border"
     >
-      <div
-        role="tablist"
-        aria-label={t("usage.metrics.label")}
-        className={cn("grid border-border", gridLayout)}
-      >
+      <div className={cn("grid border-border", gridLayout)}>
         <MetricCell
           label={t("usage.totalCost")}
           value={placeholder ?? (totalCost == null ? "—" : money(totalCost, 2))}
