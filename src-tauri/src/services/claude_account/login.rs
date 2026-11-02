@@ -4,6 +4,8 @@
 //! - 拿到登录链接给窗口显示、打开。macOS / Linux 把 `BROWSER` 设成账号目录旁的小脚本，
 //!   Claude Code 要打开的那个链接（登录后回到本机端口）会被写进文件；Windows 上让 Claude
 //!   Code 自己打开浏览器。两种情况下它打印出来的链接都作后备（那个页面显示一段代码让人粘贴）。
+//!   授权中心关了「登录时自动打开浏览器」时，Windows 上把 `BROWSER` 指向一个不存在的程序，
+//!   Claude Code 打不开浏览器、只打印链接（多账号用独立浏览器环境的用户不希望弹出系统默认浏览器）。
 //! - 浏览器回不到本机时，替用户把回调地址转交给本机端口，或把页面上的代码写进 stdin。
 //! - 等它退出，退出码 0 就是登录成功。
 
@@ -168,14 +170,21 @@ fn looks_like_code(raw: &str) -> bool {
 
 /// 在 `config_dir` 里启动 `claude auth login --claudeai`，等到拿到登录链接再返回。
 /// `home` 是账号的外层目录（放截获脚本）。`timeout` 到了还没登完就杀掉子进程。
+/// `open_browser` 为假时不让 Claude Code 自己打开浏览器（只影响 Windows，别的平台本来就截获）。
 pub async fn start(
     config_dir: PathBuf,
     home: PathBuf,
     timeout: Duration,
+    open_browser: bool,
 ) -> Result<RunningLogin, AppError> {
     let opened_file = home.join(layout::OPENED_URL_FILENAME);
     let _ = std::fs::remove_file(&opened_file);
-    let opener = write_opener(&home)?;
+    let opener = match write_opener(&home)? {
+        Some(opener) => Some(opener),
+        // 不存在的程序：Claude Code 打开浏览器失败，照常打印链接
+        None if !open_browser => Some(home.join(layout::NO_BROWSER_FILENAME)),
+        None => None,
+    };
 
     let spawn = {
         let config_dir = config_dir.clone();
@@ -269,7 +278,7 @@ pub async fn start(
         auth_url,
         // 截获到的链接是 CC Switch 拦下来的，浏览器还没开；只打印出来的链接，Windows 上
         // Claude Code 已经自己去开浏览器了，macOS / Linux 上则是它没打算开（没有图形界面）
-        browser_opened: !intercepted && cfg!(windows),
+        browser_opened: open_browser && !intercepted && cfg!(windows),
         stdin,
         callback_port,
         cancel,

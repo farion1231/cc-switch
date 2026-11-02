@@ -6,7 +6,7 @@ import {
   type KimiLoginStart,
   type KimiRegion,
 } from "@/lib/api/kimiOAuth";
-import { settingsApi } from "@/lib/api";
+import { deliverLoginLink } from "@/lib/authLoginLink";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { toast } from "@/lib/toast";
 
@@ -147,9 +147,7 @@ export function useKimiOAuth() {
         setFlow(next);
         setStarting(false);
         // Keep the manual link and code visible even when the browser cannot open.
-        void settingsApi.openExternal(next.verificationUri).catch((e) => {
-          console.debug("[KimiOAuth] Could not open browser:", e);
-        });
+        void deliverLoginLink(next.verificationUri, t);
         timer.current = setTimeout(
           () => void poll(next.flowId, current),
           Math.max(1, next.interval) * 1000,
@@ -160,7 +158,7 @@ export function useKimiOAuth() {
         setError(extractErrorMessage(e));
       }
     },
-    [cancelBackend, clearTimer, poll],
+    [cancelBackend, clearTimer, poll, t],
   );
 
   const retry = () => {

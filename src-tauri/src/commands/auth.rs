@@ -186,8 +186,11 @@ pub async fn auth_start_login(
     let browser_login = match login_method.as_deref().unwrap_or("device_code") {
         "device_code" => false,
         "browser" if auth_provider == AUTH_PROVIDER_CODEX_OAUTH => true,
+        // Claude 官方账号：只给链接、不打开浏览器（授权中心关了自动打开，用户自己选浏览器）
+        "copy_link" if auth_provider == AUTH_PROVIDER_CLAUDE_OFFICIAL => false,
         _ => return Err("Unsupported login method for this auth provider".into()),
     };
+    let copy_link = login_method.as_deref() == Some("copy_link");
     match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             if target_account_id.is_some() {
@@ -248,7 +251,7 @@ pub async fn auth_start_login(
             }
             let start = claude_state
                 .0
-                .start_login()
+                .start_login(!copy_link)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(ManagedAuthDeviceCodeResponse {

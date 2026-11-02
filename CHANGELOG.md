@@ -5,6 +5,29 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.24] - 2026-11-01
+
+This release adds an Auth Center switch that makes sign-in copy the login link instead of opening the default browser, for people who keep each account in its own browser profile. Fixes cover Claude routes downgrading `max` effort to `xhigh` for GPT 6.1 Sol / Terra, DeepSeek Harness showing no third-party providers after a model with PDF input was picked, CC Switch exiting on WSL when the tray could not write its icons, Codex Chat cards losing the reasoning effort after "Supports Reasoning Effort" was turned off and on again, and the DeepSeek official sign-in card saying it signs in with a Claude account.
+
+**Stats**: 8 commits | 44 files changed | +774 insertions | -115 deletions
+
+### Added
+
+- **Sign In by Copying the Login Link** (734ed4a17): An "Open the browser when signing in" switch at the top of the Auth Center, shared by Claude, ChatGPT, Copilot, xAI, Antigravity, Kimi and DeepSeek Harness sign-ins (including those started from the provider form). With it off, sign-in only copies the login link, device-code flows no longer auto-copy the code so the link stays on the clipboard, and the reopen button is hidden; the waiting block always offers "Copy sign-in link". On Windows a Claude sign-in passes login method `copy_link` and points `BROWSER` at a missing program so Claude Code only prints the link (macOS and Linux already intercept `BROWSER`). The choice is a per-device UI preference in localStorage, on by default.
+
+### Changed
+
+- **A6API Presets** (889e50ac7): Website, API base URL and register link moved to the `a6api.vip` domain in all nine app presets and the four README sponsor tables.
+
+### Fixed
+
+- **Max Effort Downgraded to xhigh for GPT 6.1 Sol / Terra on Claude Routes** (39183b59a, refs #9122): `supports_max_reasoning_effort` matched an exact list, so `/effort max` reached gpt-6.1-sol and gpt-6.1-terra as `xhigh`. It now matches `gpt-<version>` with version ≥ 5.6, bare or with a single sol / terra / luna / astra suffix; other suffixes (pro, codex, mini, cyber, dated snapshots) still fall back to xhigh.
+- **DeepSeek Harness Showed No Third-Party Providers After Picking a Model with PDF Input** (14ddd7b55, refs #9116): A model picked from a fetched list carried models.dev's full input modalities (e.g. text / image / pdf) into `cordis.patch.yml`, and DeepSeek Harness rejected the whole `llm-pi-ai` entry. The exported `input` keeps only text / image (falling back to an existing native `input`) and is omitted when nothing is left.
+- **CC Switch Exited on WSL When the Tray Could Not Write Its Icons** (#9021, fixes #9020): With `XDG_RUNTIME_DIR` pointing to a directory that cannot be created, tray setup failed with `Permission denied`. Linux tray icons are written under the app cache directory (`tray-icon`).
+- **Codex Chat Cards Dropped the Reasoning Effort After Re-enabling "Supports Reasoning Effort"** (#8998, fixes #8954): `effortParam` stayed `"none"`, so upstreams such as GitHub Copilot never received `reasoning_effort`. Re-enabling restores `"reasoning_effort"`, saving repairs stored values while keeping a valid `"reasoning.effort"`, and the backend normalizes rows saved earlier.
+- **DeepSeek Official Sign-In Card Said It Signs In with a Claude Account** (#9058): The DeepSeek Harness official card's subtitle now reads "Sign in with a DeepSeek account" instead of falling back to the Claude text.
+- **Flaky Codex OAuth Keep-Alive Test on macOS CI** (832fbe65a, refs #9111): The replacement test retries a request that hit a connection the old callback server had already closed; production behavior is unchanged.
+
 ## [4.0.23] - 2026-10-31
 
 This release lets the provider editors of Kimi Code, MiniMax Code and Oh My Pi show the provider's part of the real config file in its own TOML / YAML format, sends the thinking level chosen in Claude Code / Claude Desktop to more upstreams on the OpenAI and Gemini Native routes (with a per-card "Reasoning effort" select), adds a refresh-all button to the Auth Center, OpenAI API key presets, Gemini CLI presets for 13 providers and an Astron MaaS preset, and records latency and first-token time for Antigravity and MiniMax Code usage. Fixes cover the main window not coming back from lightweight mode on Windows, Claude model switching failing on upstreams that answer non-streaming requests with SSE, DeepSeek Harness profiles reached through a symlink refusing every edit, Grok Build sessions over 50 MiB never imported, Codex forks stuck as deferred, official balance tests reporting an empty key for DeepSeek Harness / MiniMax Code / Kimi, config editors in the provider form overwriting each other, the startup database lock blocking the UI thread, the icon picker under the macOS traffic lights, and IME input duplicating letters.

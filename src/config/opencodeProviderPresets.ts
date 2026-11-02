@@ -1793,13 +1793,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "A6API",
       options: {
-        baseURL: "https://api.a6api.com/v1",
+        baseURL: "https://api.a6api.vip/v1",
         apiKey: "",
         setCacheKey: true,
       },

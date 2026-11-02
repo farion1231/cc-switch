@@ -1052,11 +1052,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "A6API",
     providerKey: "cc-switch-a6-api",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     settingsConfig: {
       name: "A6API",
-      baseUrl: "https://api.a6api.com/v1",
+      baseUrl: "https://api.a6api.vip/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
