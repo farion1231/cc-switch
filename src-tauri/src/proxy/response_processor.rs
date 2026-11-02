@@ -173,16 +173,34 @@ pub async fn handle_streaming(
         format_headers(response.headers())
     );
     // 检查流式响应是否被压缩（SSE 通常不压缩，如果压缩则 SSE 解析会失败）
-    if let Some(encoding) = get_content_encoding(response.headers()) {
+    let stream_content_encoding = get_content_encoding(response.headers());
+    if let Some(encoding) = stream_content_encoding.as_deref() {
         log::warn!(
             "[{}] 流式响应含 content-encoding={encoding}，SSE 解析可能失败。\
-             上游在 accept-encoding 透传后压缩了 SSE 流。",
+             上游在 accept-encoding 透传后压缩了 SSE 流；model 回写对该流跳过。",
             ctx.tag
         );
     }
 
     let mut response_headers = response.headers().clone();
     strip_hop_by_hop_response_headers(&mut response_headers);
+
+    // Claude /v1/messages 透传：把响应 model 回写为客户端请求 model。rewrite 会改变
+    // SSE 字节数，必须剥掉 Content-Length 等 entity 头，否则下游按旧长度截断/挂起。
+    // 压缩流的字节不是明文 SSE，按 UTF-8 事件边界重写会产出带 content-encoding 的
+    // 替换符文本、流不可恢复；此时退回原样透传，而不是重写。
+    let force_response_model =
+        if super::model_mapper::should_force_response_model_for_app(&ctx.app_type)
+            && !ctx.request_model.trim().is_empty()
+            && stream_content_encoding.is_none()
+        {
+            Some(ctx.request_model.clone())
+        } else {
+            None
+        };
+    if force_response_model.is_some() {
+        strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    }
 
     let mut builder = axum::response::Response::builder().status(status);
 
@@ -207,6 +225,7 @@ pub async fn handle_streaming(
         usage_collector,
         timeout_config,
         connection_guard,
+        force_response_model,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -315,6 +334,38 @@ pub async fn handle_non_streaming(
         }
     } else {
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
+    }
+
+    // Claude /v1/messages 透传：把响应 model 写回客户端请求模型，避免 Claude Code 因
+    // message.model 与本轮请求 model 不一致而剥离带 signature 的 thinking。
+    let mut body_bytes = body_bytes;
+    if super::model_mapper::should_force_response_model_for_app(&ctx.app_type)
+        && !ctx.request_model.trim().is_empty()
+    {
+        if let Ok(mut json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+            if super::model_mapper::rewrite_anthropic_response_model(
+                &mut json_value,
+                &ctx.request_model,
+            ) {
+                match serde_json::to_vec(&json_value) {
+                    Ok(rewritten) => {
+                        log::debug!(
+                            "[{}] response model rewritten to client request model={}",
+                            ctx.tag,
+                            ctx.request_model
+                        );
+                        body_bytes = Bytes::from(rewritten);
+                        strip_entity_headers_for_rebuilt_body(&mut response_headers);
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[{}] failed to serialize rewritten response model body: {e}",
+                            ctx.tag
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // 构建响应
@@ -734,6 +785,7 @@ pub fn create_logged_passthrough_stream(
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    force_response_model: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
@@ -741,8 +793,13 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
+        let force_model = force_response_model;
+        let rewrite_models = force_model
+            .as_ref()
+            .map(|m| !m.trim().is_empty())
+            .unwrap_or(false);
         let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+            rewrite_models || collector.is_some() || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -793,10 +850,10 @@ pub fn create_logged_passthrough_stream(
                         );
                     }
                     is_first_chunk = false;
-                    if inspect_sse_events {
+                    if rewrite_models {
+                        // 模型回写需要按完整 SSE event 边界处理，避免 JSON 跨 chunk 半包。
                         crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-
-                        // 尝试解析并记录完整的 SSE 事件
+                        let client_model = force_model.as_deref().unwrap_or("");
                         while let Some(event_text) = take_sse_block(&mut buffer) {
                             if !event_text.trim().is_empty() {
                                 let event_name = event_text
@@ -831,10 +888,59 @@ pub fn create_logged_passthrough_stream(
                                     }
                                 }
                             }
+                            let rewritten =
+                                super::model_mapper::rewrite_anthropic_sse_event_block(
+                                    &event_text,
+                                    client_model,
+                                );
+                            let mut out = rewritten;
+                            out.push_str("\n\n");
+                            yield Ok(Bytes::from(out));
                         }
-                    }
+                    } else {
+                        if inspect_sse_events {
+                            crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
-                    yield Ok(bytes);
+                            // 尝试解析并记录完整的 SSE 事件
+                            while let Some(event_text) = take_sse_block(&mut buffer) {
+                                if !event_text.trim().is_empty() {
+                                    let event_name = event_text
+                                        .lines()
+                                        .find_map(|line| strip_sse_field(line, "event"));
+                                    // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
+                                    for line in event_text.lines() {
+                                        if let Some(data) = strip_sse_field(line, "data") {
+                                            if let Some(c) = &collector {
+                                                c.observe_data(event_name, data);
+                                            }
+                                            if data.trim() != "[DONE]" {
+                                                let collected = match &collector {
+                                                    Some(c) if c.should_collect(data) => {
+                                                        match serde_json::from_str::<Value>(data) {
+                                                            Ok(json_value) => {
+                                                                c.push(json_value).await;
+                                                                true
+                                                            }
+                                                            Err(_) => false,
+                                                        }
+                                                    }
+                                                    _ => false,
+                                                };
+                                                log::trace!(
+                                                    "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
+                                                    data.len()
+                                                );
+                                            } else {
+                                                log::debug!("[{tag}] <<< SSE: [DONE]");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        yield Ok(bytes);
+                    }
                 }
                 Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
@@ -845,6 +951,21 @@ pub fn create_logged_passthrough_stream(
                     // 流正常结束
                     break;
                 }
+            }
+        }
+
+        if rewrite_models {
+            if !utf8_remainder.is_empty() {
+                buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
+                utf8_remainder.clear();
+            }
+            if !buffer.trim().is_empty() {
+                let client_model = force_model.as_deref().unwrap_or("");
+                let rewritten = super::model_mapper::rewrite_anthropic_sse_event_block(
+                    buffer.trim_end(),
+                    client_model,
+                );
+                yield Ok(Bytes::from(rewritten));
             }
         }
 
@@ -985,6 +1106,7 @@ mod tests {
                 first_byte_timeout: 0,
                 idle_timeout: 0,
             },
+            None,
             None,
         );
         futures::pin_mut!(stream);
