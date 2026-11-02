@@ -587,6 +587,75 @@ mod tests {
         })).unwrap()
     }
 
+    fn isolated_vscode_config_dir() -> PathBuf {
+        let home = crate::config::get_home_dir();
+        if cfg!(target_os = "windows") {
+            home.join("AppData").join("Roaming")
+        } else if cfg!(target_os = "macos") {
+            home.join("Library").join("Application Support")
+        } else {
+            home.join(".config")
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_home_limits_discovery_to_isolated_profiles() {
+        let _home = TestHome::new();
+        assert!(vscode::discover_vscode_targets().unwrap().is_empty());
+        let config = isolated_vscode_config_dir();
+        for edition in ["Code", "Code - Insiders"] {
+            let user = config.join(edition).join("User");
+            std::fs::create_dir_all(user.join("profiles/work")).unwrap();
+            crate::config::write_json_file_private(
+                &user.join("globalStorage/storage.json"),
+                &json!({ "userDataProfiles": [{ "location": "work", "name": "Work" }] }),
+            )
+            .unwrap();
+        }
+
+        let targets = vscode::discover_vscode_targets().unwrap();
+        assert_eq!(targets.len(), 4);
+        for target in targets {
+            assert!(target.path().starts_with(&config));
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn changing_targets_only_cleans_the_isolated_default_profile() {
+        let _home = TestHome::new();
+        let home = crate::config::get_home_dir();
+        let default_path = isolated_vscode_config_dir().join("Code/User/chatLanguageModels.json");
+        let original = json!([
+            { "name": "Unmanaged", "vendor": "Other", "models": [] },
+            group().to_language_model_group()
+        ]);
+        crate::config::write_json_file_private(&default_path, &original).unwrap();
+
+        // Check the discovery boundary BEFORE invoking any mutating operation.
+        // This regression must fail safely even if OS discovery is reintroduced.
+        let targets = vscode::discover_vscode_targets().unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].path(), default_path);
+        assert!(targets
+            .iter()
+            .all(|target| target.path().starts_with(&home)));
+
+        let db = Database::memory().unwrap();
+        let custom = home.join("custom/chatLanguageModels.json");
+        add_custom_target(&db, custom.to_string_lossy().into_owned(), None).unwrap();
+        assert_eq!(
+            sync::read_language_model_groups(&default_path).unwrap(),
+            vec![original[0].clone()]
+        );
+        let state = get_state(&db).unwrap();
+        assert!(state
+            .targets
+            .iter()
+            .all(|target| { Path::new(&target.language_models_path).starts_with(&home) }));
+    }
+
     #[test]
     #[serial_test::serial]
     fn catalog_crud_sync_and_restore_form_a_complete_loop() {

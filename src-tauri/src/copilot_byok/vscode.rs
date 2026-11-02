@@ -198,7 +198,21 @@ fn resolve_profile_dir(profiles_dir: &Path, location: &str) -> Option<PathBuf> {
 }
 
 fn default_user_roots() -> Vec<(VsCodeEdition, PathBuf)> {
-    let Some(config_dir) = dirs::config_dir() else {
+    // dirs::config_dir() can use XDG_CONFIG_HOME / the real Windows profile,
+    // bypassing TestHome and making target changes modify the user's VS Code.
+    // An explicit test home must take precedence over every OS discovery root.
+    let config_dir = crate::config::test_home_override()
+        .map(|home| {
+            if cfg!(target_os = "windows") {
+                home.join("AppData").join("Roaming")
+            } else if cfg!(target_os = "macos") {
+                home.join("Library").join("Application Support")
+            } else {
+                home.join(".config")
+            }
+        })
+        .or_else(dirs::config_dir);
+    let Some(config_dir) = config_dir else {
         return Vec::new();
     };
 
