@@ -1,10 +1,11 @@
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import {
   CircleAlert,
   Copy,
   ExternalLink,
+  Link2,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -25,6 +26,7 @@ import type { ManagedAccountUser } from "@/lib/managedAccountUsage";
 import type { ManagedAuthDeviceCodeResponse } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { settingsApi } from "@/lib/api";
+import { readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ProviderIcon";
 
@@ -207,6 +209,29 @@ export function ManagedAccountsGroup({
     }
   };
 
+  // 这次登录开始时有没有打开浏览器（授权中心的开关），换一次登录链接才重新读：
+  // 中途拨开关不改这次的说明
+  const verificationUri = login.deviceCode?.verification_uri;
+  const linkOnly = useMemo(
+    () => Boolean(verificationUri) && !readAuthOpenBrowser(),
+    [verificationUri],
+  );
+
+  const copyLink = async () => {
+    const uri = login.deviceCode?.verification_uri;
+    if (!uri) return;
+    try {
+      await copyText(uri);
+      toast.success(
+        t("authCenter.pending.linkCopied", {
+          defaultValue: "登录链接已复制。",
+        }),
+      );
+    } catch (e) {
+      console.debug("[AuthCenter] Failed to copy login link:", e);
+    }
+  };
+
   const openPage = () => {
     const uri = login.deviceCode?.verification_uri;
     if (uri) void settingsApi.openExternal(uri);
@@ -352,24 +377,43 @@ export function ManagedAccountsGroup({
             {login.deviceCode && !login.deviceCode.user_code && (
               <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
                 <span className="min-w-0 flex-1">
-                  {t("authCenter.pending.browserNote", {
-                    defaultValue:
-                      "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
-                    service: name,
-                  })}
+                  {linkOnly
+                    ? t("authCenter.pending.linkNote", {
+                        defaultValue:
+                          "登录链接已复制。在你要用的浏览器里打开，登录并同意授权后这里会自动更新。",
+                      })
+                    : t("authCenter.pending.browserNote", {
+                        defaultValue:
+                          "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
+                        service: name,
+                      })}
                 </span>
                 <Button
                   type="button"
                   variant="quiet"
                   size="compact"
                   className="gap-1"
-                  onClick={openPage}
+                  onClick={() => void copyLink()}
                 >
-                  <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  {t("authCenter.pending.reopen", {
-                    defaultValue: "重新打开登录页",
+                  <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  {t("authCenter.pending.copyLink", {
+                    defaultValue: "复制登录链接",
                   })}
                 </Button>
+                {!linkOnly && (
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="compact"
+                    className="gap-1"
+                    onClick={openPage}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    {t("authCenter.pending.reopen", {
+                      defaultValue: "重新打开登录页",
+                    })}
+                  </Button>
+                )}
               </div>
             )}
             {login.deviceCode && !login.deviceCode.user_code && login.extra}
@@ -402,29 +446,57 @@ export function ManagedAccountsGroup({
                     </Button>
                   </HoverTip>
                   <HoverTip
-                    content={t("authCenter.pending.open", {
-                      defaultValue: "打开授权页面",
+                    content={t("authCenter.pending.copyLink", {
+                      defaultValue: "复制登录链接",
                     })}
                   >
                     <Button
                       type="button"
                       variant="quiet"
                       size="icon-compact"
-                      aria-label={t("authCenter.pending.open", {
-                        defaultValue: "打开授权页面",
+                      aria-label={t("authCenter.pending.copyLink", {
+                        defaultValue: "复制登录链接",
                       })}
-                      onClick={openPage}
+                      onClick={() => void copyLink()}
                     >
-                      <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
+                      <Link2 className="h-3.5 w-3.5" strokeWidth={1.5} />
                     </Button>
                   </HoverTip>
+                  {!linkOnly && (
+                    <HoverTip
+                      content={t("authCenter.pending.open", {
+                        defaultValue: "打开授权页面",
+                      })}
+                    >
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        size="icon-compact"
+                        aria-label={t("authCenter.pending.open", {
+                          defaultValue: "打开授权页面",
+                        })}
+                        onClick={openPage}
+                      >
+                        <ExternalLink
+                          className="h-3.5 w-3.5"
+                          strokeWidth={1.5}
+                        />
+                      </Button>
+                    </HoverTip>
+                  )}
                 </div>
                 <span className="text-caption text-fg-2">
-                  {t("authCenter.pending.note", {
-                    defaultValue:
-                      "已在浏览器打开授权页面，完成后这里会自动更新。注意 {{service}} 的使用条款。",
-                    service: name,
-                  })}
+                  {linkOnly
+                    ? t("authCenter.pending.linkCodeNote", {
+                        defaultValue:
+                          "登录链接已复制。在你要用的浏览器里打开并输入验证码，完成后这里会自动更新。注意 {{service}} 的使用条款。",
+                        service: name,
+                      })
+                    : t("authCenter.pending.note", {
+                        defaultValue:
+                          "已在浏览器打开授权页面，完成后这里会自动更新。注意 {{service}} 的使用条款。",
+                        service: name,
+                      })}
                 </span>
               </>
             )}

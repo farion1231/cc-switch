@@ -225,8 +225,22 @@ module.exports = {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "row-flash": "rowFlash 4s ease-in-out forwards",
+        "row-fade": "rowFade 3s ease-out forwards",
       },
       keyframes: {
+        // 从「发现」跳到「已安装」后标出那一行：黄底闪两下，停一会再淡出
+        // 动 opacity 而不是 background-color：WebKit 里 keyframes 带 var() 的颜色会跳变成快闪
+        rowFlash: {
+          "0%": { opacity: "0" },
+          "15%, 50%, 75%": { opacity: "1" },
+          "32%": { opacity: "0.15" },
+          "100%": { opacity: "0" },
+        },
+        rowFade: {
+          "0%, 60%": { opacity: "1" },
+          "100%": { opacity: "0" },
+        },
         fadeIn: {
           "0%": {
             opacity: "0",

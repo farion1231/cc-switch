@@ -44,6 +44,11 @@ mod webdav_sync;
 mod workbuddy_account;
 mod workspace;
 
+#[cfg(test)]
+mod provider_concurrency_tests;
+#[cfg(test)]
+mod startup_tests;
+
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
@@ -86,3 +91,6 @@ pub use usage::*;
 pub use webdav_sync::*;
 pub use workbuddy_account::*;
 pub use workspace::*;
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) use misc::{login_shell_path, merge_path_segments, CommandDeadline};

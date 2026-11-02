@@ -52,7 +52,6 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
 const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   mcode: "sessionManager.mcodeDeleteHint",
   agy: "sessionManager.agyDeleteHint",
-  kimi: "kimi.deleteSessionHint",
   dsh: "dsh.deleteSessionHint",
   workbuddy: "workbuddy.deleteSessionHint",
 };

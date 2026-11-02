@@ -375,12 +375,178 @@ fn build_generation_config(body: &Value) -> Option<Value> {
     if let Some(value) = body.get("stop_sequences") {
         config.insert("stopSequences".to_string(), value.clone());
     }
+    if let Some(thinking_config) = build_thinking_config(body) {
+        config.insert("thinkingConfig".to_string(), thinking_config);
+    }
 
     if config.is_empty() {
         None
     } else {
         Some(Value::Object(config))
     }
+}
+
+/// 客户端要的思考强度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestedThinking {
+    Off,
+    /// low / medium / high / xhigh / max 之一。
+    Effort(&'static str),
+}
+
+/// 目标模型用哪种参数控制思考。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GeminiThinkingControl {
+    /// Gemini 2.5：`thinkingBudget`。`off` 是关思考时发的值。
+    Budget { off: i64 },
+    /// Gemini 3 及以后：`thinkingLevel`。`minimal` / `medium` 表示是否收这一档。
+    Level { minimal: bool, medium: bool },
+}
+
+/// 把 Claude 的 `thinking` / `output_config.effort` 换成 Gemini 的 `thinkingConfig`。
+///
+/// 官方文档（2026-10-31 核对）：
+/// - 思考参数：<https://ai.google.dev/gemini-api/docs/generate-content/thinking>
+/// - 3 系各档位：<https://ai.google.dev/gemini-api/docs/gemini-3>
+/// - 字段与枚举：<https://ai.google.dev/api/generate-content#ThinkingConfig>
+/// - 档位 → 预算的官方换算（OpenAI 兼容层）：<https://ai.google.dev/gemini-api/docs/openai#thinking>
+///
+/// Gemini 2.5 只认 `thinkingBudget`（发 `thinkingLevel` 报错）；3 / 4 系用 `thinkingLevel`，
+/// 两个字段同时发会 400。档位按 OpenAI 兼容层的官方换算：
+///
+/// | Claude             | 2.5 Pro | 2.5 Flash / Flash-Lite | 3 / 4 系                             |
+/// |--------------------|---------|------------------------|--------------------------------------|
+/// | 关思考             | 128     | 0                      | minimal（不收的发 low）               |
+/// | low                | 1024    | 1024                   | low                                  |
+/// | medium             | 8192    | 8192                   | medium（Gemini 3 Pro 不收，发 high）  |
+/// | high / xhigh / max | 24576   | 24576                  | high                                 |
+///
+/// - 2.5 Pro 关不掉思考、预算下限 128，关思考发 128；2.5 Flash / Flash-Lite 发 0 即关。
+/// - 3 / 4 系都关不掉思考；`minimal` 只有 3 Flash、3.6 Flash 和各代 Flash-Lite 收，
+///   4 Argon、3.8 Flash、3.x Pro 发 `minimal` 会报错，改发 `low`。没写进文档的 3 系以后
+///   型号按 low / medium / high 发（文档里所有 3 / 4 系对话模型都收这三档，3 Pro 除外）。
+/// - 认不出的模型不发：非 `gemini-<版本>-` 开头的名字、2.5 以前的型号、生图 / 语音 / 实时 /
+///   转写模型，以及名字末尾带档位的中转别名（如 `gemini-3-pro-high`，档位由中转定）。
+/// - 客户端没给任何思考字段时不发，保持模型默认。
+///
+/// 不发 `includeThoughts`：响应转换会丢掉 `thought` 部分，要了也送不到客户端。
+fn build_thinking_config(body: &Value) -> Option<Value> {
+    let control = gemini_thinking_control(body.get("model").and_then(Value::as_str)?)?;
+    let requested = requested_thinking(body)?;
+    Some(match control {
+        GeminiThinkingControl::Budget { off } => {
+            let budget = match requested {
+                RequestedThinking::Off => off,
+                RequestedThinking::Effort("low") => 1024,
+                RequestedThinking::Effort("medium") => 8192,
+                RequestedThinking::Effort(_) => 24_576,
+            };
+            json!({ "thinkingBudget": budget })
+        }
+        GeminiThinkingControl::Level { minimal, medium } => {
+            let level = match requested {
+                RequestedThinking::Off if minimal => "minimal",
+                RequestedThinking::Off | RequestedThinking::Effort("low") => "low",
+                RequestedThinking::Effort("medium") if medium => "medium",
+                RequestedThinking::Effort(_) => "high",
+            };
+            json!({ "thinkingLevel": level })
+        }
+    })
+}
+
+/// 读客户端要的思考强度，优先级同 [`super::transform::resolve_reasoning_effort`]：
+/// 1. `output_config.effort`；`thinking` 缺省或 disabled 时算关（Claude Code 关思考时
+///    照样带 effort）。
+/// 2. 否则看 `thinking`：adaptive → xhigh；enabled 按 `budget_tokens` 分档（<4000 low、
+///    <16000 medium、其余或没给 high）；disabled → 关。
+/// 3. 都没有 → `None`，不发。
+///
+/// 5.x Claude 模型省略 `thinking` 也默认开 adaptive，转发前已按客户端原模型补成显式
+/// adaptive（[`super::transform::make_default_adaptive_thinking_explicit`]）。
+fn requested_thinking(body: &Value) -> Option<RequestedThinking> {
+    let thinking_type = body.pointer("/thinking/type").and_then(Value::as_str);
+    if let Some(effort) = body
+        .pointer("/output_config/effort")
+        .and_then(Value::as_str)
+    {
+        let effort = match effort {
+            "low" => "low",
+            "medium" => "medium",
+            "high" => "high",
+            "xhigh" => "xhigh",
+            "max" => "max",
+            _ => return None,
+        };
+        return Some(match thinking_type {
+            None | Some("disabled") => RequestedThinking::Off,
+            Some(_) => RequestedThinking::Effort(effort),
+        });
+    }
+    match thinking_type? {
+        "disabled" => Some(RequestedThinking::Off),
+        "adaptive" => Some(RequestedThinking::Effort("xhigh")),
+        "enabled" => {
+            let budget = body
+                .pointer("/thinking/budget_tokens")
+                .and_then(Value::as_u64);
+            Some(RequestedThinking::Effort(match budget {
+                Some(budget) if budget < 4_000 => "low",
+                Some(budget) if budget < 16_000 => "medium",
+                _ => "high",
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// 按模型名判断思考参数（规则见 [`build_thinking_config`]）。带厂商前缀的名字
+/// （`models/gemini-2.5-pro`、`google/gemini-3-flash-preview`）按最后一段判断。
+fn gemini_thinking_control(model: &str) -> Option<GeminiThinkingControl> {
+    const NON_CHAT: [&str; 7] = [
+        "image",
+        "tts",
+        "live",
+        "audio",
+        "transcribe",
+        "translate",
+        "embedding",
+    ];
+    let name = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .trim()
+        .to_ascii_lowercase();
+    if name.split('-').any(|segment| NON_CHAT.contains(&segment))
+        || matches!(
+            name.rsplit('-').next(),
+            Some("minimal" | "low" | "medium" | "high")
+        )
+    {
+        return None;
+    }
+    let (version, family) = name.strip_prefix("gemini-")?.split_once('-')?;
+    let (major, minor) = match version.split_once('.') {
+        Some((major, minor)) => (major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?),
+        None => (version.parse::<u32>().ok()?, 0),
+    };
+
+    if major >= 3 {
+        let minimal = family.starts_with("flash-lite")
+            || (family.starts_with("flash") && matches!((major, minor), (3, 0) | (3, 6)));
+        let medium = !((major, minor) == (3, 0) && family.starts_with("pro"));
+        return Some(GeminiThinkingControl::Level { minimal, medium });
+    }
+    if (major, minor) == (2, 5) {
+        if family.starts_with("pro") {
+            return Some(GeminiThinkingControl::Budget { off: 128 });
+        }
+        if family.starts_with("flash") {
+            return Some(GeminiThinkingControl::Budget { off: 0 });
+        }
+    }
+    None
 }
 
 fn convert_messages_to_contents(
@@ -1387,6 +1553,301 @@ mod tests {
         assert_eq!(result["contents"][0]["role"], "user");
         assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
         assert_eq!(result["generationConfig"]["maxOutputTokens"], 128);
+    }
+
+    fn thinking_config_for(model: &str, thinking: Value) -> Option<Value> {
+        let mut body = json!({
+            "model": model,
+            "max_tokens": 32000,
+            "messages": [{ "role": "user", "content": "Hi" }]
+        });
+        for (key, value) in thinking.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        anthropic_to_gemini(body).unwrap()["generationConfig"]
+            .get("thinkingConfig")
+            .cloned()
+    }
+
+    fn adaptive(effort: &str) -> Value {
+        json!({
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": effort }
+        })
+    }
+
+    #[test]
+    fn thinking_config_maps_effort_to_budget_for_gemini_2_5() {
+        for model in [
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash-preview-09-2025",
+        ] {
+            for (effort, budget) in [
+                ("low", 1024),
+                ("medium", 8192),
+                ("high", 24_576),
+                ("xhigh", 24_576),
+                ("max", 24_576),
+            ] {
+                assert_eq!(
+                    thinking_config_for(model, adaptive(effort)),
+                    Some(json!({ "thinkingBudget": budget })),
+                    "model={model}, effort={effort}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn thinking_config_maps_effort_to_level_for_gemini_3_and_later() {
+        for model in [
+            "gemini-4-argon",
+            "gemini-3.8-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite",
+            "gemini-3-flash-preview",
+            "gemini-3.8-pro",
+        ] {
+            for (effort, level) in [
+                ("low", "low"),
+                ("medium", "medium"),
+                ("high", "high"),
+                ("xhigh", "high"),
+                ("max", "high"),
+            ] {
+                assert_eq!(
+                    thinking_config_for(model, adaptive(effort)),
+                    Some(json!({ "thinkingLevel": level })),
+                    "model={model}, effort={effort}"
+                );
+            }
+        }
+        // Gemini 3 Pro 只收 low / high。
+        assert_eq!(
+            thinking_config_for("gemini-3-pro-preview", adaptive("medium")),
+            Some(json!({ "thinkingLevel": "high" }))
+        );
+        assert_eq!(
+            thinking_config_for("gemini-3-pro-preview", adaptive("low")),
+            Some(json!({ "thinkingLevel": "low" }))
+        );
+    }
+
+    #[test]
+    fn thinking_config_disabled_sends_lowest_setting_each_model_accepts() {
+        let cases = [
+            ("gemini-2.5-pro", json!({ "thinkingBudget": 128 })),
+            ("gemini-2.5-flash", json!({ "thinkingBudget": 0 })),
+            ("gemini-2.5-flash-lite", json!({ "thinkingBudget": 0 })),
+            (
+                "gemini-3-flash-preview",
+                json!({ "thinkingLevel": "minimal" }),
+            ),
+            ("gemini-3.6-flash", json!({ "thinkingLevel": "minimal" })),
+            (
+                "gemini-3.1-flash-lite",
+                json!({ "thinkingLevel": "minimal" }),
+            ),
+            (
+                "gemini-3.5-flash-lite",
+                json!({ "thinkingLevel": "minimal" }),
+            ),
+            ("gemini-4-argon", json!({ "thinkingLevel": "low" })),
+            ("gemini-3.8-flash", json!({ "thinkingLevel": "low" })),
+            ("gemini-3.1-pro-preview", json!({ "thinkingLevel": "low" })),
+            ("gemini-3-pro-preview", json!({ "thinkingLevel": "low" })),
+        ];
+        for (model, expected) in cases {
+            assert_eq!(
+                thinking_config_for(model, json!({ "thinking": { "type": "disabled" } })),
+                Some(expected.clone()),
+                "model={model}"
+            );
+            // Claude Code 关思考时照样带 effort：disabled 或省略 thinking 都算关。
+            assert_eq!(
+                thinking_config_for(
+                    model,
+                    json!({
+                        "thinking": { "type": "disabled" },
+                        "output_config": { "effort": "high" }
+                    })
+                ),
+                Some(expected.clone()),
+                "model={model}"
+            );
+            assert_eq!(
+                thinking_config_for(model, json!({ "output_config": { "effort": "high" } })),
+                Some(expected),
+                "model={model}"
+            );
+        }
+    }
+
+    #[test]
+    fn thinking_config_reads_budget_tokens_and_adaptive_without_effort() {
+        let enabled = |budget: Option<u64>| {
+            let mut thinking = json!({ "type": "enabled" });
+            if let Some(budget) = budget {
+                thinking["budget_tokens"] = json!(budget);
+            }
+            json!({ "thinking": thinking })
+        };
+        for (thinking, budget, level) in [
+            (enabled(Some(2_048)), 1024, "low"),
+            (enabled(Some(10_000)), 8192, "medium"),
+            (enabled(Some(31_999)), 24_576, "high"),
+            (enabled(None), 24_576, "high"),
+            (
+                json!({ "thinking": { "type": "adaptive" } }),
+                24_576,
+                "high",
+            ),
+        ] {
+            assert_eq!(
+                thinking_config_for("gemini-2.5-pro", thinking.clone()),
+                Some(json!({ "thinkingBudget": budget })),
+                "thinking={thinking}"
+            );
+            assert_eq!(
+                thinking_config_for("gemini-4-argon", thinking.clone()),
+                Some(json!({ "thinkingLevel": level })),
+                "thinking={thinking}"
+            );
+        }
+        // output_config.effort 优先于 budget_tokens。
+        assert_eq!(
+            thinking_config_for(
+                "gemini-3.8-flash",
+                json!({
+                    "thinking": { "type": "enabled", "budget_tokens": 31_999 },
+                    "output_config": { "effort": "low" }
+                })
+            ),
+            Some(json!({ "thinkingLevel": "low" }))
+        );
+    }
+
+    #[test]
+    fn thinking_config_matches_last_segment_of_prefixed_model_names() {
+        assert_eq!(
+            thinking_config_for("models/gemini-2.5-flash", adaptive("medium")),
+            Some(json!({ "thinkingBudget": 8192 }))
+        );
+        assert_eq!(
+            thinking_config_for("google/Gemini-3-Flash-Preview", adaptive("medium")),
+            Some(json!({ "thinkingLevel": "medium" }))
+        );
+    }
+
+    #[test]
+    fn thinking_config_omitted_for_unknown_models_or_missing_signal() {
+        for model in [
+            "gemini-2.0-flash",
+            "gemini-1.5-pro",
+            "gemini-flash-latest",
+            "gemini-exp-1206",
+            "gemini-3-pro-high",
+            "gemini-4-argon-medium",
+            "gemini-2.5-flash-image",
+            "gemini-3.1-flash-lite-image",
+            "gemini-3-pro-image",
+            "gemini-3.8-flash-tts",
+            "gemini-3.8-live",
+            "gemini-2.5-flash-native-audio-preview-12-2025",
+            "gemini-3.5-transcribe",
+            "gemini-embedding-001",
+            "my-relay-model",
+            "claude-sonnet-5",
+        ] {
+            assert_eq!(
+                thinking_config_for(model, adaptive("high")),
+                None,
+                "model={model}"
+            );
+            assert_eq!(
+                thinking_config_for(model, json!({ "thinking": { "type": "disabled" } })),
+                None,
+                "model={model}"
+            );
+        }
+        for thinking in [
+            json!({}),
+            json!({ "thinking": null }),
+            json!({ "thinking": { "type": "something-new" } }),
+            json!({ "thinking": { "type": "adaptive" }, "output_config": { "effort": "turbo" } }),
+        ] {
+            assert_eq!(
+                thinking_config_for("gemini-2.5-flash", thinking.clone()),
+                None,
+                "thinking={thinking}"
+            );
+        }
+    }
+
+    #[test]
+    fn thinking_config_only_adds_thinking_config_to_generation_config() {
+        let base = json!({
+            "model": "gemini-3.8-flash",
+            "max_tokens": 32000,
+            "temperature": 1,
+            "top_p": 0.9,
+            "stop_sequences": ["END"],
+            "system": "You are helpful.",
+            "messages": [{ "role": "user", "content": "Hi" }]
+        });
+        let mut with_thinking = base.clone();
+        with_thinking["thinking"] = json!({ "type": "adaptive" });
+        with_thinking["output_config"] = json!({ "effort": "medium" });
+
+        let mut plain = anthropic_to_gemini(base).unwrap();
+        let mut converted = anthropic_to_gemini(with_thinking).unwrap();
+        assert_eq!(
+            converted["generationConfig"]
+                .as_object_mut()
+                .unwrap()
+                .remove("thinkingConfig"),
+            Some(json!({ "thinkingLevel": "medium" }))
+        );
+        assert_eq!(converted, plain);
+
+        // 没有别的生成参数时，generationConfig 只放 thinkingConfig。
+        plain = anthropic_to_gemini(json!({
+            "model": "gemini-2.5-flash",
+            "thinking": { "type": "disabled" },
+            "messages": [{ "role": "user", "content": "Hi" }]
+        }))
+        .unwrap();
+        assert_eq!(
+            plain["generationConfig"],
+            json!({ "thinkingConfig": { "thinkingBudget": 0 } })
+        );
+    }
+
+    #[test]
+    fn thinking_config_keeps_default_adaptive_of_5x_client_models() {
+        // Claude Code 对 Opus 5.5 等「关不掉思考」的模型省略 thinking；转发前按客户端原模型
+        // 补成 adaptive，否则映射到 Gemini 后会被当成关思考。
+        let mut body = json!({
+            "model": "gemini-3.8-flash",
+            "output_config": { "effort": "high" },
+            "messages": [{ "role": "user", "content": "Hi" }]
+        });
+        assert_eq!(
+            thinking_config_for("gemini-3.8-flash", body.clone()),
+            Some(json!({ "thinkingLevel": "low" }))
+        );
+        super::super::transform::make_default_adaptive_thinking_explicit(
+            &mut body,
+            Some("claude-opus-5-5"),
+        );
+        assert_eq!(
+            anthropic_to_gemini(body).unwrap()["generationConfig"]["thinkingConfig"],
+            json!({ "thinkingLevel": "high" })
+        );
     }
 
     #[test]
