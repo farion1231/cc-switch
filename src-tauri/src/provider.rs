@@ -132,15 +132,6 @@ impl Provider {
             .unwrap_or(false)
     }
 
-    /// xAI Priority 开关。只表示要不要补 `service_tier = "priority"`，
-    /// 不改 model。快速变体是另一个模型 ID。
-    pub fn xai_priority_enabled(&self) -> bool {
-        self.meta
-            .as_ref()
-            .map(|m| m.xai_priority_enabled())
-            .unwrap_or(false)
-    }
-
     pub fn has_usage_script_enabled(&self) -> bool {
         self.meta
             .as_ref()
@@ -578,10 +569,6 @@ pub struct ProviderMeta {
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
     #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
     pub codex_fast_mode: Option<bool>,
-    /// xAI Responses：打开后给出站请求补 `service_tier = "priority"`。
-    /// 与 Codex FAST 无关，也不改 model。快速变体是模型 ID，不由这个字段注入。
-    #[serde(rename = "xaiPriority", skip_serializing_if = "Option::is_none")]
-    pub xai_priority: Option<bool>,
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
@@ -694,10 +681,6 @@ impl ProviderMeta {
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
         self.codex_fast_mode.unwrap_or(false)
-    }
-
-    pub fn xai_priority_enabled(&self) -> bool {
-        self.xai_priority.unwrap_or(false)
     }
 
     /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。

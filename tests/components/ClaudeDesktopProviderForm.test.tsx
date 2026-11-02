@@ -8,17 +8,12 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 
 const authState = vi.hoisted(() => ({
   codexReauthRequired: false,
-  xaiAuthenticated: false,
 }));
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
-  success: vi.fn(),
 }));
 const modelFetchMocks = vi.hoisted(() => ({
   fetchCodexOauthModels: vi.fn(),
-}));
-const clipboardMocks = vi.hoisted(() => ({
-  copyText: vi.fn(),
 }));
 
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
@@ -32,12 +27,8 @@ vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
 vi.mock("sonner", () => ({
   toast: {
     error: toastMocks.error,
-    success: toastMocks.success,
+    success: vi.fn(),
   },
-}));
-
-vi.mock("@/lib/clipboard", () => ({
-  copyText: clipboardMocks.copyText,
 }));
 
 vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
@@ -62,10 +53,8 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
       ],
     }),
     useXaiOauth: () => ({
-      isAuthenticated: authState.xaiAuthenticated,
-      accounts: authState.xaiAuthenticated
-        ? [{ id: "xai-acct", requires_reauth: false }]
-        : [],
+      isAuthenticated: false,
+      accounts: [],
     }),
   };
 });
@@ -109,12 +98,8 @@ function renderForm(
 describe("ClaudeDesktopProviderForm", () => {
   beforeEach(() => {
     authState.codexReauthRequired = false;
-    authState.xaiAuthenticated = false;
     toastMocks.error.mockReset();
-    toastMocks.success.mockReset();
     modelFetchMocks.fetchCodexOauthModels.mockReset();
-    clipboardMocks.copyText.mockReset();
-    clipboardMocks.copyText.mockResolvedValue(undefined);
   });
 
   it("托管 OAuth 供应商也能获取模型并在映射行里选择（#8426）", async () => {
@@ -755,151 +740,5 @@ describe("ClaudeDesktopProviderForm", () => {
       ),
     );
     expect(onSubmit).not.toHaveBeenCalled();
-  });
-
-  const xaiInitialData = {
-    name: "xAI",
-    category: "third_party" as const,
-    settingsConfig: {
-      env: { ANTHROPIC_BASE_URL: "https://api.x.ai/v1" },
-    },
-    meta: {
-      providerType: "xai_oauth",
-      claudeDesktopMode: "proxy" as const,
-      apiFormat: "openai_responses" as const,
-      claudeDesktopModelRoutes: {
-        "claude-sonnet-5": { model: "grok-4.5" },
-      },
-    },
-  };
-
-  it("只在 xAI 的 Claude Desktop 表单显示 Priority 开关和快速变体说明", () => {
-    const { unmount } = renderForm(xaiInitialData);
-
-    expect(screen.getByRole("switch", { name: "Priority" })).not.toBeChecked();
-    expect(
-      screen.getByText(/获取模型列表不含/).closest("p"),
-    ).toHaveClass("text-destructive");
-    expect(
-      screen.getAllByRole("button", { name: "grok-4.7-build-fast" }).length,
-    ).toBeGreaterThan(0);
-    expect(screen.queryByText(/ChatGPT/)).not.toBeInTheDocument();
-
-    unmount();
-    renderForm({
-      name: "Codex OAuth Provider",
-      category: "third_party",
-      settingsConfig: { env: {} },
-      meta: {
-        providerType: "codex_oauth",
-        claudeDesktopMode: "proxy",
-        claudeDesktopModelRoutes: {
-          "claude-sonnet-5": { model: "upstream-model" },
-        },
-      },
-    });
-
-    expect(
-      screen.queryByRole("switch", { name: "Priority" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(/grok-4.7-build-fast/)).not.toBeInTheDocument();
-  });
-
-  it("API Key 供应商不显示 xAI Priority 开关和快速变体说明", () => {
-    renderForm({
-      name: "Grok API Key",
-      category: "third_party",
-      settingsConfig: {
-        env: {
-          ANTHROPIC_BASE_URL: "https://api.x.ai/v1",
-          ANTHROPIC_AUTH_TOKEN: "sk-test",
-        },
-      },
-      meta: {
-        claudeDesktopMode: "proxy",
-        apiFormat: "openai_responses",
-        claudeDesktopModelRoutes: {
-          "claude-sonnet-5": { model: "grok-4.5" },
-        },
-      },
-    });
-
-    expect(
-      screen.queryByRole("switch", { name: "Priority" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(/grok-4.7-build-fast/)).not.toBeInTheDocument();
-  });
-
-  it("点击 grok-4.7-build-fast 复制模型 ID，不把它写进拉取结果", async () => {
-    renderForm(xaiInitialData);
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "grok-4.7-build-fast" })[0],
-    );
-
-    await waitFor(() =>
-      expect(clipboardMocks.copyText).toHaveBeenCalledWith(
-        "grok-4.7-build-fast",
-      ),
-    );
-    expect(toastMocks.success).toHaveBeenCalledWith("已复制");
-    expect(modelFetchMocks.fetchCodexOauthModels).not.toHaveBeenCalled();
-  });
-
-  it("保存 xAI 表单时只写入 xaiPriority，不复用 codexFastMode", async () => {
-    authState.xaiAuthenticated = true;
-    const onSubmit = vi.fn();
-    renderForm(
-      {
-        ...xaiInitialData,
-        meta: {
-          ...xaiInitialData.meta,
-          authBinding: {
-            source: "managed_account",
-            authProvider: "xai_oauth",
-            accountId: "xai-acct",
-          },
-        },
-      },
-      onSubmit,
-    );
-
-    expect(screen.getByRole("switch", { name: "Priority" })).not.toBeChecked();
-    fireEvent.click(screen.getByRole("switch", { name: "Priority" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    const submitted = onSubmit.mock.calls[0][0];
-    expect(submitted.meta.xaiPriority).toBe(true);
-    expect(submitted.meta.codexFastMode).toBeUndefined();
-    expect(submitted.meta.providerType).toBe("xai_oauth");
-  });
-
-  it("xAI Priority 默认关闭时保存为 false", async () => {
-    authState.xaiAuthenticated = true;
-    const onSubmit = vi.fn();
-    renderForm(
-      {
-        ...xaiInitialData,
-        meta: {
-          ...xaiInitialData.meta,
-          xaiPriority: true,
-          authBinding: {
-            source: "managed_account",
-            authProvider: "xai_oauth",
-            accountId: "xai-acct",
-          },
-        },
-      },
-      onSubmit,
-    );
-
-    expect(screen.getByRole("switch", { name: "Priority" })).toBeChecked();
-    fireEvent.click(screen.getByRole("switch", { name: "Priority" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    expect(onSubmit.mock.calls[0][0].meta.xaiPriority).toBe(false);
-    expect(onSubmit.mock.calls[0][0].meta.codexFastMode).toBeUndefined();
   });
 });
