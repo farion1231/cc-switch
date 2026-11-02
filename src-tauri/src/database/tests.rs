@@ -1579,7 +1579,9 @@ fn enable_wal_leaves_in_memory_database_usable() {
         .expect("write after failed switch");
 }
 
+// 导入会在测试目录给 cc-switch.db 做安全备份，和切换测试目录的备份测试一起串行跑
 #[tokio::test]
+#[serial_test::serial]
 async fn proxy_request_config_reads_follow_writes_and_imports() {
     let db = Database::memory().expect("memory db");
 
