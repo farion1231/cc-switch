@@ -2172,6 +2172,7 @@
     "manageUniversal": "Mevcut evrensel sağlayıcıları yönetin ›",
     "loginWith": {
       "deepseek": "DeepSeek hesabıyla giriş yap",
+      "workbuddy": "WorkBuddy hesabıyla giriş yap",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",

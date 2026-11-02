@@ -476,6 +476,8 @@ export function loginAccountKey(
       return "kimi";
     case "dsh":
       return "deepseek";
+    case "workbuddy":
+      return "workbuddy";
     default:
       return "claude";
   }
