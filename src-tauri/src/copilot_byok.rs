@@ -644,16 +644,29 @@ mod tests {
 
         let db = Database::memory().unwrap();
         let custom = home.join("custom/chatLanguageModels.json");
+        crate::config::write_json_file_private(&custom, &json!([])).unwrap();
         add_custom_target(&db, custom.to_string_lossy().into_owned(), None).unwrap();
         assert_eq!(
             sync::read_language_model_groups(&default_path).unwrap(),
             vec![original[0].clone()]
         );
         let state = get_state(&db).unwrap();
-        assert!(state
-            .targets
-            .iter()
-            .all(|target| { Path::new(&target.language_models_path).starts_with(&home) }));
+        assert_eq!(state.targets.len(), 2);
+        // Custom targets are canonicalized by the store. Compare real paths on
+        // both sides: macOS temp roots can be symlink aliases, and Windows
+        // canonicalization can change the path prefix/casing. Both fixture files
+        // exist, so canonicalize must succeed rather than falling back lexically.
+        let canonical_home = std::fs::canonicalize(&home).unwrap();
+        for target in &state.targets {
+            let canonical_target = std::fs::canonicalize(&target.language_models_path).unwrap();
+            assert!(
+                canonical_target.starts_with(&canonical_home),
+                "target {} resolves outside test home {}: {}",
+                target.language_models_path,
+                canonical_home.display(),
+                canonical_target.display()
+            );
+        }
     }
 
     #[test]
