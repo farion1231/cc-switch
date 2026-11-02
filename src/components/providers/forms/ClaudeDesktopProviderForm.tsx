@@ -114,7 +114,33 @@ type RouteRow = {
   model: string;
   labelOverride: string;
   supports1m: boolean;
+  /** 取消勾选的档不写进映射，等同没配这一档。 */
+  enabled: boolean;
+  /** 这个模型允许的最高努力程度（profile 的 `maxEffort`）；空串表示不设上限。 */
+  maxEffort: string;
 };
+
+/** Claude Desktop 认的努力程度档位，和 `inferenceModels[].maxEffort` 的取值一致。 */
+const MAX_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"] as const;
+/** 新加一行时预选的最大强度。 */
+const DEFAULT_MAX_EFFORT = "high";
+/** Select 不接受空字符串当 value，用这个哨兵表示「不设置上限」。 */
+const NO_MAX_EFFORT = "__unset__";
+
+function maxEffortLabelKey(effort: string) {
+  switch (effort) {
+    case "low":
+      return "claudeDesktop.effortLow";
+    case "medium":
+      return "claudeDesktop.effortMedium";
+    case "high":
+      return "claudeDesktop.effortHigh";
+    case "xhigh":
+      return "claudeDesktop.effortXHigh";
+    default:
+      return "claudeDesktop.effortMax";
+  }
+}
 
 type RouteRowValues = Omit<RouteRow, "rowId">;
 type RouteRole = ClaudeDesktopRoleId;
@@ -197,6 +223,9 @@ function initialRouteRows(
         value.labelOverride ??
         (!isClaudeSafeRoute(route) ? value.model || route : ""),
       supports1m: value.supports1m ?? false,
+      // 没有 enabled 字段的旧配置按启用处理。
+      enabled: value.enabled !== false,
+      maxEffort: value.maxEffort ?? "",
     });
   });
 }
@@ -215,6 +244,10 @@ function normalizeProxyRows(rows: RouteRow[]): RouteRow[] {
       model: match?.model ?? "",
       labelOverride: match?.labelOverride ?? "",
       supports1m: match?.supports1m ?? false,
+      // 没存过这一档就是没启用。不能默认勾上：取消勾选且没填模型的档不会落库，
+      // 重新打开时如果按「没有记录 = 启用」会又变回勾选。
+      enabled: match?.enabled ?? false,
+      maxEffort: match?.maxEffort ?? "",
     });
   });
 }
@@ -247,6 +280,8 @@ function defaultRouteRows(
       model: index === 0 ? defaultModel : "",
       labelOverride: "",
       supports1m: route.supports1m,
+      enabled: true,
+      maxEffort: "",
     }),
   );
 }
@@ -464,6 +499,8 @@ export function ClaudeDesktopProviderForm({
               model: "",
               labelOverride: route.labelOverride ?? "",
               supports1m: route.supports1m,
+              enabled: true,
+              maxEffort: "",
             }),
           )
         : [],
@@ -478,6 +515,8 @@ export function ClaudeDesktopProviderForm({
               model: r.upstreamModel,
               labelOverride: r.labelOverride ?? "",
               supports1m: r.supports1m,
+              enabled: true,
+              maxEffort: "",
             }),
           ),
         ),
@@ -814,7 +853,7 @@ export function ClaudeDesktopProviderForm({
       return;
     }
 
-    const routeEntries = routes
+    let routeEntries = routes
       .map((route) => ({
         ...route,
         route: route.route.trim(),
@@ -824,31 +863,9 @@ export function ClaudeDesktopProviderForm({
       .filter((route) => route.route || route.model);
 
     if (effectiveMode === "proxy") {
-      // 固定四档（Sonnet / Opus / Fable / Haiku），route_id 由 UI 生成、恒合法，
-      // 因此只要求至少填一个实际请求模型；留空档继承第一个已填档（Sonnet 优先），
-      // 对齐 Claude Code 的兜底，保证落库四档齐全、子 agent 不会找不到模型。
-      const primary = routeEntries.find((route) => route.model);
-      if (!primary) {
-        toast.error(
-          t("claudeDesktop.routesRequired", {
-            defaultValue: "至少填写一个模型映射",
-          }),
-        );
-        return;
-      }
-      for (const route of routeEntries) {
-        if (!route.model) {
-          route.model = primary.model;
-          if (!route.labelOverride) {
-            route.labelOverride = primary.labelOverride || primary.model;
-          }
-          // 回填的是同一个上游模型，1M 能力声明应与 primary 一致，
-          // 避免同模型在不同档声明不同 1M（除非该档用户已显式勾选）。
-          if (!route.supports1m) {
-            route.supports1m = primary.supports1m;
-          }
-        }
-      }
+      // 没勾启用的档也存下来（模型名、显示名、最大强度都留着，下次编辑还能看到），
+      // 只是不发布；完全没填模型的档不存。一档都不发布时这张卡按直通处理。
+      routeEntries = routeEntries.filter((route) => route.model);
     } else {
       const invalid = routeEntries.find(
         (route) => !route.route || !isClaudeSafeRoute(route.route),
@@ -889,6 +906,9 @@ export function ClaudeDesktopProviderForm({
           route.labelOverride ||
           (effectiveMode === "proxy" ? route.model : undefined),
         supports1m: route.supports1m || undefined,
+        maxEffort: route.maxEffort || undefined,
+        // 启用的档不写这个键，旧版读到时按启用处理；只有停用才落库。
+        enabled: route.enabled ? undefined : false,
       };
       return acc;
     }, {});
@@ -1246,12 +1266,17 @@ export function ClaudeDesktopProviderForm({
                       <p className="text-xs leading-relaxed text-fg-2">
                         {t("claudeDesktop.routeMapHint", {
                           defaultValue:
-                            "为 Sonnet、Opus、Haiku 三档分别填写实际请求模型；菜单显示名可写 DeepSeek、Kimi 等品牌名。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
+                            "为 Sonnet、Opus、Fable、Haiku 各档分别填写实际请求模型；取消勾选或留空的档不写进映射。最大强度是该模型允许的最高努力程度，更高档位在 Claude Desktop 里会被隐藏。",
                         })}
                       </p>
                     </div>
 
-                    <div className="hidden grid-cols-[140px_1fr_1fr_116px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+                    <div className="hidden grid-cols-[52px_104px_1fr_1fr_140px_104px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+                      <span>
+                        {t("claudeDesktop.routeEnabledLabel", {
+                          defaultValue: "启用",
+                        })}
+                      </span>
                       <span>
                         {t("claudeDesktop.routeModelLabel", {
                           defaultValue: "模型角色",
@@ -1265,6 +1290,11 @@ export function ClaudeDesktopProviderForm({
                       <span>
                         {t("claudeDesktop.upstreamModelLabel", {
                           defaultValue: "实际请求模型",
+                        })}
+                      </span>
+                      <span>
+                        {t("claudeDesktop.maxEffortLabel", {
+                          defaultValue: "最大强度",
                         })}
                       </span>
                       <span>
@@ -1303,13 +1333,27 @@ export function ClaudeDesktopProviderForm({
                       return (
                         <div
                           key={route.rowId}
-                          className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px]"
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[52px_104px_1fr_1fr_140px_104px]"
                         >
+                          <label className="flex h-9 items-center justify-center">
+                            <Checkbox
+                              checked={route.enabled}
+                              onCheckedChange={(checked) =>
+                                updateRoute(index, {
+                                  enabled: checked === true,
+                                })
+                              }
+                              aria-label={t("claudeDesktop.routeEnabledLabel", {
+                                defaultValue: "启用",
+                              })}
+                            />
+                          </label>
                           <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
                             {roleLabel}
                           </div>
                           <Input
                             value={route.labelOverride}
+                            disabled={!route.enabled}
                             onChange={(event) =>
                               updateRoute(index, {
                                 labelOverride: event.target.value,
@@ -1320,11 +1364,17 @@ export function ClaudeDesktopProviderForm({
                           <div className="flex gap-1">
                             <Input
                               value={route.model}
-                              onChange={(event) =>
+                              disabled={!route.enabled}
+                              onChange={(event) => {
+                                const model = event.target.value;
                                 updateRoute(index, {
-                                  model: event.target.value,
-                                })
-                              }
+                                  model,
+                                  // 第一次填模型时把最大强度预选成高强度，用户可以再改。
+                                  ...(model && !route.maxEffort
+                                    ? { maxEffort: DEFAULT_MAX_EFFORT }
+                                    : {}),
+                                });
+                              }}
                               placeholder={modelPlaceholder}
                               className="flex-1"
                             />
@@ -1335,14 +1385,47 @@ export function ClaudeDesktopProviderForm({
                                   updateRoute(index, {
                                     model: id,
                                     labelOverride: route.labelOverride || id,
+                                    ...(route.maxEffort
+                                      ? {}
+                                      : { maxEffort: DEFAULT_MAX_EFFORT }),
                                   })
                                 }
                               />
                             )}
                           </div>
+                          <Select
+                            value={route.maxEffort || NO_MAX_EFFORT}
+                            disabled={!route.enabled}
+                            onValueChange={(value) =>
+                              updateRoute(index, {
+                                maxEffort: value === NO_MAX_EFFORT ? "" : value,
+                              })
+                            }
+                          >
+                            <SelectTrigger
+                              aria-label={t("claudeDesktop.maxEffortLabel", {
+                                defaultValue: "最大强度",
+                              })}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NO_MAX_EFFORT}>
+                                {t("claudeDesktop.maxEffortUnset", {
+                                  defaultValue: "不设置",
+                                })}
+                              </SelectItem>
+                              {MAX_EFFORT_OPTIONS.map((effort) => (
+                                <SelectItem key={effort} value={effort}>
+                                  {t(maxEffortLabelKey(effort))}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
                             <Checkbox
                               checked={route.supports1m}
+                              disabled={!route.enabled}
                               onCheckedChange={(checked) =>
                                 updateRoute(index, {
                                   supports1m: checked === true,
@@ -1377,6 +1460,8 @@ export function ClaudeDesktopProviderForm({
                             model: "",
                             labelOverride: "",
                             supports1m: false,
+                            enabled: true,
+                            maxEffort: "",
                           }),
                         ]),
                       t("claudeDesktop.addModel", {

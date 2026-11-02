@@ -2345,6 +2345,8 @@ requires_openai_auth = true
                     model: "deepseek-v4-flash".into(),
                     label_override: Some("DeepSeek V4 Flash".into()),
                     supports_1m: None,
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -2388,6 +2390,8 @@ requires_openai_auth = true
                     model: "deepseek-v4-flash".into(),
                     label_override: Some("DeepSeek V4 Flash Updated".into()),
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
