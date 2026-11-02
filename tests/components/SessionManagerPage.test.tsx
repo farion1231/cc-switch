@@ -13,6 +13,7 @@ import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import { piApi } from "@/lib/api/pi";
 import { sessionsApi } from "@/lib/api/sessions";
+import { settingsApi } from "@/lib/api/settings";
 import type { SessionMessage, SessionMeta } from "@/types";
 import { setSessionFixtures, setSettings } from "../msw/state";
 
@@ -246,6 +247,8 @@ describe("SessionManagerPage", () => {
     };
 
     setSessionFixtures(sessions, messages);
+    // 正文搜索默认关闭；大多数用例要连正文一起搜，先打开，默认关闭的行为单独测
+    setSettings({ sessionContentSearchEnabled: true });
   });
 
   it("shows Oh My Pi sessions from its app and in the all-apps filter", async () => {
@@ -500,6 +503,41 @@ describe("SessionManagerPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps message text search off by default and offers it from an empty search", async () => {
+    setSettings({ sessionContentSearchEnabled: undefined });
+    const sync = vi.spyOn(sessionsApi, "syncContentIndex");
+    const save = vi.spyOn(settingsApi, "save");
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "const a" },
+    });
+    expect(
+      await screen.findByText("没有标题、目录或首末消息匹配“const a”的会话"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("开启后会在本地为消息正文建立索引"),
+    ).toBeInTheDocument();
+    // 没开启前不读正文、不建索引
+    expect(sync).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "搜索消息正文" }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionContentSearchEnabled: true }),
+      ),
+    );
+    await waitFor(() => expect(sync).toHaveBeenCalled());
+    // 开启后不用重新输入，当前关键词直接搜到正文命中
+    expect(await screen.findByText(/^正文：/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "搜索消息正文" }),
+    ).not.toBeInTheDocument();
+    sync.mockRestore();
+    save.mockRestore();
+  });
+
   it("switches to all apps and to time buckets", async () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
@@ -584,6 +622,13 @@ describe("SessionManagerPage", () => {
     expect(
       await screen.findByText("没有会话的标题、目录或消息正文包含“zzz”"),
     ).toBeInTheDocument();
+    // 已开启正文搜索时不再提供开启入口
+    expect(
+      screen.queryByRole("button", { name: "搜索消息正文" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("开启后会在本地为消息正文建立索引"),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除搜索" }));
     expect(await screen.findByText("Alpha Session")).toBeInTheDocument();
   });

@@ -1412,6 +1412,8 @@
     "emptyAppHint": "CC Switch 讀取 {{path}} 下的工作階段資料",
     "emptySearch": "沒有標題、目錄或首末訊息符合「{{query}}」的工作階段",
     "clearSearchAction": "清除搜尋",
+    "emptySearchEnableContent": "搜尋訊息內文",
+    "emptySearchEnableContentHint": "開啟後會在本機為訊息內文建立索引",
     "backToList": "返回工作階段列表",
     "back": "返回",
     "sessionOf": "{{app}} 的工作階段",

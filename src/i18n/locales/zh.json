@@ -1411,6 +1411,8 @@
     "emptyAppHint": "CC Switch 读取 {{path}} 下的会话数据",
     "emptySearch": "没有标题、目录或首末消息匹配“{{query}}”的会话",
     "clearSearchAction": "清除搜索",
+    "emptySearchEnableContent": "搜索消息正文",
+    "emptySearchEnableContentHint": "开启后会在本地为消息正文建立索引",
     "backToList": "返回会话列表",
     "back": "返回",
     "sessionOf": "{{app}} 的会话",

@@ -161,7 +161,7 @@ export function SessionManagerPage({
   const sessions = useMemo(() => data ?? [], [data]);
   const { data: settings } = useSettingsQuery();
   const { updateSettings, autoSaveSettings } = useSettings();
-  const contentSearchEnabled = settings?.sessionContentSearchEnabled ?? true;
+  const contentSearchEnabled = settings?.sessionContentSearchEnabled ?? false;
 
   const [appFilter, setAppFilter] = useState<AppFilter>(
     isSessionAppId(appId) ? appId : "claude",
@@ -1012,6 +1012,24 @@ export function SessionManagerPage({
                   query: trimmedQuery,
                 })
           }
+          hint={
+            contentSearchEnabled
+              ? undefined
+              : t("sessionManager.emptySearchEnableContentHint", {
+                  defaultValue: "开启后会在本地为消息正文建立索引",
+                })
+          }
+          primaryAction={
+            contentSearchEnabled
+              ? undefined
+              : {
+                  label: t("sessionManager.emptySearchEnableContent", {
+                    defaultValue: "搜索消息正文",
+                  }),
+                  disabled: isTogglingContentSearch,
+                  onClick: () => toggleContentSearch(true),
+                }
+          }
           action={t("sessionManager.clearSearchAction", {
             defaultValue: "清除搜索",
           })}
@@ -1612,11 +1630,14 @@ function AppMenuItem({
 function EmptyState({
   title,
   hint,
+  primaryAction,
   action,
   onAction,
 }: {
   title: string;
   hint?: string;
+  /** 排在 action 前面的实心按钮（如没开正文搜索时的「搜索消息正文」） */
+  primaryAction?: { label: string; disabled?: boolean; onClick: () => void };
   action: string;
   onAction: () => void;
 }) {
@@ -1624,14 +1645,21 @@ function EmptyState({
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1.5 px-6 pb-10 text-center">
       <p className="m-0 max-w-[560px] text-section text-fg-1">{title}</p>
       {hint && <p className="m-0 text-caption text-fg-2">{hint}</p>}
-      <Button
-        variant="neutral"
-        size="regular"
-        className="mt-2.5"
-        onClick={onAction}
-      >
-        {action}
-      </Button>
+      <div className="mt-2.5 flex flex-wrap items-center justify-center gap-2">
+        {primaryAction && (
+          <Button
+            variant="solid"
+            size="regular"
+            disabled={primaryAction.disabled}
+            onClick={primaryAction.onClick}
+          >
+            {primaryAction.label}
+          </Button>
+        )}
+        <Button variant="neutral" size="regular" onClick={onAction}>
+          {action}
+        </Button>
+      </div>
     </div>
   );
 }

@@ -418,7 +418,7 @@ export interface Settings {
   usageDisplay?: UsageDisplaySettings;
   // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
   sessionAutoSyncEnabled?: boolean;
-  // 会话页搜索消息正文（默认开启；在本地建 session-index.db 索引，关闭时删除索引）
+  // 会话页搜索消息正文（默认关闭；开启后在本地建 session-index.db 索引，关闭时删除索引）
   sessionContentSearchEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;

@@ -1411,6 +1411,8 @@
     "emptyAppHint": "CC Switch は {{path}} のセッションデータを読み取ります",
     "emptySearch": "タイトル・ディレクトリ・最初と最後のメッセージが「{{query}}」に一致するセッションはありません",
     "clearSearchAction": "検索をクリア",
+    "emptySearchEnableContent": "メッセージ本文を検索",
+    "emptySearchEnableContentHint": "オンにすると、メッセージ本文のインデックスをローカルに作成します",
     "backToList": "セッション一覧に戻る",
     "back": "戻る",
     "sessionOf": "{{app}} のセッション",
