@@ -840,7 +840,7 @@
     "codexAuth": "Codex App Enhancements",
     "codexQuotaProtection": {
       "title": "Official quota protection",
-      "help": "Pause new official requests when either usage threshold is reached; third-party models remain available. Covers Codex official requests through CC Switch only: every request first queries the real quota with that request's own login, so each official request is slightly slower and requests for the same account are checked serially. Quota lookup failures pause requests; a fresh reading below the thresholds restores them. In-flight requests and other apps can still exhaust quota, and protection keeps ordinary-quota exhaustion from activating Luna Reserve.",
+      "help": "Pause new official requests when either usage threshold is reached; third-party models remain available. Covers Codex official requests through CC Switch local routing only. Usage is read from the quota information official responses already carry, so normal use adds no extra requests; only the first request, or one after about 5 idle minutes, triggers a separate quota lookup. When usage can't be determined (network problems, expired login, and so on) requests go through as usual instead of being blocked. Requests already admitted and other apps can still push usage past a threshold; while paused, ordinary-quota exhaustion won't activate Luna Reserve.",
       "thresholds": "Usage cutoffs for official requests",
       "fiveHour": "5-hour usage (%)",
       "weekly": "Weekly usage (%)",

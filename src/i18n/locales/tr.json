@@ -828,7 +828,7 @@
     "codexAuth": "Codex Uygulama Geliştirmeleri",
     "codexQuotaProtection": {
       "title": "Resmî kota koruması",
-      "help": "Kullanım eşiklerinden birine ulaşıldığında yeni resmî istekleri durdurur; üçüncü taraf modeller kullanılabilir kalır. Yalnızca CC Switch üzerinden geçen Codex resmî isteklerini kapsar: her istek önce kendi oturum açma bilgisiyle gerçek kotayı sorgular, bu nedenle her resmî istek biraz daha yavaştır ve aynı hesabın istekleri sırayla denetlenir. Kota sorgusu başarısız olursa istekler durur; eşiklerin altına düşen yeni bir ölçümde devam eder. Devam eden istekler ve diğer uygulamalar kotayı yine tüketebilir; koruma, normal kotanın tükenmesiyle Luna Reserve etkinleşmesini önler.",
+      "help": "Kullanım eşiklerinden birine ulaşıldığında yeni resmî istekleri durdurur; üçüncü taraf modeller kullanılabilir kalır. Yalnızca CC Switch yerel yönlendirmesinden geçen Codex resmî isteklerini kapsar. Kullanım, resmî yanıtların zaten taşıdığı kota bilgisinden okunur; normal kullanımda ek istek gönderilmez. Yalnızca ilk istekte veya yaklaşık 5 dakikalık boşta kalmanın ardından ayrı bir kota sorgusu yapılır. Kullanım belirlenemezse (ağ sorunu, oturumun süresinin dolması vb.) istekler engellenmez, normal şekilde geçer. Önceden kabul edilmiş istekler ve diğer uygulamalar kullanımı eşiğin üzerine çıkarabilir; duraklatma sırasında normal kotanın tükenmesi Luna Reserve'i etkinleştirmez.",
       "thresholds": "Resmî istekler için kullanım eşikleri",
       "fiveHour": "5 saatlik kullanım (%)",
       "weekly": "Haftalık kullanım (%)",

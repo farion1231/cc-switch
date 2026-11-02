@@ -363,6 +363,7 @@ pub struct CodexLegacyOfficialHistoryBucketMigration {
 }
 
 /// Used-percentage cutoffs for the Codex ChatGPT proxy. Independent windows.
+/// Opt-in: unknown usage never blocks, so leaving it off changes nothing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CodexQuotaProtection {
@@ -374,7 +375,7 @@ pub struct CodexQuotaProtection {
 impl Default for CodexQuotaProtection {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             five_hour_threshold: 95,
             weekly_threshold: 98,
         }

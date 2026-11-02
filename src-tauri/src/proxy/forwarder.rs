@@ -1413,7 +1413,7 @@ impl RequestForwarder {
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
         let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
-        let mut quota_permit = None;
+        let mut quota_token = None;
 
         if codex_official_auth_passthrough {
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
@@ -1461,7 +1461,8 @@ impl RequestForwarder {
                         "Codex official route requires a bearer token".to_string(),
                     )
                 })?;
-                quota_permit = super::codex_quota_protection::acquire(token, headers).await?;
+                super::codex_quota_protection::admit(token, headers).await?;
+                quota_token = Some(token);
             }
         }
 
@@ -2804,9 +2805,11 @@ impl RequestForwarder {
             .await?
         };
 
-        // Admission ends at upstream headers, including error responses. Never
-        // make concurrent requests wait for response validation or body streaming.
-        drop(quota_permit);
+        // Official responses (errors included) carry the account's usage headers;
+        // they feed the next request's quota check without an extra lookup.
+        if let Some(token) = quota_token {
+            super::codex_quota_protection::observe_response(token, headers, response.headers());
+        }
 
         // 检查响应状态
         let status = response.status();

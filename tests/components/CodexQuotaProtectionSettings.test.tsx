@@ -19,8 +19,10 @@ vi.mock("@/lib/toast", () => ({ toast: { error: toastError } }));
 
 const key = (name: string) => `settings.codexQuotaProtection.${name}`;
 
+const ENABLED = { enabled: true, fiveHourThreshold: 95, weeklyThreshold: 98 };
+
 function setup(
-  initial: Partial<SettingsFormState> = {},
+  initial: Partial<SettingsFormState> = { codexQuotaProtection: ENABLED },
   save = vi.fn().mockResolvedValue(true),
 ) {
   function Form() {
@@ -59,7 +61,7 @@ describe("Codex official quota protection settings", () => {
         reject = fail;
       });
       const save = setup(
-        {},
+        undefined,
         vi.fn().mockReturnValueOnce(pending).mockResolvedValue(true),
       );
       const fiveHour = screen.getByRole("spinbutton", {
@@ -94,7 +96,7 @@ describe("Codex official quota protection settings", () => {
   );
 
   it("keeps typed thresholds when restoring defaults fails", async () => {
-    setup({}, vi.fn().mockResolvedValue(false));
+    setup(undefined, vi.fn().mockResolvedValue(false));
     const fiveHour = screen.getByRole("spinbutton", { name: key("fiveHour") });
     fireEvent.change(fiveHour, { target: { value: "89" } });
     await act(async () => {
@@ -105,7 +107,7 @@ describe("Codex official quota protection settings", () => {
   });
 
   it("reports a rejected save and leaves the draft retryable", async () => {
-    setup({}, vi.fn().mockRejectedValue(new Error("disk full")));
+    setup(undefined, vi.fn().mockRejectedValue(new Error("disk full")));
     fireEvent.change(
       screen.getByRole("spinbutton", { name: key("fiveHour") }),
       {
@@ -118,7 +120,24 @@ describe("Codex official quota protection settings", () => {
     expect(toastError).toHaveBeenCalledWith("notifications.saveFailedGeneric");
     expect(screen.getByRole("button", { name: key("save") })).toBeEnabled();
   });
-  it("defaults to enabled with 95% and 98%, and saves independently edited thresholds together", async () => {
+  it("is off by default and enabling keeps the 95% / 98% defaults", async () => {
+    const save = setup({});
+    const toggle = screen.getByRole("switch", { name: key("title") });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    expect(save).toHaveBeenLastCalledWith({ codexQuotaProtection: ENABLED });
+    expect(
+      screen.getByRole("spinbutton", { name: key("fiveHour") }),
+    ).toHaveValue(95);
+    expect(screen.getByRole("spinbutton", { name: key("weekly") })).toHaveValue(
+      98,
+    );
+  });
+
+  it("saves independently edited thresholds together", async () => {
     const save = setup();
     expect(screen.getByRole("switch", { name: key("title") })).toHaveAttribute(
       "aria-checked",
@@ -188,7 +207,7 @@ describe("Codex official quota protection settings", () => {
   });
 
   it("keeps unsaved edits retryable when saving fails", async () => {
-    const save = setup({}, vi.fn().mockResolvedValue(false));
+    const save = setup(undefined, vi.fn().mockResolvedValue(false));
     fireEvent.change(
       screen.getByRole("spinbutton", { name: key("fiveHour") }),
       { target: { value: "89" } },
