@@ -1,5 +1,6 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { ModalDragStrip } from "@/components/shell/AppPageHeader";
 import { cn } from "@/lib/utils";
 
 const Dialog = DialogPrimitive.Root;
@@ -32,7 +33,9 @@ const DialogOverlay = React.forwardRef<
         className,
       )}
       {...props}
-    />
+    >
+      <ModalDragStrip />
+    </DialogPrimitive.Overlay>
   );
 });
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;

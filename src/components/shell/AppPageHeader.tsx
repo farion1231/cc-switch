@@ -1,5 +1,9 @@
 import { createContext, useContext, type ReactNode } from "react";
-import { DRAG_REGION_ATTR, DRAG_REGION_STYLE } from "@/lib/platform";
+import {
+  DRAG_REGION_ATTR,
+  DRAG_REGION_ENABLED,
+  DRAG_REGION_STYLE,
+} from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
 /** 由外壳提供：Linux 自绘窗口按钮要接在每一屏页头的最右端。 */
@@ -110,5 +114,25 @@ export function AppPageHeader({
         </div>
       )}
     </header>
+  );
+}
+
+/**
+ * 模态遮罩的子元素：遮罩盖住了页头，这一条和页头同高，弹窗打开时照样能拖窗口。
+ * 放在遮罩里才收得到指针事件（Radix 把遮罩外的 body 设成 pointer-events: none），
+ * 也自然排在弹窗内容下面。
+ */
+export function ModalDragStrip() {
+  const windowControls = useContext(WindowControlsContext);
+  if (!windowControls && !DRAG_REGION_ENABLED) return null;
+  return (
+    <div
+      aria-hidden="true"
+      data-tauri-drag-region
+      className="absolute inset-x-0 top-0 h-[52px]"
+      style={DRAG_REGION_STYLE as React.CSSProperties}
+      // 不让 pointerdown 冒到 document：「点遮罩就关」的弹窗不能一拖窗口就关掉
+      onPointerDown={(event) => event.stopPropagation()}
+    />
   );
 }
