@@ -2235,3 +2235,18 @@ fn skill_deeplink_is_a_shared_repository_not_an_agy_install() {
     );
     assert!(state.db.get_all_installed_skills().unwrap().is_empty());
 }
+
+/// Qwen Code 的 MCP 链接写进 Qwen 的标记
+#[test]
+fn test_parse_mcp_deeplink_accepts_qwen() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    for apps in ["qwen", "claude,qwen", "qwen,dsh"] {
+        let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
+        let request = parse_deeplink_url(&url).expect("qwen is a valid MCP target");
+        assert!(
+            parse_mcp_apps(request.apps.as_deref().unwrap())
+                .unwrap()
+                .qwen
+        );
+    }
+}

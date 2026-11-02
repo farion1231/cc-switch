@@ -60,15 +60,26 @@ impl McpService {
             }
         };
         // MCode / Pi 的文件和数据库一起提交：任一步失败都恢复原样
+        let save_with_qwen = || {
+            if server.apps.qwen || prev_apps.qwen {
+                mcp::qwen::sync_and_commit(
+                    &server.id,
+                    server.apps.qwen.then_some(&server.server),
+                    save_with_omp,
+                )
+            } else {
+                save_with_omp()
+            }
+        };
         let save_with_dsh = || {
             if server.apps.dsh || prev_apps.dsh {
                 mcp::dsh::sync_and_commit(
                     &server.id,
                     server.apps.dsh.then_some(&server.server),
-                    save_with_omp,
+                    save_with_qwen,
                 )
             } else {
-                save_with_omp()
+                save_with_qwen()
             }
         };
         let save_with_kimi = || {
@@ -145,11 +156,18 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
-            let delete_with_dsh = || {
-                if server.apps.dsh {
-                    mcp::dsh::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
+            let delete_with_qwen = || {
+                if server.apps.qwen {
+                    mcp::qwen::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
                 } else {
                     state.db.delete_mcp_server(id)
+                }
+            };
+            let delete_with_dsh = || {
+                if server.apps.dsh {
+                    mcp::dsh::sync_and_commit(id, None, delete_with_qwen)
+                } else {
+                    delete_with_qwen()
                 }
             };
             let delete_with_kimi = || {
@@ -237,10 +255,11 @@ impl McpService {
             app,
             AppType::Mcode
                 | AppType::Kimi
+                | AppType::Qwen
                 | AppType::Dsh
-                | AppType::Omp
                 | AppType::Pi
                 | AppType::Agy
+                | AppType::Omp
         ) {
             if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
                 let spec = enabled.then_some(&server.server);
@@ -259,6 +278,8 @@ impl McpService {
                     mcp::dsh::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Kimi {
                     mcp::kimi::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::Qwen {
+                    mcp::qwen::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Omp {
@@ -299,10 +320,11 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
-                    | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
+                    | AppType::Omp
             ) {
                 continue; // Already written before saving the managed state.
             }
@@ -364,6 +386,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
+            AppType::Qwen => mcp::qwen::sync(&server.id, Some(&server.server))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
@@ -384,10 +407,11 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
-                    | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
+                    | AppType::Omp
             ) {
                 continue; // Already removed before deleting the managed record.
             }
@@ -422,6 +446,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
+            AppType::Qwen => mcp::qwen::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
@@ -535,10 +560,11 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
-                    | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
+                    | AppType::Omp
             ) {
                 Self::remove_server_from_app(state, &server.id, app)
             } else {
@@ -848,7 +874,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 12] = [
+        let results: [(&str, Result<usize, AppError>); 13] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -857,6 +883,7 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("kimi", mcp::kimi::import(state)),
+            ("qwen", mcp::qwen::import(state)),
             ("dsh", mcp::dsh::import(state)),
             ("agy", mcp::agy::import(state)),
             ("pi", mcp::pi::import(state)),

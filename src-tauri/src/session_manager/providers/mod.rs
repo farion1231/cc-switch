@@ -16,5 +16,6 @@ mod utils;
 
 pub mod kimi;
 pub mod mcode;
+pub mod qwen;
 
 pub mod dsh;
