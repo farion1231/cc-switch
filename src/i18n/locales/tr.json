@@ -877,6 +877,17 @@
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
     "skipClaudeOnboardingDescription": "İlk başlatmada Claude Code, bir tema seçmenizi ve bir Anthropic hesabında oturum açmanızı isteyen bir katılım akışı çalıştırır. Üçüncü taraf bir sağlayıcı kullanıyorsanız bu oturum açma işlemine ihtiyacınız yoktur; bu nedenle, bunu açmak doğrudan atlar. ~/.claude.json'a hasCompletedOnboarding: true yazılarak çalışır; kapatıldığında bu alan kaldırılır ve bir sonraki başlatmada katılım yeniden görünür.",
     "codexAuth": "Codex Uygulama Geliştirmeleri",
+    "codexQuotaProtection": {
+      "title": "Resmî kota koruması",
+      "help": "Kullanım eşiklerinden birine ulaşıldığında yeni resmî istekleri durdurur; üçüncü taraf modeller kullanılabilir kalır. Yalnızca CC Switch yerel yönlendirmesinden geçen Codex resmî isteklerini kapsar. Kullanım, resmî yanıtların zaten taşıdığı kota bilgisinden okunur; normal kullanımda ek istek gönderilmez. Yalnızca ilk istekte veya yaklaşık 5 dakikalık boşta kalmanın ardından ayrı bir kota sorgusu yapılır. Kullanım belirlenemezse (ağ sorunu, oturumun süresinin dolması vb.) istekler engellenmez, normal şekilde geçer. Önceden kabul edilmiş istekler ve diğer uygulamalar kullanımı eşiğin üzerine çıkarabilir; duraklatma sırasında normal kotanın tükenmesi Luna Reserve'i etkinleştirmez.",
+      "thresholds": "Resmî istekler için kullanım eşikleri",
+      "fiveHour": "5 saatlik kullanım (%)",
+      "weekly": "Haftalık kullanım (%)",
+      "save": "Eşikleri kaydet",
+      "reset": "Varsayılanları geri yükle",
+      "hint": "Eşiklerden birinde duraklatır. Varsayılanlar: %95 / %98. Kaydedilen değişiklikler yeni isteklere hemen uygulanır.",
+      "invalid": "1 ile 99 arasında tam sayılar girin."
+    },
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
