@@ -3,7 +3,7 @@ use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 type OmoProviderRow = (
     String,
@@ -107,12 +107,28 @@ impl Database {
         &self,
         app_type: &str,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        self.load_providers(app_type, false)
+    }
+
+    /// 路由只加载故障转移队列；端点一次批量读取，避免每张卡再查一次。
+    pub(super) fn load_providers(
+        &self,
+        app_type: &str,
+        failover_only: bool,
+    ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
-        let mut stmt = conn.prepare(
+        let query = if failover_only {
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+             FROM providers WHERE app_type = ?1 AND in_failover_queue = 1
+             ORDER BY COALESCE(sort_index, 999999), id ASC"
+        } else {
             "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
-        ).map_err(|e| AppError::Database(e.to_string()))?;
+        };
+        let mut stmt = conn
+            .prepare_cached(query)
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         let provider_iter = stmt
             .query_map(params![app_type], |row| {
@@ -157,38 +173,51 @@ impl Database {
         for provider_res in provider_iter {
             let (id, mut provider) = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
             provider.id = id.clone();
-
-            let mut stmt_endpoints = conn.prepare(
-                "SELECT url, added_at FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY added_at ASC, url ASC"
-            ).map_err(|e| AppError::Database(e.to_string()))?;
-
-            let endpoints_iter = stmt_endpoints
-                .query_map(params![id, app_type], |row| {
-                    let url: String = row.get(0)?;
-                    let added_at: Option<i64> = row.get(1)?;
-                    Ok((
-                        url,
-                        crate::settings::CustomEndpoint {
-                            url: "".to_string(),
-                            added_at: added_at.unwrap_or(0),
-                            last_used: None,
-                        },
-                    ))
-                })
-                .map_err(|e| AppError::Database(e.to_string()))?;
-
-            let mut custom_endpoints = HashMap::new();
-            for ep_res in endpoints_iter {
-                let (url, mut ep) = ep_res.map_err(|e| AppError::Database(e.to_string()))?;
-                ep.url = url.clone();
-                custom_endpoints.insert(url, ep);
-            }
-
             if let Some(meta) = &mut provider.meta {
-                meta.custom_endpoints = custom_endpoints;
+                meta.custom_endpoints.clear();
             }
-
             providers.insert(id, provider);
+        }
+
+        if providers.is_empty() {
+            return Ok(providers);
+        }
+
+        let mut stmt_endpoints = conn
+            .prepare_cached(
+                "SELECT e.provider_id, e.url, e.added_at
+             FROM provider_endpoints e
+             INNER JOIN providers p ON p.id = e.provider_id AND p.app_type = e.app_type
+             WHERE e.app_type = ?1 AND (?2 = 0 OR p.in_failover_queue = 1)
+             ORDER BY e.added_at ASC, e.url ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let endpoints = stmt_endpoints
+            .query_map(params![app_type, failover_only], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        for endpoint in endpoints {
+            let (provider_id, url, added_at) =
+                endpoint.map_err(|e| AppError::Database(e.to_string()))?;
+            if let Some(meta) = providers
+                .get_mut(&provider_id)
+                .and_then(|provider| provider.meta.as_mut())
+            {
+                meta.custom_endpoints.insert(
+                    url.clone(),
+                    crate::settings::CustomEndpoint {
+                        url,
+                        added_at: added_at.unwrap_or(0),
+                        last_used: None,
+                    },
+                );
+            }
         }
 
         Ok(providers)

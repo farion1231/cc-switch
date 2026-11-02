@@ -9,7 +9,7 @@ use super::{
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
     server::ProxyState,
-    sse::{strip_sse_field, take_sse_block},
+    sse::{find_sse_block, strip_sse_field},
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -797,7 +797,10 @@ pub fn create_logged_passthrough_stream(
                         crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                         // 尝试解析并记录完整的 SSE 事件
-                        while let Some(event_text) = take_sse_block(&mut buffer) {
+                        let mut consumed = 0;
+                        while let Some((end, next)) = find_sse_block(&buffer[consumed..]) {
+                            let event_text = &buffer[consumed..consumed + end];
+                            consumed += next;
                             if !event_text.trim().is_empty() {
                                 let event_name = event_text
                                     .lines()
@@ -831,6 +834,10 @@ pub fn create_logged_passthrough_stream(
                                     }
                                 }
                             }
+                        }
+                        // 一批事件只移动一次尾部，不再逐事件分配 String 和搬移剩余数据。
+                        if consumed > 0 {
+                            buffer.drain(..consumed);
                         }
                     }
 

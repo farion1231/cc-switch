@@ -1,27 +1,40 @@
 #[inline]
 pub(crate) fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.strip_prefix(&format!("{field}: "))
-        .or_else(|| line.strip_prefix(&format!("{field}:")))
+    let value = line.strip_prefix(field)?.strip_prefix(':')?;
+    Some(value.strip_prefix(' ').unwrap_or(value))
+}
+
+#[inline]
+pub(crate) fn find_sse_block(buffer: &str) -> Option<(usize, usize)> {
+    let bytes = buffer.as_bytes();
+    let mut offset = 0;
+    while let Some(pos) = buffer[offset..].find('\n') {
+        let newline = offset + pos;
+        let after = &bytes[newline + 1..];
+        let end = if after.starts_with(b"\n") {
+            newline + 2
+        } else if after.starts_with(b"\r\n") {
+            newline + 3
+        } else {
+            offset = newline + 1;
+            continue;
+        };
+        // Both lines may use LF or CRLF, independently.
+        let start = if newline > 0 && bytes[newline - 1] == b'\r' {
+            newline - 1
+        } else {
+            newline
+        };
+        return Some((start, end));
+    }
+    None
 }
 
 #[inline]
 pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
-    let mut best: Option<(usize, usize)> = None;
-
-    // The data line and the following blank line can use different line endings.
-    // Include both mixed forms and prefer the earliest match so no trailing CR
-    // becomes part of the returned block.
-    for delimiter in ["\r\n\r\n", "\r\n\n", "\n\r\n", "\n\n"] {
-        if let Some(pos) = buffer.find(delimiter) {
-            if best.is_none_or(|(best_pos, _)| pos < best_pos) {
-                best = Some((pos, delimiter.len()));
-            }
-        }
-    }
-
-    let (pos, len) = best?;
+    let (pos, end) = find_sse_block(buffer)?;
     let block = buffer[..pos].to_string();
-    buffer.drain(..pos + len);
+    buffer.drain(..end);
     Some(block)
 }
 
