@@ -5,6 +5,10 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashSet;
 
+#[cfg(test)]
+#[path = "providers_tests.rs"]
+mod tests;
+
 type OmoProviderRow = (
     String,
     String,
@@ -174,6 +178,7 @@ impl Database {
             let (id, mut provider) = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
             provider.id = id.clone();
             if let Some(meta) = &mut provider.meta {
+                // The endpoint table is authoritative, including when it is empty.
                 meta.custom_endpoints.clear();
             }
             providers.insert(id, provider);
@@ -335,6 +340,8 @@ impl Database {
             existing.unwrap_or((false, provider.in_failover_queue));
 
         if is_update {
+            // Native-provider list refreshes also pass through this method. An
+            // unchanged row must not dirty the database or enqueue cloud sync.
             tx.execute(
                 "UPDATE providers SET
                     name = ?1,
@@ -349,7 +356,13 @@ impl Database {
                     meta = ?10,
                     is_current = ?11,
                     in_failover_queue = ?12
-                WHERE id = ?13 AND app_type = ?14",
+                WHERE id = ?13 AND app_type = ?14
+                  AND (name IS NOT ?1 OR settings_config IS NOT ?2
+                       OR website_url IS NOT ?3 OR category IS NOT ?4
+                       OR created_at IS NOT ?5 OR sort_index IS NOT ?6
+                       OR notes IS NOT ?7 OR icon IS NOT ?8 OR icon_color IS NOT ?9
+                       OR meta IS NOT ?10 OR is_current IS NOT ?11
+                       OR in_failover_queue IS NOT ?12)",
                 params![
                     provider.name,
                     serde_json::to_string(&provider.settings_config).map_err(|e| {
