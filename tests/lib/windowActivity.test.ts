@@ -42,7 +42,7 @@ describe("window activity", () => {
   it("uses native focus to pause foreground queries and heartbeat in a visible WebView", async () => {
     initialize();
     initialize();
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     expect(native.onFocusChanged).toHaveBeenCalledTimes(1);
     expect(focusManager.isFocused()).toBe(true);
     await vi.advanceTimersByTimeAsync(3000);
@@ -76,7 +76,7 @@ describe("window activity", () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(false);
     initialize();
     expect(focusManager.isFocused()).toBe(false);
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     expect(focusManager.isFocused()).toBe(true);
   });
 
@@ -88,10 +88,36 @@ describe("window activity", () => {
       }),
     );
     initialize();
+    await vi.advanceTimersByTimeAsync(0);
     native.listener?.({ payload: false });
     resolve(true);
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     expect(focusManager.isFocused()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("captures focus changes while native listener registration is pending", async () => {
+    let register!: () => void;
+    let nativeFocused = true;
+    native.isFocused.mockImplementation(async () => nativeFocused);
+    native.onFocusChanged.mockImplementationOnce(
+      (listener) =>
+        new Promise((resolve) => {
+          register = () => {
+            native.listener = listener;
+            resolve(native.off);
+          };
+        }),
+    );
+    initialize();
+    await vi.advanceTimersByTimeAsync(0);
+    // No DOM notification is guaranteed when a desktop WebView is hidden.
+    // The native transition happens before our listener can observe it.
+    nativeFocused = false;
+    register();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(focusManager.isFocused()).toBe(false);
+    expect(document.documentElement.dataset.windowActive).toBe("false");
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -107,6 +133,7 @@ describe("window activity", () => {
     resolve(native.off);
     await Promise.resolve();
     expect(native.off).toHaveBeenCalledTimes(1);
+    expect(native.isFocused).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 });

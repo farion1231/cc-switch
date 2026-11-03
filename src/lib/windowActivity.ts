@@ -78,33 +78,36 @@ export function initializeWindowActivity() {
 
     if (isTauri()) {
       const currentWindow = getCurrentWindow();
-      void currentWindow
-        .onFocusChanged(({ payload }) => {
-          if (disposed) return;
-          focusRevision += 1;
-          focused = payload;
-          update();
-        })
-        .then((off) => {
-          if (disposed) off();
-          else unlisten = off;
-        })
-        .catch((error) =>
-          console.error("Failed to observe window focus changes", error),
-        );
-      // The window can already be focused before its listener is registered.
-      // Never let a delayed initial snapshot overwrite a newer focus event.
-      const revision = focusRevision;
-      void currentWindow
-        .isFocused()
-        .then((active) => {
+      void (async () => {
+        try {
+          const off = await currentWindow.onFocusChanged(({ payload }) => {
+            if (disposed) return;
+            focusRevision += 1;
+            focused = payload;
+            update();
+          });
+          if (disposed) {
+            off();
+            return;
+          }
+          unlisten = off;
+        } catch (error) {
+          console.error("Failed to observe window focus changes", error);
+        }
+        if (disposed) return;
+        // Register before reading the snapshot: a native transition during
+        // registration may have no DOM event. Later events must still win over
+        // a delayed snapshot response.
+        const revision = focusRevision;
+        try {
+          const active = await currentWindow.isFocused();
           if (disposed || focusRevision !== revision) return;
           focused = active;
           update();
-        })
-        .catch((error) =>
-          console.error("Failed to read initial window focus", error),
-        );
+        } catch (error) {
+          console.error("Failed to read initial window focus", error);
+        }
+      })();
     }
 
     return () => {
