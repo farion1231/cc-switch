@@ -519,16 +519,18 @@ fn base_url_ends_with_version(base_url: &str) -> bool {
         Some((_, rest)) => rest,
         None => trimmed,
     };
-    // Authority first, path second. No separator at all means an origin-only URL,
-    // which has no path to inspect.
-    let path = match after_scheme.split_once(['/', '?', '#']) {
+    // Cut the query and fragment off *before* looking for the path. A `?` or `#` with no
+    // path in front of it means the URL is origin-only: `https://host?v4` has no path,
+    // so `v4` is a query value and must not be read as a version segment.
+    let after_scheme = match after_scheme.split_once(['?', '#']) {
+        Some((head, _)) => head,
+        None => after_scheme,
+    };
+    // Authority first, path second. No `/` at all means an origin-only URL, which has
+    // no path to inspect.
+    let path = match after_scheme.split_once('/') {
         Some((_, path)) => path,
         None => return false,
-    };
-    // A `?query`/`#fragment` must not hide the last path segment.
-    let path = match path.split_once(['?', '#']) {
-        Some((path, _)) => path,
-        None => path,
     };
     match path.trim_end_matches('/').rsplit('/').next() {
         Some(segment) => is_version_path_segment(segment),
@@ -1798,6 +1800,23 @@ mod tests {
             adapter.build_url("https://openrouter.ai/api", "/v1/messages"),
             "https://openrouter.ai/api/v1/messages"
         );
+        // Multi-digit versions are version segments too.
+        assert_eq!(
+            adapter.build_url("https://host/api/v10", "/v1/messages"),
+            "https://host/api/v10/messages"
+        );
+        // `v1beta` is not `v<digits>`, so it keeps its own shape and the endpoint's
+        // `/v1` is appended as before.
+        assert_eq!(
+            adapter.build_url("https://host/v1beta", "/v1/messages"),
+            "https://host/v1beta/v1/messages"
+        );
+        // The old `/v1/v1` special case only ever touched the path, so a literal
+        // `/v1/v1` inside a query is left alone.
+        assert_eq!(
+            adapter.build_url("https://host/api", "/v1/messages?next=/v1/v1"),
+            "https://host/api/v1/messages?next=/v1/v1"
+        );
     }
 
     #[test]
@@ -1818,6 +1837,53 @@ mod tests {
         assert!(!base_url_ends_with_version("http://v4"));
         assert!(!base_url_ends_with_version("https://v1"));
         assert!(!base_url_ends_with_version("https://v4?beta=true"));
+    }
+
+    #[test]
+    fn base_url_version_detection_never_reads_the_query_or_fragment() {
+        // A version-looking token in the query or fragment is not a path segment.
+        // Treating it as one would drop the endpoint's `/v1` and break the request.
+        assert!(!base_url_ends_with_version("https://host?v4"));
+        assert!(!base_url_ends_with_version("https://host?redirect=/v4"));
+        assert!(!base_url_ends_with_version("https://host?api-version=v4"));
+        assert!(!base_url_ends_with_version("https://host#v4"));
+        assert!(!base_url_ends_with_version("https://host/#v4"));
+        assert!(!base_url_ends_with_version("https://host/api?next=/v1"));
+        // A real version segment stays a version segment when a query follows it.
+        assert!(base_url_ends_with_version("https://host/v4?redirect=/v1"));
+        assert!(base_url_ends_with_version("https://host/api/v4#frag"));
+    }
+
+    #[test]
+    fn test_build_url_does_not_place_the_endpoint_inside_a_query_or_fragment() {
+        let adapter = ClaudeAdapter::new();
+
+        // `build_url` joins base + "/" + endpoint, so a base URL that already carries a
+        // query or fragment would swallow the endpoint into it. This is a pre-existing
+        // limitation, not something this change introduces; the tests pin the behaviour
+        // so it is visible rather than silently producing a broken request URL.
+        assert_eq!(
+            adapter.build_url("https://host/api?key=x", "/v1/messages"),
+            "https://host/api?key=x/v1/messages",
+        );
+        assert_eq!(
+            adapter.build_url("https://host/api#frag", "/v1/messages"),
+            "https://host/api#frag/v1/messages",
+        );
+
+        // The supported shapes: no query/fragment on the base URL, or the endpoint
+        // carrying its own query, which the join keeps intact.
+        assert_eq!(
+            adapter.build_url("https://host/api", "/v1/messages?beta=true"),
+            "https://host/api/v1/messages?beta=true",
+        );
+        assert_eq!(
+            adapter.build_url(
+                "https://open.bigmodel.cn/api/paas/v4",
+                "/v1/chat/completions"
+            ),
+            "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        );
     }
 
     #[test]
