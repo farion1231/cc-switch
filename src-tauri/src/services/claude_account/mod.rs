@@ -249,7 +249,8 @@ impl ClaudeAccountManager {
     // ---------- 加号 ----------
 
     /// 新建账号目录，在里面启动 `claude auth login`，拿到登录链接后返回。
-    pub async fn start_login(&self) -> Result<LoginStart, AppError> {
+    /// `open_browser` 为假（授权中心关了「登录时自动打开浏览器」）时不让 Claude Code 自己打开浏览器。
+    pub async fn start_login(&self, open_browser: bool) -> Result<LoginStart, AppError> {
         let local_id = layout::new_local_id();
         let home = layout::account_home(&self.data_dir, &local_id);
         let config_dir = layout::config_dir(&self.data_dir, &local_id);
@@ -261,7 +262,7 @@ impl ClaudeAccountManager {
             let _ = tokio::task::spawn_blocking(move || sync_shared(&config_dir)).await;
         }
 
-        let login = match login::start(config_dir, home, LOGIN_TIMEOUT).await {
+        let login = match login::start(config_dir, home, LOGIN_TIMEOUT, open_browser).await {
             Ok(login) => login,
             Err(error) => {
                 self.discard_dir(&local_id).await;
