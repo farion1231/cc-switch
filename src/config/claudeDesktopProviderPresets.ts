@@ -150,7 +150,7 @@ const brandedRoutes = (
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Claude Desktop Official",
-    websiteUrl: "https://claude.ai/download",
+    websiteUrl: "https://claude.com/download",
     category: "official",
     baseUrl: "",
     mode: "direct",
