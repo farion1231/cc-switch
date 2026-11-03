@@ -170,6 +170,8 @@ export interface QuotaSnapshots {
  */
 export interface CopilotUsageResponse {
   copilot_plan: string;
+  /** 订阅 SKU（`free_limited_copilot` / `max_monthly_subscriber_quota` …），旧版后端没有 */
+  access_type_sku?: string;
   quota_reset_date: string;
   quota_snapshots: QuotaSnapshots;
 }

@@ -21,11 +21,40 @@ export type CopilotQuotaKind = "premium" | "completions" | "chat";
 
 export interface CopilotQuota {
   success: boolean;
+  /** 套餐名（Free / Pro / Pro+ / Max …），认不出时为 null */
   plan: string | null;
   resetDate: string | null;
   tiers: CopilotQuotaTier[];
   error: string | null;
   queriedAt: number | null;
+}
+
+/**
+ * 套餐名，照 VS Code 的认法（chatEntitlementService）：先看 SKU 认出 Free、学生，其余看
+ * copilot_plan。Free 的 copilot_plan 也是 `individual`，所以没有 SKU 时不把它当 Pro。
+ */
+export function copilotPlanLabel(
+  sku: string | null | undefined,
+  plan: string | null | undefined,
+): string | null {
+  if (sku === "free_limited_copilot") return "Free";
+  if (sku === "free_educational_quota") return "Student";
+  switch (plan) {
+    case "individual":
+      return sku ? "Pro" : null;
+    case "individual_pro":
+      return "Pro+";
+    case "individual_max":
+      return "Max";
+    case "individual_edu":
+      return "Student";
+    case "business":
+      return "Business";
+    case "enterprise":
+      return "Enterprise";
+    default:
+      return null;
+  }
 }
 
 export interface UseCopilotQuotaOptions {
@@ -79,7 +108,7 @@ export function useCopilotQuota(
 
       return {
         success: true,
-        plan: usage.copilot_plan,
+        plan: copilotPlanLabel(usage.access_type_sku, usage.copilot_plan),
         resetDate: usage.quota_reset_date,
         tiers,
         error: null,

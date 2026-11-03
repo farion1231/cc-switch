@@ -209,8 +209,11 @@ pub fn build_copilot_request_headers(
 /// Copilot 使用量响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotUsageResponse {
-    /// Copilot 计划类型
+    /// Copilot 计划类型（Free 也报 `individual`，认套餐要先看 `access_type_sku`）
     pub copilot_plan: String,
+    /// 订阅 SKU：`free_limited_copilot`（Free）、`max_monthly_subscriber_quota`（Max）…
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_type_sku: Option<String>,
     /// 配额重置日期
     pub quota_reset_date: String,
     /// 配额快照

@@ -11,7 +11,11 @@ vi.mock("@/lib/api/copilot", () => ({
   copilotGetUsageForAccount,
 }));
 
-import { useCopilotQuota, type CopilotQuotaTier } from "@/lib/query/copilot";
+import {
+  copilotPlanLabel,
+  useCopilotQuota,
+  type CopilotQuotaTier,
+} from "@/lib/query/copilot";
 import { copilotQuotaRows } from "@/components/CopilotQuotaFooter";
 
 const detail = (
@@ -42,6 +46,7 @@ describe("useCopilotQuota", () => {
     // 真实 Free 号的响应：Credits 总额 0、has_quota=false；补全 2000、聊天 200
     copilotGetUsageForAccount.mockResolvedValue({
       copilot_plan: "individual",
+      access_type_sku: "free_limited_copilot",
       quota_reset_date: "2026-12-01",
       quota_snapshots: {
         premium_interactions: detail(0, 0, false, false),
@@ -55,6 +60,7 @@ describe("useCopilotQuota", () => {
     });
     await waitFor(() => expect(result.current.data).toBeDefined());
 
+    expect(result.current.data!.plan).toBe("Free");
     const tiers = result.current.data!.tiers;
     expect(tiers.map((tier) => [tier.name, tier.included])).toEqual([
       ["premium", false],
@@ -113,6 +119,34 @@ describe("useCopilotQuota", () => {
     expect(result.current.data!.tiers.map((tier) => tier.name)).toEqual([
       "premium",
     ]);
+  });
+});
+
+describe("copilotPlanLabel", () => {
+  it("reads Free and Student from the SKU before copilot_plan", () => {
+    expect(copilotPlanLabel("free_limited_copilot", "individual")).toBe("Free");
+    expect(copilotPlanLabel("free_educational_quota", "individual")).toBe(
+      "Student",
+    );
+    expect(copilotPlanLabel("monthly_subscriber_quota", "individual")).toBe(
+      "Pro",
+    );
+    expect(
+      copilotPlanLabel("plus_monthly_subscriber_quota", "individual_pro"),
+    ).toBe("Pro+");
+    expect(
+      copilotPlanLabel("max_monthly_subscriber_quota", "individual_max"),
+    ).toBe("Max");
+    expect(copilotPlanLabel("copilot_business_seat", "business")).toBe(
+      "Business",
+    );
+  });
+
+  it("does not call an individual plan Pro without a SKU", () => {
+    // Free 的 copilot_plan 也是 individual，旧版后端不带 SKU 时认不出
+    expect(copilotPlanLabel(undefined, "individual")).toBeNull();
+    expect(copilotPlanLabel(undefined, "individual_max")).toBe("Max");
+    expect(copilotPlanLabel("something_new", "something_new")).toBeNull();
   });
 });
 
