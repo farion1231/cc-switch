@@ -323,7 +323,19 @@ fn read_jsonl_line(path: &Path, offset: u64, len: u32) -> Result<Vec<u8>, String
         .ok_or_else(|| STALE.to_string())?;
     // 多读前后各一个字节，用来判断行边界
     let start = offset.saturating_sub(1);
-    let (buf, more_after_end) = if crate::codex_rollout_file::is_compressed(path) {
+    let (buf, more_after_end) = if path
+        .extension()
+        .is_some_and(|extension| extension == "zstd")
+    {
+        let bytes = super::providers::dsh::read_session(path)?;
+        if end > bytes.len() as u64 {
+            return Err(STALE.to_string());
+        }
+        (
+            bytes[start as usize..(end as usize + 1).min(bytes.len())].to_vec(),
+            end < bytes.len() as u64,
+        )
+    } else if crate::codex_rollout_file::is_compressed(path) {
         read_compressed_window(path, start, end)?
     } else {
         read_plain_window(path, start, end)?
@@ -659,6 +671,7 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "mcode" => mcode::scan_sessions(),
         "kimi" => kimi::scan_sessions(),
         "omp" => omp::scan_sessions(),
+        "dsh" => super::providers::dsh::scan_sessions(),
         "agy" => super::providers::agy::scan_sessions(),
         _ => return None,
     };

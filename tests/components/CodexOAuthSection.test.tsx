@@ -30,12 +30,20 @@ vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: () => <div />,
 }));
 
+vi.mock("@/components/providers/forms/ClaudeOfficialSection", () => ({
+  ClaudeOfficialSection: () => <div />,
+}));
+
 vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
   XaiOAuthSection: () => <div />,
 }));
 
 vi.mock("@/components/providers/KimiAccountLogin", () => ({
   KimiAccountLogin: () => <div />,
+}));
+
+vi.mock("@/components/providers/DshAccount", () => ({
+  DshAccountLogin: () => <div />,
 }));
 
 describe("CodexOAuthSection", () => {
@@ -203,28 +211,19 @@ describe("CodexOAuthSection", () => {
     expect(authResult.removeAccount).toHaveBeenCalledWith("account-1");
   });
 
-  it("asks before removing all accounts", async () => {
-    const user = userEvent.setup();
-    const authResult = mocks.useCodexOauth();
+  it("has no remove-all entry in the header with several accounts", () => {
     render(<CodexOAuthSection />);
 
-    // 「删除全部账号…」收进服务标题行的 ⋯，触发项本身不是红色实心按钮
+    // 标题行只有「添加账号」，删账号只走每一行自己的 ⋯
     expect(
       screen.queryByRole("button", { name: /注销所有账号|删除全部/ }),
     ).not.toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "ChatGPT 的更多操作" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "删除全部账号…" }),
-    );
-    const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent("删除全部 ChatGPT 账号？");
-    expect(dialog).toHaveTextContent("没有供应商在用这些账号。");
-    expect(authResult.logout).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: "删除 2 个账号" }));
-    expect(authResult.logout).toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "ChatGPT 的更多操作" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "添加账号" }),
+    ).toBeInTheDocument();
   });
 
   it("reauthenticates the selected legacy account in place", async () => {

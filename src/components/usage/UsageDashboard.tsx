@@ -557,6 +557,7 @@ export function UsageDashboard({
   // ── 筛选行 ───────────────────────────────────────────────────────────
   // 选中块是单独的滑块（SegmentThumb），切换应用时滑过去
   // 只列「应用」页设为显示的应用；Claude Code 的用量在 Claude Desktop 显示时也算，
+  // DeepSeek Harness（Web 与 Desktop 的会话用量合并记在 dsh 下）在 Desktop 显示时也算，
   // 当前选中的即使被隐藏也留着，免得筛选状态无处可见
   const { data: settings } = useSettingsQuery();
   const filterApps = useMemo(() => {

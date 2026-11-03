@@ -1,7 +1,7 @@
 //! Import Kimi Code's committed request usage. Tokens are already normalized to fresh input.
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::kimi_session::{timestamp_ms, RequestIndex};
+use crate::kimi_session::{timestamp_ms, RequestIndex, RequestInfo};
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::{
     session_usage::{
@@ -194,11 +194,12 @@ fn sync_file(
         let info = requests.get(&meta);
         let latency = info.map_or(0, |info| info.latency_ms);
         let first_token = info.and_then(|info| info.first_token_ms);
+        let started = info.and_then(|info| info.request_ms);
         // Permanent receipts prevent re-import after wire rewrites, forks, or log pruning.
         if tx.execute("INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id) VALUES ('kimi_session', ?1, ?1, 1)", [&request])? == 0 {
             // As with Claude imports, enrichment counts as changed data so the normal
             // usage-log-recorded notification refreshes open tables and detail panels.
-            if refresh_existing(&tx, &request, model, &usage, latency, first_token)? {
+            if refresh_existing(&tx, &request, model, &usage, info, created)? {
                 result.imported += 1;
             } else {
                 result.skipped += 1;
@@ -212,12 +213,19 @@ fn sync_file(
             latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
         ) VALUES (?1, '_kimi_session', 'kimi', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'kimi_session', 1, '1', ?13, 'kimi_session', ?14)",
             rusqlite::params![request, model, usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_creation_tokens,
-                amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, created/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token])?;
+                amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, started.map_or(created, |start| completed_ms(start, latency, created))/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token])?;
         result.imported += 1;
     }
     update_sync_state_on_conn(&tx, key, modified, bytes)?;
     tx.commit()?;
     Ok(result)
+}
+
+/// Kimi commits a whole turn's messages at once, so a committed record's own time is the
+/// commit, shared by every request in the turn. Date each request by when its model call
+/// finished instead, which is also when the proxy records requests.
+fn completed_ms(started: i64, latency: i64, committed: i64) -> i64 {
+    started.saturating_add(latency).min(committed)
 }
 
 fn costs(
@@ -248,18 +256,20 @@ fn refresh_existing(
     request: &str,
     model: &str,
     usage: &TokenUsage,
-    latency: i64,
-    first_token: Option<i64>,
+    info: Option<&RequestInfo>,
+    committed: i64,
 ) -> Result<bool, AppError> {
-    let stored: Option<(String, String, i64, Option<i64>)> = conn
+    let latency = info.map_or(0, |info| info.latency_ms);
+    let first_token = info.and_then(|info| info.first_token_ms);
+    let stored: Option<(String, String, i64, Option<i64>, i64)> = conn
         .query_row(
-            "SELECT model, cost_multiplier, latency_ms, first_token_ms FROM proxy_request_logs
+            "SELECT model, cost_multiplier, latency_ms, first_token_ms, created_at FROM proxy_request_logs
          WHERE request_id = ?1 AND app_type = 'kimi' AND data_source = 'kimi_session'",
             [request],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .optional()?;
-    let Some((old_model, multiplier, old_latency, old_first)) = stored else {
+    let Some((old_model, multiplier, old_latency, old_first, old_created)) = stored else {
         return Ok(false);
     };
     let model_changed = model != old_model && model != "unknown";
@@ -270,7 +280,17 @@ fn refresh_existing(
         old_latency
     };
     let first_token = first_token.or(old_first).filter(|first| *first <= latency);
-    if !model_changed && latency == old_latency && first_token == old_first {
+    // Rows imported before their request events were readable carry the commit time.
+    let created = info
+        .and_then(|info| info.request_ms)
+        .map_or(old_created, |start| {
+            completed_ms(start, latency, committed) / 1000
+        });
+    if !model_changed
+        && latency == old_latency
+        && first_token == old_first
+        && created == old_created
+    {
         return Ok(false);
     }
     if model_changed {
@@ -291,9 +311,9 @@ fn refresh_existing(
         )?;
     }
     conn.execute(
-        "UPDATE proxy_request_logs SET latency_ms = ?2, first_token_ms = ?3
+        "UPDATE proxy_request_logs SET latency_ms = ?2, first_token_ms = ?3, created_at = ?4
          WHERE request_id = ?1 AND app_type = 'kimi' AND data_source = 'kimi_session'",
-        rusqlite::params![request, latency, first_token],
+        rusqlite::params![request, latency, first_token, created],
     )?;
     Ok(true)
 }
@@ -476,6 +496,68 @@ mod tests {
             )
             .unwrap();
         assert_eq!(preserved, row);
+    }
+
+    #[test]
+    fn kimi_usage_dates_batch_committed_messages_by_their_requests() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wire.jsonl");
+        let commit = 1_700_000_900_000;
+        // Kimi commits a turn's messages together, all stamped with the commit time.
+        let mut records = Vec::new();
+        for (id, start) in [("one", 1_700_000_000_000i64), ("two", 1_700_000_300_000)] {
+            let mut step = request(id, "model", start, 1_000, 2_000, 10);
+            step.remove(3);
+            records.extend(step);
+        }
+        records.push(message("one", commit, 10));
+        records.push(message("two", commit, 10));
+        write_records(&path, &records);
+        assert_eq!(
+            sync_file(&db, &path, "main", "session", "file", 1)
+                .unwrap()
+                .imported,
+            2
+        );
+        let created = |db: &Database| -> Vec<i64> {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT created_at FROM proxy_request_logs ORDER BY request_id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(created(&db), vec![1_700_000_003, 1_700_000_303]);
+        // Rows imported with the commit time are corrected when the wire is read again.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE proxy_request_logs SET created_at = ?1",
+                [commit / 1000],
+            )
+            .unwrap();
+        assert_eq!(
+            sync_file(&db, &path, "main", "session", "file", 2)
+                .unwrap()
+                .imported,
+            2
+        );
+        assert_eq!(created(&db), vec![1_700_000_003, 1_700_000_303]);
+        let receipts: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM session_usage_dedup", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(receipts, 2);
     }
 
     #[test]

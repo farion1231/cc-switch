@@ -6,6 +6,36 @@ use std::sync::{Arc, Barrier};
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
+fn bulk_apps() -> impl Iterator<Item = AppType> {
+    AppType::all().filter(|app| *app != AppType::Dsh)
+}
+
+#[test]
+fn unsupported_dsh_batch_preserves_database_and_native_files() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    let _env = AgentEnvironment::isolated();
+    let state = create_test_state().unwrap();
+    let before = native_files();
+    let source = json!([agent_row(&AppType::Dsh, "Team", "synthetic-dsh-key")]).to_string();
+    let expected = "provider.bulkImport.errors.unsupportedApp";
+    assert_eq!(
+        ProviderService::preview_bulk_import(&state, AppType::Dsh, &source)
+            .err()
+            .unwrap()
+            .to_string(),
+        expected
+    );
+    assert_eq!(
+        ProviderService::import_bulk(&state, AppType::Dsh, &source, "forged")
+            .err()
+            .unwrap()
+            .to_string(),
+        expected
+    );
+    assert!(state.db.get_all_providers("dsh").unwrap().is_empty());
+    assert_eq!(native_files(), before);
+}
+
 fn row(name: &str, key: &str) -> Value {
     json!({"name":name,"base_url":"https://gateway.example.com/v1", "api_key":key})
 }
@@ -653,7 +683,7 @@ fn all_agents_append_atomically_without_activation_and_roundtrip_sql_backups() {
     }
     let before = native_files();
     let mut fixtures = serde_json::Map::new();
-    for app in AppType::all() {
+    for app in bulk_apps() {
         let first = agent_row(&app, "Team gateway", "synthetic-team-key-1111");
         let existing = import(&state, app.clone(), json!([first.clone()]))[0].clone();
         let second = agent_row(&app, "Team gateway", "synthetic-team-key-2222");
@@ -709,7 +739,7 @@ fn all_agents_append_atomically_without_activation_and_roundtrip_sql_backups() {
     let snapshot = state.db.export_sql_string().unwrap();
     let restored = Database::memory().unwrap();
     restored.import_sql_string(&snapshot).unwrap();
-    for app in AppType::all() {
+    for app in bulk_apps() {
         assert_eq!(
             serde_json::to_value(restored.get_all_providers(app.as_str()).unwrap()).unwrap(),
             serde_json::to_value(state.db.get_all_providers(app.as_str()).unwrap()).unwrap()
@@ -744,7 +774,7 @@ fn coexist_agents_enable_distinct_keys_then_reimport_without_duplicates() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     let _env = AgentEnvironment::isolated();
     let state = create_test_state().unwrap();
-    let scenarios = AppType::all()
+    let scenarios = bulk_apps()
         .filter(AppType::is_additive_mode)
         .map(|app| (app, false))
         .chain(std::iter::once((AppType::Hermes, true)));
@@ -828,7 +858,7 @@ fn every_agent_rejects_invalid_batch_and_rolls_back_on_second_insert_failure() {
     let conn =
         rusqlite::Connection::open(ensure_test_home().join(".cc-switch/cc-switch.db")).unwrap();
     conn.execute_batch("CREATE TRIGGER abort_batch BEFORE INSERT ON providers WHEN NEW.name='Reject' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
-    for app in AppType::all() {
+    for app in bulk_apps() {
         let data = json!([
             agent_row(&app, "First", "synthetic-key-one"),
             agent_row(&app, "Reject", "synthetic-key-two")
@@ -886,7 +916,7 @@ fn independent_connections_cannot_import_the_same_preview_twice() {
             rusqlite::Connection::open(ensure_test_home().join(".cc-switch/cc-switch.db")).unwrap();
         conn.pragma_update(None, "journal_mode", mode).unwrap();
         let two = AppState::new(Arc::new(Database::init().unwrap()));
-        for app in AppType::all() {
+        for app in bulk_apps() {
             let source = json!([agent_row(&app, "Team", "synthetic-concurrent")]).to_string();
             let token = ProviderService::preview_bulk_import(&one, app.clone(), &source)
                 .unwrap()
@@ -925,7 +955,7 @@ fn supported_protocols_models_and_context_windows_match_each_agent() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     let _env = AgentEnvironment::isolated();
     let state = create_test_state().unwrap();
-    for app in AppType::all() {
+    for app in bulk_apps() {
         for protocol in [
             "anthropic",
             "openai_chat",
@@ -1075,7 +1105,7 @@ fn partially_overlapping_batches_require_repreview_without_partial_writes() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     let _env = AgentEnvironment::isolated();
     let state = create_test_state().unwrap();
-    for app in AppType::all() {
+    for app in bulk_apps() {
         let a = json!([
             agent_row(&app, "A", "synthetic-a"),
             agent_row(&app, "B", "synthetic-b")

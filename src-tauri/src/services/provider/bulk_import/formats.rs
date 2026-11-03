@@ -12,7 +12,7 @@ pub(super) struct Format {
     pub model_required: bool,
 }
 
-pub(super) fn format(app: &AppType) -> Format {
+pub(super) fn format(app: &AppType) -> Result<Format, AppError> {
     let all = &[
         "anthropic",
         "openai_chat",
@@ -26,15 +26,20 @@ pub(super) fn format(app: &AppType) -> Format {
         AppType::Gemini | AppType::Agy => ("gemini_native", &["gemini_native"] as &[_]),
         AppType::Mcode => ("anthropic", three),
         AppType::Hermes => ("openai_chat", three),
+        AppType::Dsh => {
+            return Err(AppError::Message(
+                "provider.bulkImport.errors.unsupportedApp".into(),
+            ));
+        }
         AppType::OpenCode | AppType::OpenClaw | AppType::Pi | AppType::Omp | AppType::Kimi => {
             ("openai_chat", all)
         }
     };
-    Format {
+    Ok(Format {
         default,
         allowed,
         model_required: app.is_additive_mode(),
-    }
+    })
 }
 
 fn api(format: &str) -> &'static str {

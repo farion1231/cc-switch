@@ -230,6 +230,21 @@ fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
     assert!(apps.claude && apps.pi && apps.mcode && apps.omp);
 }
 
+/// DeepSeek Harness 的 MCP 链接写进 DSH 的标记（Web 与 Desktop 共用）
+#[test]
+fn test_parse_mcp_deeplink_accepts_dsh() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    for apps in ["dsh", "claude,dsh"] {
+        let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
+        let request = parse_deeplink_url(&url).expect("dsh is a valid MCP target");
+        assert!(
+            parse_mcp_apps(request.apps.as_deref().unwrap())
+                .unwrap()
+                .dsh
+        );
+    }
+}
+
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_refuses_omp_with_guidance() {
@@ -1110,6 +1125,21 @@ fn test_parse_grokbuild_mcp_deeplink() {
     let request = parse_deeplink_url(&url).expect("parse Grok Build MCP deeplink");
 
     assert_eq!(request.apps.as_deref(), Some("grokbuild"));
+}
+
+/// 入口白名单要和下层 `parse_mcp_apps` 一致，支持 MCP 的 MiniMax Code、Pi 不能在这里被拒
+#[test]
+fn test_parse_mcode_and_pi_mcp_deeplink() {
+    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
+    let config_b64 = BASE64_STANDARD.encode(config);
+    let url =
+        format!("ccswitch://v1/import?resource=mcp&apps=mcode,pi&config={config_b64}&enabled=true");
+
+    let request = parse_deeplink_url(&url).expect("parse MiniMax Code / Pi MCP deeplink");
+    let apps = request.apps.as_deref().unwrap();
+    assert_eq!(apps, "mcode,pi");
+    let parsed = crate::deeplink::mcp::parse_mcp_apps(apps).unwrap();
+    assert!(parsed.mcode && parsed.pi);
 }
 
 #[test]

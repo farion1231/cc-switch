@@ -263,6 +263,27 @@ impl Database {
         }
     }
 
+    /// 只改排序：一个事务里按 id 更新 `sort_index`，不存在的行跳过。不经整行快照保存，
+    /// 和删除、编辑并发时既不会复活删掉的行，也不会盖掉别处刚存的字段。
+    pub fn update_provider_sort_indexes(
+        &self,
+        app_type: &str,
+        updates: &[(String, usize)],
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for (id, sort_index) in updates {
+            tx.execute(
+                "UPDATE providers SET sort_index = ?1 WHERE id = ?2 AND app_type = ?3",
+                params![sort_index, id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))
+    }
+
     pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn

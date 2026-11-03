@@ -113,7 +113,7 @@ fn text_field(
 }
 
 fn prepare(app: &AppType, source: &str) -> Result<Prepared, AppError> {
-    let spec = formats::format(app);
+    let spec = formats::format(app)?;
     let mut result = Prepared {
         providers: Vec::new(),
         rows: Vec::new(),

@@ -15,6 +15,7 @@ mod commands;
 mod config;
 mod database;
 mod deeplink;
+mod dsh_config;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
@@ -47,6 +48,8 @@ mod settings;
 mod store;
 
 mod tray;
+#[cfg(target_os = "windows")]
+mod tray_compat;
 mod tray_panel;
 mod usage_events;
 mod usage_script;
@@ -73,7 +76,7 @@ pub use mcp::{
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
-    profile::{ProfilePayload, ProfileScope, ProfileService},
+    profile::{ProfilePayload, ProfileScope, ProfileService, NO_ACTIVE_PROMPT},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
@@ -86,7 +89,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::tray::TrayIconBuilder;
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
@@ -104,6 +107,31 @@ fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
         log::warn!("设置 Windows AppUserModelID 失败: 0x{result:08X}");
     } else {
         log::debug!("Windows AppUserModelID 已设置为 {app_id}");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn disable_windows_general_autofill<R: tauri::Runtime>(webview: &tauri::Webview<R>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+    use windows::core::Interface;
+
+    let result = webview.with_webview(|platform_webview| {
+        let result = unsafe {
+            platform_webview
+                .controller()
+                .CoreWebView2()
+                .and_then(|webview| webview.Settings())
+                .and_then(|settings| settings.cast::<ICoreWebView2Settings4>())
+                .and_then(|settings| settings.SetIsGeneralAutofillEnabled(false))
+        };
+
+        if let Err(error) = result {
+            log::warn!("禁用 Windows WebView2 常规自动填充失败: {error}");
+        }
+    });
+
+    if let Err(error) = result {
+        log::warn!("访问 Windows WebView2 失败: {error}");
     }
 }
 
@@ -395,6 +423,58 @@ fn raise_open_file_limit() {
     }
 }
 
+/// 又启动了一个实例（或经命令行打开 ccswitch:// 链接）：退出轻量模式、处理链接、把主窗口拿到前台。
+/// 在后台线程上调用（见 single_instance 回调），一次处理一个：连着启动两次时，
+/// 不能两边都看到主窗口不在、各建一个。
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    log::debug!("Args count: {}", args.len());
+    for (i, arg) in args.iter().enumerate() {
+        log::debug!("  arg[{i}]: {}", url_for_log(arg));
+    }
+
+    if crate::lightweight::is_lightweight_mode() {
+        if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            log::error!("退出轻量模式重建窗口失败: {e}");
+        }
+    }
+
+    // Check for deep link URL in args (mainly for Windows/Linux command line)
+    let mut found_deeplink = false;
+    for arg in &args {
+        if handle_deeplink_url(app, arg, false, "single_instance args") {
+            found_deeplink = true;
+            break;
+        }
+    }
+
+    if !found_deeplink {
+        log::info!(
+            "ℹ No deep link URL found in args (this is expected on macOS when launched via system)"
+        );
+    }
+
+    // Show and focus window regardless
+    if let Some(window) = app.get_webview_window("main") {
+        // 防御性重置 Windows 的 skip_taskbar：single_instance 触发时，
+        // 原进程可能因 silent_startup / 关闭到托盘等处于 skip_taskbar(true) 状态，
+        // 仅 show() 不会重置该状态，会导致窗口可见但不在任务栏、最小化后消失。
+        #[cfg(target_os = "windows")]
+        {
+            let _ = window.set_skip_taskbar(false);
+        }
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "linux")]
+        {
+            linux_fix::nudge_main_window(window.clone(), "single-instance");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
@@ -402,51 +482,29 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default();
 
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.plugin(
+            tauri::plugin::Builder::<_, ()>::new("windows-general-autofill")
+                .on_webview_ready(|webview| {
+                    if webview.label() == "main" {
+                        disable_windows_general_autofill(&webview);
+                    }
+                })
+                .build(),
+        );
+    }
+
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             log::info!("=== Single Instance Callback Triggered ===");
-            log::debug!("Args count: {}", args.len());
-            for (i, arg) in args.iter().enumerate() {
-                log::debug!("  arg[{i}]: {}", url_for_log(arg));
-            }
-
-            if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式重建窗口失败: {e}");
-                }
-            }
-
-            // Check for deep link URL in args (mainly for Windows/Linux command line)
-            let mut found_deeplink = false;
-            for arg in &args {
-                if handle_deeplink_url(app, arg, false, "single_instance args") {
-                    found_deeplink = true;
-                    break;
-                }
-            }
-
-            if !found_deeplink {
-                log::info!("ℹ No deep link URL found in args (this is expected on macOS when launched via system)");
-            }
-
-            // Show and focus window regardless
-            if let Some(window) = app.get_webview_window("main") {
-                // 防御性重置 Windows 的 skip_taskbar：single_instance 触发时，
-                // 原进程可能因 silent_startup / 关闭到托盘等处于 skip_taskbar(true) 状态，
-                // 仅 show() 不会重置该状态，会导致窗口可见但不在任务栏、最小化后消失。
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = window.set_skip_taskbar(false);
-                }
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "linux")]
-                {
-                    linux_fix::nudge_main_window(window.clone(), "single-instance");
-                }
-            }
+            // Windows 上这个回调跑在主线程处理 WM_COPYDATA 的窗口过程里，第二个实例的
+            // SendMessage 正等它返回：轻量模式下要在这里同步重建主窗口，WebView2 会把主线程
+            // 卡死（托盘随之无响应）。挪到后台线程，建窗口改由事件循环处理，和 macOS / Linux
+            // 本来就不在主线程上调用一致。
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || handle_second_instance(&app, args));
         }));
     }
 
@@ -839,6 +897,10 @@ pub fn run() {
                 }
             }
 
+            if let Err(error) = crate::services::provider::initialize_dsh_profiles(&app_state) {
+                log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
+            }
+
             match app_state.db.init_default_official_providers() {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Seeded {count} official provider(s)");
@@ -1186,10 +1248,12 @@ pub fn run() {
             // 冷启动补取：Windows/Linux 上插件在自身初始化时就解析了启动参数并发出事件，
             // macOS 的 Opened 也可能早于这里，都赶在上面的回调注册之前，只能从 get_current 取。
             // 万一两边都处理了同一条链接也无妨：暂存区只留最新一条，前端处理完就清除。
+            let mut startup_deeplink = false;
             match app.deep_link().get_current() {
                 Ok(Some(urls)) => {
                     for url in urls {
                         if handle_deeplink_url(app.handle(), url.as_str(), true, "get_current") {
+                            startup_deeplink = true;
                             break;
                         }
                     }
@@ -1204,46 +1268,7 @@ pub fn run() {
             let native_menu = tray_panel::uses_native_menu();
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button:
-                            button @ (tauri::tray::MouseButton::Left
-                            | tauri::tray::MouseButton::Right),
-                        button_state: tauri::tray::MouseButtonState::Up,
-                        rect,
-                        ..
-                    } = &event
-                    {
-                        if cfg!(target_os = "windows")
-                            && *button == tauri::tray::MouseButton::Left
-                        {
-                            tray_panel::hide_panel(tray.app_handle());
-                            tray::show_main_window(tray.app_handle());
-                        } else if !tray_panel::uses_native_menu() {
-                            tray_panel::toggle(tray.app_handle(), rect);
-                            return;
-                        } else {
-                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
-                            tray::mark_feedback_seen();
-                        }
-                    }
-                    match &event {
-                        // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
-                        // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
-                        // refresh_all_usage_in_tray 内部有 10 秒防抖。
-                        TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
-                            let app = tray.app_handle().clone();
-                            // 悬停时菜单还没打开：问题区该出现 / 消失了就趁这时重建。
-                            if matches!(event, TrayIconEvent::Enter { .. }) {
-                                tray::refresh_tray_if_problems_changed(&app);
-                            }
-                            tauri::async_runtime::spawn(async move {
-                                crate::tray::refresh_all_usage_in_tray(&app).await;
-                            });
-                        }
-                        _ => log::debug!("unhandled event {event:?}"),
-                    }
-                })
+                .on_tray_icon_event(tray::handle_tray_icon_event)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
@@ -1258,7 +1283,17 @@ pub fn run() {
                 tray_builder = tray_builder.icon(icon).icon_as_template(template);
             }
 
+            // Linux 托盘需要把图标写入磁盘。WSL 的 XDG_RUNTIME_DIR 可能指向
+            // 不存在或不可写的目录，使用应用缓存目录避免因此中止启动。
+            #[cfg(target_os = "linux")]
+            {
+                tray_builder =
+                    tray_builder.temp_dir_path(app.path().app_cache_dir()?.join("tray-icon"));
+            }
+
             let _tray = tray_builder.build(app)?;
+            #[cfg(target_os = "windows")]
+            tray_compat::install(app.handle());
             crate::services::webdav_auto_sync::start_worker(
                 app_state.db.clone(),
                 app.handle().clone(),
@@ -1314,6 +1349,21 @@ pub fn run() {
                 use crate::services::agy_account::AgyAccountManager;
                 let manager = AgyAccountManager::new(crate::config::get_app_config_dir());
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
+            }
+
+            // Claude Code 官方订阅账号（授权中心加号；每个账号一个 CLAUDE_CONFIG_DIR）
+            {
+                use crate::services::claude_account::ClaudeAccountManager;
+                let data_dir = crate::config::get_app_config_dir();
+                let manager = ClaudeAccountManager::new(data_dir.clone());
+                app.manage(commands::ClaudeAccountState(Arc::new(manager)));
+                let db = app.state::<AppState>().db.clone();
+                std::thread::spawn(move || {
+                    // 上次切换登录时崩溃、断电：先补完（配置操作在前面已补完，指针已落定）
+                    crate::services::provider::claude_official::recover_login_switch(&db);
+                    // 默认目录的设置、MCP 可能在 CC Switch 没运行时改过
+                    crate::services::claude_account::sync_all_shared(&data_dir)
+                });
             }
 
             // 初始化全局出站代理 HTTP 客户端
@@ -1484,7 +1534,14 @@ pub fn run() {
                     let _ = window.set_decorations(false);
                     let _ = window.set_shadow(true);
                 }
-                if settings.silent_startup {
+                // 上次退出时在轻量模式：照旧只留托盘。由深链接冷启动的要给用户看导入对话框，正常启动。
+                if settings.lightweight_mode && !startup_deeplink {
+                    if let Err(e) = crate::lightweight::enter_lightweight_mode(app.handle()) {
+                        log::error!("启动时恢复轻量模式失败: {e}");
+                    } else {
+                        log::info!("上次退出时在轻量模式，启动后已恢复");
+                    }
+                } else if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
@@ -1605,6 +1662,8 @@ pub fn run() {
             commands::set_mcp_enabled,
             // Unified MCP management
             commands::get_mcp_servers,
+            commands::start_mcp_connectivity_checks,
+            commands::cancel_mcp_connectivity_checks,
             commands::upsert_mcp_server,
             commands::delete_mcp_server,
             commands::toggle_mcp_app,
@@ -1660,6 +1719,7 @@ pub fn run() {
             commands::webdav_sync_upload,
             commands::webdav_sync_download,
             commands::webdav_sync_save_settings,
+            commands::webdav_sync_clear_settings,
             commands::webdav_sync_fetch_remote_info,
             commands::s3_test_connection,
             commands::s3_sync_upload,
@@ -1702,12 +1762,14 @@ pub fn run() {
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,
+            commands::discover_repo_skills,
             commands::check_skill_updates,
             commands::resync_skills_to_apps,
             commands::update_skill,
             commands::migrate_skill_storage,
             commands::get_cc_switch_skills_dir,
             commands::open_cc_switch_skills_dir,
+            commands::open_skill_dir,
             commands::search_skills_sh,
             // Skill management (legacy API compatibility)
             commands::get_skills,
@@ -1791,12 +1853,14 @@ pub fn run() {
             commands::get_models_dev_sync_config,
             commands::save_models_dev_sync_config,
             commands::record_models_dev_sync_result,
+            commands::fetch_models_dev,
             commands::check_provider_limits,
             // Session usage sync
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
             commands::get_session_usage_last_sync,
             commands::get_usage_data_sources,
+            commands::fetch_exchange_rates,
             // Stream health check
             commands::stream_check_provider,
             // Session manager
@@ -1878,7 +1942,16 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::claude_account_submit_paste,
+            commands::get_claude_account_quota,
+            commands::get_claude_default_plan,
+            commands::get_claude_login_switch,
             commands::kimi_oauth_status,
+            commands::dsh_account_status,
+            commands::dsh_account_sign_out,
+            commands::dsh_account_login_start,
+            commands::dsh_account_login_poll,
+            commands::dsh_account_login_cancel,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,
             commands::kimi_oauth_cancel,

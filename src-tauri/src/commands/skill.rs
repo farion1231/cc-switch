@@ -118,17 +118,39 @@ pub fn import_skills_from_apps(
 // ========== 发现功能命令 ==========
 
 /// 发现可安装的 Skills（从仓库获取），并逐仓库报告没读到的仓库
+///
+/// `force_refresh` 为 true（手动刷新）时绕过按仓库的发现缓存。
 #[tauri::command]
 pub async fn discover_available_skills(
+    force_refresh: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     service
         .0
-        .discover_available_report(repos)
+        .discover_available_report(repos, force_refresh.unwrap_or(false))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 只发现一个已保存的仓库（添加、重新启用仓库后用，不重拉其它仓库）。
+/// 仓库不存在或已停用时返回空结果。
+#[tauri::command]
+pub async fn discover_repo_skills(
+    owner: String,
+    name: String,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<SkillDiscoveryResult, String> {
+    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let Some(repo) = repos
+        .into_iter()
+        .find(|repo| repo.owner == owner && repo.name == name)
+    else {
+        return Ok(SkillDiscoveryResult::default());
+    };
+    Ok(service.0.discover_repo(&repo).await)
 }
 
 /// 检查 Skills 更新，并逐仓库报告没读到的仓库
@@ -196,6 +218,20 @@ pub async fn open_cc_switch_skills_dir(handle: AppHandle) -> Result<bool, String
     let dir = cc_switch_skills_dir();
     if !dir.exists() {
         std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    handle
+        .opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("打开文件夹失败: {e}"))?;
+    Ok(true)
+}
+
+/// 在系统文件管理器里打开某个已安装 Skill 的主副本目录
+#[tauri::command]
+pub async fn open_skill_dir(handle: AppHandle, directory: String) -> Result<bool, String> {
+    let dir = SkillService::get_installed_skill_dir(&directory).map_err(|e| e.to_string())?;
+    if !dir.is_dir() {
+        return Err(format!("目录不存在: {}", dir.display()));
     }
     handle
         .opener()

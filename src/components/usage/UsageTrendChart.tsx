@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   Area,
@@ -6,7 +7,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -255,6 +255,28 @@ export function formatUsageTrendTokenTickLabel(
 
 const AXIS_TICK = { fill: "var(--text-3)", fontSize: 11 };
 
+/**
+ * 量容器宽度给图表用，不用 Recharts 的 ResponsiveContainer / responsive：它们在 ResizeObserver 回调里排一次异步渲染，
+ * 侧栏开合时图表会按旧宽度多画一帧，右边缘先错位再跳回来。ResizeObserver 回调在绘制前执行，
+ * 这里用 flushSync 当场按新宽度重画，屏幕上第一帧就是对的。
+ */
+function useContainerWidth() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setWidth(Math.round(el.getBoundingClientRect().width));
+    const observer = new ResizeObserver(([entry]) => {
+      const next = Math.round(entry.contentRect.width);
+      flushSync(() => setWidth(next));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width] as const;
+}
+
 export function UsageTrendChart({
   range,
   metric,
@@ -327,6 +349,7 @@ export function UsageTrendChart({
   );
 
   const Chart = chartType === "bar" ? BarChart : AreaChart;
+  const [chartBoxRef, chartWidth] = useContainerWidth();
   // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度。
   const dataKey =
     metric === "cost"
@@ -369,77 +392,77 @@ export function UsageTrendChart({
         })}
       </h2>
 
-      <div className="mt-1 h-[132px] w-full">
+      <div ref={chartBoxRef} className="mt-1 h-[132px] w-full">
         {isLoading ? (
           <div className="flex h-full items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-fg-3" />
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <Chart
-              data={chartData}
-              margin={{ top: 6, right: 0, left: 0, bottom: 0 }}
-            >
-              <CartesianGrid
-                vertical={false}
-                stroke="var(--chart-grid)"
-                strokeWidth={1}
+          <Chart
+            width={chartWidth}
+            height={132}
+            data={chartData}
+            margin={{ top: 6, right: 0, left: 0, bottom: 0 }}
+          >
+            <CartesianGrid
+              vertical={false}
+              stroke="var(--chart-grid)"
+              strokeWidth={1}
+            />
+            {/* 🔴 分类键必须是后端 RFC3339 桶时间戳（xKey），不能用显示文字，否则跨年错位 */}
+            <XAxis
+              dataKey="xKey"
+              axisLine={false}
+              tickLine={false}
+              tick={AXIS_TICK}
+              tickMargin={6}
+              minTickGap={12}
+              tickFormatter={(value) =>
+                formatUsageTrendTickLabel(String(value), chartData)
+              }
+              allowDuplicatedCategory={false}
+            />
+            <YAxis
+              width="auto"
+              axisLine={false}
+              tickLine={false}
+              tick={AXIS_TICK}
+              tickCount={3}
+              domain={metric === "hitRate" ? [hitRateFloor, 1] : undefined}
+              tickFormatter={formatYTick}
+            />
+            <Tooltip
+              content={renderTooltip}
+              cursor={
+                chartType === "bar"
+                  ? { fill: "var(--bg-subtle)" }
+                  : { stroke: "var(--text-3)", strokeDasharray: "3 3" }
+              }
+            />
+            {chartType === "bar" ? (
+              <Bar
+                dataKey={dataKey}
+                name={metricLabel}
+                fill="var(--chart-usage)"
+                radius={[3, 3, 0, 0]}
+                maxBarSize={36}
+                isAnimationActive={false}
               />
-              {/* 🔴 分类键必须是后端 RFC3339 桶时间戳（xKey），不能用显示文字，否则跨年错位 */}
-              <XAxis
-                dataKey="xKey"
-                axisLine={false}
-                tickLine={false}
-                tick={AXIS_TICK}
-                tickMargin={6}
-                minTickGap={12}
-                tickFormatter={(value) =>
-                  formatUsageTrendTickLabel(String(value), chartData)
-                }
-                allowDuplicatedCategory={false}
+            ) : (
+              <Area
+                type="monotone"
+                dataKey={dataKey}
+                name={metricLabel}
+                stroke="var(--chart-usage)"
+                strokeWidth={2}
+                fill="var(--chart-usage)"
+                fillOpacity={0.16}
+                dot={chartData.length === 1 ? { r: 3 } : false}
+                activeDot={{ r: 4 }}
+                isAnimationActive={false}
               />
-              <YAxis
-                width="auto"
-                axisLine={false}
-                tickLine={false}
-                tick={AXIS_TICK}
-                tickCount={3}
-                domain={metric === "hitRate" ? [hitRateFloor, 1] : undefined}
-                tickFormatter={formatYTick}
-              />
-              <Tooltip
-                content={renderTooltip}
-                cursor={
-                  chartType === "bar"
-                    ? { fill: "var(--bg-subtle)" }
-                    : { stroke: "var(--text-3)", strokeDasharray: "3 3" }
-                }
-              />
-              {chartType === "bar" ? (
-                <Bar
-                  dataKey={dataKey}
-                  name={metricLabel}
-                  fill="var(--chart-usage)"
-                  radius={[3, 3, 0, 0]}
-                  maxBarSize={36}
-                  isAnimationActive={false}
-                />
-              ) : (
-                <Area
-                  type="monotone"
-                  dataKey={dataKey}
-                  name={metricLabel}
-                  stroke="var(--chart-usage)"
-                  strokeWidth={2}
-                  fill="var(--chart-usage)"
-                  fillOpacity={0.16}
-                  dot={chartData.length === 1 ? { r: 3 } : false}
-                  activeDot={{ r: 4 }}
-                  isAnimationActive={false}
-                />
-              )}
-            </Chart>
-          </ResponsiveContainer>
+            )}
+          </Chart>
         )}
       </div>
     </section>

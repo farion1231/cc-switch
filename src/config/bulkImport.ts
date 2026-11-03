@@ -1,11 +1,11 @@
-import type { AppId } from "@/lib/api/types";
+import type { BulkImportApp } from "@/lib/api/providers";
 
 const all = ["anthropic", "openai_chat", "openai_responses", "gemini_native"];
 const three = ["anthropic", "openai_chat", "openai_responses"];
 const gemini = ["gemini_native"];
 // Mirrors bulk_import/formats.rs; model declarations are required for coexist apps.
 export const BULK_IMPORT_FORMATS: Record<
-  AppId,
+  BulkImportApp,
   { defaultFormat: string; formats: string[]; modelRequired: boolean }
 > = {
   claude: { defaultFormat: "anthropic", formats: all, modelRequired: false },
