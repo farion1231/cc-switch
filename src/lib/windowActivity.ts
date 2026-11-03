@@ -47,57 +47,92 @@ export function initializeWindowActivity() {
   if (initialized) return;
   initialized = true;
 
-  // Desktop WebViews may remain document-visible after being hidden/minimized.
-  // Use native focus as well as DOM visibility for Query's foreground polling,
-  // session auto-sync, and the decorative heartbeat. Explicit background quota
-  // queries retain their refetchIntervalInBackground behavior.
+  // Visible monitoring windows must keep refreshing while the user works in a
+  // terminal. Only hidden/minimized windows pause Query; focus controls the
+  // decorative heartbeat. Native visibility covers WebViews that remain
+  // document-visible after being hidden.
   focusManager.setEventListener((handleFocus) => {
+    const currentWindow = isTauri() ? getCurrentWindow() : undefined;
     let focused = document.hasFocus();
+    let nativeVisible = true;
     let focusRevision = 0;
+    let visibilityRevision = 0;
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    const unlisteners: (() => void)[] = [];
     const update = () => {
-      const active = focused && document.visibilityState !== "hidden";
-      setWindowActive(active);
-      handleFocus(active);
+      const visible = nativeVisible && document.visibilityState !== "hidden";
+      setWindowActive(focused && visible);
+      handleFocus(visible);
+    };
+    const refreshVisibility = async () => {
+      if (!currentWindow || disposed) return;
+      const revision = ++visibilityRevision;
+      try {
+        const [visible, minimized] = await Promise.all([
+          currentWindow.isVisible(),
+          currentWindow.isMinimized(),
+        ]);
+        if (disposed || visibilityRevision !== revision) return;
+        nativeVisible = visible && !minimized;
+        update();
+      } catch (error) {
+        console.error("Failed to read window visibility", error);
+      }
+    };
+    const onVisibilityChange = () => {
+      update();
+      void refreshVisibility();
     };
     const onFocus = () => {
       focusRevision += 1;
       focused = true;
-      update();
+      onVisibilityChange();
     };
     const onBlur = () => {
       focusRevision += 1;
       focused = false;
-      update();
+      onVisibilityChange();
     };
     window.addEventListener("focus", onFocus);
     window.addEventListener("blur", onBlur);
-    document.addEventListener("visibilitychange", update);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     update();
 
-    if (isTauri()) {
-      const currentWindow = getCurrentWindow();
-      void (async () => {
+    if (currentWindow) {
+      const observe = async (register: () => Promise<() => void>) => {
         try {
-          const off = await currentWindow.onFocusChanged(({ payload }) => {
-            if (disposed) return;
-            focusRevision += 1;
-            focused = payload;
-            update();
-          });
-          if (disposed) {
-            off();
-            return;
-          }
-          unlisten = off;
+          const off = await register();
+          if (disposed) off();
+          else unlisteners.push(off);
         } catch (error) {
-          console.error("Failed to observe window focus changes", error);
+          console.error("Failed to observe window activity", error);
         }
+      };
+      void (async () => {
+        await Promise.all([
+          observe(() =>
+            currentWindow.onFocusChanged(({ payload }) => {
+              if (disposed) return;
+              focusRevision += 1;
+              focused = payload;
+              onVisibilityChange();
+            }),
+          ),
+          observe(() =>
+            currentWindow.onResized(() => void refreshVisibility()),
+          ),
+          // Closing an already-unfocused window to the tray may emit no blur
+          // or resize. The backend notifies after its explicit show/hide calls.
+          observe(() =>
+            currentWindow.listen("main-window-visibility-changed", () => {
+              void refreshVisibility();
+            }),
+          ),
+        ]);
         if (disposed) return;
-        // Register before reading the snapshot: a native transition during
-        // registration may have no DOM event. Later events must still win over
-        // a delayed snapshot response.
+        // Register before snapshots so transitions during setup cannot be lost.
+        // Visibility must not wait for the separate decorative focus snapshot.
+        void refreshVisibility();
         const revision = focusRevision;
         try {
           const active = await currentWindow.isFocused();
@@ -114,8 +149,8 @@ export function initializeWindowActivity() {
       disposed = true;
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("blur", onBlur);
-      document.removeEventListener("visibilitychange", update);
-      unlisten?.();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      unlisteners.forEach((off) => off());
       stopHeartbeat();
       delete document.documentElement.dataset.windowActive;
     };

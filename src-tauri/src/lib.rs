@@ -518,7 +518,10 @@ pub fn run() {
                 && !startup_page_handled.swap(true, Ordering::Relaxed)
                 && !crate::settings::get_settings().silent_startup
             {
-                let _ = webview.window().show();
+                let window = webview.window();
+                if window.show().is_ok() {
+                    let _ = window.emit("main-window-visibility-changed", ());
+                }
                 log::info!("主页面加载完成，主窗口已显示");
             }
         });
@@ -549,7 +552,10 @@ pub fn run() {
 
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
-                    let _ = window.hide();
+                    if window.hide().is_ok() {
+                        // An already-unfocused window may emit no blur/resize.
+                        let _ = window.emit("main-window-visibility-changed", ());
+                    }
                     log::info!("关闭请求已处理：最小化到托盘");
                     #[cfg(target_os = "windows")]
                     {
@@ -1544,7 +1550,9 @@ pub fn run() {
                     }
                 } else if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
-                    let _ = window.hide();
+                    if window.hide().is_ok() {
+                        let _ = window.emit("main-window-visibility-changed", ());
+                    }
                     #[cfg(target_os = "windows")]
                     let _ = window.set_skip_taskbar(true);
                     #[cfg(target_os = "macos")]
@@ -1553,7 +1561,9 @@ pub fn run() {
                 } else {
                     // 正常启动模式：显示窗口
                     #[cfg(not(target_os = "windows"))]
-                    let _ = window.show();
+                    if window.show().is_ok() {
+                        let _ = window.emit("main-window-visibility-changed", ());
+                    }
                     #[cfg(target_os = "windows")]
                     log::info!("正常启动模式：等待主页面加载完成后显示主窗口");
                     #[cfg(not(target_os = "windows"))]
