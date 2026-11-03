@@ -82,6 +82,8 @@ const { settingsApiMock } = vi.hoisted(() => ({
     webdavSyncUpload: vi.fn(),
     webdavSyncDownload: vi.fn(),
     webdavSyncClearSettings: vi.fn(),
+    s3TestConnection: vi.fn(),
+    s3SyncSaveSettings: vi.fn(),
   },
 }));
 
