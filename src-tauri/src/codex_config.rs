@@ -4431,6 +4431,16 @@ experimental_bearer_token = "stale-table-key"
                 default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
+                model: "deepseek/deepseek-v4-flash-0731".to_string(),
+                display_name: Some("DeepSeek V4 Flash 0731".to_string()),
+                context_window: Some(128_000),
+                supports_parallel_tool_calls: None,
+                input_modalities: None,
+                base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
+            },
+            CodexCatalogModelSpec {
                 model: "glm-5.2v".to_string(),
                 display_name: Some("GLM 5.2V".to_string()),
                 context_window: Some(128_000),
@@ -4481,6 +4491,11 @@ experimental_bearer_token = "stale-table-key"
 
             assert_eq!(modalities("gpt-5.4"), json!(["text", "image"]));
             assert_eq!(modalities("qwen/qwen3-coder-plus"), json!(["text"]));
+            assert_eq!(
+                modalities("deepseek/deepseek-v4-flash-0731"),
+                json!(["text"]),
+                "OpenRouter's dated DeepSeek Flash alias is text-only"
+            );
             assert_eq!(modalities("glm-5.2v"), json!(["text", "image"]));
             assert_eq!(
                 modalities("deepseek-v4-flash"),

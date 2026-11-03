@@ -351,6 +351,41 @@ fn replacing_stdio_with_http_clears_every_old_connection_field() {
 }
 
 #[test]
+fn pi_overrides_keep_preinstall_validation_and_name_collision_checks() {
+    let _guard = support::test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let directory = fixture.path(&AppType::Pi).parent().unwrap().to_path_buf();
+    fs::remove_dir_all(&directory).unwrap();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    for id in ["dev-tools", "dev_tools"] {
+        let server: McpServer = serde_json::from_value(json!({
+            "id": id,
+            "name": id,
+            "server": {"type": "sse", "url": "https://example.invalid/shared"},
+            "appOverrides": {"pi": {"command": "pi-command"}},
+            "apps": {}
+        }))
+        .unwrap();
+        McpService::upsert_server(&state, server).unwrap();
+    }
+    McpService::toggle_app(&state, "dev-tools", AppType::Pi, true).unwrap();
+    assert!(McpService::toggle_app(&state, "dev_tools", AppType::Pi, true).is_err());
+    let mut edited = McpService::get_all_servers(&state).unwrap()["dev_tools"].clone();
+    edited.apps.pi = true;
+    assert!(McpService::upsert_server(&state, edited).is_err());
+    let saved = McpService::get_all_servers(&state).unwrap();
+    assert!(saved["dev-tools"].apps.pi);
+    assert!(!saved["dev_tools"].apps.pi);
+    assert_eq!(
+        saved["dev-tools"].server_for_app(&AppType::Pi)["command"],
+        "pi-command"
+    );
+    assert!(!directory.exists());
+}
+
+#[test]
 fn pi_disabled_config_edits_keep_the_owned_tombstone_in_sync() {
     let _guard = support::test_mutex()
         .lock()
