@@ -184,7 +184,10 @@ async fn fetch_tiers(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
 
 async fn fetch_plan(access_token: &str) -> Option<String> {
     let (status, body) = load_code_assist(access_token).await.ok()?;
-    status.is_success().then(|| parse_plan(&body)).flatten()
+    status
+        .is_success()
+        .then(|| code_assist_plan(&body))
+        .flatten()
 }
 
 async fn load_code_assist(
@@ -245,9 +248,9 @@ fn parse(body: &[u8]) -> Option<Vec<QuotaTier>> {
     )
 }
 
-/// 套餐名：先看 `paidTier.name`（「Google AI Pro」），没有时按 `currentTier.id` 写
-/// Free / Paid（gemini-cli 和 CodexBar 都这样取）
-fn parse_plan(body: &[u8]) -> Option<String> {
+/// `loadCodeAssist` 响应里的套餐名：先看 `paidTier.name`（「Google AI Pro」），没有时按
+/// `currentTier.id` 写 Free / Paid（gemini-cli 和 CodexBar 都这样取）。Gemini CLI 的额度也用它
+pub(crate) fn code_assist_plan(body: &[u8]) -> Option<String> {
     let response: LoadCodeAssistResponse = serde_json::from_slice(body).ok()?;
     let name = |tier: &Option<Value>| {
         tier.as_ref()?
@@ -361,7 +364,7 @@ mod tests {
 
     #[test]
     fn plan_prefers_the_paid_tier_name() {
-        let plan = |body: &str| parse_plan(body.as_bytes());
+        let plan = |body: &str| code_assist_plan(body.as_bytes());
         assert_eq!(
             plan(r#"{"currentTier":{"id":"standard-tier","name":"Gemini Code Assist"},"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}"#)
                 .as_deref(),

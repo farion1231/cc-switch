@@ -64,3 +64,14 @@ export function useAccountQuotaPlans(
     pick,
   );
 }
+
+/** 供应商卡片副标题的套餐：读卡片额度那个查询的缓存；`queryKey` 为 null 时不显示 */
+export function useQuotaPlan(
+  queryKey: QueryKey | null,
+  pick: PlanPicker = defaultPick,
+): string | null {
+  // 名字带上查询键：换了账号时不沿用上一个号的套餐
+  const name = JSON.stringify(queryKey);
+  const plans = useQuotaPlansByKey(queryKey ? [[name, queryKey]] : [], pick);
+  return plans[name] ?? null;
+}

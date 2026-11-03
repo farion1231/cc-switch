@@ -1625,7 +1625,7 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
-        plan_name: None,
+        plan_name: crate::services::agy_account::quota::code_assist_plan(&load_raw),
         error: None,
         queried_at: Some(now_millis()),
     })
