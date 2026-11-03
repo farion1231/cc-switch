@@ -308,6 +308,8 @@
     "modelMappingToggle": "需要模型對應",
     "modelModeHint": "如果你的供應商提供原生 Claude 系列模型，可以使用直連；如果是 DeepSeek、Kimi 等第三方模型，請使用「模型映射」。",
     "routeMapTitle": "模型對應",
+    "modelFallbackLabel": "備用模型（選填）",
+    "modelFallbackHint": "僅在 402、404、429、500、502–504 錯誤時，以同一供應商的備用模型重試一次，並計入路由重試上限。留空關閉；相同實際模型共用備用設定。請選擇支援原請求及安全檢查的模型。連續三輪工具結果回報安全分類器無法使用時，將停止請求主模型；修復後傳送新訊息再繼續。",
     "routeMapHint": "為 Sonnet、Opus、Haiku 三檔分別填寫實際請求模型；選單顯示名稱可寫 DeepSeek、Kimi 等品牌名。留空的檔會自動沿用 Sonnet（或第一個已填檔）的模型，確保子 agent 呼叫的 Haiku 始終可用。",
     "routeModelLabel": "模型角色",
     "routeRoleSonnet": "Sonnet",

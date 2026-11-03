@@ -790,6 +790,18 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: &[Provider],
     ) -> Result<ForwardResult, ForwardError> {
+        if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop)
+            && super::model_fallback::classifier_retry_loop(&body)
+        {
+            let error = ProxyError::InvalidRequest(
+                super::model_fallback::CLASSIFIER_LOOP_MESSAGE.to_string(),
+            );
+            self.record_failed_request(error.to_string()).await;
+            return Err(ForwardError {
+                error,
+                provider: providers.first().cloned(),
+            });
+        }
         // 获取适配器
         let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
             error: ProxyError::ConfigError(format!(
@@ -810,6 +822,7 @@ impl RequestForwarder {
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
+        let mut fallback_attempts = 0usize;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
         let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
@@ -825,17 +838,16 @@ impl RequestForwarder {
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
-            if attempted_providers >= self.max_attempts {
+            if attempted_providers + fallback_attempts >= self.max_attempts {
                 log::warn!(
                     "[{app_type_str}] 已达最大尝试次数上限 ({}/{}), 停止故障转移",
-                    attempted_providers,
+                    attempted_providers + fallback_attempts,
                     self.max_attempts
                 );
                 break;
             }
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
-            // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
                 (true, false)
             } else {
@@ -902,6 +914,61 @@ impl RequestForwarder {
                         .await);
                 }
                 Err(mut e) => {
+                    if matches!(app_type, AppType::ClaudeDesktop)
+                        && self.routing_state_enabled()
+                        && attempted_providers + fallback_attempts < self.max_attempts
+                    {
+                        if let Some(fallback_provider) =
+                            super::model_fallback::desktop_fallback_provider(provider, &body, &e)
+                        {
+                            fallback_attempts += 1;
+                            log::warn!("[{app_type_str}] Trying the configured model fallback once for provider={}", provider.id);
+                            let mut fallback_format = None;
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    &fallback_provider,
+                                    endpoint,
+                                    &provider_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                    &mut fallback_format,
+                                )
+                                .await
+                            {
+                                Ok(forwarded) => {
+                                    return Ok(self
+                                        .finish_success(
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            forwarded,
+                                            fallback_format,
+                                        )
+                                        .await);
+                                }
+                                Err(error) => {
+                                    if let Some(error) = self
+                                        .handle_rectifier_retry_failure(
+                                            error,
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            "model fallback",
+                                            &mut last_error,
+                                            &mut last_provider,
+                                        )
+                                        .await
+                                    {
+                                        return Err(error);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
                     // 检测是否需要触发整流器（上游为 Anthropic Messages 的供应商）
                     let is_anthropic_provider = uses_anthropic_rectifiers(
                         ProviderType::from_app_type_and_config(app_type, provider),
@@ -8305,6 +8372,194 @@ mod tests {
             );
             assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
             assert_eq!(breaker(&fwd, "p2").await, Some((1, 1)));
+        }
+
+        fn desktop_provider(up: &Upstream) -> Provider {
+            let mut p = provider("p1", up);
+            p.meta = Some(crate::provider::ProviderMeta {
+                claude_desktop_model_routes: [
+                    ("claude-opus-5", "primary-model"),
+                    ("claude-fable-5", "main-model"),
+                ]
+                .into_iter()
+                .map(|(role, model)| {
+                    (
+                        role.into(),
+                        crate::provider::ClaudeDesktopModelRoute {
+                            model: model.into(),
+                            label_override: None,
+                            supports_1m: Some(true),
+                        },
+                    )
+                })
+                .collect(),
+                claude_desktop_model_fallbacks: [("primary-model".into(), "backup-model".into())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            });
+            p
+        }
+
+        async fn send_desktop(
+            fwd: &RequestForwarder,
+            p: Provider,
+            body: Value,
+        ) -> Result<ForwardResult, ForwardError> {
+            fwd.forward_with_retry(
+                &AppType::ClaudeDesktop,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![p],
+            )
+            .await
+        }
+
+        #[tokio::test]
+        async fn desktop_fallback_preserves_request_and_reports_the_actual_model() {
+            for alias in [
+                "claude-opus-5",
+                "claude-opus-5[1m]",
+                "claude-opus-5-20261001",
+            ] {
+                let up = upstream(vec![error(402, "Insufficient Balance"), ok(), ok()]).await;
+                let p = desktop_provider(&up);
+                let original_config = serde_json::to_value(&p).unwrap();
+                let fwd = forwarder(2, "p1");
+                let mut body = plain_body();
+                body["model"] = json!(alias);
+                body["system"] = json!("Apply the safety policy");
+                body["stop_sequences"] = json!(["</block>"]);
+                body["thinking"] = json!({"type":"disabled"});
+                let result = send_desktop(&fwd, p.clone(), body)
+                    .await
+                    .map_err(|e| e.error)
+                    .expect("fallback succeeds");
+                assert_eq!(result.outbound_model.as_deref(), Some("backup-model"));
+                assert_eq!(
+                    serde_json::to_value(&result.provider).unwrap(),
+                    original_config
+                );
+                let mut main = plain_body();
+                main["model"] = json!("claude-fable-5");
+                send_desktop(&fwd, p, main)
+                    .await
+                    .map_err(|e| e.error)
+                    .expect("main model unchanged");
+                let requests = up.requests.lock().await;
+                assert_eq!(requests.len(), 3);
+                assert_eq!(requests[0]["model"], "primary-model");
+                assert_eq!(requests[1]["model"], "backup-model");
+                assert_eq!(requests[2]["model"], "main-model");
+                let mut first = requests[0].clone();
+                first["model"] = json!("backup-model");
+                assert_eq!(requests[1], first);
+            }
+        }
+
+        #[tokio::test]
+        async fn desktop_fallback_failure_does_not_follow_a_cycle_or_rectify_again() {
+            for status in [402, 400, 500] {
+                let up =
+                    upstream(vec![error(402, "balance"), error(status, SIGNATURE_ERROR)]).await;
+                let mut p = desktop_provider(&up);
+                p.meta
+                    .as_mut()
+                    .unwrap()
+                    .claude_desktop_model_fallbacks
+                    .insert("backup-model".into(), "primary-model".into());
+                let mut body = body_with_thinking_signature();
+                body["model"] = json!("claude-opus-5");
+                let err = expect_err(send_desktop(&forwarder(10, "p1"), p, body).await);
+                assert!(
+                    matches!(err.error, ProxyError::UpstreamError {status: s, ..} if s == status)
+                );
+                assert_eq!(up.requests.lock().await.len(), 2);
+            }
+        }
+
+        #[tokio::test]
+        async fn desktop_fallback_is_opt_in_and_obeys_the_attempt_budget() {
+            for (budget, fallback) in [
+                (1, Some("backup-model")),
+                (2, None),
+                (2, Some("primary-model")),
+                (2, Some(" ")),
+            ] {
+                let up = upstream(vec![error(402, "balance")]).await;
+                let mut p = desktop_provider(&up);
+                let map = &mut p.meta.as_mut().unwrap().claude_desktop_model_fallbacks;
+                map.clear();
+                if let Some(model) = fallback {
+                    map.insert("primary-model".into(), model.into());
+                }
+                let mut body = plain_body();
+                body["model"] = json!("claude-opus-5");
+                expect_err(send_desktop(&forwarder(budget, "p1"), p, body).await);
+                assert_eq!(up.requests.lock().await.len(), 1);
+            }
+        }
+
+        #[tokio::test]
+        async fn desktop_fallback_only_handles_selected_upstream_statuses() {
+            for status in [
+                400, 401, 402, 403, 404, 413, 422, 429, 500, 501, 502, 503, 504,
+            ] {
+                let eligible = matches!(status, 402 | 404 | 429 | 500 | 502..=504);
+                let up = upstream(if eligible {
+                    vec![error(status, "error"), ok()]
+                } else {
+                    vec![error(status, "error")]
+                })
+                .await;
+                let mut body = plain_body();
+                body["model"] = json!("claude-opus-5");
+                let result = send_desktop(&forwarder(2, "p1"), desktop_provider(&up), body).await;
+                assert_eq!(result.is_ok(), eligible, "{status}");
+                assert_eq!(
+                    up.requests.lock().await.len(),
+                    if eligible { 2 } else { 1 },
+                    "{status}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn repeated_classifier_errors_stop_main_requests_before_any_upstream_call() {
+            let up = upstream(vec![ok()]).await;
+            let fwd = forwarder(2, "p1");
+            let mut body = plain_body();
+            body["tools"] = json!([{"name":"Bash","input_schema":{"type":"object"}}]);
+            for n in 0..3 {
+                body["messages"].as_array_mut().unwrap().extend([
+                    json!({"role":"assistant","content":[{"type":"tool_use","id":format!("tool_{n}"),"name":"Bash","input":{}}]}),
+                    json!({"role":"user","content":[{"type":"tool_result","tool_use_id":format!("tool_{n}"),"is_error":true,"content":"claude-opus-5[1m] is temporarily unavailable, so auto mode cannot determine the safety of Bash right now."}]}),
+                ]);
+            }
+            for _ in 0..10 {
+                let err = expect_err(send(&fwd, vec![provider("p1", &up)], body.clone()).await);
+                assert!(matches!(err.error, ProxyError::InvalidRequest(_)));
+            }
+            assert_eq!(up.requests.lock().await.len(), 0);
+            for _ in 0..100 {
+                if fwd.status.read().await.active_connections == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(fwd.status.read().await.active_connections, 0);
+            body["messages"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"role":"user","content":"I fixed the mapping; continue."}));
+            send(&fwd, vec![provider("p1", &up)], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("new user turn resumes");
+            assert_eq!(up.requests.lock().await.len(), 1);
         }
 
         #[tokio::test]

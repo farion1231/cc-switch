@@ -96,6 +96,43 @@ function renderForm(
 }
 
 describe("ClaudeDesktopProviderForm", () => {
+  it("保存并清除按实际模型配置的备用模型", async () => {
+    const { onSubmit } = renderForm({
+      name: "Fallback provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "test-token",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "proxy",
+        apiFormat: "anthropic",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "main-model" },
+          "claude-opus-5": { model: "classifier-model" },
+        },
+        claudeDesktopModelFallbacks: {
+          "classifier-model": "old-backup",
+          "removed-model": "stale-backup",
+        },
+      },
+    });
+    const fallback = screen.getByDisplayValue("old-backup");
+    fireEvent.change(fallback, { target: { value: " backup-model " } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelFallbacks).toEqual({
+      "classifier-model": "backup-model",
+    });
+    fireEvent.change(fallback, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    expect(
+      onSubmit.mock.calls[1][0].meta.claudeDesktopModelFallbacks,
+    ).toBeUndefined();
+  });
+
   beforeEach(() => {
     authState.codexReauthRequired = false;
     toastMocks.error.mockReset();

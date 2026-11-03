@@ -504,6 +504,12 @@ pub struct ProviderMeta {
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
+    #[serde(
+        default,
+        rename = "claudeDesktopModelFallbacks",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub claude_desktop_model_fallbacks: HashMap<String, String>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,

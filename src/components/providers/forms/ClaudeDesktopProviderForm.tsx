@@ -325,6 +325,9 @@ export function ClaudeDesktopProviderForm({
       Object.keys(initialData?.meta?.claudeDesktopModelRoutes ?? {}).length > 0,
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [modelFallbacks, setModelFallbacks] = useState<Record<string, string>>(
+    () => initialData?.meta?.claudeDesktopModelFallbacks ?? {},
+  );
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const { data: defaultRoutes = [] } = useQuery({
     queryKey: ["claudeDesktopDefaultRoutes"],
@@ -704,6 +707,7 @@ export function ClaudeDesktopProviderForm({
       const meta: ProviderMeta = { ...(initialData?.meta ?? {}) };
       delete meta.claudeDesktopMode;
       delete meta.claudeDesktopModelRoutes;
+      delete meta.claudeDesktopModelFallbacks;
       delete meta.apiFormat;
       delete meta.claudeReasoningEffort;
       delete meta.endpointAutoSelect;
@@ -911,6 +915,17 @@ export function ClaudeDesktopProviderForm({
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
+    const savedFallbacks = Object.fromEntries(
+      Object.values(routeMap).flatMap(({ model }) => {
+        const fallback = modelFallbacks[model]?.trim();
+        return fallback && fallback !== model ? [[model, fallback]] : [];
+      }),
+    );
+    if (effectiveMode === "proxy" && Object.keys(savedFallbacks).length > 0) {
+      meta.claudeDesktopModelFallbacks = savedFallbacks;
+    } else {
+      delete meta.claudeDesktopModelFallbacks;
+    }
     if (
       effectiveMode === "proxy" &&
       (meta.apiFormat === "openai_chat" ||
@@ -1251,7 +1266,10 @@ export function ClaudeDesktopProviderForm({
                       </p>
                     </div>
 
-                    <div className="hidden grid-cols-[140px_1fr_1fr_116px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+                    <p className="text-xs leading-relaxed text-fg-2">
+                      {t("claudeDesktop.modelFallbackHint")}
+                    </p>
+                    <div className="hidden grid-cols-[100px_1fr_1fr_1fr_70px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
                       <span>
                         {t("claudeDesktop.routeModelLabel", {
                           defaultValue: "模型角色",
@@ -1267,6 +1285,7 @@ export function ClaudeDesktopProviderForm({
                           defaultValue: "实际请求模型",
                         })}
                       </span>
+                      <span>{t("claudeDesktop.modelFallbackLabel")}</span>
                       <span>
                         {t("claudeDesktop.supports1mLabel", {
                           defaultValue: "声明支持 1M",
@@ -1303,7 +1322,7 @@ export function ClaudeDesktopProviderForm({
                       return (
                         <div
                           key={route.rowId}
-                          className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px]"
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[100px_1fr_1fr_1fr_70px]"
                         >
                           <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
                             {roleLabel}
@@ -1340,6 +1359,18 @@ export function ClaudeDesktopProviderForm({
                               />
                             )}
                           </div>
+                          <Input
+                            aria-label={`${roleLabel} ${t("claudeDesktop.modelFallbackLabel")}`}
+                            value={modelFallbacks[route.model.trim()] ?? ""}
+                            disabled={!route.model.trim()}
+                            onChange={(event) =>
+                              setModelFallbacks((current) => ({
+                                ...current,
+                                [route.model.trim()]: event.target.value,
+                              }))
+                            }
+                            placeholder={t("claudeDesktop.modelFallbackLabel")}
+                          />
                           <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
                             <Checkbox
                               checked={route.supports1m}

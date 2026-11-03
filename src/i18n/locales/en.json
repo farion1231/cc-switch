@@ -308,6 +308,8 @@
     "modelMappingToggle": "Needs model mapping",
     "modelModeHint": "If your provider offers native Claude models, you can use Direct. For third-party models such as DeepSeek or Kimi, use Model Mapping.",
     "routeMapTitle": "Model mapping",
+    "modelFallbackLabel": "Fallback model (optional)",
+    "modelFallbackHint": "Retry once on the same provider for 402, 404, 429, 500 or 502–504, within the routing retry limit. Leave blank to disable; rows using the same upstream model share this setting. Choose a model compatible with the original request and safety checks. After three consecutive tool-result turns report an unavailable safety classifier, requests to the main model stop. Fix the configuration, then send a new message to resume.",
     "routeMapHint": "Fill in the actual request model for each of the Sonnet, Opus, and Haiku tiers. Use the menu display name for branded models such as DeepSeek or Kimi. Any tier left blank inherits the Sonnet tier's model (or the first tier you filled in), so the Haiku that sub-agents call is always available.",
     "routeModelLabel": "Model role",
     "routeRoleSonnet": "Sonnet",
