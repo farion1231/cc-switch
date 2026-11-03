@@ -57,8 +57,10 @@ pub struct DeleteSessionOutcome {
     pub error: Option<String>,
 }
 
+type ScanFn = fn() -> Vec<SessionMeta>;
+
 /// 跑一个应用的扫描并记下耗时
-fn timed_scan(provider: &str, scan: fn() -> Vec<SessionMeta>) -> Vec<SessionMeta> {
+fn timed_scan(provider: &str, scan: ScanFn) -> Vec<SessionMeta> {
     let started = Instant::now();
     let sessions = scan();
     log::debug!(
@@ -69,45 +71,36 @@ fn timed_scan(provider: &str, scan: fn() -> Vec<SessionMeta>) -> Vec<SessionMeta
     sessions
 }
 
+/// 各应用的列表扫描；顺序决定时间相同的会话的先后（排序是稳定的）
+const SCANNERS: &[(&str, ScanFn)] = &[
+    ("codex", codex::scan_sessions),
+    ("claude", claude::scan_sessions),
+    ("opencode", opencode::scan_sessions),
+    ("openclaw", openclaw::scan_sessions),
+    ("gemini", gemini::scan_sessions),
+    ("hermes", hermes::scan_sessions),
+    ("grokbuild", grokbuild::scan_sessions),
+    ("pi", pi::scan_sessions),
+    ("omp", omp::scan_sessions),
+    ("mcode", mcode::scan_sessions),
+    ("kimi", kimi::scan_sessions),
+    ("dsh", dsh::scan_sessions),
+    ("agy", agy::scan_sessions),
+];
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let started = Instant::now();
-    let (r1, r2, r3, r4, r5, r6, r7, r8, r9) = std::thread::scope(|s| {
-        let h1 = s.spawn(|| timed_scan("codex", codex::scan_sessions));
-        let h2 = s.spawn(|| timed_scan("claude", claude::scan_sessions));
-        let h3 = s.spawn(|| timed_scan("opencode", opencode::scan_sessions));
-        let h4 = s.spawn(|| timed_scan("openclaw", openclaw::scan_sessions));
-        let h5 = s.spawn(|| timed_scan("gemini", gemini::scan_sessions));
-        let h6 = s.spawn(|| timed_scan("hermes", hermes::scan_sessions));
-        let h7 = s.spawn(|| timed_scan("grokbuild", grokbuild::scan_sessions));
-        let h8 = s.spawn(|| timed_scan("pi", pi::scan_sessions));
-        let h9 = s.spawn(|| timed_scan("omp", omp::scan_sessions));
-        (
-            h1.join().unwrap_or_default(),
-            h2.join().unwrap_or_default(),
-            h3.join().unwrap_or_default(),
-            h4.join().unwrap_or_default(),
-            h5.join().unwrap_or_default(),
-            h6.join().unwrap_or_default(),
-            h7.join().unwrap_or_default(),
-            h8.join().unwrap_or_default(),
-            h9.join().unwrap_or_default(),
-        )
+    // 所有应用同时扫描，总耗时取决于最慢的一个；读文件的并行数另由全局名额限制
+    let mut sessions: Vec<SessionMeta> = std::thread::scope(|s| {
+        let handles: Vec<_> = SCANNERS
+            .iter()
+            .map(|&(provider, scan)| s.spawn(move || timed_scan(provider, scan)))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap_or_default())
+            .collect()
     });
-
-    let mut sessions = Vec::new();
-    sessions.extend(r1);
-    sessions.extend(r2);
-    sessions.extend(r3);
-    sessions.extend(r4);
-    sessions.extend(r5);
-    sessions.extend(r6);
-    sessions.extend(r7);
-    sessions.extend(r8);
-    sessions.extend(r9);
-    sessions.extend(timed_scan("mcode", mcode::scan_sessions));
-    sessions.extend(timed_scan("kimi", kimi::scan_sessions));
-    sessions.extend(timed_scan("dsh", dsh::scan_sessions));
-    sessions.extend(timed_scan("agy", agy::scan_sessions));
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
