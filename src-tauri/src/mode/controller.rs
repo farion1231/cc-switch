@@ -177,7 +177,7 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
             auth_token: !provider.is_github_copilot() || !provider.claude_uses_api_key_field(),
         }
     } else {
-        ProxyAuth::FollowRow
+        ProxyAuth::AuthToken
     }
 }
 
@@ -193,6 +193,7 @@ fn claude_contract(
 ) -> (ClaudeProjection, Contract) {
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
+        &route.name,
         proxy_url,
         claude_proxy_auth(route),
         stack_default.map(|model| StackRoleModel {
@@ -2533,6 +2534,39 @@ mod tests {
             "non-managed providers should retain the legacy fallback behavior"
         );
     }
+
+    #[test]
+    fn normal_claude_takeover_keeps_api_key_rows_off_the_local_hop() {
+        // #8104：OpenCode Go 这类预设把凭据存在 `ANTHROPIC_API_KEY`（上游跳要
+        // x-api-key），路由模式的本地占位符只能写 `ANTHROPIC_AUTH_TOKEN`；
+        // 残留的 `ANTHROPIC_API_KEY` 一并清掉，否则 Claude Code 弹自定义 key
+        // 确认框，默认拒绝后就是未登录会话。
+        let provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go",
+                    "ANTHROPIC_API_KEY": "sk-go"
+                }
+            }),
+            None,
+        );
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_API_KEY": "stale-key"
+            }
+        });
+        live_config = takeover(&live_config, &provider);
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_API_KEY", None);
+    }
 }
 
 #[cfg(test)]
@@ -2586,6 +2620,11 @@ mod mode_tests {
             }
             let _ = crate::settings::reload_settings();
         }
+    }
+
+    fn renamed(mut provider: Provider, name: &str) -> Provider {
+        provider.name = name.to_string();
+        provider
     }
 
     fn claude(id: &str, url: &str, extra: Value) -> Provider {
@@ -2769,7 +2808,8 @@ mod mode_tests {
             AppType::Claude,
             &[
                 claude("a", "https://a.example", json!({})),
-                claude("b", "https://b.example", json!({})),
+                // 名字也一样：`/model` 的说明带供应商名，名字不同契约就不同。
+                renamed(claude("b", "https://b.example", json!({})), "A"),
             ],
             "a",
         )
@@ -2825,7 +2865,8 @@ mod mode_tests {
             AppType::Claude,
             &[
                 claude("a", "https://a.example", json!({})),
-                claude("b", "https://b.example", json!({})),
+                // 名字也一样：`/model` 的说明带供应商名，名字不同契约就不同。
+                renamed(claude("b", "https://b.example", json!({})), "A"),
             ],
             "a",
         )
@@ -5744,7 +5785,7 @@ model_provider = "c"
         );
         let options = &settings()[CLAUDE_MODEL_PICKER]["options"][0];
         assert_eq!(options["label"], "claude-sonnet-4-6（A）");
-        assert_eq!(options["description"], "claude-sonnet-4-6 · 200K");
+        assert_eq!(options["description"], "A · claude-sonnet-4-6 · 200K");
         let env = settings()["env"].clone();
         assert!(env.get(DISCOVERY_ENV).is_none(), "{env}");
         for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
@@ -6427,7 +6468,7 @@ model_provider = "c"
             .as_str()
             .is_some_and(|id| id.starts_with("claude-fable-ccs-")));
         assert_eq!(stacked["labelOverride"], json!("OTHER / glm-5.2"));
-        assert_eq!(profile["modelDiscoveryEnabled"], json!(false));
+        assert_eq!(profile["modelDiscoveryEnabled"], json!(true));
 
         // 选中聚合模型的请求直达那一家。
         let resolved = stack::resolve(
@@ -6455,13 +6496,13 @@ model_provider = "c"
         .await
         .is_err());
 
-        // 换回路由模式：名单留着，模型列表只剩路由那家的，模型发现交还给 Desktop。
+        // 换回路由模式：名单留着，模型列表只剩路由那家的；模型发现照样开着（只补说明）。
         enter_with_route(&state, &desktop, false, Some("map"))
             .await
             .expect("back to route");
         let profile = desktop_profile();
         assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
-        assert!(profile.get("modelDiscoveryEnabled").is_none());
+        assert_eq!(profile["modelDiscoveryEnabled"], json!(true));
         assert!(settled_stack(&desktop).unwrap().is_member("other"));
     }
 
@@ -6923,6 +6964,11 @@ model_provider = "c"
         let env = settings()["env"].clone();
         assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-5");
         assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-haiku-5-5");
+        // `/model` 的说明写在四档变量里，不写菜单。
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION"],
+            "A · claude-sonnet-4-6"
+        );
         assert_eq!(picker(), None);
     }
 

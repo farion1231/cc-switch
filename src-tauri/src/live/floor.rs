@@ -192,7 +192,7 @@ pub const DESKTOP_PROFILE_FLOOR: &[&str] = &[
     "inferenceGatewayAuthScheme",
     // `inferenceModels` 不在这里：没配映射时不能按关键字段清掉，否则用户自己在
     // Desktop 里维护的列表会一起没。我们写过的列表在写入路径里按快照清理。
-    // 聚合模式写 false（列表完全由 CC Switch 决定），其余模式清掉
+    // 路由 / 聚合模式写 true（只为让本地 /v1/models 补上模型说明），直连模式清掉
     "modelDiscoveryEnabled",
 ];
 

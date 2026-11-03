@@ -743,55 +743,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "grooroute",
   },
   {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    settingsConfig: {
-      baseUrl: "https://api.dit.ai",
-      apiKey: "",
-      api: "anthropic-messages",
-      models: [
-        {
-          id: "claude-opus-5-5",
-          name: "Claude Opus 5.5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
-          id: "claude-sonnet-5-5",
-          name: "Claude Sonnet 5.5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-      ],
-    },
-    category: "aggregator",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "dit/claude-opus-5-5",
-        fallbacks: ["dit/claude-sonnet-5-5"],
-      },
-      modelCatalog: {
-        "dit/claude-opus-5-5": { alias: "Opus" },
-        "dit/claude-sonnet-5-5": { alias: "Sonnet" },
-      },
-    },
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
-  },
-  {
     name: "BuyToken",
     websiteUrl: "https://buytoken.work",
     apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
@@ -4101,7 +4052,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://maas.qianwenaiapi.com/compatible-mode/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -4118,8 +4069,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        defaultValue: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        placeholder: "https://maas.qianwenaiapi.com/compatible-mode/v1",
+        defaultValue: "https://maas.qianwenaiapi.com/compatible-mode/v1",
         editorValue: "",
       },
       apiKey: {
@@ -4142,7 +4093,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     settingsConfig: {
-      baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      baseUrl: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -4170,10 +4121,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
-        defaultValue:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        placeholder: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
+        defaultValue: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
         editorValue: "",
       },
       apiKey: {
@@ -4204,7 +4153,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
-      baseUrl: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
+      baseUrl: "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic/v1",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -4239,8 +4188,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
-        defaultValue: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
+        placeholder:
+          "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic/v1",
+        defaultValue:
+          "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
@@ -4327,8 +4278,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
-      baseUrl:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+      baseUrl: "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -4364,9 +4314,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: {
         label: "Base URL",
         placeholder:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
         defaultValue:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {

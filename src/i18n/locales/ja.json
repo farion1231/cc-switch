@@ -900,6 +900,17 @@
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "Claude Code は初回起動時にオンボーディングを行い、テーマの選択と Anthropic アカウントへのログインを求めます。サードパーティのプロバイダーを使う場合は公式アカウントへのログインが不要なため、オンにするとこの手順を飛ばしてすぐに使えます。仕組みとしては ~/.claude.json に hasCompletedOnboarding: true を書き込みます。オフにするとこのフィールドを削除し、次回起動時に再びオンボーディングが表示されます。",
     "codexAuth": "Codex アプリ拡張",
+    "codexQuotaProtection": {
+      "title": "公式クォータ保護",
+      "help": "いずれかの使用率しきい値に達すると新しい公式リクエストを停止します。他社モデルは引き続き利用できます。対象は CC Switch のローカルルーティングを経由する Codex 公式リクエストのみです。使用率は公式レスポンスに含まれるクォータ情報から読み取るため、通常の利用で追加のリクエストは発生しません。使い始めや約 5 分以上アイドルだった後にのみ、別途クォータを照会します。クォータを確認できない場合（ネットワークの問題、ログイン期限切れなど）は停止せず通常どおり通します。許可済みのリクエストや他のアプリにより使用率がしきい値を超えることはありますが、停止中は通常クォータの枯渇で Luna Reserve が有効になることはありません。",
+      "thresholds": "公式リクエストを停止する使用率",
+      "fiveHour": "5時間の使用率（%）",
+      "weekly": "週間使用率（%）",
+      "save": "しきい値を保存",
+      "reset": "既定値に戻す",
+      "hint": "いずれかに達すると停止。既定値は 95% / 98%。保存後の新しいリクエストから適用します。",
+      "invalid": "1～99 の整数を入力してください。"
+    },
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
@@ -1692,7 +1703,6 @@
       "alltokens_si": "AllTokens SI は「安定を基に、誠実を本に」を掲げる、企業向けの AI トークン中継・チーム協業プラットフォームです。メンバー、キー、使用量、残高を企業コンソールで一元管理し、明確な権限と利用上限の設定により、チームの利用を追跡可能で安心して管理できます。",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
       "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！",
-      "dit": "同じモデルを、多くの場合はるかに安く。OpenAI 互換の API 1 つで GPT、Claude、Gemini など 50 以上のモデルを利用でき、160 以上のプロバイダーの中から価格と品質のバランスが最も良い選択肢へルーティングされるため、通常は公式価格より 30〜70% 安くなります。Base URL と API キーを変えるだけで、既存のスタックはそのままですぐに呼び出せます。CC Switch ユーザーはこのリンクから登録し、コード \"cc-switch\" を使うと初回チャージが 30% オフになります！",
       "buytoken": "BuyToken は Claude Code、Codex、DeepSeek などの中継サービスを提供し、エンタープライズ級の同時実行と迅速な請求書発行に対応、安定して長く続くサービスを目指しています。CC Switch ユーザーはこのリンクから登録すると 3 元分のお試しクレジットを受け取れ、初回チャージは 10% オフになります！",
       "vapi": "V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスを提供し、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザーはこのリンクから登録すると、初回注文が 2 元引きのうえ 10% オフになります！",
       "ospreyai": "ACS OspreyAI は開発者と企業向けのワンストップ・マルチモデル API サービスプラットフォームです。1 つの API Key で Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、Tencent Hunyuan など国内外の主要モデルを呼び出せます。OpenAI、Anthropic などの主要 API プロトコルに対応し、Claude Code、Codex、OpenCode、Pi、Hermes などの主要 AI ツールでも利用できます。海外モデルは公式価格より 20〜40%、中国国内モデルは 30〜50% お得です。チャージと請求の一元化、使用量の確認、モデルの柔軟な切り替えに対応し、AI アプリ開発、コンテンツ制作、自動化ワークフローなどに適しています。このリンクからアカウントを作成すると特典を受けられ、国内外の主要モデルにすぐ接続できます。"
@@ -2053,6 +2063,10 @@
     "subagentReasoningEffortDefault": "デフォルト強度",
     "subagentModelHint": "Codex が起動するサブエージェントの既定モデルと推論強度です。空欄ならメインエージェントに従い、モデルだけ指定するとそのモデルの既定強度になります。集約モードでは無効で、集約タブの「集約設定」のサブエージェントモデルが使われます。",
     "subagentModelNotInCatalog": "このモデルはモデル一覧にありません。Codex はコンテキストウィンドウを取得できず、ルーティングで Chat / Anthropic 形式に変換する際はデフォルトモデルに置き換えられます。",
+    "agentMaxThreadsLabel": "サブエージェントの同時実行上限",
+    "agentMaxThreadsHint": "1 つの Codex セッションで同時に動かせるサブエージェントの数（メインエージェントを除く）です。Codex 全体の設定で、config.toml の [agents] max_threads に書き込まれ、プロバイダーを切り替えても変わりません。空欄なら Codex の既定値（従来のサブエージェントツールは 6、新しいツールは 3）を使います。無制限は指定できず、最小は 1 です。数を増やすほど使用量の消費も速くなります。Codex を開き直すと反映されます。",
+    "agentMaxThreadsPlaceholder": "空欄なら Codex の既定値",
+    "agentMaxThreadsV2Override": "config.toml の [features.multi_agent_v2] で合計 {{total}}（メインエージェントを含む）が指定されています。新しいサブエージェントツールではこちらが優先されます。",
     "autoReviewModelLabel": "自動承認モデル",
     "autoReviewModelHint": "Codex の自動承認（Approve for me）が有効なとき、操作を許可するかどうかの判断に使うモデルです。承認リクエストは会話と同じプロバイダーに送られるため、このカードのモデル一覧から選びます。集約モードでは無効で、集約タブの「集約設定」の自動承認モデルが使われます。変更後は Codex を再起動してください。",
     "autoReviewModelCodexDefault": "Codex の既定（codex-auto-review）",
@@ -2472,6 +2486,17 @@
       "title": "表示",
       "currency": "通貨",
       "rate": "為替レート",
+      "rateSource": "レートの取得方法",
+      "rateSources": {
+        "auto": "自動取得",
+        "manual": "手動入力"
+      },
+      "rateAutoHint": "1 日 1 回自動で取得し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
+      "rateAutoUpdated": "最終更新：{{time}}",
+      "rateAutoNever": "レートをまだ取得していません",
+      "rateAutoFailed": "自動取得に失敗しました。前回のレートを使用します",
+      "rateAttribution": "為替レートの提供：{{provider}}。",
+      "rateRefresh": "今すぐ更新",
       "rateHint": "手動で入力し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
       "rateInvalid": "0 より大きい数値を入力してください",
       "approxNote": "換算した金額はホバーで米ドルの値を確認できます。",
@@ -2784,7 +2809,7 @@
         "mcode": "MiniMax Code"
       }
     },
-    "userLevelPath": "ユーザーレベルの MCP パス",
+    "userLevelPath": "ユーザーレベルの MCP 設定パス",
     "serverList": "サーバー一覧",
     "loading": "読み込み中...",
     "empty": "MCP サーバーがありません",
@@ -2803,12 +2828,12 @@
       "fetch": "クイックテンプレート: mcp-fetch"
     },
     "form": {
-      "title": "MCP ID（ユニーク）",
+      "title": "MCP タイトル（一意）",
       "titlePlaceholder": "my-mcp-server",
       "name": "表示名",
       "namePlaceholder": "例: mcp-server-time",
       "enabledApps": "適用するアプリ",
-      "noAppsWarning": "少なくとも 1 つ選択してください",
+      "noAppsWarning": "アプリを少なくとも 1 つ選択してください",
       "description": "説明",
       "descriptionPlaceholder": "任意の説明",
       "tags": "タグ（カンマ区切り）",
@@ -2827,7 +2852,7 @@
       "useWizard": "設定ウィザード",
       "syncOtherSide": "{{target}} にも反映",
       "syncOtherSideHint": "{{target}} に同じ設定を書き込みます。既存の同一 ID は上書きされます。",
-      "willOverwriteWarning": "{{target}} の既存設定を上書きします"
+      "willOverwriteWarning": "{{target}} の同名の設定を上書きします"
     },
     "wizard": {
       "title": "MCP 設定ウィザード",
@@ -2873,6 +2898,9 @@
       "tomlInvalid": "TOML 形式が無効です",
       "commandRequired": "コマンドを入力してください",
       "singleServerObjectRequired": "単一の MCP サーバーオブジェクトを貼り付けてください（トップレベルの mcpServers は不要）",
+      "piSseUnsupported": "Pi は SSE 接続の MCP サーバーに対応していません。HTTP（streamable HTTP）を使用してください",
+      "piInvalidName": "Pi の MCP サーバー名に使えるのは英数字、_、- のみです：{{id}}",
+      "piNameConflict": "Pi は - と _ だけが異なるサーバー名を同一とみなします：{{id}} は既存の {{other}} と競合しています",
       "saveFailed": "保存に失敗しました",
       "deleteFailed": "削除に失敗しました"
     },
@@ -4583,6 +4611,15 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "接続を確認",
+    "testConnection": "接続をテスト",
+    "connection": {
+      "unchecked": "未確認",
+      "connected": "接続成功",
+      "disconnected": "接続失敗",
+      "checking": "接続を確認中",
+      "disabled": "無効"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP の同期のしくみ",
@@ -4646,7 +4683,7 @@
       "ok": "OK"
     },
     "templateLabels": {
-      "sequential-thinking": "sequential-thinking"
+      "sequential-thinking": "逐次思考"
     },
     "drawer": {
       "addTitle": "MCP を追加",
@@ -4849,7 +4886,7 @@
       "help": "はい、前回の選択が既定になります。インストール後も「インストール済み」でいつでも変更できます。ZIP からのインストールとバックアップからの復元もこの選択を使います。"
     },
     "discover": {
-      "searchPlaceholder": "Skill かリポジトリを検索",
+      "searchPlaceholder": "名前・説明・リポジトリを検索",
       "searchAria": "「見つける」を検索",
       "skillsShPlaceholder": "2 文字以上、Enter で検索",
       "skillsShAria": "skills.sh で検索",
@@ -4857,7 +4894,7 @@
       "skillsShNone": "skills.sh で「{{query}}」は見つかりませんでした",
       "sourceAria": "探す場所",
       "sourceRepos": "リポジトリ · {{count}}",
-      "reload": "リポジトリを読み直す",
+      "reload": "リポジトリを更新",
       "listLabel": "インストールできる Skill",
       "installed": "インストール済み",
       "installedAria": "{{name}} は {{count}} アプリにインストール済み。「インストール済み」で表示",
@@ -4876,8 +4913,8 @@
       "onlyUninstalled": "未インストールのみ"
     },
     "repos": {
-      "buttonAll": "リポジトリ：すべて",
-      "buttonSome": "リポジトリ：{{total}} 件中 {{count}}",
+      "buttonAll": "ソース：すべて",
+      "buttonSome": "ソース：{{total}} 件中 {{count}}",
       "popoverAria": "「見つける」で使うリポジトリ",
       "enableAria": "「見つける」で {{repo}} を使う",
       "disabledShort": "停止中",
@@ -5060,7 +5097,6 @@
     "contextSize": "コンテキスト長",
     "configTomlScope": "ここには [providers.{{key}}] とそれに属する [models.*] テーブルだけを書けます。プロバイダーキーは上の欄で変更してください。",
     "configTomlSchema": "設定が不完全です：プロバイダーの type と、各モデルの model・max_context_size（正の整数）を確認してください。",
-    "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
     "empty": {
       "title": "Kimi Code プロバイダーを追加",
       "description": "URL、API キー、モデルを設定します。既存の Kimi 設定は自動的にインポートされます。"

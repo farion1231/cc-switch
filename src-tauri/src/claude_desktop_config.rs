@@ -902,6 +902,24 @@ fn next_catalog_safe_route_id(
     }
 }
 
+/// Desktop 从模型发现接口最多收这么长的说明。
+const MAX_MODEL_DESCRIPTION_CHARS: usize = 100;
+
+/// 本地 `/v1/models` 给 Desktop 的模型说明。没有说明时 Desktop 按 id 里的档位词显示
+/// Anthropic 写死的那句（`claude-fable-*` 一律是 Fable 的），映射到别家模型就名不副实；
+/// 上游就是 Claude 模型也看不出走的是哪家。所以一律写 `<供应商名> · <上游模型名> · <窗口>`。
+pub fn discovered_model_description(
+    provider_name: &str,
+    upstream: &str,
+    supports_1m: bool,
+) -> String {
+    let window = if supports_1m { 1_000_000 } else { 0 };
+    crate::mode::stack::provider_model_description(provider_name, upstream, window)
+        .chars()
+        .take(MAX_MODEL_DESCRIPTION_CHARS)
+        .collect()
+}
+
 pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
     let routes = proxy_model_routes(provider)?;
     let data: Vec<Value> = routes
@@ -916,6 +934,11 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
             if route.supports_1m {
                 item["supports1m"] = json!(true);
             }
+            item["description"] = json!(discovered_model_description(
+                &provider.name,
+                &route.upstream_model,
+                route.supports_1m,
+            ));
             item
         })
         .collect();
@@ -1262,7 +1285,12 @@ pub fn gateway_base_url(proxy_url: &str) -> String {
 /// 重启 Desktop。
 ///
 /// 聚合模式下 `stack` 是其他几家发布的模型，排在路由那家后面（第一项是默认模型，仍是路由
-/// 那家的），并关掉模型发现：列表完全由这里决定。Desktop 最多收 200 条，多出的不写。
+/// 那家的）。Desktop 最多收 200 条，多出的不写。
+///
+/// 模型发现显式打开：只要有 `inferenceModels`，Desktop 就只用这份列表，发现到的条目只补
+/// 名字和说明，不会多出模型；不写这个开关时有列表就跳过发现，本地 `/v1/models` 给的说明
+/// 就用不上（见 [`discovered_model_description`]）。
+///
 /// 路由那家和聚合都没给出模型时，这份 profile 不带 `inferenceModels`。磁盘上已有的列表
 /// 由写入路径处理：我们写过的清掉，用户自己的留下。
 pub fn route_profile(
@@ -1308,9 +1336,7 @@ pub fn route_profile(
         &get_or_create_gateway_token(db)?,
         specs,
     );
-    if !stack.is_empty() {
-        profile["modelDiscoveryEnabled"] = json!(false);
-    }
+    profile["modelDiscoveryEnabled"] = json!(true);
     Ok(profile)
 }
 
@@ -2596,6 +2622,7 @@ mod tests {
             configured_proxy_model_routes(&provider)
                 .expect_err("an empty catalog must not become a configured catalog");
             assert!(models["data"].as_array().expect("models").is_empty());
+            assert_eq!(profile["modelDiscoveryEnabled"], json!(true));
             assert_eq!(serde_json::to_value(&provider).unwrap(), before);
             assert!(direct_profile(&provider)
                 .expect("direct profile remains valid")
@@ -2807,6 +2834,11 @@ mod tests {
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
+        // 不带说明 Desktop 会按 id 里的 sonnet 显示 Anthropic 的那句。
+        assert_eq!(
+            models["data"][0]["description"],
+            json!("Proxy · kimi-k2 · 1M")
+        );
 
         let mapped_opus = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
             .expect("an unconfigured Claude role falls back to the enabled tier");
@@ -2815,6 +2847,33 @@ mod tests {
         let err = map_proxy_request_model(json!({"model": "gpt-5"}), &provider)
             .expect_err("a name without a role keyword should still fail");
         assert!(err.to_string().contains("gpt-5"));
+    }
+
+    #[test]
+    fn claude_desktop_discovered_description_names_provider_and_upstream() {
+        assert_eq!(
+            discovered_model_description("DeepSeek", "deepseek-v4", false),
+            "DeepSeek · deepseek-v4"
+        );
+        assert_eq!(
+            discovered_model_description("Zhipu", "glm-5.2", true),
+            "Zhipu · glm-5.2 · 1M"
+        );
+        assert_eq!(
+            discovered_model_description(" ", "glm-5.2", false),
+            "glm-5.2"
+        );
+        assert_eq!(
+            discovered_model_description("Relay", "Claude-Opus-5", true),
+            "Relay · Claude-Opus-5 · 1M"
+        );
+        let long = "x".repeat(150);
+        assert_eq!(
+            discovered_model_description("Relay", &long, false)
+                .chars()
+                .count(),
+            MAX_MODEL_DESCRIPTION_CHARS
+        );
     }
 
     #[test]
@@ -2853,6 +2912,12 @@ mod tests {
         );
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
+        // 上游就是 Claude 模型的留给 Desktop 自己说明，别家模型换成真正的模型名。
+        assert_eq!(
+            models["data"][1]["description"],
+            json!("Proxy · claude-opus-5.5")
+        );
+        assert_eq!(models["data"][2]["description"], json!("Proxy · glm-5"));
 
         // 新名字、旧 profile 里的原键、带日期的全名都落到同一个目标。
         for (requested, upstream) in [

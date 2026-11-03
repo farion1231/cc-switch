@@ -208,17 +208,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "grooroute",
   },
   {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    auth: grokAuth(),
-    config: grokPresetConfig("DIT.ai", "https://api.dit.ai/v1", "grok-4.7"),
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
-  },
-  {
     name: "BuyToken",
     websiteUrl: "https://buytoken.work",
     apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
