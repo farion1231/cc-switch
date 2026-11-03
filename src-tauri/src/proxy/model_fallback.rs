@@ -5,10 +5,10 @@ use serde_json::Value;
 pub(super) const CLASSIFIER_LOOP_MESSAGE: &str = "CC Switch stopped this request after three consecutive tool-result turns reported an unavailable auto-mode safety classifier. No upstream request was sent. Fix the classifier model mapping, balance or configured fallback, then send a new user message to resume. Tool permission checks remain required.";
 
 pub(super) fn classifier_retry_loop(body: &Value) -> bool {
-    if !body
+    if body
         .get("tools")
         .and_then(Value::as_array)
-        .is_some_and(|tools| !tools.is_empty())
+        .is_none_or(|tools| tools.is_empty())
     {
         return false;
     }
