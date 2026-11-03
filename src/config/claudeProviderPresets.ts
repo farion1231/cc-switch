@@ -104,10 +104,12 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.moonshot.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "kimi-k2.7-code",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2.7-code",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2.7-code",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2.7-code",
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，thinking 强制开启）
+        ANTHROPIC_MODEL: "kimi-k3.1-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro",
       },
     },
     category: "cn_official",
@@ -127,10 +129,12 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.moonshot.ai/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "kimi-k2.7-code",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2.7-code",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2.7-code",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2.7-code",
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，thinking 强制开启）
+        ANTHROPIC_MODEL: "kimi-k3.1-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro",
       },
     },
     category: "cn_official",

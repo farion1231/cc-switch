@@ -348,6 +348,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+        "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
         "kimi-k2.7-code": { name: "Kimi K2.7 Code", reasoning: true },
         "kimi-k3": { name: "Kimi K3", reasoning: true },
         "kimi-k2.7-code-highspeed": {
@@ -400,6 +403,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+        "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
         "kimi-k2.7-code": { name: "Kimi K2.7 Code", reasoning: true },
         "kimi-k3": { name: "Kimi K3", reasoning: true },
         "kimi-k2.7-code-highspeed": {
