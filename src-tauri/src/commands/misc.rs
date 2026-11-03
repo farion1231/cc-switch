@@ -2821,23 +2821,98 @@ fn first_batch_command(content: &str) -> Option<&str> {
     None
 }
 
-/// 一行的第一个参数，带引号时取引号内的内容（Windows 路径常含空格）。
+/// `command` 之后是否只剩空行 / 注释 / `exit`。
+///
+/// 转发壳只有一条启动命令；后面再跟别的命令（哪怕是同一个 exe）就不再是「简单单命令
+/// 转发」，无法从第一条命令断言启动目标。
 #[cfg(target_os = "windows")]
-fn first_command_token(line: &str) -> Option<&str> {
+fn remaining_lines_are_blank(content: &str, command: &str) -> bool {
+    let mut after = false;
+    for line in content.lines() {
+        if !after {
+            if line.trim() == command.trim() {
+                after = true;
+            }
+            continue;
+        }
+        let line = line.trim();
+        let line = line.strip_prefix('@').unwrap_or(line).trim_start();
+        if line.is_empty() || line.starts_with("::") {
+            continue;
+        }
+        let verb = line.split_whitespace().next().unwrap_or_default();
+        if verb.eq_ignore_ascii_case("echo")
+            || verb.eq_ignore_ascii_case("rem")
+            || verb.eq_ignore_ascii_case("exit")
+        {
+            continue;
+        }
+        return false;
+    }
+    after
+}
+
+/// 一行的第一个参数，带引号时取引号内的内容（Windows 路径常含空格），并返回该参数
+/// 之后剩下的部分。
+#[cfg(target_os = "windows")]
+fn first_command_token(line: &str) -> Option<(&str, &str)> {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix('"') {
-        return rest.split('"').next().filter(|token| !token.is_empty());
+        let (token, tail) = rest.split_once('"')?;
+        if token.is_empty() {
+            return None;
+        }
+        return Some((token, tail));
     }
-    line.split_whitespace().next()
+    let end = line.find(char::is_whitespace).unwrap_or(line.len());
+    let token = &line[..end];
+    if token.is_empty() {
+        return None;
+    }
+    Some((token, &line[end..]))
+}
+
+/// 命令之后是否只跟着「原样转发调用方参数」的尾巴。
+///
+/// 转发壳把收到的参数原封不动传给真身（`%*`，或 `%*` 前后带 `%~dp0` 之类的展开），
+/// 因此启动哪个程序完全由第一个参数决定。除此之外的任何参数都可能改变实际启动的
+/// 目标——最典型的是 `node.exe "install-a\codex.js"`：同一个解释器、不同脚本，是两个
+/// 互不相同的安装。这类一律不认，按普通文件处理。
+///
+/// 允许的尾巴只由 `%*` 和展开变量组成；出现 `&&`、`||`、`&`、`|`、`>` 等命令串联/重定向，
+/// 或者任何字面量参数，都算「复杂命令」。
+#[cfg(target_os = "windows")]
+fn tail_only_forwards_arguments(tail: &str) -> bool {
+    let tail = tail.trim();
+    if tail.is_empty() {
+        return true;
+    }
+    if tail
+        .chars()
+        .any(|c| matches!(c, '&' | '|' | '>' | '<' | '(' | ')'))
+    {
+        return false;
+    }
+    tail.split_whitespace().all(|word| {
+        word == "%*"
+            || word == "%~dp0%*"
+            // `%~dp0` 之类只是本脚本所在目录的展开，不改变启动目标。
+            || (word.starts_with("%~")
+                && word.len() > 3
+                && word[2..].chars().all(|c| c.is_ascii_alphanumeric()))
+    })
 }
 
 /// `.cmd` / `.bat` 转发壳启动的真身，例如 `@ECHO off` + `"C:\...\opencode.exe" %*`
 /// → `C:\...\opencode.exe`。
 ///
-/// 只认「简单单命令转发」：目标是绝对 `*.exe`。相对路径依赖脚本被调用时的 CWD，npm
-/// shim 又带 `GOTO` 控制流，这两种都返回 None、按普通文件处理——宁可少合并一处，
-/// 也不要把两个真实安装误判成一个。Grok 那种 `.cmd → node → js → resolveBinary()`
-/// 的多级链同样解析不出目标，不在本函数职责内。
+/// 只认「简单单命令转发」：整段脚本只有一条命令，目标是绝对 `*.exe`，其后最多跟
+/// 一个原样转发的 `%*`。判定刻意保守——相对路径依赖脚本被调用时的 CWD，npm shim 带
+/// `GOTO` 控制流，`node.exe "script.js"` 这类带参数启动器又指向不同安装，这些都返回
+/// None、按普通文件处理。宁可少合并一处，也不要把两个真实安装误判成一个。
+///
+/// Grok 那种 `.cmd → node → js → resolveBinary()` 的多级链同样解析不出目标，不在本
+/// 函数职责内。
 #[cfg(target_os = "windows")]
 fn windows_script_forward_target(path: &Path) -> Option<std::path::PathBuf> {
     if !is_windows_command_script(path) {
@@ -2848,7 +2923,16 @@ fn windows_script_forward_target(path: &Path) -> Option<std::path::PathBuf> {
         return None;
     }
     let content = std::fs::read_to_string(path).ok()?;
-    let target = Path::new(first_command_token(first_batch_command(&content)?)?);
+    let command = first_batch_command(&content)?;
+    let (token, tail) = first_command_token(command)?;
+    if !tail_only_forwards_arguments(tail) {
+        return None;
+    }
+    // 一条命令之后还跟着别的行，就不是「简单单命令转发」。
+    if !remaining_lines_are_blank(&content, command) {
+        return None;
+    }
+    let target = Path::new(token);
     if !target.is_absolute() {
         return None;
     }
@@ -11981,6 +12065,123 @@ mod tests {
         )
         .unwrap();
         assert_eq!(windows_script_forward_target(&big), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_forward_target_rejects_a_launcher_with_arguments() {
+        // A launcher that runs `node.exe` with a script argument starts a *different*
+        // install depending on that argument. Identity must not collapse to the shared
+        // interpreter, or two real installs disappear into one.
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let node = bin.join("node.exe");
+        std::fs::write(&node, b"MZ").unwrap();
+        let a = dir.path().join("install-a");
+        let b = dir.path().join("install-b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+
+        let launcher = |name: &str, script: &Path| {
+            let path = dir.path().join(name);
+            std::fs::write(
+                &path,
+                format!(
+                    "@ECHO off\r\n\"{}\" \"{}\" %*\r\n",
+                    node.display(),
+                    script.display()
+                ),
+            )
+            .unwrap();
+            path
+        };
+        let first = launcher("first.cmd", &a.join("codex.js"));
+        let second = launcher("second.cmd", &b.join("codex.js"));
+
+        assert_eq!(
+            windows_script_forward_target(&first),
+            None,
+            "a launcher passing a script argument is not a simple forwarder"
+        );
+        assert_eq!(windows_script_forward_target(&second), None);
+
+        // And the consequence that matters: they must not dedup into one install.
+        let kept = dedup_tool_candidates(vec![
+            (first.clone(), String::new()),
+            (second.clone(), String::new()),
+        ]);
+        assert_eq!(
+            kept.len(),
+            2,
+            "two launchers running different scripts are two installs"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_forward_target_accepts_only_a_bare_forward() {
+        // The shapes a real forwarder takes: the target alone, `%*`, or the target
+        // followed by `%*`. Anything else is treated as a launcher, not a forwarder.
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("tool.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let write = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            path
+        };
+
+        for (name, body) in [
+            (
+                "bare.cmd",
+                format!("@ECHO off\r\n\"{}\"\r\n", exe.display()),
+            ),
+            (
+                "args.cmd",
+                format!("@ECHO off\r\n\"{}\" %*\r\n", exe.display()),
+            ),
+            (
+                "star.cmd",
+                format!("@ECHO off\r\n\"{}\" %*\r\n", exe.display()),
+            ),
+        ] {
+            assert_eq!(
+                windows_script_forward_target(&write(name, &body)).as_deref(),
+                Some(exe.as_path()),
+                "{name} should still be recognised as a forwarder"
+            );
+        }
+
+        // Any extra argument changes what gets started, so it must not be merged.
+        for (name, body) in [
+            (
+                "extra-arg.cmd",
+                format!("@ECHO off\r\n\"{}\" --version\r\n", exe.display()),
+            ),
+            (
+                "two-commands.cmd",
+                format!(
+                    "@ECHO off\r\n\"{}\" %*\r\n\"{}\" %*\r\n",
+                    exe.display(),
+                    exe.display()
+                ),
+            ),
+            (
+                "chained.cmd",
+                format!(
+                    "@ECHO off\r\n\"{}\" %* && \"{}\" %*\r\n",
+                    exe.display(),
+                    exe.display()
+                ),
+            ),
+        ] {
+            assert_eq!(
+                windows_script_forward_target(&write(name, &body)),
+                None,
+                "{name} must not be treated as a simple forwarder"
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]
