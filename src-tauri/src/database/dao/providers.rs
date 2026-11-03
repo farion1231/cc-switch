@@ -326,18 +326,39 @@ impl Database {
 
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
+        let mut meta_json = serde_json::to_string(&meta_clone)
+            .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?;
 
-        let existing: Option<(bool, bool)> = tx
+        let existing: Option<(bool, bool, String)> = tx
             .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue, meta FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![provider.id, app_type],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
 
         let is_update = existing.is_some();
-        let (is_current, in_failover_queue) =
-            existing.unwrap_or((false, provider.in_failover_queue));
+        let (is_current, in_failover_queue) = match existing {
+            Some((current, queued, stored_meta)) => {
+                // Metadata contains HashMaps (headers/model routes), whose key
+                // order can change after every read. Keep equivalent stored JSON
+                // so the no-op UPDATE predicate does not emit a spurious change.
+                // Only parse on a byte mismatch; normal refreshes stay cheap.
+                if meta_json != stored_meta
+                    && matches!(
+                        (
+                            serde_json::from_str::<serde_json::Value>(&meta_json),
+                            serde_json::from_str::<serde_json::Value>(&stored_meta),
+                        ),
+                        (Ok(new), Ok(old)) if new == old
+                    )
+                {
+                    meta_json = stored_meta;
+                }
+                (current, queued)
+            }
+            None => (false, provider.in_failover_queue),
+        };
 
         if is_update {
             // Native-provider list refreshes also pass through this method. An
@@ -375,9 +396,7 @@ impl Database {
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
-                    serde_json::to_string(&meta_clone).map_err(|e| AppError::Database(format!(
-                        "Failed to serialize meta: {e}"
-                    )))?,
+                    meta_json,
                     is_current,
                     in_failover_queue,
                     provider.id,
@@ -404,8 +423,7 @@ impl Database {
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
-                    serde_json::to_string(&meta_clone)
-                        .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
+                    meta_json,
                     is_current,
                     in_failover_queue,
                 ],

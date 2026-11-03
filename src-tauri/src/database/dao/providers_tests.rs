@@ -134,6 +134,94 @@ fn unchanged_provider_save_does_not_emit_a_database_change() {
 }
 
 #[test]
+fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
+    let db = Database::memory().unwrap();
+    let mut provider = provider("metadata");
+    provider.meta = Some(
+        serde_json::from_value(json!({
+            "localProxyRequestOverrides": {
+                "headers": {"X-First": "one", "X-Second": "two", "X-Third": "three"},
+                "body": {"reasoning": {"effort": "high"}}
+            }
+        }))
+        .unwrap(),
+    );
+    db.save_provider("claude", &provider).unwrap();
+    {
+        let conn = db.conn.lock().unwrap();
+        let stored: String = conn
+            .query_row(
+                "SELECT meta FROM providers WHERE id = 'metadata'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut reordered: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        let headers = reordered["localProxyRequestOverrides"]["headers"]
+            .as_object_mut()
+            .unwrap();
+        let reversed = headers
+            .iter()
+            .rev()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        *headers = reversed;
+        let reordered = reordered.to_string();
+        assert_ne!(stored, reordered);
+        // HashMap serialization order is unstable across reads/devices. Make
+        // the first equivalent-but-differently-ordered save deterministic.
+        conn.execute(
+            "UPDATE providers SET meta = ?1 WHERE id = 'metadata'",
+            [reordered],
+        )
+        .unwrap();
+    }
+    let updates = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&updates);
+    db.conn.lock().unwrap().update_hook(Some(
+        move |action: rusqlite::hooks::Action, _: &str, table: &str, _: i64| {
+            if action == rusqlite::hooks::Action::SQLITE_UPDATE && table == "providers" {
+                count.fetch_add(1, Ordering::Relaxed);
+            }
+        },
+    ));
+    db.save_provider("claude", &provider).unwrap();
+    for _ in 0..5 {
+        provider = db
+            .get_provider_by_id("metadata", "claude")
+            .unwrap()
+            .unwrap();
+        db.save_provider("claude", &provider).unwrap();
+    }
+    assert_eq!(updates.load(Ordering::Relaxed), 0);
+
+    provider
+        .meta
+        .as_mut()
+        .unwrap()
+        .local_proxy_request_overrides
+        .as_mut()
+        .unwrap()
+        .headers
+        .insert("X-First".into(), "changed".into());
+    db.save_provider("claude", &provider).unwrap();
+    assert_eq!(updates.load(Ordering::Relaxed), 1);
+    let loaded = db
+        .get_provider_by_id("metadata", "claude")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        loaded
+            .meta
+            .unwrap()
+            .local_proxy_request_overrides
+            .unwrap()
+            .headers["X-First"],
+        "changed"
+    );
+}
+
+#[test]
 #[ignore = "manual performance benchmark; reports median latency without timing assertions"]
 fn benchmark_provider_list() {
     for count in [10, 100, 1000] {
