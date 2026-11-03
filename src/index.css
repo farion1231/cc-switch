@@ -592,3 +592,24 @@ input[type="password"]::-ms-clear {
     flex: 1 1 0%;
   }
 }
+
+/*
+ * Auth center quota column (AccountQuotaColumn): fixed width so every
+ * account's bars start at the same x and have the same length. It widens only
+ * when the group card itself has room — a viewport breakpoint would also fire
+ * with the sidebar open at the 900px minimum window width and squeeze the
+ * account name. Cells: label 112 + bar + value 64 + countdown 52 + 3 × 8 gap.
+ */
+.auth-group {
+  container-type: inline-size;
+}
+
+.auth-quota-col {
+  width: 332px;
+}
+
+@container (min-width: 800px) {
+  .auth-quota-col {
+    width: 368px;
+  }
+}

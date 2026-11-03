@@ -3,12 +3,14 @@
 mod agy_account;
 mod auth;
 mod balance;
+mod claude_account;
 mod codex_oauth;
 mod coding_plan;
 mod config;
 mod copilot;
 mod custom_icon;
 mod deeplink;
+mod dsh;
 mod env;
 mod failover;
 mod global_proxy;
@@ -41,15 +43,22 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
+#[cfg(test)]
+mod provider_concurrency_tests;
+#[cfg(test)]
+mod startup_tests;
+
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
+pub use claude_account::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;
 pub use copilot::*;
 pub use custom_icon::*;
 pub use deeplink::*;
+pub use dsh::*;
 pub use env::*;
 pub use failover::*;
 pub use global_proxy::*;
@@ -80,3 +89,6 @@ pub use s3_sync::*;
 pub use usage::*;
 pub use webdav_sync::*;
 pub use workspace::*;
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) use misc::{login_shell_path, merge_path_segments, CommandDeadline};

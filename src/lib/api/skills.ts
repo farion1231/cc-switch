@@ -14,6 +14,7 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
+  | "dsh"
   | "agy"
   | "omp";
 
@@ -30,6 +31,7 @@ export interface SkillApps {
   pi: boolean;
   mcode?: boolean;
   kimi?: boolean;
+  dsh?: boolean;
   agy?: boolean;
   omp?: boolean;
 }
@@ -247,9 +249,20 @@ export const skillsApi = {
     return await invoke("import_skills_from_apps", { imports });
   },
 
-  /** 发现可安装的 Skills（从仓库获取），附带没读到的仓库 */
-  async discoverAvailable(): Promise<SkillDiscoveryResult> {
-    return await invoke("discover_available_skills");
+  /**
+   * 发现可安装的 Skills（从仓库获取），附带没读到的仓库。
+   * 后端按仓库缓存发现结果，forceRefresh 绕过缓存（手动刷新用）。
+   */
+  async discoverAvailable(forceRefresh = false): Promise<SkillDiscoveryResult> {
+    return await invoke("discover_available_skills", { forceRefresh });
+  },
+
+  /** 只发现一个已保存的仓库；仓库不存在或已停用时结果为空 */
+  async discoverRepo(
+    owner: string,
+    name: string,
+  ): Promise<SkillDiscoveryResult> {
+    return await invoke("discover_repo_skills", { owner, name });
   },
 
   /** 检查 Skills 更新，附带没读到的仓库 */
@@ -282,6 +295,11 @@ export const skillsApi = {
   /** 在文件管理器里打开 CC Switch 目录下的 Skills 目录 */
   async openCcSwitchSkillsDir(): Promise<void> {
     await invoke("open_cc_switch_skills_dir");
+  },
+
+  /** 在文件管理器里打开某个已安装 Skill 的目录 */
+  async openSkillDir(directory: string): Promise<void> {
+    await invoke("open_skill_dir", { directory });
   },
 
   /** 搜索 skills.sh 公共目录 */

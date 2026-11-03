@@ -106,8 +106,8 @@ export function SessionItem({
 
   const deleteReason = !deletable
     ? t(
-        session.providerId === "kimi"
-          ? "kimi.deleteSessionHint"
+        session.providerId === "dsh"
+          ? "dsh.deleteSessionHint"
           : session.providerId === "agy"
             ? "sessionManager.agyDeleteHint"
             : "sessionManager.mcodeDeleteHint",

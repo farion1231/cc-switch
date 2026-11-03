@@ -96,6 +96,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     speedTestEndpoints: [],
     apiFormat: "anthropic",
     onApiFormatChange: vi.fn(),
+    reasoningEffort: "auto",
+    onReasoningEffortChange: vi.fn(),
     apiKeyField: "ANTHROPIC_AUTH_TOKEN",
     onApiKeyFieldChange: vi.fn(),
     isFullUrl: false,
@@ -152,6 +154,33 @@ describe("ClaudeFormFields", () => {
       expect(screen.getByText(/copilot.automaticFormatHint/)).toBeVisible();
     },
   );
+
+  it.each(["classic", "stack"] as const)(
+    "%s 布局只在转成 OpenAI 格式时显示思考档位",
+    (variant) => {
+      const { unmount } = renderCopilotForm({
+        variant,
+        isCopilotPreset: false,
+        apiFormat: "openai_chat",
+      });
+      expect(
+        screen.getByRole("combobox", { name: "思考档位" }),
+      ).toBeVisible();
+      unmount();
+
+      renderCopilotForm({
+        variant,
+        isCopilotPreset: false,
+        apiFormat: "anthropic",
+      });
+      expect(screen.queryByRole("combobox", { name: "思考档位" })).toBeNull();
+    },
+  );
+
+  it("Copilot 卡不显示思考档位", () => {
+    renderCopilotForm({ apiFormat: "openai_chat" });
+    expect(screen.queryByRole("combobox", { name: "思考档位" })).toBeNull();
+  });
 
   it("点击获取模型列表后才请求当前 Copilot 账号的模型", async () => {
     renderCopilotForm();

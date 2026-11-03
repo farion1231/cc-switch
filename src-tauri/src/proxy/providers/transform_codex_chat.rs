@@ -11,6 +11,7 @@ use super::codex_chat_common::{
 };
 use super::codex_compaction;
 use super::inline_think::split_leading_think_block;
+use super::transform::unwrap_chat_completion_envelope;
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -488,7 +489,7 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-fn map_reasoning_effort<'a>(
+pub(crate) fn map_reasoning_effort<'a>(
     effort: &str,
     mode: Option<&str>,
     effort_levels: Option<&'a [String]>,
@@ -503,8 +504,11 @@ fn map_reasoning_effort<'a>(
     // passthrough 面向枚举未知的通用上游，档位由用户/预设的 reasoningLevels 声明
     // 背书，与 max/xhigh 一样原值透传。
     match mode.unwrap_or("passthrough") {
+        // DeepSeek 官方档位 low / high / max，其余档位照官方服务端的换算折
+        // （api-docs.deepseek.com/guides/thinking_mode：minimal→low、medium/xhigh→high、ultra→max）。
         "deepseek" => match effort.as_str() {
-            "max" | "xhigh" | "ultra" => Some("max"),
+            "minimal" | "low" => Some("low"),
+            "max" | "ultra" => Some("max"),
             _ => Some("high"),
         },
         "low_high" => match effort.as_str() {
@@ -1929,6 +1933,7 @@ pub(crate) fn chat_completion_to_response_with_context(
     body: Value,
     tool_context: &CodexToolContext,
 ) -> Result<Value, ProxyError> {
+    let body = unwrap_chat_completion_envelope(body);
     let choices = body
         .get("choices")
         .and_then(|v| v.as_array())
@@ -3113,6 +3118,26 @@ mod tests {
     }
 
     #[test]
+    fn map_reasoning_effort_deepseek_keeps_official_tiers() {
+        // DeepSeek 官方档位 low / high / max，其余照官方服务端的换算折。
+        for (requested, expected) in [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "high"),
+            ("max", "max"),
+            ("ultra", "max"),
+        ] {
+            assert_eq!(
+                map_reasoning_effort(requested, Some("deepseek"), None),
+                Some(expected),
+                "{requested}"
+            );
+        }
+    }
+
+    #[test]
     fn map_reasoning_effort_handles_ultra_per_mode() {
         // passthrough 面向枚举未知的通用上游：ultra 与 max/xhigh 一样原值透传，
         // 让声明了该档位的上游能收到用户选择。
@@ -3654,7 +3679,8 @@ mod tests {
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
-        assert_eq!(result["reasoning_effort"], "max");
+        // DeepSeek 官方服务端把 xhigh 当 high。
+        assert_eq!(result["reasoning_effort"], "high");
     }
 
     #[test]
@@ -4000,6 +4026,33 @@ mod tests {
             "Need to inspect the code."
         );
         assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_completion_to_response_unwraps_data_envelope() {
+        // #5658：ClinePass 把非流式 Chat 响应包在 data 里
+        let input = json!({
+            "success": true,
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "model": "cline-pass/deepseek-v4.1-flash",
+                "created": 1_700_000_000,
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "OK"}
+                }],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
+            }
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["model"], "cline-pass/deepseek-v4.1-flash");
+        assert_eq!(result["created_at"], 1_700_000_000);
+        assert_eq!(result["status"], "completed");
+        assert_eq!(result["output"][0]["content"][0]["text"], "OK");
+        assert_eq!(result["usage"]["input_tokens"], 12);
+        assert_eq!(result["usage"]["output_tokens"], 1);
     }
 
     #[test]

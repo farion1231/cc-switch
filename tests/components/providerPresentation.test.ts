@@ -639,7 +639,7 @@ describe("buildAdditiveSections", () => {
     });
 
     expect(button(sections, "relay", "remove").disabledReason).toBe(
-      "providerCard.reason.currentCannotRemove",
+      "providerCard.reason.defaultCannotRemove",
     );
     expect(item(sections, "relay").tone).toBe("direct");
     expect(item(sections, "managed").tone).toBeUndefined();
@@ -648,9 +648,36 @@ describe("buildAdditiveSections", () => {
       editDisabledReason: "provider.managedByHermesHint",
       deleteDisabledReason: "provider.managedByHermesHint",
     });
-    expect(button(sections, "managed", "use").disabledReason).toBe(
-      "provider.managedByHermesHint",
+    expect(
+      item(sections, "managed").menuItems?.find(
+        (action) => action.key === "setDefault",
+      )?.disabledReason,
+    ).toBe("provider.managedByHermesHint");
+  });
+
+  it("puts Hermes set-default in the more menu like other additive apps", () => {
+    const other = provider("other");
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "hermes",
+      t,
+      providers: [relay, other],
+      isInConfig: () => true,
+      hermesCurrentId: "relay",
+      actions,
+    });
+
+    expect(item(sections, "relay").status?.label).toBe(
+      "providerCard.status.default",
     );
+    expect(item(sections, "relay").menuItems).toBeUndefined();
+    expect(item(sections, "other").buttons.map((b) => b.key)).toEqual([
+      "remove",
+    ]);
+    item(sections, "other")
+      .menuItems?.find((action) => action.key === "setDefault")
+      ?.onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(other);
   });
 
   it("lets official Kimi accounts edit models and leave Kimi, but not be deleted while there", () => {
@@ -676,7 +703,7 @@ describe("buildAdditiveSections", () => {
     }
     // 只有正在用的那个号不能移除
     expect(button(sections, accounts[0].id, "remove").disabledReason).toBe(
-      "providerCard.reason.currentCannotRemove",
+      "providerCard.reason.defaultCannotRemove",
     );
     expect(
       button(sections, accounts[1].id, "remove").disabledReason,
@@ -748,7 +775,7 @@ describe("buildAdditiveSections", () => {
       "remove",
     ]);
     expect(button(sections, "current", "remove").disabledReason).toBe(
-      "providerCard.reason.currentCannotRemove",
+      "providerCard.reason.defaultCannotRemove",
     );
     expect(item(sections, "current").menuItems).toBeUndefined();
   });

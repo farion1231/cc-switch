@@ -120,10 +120,16 @@ pub(crate) fn session_roots_for(d: &Dialect) -> Vec<PathBuf> {
 /// instead of silently treating an incomplete import as success. Nested
 /// subagent and fork sessions are included.
 pub(crate) fn session_files() -> Result<Vec<PathBuf>, String> {
-    session_files_from_resolution(resolve_session_root())
+    session_files_for(&PI)
+}
+
+/// Same discovery rules as [`session_files`], for a Pi-family dialect.
+pub(crate) fn session_files_for(d: &Dialect) -> Result<Vec<PathBuf>, String> {
+    session_files_from_resolution(d, (d.resolve_root)())
 }
 
 fn session_files_from_resolution(
+    d: &Dialect,
     resolution: SessionRootResolution,
 ) -> Result<Vec<PathBuf>, String> {
     match resolution {
@@ -139,7 +145,8 @@ fn session_files_from_resolution(
             Ok(files)
         }
         SessionRootResolution::RequiresProjectContext { configured_path } => Err(format!(
-            "Pi sessionDir '{configured_path}' requires a project cwd and cannot be globally enumerated"
+            "{} sessionDir '{configured_path}' requires a project cwd and cannot be globally enumerated",
+            d.label
         )),
         SessionRootResolution::Unavailable { reason } => Err(reason),
     }
@@ -1046,13 +1053,13 @@ mod tests {
             reason: "fixture unavailable".to_string(),
         };
         assert_eq!(
-            session_files_from_resolution(unavailable).expect_err("discovery error"),
+            session_files_from_resolution(&PI, unavailable).expect_err("discovery error"),
             "fixture unavailable"
         );
         let relative = SessionRootResolution::RequiresProjectContext {
             configured_path: ".pi/sessions".to_string(),
         };
-        assert!(session_files_from_resolution(relative)
+        assert!(session_files_from_resolution(&PI, relative)
             .expect_err("relative discovery error")
             .contains("requires a project cwd"));
     }
@@ -1206,7 +1213,7 @@ mod tests {
                 layout,
             };
             assert_eq!(
-                session_files_from_resolution(resolution).expect("usage files"),
+                session_files_from_resolution(&PI, resolution).expect("usage files"),
                 expected,
                 "{layout:?}"
             );

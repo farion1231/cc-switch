@@ -52,7 +52,6 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
     removeAccount,
     setDefaultAccount,
     cancelAuth,
-    logout,
     refetchStatus,
   } = useManagedAuth("agy_oauth");
   const accountUsers = useManagedAccountUsers("agy_oauth", defaultAccountId);
@@ -62,9 +61,8 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
-    if (!target) return;
-    if (target.kind === "all") logout();
-    else removeAccount(target.accountId);
+    // 这组没有「删除全部」，只会是单个账号
+    if (target?.kind === "one") removeAccount(target.accountId);
   };
 
   const rows: GroupAccountRow[] = accounts.map((account) => {
@@ -116,9 +114,6 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
         defaultValue:
           "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
       })}
-      loginLabel={t("authCenter.agy.login", {
-        defaultValue: "用 Google 登录",
-      })}
       onAdd={addAccount}
       defaultLabel={t("authCenter.agy.current", {
         defaultValue: "agy 在用",
@@ -133,12 +128,6 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
       settingDefault={isSettingDefaultAccount}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
-      }
-      onRemoveAll={() =>
-        setRemoveTarget({
-          kind: "all",
-          accountIds: accounts.map((account) => account.id),
-        })
       }
       removing={isRemovingAccount}
       login={{

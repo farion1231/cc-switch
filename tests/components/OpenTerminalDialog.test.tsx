@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { OpenTerminalDialog } from "@/components/providers/OpenTerminalDialog";
+import {
+  OpenTerminalDialog,
+  terminalAvailable,
+} from "@/components/providers/OpenTerminalDialog";
 import type { Provider } from "@/types";
 
 const openTerminalMock = vi.fn();
@@ -42,7 +45,7 @@ const provider = {
 function renderDialog(
   onClose = vi.fn(),
   target: Provider = provider,
-  appId: "claude" | "agy" = "claude",
+  appId: "claude" | "codex" | "agy" = "claude",
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -128,6 +131,7 @@ describe("OpenTerminalDialog", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
       cwd: "/work/alpha",
+      skipPermissions: false,
     });
     expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toEqual([
       "/work/alpha",
@@ -153,11 +157,86 @@ describe("OpenTerminalDialog", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
       cwd: "/work/beta",
+      skipPermissions: false,
     });
     expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toEqual([
       "/work/beta",
       "/work/alpha",
     ]);
+  });
+
+  it("passes the skip-permissions choice and remembers it per app after opening", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+
+    const checkbox = screen.getByRole("checkbox");
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.confirm",
+      }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: true,
+    });
+    expect(
+      window.localStorage.getItem("cc-switch:terminal:skip-permissions:claude"),
+    ).toBe("1");
+    expect(
+      window.localStorage.getItem("cc-switch:terminal:skip-permissions:agy"),
+    ).toBeNull();
+  });
+
+  it("prefills the remembered skip-permissions choice", () => {
+    window.localStorage.setItem(
+      "cc-switch:terminal:skip-permissions:claude",
+      "1",
+    );
+    renderDialog();
+    expect(screen.getByRole("checkbox")).toBeChecked();
+  });
+
+  it("passes trimmed extra arguments and remembers them per app after opening", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+
+    fireEvent.change(
+      screen.getByLabelText("provider.openTerminalDialog.extraArgs"),
+      { target: { value: '  --debug --append-system-prompt "be brief"  ' } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.confirm",
+      }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+      extraArgs: '--debug --append-system-prompt "be brief"',
+    });
+    expect(
+      window.localStorage.getItem("cc-switch:terminal:extra-args:claude"),
+    ).toBe('--debug --append-system-prompt "be brief"');
+    expect(
+      window.localStorage.getItem("cc-switch:terminal:extra-args:codex"),
+    ).toBeNull();
+  });
+
+  it("prefills the remembered extra arguments", () => {
+    window.localStorage.setItem(
+      "cc-switch:terminal:extra-args:claude",
+      "--debug",
+    );
+    renderDialog();
+    expect(
+      screen.getByLabelText("provider.openTerminalDialog.extraArgs"),
+    ).toHaveValue("--debug");
   });
 
   it("keeps the dialog open and the list unchanged when opening fails", async () => {
@@ -197,6 +276,26 @@ describe("OpenTerminalDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  // 绑了授权中心账号的官方卡：终端用这个账号的 CLAUDE_CONFIG_DIR 启动，固定在这个号上
+  it("shows the isolation notice for an official card bound to a Claude account", () => {
+    renderDialog(vi.fn(), {
+      id: "official",
+      name: "Claude Official",
+      category: "official",
+      settingsConfig: { env: {} },
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "claude_official",
+          accountId: "acct-1",
+        },
+      },
+    } as Provider);
+    expect(
+      screen.getByText("provider.openTerminalDialog.isolationTitle"),
+    ).toBeInTheDocument();
+  });
+
   // agy 带 Key 的卡用自己的私有目录启动；官方登录卡跟着全局登录走
   it("treats only Antigravity key cards as isolated", () => {
     renderDialog(
@@ -227,5 +326,44 @@ describe("OpenTerminalDialog", () => {
     expect(
       screen.queryByText("provider.openTerminalDialog.isolationTitle"),
     ).not.toBeInTheDocument();
+  });
+
+  const codexRelay = {
+    id: "kimi",
+    name: "Kimi",
+    settingsConfig: {
+      auth: { OPENAI_API_KEY: "sk-kimi" },
+      config:
+        'model_provider = "kimi"\n[model_providers.kimi]\nbase_url = "https://api.moonshot.cn/v1"\n',
+    },
+  } as Provider;
+
+  // Codex 跳过权限确认的参数和 Claude Code 不同，带路由表的第三方卡才算隔离
+  it("shows Codex's own skip flag and isolates its third-party cards", () => {
+    renderDialog(vi.fn(), codexRelay, "codex");
+    expect(
+      screen.getByText("--dangerously-bypass-approvals-and-sandbox"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("provider.openTerminalDialog.isolationTitle"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers a Codex terminal for login or routed cards only when it is current", () => {
+    const official = {
+      id: "openai",
+      name: "OpenAI Official",
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    } as Provider;
+    const routed = {
+      ...codexRelay,
+      meta: { apiFormat: "anthropic" },
+    } as Provider;
+    expect(terminalAvailable(codexRelay, "codex", false)).toBe(true);
+    expect(terminalAvailable(official, "codex", false)).toBe(false);
+    expect(terminalAvailable(official, "codex", true)).toBe(true);
+    expect(terminalAvailable(routed, "codex", true)).toBe(false);
+    expect(terminalAvailable(official, "claude", false)).toBe(true);
   });
 });

@@ -819,6 +819,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openmodel", "aggregator", "gateway", "claude", "codex"],
     defaultColor: "currentColor",
   },
+  ospreyai: {
+    name: "ospreyai",
+    displayName: "OspreyAI",
+    category: "ai-provider",
+    keywords: ["ospreyai", "osprey", "枭毅", "aggregator", "claude", "codex"],
+    defaultColor: "currentColor",
+  },
   runapi: {
     name: "runapi",
     displayName: "RunAPI",
@@ -1152,6 +1159,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     shape: "tile",
     keywords: ["vapi", "v-api", "gpt.ge", "relay", "aggregator"],
+    defaultColor: "currentColor",
+  },
+  cline: {
+    name: "cline",
+    displayName: "Cline",
+    category: "ai-provider",
+    keywords: ["cline", "clinepass", "cline pass"],
     defaultColor: "currentColor",
   },
   everyapi: {

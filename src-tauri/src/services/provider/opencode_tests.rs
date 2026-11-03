@@ -182,6 +182,30 @@ fn opencode_builtin_incomplete_copies_cannot_be_added_to_live() {
 
 #[test]
 #[serial]
+fn additive_add_rolls_back_row_when_live_config_cannot_be_parsed() {
+    let fixture = Fixture::new();
+    let broken = "{ \"provider\": ";
+    fs::write(&fixture.config_path, broken).unwrap();
+    let provider = Provider::with_id(
+        "custom-new".into(),
+        "New provider".into(),
+        json!({"npm": "@ai-sdk/openai-compatible", "models": {"glm-5": {"name": "GLM 5"}}}),
+        None,
+    );
+
+    ProviderService::add(&fixture.state, AppType::OpenCode, provider, true).unwrap_err();
+
+    assert!(fixture
+        .state
+        .db
+        .get_provider_by_id("custom-new", "opencode")
+        .unwrap()
+        .is_none());
+    assert_eq!(fs::read_to_string(&fixture.config_path).unwrap(), broken);
+}
+
+#[test]
+#[serial]
 fn opencode_builtin_removed_override_cannot_reuse_live_membership() {
     let fixture = Fixture::new();
     fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
