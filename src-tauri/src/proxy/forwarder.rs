@@ -8504,6 +8504,64 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn desktop_context_allows_one_fallback_without_provider_failover_but_not_for_stack() {
+            for (configured, is_stack) in [(false, false), (true, false), (true, true)] {
+                let expected_fallback = configured && !is_stack;
+                let up = upstream(if expected_fallback {
+                    vec![error(402, "balance"), ok()]
+                } else {
+                    vec![error(402, "balance")]
+                })
+                .await;
+                let mut p = desktop_provider(&up);
+                if !configured {
+                    p.meta
+                        .as_mut()
+                        .unwrap()
+                        .claude_desktop_model_fallbacks
+                        .clear();
+                }
+                let db = Arc::new(Database::memory().unwrap());
+                db.save_provider("claude-desktop", &p).unwrap();
+                db.set_current_provider("claude-desktop", &p.id).unwrap();
+                let mut config = db.get_proxy_config_for_app("claude-desktop").await.unwrap();
+                config.auto_failover_enabled = false;
+                config.max_retries = 0;
+                db.update_proxy_config_for_app(config).await.unwrap();
+                let state = crate::proxy::server::ProxyState::for_test(db);
+                let mut body = plain_body();
+                body["model"] = json!(if is_stack {
+                    "primary-model"
+                } else {
+                    "claude-opus-5"
+                });
+                let stack = is_stack.then(|| crate::mode::stack::StackTarget {
+                    provider: p.clone(),
+                    upstream_model: "primary-model".into(),
+                    original_model: "stacked-model".into(),
+                });
+                let context = crate::proxy::handler_context::RequestContext::new(
+                    &state,
+                    &body,
+                    &HeaderMap::new(),
+                    AppType::ClaudeDesktop,
+                    "Claude Desktop",
+                    "claude-desktop",
+                    stack,
+                )
+                .await
+                .unwrap();
+                let _ = rustls::crypto::ring::default_provider().install_default();
+                let result = send_desktop(&context.create_forwarder(&state), p, body).await;
+                assert_eq!(result.is_ok(), expected_fallback);
+                assert_eq!(
+                    up.requests.lock().await.len(),
+                    if expected_fallback { 2 } else { 1 }
+                );
+            }
+        }
+
+        #[tokio::test]
         async fn desktop_fallback_only_handles_selected_upstream_statuses() {
             for status in [
                 400, 401, 402, 403, 404, 413, 422, 429, 500, 501, 502, 503, 504,
