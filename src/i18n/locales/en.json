@@ -4613,6 +4613,7 @@
     "connection": {
       "unchecked": "Not checked",
       "connected": "Connection successful",
+      "authRequired": "Server reachable but requires sign-in (e.g. OAuth). CC Switch checks without your client's own login: if you've signed in from the client, it works there; if you set a token in the headers, make sure it is still valid",
       "disconnected": "Connection failed",
       "checking": "Checking connection",
       "disabled": "Not enabled"
