@@ -5073,4 +5073,18 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ),
     icon: "aicoming",
   },
+  {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/en",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "coderplan",
+      "https://api.coderplan.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: ["https://api.coderplan.ai/v1"],
+    icon: "coderplan",
+  },
 ];

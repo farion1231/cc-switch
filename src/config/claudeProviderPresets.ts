@@ -3199,4 +3199,18 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "aicoming",
   },
+  {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/en",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.coderplan.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api.coderplan.ai"],
+    category: "third_party",
+    icon: "coderplan",
+  },
 ];

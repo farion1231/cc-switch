@@ -1093,6 +1093,23 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     category: "aggregator",
     icon: "aicoming",
   },
+  {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/en",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.coderplan.ai",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.coderplan.ai",
+    model: "gemini-3.8-flash",
+    description: "CoderPlan",
+    category: "third_party",
+    endpointCandidates: ["https://api.coderplan.ai"],
+    icon: "coderplan",
+  },
 ];
 
 export function getGeminiPresetByName(
