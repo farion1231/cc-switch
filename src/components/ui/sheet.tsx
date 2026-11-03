@@ -32,6 +32,26 @@ interface SheetContentProps
   dismissOnOutsideClick?: boolean;
 }
 
+/**
+ * 抽屉本体。单独成一个组件是为了在 Portal 里面量页头：Portal 只在打开时挂载子元素，
+ * 这里每次打开都重新量，和同样打开时才挂载的 ModalDragStrip 读的是同一时刻的页头。
+ * 很多抽屉随页面常驻、只切换 open，要是在 SheetContent 顶层量，量到的是页面挂载时的值，
+ * 之后环境变量警告条出现或关掉，抽屉顶边就和拖动条下沿对不上了。
+ */
+const SheetPanel = React.forwardRef<
+  React.ElementRef<typeof DialogPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
+>(({ style, ...props }, ref) => {
+  const windowControls = React.useContext(WindowControlsContext);
+  const headerBottom = usePageHeaderBottom();
+  // 遮罩上复刻的窗口按钮在页头右端，抽屉铺满整高会把它们盖住：有按钮时从页头下沿开始
+  const top = windowControls ? headerBottom : undefined;
+  return (
+    <DialogPrimitive.Content ref={ref} style={{ top, ...style }} {...props} />
+  );
+});
+SheetPanel.displayName = "SheetPanel";
+
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   SheetContentProps
@@ -49,18 +69,14 @@ const SheetContent = React.forwardRef<
     },
     ref,
   ) => {
-    const windowControls = React.useContext(WindowControlsContext);
-    const headerBottom = usePageHeaderBottom();
-    // 遮罩上复刻的窗口按钮在页头右端，抽屉铺满整高会把它们盖住：有按钮时从页头下沿开始
-    const top = windowControls ? headerBottom : undefined;
     return (
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
           <ModalDragStrip />
         </DialogPrimitive.Overlay>
-        <DialogPrimitive.Content
+        <SheetPanel
           ref={ref}
-          style={{ width, top, ...style }}
+          style={{ width, ...style }}
           className={cn(
             "fixed inset-y-0 end-0 z-50 flex max-w-[100vw] flex-col overflow-hidden rounded-s-dialog border-s border-border bg-surface text-fg-1 shadow-v7-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-right-4 data-[state=open]:slide-in-from-right-4",
             className,
@@ -78,7 +94,7 @@ const SheetContent = React.forwardRef<
           >
             <X className="h-4 w-4" strokeWidth={1.5} />
           </DialogPrimitive.Close>
-        </DialogPrimitive.Content>
+        </SheetPanel>
       </DialogPrimitive.Portal>
     );
   },

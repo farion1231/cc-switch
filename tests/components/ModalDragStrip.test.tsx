@@ -179,6 +179,48 @@ describe("ModalDragStrip", () => {
     }
   });
 
+  it("re-measures the header when a mounted-but-closed sheet opens", () => {
+    // 路由设置这类抽屉随页面常驻、只切换 open；警告条是异步检查完才出现的，
+    // 抽屉挂载时量到的值到打开时已经过时，得在打开时重新量
+    const header = document.createElement("header");
+    const rect = vi
+      .spyOn(header, "getBoundingClientRect")
+      .mockReturnValue({ bottom: 52 } as DOMRect);
+    const main = document.createElement("main");
+    main.id = "content-area";
+    main.append(header);
+    document.body.append(main);
+    const drawer = (open: boolean) => (
+      <WindowControlsContext.Provider value={<button>Minimize</button>}>
+        <Sheet open={open}>
+          <SheetContent closeLabel="close">
+            <SheetTitle>Drawer</SheetTitle>
+            <SheetDescription>Body</SheetDescription>
+          </SheetContent>
+        </Sheet>
+      </WindowControlsContext.Provider>
+    );
+    try {
+      const { rerender } = render(drawer(false));
+      expect(screen.queryByRole("dialog")).toBeNull();
+
+      // 关着的时候警告条出现，页头被推下去
+      rect.mockReturnValue({ bottom: 119 } as DOMRect);
+      rerender(drawer(true));
+      expect(getStrip()).toHaveStyle({ height: "119px" });
+      expect(screen.getByRole("dialog")).toHaveStyle({ top: "119px" });
+
+      // 反过来：关掉警告条后再打开，抽屉顶边也跟着回到 52，不留空隙
+      rerender(drawer(false));
+      rect.mockReturnValue({ bottom: 52 } as DOMRect);
+      rerender(drawer(true));
+      expect(getStrip()).toHaveStyle({ height: "52px" });
+      expect(screen.getByRole("dialog")).toHaveStyle({ top: "52px" });
+    } finally {
+      main.remove();
+    }
+  });
+
   it("keeps sheets full height when there are no in-app window controls", () => {
     render(
       <Sheet open>
