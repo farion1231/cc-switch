@@ -60,6 +60,7 @@ import {
   MatrixColumnHighlight,
   MatrixSearch,
   NeutralBadge,
+  ompDiscoveryColumnNote,
   resolveBulkScope,
   showUndoToast,
 } from "@/components/mcp/AppMatrix";
@@ -865,14 +866,24 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
-  const copyDirectory = async (skill: InstalledSkill) => {
+  const copyName = async (skill: InstalledSkill) => {
     try {
-      await copyText(skill.directory);
-      toast.success(t("skillsPage.toast.copiedDir", { dir: skill.directory }), {
+      await copyText(skill.name);
+      toast.success(t("skillsPage.toast.copiedName", { name: skill.name }), {
         closeButton: true,
       });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const openDirectory = async (skill: InstalledSkill) => {
+    try {
+      await skillsApi.openSkillDir(skill.directory);
+    } catch (error) {
+      toast.error(t("skillsPage.toast.openDirFailed"), {
+        description: extractErrorMessage(error),
+      });
     }
   };
 
@@ -1300,6 +1311,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                             }
                           : undefined
                       }
+                      {...ompDiscoveryColumnNote(app, t)}
                       extraAction={{
                         label:
                           statusFilter === appFilter
@@ -1387,6 +1399,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       updateSkillMutation.variables === skill.id
                     }
                     highlighted={highlightId === skill.id}
+                    onHighlightDone={() => setHighlightId(null)}
                     fails={fails}
                     disabled={controlsDisabled}
                     sourceText={
@@ -1414,7 +1427,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     onFixSync={() => setStorageOpen(true)}
                     onUpdate={() => void updateIds([skill.id])}
                     onOpenDocs={() => void openDocs(skill)}
-                    onCopyDir={() => void copyDirectory(skill)}
+                    onCopyName={() => void copyName(skill)}
+                    onOpenDir={() => void openDirectory(skill)}
                     onUninstall={() => {
                       if (writeLockRef.current || interactionBlocked) return;
                       setConfirm({ kind: "uninstall", ids: [skill.id] });
@@ -1767,6 +1781,8 @@ interface InstalledRowProps {
   hasUpdate: boolean;
   isUpdating: boolean;
   highlighted: boolean;
+  /** 闪烁结束后清掉，下次跳到同一行还能再闪 */
+  onHighlightDone: () => void;
   fails: Record<string, WriteFailure>;
   disabled: boolean;
   sourceText: string;
@@ -1776,7 +1792,8 @@ interface InstalledRowProps {
   onFixSync: () => void;
   onUpdate: () => void;
   onOpenDocs: () => void;
-  onCopyDir: () => void;
+  onCopyName: () => void;
+  onOpenDir: () => void;
   onUninstall: () => void;
 }
 
@@ -1788,6 +1805,7 @@ function InstalledRow({
   hasUpdate,
   isUpdating,
   highlighted,
+  onHighlightDone,
   fails,
   disabled,
   sourceText,
@@ -1797,14 +1815,12 @@ function InstalledRow({
   onFixSync,
   onUpdate,
   onOpenDocs,
-  onCopyDir,
+  onCopyName,
+  onOpenDir,
   onUninstall,
 }: InstalledRowProps) {
   const { t } = useTranslation();
   const enabled = SKILLS_APP_IDS.some((app) => skill.apps[app]);
-  const showDir =
-    skill.directory &&
-    skill.directory.trim().toLowerCase() !== skill.name.trim().toLowerCase();
   const failedApp = appIds.find((app) => fails[failKey(skill.id, app)]);
   const failure = failedApp ? fails[failKey(skill.id, failedApp)] : undefined;
   const failId = `sk-fail-${skill.id}`;
@@ -1817,8 +1833,15 @@ function InstalledRow({
       className={cn(
         "group relative flex h-14 items-center px-2 outline-none transition-colors duration-150 hover:bg-subtle",
         !first && "border-t border-border",
-        highlighted && "bg-subtle",
+        // 黄色垫在内容下面的一层，靠它的透明度闪
+        highlighted &&
+          "isolate before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-warning-soft before:opacity-0 before:content-[''] before:animate-row-flash motion-reduce:before:animate-row-fade",
       )}
+      onAnimationEnd={(event) => {
+        if (highlighted && event.target === event.currentTarget) {
+          onHighlightDone();
+        }
+      }}
     >
       <span className="flex w-6 shrink-0 justify-center">
         <input
@@ -1832,18 +1855,25 @@ function InstalledRow({
       </span>
       <div className="ms-2 flex min-w-0 flex-1 flex-col pe-3">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span
-            title={skill.name}
-            className="min-w-0 truncate text-body font-medium"
+          <button
+            type="button"
+            onClick={onCopyName}
+            className="min-w-0 cursor-copy truncate text-start text-body font-medium hover:text-fg-1 hover:underline hover:underline-offset-[3px]"
           >
             {skill.name}
-          </span>
-          {showDir && (
-            <span
-              title={skill.directory}
-              className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
+          </button>
+          {hasRepo ? (
+            <button
+              type="button"
+              onClick={onOpenSource}
+              title={sourceText}
+              className="min-w-0 shrink truncate font-mono text-caption text-fg-3 hover:text-fg-1 hover:underline hover:underline-offset-[3px]"
             >
-              {skill.directory}
+              {sourceText}
+            </button>
+          ) : (
+            <span className="shrink-0 text-caption text-fg-3">
+              {sourceText}
             </span>
           )}
           {hasUpdate && (
@@ -1855,31 +1885,18 @@ function InstalledRow({
         </div>
         <div className="flex min-w-0 whitespace-nowrap text-caption text-fg-2">
           {skill.description && (
-            <>
-              <span className="min-w-0 truncate" title={skill.description}>
-                {skill.description}
-              </span>
-              <span aria-hidden="true" className="shrink-0">
-                &nbsp;·&nbsp;
-              </span>
-            </>
-          )}
-          {hasRepo ? (
-            <button
-              type="button"
-              onClick={onOpenSource}
-              className="shrink-0 underline underline-offset-[3px] hover:text-fg-1"
-            >
-              {sourceText}
-            </button>
-          ) : (
-            <span className="shrink-0">{sourceText}</span>
+            <span className="min-w-0 truncate" title={skill.description}>
+              {skill.description}
+            </span>
           )}
           {failure && failedApp && (
             <>
               <span
                 id={failId}
-                className="ms-1.5 min-w-0 truncate text-warning-text"
+                className={cn(
+                  "min-w-0 truncate text-warning-text",
+                  skill.description && "ms-1.5",
+                )}
               >
                 {t("skillsPage.rowFail", {
                   app: APP_DISPLAY_NAME[failedApp],
@@ -1952,8 +1969,8 @@ function InstalledRow({
                 {t("mcpPage.openDocs")}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onSelect={onCopyDir}>
-              {t("skillsPage.copyDir")}
+            <DropdownMenuItem onSelect={onOpenDir}>
+              {t("skillsPage.openDir")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

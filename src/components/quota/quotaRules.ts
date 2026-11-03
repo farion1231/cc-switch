@@ -95,6 +95,8 @@ export function countdownStr(
 /** 档位窗口的长短：卡片第一行写最短的那档；不认识的档排最后 */
 const TIER_WINDOW_ORDER: Record<string, number> = {
   five_hour: 0,
+  agy_gemini_five_hour: 0,
+  agy_third_party_five_hour: 0,
   gemini_pro: 1,
   gemini_flash: 1,
   gemini_flash_lite: 1,
@@ -371,14 +373,15 @@ export function balanceLine(
   const hasTotal = typeof total === "number" && total > 0;
   const left =
     remaining <= 0 ? 0 : hasTotal ? (remaining / total) * 100 : Infinity;
-  const value = `${remaining.toFixed(2)}${unit ? ` ${unit}` : ""}`;
+  // 用完也照写金额（欠费就是负数，#8812），整行变红；`|| 0` 把 -0 归成 0，免得显示 -0.00
+  const amount = Number(remaining.toFixed(2)) || 0;
+  const value = `${amount.toFixed(2)}${unit ? ` ${unit}` : ""}`;
   return {
     key,
     left,
     tone: remaining <= 0 ? "danger" : "normal",
     emphasis: remaining <= 0 ? undefined : value,
-    text:
-      remaining <= 0 ? t("quota.balanceUsedUp") : t("quota.balance", { value }),
+    text: t("quota.balance", { value }),
     detail,
   };
 }

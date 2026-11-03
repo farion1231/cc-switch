@@ -17,6 +17,7 @@ import {
   ChevronRight,
   ExternalLink,
   Feather,
+  Loader2,
   Plus,
   Power,
   Search,
@@ -56,6 +57,11 @@ const SUB_MAX_HEIGHT = 540;
 const HOVER_OPEN_MS = 50;
 /** 正朝子面板移动时隔这么久再看一次：鼠标停下了或偏离了就切换 */
 const AIM_RECHECK_MS = 120;
+/**
+ * 冷开（还没有上次的内容）时最多等数据这么久：平时几十毫秒就到，首帧就是完整内容；
+ * 库被长事务占着（启动期的会话用量导入）时等满就不再等，先出头部和底栏，「退出」不能等它。
+ */
+const COLD_DATA_WAIT_MS = 100;
 /** 鼠标停在主面板里不是应用行的项上（`hovered` 的取值） */
 const OTHER_ITEM = "";
 
@@ -85,10 +91,10 @@ function syncLanguage() {
 }
 
 /** 分开摆时窗口的纵向范围（相对贴图标那条边）。 */
-function floatingCanvas(p: PanelPlacement) {
+function floatingCanvas(p: PanelPlacement, maxHeight = CANVAS_MAX_HEIGHT) {
   return p.edge === "top"
-    ? { top: 0, bottom: Math.min(p.boundsBottom, CANVAS_MAX_HEIGHT) }
-    : { top: Math.max(p.boundsTop, -CANVAS_MAX_HEIGHT), bottom: 0 };
+    ? { top: 0, bottom: Math.min(p.boundsBottom, maxHeight) }
+    : { top: Math.max(p.boundsTop, -maxHeight), bottom: 0 };
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -97,14 +103,61 @@ function clamp(value: number, min: number, max: number) {
 
 // ─── 额度 ────────────────────────────────────────────────────────────────────
 
-/** 重置时间写短：今天只写时刻，其余写月/日 + 时刻；已经过了的不写。 */
-function formatResetTime(iso: string, now: Date): string | null {
+/**
+ * 还有多久重置，写短：最多两级（天+小时、小时+分、分），零的那级不写；
+ * 不足一分钟按一分钟算，已经过了的不写。
+ */
+export function formatResetIn(
+  iso: string,
+  now: Date,
+  texts: PanelTexts,
+): string | null {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime()) || at <= now) return null;
-  const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-  return at.toDateString() === now.toDateString()
-    ? time
-    : `${at.getMonth() + 1}/${at.getDate()} ${time}`;
+  const totalMinutes = Math.max(
+    1,
+    Math.floor((at.getTime() - now.getTime()) / 60_000),
+  );
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const unit = (template: string, n: number) =>
+    template.replace("{n}", String(n));
+  const parts =
+    days > 0
+      ? [
+          unit(texts.durationDays, days),
+          hours > 0 && unit(texts.durationHours, hours),
+        ]
+      : hours > 0
+        ? [
+            unit(texts.durationHours, hours),
+            minutes > 0 && unit(texts.durationMinutes, minutes),
+          ]
+        : [unit(texts.durationMinutes, minutes)];
+  return texts.resetsIn.replace(
+    "{when}",
+    parts.filter(Boolean).join(texts.durationSep),
+  );
+}
+
+/** 只给数值上绿色（「余额 82.10 CNY」里的金额），和主界面 `TONE_TEXT.normal` 同色。 */
+function EmphasizedText({
+  text,
+  emphasis,
+}: {
+  text: string;
+  emphasis: string | null;
+}) {
+  const at = emphasis ? text.lastIndexOf(emphasis) : -1;
+  if (!emphasis || at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <span className="text-green-600 dark:text-green-400">{emphasis}</span>
+      {text.slice(at + emphasis.length)}
+    </>
+  );
 }
 
 function QuotaBlock({
@@ -121,22 +174,38 @@ function QuotaBlock({
     return null;
   }
   const now = new Date();
+  const lines = quota.lines.slice(0, compact ? 2 : 3).map((line) => ({
+    ...line,
+    when: line.resetsAt ? formatResetIn(line.resetsAt, now, texts) : null,
+  }));
+  // 各档共用一张网格（文字 | 进度条 | 多久重置），进度条的起止才对得齐；
+  // 整块都没有重置时间时不留第三列，免得右边空出一截间距。
+  const hasWhen = lines.some((line) => line.when);
   return (
-    <div className={cn("flex flex-col gap-1", compact ? "mt-1" : "mt-1.5")}>
-      {quota.lines.slice(0, compact ? 2 : 3).map((line, index) => {
-        const when = line.resetsAt ? formatResetTime(line.resetsAt, now) : null;
+    <div
+      className={cn(
+        "grid items-center gap-x-2 gap-y-1",
+        hasWhen
+          ? "grid-cols-[auto_minmax(1.5rem,1fr)_auto]"
+          : "grid-cols-[auto_minmax(1.5rem,1fr)]",
+        compact ? "mt-1" : "mt-1.5",
+      )}
+    >
+      {lines.map((line, index) => {
         return (
-          <div key={index} className="flex items-center gap-2">
+          <div key={index} className="contents">
             <span
               className={cn(
-                "shrink-0 text-[11px] tabular-nums",
+                "whitespace-nowrap text-[11px] tabular-nums",
                 line.warn ? "text-amber-500" : "text-muted-foreground",
               )}
             >
-              {line.text}
+              <EmphasizedText text={line.text} emphasis={line.emphasis} />
             </span>
-            {line.left != null && (
-              <span className="h-1 min-w-6 flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            {line.left == null ? (
+              <span />
+            ) : (
+              <span className="h-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
                 <span
                   className={cn(
                     "block h-full rounded-full",
@@ -150,21 +219,23 @@ function QuotaBlock({
                 />
               </span>
             )}
-            {when && (
-              <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
-                {texts.resetsAt.replace("{when}", when)}
+            {hasWhen && (
+              <span className="justify-self-end whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground">
+                {line.when}
               </span>
             )}
           </div>
         );
       })}
       {quota.resetCredits != null && quota.resetCredits > 0 && (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="col-span-full text-[11px] text-muted-foreground">
           {texts.resetCredits.replace("{count}", String(quota.resetCredits))}
         </span>
       )}
       {quota.note && (
-        <span className="text-[11px] text-amber-500">{quota.note}</span>
+        <span className="col-span-full text-[11px] text-amber-500">
+          {quota.note}
+        </span>
       )}
     </div>
   );
@@ -206,7 +277,8 @@ function AppRow({
       onMouseLeave={onLeave}
       onClick={onOpen}
       className={cn(
-        "flex w-full items-start gap-3 rounded-[10px] px-2.5 py-2 text-left",
+        // 图标 | 名称 | 箭头；额度另起一行，从名称列一直铺到箭头下方，进度条才不被箭头那一列挤短
+        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 rounded-[10px] px-2.5 py-2 text-left",
         FOCUS_RING,
         active ? "bg-blue-500/[0.16]" : ROW_HOVER,
       )}
@@ -214,7 +286,7 @@ function AppRow({
       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-black/[0.05] dark:bg-white/[0.08]">
         <AppGlyph app={app.app} size={20} badgeClassName="bg-transparent" />
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0">
         <span className="flex items-center gap-1.5">
           <span
             className={cn(
@@ -242,12 +314,16 @@ function AppRow({
             </>
           )}
         </span>
-        {app.quota && <QuotaBlock quota={app.quota} texts={texts} />}
       </span>
       {app.addId ? (
         <Plus className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
       ) : (
         <Chevron className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
+      )}
+      {app.quota && (
+        <span className="col-span-2 col-start-2 min-w-0">
+          <QuotaBlock quota={app.quota} texts={texts} />
+        </span>
       )}
     </button>
   );
@@ -287,6 +363,7 @@ function SubRow({
   const provider = row.provider;
   const hint =
     provider?.hint && !row.text.includes(provider.hint) ? provider.hint : null;
+  const inUse = row.checked && provider != null;
   return (
     <button
       type="button"
@@ -294,7 +371,11 @@ function SubRow({
       disabled={!row.enabled}
       onClick={() => onAction(row.id)}
       className={cn(
-        "flex w-full gap-2.5 rounded-lg px-2.5 py-1.5 text-left",
+        // 图标 | 名称 | 使用中；额度另起一行铺到「使用中」下方，免得被那一列挤窄
+        "grid w-full gap-x-2.5 rounded-lg px-2.5 py-1.5 text-left",
+        inUse
+          ? "grid-cols-[auto_minmax(0,1fr)_auto]"
+          : "grid-cols-[auto_minmax(0,1fr)]",
         // 带额度的行高，图标和「使用中」贴着第一行
         provider?.quota ? "items-start" : "items-center",
         FOCUS_RING,
@@ -313,7 +394,7 @@ function SubRow({
           />
         ) : null}
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0">
         <span className="block truncate text-[13px] font-medium">
           {row.text}
         </span>
@@ -322,13 +403,15 @@ function SubRow({
             {hint}
           </span>
         )}
-        {provider?.quota && (
-          <QuotaBlock quota={provider.quota} texts={texts} compact />
-        )}
       </span>
-      {row.checked && provider && (
-        <span className="shrink-0 text-[11px] font-medium text-blue-500">
+      {inUse && (
+        <span className="text-[11px] font-medium text-blue-500">
           {texts.inUse}
+        </span>
+      )}
+      {provider?.quota && (
+        <span className="min-w-0 [grid-column:2/-1]">
+          <QuotaBlock quota={provider.quota} texts={texts} compact />
         </span>
       )}
     </button>
@@ -419,7 +502,7 @@ function FooterButton({
       title={title}
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
+        "flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
         FOCUS_RING,
         ROW_HOVER,
         className,
@@ -436,7 +519,26 @@ function FooterButton({
 // ─── 面板 ─────────────────────────────────────────────────────────────────────
 
 export function TrayPanel() {
-  const [placement, setPlacement] = useState<PanelPlacement | null>(null);
+  const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
+  const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
+  // Windows 文本大小 / WebView 缩放可能让 CSS 像素和屏幕逻辑像素不再一一对应。
+  const coordinateScale =
+    nativePlacement?.platform === "windows"
+      ? pixelRatio / nativePlacement.scaleFactor
+      : 1;
+  const placement = useMemo(
+    () =>
+      nativePlacement && {
+        ...nativePlacement,
+        boundsTop: nativePlacement.boundsTop / coordinateScale,
+        boundsBottom: nativePlacement.boundsBottom / coordinateScale,
+        mainWidth: nativePlacement.mainWidth / coordinateScale,
+        subWidth: nativePlacement.subWidth / coordinateScale,
+        gap: nativePlacement.gap / coordinateScale,
+        radius: nativePlacement.radius / coordinateScale,
+      },
+    [nativePlacement, coordinateScale],
+  );
   const [state, setState] = useState<TrayPanelState | null>(null);
   const [tab, setTab] = useState<Tab>(readTab);
   const [openApp, setOpenApp] = useState<string | null>(null);
@@ -463,6 +565,22 @@ export function TrayPanel() {
   placementRef.current = placement;
   const openAppRef = useRef(openApp);
   openAppRef.current = openApp;
+  /** 已经开始处理的最新一次弹出（`seq`） */
+  const shownSeq = useRef(0);
+
+  useEffect(() => {
+    const update = () => setPixelRatio(window.devicePixelRatio || 1);
+    // 跨屏时 DPR 可能晚于显示事件更新，固定画布也不一定触发 resize。
+    // 每次 DPR 变化后重新订阅，才能继续检测下一次跨屏或 WebView 缩放。
+    const media = window.matchMedia?.(`(resolution: ${pixelRatio}dppx)`);
+    media?.addEventListener("change", update);
+    window.addEventListener("resize", update);
+    update();
+    return () => {
+      media?.removeEventListener("change", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [pixelRatio]);
 
   const load = useCallback(async () => {
     try {
@@ -477,19 +595,45 @@ export function TrayPanel() {
     }
   }, []);
 
-  // 每次弹出：收起子面板、清空搜索、先取数据再排版，显示出来就是新内容。
+  // 每次弹出：收起子面板、清空搜索，数据另取，热开不让排版等它——取数要读库，启动期的
+  // 会话用量导入可能占着库好几秒，等它就是点了没反应。热开先按上次的内容排版显示，
+  // 数据到了再更新；冷开最多等 `COLD_DATA_WAIT_MS`。
   // 设置（币种、趋势图样式）也重新读：面板窗口只隐藏不销毁，主窗口改了设置这边收不到。
   const begin = useCallback(
     async (next: PanelPlacement) => {
+      // 窗口刚建好时挂载取回的方位可能晚于、也旧于后来的弹出事件：过期的不用，
+      // 否则按旧 seq 回报的尺寸会被后端丢掉，Windows 上面板就不显示了。
+      if (next.seq <= shownSeq.current) return;
+      shownSeq.current = next.seq;
       syncLanguage();
       setOpenApp(null);
       setQuery("");
-      await Promise.all([
-        load(),
-        queryClient.invalidateQueries({ queryKey: ["settings"] }),
-      ]);
+      const cold = !lastState.current;
+      const loading = load();
+      void queryClient.invalidateQueries({ queryKey: ["settings"] });
+      // 反馈行（切换后的「重启生效」）收起即算看过（后端 `mark_feedback_seen`）：沿用上次
+      // 内容时先去掉。缓存键跟着换，收起之后才记下的（还没看过）等数据回来照样显示。
+      if (lastState.current) {
+        const previous = JSON.parse(lastState.current) as TrayPanelState;
+        if (previous.feedback) {
+          const cleared = { ...previous, feedback: null };
+          lastState.current = JSON.stringify(cleared);
+          setState(cleared);
+        }
+      }
+      if (cold) {
+        await Promise.race([
+          loading,
+          new Promise((resolve) =>
+            window.setTimeout(resolve, COLD_DATA_WAIT_MS),
+          ),
+        ]);
+        // 等的时候又弹出了一次：按最新那次排版
+        if (shownSeq.current !== next.seq) return;
+      }
       lastLayout.current = "";
       setShownCount((count) => count + 1);
+      setPixelRatio(window.devicePixelRatio || 1);
       setPlacement(next);
     },
     [load, queryClient],
@@ -544,16 +688,13 @@ export function TrayPanel() {
     const windowsJoined = p.platform === "windows" && !floating;
     const fixedCanvas = floating || windowsJoined;
 
-    main.style.minHeight = "";
-    if (sub) sub.style.minHeight = "";
-    let mainHeight = main.offsetHeight;
-    let subHeight = sub ? sub.offsetHeight : 0;
-    if (sub && !floating) {
-      // 两栏：一样高，整窗一块背景不留空
-      const height = Math.max(mainHeight, subHeight);
-      main.style.minHeight = sub.style.minHeight = `${height}px`;
-      mainHeight = subHeight = height;
+    const mainHeight = main.getBoundingClientRect().height;
+    if (sub) {
+      // 两栏以主面板的高度为准，供应商列表在子面板内部滚动。
+      // 底部弹出时不能让子面板撑高主面板，否则应用行会移到鼠标下面，反复触发切换。
+      sub.style.height = floating ? "" : `${mainHeight}px`;
     }
+    const subHeight = sub ? sub.getBoundingClientRect().height : 0;
 
     const mainTop = p.edge === "top" ? 0 : -mainHeight;
     let subX = p.side === "left" ? 0 : p.mainWidth + p.gap;
@@ -565,7 +706,7 @@ export function TrayPanel() {
     if (fixedCanvas) {
       // macOS 和 Windows 在这次弹出期间固定窗口范围，不让展开 / 切换子面板
       // 触发 WebView resize。Windows 的原生窗口区域只露出实际的卡片，其余区域可点击穿透。
-      const canvas = floatingCanvas(p);
+      const canvas = floatingCanvas(p, CANVAS_MAX_HEIGHT / coordinateScale);
       top = canvas.top;
       bottom = canvas.bottom;
       mainX = p.side === "left" ? p.subWidth + p.gap : 0;
@@ -613,11 +754,16 @@ export function TrayPanel() {
 
     const layout = {
       seq: p.seq,
-      width,
-      height: Math.ceil(bottom - top),
-      offsetX: mainX,
-      offsetY: top,
-      cards,
+      width: width * coordinateScale,
+      height: Math.ceil((bottom - top) * coordinateScale),
+      offsetX: mainX * coordinateScale,
+      offsetY: top * coordinateScale,
+      cards: cards.map((card) => ({
+        x: card.x * coordinateScale,
+        y: card.y * coordinateScale,
+        width: card.width * coordinateScale,
+        height: card.height * coordinateScale,
+      })),
       dark: theme.explicit,
     };
     const key = JSON.stringify(layout);
@@ -639,7 +785,7 @@ export function TrayPanel() {
     } else {
       void trayPanelApi.layout(layout);
     }
-  }, [openApp, theme.explicit]);
+  }, [openApp, theme.explicit, coordinateScale]);
 
   useEffect(
     () => () => {
@@ -835,22 +981,22 @@ export function TrayPanel() {
   };
 
   const mainMaxHeight = useMemo(() => {
-    if (!placement) return MAIN_MAX_HEIGHT;
+    if (!placement) return MAIN_MAX_HEIGHT / coordinateScale;
     const room =
       placement.edge === "top" ? placement.boundsBottom : -placement.boundsTop;
-    return Math.max(200, Math.min(MAIN_MAX_HEIGHT, room));
-  }, [placement]);
+    return Math.max(0, Math.min(MAIN_MAX_HEIGHT / coordinateScale, room));
+  }, [placement, coordinateScale]);
   const subMaxHeight = useMemo(() => {
-    if (!placement) return SUB_MAX_HEIGHT;
+    if (!placement) return SUB_MAX_HEIGHT / coordinateScale;
     const room =
       placement.layout === "floating"
         ? floatingCanvas(placement).bottom - floatingCanvas(placement).top
         : placement.boundsBottom - placement.boundsTop;
-    return Math.max(200, Math.min(SUB_MAX_HEIGHT, room));
-  }, [placement]);
+    return Math.max(0, Math.min(SUB_MAX_HEIGHT / coordinateScale, room));
+  }, [placement, coordinateScale]);
 
-  if (!state || !placement) return null;
-  const { texts } = state;
+  if (!placement) return null;
+  const { texts } = placement;
 
   return (
     <div
@@ -922,7 +1068,13 @@ export function TrayPanel() {
         <div className="tp-scroll min-h-0 flex-1" onScroll={() => relayout()}>
           {tab === "config" ? (
             <div className="flex flex-col gap-0.5 px-1.5 pb-1.5">
-              {state.problems.map((problem) => (
+              {/* 数据没到：列表区先转圈；头部、标签和底部的「打开主窗口 / 退出」照常可用 */}
+              {!state && (
+                <div className="flex justify-center py-6">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              )}
+              {state?.problems.map((problem) => (
                 <button
                   key={problem.id}
                   type="button"
@@ -938,7 +1090,7 @@ export function TrayPanel() {
                   <span>{problem.text}</span>
                 </button>
               ))}
-              {state.feedback && (
+              {state?.feedback && (
                 <div className="px-2.5 py-1 text-[11.5px] text-muted-foreground">
                   {state.feedback}
                 </div>
@@ -969,37 +1121,40 @@ export function TrayPanel() {
           data-other-item
           className="shrink-0 border-t border-black/[0.08] px-1.5 py-1.5 dark:border-white/[0.08]"
         >
-          <button
-            type="button"
-            role="switch"
-            aria-checked={state.lightweight}
-            onClick={() => action("lightweight_mode")}
-            className={cn(
-              "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
-              FOCUS_RING,
-              ROW_HOVER,
-            )}
-          >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
-              <Feather className="h-4 w-4" />
-            </span>
-            <span className="flex-1">{texts.lightweightMode}</span>
-            <span
+          {/* 开关要显示当前是否开着，数据到了再出 */}
+          {state && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={state.lightweight}
+              onClick={() => action("lightweight_mode")}
               className={cn(
-                "relative h-[18px] w-8 shrink-0 rounded-full transition-colors",
-                state.lightweight
-                  ? "bg-blue-500"
-                  : "bg-black/15 dark:bg-white/20",
+                "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
+                FOCUS_RING,
+                ROW_HOVER,
               )}
             >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
+                <Feather className="h-4 w-4" />
+              </span>
+              <span className="flex-1">{texts.lightweightMode}</span>
               <span
                 className={cn(
-                  "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-[left]",
-                  state.lightweight ? "left-[16px]" : "left-[2px]",
+                  "relative h-[18px] w-8 shrink-0 rounded-full transition-colors",
+                  state.lightweight
+                    ? "bg-blue-500"
+                    : "bg-black/15 dark:bg-white/20",
                 )}
-              />
-            </span>
-          </button>
+              >
+                <span
+                  className={cn(
+                    "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-[left]",
+                    state.lightweight ? "left-[16px]" : "left-[2px]",
+                  )}
+                />
+              </span>
+            </button>
+          )}
           <div className="flex">
             <FooterButton
               className="flex-1"
@@ -1010,7 +1165,7 @@ export function TrayPanel() {
             <FooterButton
               icon={<Power className="h-4 w-4" />}
               text={texts.quit}
-              title={state.quitHint ?? undefined}
+              title={state?.quitHint ?? undefined}
               onClick={() => action("quit")}
             />
           </div>
@@ -1026,7 +1181,7 @@ export function TrayPanel() {
           onMouseEnter={() => window.clearTimeout(hoverTimer.current)}
           style={{
             width: placement.subWidth,
-            maxHeight: subMaxHeight,
+            maxHeight: joined ? mainMaxHeight : subMaxHeight,
             ...cornerStyle("sub"),
           }}
         >

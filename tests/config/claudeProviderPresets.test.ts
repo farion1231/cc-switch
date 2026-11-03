@@ -64,10 +64,10 @@ describe("OpenCode Go Provider Preset", () => {
     expect(env).toMatchObject({
       ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
       ANTHROPIC_API_KEY: "",
-      ANTHROPIC_MODEL: "deepseek-v4-flash[1M]",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash[1M]",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash[1M]",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash[1M]",
+      ANTHROPIC_MODEL: "deepseek-v4.1-flash[1M]",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1M]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1M]",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1M]",
     });
     // /messages 只认 x-api-key，Bearer 被网关静默忽略——勿换回 AUTH_TOKEN
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { ArrowDown } from "lucide-react";
 import { useModelStats } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
@@ -56,16 +57,31 @@ export function ModelStatsTable({
   return (
     <div className="flex flex-col">
       <div className={usageTable.scroller}>
+        {/* 和请求日志同一套列组与取宽：按内容取宽、至少铺满面板，放不下横向滚动 */}
         <table
-          className={cn(usageTable.table, "min-w-[620px]")}
+          className={cn(usageTable.table, "w-max min-w-full")}
           aria-label={t("usage.modelStats")}
         >
           <thead>
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.model")}</th>
-              <th className={usageTable.th}>{t("usage.requests")}</th>
-              <th className={usageTable.th}>{t("usage.tokens")}</th>
-              <th className={usageTable.th}>{t("usage.cost")}</th>
+              {/* 按请求数从多到少排：箭头就是排序说明，不另写文字 */}
+              <th className={usageTable.th} aria-sort="descending">
+                <span className="inline-flex items-center gap-1">
+                  {t("usage.requests")}
+                  <ArrowDown
+                    aria-hidden="true"
+                    className="h-3 w-3 text-fg-3"
+                    strokeWidth={2}
+                  />
+                </span>
+              </th>
+              <th className={cn(usageTable.th, usageTable.groupGap)}>
+                {t("usage.cost")}
+              </th>
+              <th className={cn(usageTable.th, usageTable.groupGap)}>
+                {t("usage.tokens")}
+              </th>
               <PerformanceHeaders />
             </tr>
           </thead>
@@ -80,27 +96,26 @@ export function ModelStatsTable({
               pagination.pageRows.map((stat) => (
                 <tr key={stat.model} className={usageTable.row}>
                   <td className={cn(usageTable.td, usageTable.mono)}>
-                    <span
-                      className="block max-w-[320px] truncate"
-                      title={stat.model}
-                    >
-                      {stat.model}
-                    </span>
+                    <span title={stat.model}>{stat.model}</span>
                   </td>
                   <td className={usageTable.td}>
                     {fmtInt(stat.requestCount, locale)}
                   </td>
                   <td
-                    className={usageTable.td}
-                    title={fmtInt(stat.totalTokens, locale)}
-                  >
-                    {formatTokensCompact(stat.totalTokens, locale)}
-                  </td>
-                  <td
-                    className={cn(usageTable.td, "font-medium")}
+                    className={cn(
+                      usageTable.td,
+                      usageTable.groupGap,
+                      "font-medium",
+                    )}
                     title={`${moneyTitle(stat.totalCost, 6)} · ${t("usage.avgCost")} ${money(stat.avgCostPerRequest, 4)}`}
                   >
                     {money(stat.totalCost, 2)}
+                  </td>
+                  <td
+                    className={cn(usageTable.td, usageTable.groupGap)}
+                    title={fmtInt(stat.totalTokens, locale)}
+                  >
+                    {formatTokensCompact(stat.totalTokens, locale)}
                   </td>
                   <PerformanceCells stat={stat} />
                 </tr>

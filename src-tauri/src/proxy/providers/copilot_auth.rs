@@ -1039,6 +1039,26 @@ impl CopilotAuthManager {
         Ok(super::copilot_model_map::resolve_model(model_id, &models).map(|model| model.vendor))
     }
 
+    /// Vendor and upstream endpoints Copilot advertises for `model_id`.
+    pub async fn get_model_record_for_account(
+        &self,
+        account_id: &str,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        let models = self.fetch_all_models_for_account(account_id).await?;
+        Ok(super::copilot_model_map::resolve_model_record(model_id, &models).cloned())
+    }
+
+    pub async fn get_model_record(
+        &self,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_model_record_for_account(&id, model_id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
     pub async fn resolve_model_for_account(
         &self,
         account_id: &str,

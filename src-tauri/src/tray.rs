@@ -18,6 +18,7 @@ use tauri::image::Image;
 use tauri::menu::{
     CheckMenuItem, Menu, MenuBuilder, MenuItem, MenuItemKind, Submenu, SubmenuBuilder,
 };
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconEvent};
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -55,6 +56,10 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Hermes => "Hermes",
         AppType::Pi => "Pi",
         AppType::Mcode => "MiniMax Code",
+        AppType::Kimi => "Kimi Code",
+        AppType::Dsh => "DeepSeek Harness",
+        AppType::Agy => "Antigravity",
+        AppType::Omp => "Oh My Pi",
     }
 }
 
@@ -129,7 +134,6 @@ pub struct TrayTexts {
     pub tier_used: &'static str,
     pub tier_used_up: &'static str,
     pub balance: &'static str,
-    pub balance_used_up: &'static str,
     pub plan_expired: &'static str,
     pub used_amount: &'static str,
     pub quota_failed: &'static str,
@@ -230,7 +234,6 @@ impl TrayTexts {
                 tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
                 balance: "Balance {value}",
-                balance_used_up: "Balance used up",
                 plan_expired: "Plan expired",
                 used_amount: "Used {value}",
                 quota_failed: "Quota unavailable",
@@ -288,7 +291,6 @@ impl TrayTexts {
                 texts.tier_used = "{label} %{value} kullanıldı";
                 texts.tier_used_up = "{label} tükendi";
                 texts.balance = "Bakiye {value}";
-                texts.balance_used_up = "Bakiye tükendi";
                 texts.plan_expired = "Planın süresi doldu";
                 texts.used_amount = "Kullanılan: {value}";
                 texts.quota_failed = "Kota bilgisi alınamıyor";
@@ -345,7 +347,6 @@ impl TrayTexts {
                 tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
                 balance: "残高 {value}",
-                balance_used_up: "残高なし",
                 plan_expired: "プラン期限切れ",
                 used_amount: "使用 {value}",
                 quota_failed: "残量を取得できません",
@@ -400,12 +401,11 @@ impl TrayTexts {
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "餘額 {value}",
-                balance_used_up: "餘額已用完",
                 plan_expired: "方案已過期",
                 used_amount: "已使用 {value}",
-                quota_failed: "額度沒查到",
-                quota_failed_login_expired: "額度沒查到：登入已過期",
-                quota_failed_token_refresh_pending: "額度沒查到：權杖待重新整理",
+                quota_failed: "額度查詢失敗",
+                quota_failed_login_expired: "額度查詢失敗：登入已過期",
+                quota_failed_token_refresh_pending: "額度查詢失敗：權杖待重新整理",
                 reset_on_date: "{labelSp}額度 {when}重置",
                 reset_at_time: "{labelSp}額度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -455,12 +455,11 @@ impl TrayTexts {
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "余额 {value}",
-                balance_used_up: "余额已用完",
                 plan_expired: "套餐已过期",
                 used_amount: "已使用 {value}",
-                quota_failed: "额度没查到",
-                quota_failed_login_expired: "额度没查到：登录已过期",
-                quota_failed_token_refresh_pending: "额度没查到：令牌待刷新",
+                quota_failed: "额度查询失败",
+                quota_failed_login_expired: "额度查询失败：登录已过期",
+                quota_failed_token_refresh_pending: "额度查询失败：令牌待刷新",
                 reset_on_date: "{labelSp}额度 {when}重置",
                 reset_at_time: "{labelSp}额度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -586,6 +585,8 @@ struct QuotaLine {
     /// 档名（重置说明用；余额等没有档名）。
     label: Option<&'static str>,
     resets_at: Option<String>,
+    /// 要上色的那段数值（还有余额时的金额，照卡片 `balanceLine` 的 `emphasis`）；其余为空。
+    emphasis: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -630,6 +631,7 @@ fn tier_line(
         left,
         label: Some(label),
         resets_at,
+        emphasis: None,
     }
 }
 
@@ -713,6 +715,9 @@ fn resets_at_from_extra(extra: Option<&str>) -> Option<String> {
 }
 
 fn amount(value: f64, unit: Option<&str>) -> String {
+    // `{:.2}` 会把 -0.0 和舍入到 0 的小负数写成 -0.00（DeepSeek 欠费归零时就回 "-0.00"）
+    let rounded = (value * 100.0).round() / 100.0;
+    let value = if rounded == 0.0 { 0.0 } else { value };
     match unit.map(str::trim).filter(|unit| !unit.is_empty()) {
         Some(unit) => format!("{value:.2} {unit}"),
         None => format!("{value:.2}"),
@@ -727,6 +732,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
             left: -1.0,
             label: None,
             resets_at: None,
+            emphasis: None,
         });
     }
     let unit = data.unit.as_deref();
@@ -740,18 +746,18 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         }
     }
     if let Some(remaining) = data.remaining {
-        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）
+        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
+        // 用完也照写金额（欠费就是负数，#8812），整行变色、金额不另上绿色
         let left = if remaining <= 0.0 { 0.0 } else { f64::INFINITY };
-        let text = if remaining <= 0.0 {
-            texts.balance_used_up.to_string()
-        } else {
-            fill(texts.balance, &[("value", &amount(remaining, unit))])
-        };
+        let value = amount(remaining, unit);
+        let text = fill(texts.balance, &[("value", &value)]);
+        let emphasis = (remaining > 0.0).then_some(value);
         return Some(QuotaLine {
             text,
             left,
             label: None,
             resets_at: None,
+            emphasis,
         });
     }
     data.used.map(|used| QuotaLine {
@@ -759,6 +765,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         left: f64::INFINITY,
         label: None,
         resets_at: None,
+        emphasis: None,
     })
 }
 
@@ -873,6 +880,19 @@ fn managed_codex_account_id(provider: &Provider) -> Option<String> {
     None
 }
 
+/// Claude 官方卡绑了授权中心的账号（同前端 ProviderCard 的 `claudeBoundAccountId`）。
+fn claude_bound_account_id(app_type: &AppType, provider: &Provider) -> Option<String> {
+    if *app_type != AppType::Claude || !is_official_account(app_type, provider) {
+        return None;
+    }
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("claude_official"))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
 fn provider_uses_official_subscription(provider: &Provider) -> bool {
     // Managed Codex uses the account-scoped path in tray_usage_source instead
     // of the CLI's app-wide subscription cache.
@@ -894,6 +914,8 @@ fn provider_uses_official_subscription(provider: &Provider) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 enum TrayUsageSource {
     ManagedCodex(String),
+    /// 绑了账号的 Claude 官方卡：按绑定的账号取，不读客户端默认登录的应用级缓存。
+    ClaudeAccount(String),
     /// 客户端自己登录的官方订阅：和供应商卡片读写同一份应用级订阅缓存。
     Subscription,
     Script,
@@ -913,6 +935,16 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
                 .unwrap_or(true);
             return enabled.then_some(TrayUsageSource::ManagedCodex(account_id));
         }
+    }
+    if let Some(account_id) = claude_bound_account_id(app_type, provider) {
+        // 同卡片：绑了账号的 Claude 官方卡没保存过开关时默认查额度，用户关掉才不查。
+        let enabled = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.usage_script.as_ref())
+            .map(|script| script.enabled)
+            .unwrap_or(true);
+        return enabled.then_some(TrayUsageSource::ClaudeAccount(account_id));
     }
     // xAI OAuth 的额度属于绑定的 SuperGrok 账号，不是所在应用的客户端登录，仍走脚本路径。
     if provider_uses_official_subscription(provider) && !provider.is_xai_oauth() {
@@ -964,6 +996,12 @@ fn cached_usage_view(
         // account's quota from a provider cache or the CLI subscription cache.
         return usage_cache
             .with_codex_oauth(account_id, |quota| format_subscription_quota(texts, quota))
+            .flatten();
+    }
+    if let Some(TrayUsageSource::ClaudeAccount(account_id)) = source {
+        // 同上：没查到这个号就不显示，不回落到默认登录的应用级缓存。
+        return usage_cache
+            .with_claude_account(account_id, |quota| format_subscription_quota(texts, quota))
             .flatten();
     }
     if source == Some(&TrayUsageSource::Subscription) {
@@ -1182,7 +1220,12 @@ fn sort_providers(providers: &indexmap::IndexMap<String, Provider>) -> Vec<(&Str
     sorted
 }
 
-fn provider_hint(provider: &Provider) -> Option<String> {
+/// 副标题：备注 > 绑定的 Claude 账号（同主界面卡片） > 官网域名。
+fn provider_hint(
+    app: &AppType,
+    provider: &Provider,
+    claude_accounts: &HashMap<String, String>,
+) -> Option<String> {
     if let Some(notes) = provider
         .notes
         .as_deref()
@@ -1191,6 +1234,11 @@ fn provider_hint(provider: &Provider) -> Option<String> {
         .filter(|notes| !notes.is_empty())
     {
         return Some(truncate_chars(notes, 24));
+    }
+    if let Some(label) =
+        claude_bound_account_id(app, provider).and_then(|id| claude_accounts.get(&id))
+    {
+        return Some(label.clone());
     }
     let url = provider.website_url.as_deref()?.trim();
     let host = url
@@ -1202,11 +1250,15 @@ fn provider_hint(provider: &Provider) -> Option<String> {
     (!host.is_empty()).then(|| host.to_string())
 }
 
-fn provider_entry(app: &AppType, provider: &Provider) -> ProviderEntry {
+fn provider_entry(
+    app: &AppType,
+    provider: &Provider,
+    claude_accounts: &HashMap<String, String>,
+) -> ProviderEntry {
     ProviderEntry {
         id: provider.id.clone(),
         name: provider.name.clone(),
-        hint: provider_hint(provider),
+        hint: provider_hint(app, provider, claude_accounts),
         needs_routing: provider_needs_routing(app, provider),
         official: is_official_account(app, provider),
         blocked_from_routing: blocked_from_routing(app, provider),
@@ -1237,9 +1289,14 @@ fn collect_app_snapshot(
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
     let rows = app_state.db.get_all_providers(app.as_str())?;
+    let claude_accounts = if *app == AppType::Claude {
+        crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
+    } else {
+        HashMap::new()
+    };
     let providers: Vec<ProviderEntry> = sort_providers(&rows)
         .into_iter()
-        .map(|(_, provider)| provider_entry(app, provider))
+        .map(|(_, provider)| provider_entry(app, provider, &claude_accounts))
         .collect();
     // 代理模式下是代理路由到的那家（含故障转移切过去的）。
     let current_id = crate::mode::current::provider_for(
@@ -2088,6 +2145,8 @@ pub struct PanelQuotaLine {
     pub warn: bool,
     /// 这一档什么时候重置（ISO 8601），前端按本地时间写。
     pub resets_at: Option<String>,
+    /// `text` 里要上绿色的那段数值（还有余额时的金额）；其余为空。
+    pub emphasis: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2127,6 +2186,7 @@ fn panel_quota(
                     left: line.left.is_finite().then(|| line.left.clamp(0.0, 100.0)),
                     warn: line.left < WARN_BELOW_PERCENT,
                     resets_at: line.resets_at.clone(),
+                    emphasis: line.emphasis.clone(),
                 })
                 .collect(),
             note: None,
@@ -2157,7 +2217,7 @@ fn cached_reset_credits(
             usage_cache.with_codex_oauth(account_id, count).flatten()
         }
         TrayUsageSource::Subscription => usage_cache.with_subscription(app_type, count).flatten(),
-        TrayUsageSource::Script => None,
+        TrayUsageSource::ClaudeAccount(_) | TrayUsageSource::Script => None,
     }
 }
 
@@ -2212,7 +2272,11 @@ fn panel_rows(
                 let source = tray_usage_source(&snapshot.app, provider);
                 Some(PanelProvider {
                     name: provider.name.clone(),
-                    hint: provider_hint(provider),
+                    hint: snapshot
+                        .providers
+                        .iter()
+                        .find(|entry| entry.id == provider_id)
+                        .and_then(|entry| entry.hint.clone()),
                     icon: provider.icon.clone(),
                     icon_color: provider.icon_color.clone(),
                     quota: cached_usage_view(
@@ -2399,6 +2463,8 @@ pub fn create_tray_menu(
         };
     }
     let menu = builder.build().map_err(menu_error)?;
+    #[cfg(target_os = "windows")]
+    crate::tray_compat::remember_native_menu(&menu);
 
     *lock(&TRAY_SECTION_SUBMENUS) = handles;
     update_problem_indicator(app, &texts, &model.status.problems);
@@ -2628,6 +2694,44 @@ pub fn apply_tray_style(app: &tauri::AppHandle) {
         }
     }
     refresh_tray_menu(app);
+}
+
+/// 托盘图标的鼠标事件。Windows 第三方托盘下 `tray_compat` 补发的点击也走这里。
+pub fn handle_tray_icon_event(tray: &TrayIcon, event: TrayIconEvent) {
+    if let TrayIconEvent::Click {
+        button: button @ (MouseButton::Left | MouseButton::Right),
+        button_state: MouseButtonState::Up,
+        rect,
+        ..
+    } = &event
+    {
+        if cfg!(target_os = "windows") && *button == MouseButton::Left {
+            crate::tray_panel::hide_panel(tray.app_handle());
+            show_main_window(tray.app_handle());
+        } else if !crate::tray_panel::uses_native_menu() {
+            crate::tray_panel::toggle(tray.app_handle(), rect);
+            return;
+        } else {
+            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
+            mark_feedback_seen();
+        }
+    }
+    match &event {
+        // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+        // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+        // refresh_all_usage_in_tray 内部有 10 秒防抖。
+        TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+            let app = tray.app_handle().clone();
+            // 悬停时菜单还没打开：问题区该出现 / 消失了就趁这时重建。
+            if matches!(event, TrayIconEvent::Enter { .. }) {
+                refresh_tray_if_problems_changed(&app);
+            }
+            tauri::async_runtime::spawn(async move {
+                refresh_all_usage_in_tray(&app).await;
+            });
+        }
+        _ => log::debug!("unhandled event {event:?}"),
+    }
 }
 
 /// 左键是否直接出原生菜单：用面板时不出；Windows 的习惯是左键打开主界面、右键出菜单。
@@ -3170,6 +3274,11 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                         .await
                         .map(|_| ())
                     }
+                    TrayUsageSource::ClaudeAccount(account_id) => {
+                        crate::commands::get_claude_account_quota(app_clone, state, account_id)
+                            .await
+                            .map(|_| ())
+                    }
                     TrayUsageSource::Subscription => {
                         crate::commands::get_subscription_quota(app_clone, state, app_str)
                             .await
@@ -3655,8 +3764,29 @@ mod tests {
         );
         assert_eq!(
             one(balance(0.0, Some(100.0))),
-            Some(("余额已用完".to_string(), false))
+            Some(("余额 0.00 CNY".to_string(), false))
         );
+        // 欠费照写负数；-0.0 和舍入到 0 的小负数不写成 -0.00（#8812）
+        assert_eq!(
+            one(balance(-24.96, None)),
+            Some(("余额 -24.96 CNY".to_string(), false))
+        );
+        assert_eq!(
+            one(balance(-0.0, None)),
+            Some(("余额 0.00 CNY".to_string(), false))
+        );
+        assert_eq!(
+            one(balance(-0.004, None)),
+            Some(("余额 0.00 CNY".to_string(), false))
+        );
+
+        // 面板只给还有的余额金额上绿色；用完的那行整行变色，金额不另上色
+        let emphasis = |data| match format_script_result(&zh(), &usage_result(true, vec![data])) {
+            Some(QuotaView::Lines(lines)) => lines[0].emphasis.clone(),
+            _ => panic!("expected quota lines"),
+        };
+        assert_eq!(emphasis(balance(82.1, None)), Some("82.10 CNY".to_string()));
+        assert_eq!(emphasis(balance(0.0, Some(100.0))), None);
     }
 
     #[test]
@@ -3695,7 +3825,7 @@ mod tests {
         assert_eq!(title(failed.clone()), None);
         assert_eq!(
             quota_note(&zh(), &failed.unwrap(), now()).as_deref(),
-            Some("额度没查到")
+            Some("额度查询失败")
         );
 
         let login =
@@ -3703,7 +3833,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &login).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：登录已过期")
+            Some("额度查询失败：登录已过期")
         );
         let pending = SubscriptionQuota::error(
             "claude",
@@ -3713,7 +3843,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &pending).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：令牌待刷新")
+            Some("额度查询失败：令牌待刷新")
         );
         // 没有凭据时不说话。
         let missing =
@@ -3809,6 +3939,109 @@ mod tests {
             tray_usage_source(&AppType::Codex, &legacy),
             Some(TrayUsageSource::ManagedCodex("account-1".to_string()))
         );
+    }
+
+    fn claude_bound_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-bound",
+            "name": "Claude Official",
+            "settingsConfig": {"env": {}},
+            "category": "official",
+            "meta": {
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "claude_official",
+                    "accountId": id
+                })),
+                "usage_script": enabled.map(|enabled| serde_json::json!({
+                    "enabled": enabled,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": "official_subscription"
+                }))
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn claude_bound_card_hint_shows_account_unless_noted() {
+        let accounts = HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]);
+        let mut provider = claude_bound_provider(Some("acct-1"), None);
+        provider.website_url = Some("https://www.anthropic.com".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &provider, &accounts).as_deref(),
+            Some("me@example.com")
+        );
+
+        provider.notes = Some("Work".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &provider, &accounts).as_deref(),
+            Some("Work")
+        );
+
+        // 账号不在这台电脑上：退回官网域名
+        let mut missing = claude_bound_provider(Some("acct-2"), None);
+        missing.website_url = Some("https://www.anthropic.com".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &missing, &accounts).as_deref(),
+            Some("www.anthropic.com")
+        );
+    }
+
+    #[test]
+    fn claude_bound_card_tray_usage_defaults_on_and_reads_its_account() {
+        // 卡片在没保存开关时默认查额度：托盘也要显示，不然两边各说各的
+        for enabled in [Some(true), None] {
+            assert_eq!(
+                tray_usage_source(
+                    &AppType::Claude,
+                    &claude_bound_provider(Some(" acct-1 "), enabled)
+                ),
+                Some(TrayUsageSource::ClaudeAccount("acct-1".to_string()))
+            );
+        }
+        assert_eq!(
+            tray_usage_source(
+                &AppType::Claude,
+                &claude_bound_provider(Some("acct-1"), Some(false))
+            ),
+            None
+        );
+        // 没绑账号的官方卡照旧：开了官方订阅模板才查，读默认登录
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, &claude_bound_provider(None, None)),
+            None
+        );
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, &claude_bound_provider(None, Some(true))),
+            Some(TrayUsageSource::Subscription)
+        );
+
+        // 只读这个号的快照，不回落到默认登录的应用级缓存
+        let cache = UsageCache::new();
+        let texts = en();
+        let provider = claude_bound_provider(Some("acct-1"), None);
+        let label = || {
+            title(usage_view(
+                &cache,
+                &texts,
+                &AppType::Claude,
+                &provider,
+                &provider.id,
+            ))
+            .map(|(text, _)| text)
+        };
+        cache.put_subscription(
+            AppType::Claude,
+            make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 99.0)]),
+        );
+        assert_eq!(label(), None);
+        cache.put_claude_account(
+            "acct-1".to_string(),
+            make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 25.0)]),
+        );
+        assert_eq!(label().as_deref(), Some("5-hour 75% left"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 
 interface UseGeminiConfigStateProps {
+  preferConfigModel?: boolean;
   initialData?: {
     settingsConfig?: Record<string, unknown>;
   };
@@ -12,6 +13,7 @@ interface UseGeminiConfigStateProps {
  */
 export function useGeminiConfigState({
   initialData,
+  preferConfigModel = false,
 }: UseGeminiConfigStateProps) {
   const [geminiEnv, setGeminiEnvState] = useState("");
   const [geminiConfig, setGeminiConfigState] = useState("");
@@ -105,7 +107,18 @@ export function useGeminiConfigState({
     const envObj = envStringToObj(geminiEnv);
     const extractedKey = envObj.GEMINI_API_KEY || "";
     const extractedBaseUrl = envObj.GOOGLE_GEMINI_BASE_URL || "";
-    const extractedModel = envObj.GEMINI_MODEL || "";
+    let extractedModel = envObj.GEMINI_MODEL || "";
+    if (preferConfigModel) {
+      try {
+        const config = JSON.parse(geminiConfig || "{}");
+        if (typeof config.model?.name === "string") {
+          extractedModel = config.model.name;
+        }
+      } catch {
+        // Keep the last valid model while the JSON editor contains an incomplete draft.
+        extractedModel = geminiModel;
+      }
+    }
 
     if (extractedKey !== geminiApiKey) {
       setGeminiApiKey(extractedKey);
@@ -116,7 +129,15 @@ export function useGeminiConfigState({
     if (extractedModel !== geminiModel) {
       setGeminiModel(extractedModel);
     }
-  }, [geminiEnv, envStringToObj, geminiApiKey, geminiBaseUrl, geminiModel]);
+  }, [
+    geminiEnv,
+    geminiConfig,
+    preferConfigModel,
+    envStringToObj,
+    geminiApiKey,
+    geminiBaseUrl,
+    geminiModel,
+  ]);
 
   // 验证 Gemini Config JSON
   const validateGeminiConfig = useCallback((value: string): string => {
@@ -188,8 +209,25 @@ export function useGeminiConfigState({
       envObj.GEMINI_MODEL = trimmed;
       const newEnv = envObjToString(envObj);
       setGeminiEnv(newEnv);
+      if (preferConfigModel) {
+        try {
+          const config = JSON.parse(geminiConfig || "{}");
+          config.model = { ...config.model, name: trimmed };
+          setGeminiConfig(JSON.stringify(config, null, 2));
+        } catch {
+          // Do not discard an invalid user JSON draft; submission remains blocked.
+        }
+      }
     },
-    [geminiEnv, envStringToObj, envObjToString, setGeminiEnv],
+    [
+      geminiEnv,
+      geminiConfig,
+      preferConfigModel,
+      envStringToObj,
+      envObjToString,
+      setGeminiEnv,
+      setGeminiConfig,
+    ],
   );
 
   // 处理 env 变化

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Folder, Loader2, X } from "lucide-react";
 import {
   Dialog,
@@ -10,16 +11,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
-import { providersApi, settingsApi } from "@/lib/api";
+import { authApi, providersApi, settingsApi } from "@/lib/api";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import { isMac } from "@/lib/platform";
 import type { AppId } from "@/lib/api/types";
 import type { Provider } from "@/types";
 import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
+import { providerNeedsRouting } from "@/utils/providerCapabilities";
 
 const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
 const MAX_RECENT = 5;
+/** 跳过权限确认按应用分别记住：同一个人可能只在其中一个工具里这么用 */
+const skipPermissionsKey = (appId: AppId) =>
+  `cc-switch:terminal:skip-permissions:${appId}`;
+/** 附加参数同样按应用记住：各个 CLI 的参数互不通用 */
+const extraArgsKey = (appId: AppId) => `cc-switch:terminal:extra-args:${appId}`;
 
 function readRecent(): string[] {
   try {
@@ -37,6 +48,40 @@ function writeRecent(dirs: string[]) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dirs));
   } catch {
     // 只是记住用过的目录，存不了不影响打开终端
+  }
+}
+
+function readSkipPermissions(appId: AppId): boolean {
+  try {
+    return window.localStorage.getItem(skipPermissionsKey(appId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSkipPermissions(appId: AppId, value: boolean) {
+  try {
+    if (value) window.localStorage.setItem(skipPermissionsKey(appId), "1");
+    else window.localStorage.removeItem(skipPermissionsKey(appId));
+  } catch {
+    // 同上，只是记住上次的选择
+  }
+}
+
+function readExtraArgs(appId: AppId): string {
+  try {
+    return window.localStorage.getItem(extraArgsKey(appId)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeExtraArgs(appId: AppId, value: string) {
+  try {
+    if (value) window.localStorage.setItem(extraArgsKey(appId), value);
+    else window.localStorage.removeItem(extraArgsKey(appId));
+  } catch {
+    // 同上，只是记住上次填的
   }
 }
 
@@ -63,18 +108,74 @@ function DirLabel({ dir }: { dir: string }) {
   );
 }
 
+/** 对话框里说「启动 X」用的产品名 */
+const TERMINAL_APP_NAMES: Partial<Record<AppId, string>> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  agy: "Antigravity CLI",
+};
+
+/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱 */
+function skipPermissionsFlag(appId: AppId): string {
+  return appId === "codex"
+    ? "--dangerously-bypass-approvals-and-sandbox"
+    : "--dangerously-skip-permissions";
+}
+
+/** Codex 卡自己带路由表（第三方地址），终端能只对这一次用 `-c` 换成它 */
+function codexHasOwnRoute(provider: Provider): boolean {
+  if (provider.category === "official") return false;
+  if (providerNeedsRouting("codex", provider)) return false;
+  const config = (provider.settingsConfig as { config?: unknown } | undefined)
+    ?.config;
+  return typeof config === "string" && /^\s*base_url\s*=/m.test(config);
+}
+
 /**
- * 终端经 `claude --settings <临时文件>` 启动，临时文件只放这张卡的 env，没写的键仍从
- * ~/.claude/settings.json 读。卡上同时有地址和凭据才压得住全局配置；官方登录卡 env 为空，
- * 会跟着全局走（账号凭据也是全局一份），不能说它隔离。
+ * 卡片上显示不显示「打开终端」。Codex 的官方卡、没有路由的卡跟着 Codex 自己的登录走，
+ * 只有是当前供应商时才能打开（直接跑 `codex`）；要经本地路由的卡终端直连不了。
  */
-export function terminalIsIsolated(provider: Provider): boolean {
+export function terminalAvailable(
+  provider: Provider,
+  appId: AppId,
+  isCurrent: boolean,
+): boolean {
+  if (appId !== "codex") return true;
+  if (providerNeedsRouting("codex", provider)) return false;
+  return isCurrent || codexHasOwnRoute(provider);
+}
+
+/**
+ * Claude Code：终端经 `claude --settings <临时文件>` 启动，临时文件只放这张卡的 env，没写的
+ * 键仍从 ~/.claude/settings.json 读。卡上同时有地址和凭据才压得住全局配置。官方卡绑了授权
+ * 中心的账号时，终端用这个账号的 `CLAUDE_CONFIG_DIR` 启动（后端 `claude_official::
+ * terminal_account`），也固定在这个号上；没绑的官方卡 env 为空，跟着全局登录走，不能说它隔离。
+ *
+ * Codex：带路由表的第三方卡经 `codex -c` 只对这个进程换成它，Key 经环境变量传，不写
+ * config.toml（后端 `codex_terminal`）；官方卡跟着 Codex 自己的登录走。
+ *
+ * Antigravity：带 Key 的卡用自己的私有 `--gemini_dir` 启动，Key 只给这个 agy 进程；官方
+ * 登录卡直接跑原生 agy，跟着全局设置和登录走。
+ */
+export function terminalIsIsolated(
+  provider: Provider,
+  appId: AppId = "claude",
+): boolean {
+  if (appId === "codex") return codexHasOwnRoute(provider);
   const env = (provider.settingsConfig as { env?: unknown } | undefined)?.env;
   if (!env || typeof env !== "object") return false;
   const filled = (key: string) => {
     const value = (env as Record<string, unknown>)[key];
     return typeof value === "string" && value.trim() !== "";
   };
+  if (appId === "agy") {
+    return provider.category !== "official" && filled("GEMINI_API_KEY");
+  }
+  if (provider.category === "official") {
+    return Boolean(
+      resolveManagedAccountId(provider.meta, "claude_official")?.trim(),
+    );
+  }
   return (
     filled("ANTHROPIC_BASE_URL") &&
     (filled("ANTHROPIC_AUTH_TOKEN") || filled("ANTHROPIC_API_KEY"))
@@ -89,7 +190,7 @@ interface OpenTerminalDialogProps {
 }
 
 /**
- * 「打开终端」：先说明要选的是启动 Claude Code 的目录，再让用户选。
+ * 「打开终端」：先说明要选的是启动 CLI 的目录，再让用户选。
  * 默认填上次成功打开的目录，最近用过的几个点一下就能换，不必每次都走系统选文件夹窗口。
  */
 export function OpenTerminalDialog({
@@ -101,14 +202,43 @@ export function OpenTerminalDialog({
   const [recent, setRecent] = useState<string[]>([]);
   const [dir, setDir] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
+  const [skipPermissions, setSkipPermissions] = useState(false);
+  const [extraArgs, setExtraArgs] = useState("");
+  const queryClient = useQueryClient();
+
+  // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
+  const boundAgyAccount =
+    appId === "agy" && provider && provider.category === "official" && isMac()
+      ? resolveManagedAccountId(provider.meta, "agy_oauth")
+      : null;
+  const { data: agyStatus } = useQuery({
+    queryKey: ["managed-auth-status", "agy_oauth"],
+    queryFn: () => authApi.authGetStatus("agy_oauth"),
+    enabled: boundAgyAccount !== null,
+  });
+  const agyWillSwitch =
+    boundAgyAccount !== null &&
+    agyStatus !== undefined &&
+    agyStatus.default_account_id !== boundAgyAccount;
+  const { data: agyRunning } = useQuery({
+    queryKey: ["agy-running", provider?.id],
+    queryFn: () => authApi.agyAccountIsRunning(),
+    enabled: agyWillSwitch,
+    staleTime: 0,
+  });
+  const agyTargetLogin = agyStatus?.accounts.find(
+    (account) => account.id === boundAgyAccount,
+  )?.login;
 
   useEffect(() => {
     if (!provider) return;
     const stored = readRecent();
     setRecent(stored);
     setDir(stored[0] ?? null);
+    setSkipPermissions(readSkipPermissions(appId));
+    setExtraArgs(readExtraArgs(appId));
     setOpening(false);
-  }, [provider]);
+  }, [provider, appId]);
 
   const handleChoose = async () => {
     try {
@@ -131,12 +261,24 @@ export function OpenTerminalDialog({
   const handleOpen = async () => {
     if (!provider || !dir || opening) return;
     setOpening(true);
+    const args = extraArgs.trim();
     try {
-      await providersApi.openTerminal(provider.id, appId, { cwd: dir });
+      await providersApi.openTerminal(provider.id, appId, {
+        cwd: dir,
+        skipPermissions,
+        ...(args ? { extraArgs: args } : {}),
+      });
       writeRecent(
         [dir, ...recent.filter((item) => item !== dir)].slice(0, MAX_RECENT),
       );
+      writeSkipPermissions(appId, skipPermissions);
+      writeExtraArgs(appId, args);
       toast.success(t("provider.terminalOpened"));
+      if (agyWillSwitch) {
+        void queryClient.invalidateQueries({
+          queryKey: ["managed-auth-status", "agy_oauth"],
+        });
+      }
       onClose();
     } catch (error) {
       console.error("[OpenTerminalDialog] Failed to open terminal", error);
@@ -163,16 +305,46 @@ export function OpenTerminalDialog({
           <DialogDescription>
             {t("provider.openTerminalDialog.description", {
               name: provider?.name ?? "",
+              app: TERMINAL_APP_NAMES[appId] ?? "Claude Code",
             })}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 px-6 py-3">
-          {provider && terminalIsIsolated(provider) && (
+          {provider && terminalIsIsolated(provider, appId) && (
             <Notice title={t("provider.openTerminalDialog.isolationTitle")}>
-              {t("provider.openTerminalDialog.isolationBody", {
-                name: provider.name,
+              {/* Antigravity 没有「切换」，Claude Code 那句「之后切换不会影响它」对它不成立 */}
+              {t(
+                appId === "agy"
+                  ? "provider.openTerminalDialog.isolationBodyAgy"
+                  : "provider.openTerminalDialog.isolationBody",
+                { name: provider.name },
+              )}
+            </Notice>
+          )}
+
+          {agyWillSwitch && (
+            <Notice
+              tone={agyRunning ? "warning" : "neutral"}
+              title={t("provider.openTerminalDialog.agySwitchTitle", {
+                defaultValue: "会切换 agy 的登录",
               })}
+            >
+              {t("provider.openTerminalDialog.agySwitchBody", {
+                defaultValue:
+                  "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
+                account:
+                  agyTargetLogin ??
+                  t("provider.form.agy.accountMissing", {
+                    defaultValue: "不在这台电脑上的账号",
+                  }),
+              })}
+              {agyRunning &&
+                " " +
+                  t("provider.openTerminalDialog.agySwitchRunning", {
+                    defaultValue:
+                      "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。",
+                  })}
             </Notice>
           )}
 
@@ -239,6 +411,46 @@ export function OpenTerminalDialog({
               </ul>
             </div>
           )}
+
+          <label className="flex cursor-pointer select-none items-start gap-2">
+            <Checkbox
+              checked={skipPermissions}
+              disabled={opening}
+              onCheckedChange={(value) => setSkipPermissions(value === true)}
+              className="mt-0.5"
+            />
+            <span className="min-w-0 text-body text-fg-1">
+              {t("provider.openTerminalDialog.skipPermissions")}
+              <code className="ms-1.5 break-all font-mono text-caption text-fg-3">
+                {skipPermissionsFlag(appId)}
+              </code>
+            </span>
+          </label>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="open-terminal-extra-args"
+              className="text-caption text-fg-3"
+            >
+              {t("provider.openTerminalDialog.extraArgs")}
+            </label>
+            <Input
+              id="open-terminal-extra-args"
+              value={extraArgs}
+              disabled={opening}
+              onChange={(event) => setExtraArgs(event.target.value)}
+              placeholder={t(
+                "provider.openTerminalDialog.extraArgsPlaceholder",
+              )}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              className="font-mono"
+            />
+            <p className="text-caption text-fg-3">
+              {t("provider.openTerminalDialog.extraArgsHint")}
+            </p>
+          </div>
         </div>
 
         <DialogFooter>

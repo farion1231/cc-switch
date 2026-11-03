@@ -96,7 +96,7 @@ pub struct DeepLinkImportRequest {
     pub resource: String,
 
     // ============ Common fields ============
-    /// Target application (claude/codex/gemini) - for provider, prompt, skill
+    /// Target application (e.g. claude/codex/gemini/agy) - for provider and prompt
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
     /// Resource name
@@ -153,7 +153,7 @@ pub struct DeepLinkImportRequest {
     pub description: Option<String>,
 
     // ============ MCP-specific fields ============
-    /// Target applications for MCP (comma-separated: "claude,codex,gemini")
+    /// Target applications for MCP (comma-separated: "claude,codex,gemini,agy")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub apps: Option<String>,
 

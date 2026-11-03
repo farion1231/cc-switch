@@ -51,6 +51,8 @@ fn merge_settings_for_save(
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
+    // 轻量模式状态只由进入 / 退出轻量模式时写，前端缓存里的值总是旧的。
+    incoming.lightweight_mode = existing.lightweight_mode;
     incoming
 }
 
@@ -275,8 +277,15 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let updater = app
-        .updater_builder()
+    let builder = app.updater_builder();
+    // Windows 上 updater 以 `msiexec /passive /promptrestart` 安装 MSI。passive 没有模态框、
+    // 未指定重启选项时，安装目录里有文件被占用，Windows Installer 会不经确认直接重启系统
+    // （#8534）。`/promptrestart` 只对应 REBOOTPROMPT，挡不住这一点，因此显式追加
+    // REBOOT=ReallySuppress（即 `/norestart`）。旧版本的 updater 不带这个参数，
+    // 由 MSI 模板自身的 REBOOT 属性兜底。
+    #[cfg(target_os = "windows")]
+    let builder = builder.installer_arg("REBOOT=ReallySuppress");
+    let updater = builder
         .build()
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
 
@@ -399,6 +408,18 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_should_keep_the_existing_lightweight_mode() {
+        let existing = AppSettings {
+            lightweight_mode: true,
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+
+        assert!(merged.lightweight_mode);
+    }
 
     #[test]
     fn save_settings_should_keep_the_existing_proxy_client_host() {

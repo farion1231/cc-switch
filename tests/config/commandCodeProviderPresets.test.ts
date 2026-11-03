@@ -37,6 +37,8 @@ describe("Command Code provider presets", () => {
       "deepseek/deepseek-v4.1-flash",
       "z-ai/glm-5.3-flash",
       "Qwen/Qwen3.8-Flash",
+      "moonshotai/Kimi-K3.1-Pro",
+      "zai-org/GLM-5.3",
     ]);
     expect(
       preset?.modelCatalog?.some((model) => model.model.includes("claude")),

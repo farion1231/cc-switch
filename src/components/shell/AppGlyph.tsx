@@ -15,6 +15,10 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  kimi: "Kimi Code",
+  dsh: "DeepSeek Harness",
+  agy: "Antigravity",
+  omp: "Oh My Pi",
 };
 
 const APP_ICON_NAME: Record<AppId, string> = {
@@ -28,6 +32,10 @@ const APP_ICON_NAME: Record<AppId, string> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "minimax",
+  kimi: "kimi",
+  dsh: "deepseek",
+  agy: "antigravity",
+  omp: "omp",
 };
 
 // Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面
