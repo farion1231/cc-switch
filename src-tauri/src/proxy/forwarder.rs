@@ -2987,8 +2987,7 @@ impl RequestForwarder {
         let headers = response.headers().clone();
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
-        let mut parse_buffer = String::new();
-        let mut utf8_remainder = Vec::new();
+        let mut sse = crate::proxy::sse::SseBuffer::new();
 
         loop {
             let next = if self.streaming_first_byte_timeout.is_zero() {
@@ -3005,13 +3004,13 @@ impl RequestForwarder {
             };
 
             let Some(chunk) = next else {
-                if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+                if let Some(outcome) = inspect_responses_json_document(sse.pending()) {
                     outcome?;
                     let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
                     return Ok(ProxyResponse::streamed(status, headers, replay));
                 }
-                if !parse_buffer.trim().is_empty() {
-                    if let Some(outcome) = inspect_responses_start_event(parse_buffer.trim()) {
+                if !sse.pending().trim().is_empty() {
+                    if let Some(outcome) = inspect_responses_start_event(sse.pending().trim()) {
                         outcome?;
                         let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
                         return Ok(ProxyResponse::streamed(status, headers, replay));
@@ -3027,21 +3026,21 @@ impl RequestForwarder {
                     "Failed while validating Responses stream start: {error}"
                 ))
             })?;
-            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            sse.push_bytes(&chunk);
             replay_chunks.push(chunk);
 
             // Some compatible gateways ignore `stream:true` and return a complete
             // Responses JSON document without a JSON content-type. Recognize that
             // shape before looking for SSE delimiters; pretty-printed JSON may itself
             // contain blank lines and must stay intact.
-            if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+            if let Some(outcome) = inspect_responses_json_document(sse.pending()) {
                 outcome?;
                 let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
                 return Ok(ProxyResponse::streamed(status, headers, replay));
             }
 
-            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
-                if let Some(outcome) = inspect_responses_start_event(&block) {
+            while let Some(block) = sse.next_block() {
+                if let Some(outcome) = inspect_responses_start_event(block) {
                     outcome?;
                     let replay =
                         futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
@@ -3086,8 +3085,7 @@ impl RequestForwarder {
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
         let mut held_bytes = 0usize;
-        let mut parse_buffer = String::new();
-        let mut utf8_remainder = Vec::new();
+        let mut sse = crate::proxy::sse::SseBuffer::new();
 
         'hold: loop {
             let Ok(next) = tokio::time::timeout_at(deadline, stream.next()).await else {
@@ -3099,12 +3097,12 @@ impl RequestForwarder {
             // 还没有交出流，读出错和首包前出错一样回到重试循环。
             let chunk = chunk
                 .map_err(|error| ProxyError::ForwardFailed(format!("读取流式响应失败: {error}")))?;
-            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            sse.push_bytes(&chunk);
             held_bytes += chunk.len();
             replay_chunks.push(chunk);
 
-            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
-                match encrypted_task_stream_start(&block, request) {
+            while let Some(block) = sse.next_block() {
+                match encrypted_task_stream_start(block, request) {
                     StreamStart::Pending => {}
                     StreamStart::Commit => break 'hold,
                     StreamStart::Rejected(error) => return Err(error),
