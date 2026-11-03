@@ -1051,6 +1051,7 @@
     "toolActionDone": "{{action}} completed for {{count}} tool(s)",
     "toolActionPartial": "{{action}} succeeded for {{succeeded}}, failed for {{failed}}",
     "toolActionFailed": "Install/update command failed",
+    "toolActionBinCollision": "A file already exists at {{path}}, probably from another installation method, and npm won't overwrite it. Check what it is, rename it as a backup, then try again. Don't use npm's --force: it overwrites the file outright.",
     "toolActionInProgress": "An app operation is still running",
     "toolActionInProgressDetail": "{{tool}} already has an installation, update or uninstall running in the background. Please wait for it to finish.",
     "toolNotRunnable": "Installed but not runnable (no version detected)",

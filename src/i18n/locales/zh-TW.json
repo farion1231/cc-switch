@@ -1052,6 +1052,7 @@
     "toolActionDone": "{{count}} 個工具{{action}}完成",
     "toolActionPartial": "{{succeeded}} 個{{action}}成功，{{failed}} 個失敗",
     "toolActionFailed": "安裝/更新指令執行失敗",
+    "toolActionBinCollision": "{{path}} 已經有一個同名檔案，多半來自另一種安裝方式，npm 不會覆寫它。請先確認它是什麼，改名備份後再重試；不要用 npm 的 --force，它會直接覆寫這個檔案。",
     "toolActionInProgress": "應用程式操作仍在進行中",
     "toolActionInProgressDetail": "{{tool}} 已有安裝、升級或解除安裝作業正在背景處理，請等待完成，無需重複操作。",
     "toolNotRunnable": "已安裝但無法執行（未偵測到版本）",

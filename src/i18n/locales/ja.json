@@ -1051,6 +1051,7 @@
     "toolActionDone": "{{count}} 個のツールの{{action}}が完了しました",
     "toolActionPartial": "{{succeeded}} 個成功、{{failed}} 個失敗（{{action}}）",
     "toolActionFailed": "インストール/更新コマンドの実行に失敗しました",
+    "toolActionBinCollision": "{{path}} に同名のファイルが既にあります（別の方法でインストールされた可能性があります）。npm はこれを上書きしません。中身を確認し、名前を変えてバックアップしてから再試行してください。npm の --force は使わないでください。ファイルがそのまま上書きされます。",
     "toolActionInProgress": "アプリの操作が実行中です",
     "toolActionInProgressDetail": "{{tool}} のインストール、更新、またはアンインストールがバックグラウンドで実行中です。完了するまでお待ちください。",
     "toolNotRunnable": "インストール済みですが実行できません（バージョン未検出）",
