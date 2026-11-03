@@ -10,9 +10,11 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrayPanel, formatResetIn } from "@/tray-panel/TrayPanel";
 import {
+  CHANGED_EVENT,
   SHOW_EVENT,
   trayPanelApi,
   type PanelPlacement,
+  type PanelTexts,
   type TrayPanelState,
 } from "@/tray-panel/api";
 import { emitTauriEvent } from "../msw/tauriMocks";
@@ -30,26 +32,27 @@ vi.mock("@/tray-panel/api", async (importOriginal) => ({
 }));
 vi.mock("@/tray-panel/UsageTab", () => ({ UsageTab: () => <div>Usage</div> }));
 
+const texts: PanelTexts = {
+  switchProvider: "Switch provider",
+  searchPlaceholder: "Search providers",
+  inUse: "In use",
+  noMatch: "No match",
+  openMain: "Open main window",
+  quit: "Quit",
+  settings: "Settings",
+  lightweightMode: "Lightweight mode",
+  openPanel: "Open panel",
+  configTab: "Configuration",
+  usageTab: "Usage",
+  resetsIn: "Resets in {when}",
+  durationDays: "{n}d",
+  durationHours: "{n}h",
+  durationMinutes: "{n}m",
+  durationSep: " ",
+  resetCredits: "{count} resets",
+};
+
 const state: TrayPanelState = {
-  texts: {
-    switchProvider: "Switch provider",
-    searchPlaceholder: "Search providers",
-    inUse: "In use",
-    noMatch: "No match",
-    openMain: "Open main window",
-    quit: "Quit",
-    settings: "Settings",
-    lightweightMode: "Lightweight mode",
-    openPanel: "Open panel",
-    configTab: "Configuration",
-    usageTab: "Usage",
-    resetsIn: "Resets in {when}",
-    durationDays: "{n}d",
-    durationHours: "{n}h",
-    durationMinutes: "{n}m",
-    durationSep: " ",
-    resetCredits: "{count} resets",
-  },
   problems: [],
   feedback: null,
   apps: [
@@ -94,6 +97,7 @@ const windows: PanelPlacement = {
   radius: 8,
   layout: "joined",
   glass: "frosted",
+  texts,
 };
 
 const frames = new Map<number, FrameRequestCallback>();
@@ -202,6 +206,155 @@ describe("TrayPanel window layout", () => {
     expect(screen.getByText("Balance -24.96 CNY")).toHaveClass(
       "text-amber-500",
     );
+  });
+
+  it("shows the frame with Open main window and Quit before the panel data arrives", async () => {
+    let resolveState: (value: TrayPanelState) => void = () => {};
+    vi.mocked(trayPanelApi.state).mockReturnValue(
+      new Promise((resolve) => {
+        resolveState = resolve;
+      }),
+    );
+    // 主卡片的高度跟着内容走：应用行还没来时矮一截。
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.querySelector("[data-app-row]") ? 320 : 180;
+      },
+    );
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel();
+
+    const quit = await screen.findByRole("button", { name: "Quit" });
+    expect(
+      screen.getByRole("button", { name: "Open main window" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Claude Code/ })).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(trayPanelApi.layout).toHaveBeenCalledTimes(1);
+    expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        seq: 1,
+        width: 620,
+        height: 760,
+        cards: [{ x: 300, y: 580, width: 320, height: 180 }],
+      }),
+    );
+    fireEvent.click(quit);
+    expect(trayPanelApi.action).toHaveBeenCalledWith("quit");
+
+    await act(async () => resolveState(state));
+    await screen.findByRole("button", { name: "Claude Code default · Direct" });
+    expect(screen.getByRole("switch")).toBeVisible();
+    // 数据那次回报走 rAF：先画到固定画布，再扩原生可见区域
+    expect(trayPanelApi.layout).toHaveBeenCalledTimes(1);
+    await paint();
+    expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        seq: 1,
+        width: 620,
+        height: 760,
+        cards: [{ x: 300, y: 440, width: 320, height: 320 }],
+      }),
+    );
+  });
+
+  it("ignores a mount-time placement that is older than a show event already handled", async () => {
+    let resolvePlacement: (value: PanelPlacement) => void = () => {};
+    vi.mocked(trayPanelApi.placement).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePlacement = resolve;
+      }),
+    );
+    renderPanel();
+    // 监听挂上之后、挂载时的方位回包之前，又弹出了一次（seq 更新）
+    await act(async () => {});
+    await act(async () => {
+      emitTauriEvent(SHOW_EVENT, { ...windows, seq: 2 });
+    });
+    await screen.findByRole("button", { name: "Claude Code default · Direct" });
+    await act(async () => resolvePlacement(windows));
+    await paint();
+    const seqs = vi
+      .mocked(trayPanelApi.layout)
+      .mock.calls.map(([layout]) => layout.seq);
+    expect(seqs).toContain(2);
+    expect(seqs).not.toContain(1);
+    expect(trayPanelApi.state).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits briefly for the data on a cold open so the first frame is already complete", async () => {
+    vi.mocked(trayPanelApi.state).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          window.setTimeout(() => resolve(state), 30);
+        }),
+    );
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.querySelector("[data-app-row]") ? 320 : 180;
+      },
+    );
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel();
+    await screen.findByRole("button", { name: "Claude Code default · Direct" });
+    expect(trayPanelApi.layout).toHaveBeenCalledTimes(1);
+    expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        cards: [{ x: 300, y: 440, width: 320, height: 320 }],
+      }),
+    );
+  });
+
+  it("shows the previous content at once when it pops up again and the data is slow", async () => {
+    await openPanel(windows);
+    vi.mocked(trayPanelApi.state).mockReturnValue(new Promise(() => {}));
+    const calls = vi.mocked(trayPanelApi.layout).mock.calls.length;
+    await act(async () => {
+      emitTauriEvent(SHOW_EVENT, { ...windows, seq: 2 });
+    });
+    expect(
+      screen.getByRole("button", { name: "Claude Code default · Direct" }),
+    ).toBeVisible();
+    expect(screen.getByRole("switch")).toBeVisible();
+    expect(trayPanelApi.layout).toHaveBeenCalledTimes(calls + 1);
+    expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        seq: 2,
+        cards: [{ x: 300, y: 440, width: 320, height: 320 }],
+      }),
+    );
+  });
+
+  it("drops the one-off feedback line when it pops up again with the previous content", async () => {
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      feedback: "Codex switched to X. Restart Codex to apply",
+    });
+    await openPanel(windows);
+    expect(screen.getByText(/Restart Codex/)).toBeVisible();
+    vi.mocked(trayPanelApi.state).mockReturnValue(new Promise(() => {}));
+    await act(async () => {
+      emitTauriEvent(SHOW_EVENT, { ...windows, seq: 2 });
+    });
+    expect(screen.queryByText(/Restart Codex/)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Claude Code default · Direct" }),
+    ).toBeVisible();
+  });
+
+  it("keeps a feedback line that arrived while the panel was hidden", async () => {
+    await openPanel(windows);
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      feedback: "Codex switched to X. Restart Codex to apply",
+    });
+    await act(async () => {
+      emitTauriEvent(CHANGED_EVENT, null);
+    });
+    await act(async () => {
+      emitTauriEvent(SHOW_EVENT, { ...windows, seq: 2 });
+    });
+    expect(await screen.findByText(/Restart Codex/)).toBeVisible();
   });
 
   it("clips the first Windows frame without waiting for animation frames in a hidden window", async () => {
@@ -743,24 +896,20 @@ describe("formatResetIn", () => {
   const MIN = 60_000;
 
   it("keeps at most two units and drops a zero second unit", () => {
-    expect(formatResetIn(at((47 * 60 + 30) * MIN), now, state.texts)).toBe(
+    expect(formatResetIn(at((47 * 60 + 30) * MIN), now, texts)).toBe(
       "Resets in 1d 23h",
     );
-    expect(formatResetIn(at(2 * 1440 * MIN), now, state.texts)).toBe(
-      "Resets in 2d",
-    );
-    expect(formatResetIn(at((4 * 60 + 5) * MIN), now, state.texts)).toBe(
+    expect(formatResetIn(at(2 * 1440 * MIN), now, texts)).toBe("Resets in 2d");
+    expect(formatResetIn(at((4 * 60 + 5) * MIN), now, texts)).toBe(
       "Resets in 4h 5m",
     );
-    expect(formatResetIn(at(3 * 60 * MIN), now, state.texts)).toBe(
-      "Resets in 3h",
-    );
-    expect(formatResetIn(at(12 * MIN), now, state.texts)).toBe("Resets in 12m");
+    expect(formatResetIn(at(3 * 60 * MIN), now, texts)).toBe("Resets in 3h");
+    expect(formatResetIn(at(12 * MIN), now, texts)).toBe("Resets in 12m");
   });
 
   it("rounds sub-minute waits up and hides past or invalid times", () => {
-    expect(formatResetIn(at(20_000), now, state.texts)).toBe("Resets in 1m");
-    expect(formatResetIn(at(-MIN), now, state.texts)).toBeNull();
-    expect(formatResetIn("not a date", now, state.texts)).toBeNull();
+    expect(formatResetIn(at(20_000), now, texts)).toBe("Resets in 1m");
+    expect(formatResetIn(at(-MIN), now, texts)).toBeNull();
+    expect(formatResetIn("not a date", now, texts)).toBeNull();
   });
 });
