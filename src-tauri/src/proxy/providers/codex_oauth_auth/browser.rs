@@ -636,6 +636,7 @@ mod tests {
             .unwrap()
             .1
             .into_owned();
+        // A fresh pool cannot reuse the replaced callback server's idle socket (#9111).
         let new = reqwest::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(2))
