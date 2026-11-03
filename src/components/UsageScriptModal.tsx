@@ -27,7 +27,11 @@ import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
-import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
+import {
+  TEMPLATE_TYPES,
+  PROVIDER_TYPES,
+  type TemplateType,
+} from "@/config/constants";
 import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
@@ -116,6 +120,40 @@ const generatePresetTemplates = (
   },
 })`,
 
+  // Sub2API 的 /v1/usage 用 API Key 认证；供应商地址带不带 /v1 都能拼出同一个地址。
+  // 订阅分组不限量时 remaining 为 -1，不当作余额显示
+  [TEMPLATE_TYPES.SUB2API]: `({
+  request: {
+    url: "{{baseUrl}}".replace(/\\/+$/, "").replace(/\\/v1$/, "") + "/v1/usage",
+    method: "GET",
+    headers: {
+      "Authorization": "Bearer {{apiKey}}",
+      "User-Agent": "cc-switch/1.0"
+    }
+  },
+  extractor: function (response) {
+    var quota = response.quota || {};
+    var result = {
+      isValid: response.isValid !== false,
+      unit: response.unit || quota.unit || "USD"
+    };
+    if (typeof response.planName === "string") result.planName = response.planName;
+    if (typeof response.remaining === "number" && response.remaining >= 0) {
+      result.remaining = response.remaining;
+    }
+    if (quota.limit > 0) {
+      result.used = quota.used;
+      result.total = quota.limit;
+    }
+    if (!result.isValid) {
+      result.invalidMessage = response.status
+        ? String(response.status)
+        : "${t("usageScript.queryFailedMessage")}";
+    }
+    return result;
+  },
+})`,
+
   // GitHub Copilot 模板不需要脚本，使用专用 API
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "",
 
@@ -134,6 +172,7 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.CUSTOM]: "usageScript.templateCustom",
   [TEMPLATE_TYPES.GENERAL]: "usageScript.templateGeneral",
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
+  [TEMPLATE_TYPES.SUB2API]: "usageScript.templateSub2API",
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
@@ -161,7 +200,8 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
 }
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
-  if (!["claude", "codex", "gemini", "grokbuild"].includes(appId)) return false;
+  if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
+    return false;
   if (provider.category === "official") return true;
 
   const config = provider.settingsConfig as Record<string, any>;
@@ -180,7 +220,7 @@ function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
       (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
     );
   }
-  if (appId === "gemini") {
+  if (appId === "gemini" || appId === "agy") {
     const env = config?.env || {};
     const apiKey = env.GEMINI_API_KEY;
     const baseUrl = env.GOOGLE_GEMINI_BASE_URL;
@@ -262,7 +302,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey,
             baseUrl: extractCodexBaseUrl(configToml),
           };
-        } else if (appId === "gemini") {
+        } else if (appId === "gemini" || appId === "agy") {
           // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
           // Key fallback mirrors the backend resolver (Provider::resolve_usage_credentials).
           const env = (config as any).env || {};
@@ -285,8 +325,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: (config as any).api_key,
             baseUrl: (config as any).base_url,
           };
-        } else if (appId === "pi") {
-          // Pi: provider values are camelCase; a model may override baseUrl.
+        } else if (appId === "kimi") {
+          // Kimi Code: 凭据在 provider.{base_url, api_key}（snake_case，对应 config.toml）
+          const kimiProvider = (config as any).provider || {};
+          return {
+            apiKey: kimiProvider.api_key,
+            baseUrl: kimiProvider.base_url,
+          };
+        } else if (appId === "pi" || appId === "omp") {
+          // Pi / Oh My Pi: provider values are camelCase; a model may override baseUrl.
           const root = config as any;
           const firstModel = Array.isArray(root.models)
             ? root.models[0]
@@ -301,8 +348,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: (config as any).apiKey,
             baseUrl: (config as any).baseUrl,
           };
-        } else if (appId === "opencode") {
-          // OpenCode (OMO): 凭据嵌在 options.{baseURL, apiKey}（SDK options 对象）
+        } else if (
+          appId === "opencode" ||
+          appId === "dsh" ||
+          appId === "mcode"
+        ) {
+          // OpenCode / DeepSeek Harness / MiniMax Code: 凭据嵌在 options.{baseURL, apiKey}。
           const options = (config as any).options || {};
           return {
             apiKey: options.apiKey,
@@ -328,6 +379,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     provider,
     appId,
   );
+  // 绑了授权中心账号的 Claude 官方卡：额度按这个号查（同 ProviderCard 的 claudeBoundAccountId）
+  const claudeBoundAccountId =
+    appId === "claude" && isOfficialSubscription
+      ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
+        null
+      : null;
+  // 绑了账号的官方卡没保存过开关时默认开（卡片和托盘同一规则）
+  const defaultsToEnabled =
+    isBoundCodexOfficial || Boolean(claudeBoundAccountId);
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
@@ -338,7 +398,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         normalizedScript.templateType !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
       ) {
         return createUsageScript({
-          enabled: isBoundCodexOfficial ? normalizedScript.enabled : false,
+          enabled: defaultsToEnabled ? normalizedScript.enabled : false,
         });
       }
       // 已有配置：如果是 coding_plan 但没有 codingPlanProvider，自动检测填充
@@ -365,7 +425,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     }
 
     if (isOfficialSubscription) {
-      return createUsageScript({ enabled: isBoundCodexOfficial });
+      return createUsageScript({ enabled: defaultsToEnabled });
     }
 
     return createUsageScript({
@@ -445,7 +505,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       ) {
         return existingScript.templateType as string;
       }
-      // 官方 CLI/OAuth 供应商默认使用官方订阅额度模板，但开关默认关闭
+      // 官方 CLI/OAuth 供应商默认使用官方订阅额度模板；开关默认关，绑了账号的默认开
       if (isOfficialSubscription) {
         return TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
       }
@@ -511,15 +571,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
       ...script,
-      templateType: selectedTemplate as
-        | "custom"
-        | "general"
-        | "newapi"
-        | "github_copilot"
-        | "token_plan"
-        | "balance"
-        | "official_subscription"
-        | undefined,
+      templateType: (selectedTemplate ?? undefined) as TemplateType | undefined,
     };
     onSave(scriptWithTemplate);
     onClose();
@@ -539,7 +591,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           : null;
         const quota = isBoundCodexOfficial
           ? await subscriptionApi.getCodexOauthQuota(accountId)
-          : await subscriptionApi.getQuota(appId);
+          : claudeBoundAccountId
+            ? await subscriptionApi.getClaudeAccountQuota(claudeBoundAccountId)
+            : await subscriptionApi.getQuota(appId);
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -551,7 +605,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           queryClient.setQueryData(
             isBoundCodexOfficial
               ? ["codex_oauth", "quota", accountId ?? "default"]
-              : ["subscription", "quota", appId],
+              : claudeBoundAccountId
+                ? ["claude_official", "quota", claudeBoundAccountId]
+                : ["subscription", "quota", appId],
             quota,
           );
         } else {
@@ -686,7 +742,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         script.baseUrl,
         script.accessToken,
         script.userId,
-        selectedTemplate as "custom" | "general" | "newapi" | undefined,
+        (selectedTemplate ?? undefined) as TemplateType | undefined,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
@@ -767,7 +823,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           accessToken: undefined,
           userId: undefined,
         });
-      } else if (presetName === TEMPLATE_TYPES.GENERAL) {
+      } else if (
+        presetName === TEMPLATE_TYPES.GENERAL ||
+        presetName === TEMPLATE_TYPES.SUB2API
+      ) {
         setScript({
           ...script,
           code: preset,
@@ -842,6 +901,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
+    selectedTemplate === TEMPLATE_TYPES.SUB2API ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
@@ -1055,7 +1115,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <p className="text-sm text-fg-2">
-                  {t("usageScript.officialSubscriptionHint")}
+                  {appId === "agy"
+                    ? t("usageScript.officialSubscriptionHintAgy")
+                    : t("usageScript.officialSubscriptionHint")}
                 </p>
               </div>
             )}
@@ -1110,7 +1172,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
-                  {selectedTemplate === TEMPLATE_TYPES.GENERAL && (
+                  {(selectedTemplate === TEMPLATE_TYPES.GENERAL ||
+                    selectedTemplate === TEMPLATE_TYPES.SUB2API) && (
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="usage-api-key">

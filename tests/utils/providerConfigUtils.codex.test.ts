@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 import {
+  extractCodexAgentsMaxThreads,
+  extractCodexAgentsString,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexMultiAgentV2Total,
   extractCodexTopLevelInt,
   removeCodexTopLevelField,
+  setCodexAgentsMaxThreads,
+  setCodexAgentsString,
   setCodexBaseUrl,
   setCodexModelName,
   setCodexTopLevelInt,
@@ -240,6 +245,123 @@ describe("Codex TOML utils", () => {
     expect(extractCodexBaseUrl(output)).toBe("https://relay.example/v1");
   });
 
+  it("finds the active provider table when its header quotes the key", () => {
+    for (const header of [
+      '[model_providers."custom"]',
+      "[model_providers.'custom']",
+      "[ model_providers . custom ]",
+      '["model_providers".custom]',
+    ]) {
+      const input = [
+        'model_provider = "custom"',
+        "",
+        header,
+        'name = "custom"',
+        'wire_api = "responses"',
+        "",
+        "[features]",
+        "",
+      ].join("\n");
+
+      const output = setCodexBaseUrl(input, "https://relay.example/v1");
+
+      const parsed = parseToml(output) as Record<string, any>;
+      expect(parsed.model_providers.custom, header).toEqual({
+        name: "custom",
+        wire_api: "responses",
+        base_url: "https://relay.example/v1",
+      });
+      expect(output.split(/^\s*\[/m), header).toHaveLength(3);
+      expect(extractCodexBaseUrl(output), header).toBe(
+        "https://relay.example/v1",
+      );
+      expect(
+        extractCodexBaseUrl(setCodexBaseUrl(output, "")),
+        header,
+      ).toBeUndefined();
+    }
+  });
+
+  it("writes base_url into a quoted provider table whose id needs quoting", () => {
+    const input = [
+      'model_provider = "my.relay"',
+      "",
+      '[model_providers."my.relay"]',
+      'name = "my.relay"',
+      "",
+    ].join("\n");
+
+    const output = setCodexBaseUrl(input, "https://relay.example/v1");
+
+    const parsed = parseToml(output) as Record<string, any>;
+    expect(Object.keys(parsed.model_providers)).toEqual(["my.relay"]);
+    expect(parsed.model_providers["my.relay"].base_url).toBe(
+      "https://relay.example/v1",
+    );
+  });
+
+  it("updates the bearer token in a provider table whose header quotes the key", () => {
+    const input = [
+      'model_provider = "custom"',
+      "",
+      '[model_providers."custom"]',
+      'name = "custom"',
+      'experimental_bearer_token = "old"',
+      "",
+    ].join("\n");
+
+    const output = updateCodexExperimentalBearerToken(input, "new");
+
+    expect(extractCodexExperimentalBearerToken(output)).toBe("new");
+    expect(
+      (parseToml(output) as Record<string, any>).model_providers.custom
+        .experimental_bearer_token,
+    ).toBe("new");
+  });
+
+  it("skips provider tables quoted inside a multi-line string", () => {
+    for (const delimiter of ['"""', "'''"]) {
+      const instructions = [
+        "Example:",
+        '[model_providers."custom"]',
+        'base_url = "https://example.invalid/v1"',
+        'experimental_bearer_token = "example-token"',
+        "",
+      ].join("\n");
+      const input = [
+        'model_provider = "custom"',
+        `developer_instructions = ${delimiter}`,
+        `${instructions}${delimiter}`,
+        "",
+        "[model_providers.custom]",
+        'name = "custom"',
+        'base_url = "https://old.invalid/v1"',
+        'experimental_bearer_token = "old-token"',
+        "",
+      ].join("\n");
+
+      expect(extractCodexBaseUrl(input), delimiter).toBe(
+        "https://old.invalid/v1",
+      );
+      expect(extractCodexExperimentalBearerToken(input), delimiter).toBe(
+        "old-token",
+      );
+
+      const output = updateCodexExperimentalBearerToken(
+        setCodexBaseUrl(input, "https://new.invalid/v1"),
+        "new-token",
+      );
+
+      const parsed = parseToml(output) as Record<string, any>;
+      expect(parsed.developer_instructions, delimiter).toBe(instructions);
+      expect(parsed.model_providers.custom, delimiter).toEqual({
+        name: "custom",
+        base_url: "https://new.invalid/v1",
+        experimental_bearer_token: "new-token",
+      });
+    }
+  });
+
   it("never redefines a custom table the line scan cannot see", () => {
     for (const input of [
       'model = "m"\n\n[model_providers.custom] # mine\nname = "custom"\nwire_api = "responses"\n',
@@ -454,5 +576,167 @@ describe("Codex TOML utils", () => {
     ].join("\n");
 
     expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
+  });
+});
+
+describe("Codex [agents] subagent defaults", () => {
+  const base = [
+    'model_provider = "custom"',
+    'model = "gpt-a"',
+    "",
+    "[model_providers.custom]",
+    'base_url = "https://a.example/v1"',
+  ].join("\n");
+
+  it("adds an [agents] table and removes it again when cleared", () => {
+    const withModel = setCodexAgentsString(
+      base,
+      "default_subagent_model",
+      "gpt-a-mini",
+    );
+    expect(parseToml(withModel)).toMatchObject({
+      model: "gpt-a",
+      agents: { default_subagent_model: "gpt-a-mini" },
+    });
+
+    const withEffort = setCodexAgentsString(
+      withModel,
+      "default_subagent_reasoning_effort",
+      "low",
+    );
+    expect(
+      extractCodexAgentsString(withEffort, "default_subagent_reasoning_effort"),
+    ).toBe("low");
+
+    const cleared = setCodexAgentsString(
+      setCodexAgentsString(withEffort, "default_subagent_model", ""),
+      "default_subagent_reasoning_effort",
+      "",
+    );
+    expect(cleared.trim()).toBe(base);
+  });
+
+  it("edits only its key inside an existing [agents] table", () => {
+    const input = [
+      base,
+      "",
+      "[agents]",
+      "max_threads = 4",
+      'default_subagent_model = "old"',
+      "",
+      "[agents.reviewer]",
+      'description = "review"',
+    ].join("\n");
+
+    const updated = setCodexAgentsString(
+      input,
+      "default_subagent_model",
+      'k3"mini',
+    );
+    const parsed = parseToml(updated) as any;
+    expect(parsed.agents.default_subagent_model).toBe('k3"mini');
+    expect(parsed.agents.max_threads).toBe(4);
+    expect(parsed.agents.reviewer.description).toBe("review");
+    expect(extractCodexAgentsString(updated, "default_subagent_model")).toBe(
+      'k3"mini',
+    );
+
+    const cleared = setCodexAgentsString(updated, "default_subagent_model", "");
+    const afterClear = parseToml(cleared) as any;
+    expect(afterClear.agents.default_subagent_model).toBeUndefined();
+    expect(afterClear.agents.max_threads).toBe(4);
+  });
+
+  it("adds [agents] after an existing [agents.<role>] table", () => {
+    const input = `${base}\n\n[agents.reviewer]\ndescription = "review"\n`;
+    const updated = setCodexAgentsString(input, "default_subagent_model", "m");
+    const parsed = parseToml(updated) as any;
+    expect(parsed.agents.default_subagent_model).toBe("m");
+    expect(parsed.agents.reviewer.description).toBe("review");
+  });
+
+  it("leaves an inline agents table untouched instead of breaking the TOML", () => {
+    const input = `agents = { max_threads = 4 }\n${base}\n`;
+    expect(extractCodexAgentsString(input, "default_subagent_model")).toBe(
+      undefined,
+    );
+    const updated = setCodexAgentsString(input, "default_subagent_model", "m");
+    expect(() => parseToml(updated)).not.toThrow();
+    expect((parseToml(updated) as any).agents).toEqual({ max_threads: 4 });
+  });
+});
+
+describe("Codex [agents] sub-agent concurrency limit", () => {
+  const base = [
+    'model = "gpt-a"',
+    "",
+    "[mcp_servers.fs]",
+    'command = "fs"',
+  ].join("\n");
+
+  it("writes max_threads into a new [agents] table and removes it when cleared", () => {
+    const updated = setCodexAgentsMaxThreads(base, 8);
+    expect((parseToml(updated) as any).agents).toEqual({ max_threads: 8 });
+    expect(extractCodexAgentsMaxThreads(updated)).toBe(8);
+
+    const cleared = setCodexAgentsMaxThreads(updated, undefined);
+    expect(cleared.trim()).toBe(base);
+    expect(extractCodexAgentsMaxThreads(cleared)).toBeUndefined();
+  });
+
+  it("keeps the canonical name in place and the other [agents] keys", () => {
+    const input = [
+      "[agents]",
+      "max_concurrent_threads_per_session = 2 # mine",
+      'default_subagent_model = "m"',
+    ].join("\n");
+    expect(extractCodexAgentsMaxThreads(input)).toBe(2);
+
+    const updated = setCodexAgentsMaxThreads(input, 12);
+    expect(updated).toContain("max_concurrent_threads_per_session = 12");
+    expect(updated).not.toContain("max_threads");
+    expect((parseToml(updated) as any).agents.default_subagent_model).toBe("m");
+
+    const cleared = setCodexAgentsMaxThreads(updated, undefined);
+    expect((parseToml(cleared) as any).agents).toEqual({
+      default_subagent_model: "m",
+    });
+  });
+
+  it("drops the duplicate spelling so Codex does not reject the config", () => {
+    const input =
+      "[agents]\nmax_threads = 2\nmax_concurrent_threads_per_session = 3\n";
+    const updated = setCodexAgentsMaxThreads(input, 5);
+    expect((parseToml(updated) as any).agents).toEqual({
+      max_concurrent_threads_per_session: 5,
+    });
+  });
+
+  it("does not mistake the multi_agent_v2 key for the [agents] one", () => {
+    const input = [
+      "[features.multi_agent_v2]",
+      "enabled = true",
+      "max_concurrent_threads_per_session = 6",
+    ].join("\n");
+    expect(extractCodexAgentsMaxThreads(input)).toBeUndefined();
+    expect(extractCodexMultiAgentV2Total(input)).toBe(6);
+
+    const parsed = parseToml(setCodexAgentsMaxThreads(input, 4)) as any;
+    expect(parsed.agents).toEqual({ max_threads: 4 });
+    expect(
+      parsed.features.multi_agent_v2.max_concurrent_threads_per_session,
+    ).toBe(6);
+  });
+
+  it("reads half-edited TOML line by line and ignores 0", () => {
+    expect(
+      extractCodexAgentsMaxThreads("[agents]\nmax_threads = 7\nbroken = ["),
+    ).toBe(7);
+    expect(
+      extractCodexAgentsMaxThreads("[agents]\nmax_threads = 0\n"),
+    ).toBeUndefined();
+    expect(extractCodexAgentsMaxThreads("agents = { max_threads = 3 }\n")).toBe(
+      3,
+    );
   });
 });

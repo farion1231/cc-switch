@@ -5,7 +5,7 @@ import { usageKeys } from "@/lib/query/usage";
 
 /**
  * 监听后端 `usage-log-recorded` 事件，收到后立刻 invalidate 所有
- * UsageDashboard 相关查询，让用户无需等待 30s 轮询周期。
+ * UsageDashboard 相关查询。用量页不再定时轮询，统计全靠它刷新。
  *
  * 后端在 `proxy_request_logs` 写入新行时会 emit 该事件（200ms 防抖合并），
  * 来源覆盖代理日志、Claude/Codex/Gemini 会话同步、启动归档。

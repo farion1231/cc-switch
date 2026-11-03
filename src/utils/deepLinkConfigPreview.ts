@@ -4,8 +4,9 @@ import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { isSensitiveConfigKey, maskSensitiveValue } from "@/utils/deeplinkRisk";
 
 export interface ParsedDeepLinkConfig {
-  type: "claude" | "codex" | "gemini" | "grokbuild";
+  type: "claude" | "codex" | "gemini" | "grokbuild" | "agy";
   env?: Record<string, string>;
+  model?: string;
   auth?: Record<string, string>;
   tomlConfig?: string;
 }
@@ -69,6 +70,24 @@ export function parseDeepLinkConfigPreview(
         type: "codex",
         auth: (parsed.auth as Record<string, string>) || {},
         tomlConfig: config ? sanitizeTomlForPreview(config) : "",
+      };
+    }
+    if (request.app === "agy") {
+      const env = parsed.env ?? parsed;
+      if (!env || typeof env !== "object" || Array.isArray(env)) return null;
+      const values = env as Record<string, unknown>;
+      const config = parsed.config as
+        | { model?: { name?: unknown } }
+        | undefined;
+      const model = config?.model?.name ?? values.GEMINI_MODEL;
+      return {
+        type: "agy",
+        env: Object.fromEntries(
+          ["GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GEMINI_BASE_URL"]
+            .filter((key) => typeof values[key] === "string")
+            .map((key) => [key, values[key] as string]),
+        ),
+        model: typeof model === "string" ? model : undefined,
       };
     }
     if (request.app === "gemini") {

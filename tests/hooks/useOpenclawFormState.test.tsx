@@ -171,3 +171,37 @@ it("reset tolerates null headers from JSON without rewriting settings", () => {
   expect(test.read()).toEqual(test.original);
   expect(test.onSettingsConfigChange).not.toHaveBeenCalled();
 });
+
+describe("useOpenclawFormState JSON editor sync", () => {
+  it("turns the switch on when a User-Agent is added in JSON", () => {
+    const test = mount(customHeaders);
+    expect(test.result.current.openclawUserAgent).toBe(false);
+    act(() =>
+      test.result.current.syncOpenclawUserAgentFromConfig(
+        JSON.stringify({
+          ...base,
+          headers: { ...customHeaders, "user-agent": "edited-agent" },
+        }),
+      ),
+    );
+    expect(test.result.current.openclawUserAgent).toBe(true);
+    expect(test.onSettingsConfigChange).not.toHaveBeenCalled();
+  });
+  it("turns the switch off when the User-Agent is removed in JSON", () => {
+    const test = mount({ ...customHeaders, "User-Agent": "fixture-agent" });
+    expect(test.result.current.openclawUserAgent).toBe(true);
+    act(() =>
+      test.result.current.syncOpenclawUserAgentFromConfig(
+        JSON.stringify({ ...base, headers: customHeaders }),
+      ),
+    );
+    expect(test.result.current.openclawUserAgent).toBe(false);
+  });
+  it("keeps the last state while the JSON draft is invalid", () => {
+    const test = mount({ "User-Agent": "fixture-agent" });
+    act(() =>
+      test.result.current.syncOpenclawUserAgentFromConfig('{"headers": {'),
+    );
+    expect(test.result.current.openclawUserAgent).toBe(true);
+  });
+});

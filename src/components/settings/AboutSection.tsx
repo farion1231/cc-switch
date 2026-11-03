@@ -20,7 +20,7 @@ import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
 import { WhatsNewDialog } from "@/components/WhatsNewDialog";
 import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
-import appIcon from "@/assets/icons/app-icon.png";
+import ccswitchLogo from "@/assets/icons/logo.svg";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface AboutSectionProps {
@@ -135,7 +135,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     if (hasUpdate) {
       if (isPortable) {
         try {
-          await settingsApi.checkUpdates();
+          await settingsApi.openPortableUpdateDownload(
+            updateInfo?.availableVersion ?? "",
+          );
         } catch (error) {
           console.error("[AboutSection] Portable update failed", error);
         }
@@ -181,14 +183,26 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         closeButton: true,
       });
     }
-  }, [checkUpdate, hasUpdate, isPortable, resetDismiss, t]);
+  }, [
+    checkUpdate,
+    hasUpdate,
+    isPortable,
+    resetDismiss,
+    t,
+    updateInfo?.availableVersion,
+  ]);
 
   const displayVersion = version ?? t("common.unknown");
 
   return (
     <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-4 px-5 py-4">
-        <img src={appIcon} alt="" className="h-10 w-10 shrink-0" />
+        <img
+          src={ccswitchLogo}
+          alt=""
+          draggable={false}
+          className="h-10 w-10 shrink-0 p-1"
+        />
         <div className="min-w-0 flex-1">
           <div className="text-title text-fg-1">CC Switch</div>
           <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
@@ -250,6 +264,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           </p>
           {updateInfo.notes && (
             <p className="line-clamp-3 text-fg-2">{updateInfo.notes}</p>
+          )}
+          {isPortable && (
+            <p className="text-fg-2">{t("settings.portableUpdateHint")}</p>
           )}
         </div>
       )}

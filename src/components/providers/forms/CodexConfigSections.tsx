@@ -314,9 +314,8 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       <InactiveFieldsPanel
         fields={inactiveFields}
         hint={t("codexConfig.inactiveFieldsHint", {
-          count: inactiveFields.length,
           defaultValue:
-            "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
+            "这些是旧版存进卡里的设置，现在切换不会写出去。点一下复制 TOML，需要时粘贴到上方。",
         })}
         action={{
           kind: "copy",

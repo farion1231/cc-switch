@@ -158,10 +158,20 @@ pub async fn reveal_session_path(path: String) -> Result<bool, String> {
 /// `session_manager::terminal::shell_escape` 里做了完整的单引号转义。
 #[tauri::command]
 pub async fn launch_session_terminal(
+    state: tauri::State<'_, crate::store::AppState>,
     command: String,
     cwd: Option<String>,
     custom_config: Option<String>,
 ) -> Result<bool, String> {
+    // Antigravity 第三方 Key 的会话：命令里只有私有目录、没有 Key，按「打开终端」的方式补上
+    // 那张卡的 Key 再恢复。
+    if let Some((provider, conversation)) =
+        crate::services::provider::agy_direct::key_resume_target(&state.db, &command)
+            .map_err(|e| e.to_string())?
+    {
+        crate::commands::misc::open_agy_resume_terminal(&provider, &conversation, cwd)?;
+        return Ok(true);
+    }
     let command = command.clone();
     let cwd = cwd.clone();
     let custom_config = custom_config.clone();

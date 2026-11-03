@@ -52,6 +52,38 @@ fn deeplink_codex_rows() {
     );
 }
 
+/// 带 `config.toml` 的 Codex 链接：按白名单收下供应商自己的键，选路统一写成 custom。
+#[test]
+fn deeplink_codex_config_rows() {
+    use base64::prelude::*;
+
+    let config = serde_json::json!({
+        "auth": { "OPENAI_API_KEY": "sk-relay-codex" },
+        "config": concat!(
+            "model_provider = \"relay\"\n",
+            "model = \"gpt-5.5\"\n",
+            "model_reasoning_effort = \"medium\"\n",
+            "web_search = \"live\"\n",
+            "approval_policy = \"never\"\n\n",
+            "[features]\nstandalone_web_search = true\n\n",
+            "[model_providers.relay]\n",
+            "name = \"Relay Upstream\"\n",
+            "base_url = \"https://api.relay.example/v1\"\n",
+            "wire_api = \"responses\"\n",
+            "requires_openai_auth = false\n",
+            "http_headers = { \"x-relay-client\" = \"cc-switch\" }\n",
+            "supports_websockets = true\n",
+            "model_catalog_url = \"https://api.relay.example/v1/models?format=codex\"\n",
+            "experimental_bearer_token = \"sk-relay-codex\"\n",
+        )
+    });
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=codex&name=Relay%20Codex%20Config&configFormat=json&config={}",
+        BASE64_URL_SAFE_NO_PAD.encode(config.to_string())
+    );
+    import_deeplinks(AppType::Codex, &[&url], "rows/deeplink-codex-config.txt");
+}
+
 #[test]
 fn deeplink_gemini_rows() {
     import_deeplinks(
@@ -71,6 +103,33 @@ fn deeplink_grokbuild_rows() {
             "ccswitch://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&model=grok-4.5",
         ],
         "rows/deeplink-grokbuild.txt",
+    );
+}
+
+/// 带 `config.toml` 的 Grok Build 链接：只收 `models.default` 指向的那张表，地址和 Key
+/// 用链接参数。
+#[test]
+fn deeplink_grokbuild_config_rows() {
+    use base64::prelude::*;
+
+    let config = serde_json::json!({
+        "config": concat!(
+            "[models]\ndefault = \"grok-4.6\"\n\n",
+            "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\nname = \"Grok 4.6 (Relay)\"\n",
+            "description = \"Fast coding model\"\n",
+            "base_url = \"https://ignored.example/v1\"\napi_key = \"sk-ignored\"\n",
+            "api_backend = \"chat_completions\"\ncontext_window = 256000\n\n",
+            "[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nname = \"Grok 4.5\"\n",
+        )
+    });
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok%20Config&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&configFormat=json&config={}",
+        BASE64_URL_SAFE_NO_PAD.encode(config.to_string())
+    );
+    import_deeplinks(
+        AppType::GrokBuild,
+        &[&url],
+        "rows/deeplink-grokbuild-config.txt",
     );
 }
 

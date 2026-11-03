@@ -16,6 +16,47 @@ use support::{
 };
 
 #[test]
+fn deleting_other_app_mcp_preserves_matching_unmanaged_disabled_agy_entry() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".gemini/config/mcp_config.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let original = r#"{"mcpServers":{"shared":{"command":"echo","args":["fixture"],"disabled":true,"timeout":12345,"description":"user-owned"}}}"#;
+    fs::write(&path, original).unwrap();
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"shared", "name":"Shared", "server":{"command":"echo","args":["fixture"]},
+        "apps":{"claude":true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+    assert!(McpService::delete_server(&state, "shared").unwrap());
+    assert!(!state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key("shared"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+}
+
+#[test]
+fn deleting_enabled_agy_mcp_removes_its_native_entry() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"managed", "name":"Managed", "server":{"command":"echo"}, "apps":{"agy":true}
+    }))
+    .unwrap();
+    McpService::upsert_server(&state, server).unwrap();
+    assert!(McpService::delete_server(&state, "managed").unwrap());
+    let path = ensure_test_home().join(".gemini/config/mcp_config.json");
+    let native: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert!(native["mcpServers"].get("managed").is_none());
+}
+
+#[test]
 fn mcode_import_ignores_native_metadata_and_continues_after_conflicts() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
@@ -278,6 +319,122 @@ fn pi_import_keeps_disabled_entries_unchecked() {
     assert_eq!(servers["on"].server["type"], "http");
     assert!(!servers["off"].apps.pi);
     assert_eq!(servers["off"].server["exposure"], "deferred");
+}
+
+/// 导入按 Pi 的规则校验：SSE、非法名、只差 - 和 _ 的条目不导入，免得之后每次同步报错
+#[test]
+fn pi_import_skips_entries_pi_rejects() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    // 数据库里已勾选 Pi 的 api_server（比如 Pi 没装时勾上的）：文件里的 api-server 不能再导入勾上
+    let ticked: McpServer = serde_json::from_value(json!({
+        "id":"api_server", "name":"api_server", "server":{"type":"stdio","command":"x"},
+        "apps":{"pi":true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&ticked).unwrap();
+    let path = ensure_test_home().join(".pi/agent/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        json!({"mcpServers":{
+            "ok":{"command":"node"},
+            "remote":{"type":"sse","url":"https://example.com/sse"},
+            "bad name":{"command":"node"},
+            "dev-tools":{"command":"a"},
+            "dev_tools":{"command":"b"},
+            "api-server":{"command":"y"}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    assert!(McpService::import_from_all_apps(&state).is_err());
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(servers["ok"].apps.pi);
+    for id in ["remote", "bad name", "dev-tools", "dev_tools", "api-server"] {
+        assert!(!servers.contains_key(id), "{id}");
+    }
+}
+
+/// Pi 没装（没有 Pi 配置目录）时勾选只入库，不新建 mcp.json；Pi 不接受的仍然拒绝
+#[test]
+fn pi_toggle_without_pi_dir_skips_the_file() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let dir = ensure_test_home().join(".pi/agent");
+    let _ = fs::remove_dir_all(&dir);
+    for (id, spec) in [
+        ("docs", json!({"type":"stdio","command":"node"})),
+        (
+            "remote",
+            json!({"type":"sse","url":"https://example.com/sse"}),
+        ),
+        ("dev-tools", json!({"type":"stdio","command":"a"})),
+        ("dev_tools", json!({"type":"stdio","command":"b"})),
+    ] {
+        let server: McpServer = serde_json::from_value(json!({
+            "id": id, "name": id, "server": spec, "apps": {}
+        }))
+        .unwrap();
+        state.db.save_mcp_server(&server).unwrap();
+    }
+
+    McpService::toggle_app(&state, "docs", AppType::Pi, true).unwrap();
+    assert!(state.db.get_all_mcp_servers().unwrap()["docs"].apps.pi);
+    McpService::sync_enabled_for_app(&state, &AppType::Pi).unwrap();
+    McpService::toggle_app(&state, "docs", AppType::Pi, false).unwrap();
+    McpService::delete_server(&state, "docs").unwrap();
+    assert!(McpService::toggle_app(&state, "remote", AppType::Pi, true).is_err());
+    assert!(!state.db.get_all_mcp_servers().unwrap()["remote"].apps.pi);
+
+    // 没有文件可对照时，只差 - 和 _ 的名字对照数据库里已勾选 Pi 的服务器拒绝
+    McpService::toggle_app(&state, "dev-tools", AppType::Pi, true).unwrap();
+    assert!(McpService::toggle_app(&state, "dev_tools", AppType::Pi, true).is_err());
+    let mut edited = state.db.get_all_mcp_servers().unwrap()["dev_tools"].clone();
+    edited.apps.pi = true;
+    assert!(McpService::upsert_server(&state, edited).is_err());
+    assert!(!state.db.get_all_mcp_servers().unwrap()["dev_tools"].apps.pi);
+    assert!(!dir.exists());
+}
+
+/// 审查 #7888：Pi 没装时两个请求并发勾选 dev-tools 和 dev_tools，最多只能成功一个。
+/// 重名检查要和提交在同一把写锁里读数据库，锁外读的快照会让两个都通过
+#[test]
+fn pi_concurrent_toggles_of_colliding_names_enable_at_most_one() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    for round in 0..20 {
+        for (id, enable) in [("dev-tools", "toggle"), ("dev_tools", "upsert")] {
+            let server: McpServer = serde_json::from_value(json!({
+                "id": id, "name": id, "server": {"type":"stdio","command": enable}, "apps": {}
+            }))
+            .unwrap();
+            state.db.save_mcp_server(&server).unwrap();
+        }
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                let _ = McpService::toggle_app(&state, "dev-tools", AppType::Pi, true);
+            });
+            scope.spawn(|| {
+                let mut server = state.db.get_all_mcp_servers().unwrap()["dev_tools"].clone();
+                server.apps.pi = true;
+                barrier.wait();
+                let _ = McpService::upsert_server(&state, server);
+            });
+        });
+        let servers = state.db.get_all_mcp_servers().unwrap();
+        let enabled = ["dev-tools", "dev_tools"]
+            .iter()
+            .filter(|id| servers[**id].apps.pi)
+            .count();
+        assert_eq!(enabled, 1, "round {round}");
+    }
+    assert!(!ensure_test_home().join(".pi").exists());
 }
 
 #[test]
@@ -711,6 +868,7 @@ command = "echo"
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -718,7 +876,10 @@ command = "echo"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -858,6 +1019,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false, // 初始未启用
                 gemini: false,
@@ -865,7 +1027,10 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -926,6 +1091,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -933,7 +1099,10 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -974,6 +1143,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -981,7 +1151,10 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1011,6 +1184,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -1018,7 +1192,10 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1194,6 +1371,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 "url": "https://example.com/sse"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -1201,7 +1379,10 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1252,6 +1433,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -1259,7 +1441,10 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1310,6 +1495,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -1317,7 +1503,10 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1369,6 +1558,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -1376,7 +1566,10 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1451,6 +1644,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 "command": "custom-command"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -1458,7 +1652,10 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1593,6 +1790,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -1600,7 +1798,10 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1618,6 +1819,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 "command": "managed"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -1625,7 +1827,10 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                dsh: false,
                 pi: false,
+                omp: false,
             },
             description: None,
             homepage: None,
@@ -1670,7 +1875,11 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "opencode",
             "hermes",
             "pi",
-            "mcode"
+            "mcode",
+            "kimi",
+            "dsh",
+            "agy",
+            "omp"
         ]
     );
     assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);
@@ -1730,4 +1939,153 @@ fn resync_app_reports_each_app_and_leaves_broken_config_untouched() {
 
     let serialized = serde_json::to_value(&claude).unwrap();
     assert_eq!(serialized, json!({"app": "claude", "ok": true}));
+}
+
+fn omp_test_state() -> (cc_switch_lib::AppState, std::path::PathBuf) {
+    reset_test_fs();
+    let path = ensure_test_home().join(".omp/agent/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "{}").unwrap();
+    update_settings(AppSettings {
+        omp_config_dir: Some(path.parent().unwrap().to_string_lossy().into_owned()),
+        ..Default::default()
+    })
+    .unwrap();
+    (create_test_state().unwrap(), path)
+}
+
+#[test]
+fn omp_mcp_disable_reenable_preserves_options_and_suppresses_discovered_sources() {
+    let _guard = test_mutex().lock().unwrap();
+    let (state, path) = omp_test_state();
+    let native = json!({"mcpServers":{"demo":{"command":"node","args":["mcp.js"],"enabled":false,"timeout":0,"requestIdFormat":"string","instructions":false}},"disabledServers":["demo","other"],"enabledServers":["other"]});
+    fs::write(&path, native.to_string()).unwrap();
+    assert_eq!(McpService::import_from_omp(&state).unwrap(), 1);
+    assert!(!state.db.get_all_mcp_servers().unwrap()["demo"].apps.omp);
+    McpService::toggle_app(&state, "demo", AppType::Omp, true).unwrap();
+    let read =
+        || serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
+    let enabled = read();
+    assert_eq!(enabled["mcpServers"]["demo"]["enabled"], true);
+    assert_eq!(enabled["disabledServers"], json!(["other"]));
+    for field in ["timeout", "requestIdFormat", "instructions"] {
+        assert_eq!(
+            enabled["mcpServers"]["demo"][field],
+            native["mcpServers"]["demo"][field]
+        );
+    }
+    McpService::toggle_app(&state, "demo", AppType::Omp, false).unwrap();
+    let disabled = read();
+    assert_eq!(disabled["mcpServers"]["demo"]["enabled"], false);
+    assert!(
+        disabled["disabledServers"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("demo")),
+        "the denylist must also suppress project/foreign discovery"
+    );
+    McpService::toggle_app(&state, "demo", AppType::Omp, true).unwrap();
+    let mut edited = state.db.get_all_mcp_servers().unwrap()["demo"].clone();
+    edited.apps.omp = false;
+    McpService::upsert_server(&state, edited).unwrap();
+    assert_eq!(read()["mcpServers"]["demo"]["enabled"], false);
+    let mut disabled_edit = state.db.get_all_mcp_servers().unwrap()["demo"].clone();
+    disabled_edit.server["args"] = json!(["updated.js"]);
+    McpService::upsert_server(&state, disabled_edit).unwrap();
+    McpService::toggle_app(&state, "demo", AppType::Omp, true).unwrap();
+    assert_eq!(read()["mcpServers"]["demo"]["args"], json!(["updated.js"]));
+    McpService::toggle_app(&state, "demo", AppType::Omp, false).unwrap();
+    assert!(McpService::delete_server(&state, "demo").unwrap());
+    assert!(read()["mcpServers"].get("demo").is_none());
+    assert_eq!(read()["disabledServers"], json!(["other"]));
+}
+
+#[test]
+fn omp_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
+    let _guard = test_mutex().lock().unwrap();
+    let (state, path) = omp_test_state();
+    let native =
+        json!({"mcpServers":{"context7":{"command":"authored","env":{"SECRET":"native"}}}});
+    fs::write(&path, native.to_string()).unwrap();
+    let server: McpServer = serde_json::from_value(json!({"id":"context7","name":"Context7","server":{"command":"managed"},"apps":{"claude":true}})).unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+    McpService::sync_enabled_for_app(&state, &AppType::Omp).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), native.to_string());
+    assert!(McpService::toggle_app(&state, &server.id, AppType::Omp, true).is_err());
+    assert!(!state.db.get_all_mcp_servers().unwrap()[&server.id].apps.omp);
+    assert!(McpService::import_from_omp(&state)
+        .unwrap_err()
+        .to_string()
+        .contains("context7"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), native.to_string());
+}
+
+#[test]
+fn omp_mcp_delete_removes_enabled_native_entry_and_write_failure_keeps_db() {
+    let _guard = test_mutex().lock().unwrap();
+    let (state, path) = omp_test_state();
+    let server: McpServer = serde_json::from_value(
+        json!({"id":"demo","name":"Demo","server":{"command":"node"},"apps":{"omp":true}}),
+    )
+    .unwrap();
+    McpService::upsert_server(&state, server.clone()).unwrap();
+    fs::write(&path, "invalid json").unwrap();
+    assert!(McpService::delete_server(&state, &server.id).is_err());
+    assert!(state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key(&server.id));
+    assert!(McpService::toggle_app(&state, &server.id, AppType::Omp, false).is_err());
+    assert!(state.db.get_all_mcp_servers().unwrap()[&server.id].apps.omp);
+    fs::write(
+        &path,
+        json!({"mcpServers":{"demo":{"command":"node","enabled":true}}}).to_string(),
+    )
+    .unwrap();
+    assert!(McpService::delete_server(&state, &server.id).unwrap());
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert!(written["mcpServers"].get("demo").is_none());
+}
+
+#[test]
+fn concurrent_toggles_keep_every_server_in_live_config() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    fs::create_dir_all(ensure_test_home().join(".claude")).unwrap();
+    let state = create_test_state().unwrap();
+
+    // 批量勾选会连发多个 toggle：每次都是读 ~/.claude.json → 改 → 写回，不串行就会互相覆盖
+    let ids: Vec<String> = (0..16).map(|i| format!("server-{i:02}")).collect();
+    for id in &ids {
+        let server: McpServer = serde_json::from_value(json!({
+            "id": id, "name": id, "server": {"type": "stdio", "command": "node"}, "apps": {}
+        }))
+        .unwrap();
+        state.db.save_mcp_server(&server).unwrap();
+    }
+
+    let barrier = std::sync::Barrier::new(ids.len());
+    std::thread::scope(|scope| {
+        for id in &ids {
+            let (state, barrier) = (&state, &barrier);
+            scope.spawn(move || {
+                barrier.wait();
+                futures::executor::block_on(McpService::toggle_app_locked(
+                    state,
+                    id,
+                    AppType::Claude,
+                    true,
+                ))
+                .unwrap();
+            });
+        }
+    });
+
+    let live: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(get_claude_mcp_path()).unwrap()).unwrap();
+    let written = live["mcpServers"].as_object().expect("mcpServers object");
+    let missing: Vec<&String> = ids.iter().filter(|id| !written.contains_key(*id)).collect();
+    assert!(missing.is_empty(), "lost concurrent toggles: {missing:?}");
 }

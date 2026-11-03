@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from "vitest";
 import { HermesFormFields } from "@/components/providers/forms/HermesFormFields";
 import type { HermesModel } from "@/config/hermesProviderPresets";
 import { Form } from "@/components/ui/form";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { server } from "../msw/server";
 
 type HermesFormFieldsProps = ComponentProps<typeof HermesFormFields>;
@@ -58,13 +57,15 @@ describe("HermesFormFields", () => {
       http.post("http://tauri.local/fetch_models_for_config", () =>
         HttpResponse.json([{ id: "model-x", ownedBy: "example" }]),
       ),
-      http.get(MODELS_DEV_API_URL, () =>
-        HttpResponse.json({
-          example: {
-            api: "https://api.example.com/v1",
-            models: { "model-x": { limit: { context: 123456 } } },
-          },
-        }),
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.json(
+          JSON.stringify({
+            example: {
+              api: "https://api.example.com/v1",
+              models: { "model-x": { limit: { context: 123456 } } },
+            },
+          }),
+        ),
       ),
     );
     const onModelsChange = vi.fn();
@@ -98,14 +99,16 @@ describe("HermesFormFields", () => {
       http.post("http://tauri.local/fetch_models_for_config", () =>
         HttpResponse.json([{ id: "model-x", ownedBy: "example" }]),
       ),
-      http.get(MODELS_DEV_API_URL, async () => {
+      http.post("http://tauri.local/fetch_models_dev", async () => {
         await modelsDevReady;
-        return HttpResponse.json({
-          example: {
-            api: "https://api.example.com/v1",
-            models: { "model-x": { limit: { context: 123456 } } },
-          },
-        });
+        return HttpResponse.json(
+          JSON.stringify({
+            example: {
+              api: "https://api.example.com/v1",
+              models: { "model-x": { limit: { context: 123456 } } },
+            },
+          }),
+        );
       }),
     );
     const committed = vi.fn();
@@ -195,6 +198,26 @@ describe("HermesFormFields", () => {
     expect(screen.getByText(/第一个模型/)).toBeInTheDocument();
   });
 
+  it("declares image input per model and drops the key when turned off", () => {
+    const { props } = renderHermesForm({
+      models: [{ id: "model-a", name: "Model A", supports_vision: true }],
+    });
+    const onModelsChange = vi.mocked(props.onModelsChange);
+
+    fireEvent.click(screen.getByRole("button", { name: "展开或收起模型详情" }));
+    const vision = screen.getByRole("switch", { name: "支持图片输入" });
+    expect(vision).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(vision);
+
+    const [next] = onModelsChange.mock.calls.at(-1)![0];
+    expect(next.supports_vision).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(next))).toEqual({
+      id: "model-a",
+      name: "Model A",
+    });
+  });
+
   it("keeps model name composition local until the IME commits", () => {
     const onModelsChange = vi.fn();
     const { props, rerender } = renderHermesForm({ onModelsChange });
@@ -238,10 +261,7 @@ describe("HermesFormFields", () => {
       "font-medium",
       "leading-none",
     );
-    expect(input.closest("div.border-l")).toHaveClass(
-      "border-border",
-      "pl-3",
-    );
+    expect(input.closest("div.border-l")).toHaveClass("border-border", "pl-3");
     expect(
       screen.queryByRole("button", { name: "供应商高级选项" }),
     ).not.toBeInTheDocument();

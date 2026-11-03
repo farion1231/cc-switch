@@ -6,6 +6,7 @@ import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
 import { formatBytes } from "@/components/settings/BackupStorageSection";
+import { CodexQuotaProtectionSettings } from "./CodexQuotaProtectionSettings";
 
 interface CodexAuthSettingsProps {
   settings: SettingsFormState;
@@ -26,9 +27,6 @@ export function CodexAuthSettings({
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
-  const classicSubagents = settings.codexStackClassicSubagents ?? false;
-  // config.toml 用 [features] multi_agent_v2 强制了新版工具时，开关不生效
-  const [forcesMultiAgentV2, setForcesMultiAgentV2] = useState(false);
   // 会话压缩开关以 config.toml 为准，不走设置表单的自动保存
   const [sessionCompression, setSessionCompression] = useState(false);
   const [sessionCompressionSaving, setSessionCompressionSaving] =
@@ -69,23 +67,6 @@ export function CodexAuthSettings({
       setSessionCompressionSaving(false);
     }
   };
-
-  useEffect(() => {
-    if (!classicSubagents) {
-      setForcesMultiAgentV2(false);
-      return;
-    }
-    let cancelled = false;
-    void settingsApi
-      .codexForcesMultiAgentV2()
-      .catch(() => false)
-      .then((forced) => {
-        if (!cancelled) setForcesMultiAgentV2(forced);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [classicSubagents]);
 
   const handleUnifyHistoryChange = (checked: boolean) => {
     if (checked) {
@@ -151,9 +132,11 @@ export function CodexAuthSettings({
     }
   };
 
-  // 设置 → 应用配置 → Codex 卡片里的四行
+  // 设置 → 应用配置 → Codex 卡片里的认证、额度与会话设置
+  // 经典子 agent 开关在 Codex 聚合页签的「聚合设置」里。
   return (
     <>
+      <CodexQuotaProtectionSettings settings={settings} onChange={onChange} />
       <SettingsSwitchRow
         label={t("settings.preserveCodexOfficialAuthOnSwitch")}
         help={{
@@ -174,25 +157,6 @@ export function CodexAuthSettings({
         }}
         checked={settings.unifyCodexSessionHistory ?? false}
         onCheckedChange={handleUnifyHistoryChange}
-      />
-
-      <SettingsSwitchRow
-        label={t("settings.codexStackClassicSubagents")}
-        help={{
-          title: t("settings.codexStackClassicSubagents"),
-          body: t("settings.codexStackClassicSubagentsDescription"),
-        }}
-        description={
-          forcesMultiAgentV2 ? (
-            <span className="text-warning-text">
-              {t("settings.codexStackClassicSubagentsForcedV2")}
-            </span>
-          ) : undefined
-        }
-        checked={classicSubagents}
-        onCheckedChange={(value) =>
-          onChange({ codexStackClassicSubagents: value })
-        }
       />
 
       <SettingsSwitchRow

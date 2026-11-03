@@ -34,14 +34,13 @@ vi.mock("@/lib/api", () => ({
 }));
 
 const LABEL = "settings.codexStackClassicSubagents";
-const FORCED_HINT = "settings.codexStackClassicSubagentsForcedV2";
 
 /** 挂载后把读取 config.toml / 会话占用的异步更新一并冲刷掉 */
 async function renderWith(classic: boolean, onChange = vi.fn()) {
   await act(async () => {
     render(
       <CodexAuthSettings
-        settings={{ codexStackClassicSubagents: classic } as SettingsFormState}
+        settings={{ codexStackClassicTools: classic } as SettingsFormState}
         onChange={onChange}
       />,
     );
@@ -56,32 +55,14 @@ describe("CodexAuthSettings classic sub-agent toggle", () => {
     diskUsageMock.mockResolvedValue(0);
   });
 
-  it("is off by default and saves the new value when toggled", async () => {
-    forcesMultiAgentV2Mock.mockResolvedValue(false);
-    const onChange = await renderWith(false);
+  // 开关挪到了 Codex 聚合页签的「聚合设置」（StackSettingsSheet），设置页不再显示
+  it("is no longer on the settings page", async () => {
+    await renderWith(true);
 
-    const toggle = screen.getByRole("switch", { name: LABEL });
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(toggle);
-
-    expect(onChange).toHaveBeenCalledWith({ codexStackClassicSubagents: true });
-    // 关着时不去读 config.toml
+    expect(
+      screen.queryByRole("switch", { name: LABEL }),
+    ).not.toBeInTheDocument();
     expect(forcesMultiAgentV2Mock).not.toHaveBeenCalled();
-  });
-
-  it("warns when config.toml forces multi_agent_v2 while the toggle is on", async () => {
-    forcesMultiAgentV2Mock.mockResolvedValue(true);
-    await renderWith(true);
-
-    expect(await screen.findByText(FORCED_HINT)).toBeInTheDocument();
-  });
-
-  it("shows no warning when config.toml leaves multi_agent_v2 alone", async () => {
-    forcesMultiAgentV2Mock.mockResolvedValue(false);
-    await renderWith(true);
-
-    await waitFor(() => expect(forcesMultiAgentV2Mock).toHaveBeenCalled());
-    expect(screen.queryByText(FORCED_HINT)).not.toBeInTheDocument();
   });
 });
 

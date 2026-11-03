@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import type { PresetModelSource } from "@/lib/modelMetadata";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -42,15 +41,17 @@ const renderFill = () => {
 describe("useModelMetadataFill", () => {
   it("applies preset values at once and models.dev values when they arrive", async () => {
     server.use(
-      http.get(MODELS_DEV_API_URL, () =>
-        HttpResponse.json({
-          example: {
-            api: "https://api.example.com/v1",
-            models: {
-              "model-x": { limit: { context: 1000000, output: 64000 } },
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.json(
+          JSON.stringify({
+            example: {
+              api: "https://api.example.com/v1",
+              models: {
+                "model-x": { limit: { context: 1000000, output: 64000 } },
+              },
             },
-          },
-        }),
+          }),
+        ),
       ),
     );
     const { result } = renderFill();
@@ -73,16 +74,26 @@ describe("useModelMetadataFill", () => {
   });
 
   it("looks a row up by its own address when it overrides the form's", () => {
-    server.use(http.get(MODELS_DEV_API_URL, () => HttpResponse.error()));
+    server.use(
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.error(),
+      ),
+    );
     const { result } = renderFill();
     const apply = vi.fn(() => true);
 
-    result.current("model-x", apply, "https://other.example.com/v1");
+    result.current("model-x", apply, {
+      baseUrl: "https://other.example.com/v1",
+    });
     expect(apply).not.toHaveBeenCalled();
   });
 
   it("keeps preset values and stays quiet when models.dev is unreachable", async () => {
-    server.use(http.get(MODELS_DEV_API_URL, () => HttpResponse.error()));
+    server.use(
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.error(),
+      ),
+    );
     const { result } = renderFill();
     const apply = vi.fn(() => true);
 
@@ -92,7 +103,11 @@ describe("useModelMetadataFill", () => {
   });
 
   it("merges fills that changed something into one reminder", async () => {
-    server.use(http.get(MODELS_DEV_API_URL, () => HttpResponse.error()));
+    server.use(
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.error(),
+      ),
+    );
     toastInfo.mockClear();
     const { result } = renderFill();
 
@@ -107,6 +122,21 @@ describe("useModelMetadataFill", () => {
 
     toastInfo.mockClear();
     result.current("model-y", () => false);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(toastInfo).not.toHaveBeenCalled();
+  });
+  it("fills without a reminder when asked to stay silent", async () => {
+    server.use(
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.error(),
+      ),
+    );
+    toastInfo.mockClear();
+    const { result } = renderFill();
+    const apply = vi.fn(() => true);
+
+    result.current("model-x", apply, { silent: true });
+    expect(apply).toHaveBeenCalledTimes(1);
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(toastInfo).not.toHaveBeenCalled();
   });

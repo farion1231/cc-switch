@@ -382,26 +382,25 @@ impl RequestForwarder {
     ///
     /// 受 `enabled && request_media_fallback` 管辖；其中"启发式模型名单预测"
     /// 再受 `request_media_heuristic` 单独管辖（显式声明 text-only 始终生效）。
-    /// 返回被替换的图片块数量（0 = 未触发或开关关闭）。
+    /// 返回被替换的媒体块数量（0 = 未触发或开关关闭）。
     fn apply_media_prevention(&self, body: &mut Value, provider: &Provider) -> usize {
         if !(self.rectifier_config.enabled && self.rectifier_config.request_media_fallback) {
             return 0;
         }
-        let replaced_images = super::media_sanitizer::replace_images_for_text_only_model(
+        let replaced_media = super::media_sanitizer::replace_images_for_text_only_model(
             body,
             provider,
             self.rectifier_config.request_media_heuristic,
         );
-        if replaced_images > 0 {
+        if replaced_media > 0 {
             let model = body.get("model").and_then(Value::as_str).unwrap_or("");
             log::info!(
-                "[Media] Replaced {replaced_images} image block(s) with {} for text-only provider={}, model={}",
-                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER,
+                "[Media] Replaced {replaced_media} unsupported media block(s) for provider={}, model={}",
                 provider.id,
                 model
             );
         }
-        replaced_images
+        replaced_media
     }
 
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
@@ -901,11 +900,9 @@ impl RequestForwarder {
                         .await);
                 }
                 Err(mut e) => {
-                    // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
-                    let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
-                    let is_anthropic_provider = matches!(
-                        provider_type,
-                        Some(ProviderType::Claude | ProviderType::ClaudeAuth)
+                    // 检测是否需要触发整流器（上游为 Anthropic Messages 的供应商）
+                    let is_anthropic_provider = uses_anthropic_rectifiers(
+                        ProviderType::from_app_type_and_config(app_type, provider),
                     );
                     let mut signature_rectifier_non_retryable_client_error = false;
 
@@ -1183,7 +1180,7 @@ impl RequestForwarder {
                         }
                     }
 
-                    // 检测是否需要触发 budget 整流器（仅 Claude/ClaudeAuth 供应商）
+                    // 检测是否需要触发 budget 整流器（上游为 Anthropic Messages 的供应商）
                     if is_anthropic_provider {
                         let error_message = extract_error_message(&e);
                         if should_rectify_thinking_budget(
@@ -1413,6 +1410,7 @@ impl RequestForwarder {
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
         let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
+        let mut quota_token = None;
 
         if codex_official_auth_passthrough {
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
@@ -1454,14 +1452,28 @@ impl RequestForwarder {
                 expected_chatgpt_account_id.as_deref(),
                 managed_session_matches,
             )?;
+            if method == http::Method::POST {
+                let token = codex_bearer_access_token(headers).ok_or_else(|| {
+                    ProxyError::AuthError(
+                        "Codex official route requires a bearer token".to_string(),
+                    )
+                })?;
+                super::codex_quota_protection::admit(token, headers).await?;
+                quota_token = Some(token);
+            }
         }
 
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        // 聚合模型的请求已经解出了上游名，不再查映射表（查不到会报错，按档位回落会发错模型）。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            if self.keeps_resolved_model() {
+                crate::claude_desktop_config::normalize_upstream_request(body.clone(), provider)
+            } else {
+                crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                    .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            }
         } else if self.keeps_resolved_model() {
             body.clone()
         } else {
@@ -1566,12 +1578,6 @@ impl RequestForwarder {
             // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
             if self.copilot_optimizer_config.tool_result_merging {
                 mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
-            }
-
-            // 3.5. 主动剥离 thinking block — Copilot 走 OpenAI 兼容端点不识别该块
-            //      避免上游拒绝后由 rectifier 反应式重试（首次请求已消耗 quota）
-            if self.copilot_optimizer_config.strip_thinking {
-                mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
             }
 
             // 4. Warmup 小模型降级
@@ -1708,6 +1714,15 @@ impl RequestForwarder {
         };
         if adapter.name() == "Claude" {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
+                // 主动剥离 thinking block — Copilot 的 OpenAI 兼容端点不识别该块，避免上游拒绝后
+                // 由 rectifier 反应式重试（首次请求已消耗 quota）。原生 Messages 透传保留它们：
+                // 工具循环里 Anthropic 会校验 thinking block。
+                if run_copilot_optimizer
+                    && self.copilot_optimizer_config.strip_thinking
+                    && super::providers::claude_api_format_needs_transform(api_format)
+                {
+                    mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
+                }
                 super::providers::normalize_anthropic_messages_for_provider(
                     &mut mapped_body,
                     provider,
@@ -1804,6 +1819,12 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        let (listen_address, listen_port) = {
+            let status = self.status.read().await;
+            (status.address.clone(), status.port)
+        };
+        super::upstream_guard::reject_self_forwarding(&url, &listen_address, listen_port).await?;
+
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
         // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。
@@ -1842,6 +1863,15 @@ impl RequestForwarder {
                 mapped_body,
                 reasoning_config.as_ref(),
             )?;
+            let signature_fallbacks =
+                super::providers::codex_chat_common::fill_gemini_thought_signature_fallback(
+                    &mut chat_body,
+                );
+            if signature_fallbacks > 0 {
+                log::debug!(
+                    "[Codex] Filled {signature_fallbacks} missing Gemini thought signature(s) with the skip placeholder"
+                );
+            }
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
@@ -1917,7 +1947,10 @@ impl RequestForwarder {
                 // 映射后的模型名不再带「省略 thinking 仍默认开思考」的语义（5.x 的
                 // Fable / Mythos / Opus / Sonnet），按客户端原模型补成显式 adaptive，
                 // effort 换算才不会当成关闭。
-                if matches!(api_format, "openai_chat" | "openai_responses") {
+                if matches!(
+                    api_format,
+                    "openai_chat" | "openai_responses" | "gemini_native"
+                ) {
                     super::providers::transform::make_default_adaptive_thinking_explicit(
                         &mut mapped_body,
                         body.get("model").and_then(|m| m.as_str()),
@@ -2489,10 +2522,14 @@ impl RequestForwarder {
             // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
             // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
             // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
-            if (codex_responses_to_anthropic
-                || (codex_stack_request && !codex_official_auth_passthrough))
-                && is_codex_client_fingerprint_header(key_str)
-            {
+            if should_strip_codex_client_fingerprint_header(
+                key_str,
+                &effective_endpoint,
+                codex_responses_to_anthropic,
+                codex_responses_to_chat,
+                codex_stack_request,
+                codex_official_auth_passthrough,
+            ) {
                 continue;
             }
 
@@ -2707,8 +2744,8 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 获取全局代理 URL
-        let upstream_proxy_url: Option<String> = super::http_client::get_current_proxy_url();
+        // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
+        let upstream_proxy_url: Option<String> = super::http_client::proxy_url_for(&url);
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -2730,7 +2767,7 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = super::http_client::get();
+            let client = super::http_client::get_for_url(&url);
             let mut request = client.request(method.clone(), &url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
@@ -2780,6 +2817,12 @@ impl RequestForwarder {
             )
             .await?
         };
+
+        // Official responses (errors included) carry the account's usage headers;
+        // they feed the next request's quota check without an extra lookup.
+        if let Some(token) = quota_token {
+            super::codex_quota_protection::observe_response(token, headers, response.headers());
+        }
 
         // 检查响应状态
         let status = response.status();
@@ -3156,11 +3199,17 @@ impl RequestForwarder {
 
     async fn resolve_copilot_api_format(&self, provider: &Provider, body: &Value) -> &'static str {
         let model = body.get("model").and_then(|value| value.as_str());
-        let vendor = match model {
-            Some(model_id) => self.copilot_model_vendor(provider, model_id).await,
+        let record = match model {
+            Some(model_id) => self.copilot_model_record(provider, model_id).await,
             None => None,
         };
-        copilot_api_format_for_vendor(vendor.as_deref())
+        copilot_api_format_for_model(
+            record.as_ref().map(|model| model.vendor.as_str()),
+            record
+                .as_ref()
+                .map(|model| model.supported_endpoints.as_slice())
+                .unwrap_or_default(),
+        )
     }
 
     /// 用 Copilot live `/models` 列表确认 model ID 真实可用，找不到时按 family 降级。
@@ -3246,7 +3295,11 @@ impl RequestForwarder {
         resolved.map_err(|error| codex_copilot_lookup_error(model_id, error))
     }
 
-    async fn copilot_model_vendor(&self, provider: &Provider, model_id: &str) -> Option<String> {
+    async fn copilot_model_record(
+        &self,
+        provider: &Provider,
+        model_id: &str,
+    ) -> Option<super::providers::copilot_auth::CopilotModel> {
         let Some(app_handle) = &self.app_handle else {
             log::debug!("[Copilot] AppHandle unavailable, fallback to chat/completions");
             return None;
@@ -3259,17 +3312,17 @@ impl RequestForwarder {
             .as_ref()
             .and_then(|m| m.managed_account_id_for("github_copilot"));
 
-        let vendor_result = match account_id.as_deref() {
+        let record_result = match account_id.as_deref() {
             Some(id) => {
                 copilot_auth
-                    .get_model_vendor_for_account(id, model_id)
+                    .get_model_record_for_account(id, model_id)
                     .await
             }
-            None => copilot_auth.get_model_vendor(model_id).await,
+            None => copilot_auth.get_model_record(model_id).await,
         };
 
-        match vendor_result {
-            Ok(Some(vendor)) => Some(vendor),
+        match record_result {
+            Ok(Some(record)) => Some(record),
             Ok(None) => {
                 log::debug!(
                     "[Copilot] Model vendor unavailable for {model_id}, fallback to chat/completions"
@@ -3585,6 +3638,37 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
         || key_str.starts_with("x-responsesapi-")
 }
 
+/// Decide whether a Codex fingerprint header must be removed before the request
+/// reaches an upstream.
+///
+/// Stack requests to a third party still must not carry ChatGPT session or
+/// account identity. A native Responses third party, however, may use the
+/// non-identity `x-codex-beta-features` marker to recognize the Codex protocol
+/// and reject requests without it. Keep only that marker; all other Codex and
+/// OpenAI identity headers remain stripped. Converted Chat/Anthropic requests
+/// continue to receive a clean client fingerprint.
+fn should_strip_codex_client_fingerprint_header(
+    key_str: &str,
+    endpoint: &str,
+    codex_responses_to_anthropic: bool,
+    codex_responses_to_chat: bool,
+    codex_stack_request: bool,
+    codex_official_auth_passthrough: bool,
+) -> bool {
+    if codex_responses_to_anthropic {
+        return is_codex_client_fingerprint_header(key_str);
+    }
+
+    if codex_stack_request && !codex_official_auth_passthrough {
+        let native_third_party_responses =
+            !codex_responses_to_chat && super::providers::is_codex_responses_endpoint(endpoint);
+        return is_codex_client_fingerprint_header(key_str)
+            && !(native_third_party_responses && key_str == "x-codex-beta-features");
+    }
+
+    false
+}
+
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
     let value: Value = serde_json::from_slice(body).ok()?;
     if value.get("type").and_then(Value::as_str) != Some("error") && value.get("error").is_none() {
@@ -3868,9 +3952,36 @@ fn rewrite_codex_endpoint_for_copilot(
     (rewritten, passthrough_query)
 }
 
-fn copilot_api_format_for_vendor(vendor: Option<&str>) -> &'static str {
+/// Providers whose errors can come from an Anthropic Messages endpoint and therefore
+/// need the thinking signature / budget rectifiers. GitHub Copilot passes Anthropic
+/// models through to its native `/v1/messages`, where history replayed from another
+/// provider or from the Responses bridge fails signature validation; errors from its
+/// Chat / Responses bridges never match the rectifier keywords.
+fn uses_anthropic_rectifiers(provider_type: Option<ProviderType>) -> bool {
+    matches!(
+        provider_type,
+        Some(ProviderType::Claude | ProviderType::ClaudeAuth | ProviderType::GitHubCopilot)
+    )
+}
+
+/// Pick the Copilot upstream protocol for a Claude-client request.
+///
+/// Anthropic models that advertise `/v1/messages` are passed through natively:
+/// the Chat Completions bridge drops `cache_control` breakpoints and Copilot's
+/// chat endpoint stops prefix caching at the first mid-conversation `system`
+/// message Claude Code inserts, so every turn re-bills the whole history.
+fn copilot_api_format_for_model(
+    vendor: Option<&str>,
+    supported_endpoints: &[String],
+) -> &'static str {
     if vendor.is_some_and(|vendor| vendor.eq_ignore_ascii_case("openai")) {
         "openai_responses"
+    } else if vendor.is_some_and(|vendor| vendor.eq_ignore_ascii_case("anthropic"))
+        && supported_endpoints
+            .iter()
+            .any(|endpoint| endpoint.trim_end_matches('/') == "/v1/messages")
+    {
+        "anthropic"
     } else {
         "openai_chat"
     }
@@ -4228,12 +4339,15 @@ fn should_force_identity_encoding(
 }
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
-    if error.is_timeout() {
-        ProxyError::Timeout(format!("上游请求超时: {}", error.without_url()))
-    } else if error.is_connect() {
-        ProxyError::ForwardFailed(format!("上游连接失败: {}", error.without_url()))
+    let is_timeout = error.is_timeout();
+    let is_connect = error.is_connect();
+    let detail = super::error::describe_reqwest_error(error);
+    if is_timeout {
+        ProxyError::Timeout(format!("上游请求超时: {detail}"))
+    } else if is_connect {
+        ProxyError::ForwardFailed(format!("上游连接失败: {detail}"))
     } else {
-        ProxyError::ForwardFailed(format!("上游请求发送失败: {}", error.without_url()))
+        ProxyError::ForwardFailed(format!("上游请求发送失败: {detail}"))
     }
 }
 
@@ -6069,7 +6183,13 @@ mod tests {
         let continuation = json!({
             "input": [{"type": "function_call_output", "call_id": "call-1", "output": "done"}]
         });
-        for source in ["session_id", "x-session-id", "metadata"] {
+        for source in [
+            "session_id",
+            "x-session-id",
+            "session-id",
+            "thread-id",
+            "metadata",
+        ] {
             let mut headers = HeaderMap::new();
             let mut body = first.clone();
             let session_id = "12345678-1234-1234-1234-123456789abc";
@@ -6171,16 +6291,45 @@ mod tests {
     }
 
     #[test]
-    fn copilot_transport_uses_responses_only_for_openai_vendor() {
+    fn anthropic_rectifiers_cover_copilot_native_messages() {
+        for provider_type in [
+            ProviderType::Claude,
+            ProviderType::ClaudeAuth,
+            ProviderType::GitHubCopilot,
+        ] {
+            assert!(uses_anthropic_rectifiers(Some(provider_type)));
+        }
+        for provider_type in [
+            ProviderType::Codex,
+            ProviderType::OpenRouter,
+            ProviderType::CodexOAuth,
+        ] {
+            assert!(!uses_anthropic_rectifiers(Some(provider_type)));
+        }
+        assert!(!uses_anthropic_rectifiers(None));
+    }
+
+    #[test]
+    fn copilot_transport_selects_protocol_by_vendor_and_endpoints() {
+        let messages = vec!["/v1/messages".to_string(), "/chat/completions".to_string()];
+        let chat_only = vec!["/chat/completions".to_string()];
         assert_eq!(
-            copilot_api_format_for_vendor(Some("OpenAI")),
+            copilot_api_format_for_model(Some("OpenAI"), &chat_only),
             "openai_responses"
         );
         assert_eq!(
-            copilot_api_format_for_vendor(Some("Anthropic")),
+            copilot_api_format_for_model(Some("Anthropic"), &messages),
+            "anthropic"
+        );
+        assert_eq!(
+            copilot_api_format_for_model(Some("Anthropic"), &chat_only),
             "openai_chat"
         );
-        assert_eq!(copilot_api_format_for_vendor(None), "openai_chat");
+        assert_eq!(
+            copilot_api_format_for_model(Some("Anthropic"), &[]),
+            "openai_chat"
+        );
+        assert_eq!(copilot_api_format_for_model(None, &messages), "openai_chat");
     }
 
     #[test]
@@ -6801,6 +6950,21 @@ mod tests {
     }
 
     #[test]
+    fn reactive_triggers_for_openrouter_no_image_endpoint_404() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_codex_input_image("deepseek/deepseek-v4-flash-0731");
+        let error = ProxyError::UpstreamError {
+            status: 404,
+            body: Some(
+                r#"{"error":{"message":"No endpoints found that support image input"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+    }
+
+    #[test]
     fn reactive_triggers_for_structured_and_stringified_codex_tool_images() {
         let fwd = forwarder_with_rectifier(RectifierConfig::default());
 
@@ -6971,6 +7135,7 @@ mod tests {
                 ("chatgpt-account-id", "acct-workspace"),
                 ("originator", "codex_cli_rs"),
                 ("session_id", "session-1"),
+                ("x-codex-beta-features", "remote_compaction_v2"),
                 ("x-codex-turn-state", "state"),
                 ("openai-beta", "responses=experimental"),
                 ("x-oai-attestation", "device-proof"),
@@ -7017,7 +7182,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn stacked_requests_never_carry_the_chatgpt_identity() {
+        async fn stacked_requests_drop_chatgpt_identity_but_keep_native_responses_beta_marker() {
             let upstream = upstream().await;
             for api_format in ["openai_responses", "openai_chat", "anthropic"] {
                 let seen = send(
@@ -7028,12 +7193,25 @@ mod tests {
                     body("listed", json!([])),
                 )
                 .await;
-                for (name, _) in seen.headers.iter() {
+                for name in [
+                    "chatgpt-account-id",
+                    "originator",
+                    "session_id",
+                    "x-codex-turn-state",
+                    "openai-beta",
+                    "x-oai-attestation",
+                    "x-openai-fedramp",
+                ] {
                     assert!(
-                        !is_codex_client_fingerprint_header(name.as_str()),
+                        !seen.headers.contains_key(name),
                         "{api_format}: {name} reached a third party"
                     );
                 }
+                assert_eq!(
+                    seen.headers.contains_key("x-codex-beta-features"),
+                    api_format == "openai_responses",
+                    "{api_format}: protocol marker handling"
+                );
                 let auth = seen
                     .headers
                     .get("authorization")
@@ -7045,7 +7223,7 @@ mod tests {
                 assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
             }
 
-            // 对照：路由请求发往原生 Responses 时照旧转发这些头。
+            // Control: routing requests to native Responses still forward these headers.
             let seen = send(
                 &forwarder(false),
                 &upstream,
@@ -7055,11 +7233,12 @@ mod tests {
             )
             .await;
             assert!(seen.headers.contains_key("session_id"));
+            assert!(seen.headers.contains_key("x-codex-beta-features"));
         }
 
-        /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成禁止新工具调用的摘要回合
-        /// （工具定义保留，历史里的调用条目还引用着它们），CC Switch 包装的压缩摘要改成
-        /// 普通消息；看不出来源的压缩密文原样发出。
+        /// Native Responses third parties cannot consume Codex's private compaction
+        /// trigger. Rewrite it into a summary turn that prevents new tool calls
+        /// while preserving tool definitions and historical tool-call references.
         #[tokio::test]
         async fn native_third_party_compaction_becomes_summary_turn() {
             use crate::proxy::providers::codex_compaction::{
@@ -7445,7 +7624,8 @@ mod tests {
                 gate(AppType::Codex, &third_party),
                 Some(OpaqueStateRejection {
                     reasoning: false,
-                    compaction: true
+                    compaction: true,
+                    item_ids: false,
                 })
             );
             assert_eq!(gate(AppType::Codex, &official), None);
@@ -7487,6 +7667,7 @@ mod tests {
                 Some(OpaqueStateRejection {
                     reasoning: false,
                     compaction: true,
+                    item_ids: false,
                 })
             );
             assert_eq!(
@@ -8450,6 +8631,55 @@ mod tests {
             send(&stack_forwarder(), vec![kimi], body)
                 .await
                 .map_err(|e| e.error)
+                .expect("stack mode");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[0]["model"], "kimi-k2");
+            assert_eq!(requests[1]["model"], "kimi-k3");
+        }
+
+        #[tokio::test]
+        async fn claude_desktop_stacked_requests_skip_the_mapping_table() {
+            let up = upstream(vec![ok(), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.meta = Some(crate::provider::ProviderMeta {
+                claude_desktop_model_routes: [(
+                    "claude-sonnet-5".to_string(),
+                    crate::provider::ClaudeDesktopModelRoute {
+                        model: "kimi-k2".to_string(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            });
+            let send_desktop = |fwd: RequestForwarder, model: &'static str| {
+                let kimi = kimi.clone();
+                async move {
+                    let mut body = plain_body();
+                    body["model"] = json!(model);
+                    fwd.forward_with_retry(
+                        &AppType::ClaudeDesktop,
+                        http::Method::POST,
+                        "/v1/messages",
+                        body,
+                        HeaderMap::new(),
+                        Extensions::new(),
+                        vec![kimi],
+                    )
+                    .await
+                    .map_err(|e| e.error)
+                }
+            };
+
+            // 对照：路由请求按映射表换成上游名；聚合请求体里已经是上游名，映射表里没有它也照发。
+            send_desktop(forwarder(1, "kimi"), "claude-sonnet-5")
+                .await
+                .expect("routed");
+            send_desktop(stack_forwarder(), "kimi-k3")
+                .await
                 .expect("stack mode");
 
             let requests = up.requests.lock().await;

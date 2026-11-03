@@ -191,6 +191,8 @@ pub const DESKTOP_PROFILE_FLOOR: &[&str] = &[
     "inferenceGatewayApiKey",
     "inferenceGatewayAuthScheme",
     "inferenceModels",
+    // 路由 / 聚合模式写 true（只为让本地 /v1/models 补上模型说明），直连模式清掉
+    "modelDiscoveryEnabled",
 ];
 
 pub fn desktop_profile_floor(key: &str) -> bool {

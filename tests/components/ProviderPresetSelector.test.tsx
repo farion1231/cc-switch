@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
 import type { ProviderCategory } from "@/types";
+import type { AppId } from "@/lib/api";
 import {
   ProviderPresetSelector,
   filterPresetEntries,
@@ -17,6 +18,7 @@ import {
   type PresetStepState,
 } from "@/components/providers/forms/presetStep";
 import {
+  PRESET_GROUP_ORDER,
   domainBody,
   groupPresetRows,
   presetGroup,
@@ -24,6 +26,10 @@ import {
   sectionPresetRows,
 } from "@/components/providers/forms/presetGroups";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import {
+  dshAccountPreset,
+  DSH_ACCOUNT_PRESET_ID,
+} from "@/config/dshProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import {
   PRESET_FAMILIES,
@@ -34,6 +40,7 @@ import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
+import tr from "@/i18n/locales/tr.json";
 
 vi.mock("@/components/ProviderIcon", () => ({
   ProviderIcon: ({ name }: { name: string }) => (
@@ -92,6 +99,10 @@ const entries: PresetEntry[] = [
     preset: preset("GitHub Copilot", "third_party", "https://github.com", {
       providerType: "github_copilot",
     }),
+  },
+  {
+    id: "ollama-local",
+    preset: preset("Ollama", "local", "https://ollama.com"),
   },
 ];
 
@@ -176,6 +187,7 @@ describe("preset helpers", () => {
       "vendor",
       "cloud",
       "login",
+      "local",
     ]);
   });
 
@@ -184,7 +196,15 @@ describe("preset helpers", () => {
       getVisiblePresetEntries(entries, { query: "", t }).map(
         (entry) => entry.id,
       ),
-    ).toEqual(["alpha", "bedrock", "gamma", "copilot", "huoshan", "zhipu"]);
+    ).toEqual([
+      "alpha",
+      "bedrock",
+      "gamma",
+      "copilot",
+      "huoshan",
+      "ollama-local",
+      "zhipu",
+    ]);
   });
 
   it("searches display names, domains and aliases but not TLDs", () => {
@@ -226,17 +246,17 @@ describe("preset families", () => {
     expect(hits("moonshot")).toEqual([["family:kimi", []]]);
   });
 
-  it("merges Claude's visible presets into 74 rows", () => {
+  it("merges Claude's visible presets into 111 rows", () => {
     const claudeEntries = providerPresets
-      .filter((item) => !item.hidden)
-      .map((item, index) => ({ id: `claude-${index}`, preset: item }));
-    expect(groupPresetRows(claudeEntries)).toHaveLength(74);
+      .map((item, index) => ({ id: `claude-${index}`, preset: item }))
+      .filter((entry) => !entry.preset.hidden);
+    expect(groupPresetRows(claudeEntries)).toHaveLength(111);
   });
 
   it("orders plans and regions as the design does where a family says so", () => {
     const claudeEntries = providerPresets
-      .filter((item) => !item.hidden)
-      .map((item, index) => ({ id: `claude-${index}`, preset: item }));
+      .map((item, index) => ({ id: `claude-${index}`, preset: item }))
+      .filter((entry) => !entry.preset.hidden);
     const versionsOf = (family: string) =>
       groupPresetRows(claudeEntries)
         .find((row) => row.family === family)
@@ -319,6 +339,7 @@ describe("preset families", () => {
       ["vendor", ["huoshan", "family:kimi", "zhipu"]],
       ["thirdparty", ["gamma"]],
       ["cloud", ["bedrock"]],
+      ["local", ["ollama-local"]],
     ]);
     expect(sections("gamma")).toEqual([["thirdparty", ["gamma"]]]);
   });
@@ -350,14 +371,31 @@ describe("preset families", () => {
       }
     }
   });
+
+  it("has a label and a hint for every category in all four locales", () => {
+    for (const [name, locale] of Object.entries({ zh, zhTW, en, ja })) {
+      const { group, groupHint } = locale.providerPreset as unknown as Record<
+        "group" | "groupHint",
+        Record<string, unknown>
+      >;
+      for (const key of PRESET_GROUP_ORDER) {
+        expect(typeof group[key], `${name} group.${key}`).toBe("string");
+        expect(typeof groupHint[key], `${name} groupHint.${key}`).toBe(
+          "string",
+        );
+      }
+    }
+  });
 });
 
 function TwoSteps({
   onPresetChange,
   presetEntries = entries,
+  appId = "claude",
 }: {
   onPresetChange: (id: string) => void;
   presetEntries?: PresetEntry[];
+  appId?: AppId;
 }) {
   const [step, setStep] = useState<"pick" | "form">("pick");
   const [host, setHost] = useState<HTMLDivElement | null>(null);
@@ -365,7 +403,7 @@ function TwoSteps({
   // 表单的替身：选预设时程序重填（清空 Key），用户可以手动输入
   const [apiKey, setApiKey] = useState("");
   const state: PresetStepState = {
-    appId: "claude",
+    appId,
     step,
     setStep,
     host,
@@ -408,7 +446,7 @@ describe("ProviderPresetSelector", () => {
     render(<TwoSteps onPresetChange={onPresetChange} />);
 
     const host = await screen.findByTestId("host");
-    // 自定义配置固定第一行；其余按分类分段（账号登录 → 模型厂商 → 第三方平台 → 云服务商），段内按名称
+    // 自定义配置固定第一行；其余按分类分段（账号登录 → 模型厂商 → 第三方平台 → 云服务商 → 本地），段内按名称
     const rows = within(host)
       .getAllByRole("button")
       .filter((button) => !button.hasAttribute("aria-pressed"));
@@ -422,6 +460,7 @@ describe("ProviderPresetSelector", () => {
       "providerPreset.group.vendor",
       "providerPreset.group.thirdparty",
       "providerPreset.group.cloud",
+      "providerPreset.group.local",
     ]);
     const login = within(host).getByRole("region", {
       name: "providerPreset.group.login",
@@ -448,6 +487,37 @@ describe("ProviderPresetSelector", () => {
       screen.getByRole("button", { name: "providerPreset.change" }),
     );
     expect(await screen.findByTestId("host")).toBeInTheDocument();
+  });
+
+  it("shows the DeepSeek account subtitle for the DSH official preset", async () => {
+    const onPresetChange = vi.fn();
+    render(
+      <TwoSteps
+        appId="dsh"
+        onPresetChange={onPresetChange}
+        presetEntries={[
+          { id: DSH_ACCOUNT_PRESET_ID, preset: dshAccountPreset },
+        ]}
+      />,
+    );
+    const host = await screen.findByTestId("host");
+    expect(
+      within(host).getByText("providerPreset.loginWith.deepseek"),
+    ).toBeInTheDocument();
+    expect(
+      within(host).queryByText("providerPreset.loginWith.claude"),
+    ).not.toBeInTheDocument();
+    for (const locale of [zh, zhTW, en, ja, tr]) {
+      expect(
+        (locale.providerPreset.loginWith as Record<string, string>).deepseek,
+      ).toContain("DeepSeek");
+    }
+    await userEvent
+      .setup()
+      .click(
+        within(host).getByRole("button", { name: "dsh.account.presetName" }),
+      );
+    expect(onPresetChange).toHaveBeenCalledWith(DSH_ACCOUNT_PRESET_ID);
   });
 
   it("filters by category and keeps the search text when clicking around", async () => {

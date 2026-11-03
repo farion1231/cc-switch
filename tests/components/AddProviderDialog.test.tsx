@@ -10,6 +10,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import type { ProviderFormValues } from "@/components/providers/forms/ProviderForm";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
+import { providersApi } from "@/lib/api";
+import type { ProviderEditorView } from "@/lib/api/providers";
+import { usePresetStep } from "@/components/providers/forms/presetStep";
+import { createPortal } from "react-dom";
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => (
@@ -34,11 +38,17 @@ vi.mock("@/components/ui/dialog", () => ({
 
 let mockFormValues: ProviderFormValues;
 let mockFormReady = true;
+let mockHasPresetSelector = false;
 // 表单把预设投影到配置文件上之后交给对话框的底（Codex、Gemini CLI、Grok Build）。
 let mockProjectedBase: Record<string, unknown> | null = null;
 // 投影成那份底的草稿（预设或模板）。
 let mockProjectedDraft: Record<string, unknown> | undefined;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
+// 对话框是否把「统一供应商」入口交给表单：只有 `showUniversalTab` 为真时才传。
+let universalProps: {
+  onUniversalPresetSelect?: unknown;
+  onManageUniversalProviders?: unknown;
+} = {};
 
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
@@ -46,6 +56,8 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     onSubmitReadyChange,
     onManageAuthAccounts,
     onEditorBaseChange,
+    onUniversalPresetSelect,
+    onManageUniversalProviders,
   }: {
     onSubmit: (values: ProviderFormValues) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
@@ -54,7 +66,15 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       base: Record<string, unknown> | null,
       draft?: Record<string, unknown>,
     ) => void;
+    onUniversalPresetSelect?: unknown;
+    onManageUniversalProviders?: unknown;
   }) => {
+    const presetStep = usePresetStep();
+    const registerSelector = presetStep?.registerSelector;
+    universalProps = { onUniversalPresetSelect, onManageUniversalProviders };
+    useEffect(() => {
+      if (mockHasPresetSelector) return registerSelector?.();
+    }, [registerSelector]);
     useEffect(() => {
       if (onSubmitReadyChange) {
         submitReadyCallbacks.push(onSubmitReadyChange);
@@ -72,6 +92,14 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
           onSubmit(mockFormValues);
         }}
       >
+        {mockHasPresetSelector && presetStep?.step === "pick" && presetStep.host
+          ? createPortal(
+              <button type="button" onClick={() => presetStep.setStep("form")}>
+                pick-preset
+              </button>,
+              presetStep.host,
+            )
+          : null}
         <button
           type="button"
           onClick={() => onManageAuthAccounts?.("codex_oauth")}
@@ -90,7 +118,9 @@ vi.mock("@/components/providers/AuthSettingsPanel", () => ({
 
 describe("AddProviderDialog", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     mockFormReady = true;
+    mockHasPresetSelector = false;
     mockProjectedBase = null;
     mockProjectedDraft = undefined;
     submitReadyCallbacks = [];
@@ -107,6 +137,89 @@ describe("AddProviderDialog", () => {
         },
       },
     };
+  });
+
+  it("opens without a fade while Claude's live base loads, then shows the picker", async () => {
+    let resolveView!: (view: ProviderEditorView) => void;
+    vi.spyOn(providersApi, "getEditorView").mockReturnValue(
+      new Promise((resolve) => {
+        resolveView = resolve;
+      }),
+    );
+    mockHasPresetSelector = true;
+    render(
+      <AddProviderDialog
+        open
+        appId="claude"
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("heading", { name: "provider.addNewProvider" })
+        .closest(".bg-app"),
+    ).toHaveStyle({ opacity: "1" });
+    expect(screen.getByText("common.loading")).toBeInTheDocument();
+    expect(document.getElementById("provider-form")).toBeNull();
+
+    await act(async () => {
+      resolveView({ settings: {}, inactive: [] });
+    });
+    const heading = screen.getByRole("heading", {
+      name: "provider.addNewProvider",
+    });
+    expect(heading.closest(".bg-app")).toHaveStyle({ opacity: "1" });
+    fireEvent.click(screen.getByRole("button", { name: "pick-preset" }));
+    expect(
+      screen.getByRole("button", { name: "common.add" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerPreset.backToPick" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "pick-preset" }),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the form when Claude's live base cannot be read", async () => {
+    vi.spyOn(providersApi, "getEditorView").mockRejectedValue(
+      new Error("invalid settings.json"),
+    );
+    render(
+      <AddProviderDialog
+        open
+        appId="claude"
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "common.add" }),
+    ).toBeEnabled();
+  });
+
+  it("ignores a closed Claude request when loading the next opening's form", async () => {
+    const resolvers: Array<(view: ProviderEditorView) => void> = [];
+    vi.spyOn(providersApi, "getEditorView").mockImplementation(
+      () => new Promise((resolve) => resolvers.push(resolve)),
+    );
+    const props = {
+      appId: "claude" as const,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+    };
+    const { rerender } = render(<AddProviderDialog open {...props} />);
+    rerender(<AddProviderDialog open={false} {...props} />);
+    rerender(<AddProviderDialog open {...props} />);
+    await act(async () => resolvers[0]({ settings: {}, inactive: [] }));
+    expect(
+      screen.queryByRole("button", { name: "manage-auth" }),
+    ).not.toBeInTheDocument();
+    await act(async () => resolvers[1]({ settings: {}, inactive: [] }));
+    expect(
+      screen.getByRole("button", { name: "manage-auth" }),
+    ).toBeInTheDocument();
   });
 
   it("使用 ProviderForm 返回的自定义端点", async () => {
@@ -428,5 +541,53 @@ context_window = 500000
 
     act(() => staleCallback?.(true));
     expect(reopenedButton).toBeDisabled();
+  });
+
+  // Oh My Pi 用 Pi 的表单：标识与模型都在表单里，必填项对话框看不见，按钮必须等表单报告就绪。
+  it("Oh My Pi 添加表单报告未就绪时禁用添加按钮", async () => {
+    mockFormReady = false;
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="omp"
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    const addButton = await screen.findByRole("button", { name: "common.add" });
+    await waitFor(() => expect(addButton).toBeDisabled());
+
+    act(() => submitReadyCallbacks.at(-1)?.(true));
+    await waitFor(() => expect(addButton).toBeEnabled());
+  });
+
+  // 统一供应商只能投影到 Claude Code / Codex / Gemini（后端 `UniversalProviderApps`），
+  // 所以对话框对 omp 不能把入口交给表单；Claude Code 作为对照必须照旧传。
+  it("只有能接收统一供应商的应用才拿到统一预设入口", async () => {
+    const { rerender } = render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="omp"
+        onSubmit={vi.fn()}
+      />,
+    );
+    await screen.findByRole("button", { name: "common.add" });
+    expect(universalProps.onUniversalPresetSelect).toBeUndefined();
+    expect(universalProps.onManageUniversalProviders).toBeUndefined();
+
+    rerender(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="claude"
+        onSubmit={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(universalProps.onUniversalPresetSelect).toBeTypeOf("function"),
+    );
+    expect(universalProps.onManageUniversalProviders).toBeTypeOf("function");
   });
 });

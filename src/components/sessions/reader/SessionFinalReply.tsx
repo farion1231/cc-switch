@@ -6,6 +6,7 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
 import { highlightText } from "../utils";
 import { useReaderContext } from "./context";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useReaderT } from "./i18n";
 import {
   COLLAPSE_THRESHOLD,
@@ -19,7 +20,7 @@ import {
   hasHighlightableMarkdownMatch,
   SessionMarkdown,
 } from "./SessionMarkdown";
-import { formatCost, formatTokens } from "./toolSummary";
+import { formatTokens } from "./toolSummary";
 import type { TurnFinal } from "./turns";
 
 const SNIPPET_RADIUS = 60;
@@ -57,6 +58,7 @@ export const SessionFinalReply = memo(function SessionFinalReply({
 }: SessionFinalReplyProps) {
   const { t } = useTranslation();
   const rt = useReaderT();
+  const { moneyCompact } = useMoneyFormat();
   const { style, projectDir, searchQuery, onCopy } = useReaderContext();
   const [expanded, setExpanded] = useState(false);
   const text = final.text;
@@ -145,7 +147,7 @@ export const SessionFinalReply = memo(function SessionFinalReply({
             {cost.tokens !== undefined &&
               rt("summaryTokens", { tokens: formatTokens(cost.tokens) })}
             {cost.tokens !== undefined && cost.costUsd !== undefined && " · "}
-            {cost.costUsd !== undefined && formatCost(cost.costUsd)}
+            {cost.costUsd !== undefined && moneyCompact(cost.costUsd)}
           </div>
         )}
         {hiddenMatches.length > 0 && searchQuery && (

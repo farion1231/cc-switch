@@ -12,7 +12,8 @@
 //! (`backend/internal/service/openai_gateway_grok.go`) plus the #6815 schema
 //! collapse for root `oneOf`/`anyOf` function parameters. Field removal and
 //! that schema rewrite stay in that function. Collaboration `agent_message`
-//! items and return-path whole-float tool argument rewrites are separate
+//! items, `function_call_output` receipts without a `call_id`, and
+//! return-path whole-float tool argument rewrites are separate
 //! entry points so they cannot be mistaken for "just delete a field". Gated on
 //! [`super::codex::provider_needs_responses_namespace_flatten`], which covers
 //! xAI OAuth *and* API-key cards whose live upstream is `api.x.ai` Responses.
@@ -42,6 +43,9 @@ const RECURSIVE_UNSUPPORTED_FIELDS: &[&str] = &["external_web_access"];
 
 /// Top-level request fields xAI rejects regardless of model.
 const TOP_LEVEL_UNSUPPORTED_FIELDS: &[&str] = &["prompt_cache_retention", "safety_identifier"];
+
+/// `include` markers emitted by Codex that xAI's Responses API rejects.
+const XAI_UNSUPPORTED_INCLUDE_MARKERS: &[&str] = &["output.encrypted_content"];
 
 /// Top-level sampling fields rejected specifically by grok-4.5.
 const GROK_45_UNSUPPORTED_FIELDS: &[&str] = &[
@@ -86,37 +90,67 @@ pub(crate) fn sanitize_xai_responses_request(body: &mut Value) -> bool {
         changed |= remove_top_level_field(body, field);
     }
 
-    // 2. grok-4.5 additionally rejects these sampling knobs.
+    // 2. Codex may request replay-only output tokens that xAI does not support.
+    //    Preserve every other include marker so newly supported xAI features keep working.
+    changed |= filter_unsupported_include_markers(body);
+
+    // 3. grok-4.5 additionally rejects these sampling knobs.
     if request_targets_grok_45(body) {
         for field in GROK_45_UNSUPPORTED_FIELDS {
             changed |= remove_top_level_field(body, field);
         }
     }
 
-    // 3. Codex plugin-private flags buried at any depth (e.g. inside tools or
+    // 4. Codex plugin-private flags buried at any depth (e.g. inside tools or
     //    tool parameter schemas).
     for field in RECURSIVE_UNSUPPORTED_FIELDS {
         changed |= remove_field_recursive(body, field);
     }
 
-    // 4. Lift the `additional_tools` input carrier (Responses Lite private
+    // 5. Lift the `additional_tools` input carrier (Responses Lite private
     //    shape) up to top-level `tools` so the supported ones survive.
     changed |= promote_additional_tools(body);
 
-    // 5. Drop `content: null` on reasoning input items — xAI's untagged enum
+    // 6. Drop `content: null` on reasoning input items — xAI's untagged enum
     //    deserializer refuses a present-but-null content field.
     changed |= strip_null_reasoning_content(body);
 
-    // 6. Whitelist the tool types and clean a now-dangling `tool_choice`.
+    // 7. Whitelist the tool types and clean a now-dangling `tool_choice`.
     changed |= filter_unsupported_tools(body);
 
-    // 7. Normalize function tool parameter schemas that xAI rejects before
+    // 8. Normalize function tool parameter schemas that xAI rejects before
     //    sampling starts — notably Codex's built-in `automation_update`, which
     //    arrives flattened as `mcp__codex_app__automation_update` with a root
     //    `oneOf`/`anyOf` union containing a `null` branch. The Responses→Chat
     //    bridge already coerces these, but the native Responses passthrough did
     //    not until this step.
     changed |= normalize_xai_function_tool_parameter_schemas(body);
+
+    changed
+}
+
+fn filter_unsupported_include_markers(body: &mut Value) -> bool {
+    let mut remove_empty_include = false;
+    let changed = match body.get_mut("include").and_then(Value::as_array_mut) {
+        Some(include) => {
+            let original_len = include.len();
+            include.retain(|item| {
+                !item
+                    .as_str()
+                    .is_some_and(|marker| XAI_UNSUPPORTED_INCLUDE_MARKERS.contains(&marker))
+            });
+            let changed = include.len() != original_len;
+            remove_empty_include = changed && include.is_empty();
+            changed
+        }
+        None => false,
+    };
+
+    if remove_empty_include {
+        if let Some(body) = body.as_object_mut() {
+            body.remove("include");
+        }
+    }
 
     changed
 }
@@ -661,6 +695,82 @@ pub(crate) fn apply_xai_native_responses_request_compat(
             "[Codex] Rewrote xAI-unsupported agent_message input items (provider={provider_id})"
         );
     }
+    if rewrite_xai_call_id_less_tool_outputs(body) {
+        log::info!(
+            "[Codex] Rewrote function_call_output items without call_id for xAI (provider={provider_id})"
+        );
+    }
+}
+
+/// Same marker the Responses→Chat bridge uses, so the model reads one wording
+/// whichever path an orphan tool result takes.
+const ORPHAN_TOOL_OUTPUT_MARKER: &str = "[tool_result without a matching tool_call]";
+
+/// Content part types a Responses `message` accepts as-is from a tool output.
+const MESSAGE_CONTENT_PART_TYPES: &[&str] = &["input_text", "input_image", "input_file"];
+
+/// Rewrite top-level `function_call_output` items that carry no `call_id` into
+/// user `message` items. Codex Desktop injects these receipts on its own
+/// (create_thread delegation, automation_update, heartbeat, cross-thread
+/// messages) with only an `fco_` id; xAI's strict deserializer 422s the whole
+/// request (`input[N]: invalid "function_call_output" item: missing field
+/// call_id`), and since the receipt stays in history the thread never recovers.
+///
+/// Rewrite rather than drop: the receipt carries the delegated task text.
+/// Items with a `call_id` are left alone even if their call is not in `input`,
+/// because a `previous_response_id` continuation legitimately pairs them with
+/// a call from the stored response.
+pub(crate) fn rewrite_xai_call_id_less_tool_outputs(body: &mut Value) -> bool {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for item in input {
+        if json_type(item) != Some("function_call_output") {
+            continue;
+        }
+        let has_call_id = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.trim().is_empty());
+        if has_call_id {
+            continue;
+        }
+        *item = json!({
+            "type": "message",
+            "role": "user",
+            "content": orphan_tool_output_content(item.get("output")),
+        });
+        changed = true;
+    }
+    changed
+}
+
+fn orphan_tool_output_content(output: Option<&Value>) -> Vec<Value> {
+    match output {
+        Some(Value::String(text)) if !text.is_empty() => {
+            vec![input_text_part(&format!(
+                "{ORPHAN_TOOL_OUTPUT_MARKER}\n{text}"
+            ))]
+        }
+        Some(Value::Array(parts)) => {
+            let mut content = vec![input_text_part(ORPHAN_TOOL_OUTPUT_MARKER)];
+            content.extend(parts.iter().map(|part| {
+                if json_type(part).is_some_and(|ty| MESSAGE_CONTENT_PART_TYPES.contains(&ty)) {
+                    part.clone()
+                } else {
+                    input_text_part(&part.to_string())
+                }
+            }));
+            content
+        }
+        Some(Value::Null | Value::String(_)) | None => {
+            vec![input_text_part(ORPHAN_TOOL_OUTPUT_MARKER)]
+        }
+        Some(other) => vec![input_text_part(&format!(
+            "{ORPHAN_TOOL_OUTPUT_MARKER}\n{other}"
+        ))],
+    }
 }
 
 /// Rewrite Codex multi-agent v2 `agent_message` items into ordinary `message`
@@ -1104,6 +1214,56 @@ mod tests {
         assert!(sanitize_xai_responses_request(&mut body));
         assert!(body.get("prompt_cache_retention").is_none());
         assert!(body.get("safety_identifier").is_none());
+    }
+
+    #[test]
+    fn filters_unsupported_include_marker_preserving_other_values() {
+        let mut body = json!({
+            "model": "grok-4.7",
+            "include": [
+                "reasoning.encrypted_content",
+                "output.encrypted_content",
+                "web_search_call.action.sources"
+            ]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert_eq!(
+            body["include"],
+            json!([
+                "reasoning.encrypted_content",
+                "web_search_call.action.sources"
+            ])
+        );
+        assert!(!sanitize_xai_responses_request(&mut body));
+    }
+
+    #[test]
+    fn drops_include_when_only_unsupported_marker_remains() {
+        let mut body = json!({
+            "model": "grok-4.7",
+            "include": ["output.encrypted_content"]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn keeps_supported_include_values_unchanged() {
+        let mut body = json!({
+            "model": "grok-4.7",
+            "include": ["reasoning.encrypted_content", "web_search_call.action.sources"]
+        });
+
+        assert!(!sanitize_xai_responses_request(&mut body));
+        assert_eq!(
+            body["include"],
+            json!([
+                "reasoning.encrypted_content",
+                "web_search_call.action.sources"
+            ])
+        );
     }
 
     #[test]
@@ -1667,6 +1827,113 @@ mod tests {
         assert!(rewrite_xai_agent_message_input_items(&mut body));
         assert_eq!(body["input"]["items"][0]["type"], "message");
         assert_eq!(body["input"]["items"][0]["role"], "user");
+    }
+
+    #[test]
+    fn rewrites_call_id_less_tool_output_at_input_index_matching_xai_422() {
+        // Shape Codex Desktop injects for a create_thread / worker receipt:
+        // an `fco_` id, `call_id: null`, no preceding function_call.
+        let mut body = json!({
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]},
+                {"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{}"},
+                {
+                    "type": "function_call_output",
+                    "id": "fco_01abc",
+                    "call_id": null,
+                    "output": "Created thread t_42: review the PR"
+                },
+                {"type": "function_call_output", "call_id": "call_1", "output": "ok"}
+            ]
+        });
+        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert_eq!(
+            body["input"][2],
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "[tool_result without a matching tool_call]\nCreated thread t_42: review the PR"
+                }]
+            })
+        );
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(
+            body["input"][3],
+            json!({"type": "function_call_output", "call_id": "call_1", "output": "ok"})
+        );
+        assert!(!rewrite_xai_call_id_less_tool_outputs(&mut body));
+    }
+
+    #[test]
+    fn rewrites_missing_and_blank_call_id_but_keeps_any_present_call_id() {
+        let mut body = json!({
+            "input": [
+                {"type": "function_call_output", "id": "fco_1", "output": "automation"},
+                {"type": "function_call_output", "call_id": "  ", "output": "heartbeat"},
+                // Paired through previous_response_id, not through `input`.
+                {"type": "function_call_output", "call_id": "call_prev", "output": "kept"}
+            ]
+        });
+        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][1]["type"], "message");
+        assert_eq!(body["input"][2]["type"], "function_call_output");
+        assert_eq!(body["input"][2]["call_id"], "call_prev");
+    }
+
+    #[test]
+    fn call_id_less_tool_output_keeps_image_parts() {
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "output": [
+                    {"type": "input_text", "text": "screenshot"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                    {"type": "unknown_part", "x": 1}
+                ]
+            }]
+        });
+        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        let content = body["input"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 4);
+        assert_eq!(
+            content[0]["text"],
+            "[tool_result without a matching tool_call]"
+        );
+        assert_eq!(
+            content[1],
+            json!({"type": "input_text", "text": "screenshot"})
+        );
+        assert_eq!(content[2]["type"], "input_image");
+        assert_eq!(content[2]["image_url"], "data:image/png;base64,AAAA");
+        assert_eq!(content[3]["type"], "input_text");
+        assert_eq!(content[3]["text"], r#"{"type":"unknown_part","x":1}"#);
+    }
+
+    #[test]
+    fn clean_tool_history_is_untouched_by_call_id_rewrite() {
+        let mut body = json!({
+            "input": [
+                {"type": "function_call", "call_id": "c1", "name": "shell", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "ok"}
+            ]
+        });
+        let before = body.clone();
+        assert!(!rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert_eq!(body, before);
+    }
+
+    #[test]
+    fn request_compat_rewrites_call_id_less_tool_output() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "input": [{"type": "function_call_output", "id": "fco_1", "output": "receipt"}]
+        });
+        apply_xai_native_responses_request_compat(&mut body, "grok", None, &json!({}));
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][0]["role"], "user");
     }
 
     #[test]

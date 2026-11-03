@@ -17,6 +17,7 @@ import type { SessionTranscriptResult } from "@/lib/query/sessions";
 import { toast } from "@/lib/toast";
 
 import { sessionsApi } from "@/lib/api";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { cn } from "@/lib/utils";
 import type { SessionMessage, SessionMeta, TurnIndex } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -170,6 +171,7 @@ export function SessionReader({
 }: SessionReaderProps) {
   const { t } = useTranslation();
   const rt = useReaderT();
+  const { moneyCompact } = useMoneyFormat();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
@@ -396,9 +398,10 @@ export function SessionReader({
       youLabel: t("sessionManager.you", { defaultValue: "你" }),
       projectDir: session.projectDir ?? undefined,
       t: rt,
+      formatCost: moneyCompact,
       includeThinking,
     }),
-    [appName, includeThinking, rt, session.projectDir, style, t],
+    [appName, includeThinking, moneyCompact, rt, session.projectDir, style, t],
   );
 
   const copyTurn = useCallback(

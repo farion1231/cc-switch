@@ -81,7 +81,7 @@ export function ApiKeySection({
             href={websiteUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-caption text-fg-1 underline underline-offset-2 hover:text-fg-2"
+            className="text-caption text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
           >
             {t("providerForm.getApiKey", { defaultValue: "获取 API Key" })} ↗
           </a>

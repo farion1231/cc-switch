@@ -5,6 +5,7 @@ export type ProviderCategory =
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
   | "custom" // 自定义
+  | "local" // 本机推理服务（Ollama、LM Studio 等）
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
@@ -217,6 +218,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Claude route → OpenAI Chat / Responses: how the client's thinking effort is sent upstream (absent = auto)
+  claudeReasoningEffort?: ClaudeReasoningEffortMode;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).
@@ -268,6 +271,9 @@ export type ClaudeApiFormat =
   | "openai_responses"
   | "gemini_native";
 
+// Claude 路由经 OpenAI Chat / Responses 转发时思考档位的发法；缺省 = 自动
+export type ClaudeReasoningEffortMode = "off" | "passthrough";
+
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
@@ -314,6 +320,10 @@ export interface VisibleApps {
   hermes: boolean;
   pi: boolean;
   mcode: boolean;
+  kimi: boolean;
+  dsh?: boolean;
+  agy: boolean;
+  omp: boolean;
 }
 
 // WebDAV 同步状态
@@ -368,6 +378,36 @@ export interface RemoteSnapshotInfo {
   remotePath: string;
 }
 
+/** 用量金额的显示方式；对应 Rust `UsageDisplaySettings`。值由前端校验兜底。 */
+export interface UsageDisplaySettings {
+  /** 显示币种（见 `DISPLAY_CURRENCIES`），缺省为 USD */
+  currency?: string;
+  /** 1 美元折多少目标币种，按币种存 */
+  exchangeRates?: Record<string, number>;
+  /** 侧栏「今日」显示哪几项（见 `SIDEBAR_TODAY_ITEMS`），缺省只显示金额；空列表＝不显示 */
+  sidebarTodayItems?: string[];
+  /** 请求日志列显隐：只存用户改过的列（列 id → 是否显示） */
+  requestLogColumns?: Record<string, boolean>;
+  /** 用量趋势图的样式（见 `TREND_CHART_TYPES`），缺省为柱形图 */
+  trendChartType?: string;
+  /** 汇率来源（"auto" 自动获取 / "manual" 手动填写），缺省为 manual，只有用户主动选自动才联网 */
+  rateSource?: string;
+  /** 自动获取到的汇率，按币种存；与手填的 `exchangeRates` 分开，切回手动不丢手填值 */
+  autoExchangeRates?: Record<string, number>;
+  /** 上次成功取到汇率的时间（毫秒时间戳） */
+  rateFetchedAt?: number;
+  /** 上次取到汇率的实际数据源（后端返回的 source），用于界面署名 */
+  rateProvider?: string;
+}
+
+/** 后端 `fetch_exchange_rates` 的返回：1 美元折多少目标币种 */
+export interface FetchedExchangeRates {
+  rates: Record<string, number>;
+  fetchedAt: number;
+  /** 实际取到数据的源，界面标注用 */
+  source: string;
+}
+
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
 export interface Settings {
@@ -395,6 +435,8 @@ export interface Settings {
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
   usageDashboardRefreshIntervalMs?: number;
+  // 用量金额的显示币种与汇率（只影响显示，库里一律存美元）
+  usageDisplay?: UsageDisplaySettings;
   // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
   sessionAutoSyncEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page
@@ -405,16 +447,30 @@ export interface Settings {
   showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
+  // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
+  nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
+  codexQuotaProtection?: {
+    enabled: boolean;
+    fiveHourThreshold: number;
+    weeklyThreshold: number;
+  };
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
   // Codex aggregation: every catalog row uses the classic (v1) sub-agent tools,
-  // so a sub-agent on another provider can read its task (off by default)
-  codexStackClassicSubagents?: boolean;
+  // so a sub-agent on another provider can read its task (on by default)
+  codexStackClassicTools?: boolean;
+  // Codex aggregation: default sub-agent model (a published `ccs-<key>/<model>` id)
+  // and its reasoning effort. Unset = sub-agents follow the main model.
+  codexStackSubagentModel?: string;
+  codexStackSubagentReasoningEffort?: string;
+  // Codex aggregation: Auto Review (approval reviewer) model, a published
+  // `ccs-<key>/<model>` id. Unset = Codex's default reviewer.
+  codexStackAutoReviewModel?: string;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
@@ -428,12 +484,14 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "zh-TW" | "ja";
+  language?: "en" | "zh" | "zh-TW" | "ja" | "tr";
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
+  // 应用页和侧栏的应用顺序（应用 ID，拖动排序后写入；缺的应用按默认顺序插回）
+  appOrder?: string[];
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
@@ -452,6 +510,8 @@ export interface Settings {
   hermesConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
+  // 覆盖 Oh My Pi agent 配置目录（可选）
+  ompConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -737,6 +797,9 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   mcode?: boolean;
+  kimi?: boolean;
+  dsh?: boolean;
+  agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;
@@ -746,6 +809,7 @@ export interface McpApps {
   openclaw: boolean;
   hermes: boolean;
   pi?: boolean;
+  omp?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -905,6 +969,10 @@ export interface OpenClawModel {
   maxTokens?: number; // 最大输出 token 数
   compat?: {
     maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
+    supportsTools?: boolean; // 自定义供应商声明模型支持工具调用
+    toolSchemaProfile?: string; // 工具 schema 清理档案（如 llama-server 用 "llamacpp"）
+    supportsReasoningEffort?: boolean; // 接受 reasoning effort 参数
+    supportedReasoningEfforts?: string[]; // 接口接受的 effort 档位
   };
 }
 

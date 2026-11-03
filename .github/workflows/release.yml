@@ -230,6 +230,20 @@ jobs:
             $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if ($null -ne $msi) {
+            # #8534：旧版本的应用内更新器以 `msiexec /passive /promptrestart` 安装、不带任何 REBOOT
+            # 选项，文件被占用时会不经提示直接重启系统，所以 MSI 自身必须带 REBOOT=ReallySuppress。
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msi.FullName, 0))
+            $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @('SELECT `Value` FROM `Property` WHERE `Property`=''REBOOT'''))
+            $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+            $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            $reboot = if ($null -ne $record) { $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1) } else { $null }
+            $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
+            if ($reboot -ne 'ReallySuppress') {
+              throw "MSI Property table must set REBOOT=ReallySuppress (found: '$reboot') - see #8534"
+            }
+            Write-Host "MSI REBOOT property: $reboot"
+
             $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
@@ -365,7 +379,7 @@ jobs:
   macos-binary:
     name: Build macOS binary (${{ matrix.target }})
     needs: whats-new-check
-    runs-on: macos-14
+    runs-on: macos-15
     environment: release
     strategy:
       matrix:
@@ -437,7 +451,7 @@ jobs:
   # 已经过了 release 的批准，这里再挂会在半路要求第二次批准。secret 都是仓库级的。
   macos-release:
     name: Bundle macOS release
-    runs-on: macos-14
+    runs-on: macos-15
     needs: macos-binary
 
     steps:
@@ -623,8 +637,22 @@ jobs:
             exit 1
           fi
 
+          # stapler fetches the ticket from Apple's CloudKit, which sometimes drops
+          # the connection (NSURLError -1005, "Error 68"); retry instead of failing.
+          stapler_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler "$@"; then
+                return 0
+              fi
+              echo "⚠️ xcrun stapler $1 failed (attempt ${attempt}/5)" >&2
+              [ "$attempt" -lt 5 ] && sleep $((attempt * 20))
+            done
+            return 1
+          }
+
           # Staple notarization ticket to .app (Tauri already notarized it)
-          xcrun stapler staple "$APP_PATH"
+          stapler_retry staple "$APP_PATH"
           echo "✅ .app stapled"
 
           # 1) Collect .tar.gz (updater artifact)
@@ -688,6 +716,20 @@ jobs:
             exit 1
           fi
 
+          # stapler fetches the ticket from Apple's CloudKit, which sometimes drops
+          # the connection (NSURLError -1005, "Error 68"); retry instead of failing.
+          stapler_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler "$@"; then
+                return 0
+              fi
+              echo "⚠️ xcrun stapler $1 failed (attempt ${attempt}/5)" >&2
+              [ "$attempt" -lt 5 ] && sleep $((attempt * 20))
+            done
+            return 1
+          }
+
           echo "=== Notarizing DMG: $DMG_PATH ==="
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
@@ -698,7 +740,7 @@ jobs:
               --team-id "$APPLE_TEAM_ID" \
               --wait; then
               echo "✅ DMG notarization succeeded"
-              xcrun stapler staple "$DMG_PATH"
+              stapler_retry staple "$DMG_PATH"
               echo "✅ DMG stapled"
               break
             fi
@@ -717,6 +759,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # stapler fetches the ticket from Apple's CloudKit, which sometimes drops
+          # the connection (NSURLError -1005, "Error 68"); retry instead of failing.
+          stapler_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler "$@"; then
+                return 0
+              fi
+              echo "⚠️ xcrun stapler $1 failed (attempt ${attempt}/5)" >&2
+              [ "$attempt" -lt 5 ] && sleep $((attempt * 20))
+            done
+            return 1
+          }
 
           # Verify .app (from Tauri bundle)
           APP_PATH=""
@@ -739,7 +795,7 @@ jobs:
           echo "✅ codesign verification passed"
           spctl -a -t exec -vv "$APP_PATH"
           echo "✅ spctl assessment passed"
-          xcrun stapler validate "$APP_PATH"
+          stapler_retry validate "$APP_PATH"
           echo "✅ .app stapler validation passed"
 
           # Verify .dmg (from release-assets/, created by create-dmg + notarized)
@@ -750,7 +806,7 @@ jobs:
             echo "✅ .dmg codesign verification passed"
             spctl -a -t open --context context:primary-signature -vv "$DMG_PATH"
             echo "✅ .dmg spctl assessment passed"
-            xcrun stapler validate "$DMG_PATH"
+            stapler_retry validate "$DMG_PATH"
             echo "✅ .dmg stapler validation passed"
           else
             echo "❌ No .dmg found for verification — release would ship without verified DMG" >&2

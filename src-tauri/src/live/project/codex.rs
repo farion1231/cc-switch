@@ -50,7 +50,7 @@ const BEDROCK_IDS: &[&str] = &["amazon-bedrock", "amazon-bedrock-runtime"];
 const LEGACY_REROUTE_ID: &str = "cc-switch";
 
 /// 顶层的关键字段里，直接取行里值的那几个（选路、凭据、模型目录指针另算）。
-const ROW_TOP_FIELDS: &[&str] = &[
+pub(crate) const ROW_TOP_FIELDS: &[&str] = &[
     "model",
     "review_model",
     "model_reasoning_effort",

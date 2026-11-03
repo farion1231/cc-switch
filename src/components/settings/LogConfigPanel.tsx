@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { HelpTip } from "@/components/ui/help-tip";
 import {
   Select,
   SelectContent,
@@ -47,24 +48,37 @@ export function LogConfigPanel() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div className="space-y-0.5">
-          <Label>{t("settings.advanced.logConfig.enabled")}</Label>
-          <p className="text-xs text-fg-2">
+        <div className="flex items-center gap-1">
+          <Label htmlFor="diagnostic-log-enabled">
+            {t("settings.advanced.logConfig.enabled")}
+          </Label>
+          <HelpTip title={t("settings.advanced.logConfig.enabled")}>
             {t("settings.advanced.logConfig.enabledDescription")}
-          </p>
+          </HelpTip>
         </div>
         <Switch
+          id="diagnostic-log-enabled"
           checked={config.enabled}
           onCheckedChange={(checked) => handleChange({ enabled: checked })}
         />
       </div>
 
       <div className="flex items-center justify-between">
-        <div className="space-y-0.5">
-          <Label>{t("settings.advanced.logConfig.level")}</Label>
-          <p className="text-xs text-fg-2">
-            {t("settings.advanced.logConfig.levelDescription")}
-          </p>
+        <div className="flex items-center gap-1">
+          <Label htmlFor="diagnostic-log-level">
+            {t("settings.advanced.logConfig.level")}
+          </Label>
+          <HelpTip title={t("settings.advanced.logConfig.level")}>
+            <div className="space-y-1.5">
+              <p>{t("settings.advanced.logConfig.levelDescription")}</p>
+              {LOG_LEVELS.map((level) => (
+                <p key={level}>
+                  <span className="font-mono">{level}</span> —{" "}
+                  {t(`settings.advanced.logConfig.levelDesc.${level}`)}
+                </p>
+              ))}
+            </div>
+          </HelpTip>
         </div>
         <Select
           value={config.level}
@@ -73,7 +87,7 @@ export function LogConfigPanel() {
             handleChange({ level: value as LogConfig["level"] })
           }
         >
-          <SelectTrigger className="w-[120px]">
+          <SelectTrigger id="diagnostic-log-level" className="w-[120px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -84,35 +98,6 @@ export function LogConfigPanel() {
             ))}
           </SelectContent>
         </Select>
-      </div>
-
-      {/* 日志级别说明 */}
-      <div className="rounded-lg bg-subtle p-4 text-xs space-y-1.5">
-        <p className="font-medium text-fg-2 mb-2">
-          {t("settings.advanced.logConfig.levelHint")}
-        </p>
-        <div className="grid gap-1 text-fg-2">
-          <p>
-            <span className="font-mono text-danger-text">error</span> -{""}
-            {t("settings.advanced.logConfig.levelDesc.error")}
-          </p>
-          <p>
-            <span className="font-mono text-warning-text">warn</span> -{""}
-            {t("settings.advanced.logConfig.levelDesc.warn")}
-          </p>
-          <p>
-            <span className="font-mono text-fg-1">info</span> -{""}
-            {t("settings.advanced.logConfig.levelDesc.info")}
-          </p>
-          <p>
-            <span className="font-mono text-success-text">debug</span> -{""}
-            {t("settings.advanced.logConfig.levelDesc.debug")}
-          </p>
-          <p>
-            <span className="font-mono text-fg-2">trace</span> -{""}
-            {t("settings.advanced.logConfig.levelDesc.trace")}
-          </p>
-        </div>
       </div>
     </div>
   );
