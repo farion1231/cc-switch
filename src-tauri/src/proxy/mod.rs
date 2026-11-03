@@ -3,8 +3,10 @@
 //! 提供本地HTTP代理服务，支持多Provider故障转移和请求透传
 
 pub mod body_filter;
+mod browser_guard;
 pub mod cache_injector;
 pub mod circuit_breaker;
+pub(crate) mod codex_quota_protection;
 pub(crate) mod content_encoding;
 pub mod copilot_optimizer;
 pub mod error;

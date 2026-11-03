@@ -14,7 +14,7 @@ import {
   type DshLoginStart,
   type DshWallet,
 } from "@/lib/api/dsh";
-import { settingsApi } from "@/lib/api";
+import { deliverLoginLink } from "@/lib/authLoginLink";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { resolveProviderIcon } from "@/utils/providerIcon";
@@ -121,7 +121,7 @@ function useDshLogin(onSignedIn: () => void) {
     try {
       const next = await dshApi.loginStart();
       setFlow(next);
-      void settingsApi.openExternal(next.authUrl);
+      void deliverLoginLink(next.authUrl, t);
     } catch (e) {
       setFlow(null);
       setError(extractErrorMessage(e) || t("dsh.account.signInFailed"));
