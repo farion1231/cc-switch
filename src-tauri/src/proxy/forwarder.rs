@@ -1409,6 +1409,8 @@ impl RequestForwarder {
         let mut copilot_endpoint_override: Option<String> = None;
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
+        let codex_third_party =
+            matches!(app_type, AppType::Codex) && !codex_official_auth_passthrough;
         let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
         let mut quota_token = None;
 
@@ -2518,17 +2520,16 @@ impl RequestForwarder {
             // can defeat strict gateway fingerprint checks.
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            // Codex Stack 请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
-            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
-            // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
-            // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
+            // Codex 发往任何第三方上游时都剥掉：Codex 每个请求都带着 ChatGPT 身份
+            // （`chatgpt-account-id`、`session_id` 等），它们只能发往官方上游。Stack 目标
+            // 不会是官方账号，普通 native Responses 第三方路由同样如此。只限 Codex：
+            // Claude Code 自己的 `x-stainless-*` 是 Anthropic SDK 的正常请求头，照常转发。
             if should_strip_codex_client_fingerprint_header(
                 key_str,
                 &effective_endpoint,
                 codex_responses_to_anthropic,
                 codex_responses_to_chat,
-                codex_stack_request,
-                codex_official_auth_passthrough,
+                codex_third_party,
             ) {
                 continue;
             }
@@ -3641,25 +3642,25 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
 /// Decide whether a Codex fingerprint header must be removed before the request
 /// reaches an upstream.
 ///
-/// Stack requests to a third party still must not carry ChatGPT session or
-/// account identity. A native Responses third party, however, may use the
-/// non-identity `x-codex-beta-features` marker to recognize the Codex protocol
-/// and reject requests without it. Keep only that marker; all other Codex and
-/// OpenAI identity headers remain stripped. Converted Chat/Anthropic requests
-/// continue to receive a clean client fingerprint.
+/// Any Codex route to a third party must not carry ChatGPT session or account
+/// identity. A native Responses third party, however, may use the non-identity
+/// `x-codex-beta-features` marker to recognize the Codex protocol and reject
+/// requests without it. Keep only that marker; all other Codex and OpenAI
+/// identity headers remain stripped. Converted Chat/Anthropic requests continue
+/// to receive a clean client fingerprint. Official Codex and non-Codex routes
+/// keep their headers.
 fn should_strip_codex_client_fingerprint_header(
     key_str: &str,
     endpoint: &str,
     codex_responses_to_anthropic: bool,
     codex_responses_to_chat: bool,
-    codex_stack_request: bool,
-    codex_official_auth_passthrough: bool,
+    codex_third_party: bool,
 ) -> bool {
     if codex_responses_to_anthropic {
         return is_codex_client_fingerprint_header(key_str);
     }
 
-    if codex_stack_request && !codex_official_auth_passthrough {
+    if codex_third_party {
         let native_third_party_responses =
             !codex_responses_to_chat && super::providers::is_codex_responses_endpoint(endpoint);
         return is_codex_client_fingerprint_header(key_str)
@@ -5516,6 +5517,80 @@ mod tests {
     }
 
     #[test]
+    fn codex_third_party_responses_strip_identity_headers_but_keep_protocol_marker() {
+        let endpoint = "/v1/responses";
+        for header in [
+            "originator",
+            "session_id",
+            "thread-id",
+            "conversation_id",
+            "chatgpt-account-id",
+            "x-stainless-lang",
+            "x-codex-window-id",
+            "x-oai-attestation",
+            "openai-organization",
+            "version",
+        ] {
+            assert!(
+                should_strip_codex_client_fingerprint_header(header, endpoint, false, false, true),
+                "expected {header} to be stripped for a third-party Responses upstream"
+            );
+        }
+        assert!(
+            !should_strip_codex_client_fingerprint_header(
+                "x-codex-beta-features",
+                endpoint,
+                false,
+                false,
+                true,
+            ),
+            "native third-party Responses still needs the Codex protocol marker"
+        );
+        assert!(!should_strip_codex_client_fingerprint_header(
+            "anthropic-version",
+            endpoint,
+            false,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn codex_official_and_native_claude_keep_fingerprint_headers() {
+        assert!(!should_strip_codex_client_fingerprint_header(
+            "chatgpt-account-id",
+            "https://chatgpt.com/backend-api/codex/responses",
+            false,
+            false,
+            false,
+        ));
+        assert!(!should_strip_codex_client_fingerprint_header(
+            "x-stainless-lang",
+            "https://api.anthropic.com/v1/messages",
+            false,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn codex_third_party_converted_paths_strip_all_fingerprint_headers() {
+        for (anthropic, chat, endpoint) in [
+            (false, true, "/v1/chat/completions"),
+            (true, false, "/v1/messages"),
+        ] {
+            for header in ["chatgpt-account-id", "x-codex-beta-features"] {
+                assert!(
+                    should_strip_codex_client_fingerprint_header(
+                        header, endpoint, anthropic, chat, true
+                    ),
+                    "expected {header} to be stripped for converted upstreams"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn codex_anthropic_2xx_error_envelope_is_detected_for_failover() {
         let body = br#"{"type":"error","error":{"type":"overloaded_error","message":"busy"}}"#;
         assert_eq!(
@@ -7223,7 +7298,8 @@ mod tests {
                 assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
             }
 
-            // Control: routing requests to native Responses still forward these headers.
+            // Control: a non-Stack route to a native Responses third party follows the
+            // same rule — identity headers stripped, protocol marker kept.
             let seen = send(
                 &forwarder(false),
                 &upstream,
@@ -7232,7 +7308,7 @@ mod tests {
                 body("listed", json!([])),
             )
             .await;
-            assert!(seen.headers.contains_key("session_id"));
+            assert!(!seen.headers.contains_key("session_id"));
             assert!(seen.headers.contains_key("x-codex-beta-features"));
         }
 
