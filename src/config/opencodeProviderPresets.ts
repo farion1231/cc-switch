@@ -828,45 +828,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "grooroute",
   },
   {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "DIT.ai",
-      options: {
-        baseURL: "https://api.dit.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "claude-opus-5-5": {
-          name: "Claude Opus 5.5",
-          reasoning: true,
-          limit: { context: 1000000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "claude-sonnet-5-5": {
-          name: "Claude Sonnet 5.5",
-          reasoning: true,
-          limit: { context: 1000000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-      },
-    },
-    category: "aggregator",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
-  },
-  {
     name: "BuyToken",
     websiteUrl: "https://buytoken.work",
     apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
@@ -2946,7 +2907,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "千问AI平台",
       options: {
-        baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        baseURL: "https://maas.qianwenaiapi.com/compatible-mode/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -2971,8 +2932,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        defaultValue: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        placeholder: "https://maas.qianwenaiapi.com/compatible-mode/v1",
+        defaultValue: "https://maas.qianwenaiapi.com/compatible-mode/v1",
         editorValue: "",
       },
       apiKey: {
@@ -2994,8 +2955,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/anthropic",
       name: "千问AI平台 Token Plan",
       options: {
-        baseURL:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+        baseURL: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -3021,9 +2981,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       baseURL: {
         label: "Base URL",
         placeholder:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+          "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/v1",
         defaultValue:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+          "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
@@ -3047,7 +3007,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "QwenCloud",
       options: {
-        baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        baseURL:
+          "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -3073,8 +3034,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        defaultValue: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        placeholder:
+          "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
+        defaultValue:
+          "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
         editorValue: "",
       },
       apiKey: {
@@ -3134,8 +3097,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/anthropic",
       name: "QwenCloud Token Plan",
       options: {
-        baseURL:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+        baseURL: "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -3162,9 +3124,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       baseURL: {
         label: "Base URL",
         placeholder:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
         defaultValue:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
