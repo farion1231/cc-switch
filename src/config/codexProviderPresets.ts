@@ -144,16 +144,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     config: generateThirdPartyConfig(
       "kimi",
       "https://api.moonshot.cn/v1",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
     ),
     endpointCandidates: ["https://api.moonshot.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      // 档位照抄官方参数文档（2026-08-15 盘点）：k2.7-code 始终思考、官方
-      // 标注不支持 reasoning_effort → 单档 high（防模板假差异档，LongCat
-      // 先例）；k3 不可关思考、顶层 reasoning_effort 三档官方默认 max——
-      // 不声明 default：模板默认 medium ∉ 子集时后端回落最高档 = max，恰合
-      // 官方默认。两模型都关不掉思考，none 一律不列
+      // 档位照抄官方参数文档（2026-11-03 盘点）：k3.1-pro 与 k3 均始终思考、
+      // 顶层 reasoning_effort 三档官方默认 max——不声明 default：模板默认
+      // medium ∉ 子集时后端回落最高档 = max，恰合官方默认；两模型都关不掉
+      // 思考，none 一律不列。k2.7-code 保留给存量用户：K2 系列自 2026-10-31
+      // 起对新注册用户关闭，官方计划 2026-12 底全量退役（届时删该行）。
+      {
+        model: "kimi-k3.1-pro",
+        displayName: "Kimi K3.1 Pro",
+        contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
+      },
       {
         model: "kimi-k2.7-code",
         displayName: "Kimi K2.7 Code",
@@ -1338,17 +1344,25 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "bailian",
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "qwen3-coder-plus",
+      "qwen3.8-max",
     ),
     endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
     // 阿里百炼 DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
     apiFormat: "openai_responses",
     // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）
     modelCatalog: modelCatalog([
+      // qwen3-coder-plus 与 qwen3-max 已于 2026-10-10 停服（阿里云下线公告，
+      // 官方推荐替换 qwen3.7-plus）；现默认 qwen3.8-max（百炼文本生成旗舰，
+      // 定位"复杂推理与编程"，1M 上下文）
       {
-        model: "qwen3-coder-plus",
-        displayName: "Qwen3 Coder Plus",
-        contextWindow: 1048576,
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 1000000,
+      },
+      {
+        model: "qwen3.7-plus",
+        displayName: "Qwen3.7 Plus",
+        contextWindow: 1000000,
       },
     ]),
     category: "cn_official",
@@ -1776,7 +1790,7 @@ requires_openai_auth = true`,
     websiteUrl: "https://x.ai/api",
     apiKeyUrl: "https://console.x.ai",
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7"),
     endpointCandidates: ["https://api.x.ai/v1"],
     // xAI 官方以 /v1/responses 为一等端点（docs.x.ai api-reference）：Codex 硬依赖的
     // store:false / include=["reasoning.encrypted_content"] / reasoning effort 均支持，
@@ -1784,16 +1798,18 @@ requires_openai_auth = true`,
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
-        model: "grok-4.5",
-        displayName: "Grok 4.5",
+        model: "grok-4.7",
+        displayName: "Grok 4.7",
         contextWindow: 500000,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
-        // xAI Reasoning guide（docs.x.ai，2026-08）模型级枚举 low/medium/high
-        // 默认 high；"Reasoning cannot be disabled" 故无 none 档（模板默认的
-        // none 对 grok-4.5 是无效选项）；xhigh 是 grok-4.6 起才有的档位。
-        // ⚠️ docs.x.ai/developers/grok-4-5 页面实际渲染的是 grok-4.6 内容勿引
-        reasoningLevels: ["low", "medium", "high"],
+        // xAI 模型页（docs.x.ai，2026-11-03 盘点）：grok-4.7 为现行旗舰，
+        // reasoning 枚举 low/medium/high/xhigh（默认 high）；"Reasoning cannot
+        // be disabled" 故无 none 档。context 500k 为上限，>200K 输入按更高档
+        // 计费（价差见 xAI pricing，不影响窗口声明）
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+        // 官方默认 high ≠ 回落档（canonical 最高档 xhigh）→ 显式声明
+        defaultReasoningLevel: "high",
       },
     ]),
     category: "third_party",
@@ -1806,22 +1822,22 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     // 托管 OAuth：真实 token 由本地代理按请求注入，CodexAdapter 硬定向
     // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7"),
     apiFormat: "openai_responses",
     providerType: "xai_oauth",
     requiresOAuth: true,
     modelCatalog: modelCatalog([
       {
-        model: "grok-4.5",
-        displayName: "Grok 4.5",
+        model: "grok-4.7",
+        displayName: "Grok 4.7",
         contextWindow: 500000,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
-        // xAI Reasoning guide（docs.x.ai，2026-08）模型级枚举 low/medium/high
-        // 默认 high；"Reasoning cannot be disabled" 故无 none 档（模板默认的
-        // none 对 grok-4.5 是无效选项）；xhigh 是 grok-4.6 起才有的档位。
-        // ⚠️ docs.x.ai/developers/grok-4-5 页面实际渲染的是 grok-4.6 内容勿引
-        reasoningLevels: ["low", "medium", "high"],
+        // 同上（xAI 模型页 2026-11-03 盘点）：low/medium/high/xhigh 默认 high，
+        // 无 none 档
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+        // 官方默认 high ≠ 回落档（canonical 最高档 xhigh）→ 显式声明
+        defaultReasoningLevel: "high",
       },
     ]),
     category: "third_party",

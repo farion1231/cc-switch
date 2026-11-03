@@ -806,7 +806,7 @@ export function CodexFormFields({
               placeholder={
                 isGrokBuild
                   ? t("grokBuild.defaultModelPlaceholder", {
-                      defaultValue: "例如: grok-4.5",
+                      defaultValue: "例如: grok-4.7",
                     })
                   : t("codexConfig.defaultModelPlaceholder", {
                       defaultValue: "例如: gpt-5.6",

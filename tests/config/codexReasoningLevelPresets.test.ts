@@ -51,9 +51,15 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Tencent Hunyuan", "hy3-preview", ["low", "high"]],
     // LongCat 无档位可调：全站唯一 effort 证据=官方示例的 high
     ["Longcat", "LongCat-2.0", ["high"]],
-    // xAI Reasoning guide 模型级枚举；grok-4.5 不可关思考故无 none
-    ["xAI (Grok)", "grok-4.5", ["low", "medium", "high"]],
-    ["xAI (Grok) OAuth", "grok-4.5", ["low", "medium", "high"]],
+    // xAI Reasoning guide 模型级枚举（2026-11-03 盘点）；grok-4.7 不可关
+    // 思考故无 none，xhigh 为 4.7 起的新档；官方默认 high ≠ 回落档 → 显式声明
+    ["xAI (Grok)", "grok-4.7", ["low", "medium", "high", "xhigh"], "high"],
+    [
+      "xAI (Grok) OAuth",
+      "grok-4.7",
+      ["low", "medium", "high", "xhigh"],
+      "high",
+    ],
     // DeepSeek 直连照抄官方 catalog 镜像（Jason 2026-08-15 拍板：表单可见性
     // 优先，接受快照过时风险——官方目录变更时须同步）
     ["DeepSeek", "deepseek-v4-flash", ["low", "high", "max"]],
@@ -94,8 +100,10 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["StepFun en", "step-3.7-flash", ["low", "medium", "high"]],
     ["StepFun en", "step-3.5-flash-2603", ["low", "high"]],
     // Kimi 开放平台：k2.7-code 始终思考且官方标注不支持 effort → 单档；k3
-    // 三档（官方默认 max=后端回落结果，无需显式 default）。均关不掉思考无 none
+    // / k3.1-pro 三档（官方默认 max=后端回落结果，无需显式 default）。均关
+    // 不掉思考无 none
     ["Kimi", "kimi-k2.7-code", ["high"]],
+    ["Kimi", "kimi-k3.1-pro", ["low", "high", "max"]],
     ["Kimi", "kimi-k3", ["low", "high", "max"]],
     // Kimi Code 端点：k3/k3-256k 官方默认 high ≠ 回落值 max → 显式 default
     // 首两例；kimi-for-coding(-highspeed) Thinking 恒 ON 单档
@@ -126,14 +134,15 @@ describe("Codex preset pre-filled reasoning levels", () => {
   );
 
   it("keeps deliberately-unfilled presets unfilled", () => {
-    // Bailian qwen3-coder-plus 无 per-model 档位证据。OpenCode Go 的
+    // Bailian qwen3.8-max 无 per-model 档位证据（2026-11-03 盘点，沿袭原
+    // qwen3-coder-plus 口径）。OpenCode Go 的
     // toggle/未收录模型保持不填：glm-5.1 是 toggle 型（models.dev 无 effort
     // 声明）、kimi-k2.7-code 官方标注不支持 effort、mimo-v2.5-pro 未收录
     // models.dev——与 opencode 客户端一致（代理侧无表不发 reasoning_effort
     // 字段）。SiliconFlow .cn 的 M2.5 能否真正关思考无官方明文、ModelScope
     // 是否透传思考字段未证实——真机验证前不造两态假开关（2026-08-15 盘点结论）
     const UNFILLED: Array<[string, string]> = [
-      ["Bailian", "qwen3-coder-plus"],
+      ["Bailian", "qwen3.8-max"],
       ["OpenCode Go", "glm-5.1"],
       ["OpenCode Go", "kimi-k2.7-code"],
       ["OpenCode Go", "mimo-v2.5-pro"],

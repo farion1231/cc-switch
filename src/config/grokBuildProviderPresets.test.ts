@@ -40,8 +40,8 @@ describe("grokBuildProviderPresets", () => {
       "Novita AI",
       "Nvidia",
       "AtlasCloud",
-      // 上游已有 grok-4.5（2026-08 起），但订阅制网关是否收录待产品决策，
-      // 目前按刻意排除锁定（理由不再是"上游无 Grok"）。
+      // 上游已有 grok 系模型（2026-08 起提供，2026-11 已含 grok-4.7），
+      // 但订阅制网关是否收录待产品决策，目前按刻意排除锁定。
       "OpenCode Go",
     ];
     for (const name of excluded) {
@@ -53,7 +53,7 @@ describe("grokBuildProviderPresets", () => {
     for (const preset of grokBuildProviderPresets) {
       const model = extractCodexModelName(preset.config);
       expect(
-        model === GROK_BUILD_DEFAULT_MODEL || model === "x-ai/grok-4.5",
+        model === GROK_BUILD_DEFAULT_MODEL || model === "x-ai/grok-4.7",
         `${preset.name}: ${model}`,
       ).toBe(true);
     }

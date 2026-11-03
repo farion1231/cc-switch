@@ -261,6 +261,15 @@ export const piModelCatalog = {
       maxTokens: 131_072,
     },
   },
+  "moonshotai/kimi-k3.1-pro": {
+    capabilities: {
+      name: "Kimi K3.1 Pro",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
   "openai/gpt-5": {
     capabilities: {
       name: "GPT-5",
@@ -435,6 +444,15 @@ export const piModelCatalog = {
   "qwen/qwen3.8-max-preview": {
     capabilities: {
       name: "Qwen3.8 Max Preview",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_000_000,
+      maxTokens: 131_072,
+    },
+  },
+  "qwen/qwen3.8-max": {
+    capabilities: {
+      name: "Qwen3.8 Max",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1_000_000,

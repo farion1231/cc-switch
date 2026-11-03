@@ -162,10 +162,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底退役，
+    // 默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -863,7 +865,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "openai_responses",
     providerType: "xai_oauth",
     requiresOAuth: true,
-    modelRoutes: brandedRoutes("grok-4.5", "grok-4.5", "grok-4.5"),
+    // 2026-11-03 盘点：xAI 现任旗舰 grok-4.7（context 最高 500k）
+    modelRoutes: brandedRoutes("grok-4.7", "grok-4.7", "grok-4.7"),
     icon: "xai",
     iconColor: "#000000",
   },

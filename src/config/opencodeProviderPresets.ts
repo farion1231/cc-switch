@@ -301,8 +301,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+        "kimi-k3.1-pro": { name: "Kimi K3.1 Pro" },
         "kimi-k3": { name: "Kimi K3" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
       },
     },
     category: "cn_official",

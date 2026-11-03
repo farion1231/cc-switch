@@ -95,10 +95,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("moonshotai/kimi-k2.7-code", {
-          id: "kimi-k2.7-code",
-          thinkingProfile: "offUnsupported",
-        }),
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；K3.1 Pro 为 K 系新旗舰（1M 上下文，thinking 强制开启，
+        // effort low/high/max 默认 max）
+        {
+          ...piModel("moonshotai/kimi-k3.1-pro", {
+            id: "kimi-k3.1-pro",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
         {
           ...piModel("moonshotai/kimi-k3", {
             id: "kimi-k3",
@@ -106,6 +112,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
       ],
     },
     category: "cn_official",
@@ -935,8 +945,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("qwen/qwen3-coder-plus", {
-          id: "qwen3-coder-plus",
+        // 2026-11-03 盘点：qwen3-coder-plus 已于 2026-10-10 停服（官方推荐
+        // qwen3.7-plus）；默认改 qwen3.8-max（GA，1M 上下文）
+        piModel("qwen/qwen3.8-max", {
+          id: "qwen3.8-max",
         }),
       ],
     },

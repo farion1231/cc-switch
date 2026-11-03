@@ -799,8 +799,9 @@ describe("PiProviderForm", () => {
     const submitted = onSubmit.mock.calls[0][0];
     const config = JSON.parse(submitted.settingsConfig);
     expect(config.models.map((model: { id: string }) => model.id)).toEqual([
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
       "kimi-k3",
+      "kimi-k2.7-code",
     ]);
     expect(
       config.models.map((model: { id: string; name?: string }) => ({
@@ -808,8 +809,9 @@ describe("PiProviderForm", () => {
         name: model.name,
       })),
     ).toEqual([
-      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+      { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro" },
       { id: "kimi-k3", name: "Kimi K3" },
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
     ]);
     for (const model of config.models) {
       expect(model).toMatchObject({
@@ -1319,16 +1321,30 @@ describe("PiProviderForm", () => {
     const configEditor = screen.getByLabelText(
       "provider.configJson",
     ) as HTMLTextAreaElement;
+    // models[0] = kimi-k3.1-pro（kimi3 profile 全量映射原样下发）
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
 
     await user.click(document.querySelector("#pi-provider-api-select")!);
     await user.click(
       await screen.findByRole("option", { name: "OpenAI Responses" }),
     );
+    // models[0] = kimi-k3.1-pro（kimi3 profile 全量映射原样下发）
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
 
     await user.click(document.querySelector("#pi-provider-api-select")!);
@@ -1337,8 +1353,15 @@ describe("PiProviderForm", () => {
         name: "OpenAI Chat Completions",
       }),
     );
+    // models[0] = kimi-k3.1-pro（kimi3 profile 全量映射原样下发）
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
   });
 

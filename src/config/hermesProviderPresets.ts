@@ -140,8 +140,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，thinking 强制
+        // 开启，effort low/high/max 默认 max）
+        { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro", context_length: 1048576 },
         { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
       ],
     },
     category: "cn_official",
@@ -149,7 +153,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
-      model: { default: "kimi-k2.7-code", provider: "kimi" },
+      model: { default: "kimi-k3.1-pro", provider: "kimi" },
     },
   },
   {
@@ -1308,15 +1312,17 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
-        { id: "qwen3-max", name: "Qwen3 Max" },
+        // 2026-11-03 盘点：qwen3-coder-plus / qwen3-max 已于 2026-10-10 停服
+        // （官方推荐 qwen3.7-plus）；默认改 qwen3.8-max（GA，1M 上下文）
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 1000000 },
+        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
       ],
     },
     category: "cn_official",
     icon: "bailian",
     iconColor: "#624AFF",
     suggestedDefaults: {
-      model: { default: "qwen3-coder-plus", provider: "bailian" },
+      model: { default: "qwen3.8-max", provider: "bailian" },
     },
   },
   {
@@ -1328,15 +1334,17 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
-        { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
-        { id: "qwen3-max", name: "Qwen3 Max" },
+        // 2026-11-03 盘点：qwen3-coder-plus / qwen3-max 已于 2026-10-10 停服
+        // （官方推荐 qwen3.7-plus）；默认改 qwen3.8-max（GA，1M 上下文）
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 1000000 },
+        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
       ],
     },
     category: "cn_official",
     icon: "bailian",
     iconColor: "#624AFF",
     suggestedDefaults: {
-      model: { default: "qwen3-coder-plus", provider: "bailian_coding" },
+      model: { default: "qwen3.8-max", provider: "bailian_coding" },
     },
   },
   {
