@@ -62,49 +62,58 @@ function DropdownMenu({
 const DropdownMenuTrigger = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Trigger>
->(({ onPointerDown, onKeyDown, disabled = false, ...props }, forwardedRef) => {
-  const animation = React.useContext(DropdownMenuAnimationContext);
-  const setRefs = React.useCallback(
-    (node: HTMLButtonElement | null) => {
-      if (animation) animation.triggerRef.current = node;
-      if (typeof forwardedRef === "function") forwardedRef(node);
-      else if (forwardedRef) forwardedRef.current = node;
-    },
-    [animation, forwardedRef],
-  );
-  return (
-    <DropdownMenuPrimitive.Trigger
-      {...props}
-      disabled={disabled}
-      ref={setRefs}
-      onPointerDown={(event) => {
-        onPointerDown?.(event);
-        if (!event.defaultPrevented && animation?.isTransitioning()) {
-          event.preventDefault();
-        } else if (
-          !event.defaultPrevented &&
-          !disabled &&
-          event.button === 0 &&
-          event.ctrlKey === false
-        ) {
-          animation?.beginTriggerTransition();
-        }
-      }}
-      onKeyDown={(event) => {
-        onKeyDown?.(event);
-        if (!event.defaultPrevented && animation?.isTransitioning()) {
-          event.preventDefault();
-        } else if (
-          !event.defaultPrevented &&
-          !disabled &&
-          ["Enter", " ", "ArrowDown"].includes(event.key)
-        ) {
-          animation?.beginTriggerTransition();
-        }
-      }}
-    />
-  );
-});
+>(
+  (
+    { className, onPointerDown, onKeyDown, disabled = false, ...props },
+    forwardedRef,
+  ) => {
+    const animation = React.useContext(DropdownMenuAnimationContext);
+    const setRefs = React.useCallback(
+      (node: HTMLButtonElement | null) => {
+        if (animation) animation.triggerRef.current = node;
+        if (typeof forwardedRef === "function") forwardedRef(node);
+        else if (forwardedRef) forwardedRef.current = node;
+      },
+      [animation, forwardedRef],
+    );
+    return (
+      <DropdownMenuPrimitive.Trigger
+        {...props}
+        // Modal menus disable pointer events on body while open. Opt the trigger
+        // back in so a real second click still targets it (rather than <html>)
+        // and can be rejected by the animation guard below.
+        className={cn("data-[state=open]:pointer-events-auto", className)}
+        disabled={disabled}
+        ref={setRefs}
+        onPointerDown={(event) => {
+          onPointerDown?.(event);
+          if (!event.defaultPrevented && animation?.isTransitioning()) {
+            event.preventDefault();
+          } else if (
+            !event.defaultPrevented &&
+            !disabled &&
+            event.button === 0 &&
+            event.ctrlKey === false
+          ) {
+            animation?.beginTriggerTransition();
+          }
+        }}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          if (!event.defaultPrevented && animation?.isTransitioning()) {
+            event.preventDefault();
+          } else if (
+            !event.defaultPrevented &&
+            !disabled &&
+            ["Enter", " ", "ArrowDown"].includes(event.key)
+          ) {
+            animation?.beginTriggerTransition();
+          }
+        }}
+      />
+    );
+  },
+);
 DropdownMenuTrigger.displayName = DropdownMenuPrimitive.Trigger.displayName;
 
 const DropdownMenuGroup = DropdownMenuPrimitive.Group;
